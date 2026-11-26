@@ -1,9 +1,11 @@
 import { ilikeContains } from '~/server/utils/ilike';
+import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import { postsWithDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import {
-  deletePostRows,
-  ownPostDeleteBlocked,
-  type DeleteActor,
-} from '@civitai/db-queries/content-deletion';
+  postUnpublishContextOf,
+  PUBLISHED_POST_CONTEXT,
+  type PostUnpublishContext,
+} from '~/server/utils/post-unpublish-context';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -41,7 +43,7 @@ import {
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   announceReviewsInBackground,
   syncReviewsOfMovedPosts,
@@ -65,6 +67,8 @@ import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { ownerBlockedNotice } from '~/server/utils/image-media-visibility';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -100,13 +104,13 @@ import {
   createImageResources,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
+  feedThumbnailFields,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   queueImageSearchIndexUpdate,
-  deleteImages,
-  imagesPendingDeletion,
   requeueUnverifiedImages,
+  deleteImagesWithOutcome,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -799,12 +803,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   // Pass the same `db` client used above so the stash JOIN shares
   // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
   const unpublishContext: PostUnpublishContext = post.publishedAt
-    ? {
-        wasPublished: false,
-        unpublishedAt: null,
-        unpublishedBy: null,
-        parentModelId: null,
-      }
+    ? PUBLISHED_POST_CONTEXT
     : await getPostUnpublishContext({ id, db });
 
   return {
@@ -826,6 +825,8 @@ type PostEditInput = GetByIdInput & {
   servableLevels: number;
   /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
   ownerSeesHeld?: boolean;
+  /** `actsAsModerator(ctx)`: a moderator on a scoped key gets the owner's view of blocked media. */
+  asModerator?: boolean;
 };
 
 export const getPostEditDetail = async ({
@@ -833,11 +834,12 @@ export const getPostEditDetail = async ({
   user,
   servableLevels,
   ownerSeesHeld,
+  asModerator,
 }: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld, asModerator }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -912,22 +914,6 @@ async function getPostModel({
   return version?.model ?? null;
 }
 
-export type PostUnpublishContext = {
-  // True when the post carries a `prevPublishedAt` stash — i.e. it was
-  // previously public, then unpublished via the parent model/version flow.
-  // Drives the restore-only UI in PostEditSidebar: when set, the post
-  // cannot be rescheduled, only republished at its original date.
-  wasPublished: boolean;
-  unpublishedAt: Date | null;
-  unpublishedBy: number | null;
-  // Surfaced via JOIN so the UI can build a link back to the parent model
-  // edit page (where the actual unpublish reason + custom message live).
-  // We deliberately don't surface the reason directly on the post —
-  // model-level reasons like "insufficient-description" don't always map
-  // onto the post itself, so showing them in the post alert is misleading.
-  parentModelId: number | null;
-};
-
 async function getPostUnpublishContext({
   id,
   db = dbRead,
@@ -950,34 +936,41 @@ async function getPostUnpublishContext({
   `;
 
   const row = rows[0];
-  const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
-  const prevPublishedAt = metadata.prevPublishedAt;
-  const rawUnpublishedAt = metadata.unpublishedAt;
-  const rawUnpublishedBy = metadata.unpublishedBy;
-
-  return {
-    wasPublished: !!prevPublishedAt,
-    unpublishedAt: typeof rawUnpublishedAt === 'string' ? new Date(rawUnpublishedAt) : null,
-    unpublishedBy: typeof rawUnpublishedBy === 'number' ? rawUnpublishedBy : null,
-    parentModelId: row?.modelId ?? null,
-  };
+  const queued = await postsWithDeleteQueued(kyselyOver(db), [id]);
+  return postUnpublishContextOf(
+    (row?.metadata ?? {}) as Record<string, unknown>,
+    row?.modelId ?? null,
+    queued.has(id)
+  );
 }
 
-async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+async function combinePostEditImageData(
+  images: PostImageEditSelect[],
+  user: SessionUser,
+  asModerator: boolean
+) {
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
   const thumbnails = await thumbnailCache.fetch(imageIds);
 
   return _images
-    .map((image) => ({
-      ...image,
-      metadata: image.metadata as PreprocessFileReturnType['metadata'],
-      tags: tags.filter((x) => x.imageId === image.id),
-      tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
-      techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
-      thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
-    }))
+    .map((image) => {
+      const row = {
+        ...image,
+        metadata: image.metadata as PreprocessFileReturnType['metadata'],
+        tags: tags.filter((x) => x.imageId === image.id),
+        tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+        techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
+        // The editor's viewer is the post's owner or a moderator; a blocked thumbnail follows the feed's rule.
+        thumbnailUrl: (feedThumbnailFields(thumbnails[image.id], image.nsfwLevel, user.id, {
+          ownerId: user.id,
+          isModerator: asModerator,
+        }).thumbnailUrl ?? null) as string | null,
+      };
+      if (asModerator || ownerMediaAllowed(image)) return row;
+      return { ...ownerBlockedNotice(row), thumbnailUrl: null };
+    })
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
 
@@ -1000,19 +993,20 @@ export const getPostEditImages = async ({
   user,
   servableLevels,
   ownerSeesHeld = false,
+  asModerator = false,
 }: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
+        asModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
     select: editPostImageSelect,
   });
-  return combinePostEditImageData(images, user);
+  return combinePostEditImageData(images, user, asModerator);
 };
 
 export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
@@ -1159,9 +1153,7 @@ export const createPost = async ({
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
     // (which carries these via the getPostDetail spread).
-    wasPublished: false,
-    unpublishedAt: null,
-    unpublishedBy: null,
+    ...PUBLISHED_POST_CONTEXT,
     parentModelId: model?.id ?? null,
     parentModelName: model?.name ?? null,
     ownModelId: model?.userId === userId ? model.id : null,
@@ -1178,6 +1170,8 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 
 export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
+
+export const POST_PUBLISH_REFUSED_ERROR = "This post can't be published right now.";
 
 export const updatePost = async ({
   id,
@@ -1300,6 +1294,8 @@ export const updatePost = async ({
       // authoritative. Propagate the value faithfully — including null —
       // rather than masking malformed stash data behind a truthy check.
       if (writtenRows.length > 0) {
+        // Kept for a review its delete waits on (trg_post_pending_delete_keep_unpublished).
+        if (!writtenRows[0].publishedAt) throw throwBadRequestError(POST_PUBLISH_REFUSED_ERROR);
         updated.publishedAt = writtenRows[0].publishedAt;
         publishedAtWritten = true;
       }
@@ -1455,27 +1451,29 @@ export const deletePost = async ({
 
   // Images first, then the post: a failure in between leaves a post with fewer images, which can
   // be deleted again.
-  const deletedImages = await deleteImages(
+  const { deleted: deletedImages, kept: keptImages } = await deleteImagesWithOutcome(
     images.filter((image) => image.deletable).map((image) => image.id),
     { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
   );
-  // The deleter's own post under a child-safety report stays, as a pending delete, until the report
-  // is ruled on.
-  const deletedById = 'id' in actor ? actor.id : undefined;
-  const [post] = await deletePostRows(kyselyOver(dbWrite), {
-    ids: [id],
-    actor,
-    pending:
-      deletedById === undefined
-        ? undefined
-        : { blocked: ownPostDeleteBlocked(deletedById), data: { ownerId: deletedById } },
-  });
-  // Only the deleter's own images: the notice is for an owner's delete.
-  const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
-  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
+  const {
+    deleted: [post],
+    kept: keptPost,
+    hidden: hiddenPost,
+  } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId }))).catch(
+    (e: unknown) =>
+      logToAxiom({
+        type: 'error',
+        name: 'post-delete-unpublish-follow-ups-failed',
+        postId: id,
+        error: safeError(e),
+      })
+  );
+  // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
+  const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 
-  // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-  // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+  // Images left behind (not this caller's to delete, or left for a child-safety case) keep their row
+  // with `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
   // never revisits them — their docs must be dropped here.
   const deletedIds = new Set(deletedImages.map((image) => image.id));
   const orphanedImageIds = images.filter((image) => !deletedIds.has(image.id)).map((x) => x.id);
@@ -1502,8 +1500,6 @@ export const deletePost = async ({
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
-  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
-  // answers as if nothing was deleted.
   return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 
@@ -1667,6 +1663,7 @@ export const addPostImage = async ({
   externalDetailsUrl,
   assertPostOwnedBy,
   serverMintedUrl,
+  asModerator = false,
   ...props
 }: ImageSchema & {
   user: SessionUser;
@@ -1676,6 +1673,8 @@ export const addPostImage = async ({
   assertPostOwnedBy?: AssertPostOwnedBy;
   /** `url` is a key the server minted and stored itself, not one from the client. */
   serverMintedUrl?: boolean;
+  /** `actsAsModerator(ctx)`, as on `getPostEditImages`. */
+  asModerator?: boolean;
 }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
@@ -1746,7 +1745,7 @@ export const addPostImage = async ({
         select: editPostImageSelect,
       });
       if (existingResult) {
-        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        const [existingImage] = await combinePostEditImageData([existingResult], user, asModerator);
         return existingImage;
       }
     }
@@ -1793,7 +1792,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!result) throw throwDbError(`Image not found`);
-  const [image] = await combinePostEditImageData([result], user);
+  const [image] = await combinePostEditImageData([result], user, asModerator);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting — parallelize independent operations
@@ -1931,7 +1930,11 @@ async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
     );
 }
 
-export const updatePostImage = async (image: UpdatePostImageInput) => {
+/** `asModerator`: `actsAsModerator(ctx)`. */
+export const updatePostImage = async (
+  image: UpdatePostImageInput,
+  { asModerator = false }: { asModerator?: boolean } = {}
+) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
     select: {
@@ -1949,6 +1952,10 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
   // caller never touched, so the write below is skipped entirely unless the key was sent.
   const metaProvided = image.meta !== undefined;
+  // The editor gives its owner this image's meta without media references (`ownerBlockedNotice`),
+  // so a save from it would overwrite the stored record moderation reviews.
+  if (metaProvided && !asModerator && !ownerMediaAllowed(currentImage))
+    throw throwBadRequestError("You can't edit this image's details while it is under moderation.");
 
   // This edit replaces meta wholesale from client input, so provenance has to be
   // re-derived from the row rather than accepted: otherwise editing an image you

@@ -248,8 +248,11 @@ describe('migrateResourceToCollection and a .com face the text scan relied on', 
   describe("the owners' rating notices", () => {
     const realSend = faceLossNotice.send;
     const send = vi.fn();
+    let refresh: ReturnType<typeof vi.spyOn> | undefined;
     afterEach(() => {
       faceLossNotice.send = realSend;
+      refresh?.mockRestore();
+      refresh = undefined;
     });
     /** The held verdict as the split's transaction reads it before spending it. */
     function readsHeld() {
@@ -271,10 +274,11 @@ describe('migrateResourceToCollection and a .com face the text scan relied on', 
       readsHeld();
       // The held-verdict flip writes its row (the raw writes are not under test here).
       vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(1 as never);
-      const refresh = vi.spyOn(dataForModelsCache, 'refresh');
+      const spy = vi.spyOn(dataForModelsCache, 'refresh');
+      refresh = spy;
       let atSend: { levels: unknown; busted: boolean } | undefined;
       send.mockReset().mockImplementation(async () => {
-        atSend = { levels: (await levels()).models, busted: refresh.mock.calls.length > 0 };
+        atSend = { levels: (await levels()).models, busted: spy.mock.calls.length > 0 };
       });
       faceLossNotice.send = send as never;
 
@@ -285,7 +289,6 @@ describe('migrateResourceToCollection and a .com face the text scan relied on', 
       expect(atSend?.busted).toBe(true);
       // The levels the notices follow are the ones the split's refresh left.
       expect(atSend?.levels).toEqual((await levels()).models);
-      refresh.mockRestore();
     });
 
     it('sends none when no model was rated (control)', async () => {

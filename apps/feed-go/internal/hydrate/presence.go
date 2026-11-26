@@ -64,7 +64,7 @@ var PageCaches = []PageCache{
 
 // MissReason is the fallback reason a miss on the named cache raises when s serves: "" for a cache
 // s.Compute answers (MissCaches, shared with the miss computation; the metric hashes only when s
-// reads ClickHouse); else the PageCaches Reason of a
+// reads ClickHouse; the image resources only while imageResourcesComputed); else the PageCaches Reason of a
 // page cache, the lookup spec's reason for another computed cache (model-frames), and "" for any
 // other name.
 func (s *Sources) MissReason(name string) string {
@@ -74,6 +74,13 @@ func (s *Sources) MissReason(name string) string {
 			return ""
 		}
 		return "metrics-miss"
+	}
+	if name == MissImageResources {
+		// Computed only while the Node lookup reads the replica (imageResourcesComputed).
+		if s.imageResourcesComputed() {
+			return ""
+		}
+		return "image-resources-miss"
 	}
 	if s.Compute != nil && slices.Contains(MissCaches, name) {
 		return ""

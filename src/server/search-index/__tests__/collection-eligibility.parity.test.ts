@@ -8,20 +8,16 @@ import {
 import { COLLECTION_ELIGIBLE_SQL } from '../../../../apps/event-engine/src/vector-sync/collections/source';
 import { collectionSemanticEligibleText } from '~/server/services/semantic-collection-eligibility';
 
-// Users: 1 clean, 2 banned, 3 deleted, 4 a CsamReport's subject, 5 its secondary user, 6 under an
-// evidence hold, 7 a released hold, -1 the placeholder owner.
+// Users: 1 clean, 2 banned, 3 deleted, 4 a CsamReport's subject, 5 its secondary user, -1 the
+// placeholder owner.
 const USERS = `
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, NULL, NULL),
-    (5, NULL, NULL), (6, NULL, NULL), (7, NULL, NULL), (-1, NULL, NULL);
+    (5, NULL, NULL), (-1, NULL, NULL);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   INSERT INTO "CsamReport" ("userId", details) VALUES (4, '{}'), (NULL, '{"secondaryUserId": "5"}');
-  CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-  INSERT INTO "EvidenceHold" VALUES (6, NULL), (7, now());
-  CREATE VIEW "EvidenceHeldUser" AS
-    SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
 `;
 
 const SCHEMA = `${USERS}
@@ -84,15 +80,13 @@ const spec: ParitySpec = {
     collection(9, 'blockedWithOthers', { nsfwLevel: '33' }),
     collection(10, 'bannedOwner', { userId: '2' }),
     collection(11, 'deletedOwner', { userId: '3' }),
-    collection(12, 'ownerReported', { userId: '4' }),
-    collection(13, 'ownerSecondaryReported', { userId: '5' }),
-    collection(14, 'ownerEvidenceHold', { userId: '6' }),
+    collection(12, 'eligible:ownerReported', { userId: '4' }),
+    collection(13, 'eligible:ownerSecondaryReported', { userId: '5' }),
     collection(15, 'empty', { items: [] }),
     collection(16, 'noAcceptedItem', { items: ['REVIEW', 'REJECTED'] }),
     // Every other value on each boundary, so a rule that widens or narrows one is caught.
     collection(17, 'eligible:earlyAccess', { availability: `'EarlyAccess'` }),
     collection(18, 'eligible:mature', { nsfwLevel: '28' }),
-    collection(19, 'eligible:releasedHold', { userId: '7' }),
     collection(20, 'eligible:oneAcceptedAmongOthers', { items: ['REJECTED', 'ACCEPTED'] }),
   ],
   clauses: [
@@ -106,9 +100,6 @@ const spec: ParitySpec = {
     'blockedWithOthers',
     'bannedOwner',
     'deletedOwner',
-    'ownerReported',
-    'ownerSecondaryReported',
-    'ownerEvidenceHold',
     'empty',
     'noAcceptedItem',
   ],

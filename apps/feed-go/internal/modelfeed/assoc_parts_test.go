@@ -94,7 +94,9 @@ func TestParseGateRules(t *testing.T) {
 }
 
 func TestHiddenGateVersions(t *testing.T) {
-	cand := map[int]bool{5: true, 9: true}
+	// Candidates: version id to base model. SDXL 1.0 is in the SDXL ecosystem; Pony is its own
+	// ecosystem (whose parent is SDXL); the third name is no base model at all.
+	cand := map[int]string{5: "SDXL 1.0", 9: "Pony", 11: "Not A Base Model"}
 	mod := &Viewer{ID: 1, IsModerator: true}
 	user := &Viewer{ID: 2}
 	for _, c := range []struct {
@@ -112,10 +114,18 @@ func TestHiddenGateVersions(t *testing.T) {
 		{"testers, mod", GateRule{AvailableTo: "testers", Presentation: "hidden", ModelVersionIDs: []int{9}}, mod, map[int]bool{}, ""},
 		{"testers, user, other version", GateRule{AvailableTo: "testers", Presentation: "hidden", ModelVersionIDs: []int{7}}, user, map[int]bool{}, ""},
 		{"testers, user, candidate", GateRule{AvailableTo: "testers", Presentation: "hidden", ModelVersionIDs: []int{9}}, user, nil, "gate-rules-testers"},
-		{"testers, user, ecosystem", GateRule{AvailableTo: "testers", Presentation: "hidden", Ecosystems: []string{"X"}}, user, nil, "gate-rules-testers"},
-		{"ecosystem applies", GateRule{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"X"}}, nil, nil, "gate-rules-ecosystem"},
-		{"ecosystem, not applicable", GateRule{AvailableTo: "moderators", Presentation: "hidden", Ecosystems: []string{"X"}}, mod, map[int]bool{}, ""},
-		{"experimental", GateRule{AvailableTo: "nobody", Presentation: "experimental", ModelVersionIDs: []int{5}, Ecosystems: []string{"X"}}, nil, map[int]bool{}, ""},
+		{"testers, user, candidate's ecosystem", GateRule{AvailableTo: "testers", Presentation: "hidden", Ecosystems: []string{"Pony"}}, user, nil, "gate-rules-testers"},
+		{"testers, user, other ecosystem", GateRule{AvailableTo: "testers", Presentation: "hidden", Ecosystems: []string{"Flux1"}}, user, map[int]bool{}, ""},
+		{"testers, signed out, ecosystem", GateRule{AvailableTo: "testers", Presentation: "hidden", Ecosystems: []string{"Pony"}}, nil, map[int]bool{9: true}, ""},
+		// The ecosystem target (was the gate-rules-ecosystem fallback): only the base model's own
+		// ecosystem key reaches it, so SDXL does not reach the Pony version.
+		{"ecosystem applies", GateRule{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"SDXL"}}, nil, map[int]bool{5: true}, ""},
+		{"ecosystem applies, child ecosystem", GateRule{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"Pony"}}, mod, map[int]bool{9: true}, ""},
+		{"ecosystem and version", GateRule{AvailableTo: "moderators", Presentation: "hidden", Ecosystems: []string{"Pony"}, ModelVersionIDs: []int{5}}, user, map[int]bool{5: true, 9: true}, ""},
+		{"ecosystem names no candidate", GateRule{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"Flux1", "X"}}, nil, map[int]bool{}, ""},
+		{"ecosystem, not applicable", GateRule{AvailableTo: "moderators", Presentation: "hidden", Ecosystems: []string{"SDXL"}}, mod, map[int]bool{}, ""},
+		{"ecosystem, disabled", GateRule{AvailableTo: "nobody", Presentation: "disabled", Ecosystems: []string{"SDXL"}}, nil, map[int]bool{}, ""},
+		{"experimental", GateRule{AvailableTo: "nobody", Presentation: "experimental", ModelVersionIDs: []int{5}, Ecosystems: []string{"SDXL"}}, nil, map[int]bool{}, ""},
 		{"unknown audience", GateRule{AvailableTo: "?", Presentation: "hidden", ModelVersionIDs: []int{5}}, nil, map[int]bool{}, ""},
 	} {
 		got, err := hiddenGateVersions([]GateRule{c.rule}, c.viewer, cand)
@@ -127,6 +137,29 @@ func TestHiddenGateVersions(t *testing.T) {
 		}
 		if err != nil || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v %v, want %v", c.name, got, err, c.want)
+		}
+	}
+}
+
+// basemodels.json's gateEcosystems, read through ruleTargets: literal answers isTargetedBy gives
+// today (the drift test pins the same ones on the Node side), including a deprecated (disabled)
+// base model, which keeps its ecosystem.
+func TestRuleTargetsEcosystems(t *testing.T) {
+	for _, c := range []struct {
+		baseModel, key string
+		want           bool
+	}{
+		{"SDXL 1.0", "SDXL", true},
+		{"Pony", "Pony", true},
+		{"Pony", "SDXL", false},
+		{"SDXL 1.0", "Pony", false},
+		{"SD 3", "SD3", true},
+		{"SDXL", "SDXL", false},
+		{"", "SDXL", false},
+		{"Not A Base Model", "SDXL", false},
+	} {
+		if got := ruleTargets(GateRule{Ecosystems: []string{c.key}}, 1, c.baseModel); got != c.want {
+			t.Errorf("%q under %q: %v, want %v", c.baseModel, c.key, got, c.want)
 		}
 	}
 }

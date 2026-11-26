@@ -1411,7 +1411,10 @@
         "modelId": 5001,
         "deadline": {
           "$date": "2026-06-30T10:00:00.000Z"
-        }
+        },
+        "versionIds": [
+          6001
+        ]
       }
     ],
     "coverImages": [

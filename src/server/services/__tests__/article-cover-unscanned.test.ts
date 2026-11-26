@@ -166,3 +166,34 @@ describe('article card covers restricted by their base model', () => {
     expect(unrestricted.map((a) => a.coverImage?.url ?? null)).toEqual(ALL);
   });
 });
+
+describe('article card covers blocked by a moderation action', () => {
+  const blocked = (blockedFor: string) =>
+    STATES.map((_, i) => ({ ...coverOf(i), ingestion: 'Blocked', blockedFor, hash: 'blur-hash' }));
+  const authorCovers = async (viewer: { id: number; isModerator?: boolean }) => {
+    const { items } = await getArticles({
+      limit: 10,
+      sort: ArticleSort.Newest,
+      period: MetricTimeframe.AllTime,
+      periodMode: 'published',
+      browsingLevel: 1,
+      sessionUser: viewer,
+    } as Parameters<typeof getArticles>[0]);
+    return items.map((a) => (a.coverImage ? [a.coverImage.url, a.coverImage.hash] : null));
+  };
+
+  it.each(['tos', 'moderated'])(
+    'the feed carries no %s-blocked cover to its author',
+    async (blockedFor) => {
+      dbMock.dbRead.image.findMany.mockResolvedValue(blocked(blockedFor) as never);
+      expect(await authorCovers({ id: AUTHOR })).toEqual(STATES.map(() => null));
+    }
+  );
+
+  it('the feed carries a cover under an exempt block to its author with its media', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(blocked('AiNotVerified') as never);
+    expect(await authorCovers({ id: AUTHOR })).toEqual(
+      STATES.map((s) => [`cover-${s}`, 'blur-hash'])
+    );
+  });
+});

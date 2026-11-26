@@ -18,7 +18,7 @@ import {
 import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconAlertCircle,
   IconExternalLink,
@@ -102,10 +102,9 @@ const ChangelogItem = ({
   const { mutate: deleteItem } = trpc.changelog.delete.useMutation();
 
   const handleDelete = (id: number) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete changelog',
-      children: 'Are you sure you want to delete this changelog?',
-      centered: true,
+      message: 'Are you sure you want to delete this changelog?',
       labels: { confirm: 'Delete', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {

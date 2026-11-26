@@ -17,12 +17,13 @@ type Harness = {
 };
 
 const TOKEN = 'test-watchdog-token';
+const PROBE = 'test-watchdog-probe';
 const THRESHOLD_MS = 200;
 
 const harnesses: Harness[] = [];
 
 async function startWorker(
-  opts: { thresholdMs?: number; token?: string; previousToken?: string } = {}
+  opts: { thresholdMs?: number; token?: string; previousToken?: string; probeToken?: string } = {}
 ): Promise<Harness> {
   const sab = new SharedArrayBuffer(8);
   const beat = new BigInt64Array(sab);
@@ -38,6 +39,7 @@ async function startWorker(
       port: 0,
       token: opts.token ?? TOKEN,
       previousToken: opts.previousToken,
+      probeToken: opts.probeToken,
       heartbeatIntervalMs: 50,
       pollMs: 25,
     },
@@ -190,6 +192,30 @@ describe('event-loop watchdog worker', () => {
     expect(await bearer(`Bearer ${'x'.repeat(TOKEN.length)}`)).toBe(401);
     expect(await bearer(TOKEN)).toBe(401);
     expect(await bearer('Bearer ')).toBe(401);
+  });
+
+  it('accepts PROBE_TOKEN as Bearer or ?token=, counted as slot probe', async () => {
+    const h = await startWorker({ probeToken: PROBE });
+    const bearer = async (value: string) =>
+      (await fetch(`http://127.0.0.1:${h.port}/metrics`, { headers: { authorization: value } }))
+        .status;
+
+    expect(await bearer(`Bearer ${PROBE}`)).toBe(200);
+    expect((await h.scrape(PROBE)).status).toBe(200);
+    expect(await bearer(`Bearer ${'x'.repeat(PROBE.length)}`)).toBe(401);
+    const { status, body } = await h.scrape(TOKEN);
+    expect(status).toBe(200);
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="current"} 1');
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="probe"} 2');
+  });
+
+  it('refuses the probe value while PROBE_TOKEN is unset or blank', async () => {
+    for (const probeToken of [undefined, '', '   ']) {
+      const h = await startWorker({ probeToken });
+      expect((await h.scrape(PROBE)).status).toBe(401);
+      expect((await h.scrape(probeToken ?? '')).status).toBe(401);
+      expect((await h.scrape(TOKEN)).status).toBe(200);
+    }
   });
 
   it('a blank previous token never lets an empty token through', async () => {

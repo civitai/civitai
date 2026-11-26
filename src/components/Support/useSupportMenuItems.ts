@@ -7,19 +7,14 @@ import {
   IconMessageChatbot,
   IconQuestionMark,
 } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useAssistantAvailable } from '~/components/Assistant/useAssistantAvailable';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SITE_BUG_REPORT_AREA } from '~/shared/constants/feedback.constants';
 import { useAssistantPanelStore } from '~/store/assistant-panel.store';
 import { trpc } from '~/utils/trpc';
-
-const FeedbackDrawer = dynamic(() => import('~/components/Feedback/FeedbackDrawer'), {
-  ssr: false,
-});
 
 export type SupportMenuItem = {
   id:
@@ -56,7 +51,7 @@ export function useReportBugItem({ opened }: { opened: boolean }): SupportMenuIt
         id: 'support-report-bug',
         label: 'Report a bug',
         icon: IconBug,
-        onClick: () => dialogStore.trigger({ component: FeedbackDrawer }),
+        onClick: () => openDialog(() => import('~/components/Feedback/FeedbackDrawer')),
       }
     : {
         id: 'support-report-bug',

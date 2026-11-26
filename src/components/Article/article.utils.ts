@@ -1,5 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useMemo } from 'react';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -14,6 +15,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -120,7 +122,11 @@ export const useSemanticArticleFeed = (
   query: string | undefined
 ) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const input = toSemanticArticleSearchInput(filters, query ?? '', browsingLevel);
+  const { asTyped } = useSearchAsTyped(query);
+  const input = {
+    ...toSemanticArticleSearchInput(filters, query ?? '', browsingLevel),
+    ...spellcheckFor(asTyped),
+  };
   const { data, ...rest } = trpc.semanticArticleSearch.search.useInfiniteQuery(input, {
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -140,6 +146,7 @@ export const useSemanticArticleFeed = (
     ...rest,
     articles: items,
     isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
     correctedQuery: data?.pages[0]?.correctedQuery,
     // Identifies the search, so the feed can scroll to the top when it changes.
     searchKey: query ? JSON.stringify(input) : undefined,

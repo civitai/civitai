@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as GenerativeContent from '~/server/games/daily-challenge/generative-content';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
+import type * as FliptClient from '~/server/flipt/client';
 
 // The daily job must set `metadata.autoTagId` on the collection it creates — that field is the
 // entire mechanism by which challenge entries get tagged (applyCollectionAutoTag reads it on
@@ -37,6 +38,15 @@ const {
 // Imported at module scope but not reached by the creation path; cuts its
 // clickhouse/redis/discord chain.
 vi.mock('~/server/events', () => ({ eventEngine: {} }));
+
+// Flipt is a separate service; the plan flags are read through it.
+const { fliptFlagsOn } = vi.hoisted(() => ({ fliptFlagsOn: { value: false } }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(async (flag: string) =>
+    flag.startsWith('daily-challenge-') ? fliptFlagsOn.value : true
+  ),
+}));
 
 vi.mock('~/server/games/daily-challenge/generative-content', async (importOriginal) => ({
   ...(await importOriginal<typeof GenerativeContent>()),
@@ -142,5 +152,56 @@ describe('daily challenge creation applies the challenge auto-tag', () => {
 
     const metadata = mockCollectionCreate.mock.calls[0][0].data.metadata;
     expect(metadata.autoTagId).toBe(999001);
+  });
+});
+
+describe('daily challenge creation applies the day\'s plan', () => {
+  const dec1 = new Date('2026-12-01T00:00:00Z');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbReadQueryRaw.mockImplementation((strings: TemplateStringsArray) =>
+      Promise.resolve(routeQuery(strings))
+    );
+    mockCollectionCreate.mockResolvedValue({ id: 4242 });
+    mockCreateChallengeRecord.mockResolvedValue(31337);
+    mockGetChallengeConfig.mockResolvedValue(configWithJudge());
+    dbMock.dbRead.challengeCategory.findMany.mockResolvedValue([]);
+    dbMock.dbRead.challengeJudge.findFirst.mockResolvedValue({ id: 7 } as never);
+    dbMock.dbRead.challengeJudge.findUnique.mockResolvedValue({
+      id: 7,
+      userId: 5,
+      sourceCollectionId: 123,
+      systemPrompt: 'holiday',
+      collectionPrompt: '',
+      contentPrompt: '',
+      reviewPrompt: '',
+      reviewTemplate: null,
+      winnerSelectionPrompt: '',
+    } as never);
+  });
+
+  it('stores the scheduled judge, rubric and plan when the flags are on', async () => {
+    fliptFlagsOn.value = true;
+
+    expect(await createChallengesBatch([dec1])).toMatchObject({ created: 1, failed: 0 });
+
+    const record = mockCreateChallengeRecord.mock.calls[0][0];
+    expect(record.judgeId).toBe(7);
+    expect(record.judgingCategories?.length).toBeGreaterThan(1);
+    expect(record.metadata.dailyPlan).toMatchObject({ source: 'schedule' });
+    expect(mockGenerateArticle.mock.calls[0][0].occasion).toBeDefined();
+  });
+
+  it('keeps the default judge and rubric when the flags are off', async () => {
+    fliptFlagsOn.value = false;
+
+    expect(await createChallengesBatch([dec1])).toMatchObject({ created: 1, failed: 0 });
+
+    const record = mockCreateChallengeRecord.mock.calls[0][0];
+    expect(record.judgeId).toBe(1);
+    expect(record.judgingCategories).toBeUndefined();
+    expect(record.metadata).not.toHaveProperty('dailyPlan');
+    expect(mockGenerateArticle.mock.calls[0][0].occasion).toBeUndefined();
   });
 });

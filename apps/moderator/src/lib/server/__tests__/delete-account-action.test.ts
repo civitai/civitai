@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL } from '$lib/legal-hold';
 
 /**
  * `deleteAccount` — the spoke half of the moderator account-deletion path.
@@ -144,17 +143,8 @@ describe('deleteAccount — what it sends', () => {
   });
 });
 
-describe('deleteAccount — a legal hold', () => {
-  it.each([
-    ['a hold', LEGAL_HOLD_REFUSAL],
-    ['a hold status the endpoint could not read', HOLD_UNKNOWN_REFUSAL],
-  ])('shows %s as the hold refusal, with no other text', async (_, refusal) => {
-    respond = () => new Response(JSON.stringify({ message: refusal }), { status: 403 });
-
-    expect(await deleteAccount({ userId: TARGET })).toEqual({ ok: false, error: refusal });
-  });
-
-  it('shows any other 403 as the endpoint wrote it', async () => {
+describe('deleteAccount — a refusal', () => {
+  it('shows a 403 as the endpoint wrote it', async () => {
     respond = () => new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 });
 
     expect(await deleteAccount({ userId: TARGET })).toEqual({
@@ -180,9 +170,8 @@ describe('deleteAccount — the audit row belongs to the endpoint', () => {
   // The control. `recordModActivity` is mocked and observable, so the assertion above is capable of
   // failing — a neighbouring action that DOES log proves the spy is wired to the real call site.
   it('while its neighbour purgeAllContent still does', async () => {
-    // Purge checks the hold first; one answer serves the check and the purge.
     respond = () =>
-      new Response(JSON.stringify({ userId: TARGET, held: false }), {
+      new Response(JSON.stringify({ userId: TARGET }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });

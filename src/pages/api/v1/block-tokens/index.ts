@@ -18,10 +18,16 @@ export const config = {
 import { isSystemAccountMeta } from '@civitai/auth';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
+import {
+  handleRunnerMint,
+  isRunnerMintRequest,
+} from '~/server/services/blocks/runner-mint-handler';
 import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import { BLOCK_TOKEN_MINT_RATE_LIMIT } from '~/server/common/block-token-mint-rate-limit';
 import { BlockTokenService } from '~/server/services/block-token.service';
+import { resolveAppDataInit } from '~/server/services/apps/app-data-writes-routing';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
@@ -75,6 +81,7 @@ import {
   withholdUncoveredImportScope,
 } from '~/server/services/apps/storage-import-grant.service';
 import type { Logger } from '@civitai/next-axiom';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /** Call only after the host gate: the site rule takes precedence over the level. */
 function hiddenByViewerBrowsingLevel(
@@ -1130,7 +1137,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // caller — including moderators — before the per-user gate ran (the H2
   // divergence). Removing it lets the per-user gate be authoritative: a mod
   // passes, a non-mod / anon caller is still refused (403) before any DB read.
-  // The cheap per-IP rate limit below still runs first to throttle probing.
+
+  // A recipe runner's mint takes its own path, before the per-IP limit: one runner address
+  // serves many users, and it authenticates with its OAuth token, never a session.
+  if (isRunnerMintRequest(req.body)) return handleRunnerMint(req, res);
 
   const parsed = requestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -1144,7 +1154,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const clientIp = getClientIp(req);
   const ipOk = await checkPerIpRateLimit(clientIp);
   if (!ipOk) {
-    res.status(429).json({ error: 'Rate limit exceeded' });
+    // Both mint limits are fixed windows read without their TTL: the window bounds the wait.
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.block-token-mint-ip', PER_IP_RATE_LIMIT_WINDOW_SECONDS),
+      'Rate limit exceeded'
+    );
     return;
   }
 
@@ -1195,7 +1210,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // attacker can't fresh-mint a bucket by rotating blockInstanceId strings.
   const instanceOk = await BlockTokenService.checkRateLimit(userId, blockInstanceId, clientIp);
   if (!instanceOk) {
-    res.status(429).json({ error: 'Rate limit exceeded' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.block-token-mint', BLOCK_TOKEN_MINT_RATE_LIMIT.windowSeconds),
+      'Rate limit exceeded'
+    );
     return;
   }
 
@@ -1766,6 +1785,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         )
       : buzzBudget;
 
+  const tokenKind = oauth?.outcome === 'minted' ? 'oauth' : 'block';
+  // The App Storage writes cutover: `{ appData: { url, slug } }` only for a production page run
+  // of an app the `app-data-writes-via-service` flag is on for, with a block token; `{}` (the key
+  // ABSENT) otherwise. Decided here, never by the host. See app-data-writes-routing.ts.
+  const appDataInit = await resolveAppDataInit({
+    entityType,
+    devTunnel: devTunnel === true,
+    tokenKind,
+    appBlockId: block.id,
+    blockId: block.blockId,
+  });
+
   // A6: surface the consent signal alongside the token. The token carries only
   // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
   // the user to re-consent for the scopes the app's approved manifest declares
@@ -1775,7 +1806,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
-    kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
+    kind: tokenKind,
     scopes: manifestScopes,
     // The per-call budget this token carries, so the host forwards it to the block
     // instead of deriving its own: an install setting it can resolve from is not
@@ -1795,5 +1826,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // it is what a block should render mature affordances against. Always a
     // subset of `maxBrowsingLevel` — see `viewerEffectiveBrowsingLevel`.
     effectiveBrowsingLevel,
+    ...appDataInit,
   });
 });

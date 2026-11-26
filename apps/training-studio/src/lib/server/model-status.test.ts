@@ -22,6 +22,14 @@ describe('mainAppModelLive', () => {
     expect(new Headers(init.headers).get('cookie')).toBe('session=abc');
   });
 
+  it("asks about the run's own version when it has one", async () => {
+    mainApp.mockResolvedValue(Response.json({ live: false }));
+    await expect(mainAppModelLive('session=abc')(77, 770)).resolves.toBe(false);
+    expect(mainApp.mock.calls[0]![0]).toBe(
+      'https://civitai.test/api/training-studio/model-status?id=77&versionId=770'
+    );
+  });
+
   // Decision: no answer is not "deleted". The run page keeps the link on a rejection, so a failed
   // check must reject rather than resolve false.
   it.each([

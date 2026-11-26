@@ -282,6 +282,28 @@ func TestAFailureIsForgottenSoALaterCallRetries(t *testing.T) {
 	}
 }
 
+// A 429 (or its hold) is a failure, forgotten like one, but counted rate_limited, not failed, so a
+// hold does not read as a hub outage.
+func TestARateLimitedExchangeIsForgottenAndCountedAsRateLimited(t *testing.T) {
+	bc, h, _, o := newBlockCache()
+	h.answer[blockA] = &RateLimitedError{RetryAfter: 60 * time.Second}
+	if _, err := bc.Exchange(context.Background(), blockA); !errors.As(err, new(*RateLimitedError)) || errors.Is(err, ErrRefused) {
+		t.Fatalf("got %v, want a RateLimitedError", err)
+	}
+	if issued, refused := bc.Len(); issued != 0 || refused != 0 {
+		t.Fatal("a rate-limited exchange was remembered")
+	}
+	h.mu.Lock()
+	delete(h.answer, blockA)
+	h.mu.Unlock()
+	if _, err := bc.Exchange(context.Background(), blockA); err != nil {
+		t.Fatal(err)
+	}
+	if got := o.String(); got != "[rate_limited/none issued/none]" {
+		t.Fatalf("observed %s", got)
+	}
+}
+
 // Callers waiting on an exchange that fails get its error; one whose own deadline passes first gets
 // that instead.
 func TestWaitersGetTheFailureOrTheirOwnDeadline(t *testing.T) {

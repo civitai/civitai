@@ -20,7 +20,7 @@ import { createPgliteHarness, type Harness } from './doc-store.harness';
 /**
  * A shared document PUT that changes nothing is free behind `app-blocks-storage-unchanged-writes-free`:
  * no shared-write budget token, no moderation scan, nothing written. End to end, as
- * `doc-store-api.publish.test.ts` drives it: a REAL signed block token → the REAL route → the REAL
+ * `doc-store-api.contract.test.ts` drives it: a REAL signed block token → the REAL route → the REAL
  * document store on an embedded Postgres (RLS on, the content-levels migration applied). Replaced
  * at the boundary only: the Postgres rows the resolver reads, Redis (an in-memory map plus the Lua
  * harness for the token-bucket script), the session hub, the App Blocks and Flipt flags, and the
@@ -50,12 +50,14 @@ const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
 const UNCHANGED_FLAG = 'app-blocks-storage-unchanged-writes-free';
 const LEVELS_FLAG = 'app-blocks-shared-doc-levels';
+const VIEWER_KEYED_OPEN_FLAG = 'app-blocks-storage-viewer-keyed-open';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   const isFlipt = async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return false;
     if (flag === ENFORCE_FLAG) return true;
     if (flag === LEVELS_FLAG) return h.levelsFlag;
+    if (flag === VIEWER_KEYED_OPEN_FLAG) return true;
     if (flag === UNCHANGED_FLAG) {
       h.unchangedFlagEntities.push(entityId);
       return h.unchangedFlag;
@@ -844,7 +846,7 @@ async function send(opts: {
   return { status: res.statusCode, body, headers: resHeaders };
 }
 
-/** Every document-store rate bucket the app's viewer has spent (read, write, tally, report). */
+/** Every document-store rate bucket the app's viewer has spent (read, write, report). */
 const docBuckets = (app: AppRow) =>
   [...kv.keys()].filter((k) => k.includes(':docs-') && k.includes(`:${app.id}:`)).sort();
 
@@ -979,7 +981,7 @@ describe('the signed internal route', () => {
     expect((await row(A, b.key))?.seq).toBe(b.seq);
   });
 
-  it("a delete answers its tombstone's seq; a delete that removed nothing answers none", async () => {
+  it("a delete answers its tombstone's seq and the key it removed; a delete that removed nothing answers none", async () => {
     const A = freshApp();
     const t = await mint(A, V1);
     const put1 = await expectOk(
@@ -1001,7 +1003,9 @@ describe('the signed internal route', () => {
         query: { from: A.blockId },
       })
     );
-    expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A) });
+    // The key: what the overlay hides. For an `@me` delete it is the derived key, which the
+    // caller never sent, so the answer is the only place it learns it.
+    expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A), key: 'del-1' });
     expect((del.body as { seq: number }).seq).toBeGreaterThan((put1.body as { seq: number }).seq);
     const again = await expectOk(
       send({
@@ -1015,7 +1019,82 @@ describe('the signed internal route', () => {
     expect(again.body).toEqual({ deleted: false });
   });
 
-  it('a mark answers markSeq on the internal route only', async () => {
+  it('🔴 an `@me` put and delete are served there, and the delete answers the DERIVED key it removed, never the raw path segment', async () => {
+    envMock.set({
+      APP_DATA_WRITES_SIGNING_KEY: SIGNING_KEY,
+      APP_STORAGE_VIEWER_KEY_SECRET: 'unchanged-viewer-key-secret-7d31',
+    });
+    const PARENT = 'post-6152';
+    const A = freshApp({
+      scopes: SCOPES,
+      storage: {
+        collections: {
+          ...MANIFEST.storage.collections,
+          likes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
+        },
+      },
+    });
+    const t = await mint(A, V1);
+    try {
+      await expectOk(
+        send({
+          internal: true,
+          token: t,
+          method: 'PUT',
+          path: `/likes/@me/${PARENT}`,
+          query: { from: A.blockId },
+          body: { data: { n: 61 } },
+        })
+      );
+      // The key the store holds the document at: the parent, a colon, a 26-character digest.
+      const stored = await harness.raw(
+        `SELECT key FROM appdata.doc WHERE app_id = $1 AND ns = 'prod' AND coll = 'likes'`,
+        [A.id]
+      );
+      expect(stored.length).toBe(1);
+      const derived = (stored[0] as { key: string }).key;
+      expect(derived).toMatch(/^post-6152:[a-z2-7]{26}$/);
+      const del = await expectOk(
+        send({
+          internal: true,
+          token: t,
+          method: 'DELETE',
+          path: `/likes/@me/${PARENT}`,
+          query: { from: A.blockId },
+        })
+      );
+      expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A), key: derived });
+      expect((del.body as { key: string }).key).not.toBe(PARENT);
+      expect((del.body as { key: string }).key).not.toBe('@me');
+      // The read of the same document is not a route there: reads stay on the streams.
+      const read = await send({
+        internal: true,
+        token: t,
+        method: 'GET',
+        path: `/likes/@me/${PARENT}`,
+        query: { from: A.blockId },
+      });
+      expect(read.status).toBe(404);
+      expect((read.body as { code: string }).code).toBe('not_found');
+    } finally {
+      envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: undefined });
+    }
+  });
+
+  it('the public route answers a delete exactly `{ deleted: true }`: no seq, no key', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(
+      call({ token: t, method: 'PUT', path: '/drafts/del-pub-7', body: { data: { n: 47 } } })
+    );
+    const del = await expectOk(call({ token: t, method: 'DELETE', path: '/drafts/del-pub-7' }));
+    expect(del.body).toEqual({ deleted: true });
+  });
+
+  // docs/app-storage-generic-core.md, rollout step 5: the tally PATCH was removed, on both routes,
+  // even on a collection whose manifest still declares a mark. The internal route serves only the
+  // writes, so its 405 names PUT and DELETE; the public one also names GET.
+  it('PATCH is no route on either route: 405, nothing written', async () => {
     const A = freshApp(VOTE_MANIFEST);
     const t = await mint(A, V1);
     const created = await expectOk(
@@ -1030,22 +1109,33 @@ describe('the signed internal route', () => {
       201
     );
     const key = (created.body as { key: string }).key;
-    const marked = await expectOk(
-      send({
-        internal: true,
-        token: t,
-        method: 'PATCH',
-        path: `/clips/${key}`,
-        query: { from: A.blockId },
-        body: { $mark: 'vote' },
-      })
-    );
-    expect(marked.body).toMatchObject({ marked: true, count: 1 });
-    expect(typeof (marked.body as { markSeq: unknown }).markSeq).toBe('number');
-    const unmarked = await expectOk(
-      call({ token: t, method: 'PATCH', path: `/clips/${key}`, body: { $unmark: 'vote' } })
-    );
-    expect(unmarked.body).toEqual({ marked: false, count: 0 });
+    const seqBefore = await lastSeq(A);
+    const internal = await send({
+      internal: true,
+      token: t,
+      method: 'PATCH',
+      path: `/clips/${key}`,
+      query: { from: A.blockId },
+      body: { $mark: 'vote' },
+    });
+    const direct = await send({
+      internal: false,
+      token: t,
+      method: 'PATCH',
+      path: `/clips/${key}`,
+      body: { $mark: 'vote' },
+    });
+    expect([internal.status, internal.headers.allow, direct.status, direct.headers.allow]).toEqual([
+      405,
+      'PUT, DELETE',
+      405,
+      'GET, PUT, DELETE',
+    ]);
+    expect([
+      (internal.body as { code: string }).code,
+      (direct.body as { code: string }).code,
+    ]).toEqual(['method_not_allowed', 'method_not_allowed']);
+    expect(await lastSeq(A)).toBe(seqBefore);
   });
 
   it('a revoked token is refused on the internal route exactly as on the public route', async () => {

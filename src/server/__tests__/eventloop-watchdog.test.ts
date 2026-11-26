@@ -344,6 +344,45 @@ describe('watchdog heartbeat', () => {
       vi.doUnmock('node:worker_threads');
     }
   });
+
+  it('hands PROBE_TOKEN to the worker alongside the webhook tokens', async () => {
+    const spawned: { workerData: Record<string, unknown> }[] = [];
+    vi.doMock('node:worker_threads', () => ({
+      Worker: class {
+        constructor(_source: string, options: { workerData: Record<string, unknown> }) {
+          spawned.push(options);
+        }
+        unref = vi.fn();
+        on = vi.fn();
+        once = vi.fn();
+        postMessage = vi.fn();
+        terminate = vi.fn();
+      },
+    }));
+    const saved = { probe: process.env.PROBE_TOKEN, webhook: process.env.WEBHOOK_TOKEN };
+    process.env.EVENTLOOP_WATCHDOG_ENABLED = 'true';
+    process.env.PROBE_TOKEN = 'probe-value';
+    process.env.WEBHOOK_TOKEN = 'webhook-value';
+    try {
+      const { registerEventLoopWatchdog, shutdownEventLoopWatchdog } = await loadWatchdog();
+      registerEventLoopWatchdog();
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0].workerData).toMatchObject({
+        token: 'webhook-value',
+        probeToken: 'probe-value',
+      });
+      shutdownEventLoopWatchdog();
+    } finally {
+      vi.doUnmock('node:worker_threads');
+      for (const [key, value] of [
+        ['PROBE_TOKEN', saved.probe],
+        ['WEBHOOK_TOKEN', saved.webhook],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 });
 
 // The synthetic stall endpoint is covered separately in

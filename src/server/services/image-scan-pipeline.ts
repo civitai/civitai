@@ -29,7 +29,6 @@ import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
-import { captureImageKeptSql, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
@@ -73,6 +72,8 @@ import {
   ingestionAfterVerdictSql,
   scanKeepsRowSql,
   ingestionKeptAfterVerdict,
+  reviewKeyAfterSql,
+  csamBlockedSql,
   withoutGraceMarkersSql,
 } from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
@@ -559,25 +560,29 @@ async function queueCdnAccessSyncWhen(imageId: number, condition: Prisma.Sql, na
 }
 
 /**
- * A block a scan must not lift: the owner is banned or held, or a hold kept the image. The fresh
- * read and the write's WHERE share it, since a ban or hold can land between the two.
+ * A block a scan must not lift: the owner is banned. The fresh read and the write's WHERE share it,
+ * since a ban can land between the two.
  */
-export const blockKeptByBanOrHoldSql = (alias: string) => {
+export const blockKeptByBanSql = (alias: string) => {
   const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND (
-    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL)
-    OR ${ownerHeldSql(Prisma.sql`${t}."userId"`)}
-    OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = ${t}.id)
-    OR ${captureImageKeptSql(`"${alias}"`)}))`;
+  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND
+    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL))`;
 };
 
-/** Whether `blockKeptByBanOrHoldSql` holds for the image. A read that fails counts as kept. */
-function isBlockKeptByBanOrHold(imageId: number) {
-  return ownerHeld(
-    dbWrite,
-    Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
-    blockKeptByBanOrHoldSql('m')
-  );
+/** Whether `blockKeptByBanSql` holds for the image. A read that fails counts as kept. */
+async function isBlockKeptByBan(imageId: number) {
+  const rows = await dbWrite.$queryRaw<{ kept: unknown }[]>`
+    SELECT ${blockKeptByBanSql('m')} AS kept FROM "Image" m WHERE m.id = ${imageId}
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'scan-block-kept-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
+  if (!rows) return true;
+  return rows.some((r) => r.kept !== false);
 }
 
 /** One image in this many is logged without a prior review, so the line's volume shows it runs. */
@@ -763,16 +768,15 @@ export async function resolveScanOutcome({
     reviewKey = 'csam';
   }
 
-  // A block on a banned or held owner's image, or on one a hold kept, is that decision, not a stale
-  // automated one, so a scan never lifts it. Read fresh, not from `image`: the ban or hold can block
-  // the row after this scan loaded it.
+  // A block on a banned owner's image is that decision, not a stale automated one, so a scan never
+  // lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
       SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
     `;
-    if (current && hasBlockMarker(current) && (await isBlockKeptByBanOrHold(image.id))) {
+    if (current && hasBlockMarker(current) && (await isBlockKeptByBan(image.id))) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -783,7 +787,12 @@ export async function resolveScanOutcome({
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
-  const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
+  const csamBlocked = csamBlockedSql();
+  // The CSAM block the row holds once this write lands: the stored one, or one this scan writes back
+  // from the loaded copy after it was lifted.
+  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
+    (toUpdate.blockedFor as string) ?? null
+  }::text = ${BlockedReason.CSAM})`;
   // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
@@ -810,11 +819,19 @@ export async function resolveScanOutcome({
         WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0
           AND ${scanLevel}::int <> ${Prisma.raw(String(NsfwLevel.Blocked))} THEN "nsfwLevel"
         ELSE ${scanLevel}::int END,
-      "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
-        ELSE ${(toUpdate.needsReview as string) ?? null} END,
+      -- Every way the row ends Blocked, a stored CSAM block included, settles its review as any block does.
+      "needsReview" = CASE WHEN ${csamBlocked} THEN ${reviewKeyAfterSql(
+        'block',
+        (toUpdate.needsReview as string) ?? null
+      )} ELSE ${reviewKeyAfterSql(
+        lifting ? 'verdict' : 'block',
+        (toUpdate.needsReview as string) ?? null,
+        csamAfterWrite
+      )} END,
       "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
-      "minor" = ${(toUpdate.minor as boolean) ?? false},
-      "poi" = ${(toUpdate.poi as boolean) ?? false},
+      -- Only a moderator clears these.
+      "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},
+      "poi" = "poi" OR ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
       "metadata" = ${withoutGraceMarkersSql(metadataSet)},
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
@@ -822,7 +839,7 @@ export async function resolveScanOutcome({
       )}::jsonb)${axesTerm}
     WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}${
         lifting
-          ? Prisma.sql` AND NOT ${blockKeptByBanOrHoldSql('Image')} AND NOT ${keptFromScan}`
+          ? Prisma.sql` AND NOT ${blockKeptByBanSql('Image')} AND NOT ${keptFromScan}`
           : Prisma.empty
       }
   `),
@@ -938,6 +955,8 @@ export async function resolveScanOutcome({
   if (scanLevel !== NsfwLevel.Blocked && !ratingLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
+    const minorAtFloor = Prisma.sql`(COALESCE(("scanJobs"->'hasMinor')::boolean, false)
+      AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked})`;
     try {
       const [raised] = await dbWrite.$queryRaw<
         { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
@@ -945,14 +964,15 @@ export async function resolveScanOutcome({
         UPDATE "Image" SET
           -- A rescan keeps the level until its checks have run at the floor; it applies it then.
           "nsfwLevel" = CASE WHEN ${rescan} THEN "nsfwLevel" ELSE ${floor} END,
-          ingestion = CASE WHEN ${rescan} THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+          ingestion = CASE WHEN ${rescan} THEN ${
+        ImageIngestionStatus.Rescan
+      }::"ImageIngestionStatus"
             ELSE ingestion END,
-          "needsReview" = CASE
-            WHEN "needsReview" IN ('csam', 'appeal') THEN "needsReview"
-            WHEN ("scanJobs"->'hasMinor')::boolean AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked}
-            THEN 'minor'
-            ELSE "needsReview"
-          END
+          "needsReview" = ${reviewKeyAfterSql(
+            'verdict',
+            Prisma.sql`CASE WHEN ${minorAtFloor} THEN 'minor' END`
+          )},
+          "minor" = "minor" OR ${minorAtFloor}
         WHERE id = ${image.id}
           AND NOT "nsfwLevelLocked"
           AND ingestion NOT IN (

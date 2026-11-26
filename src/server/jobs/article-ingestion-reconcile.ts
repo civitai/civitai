@@ -1,13 +1,30 @@
-import { dbRead } from '~/server/db/client';
+import { sql, type Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
 import { createJob } from '~/server/jobs/job';
+import {
+  TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
+  TEXT_MODERATION_RETRY_LIMIT,
+  TEXT_MODERATION_RETRY_STATUSES,
+} from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import {
   articleHasText,
   articleTextVerdictMatch,
+  retryArticleErrorImages,
   updateArticleImageScanStatus,
 } from '~/server/services/article.service';
+import {
+  ingestionErrorPatch,
+  ingestionErrorStep,
+  readIngestionErrorState,
+  silentIngestionErrorState,
+  textCheckSpentRetries,
+  type ArticleIngestionErrorState,
+} from '~/server/services/article-ingestion.helpers';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -26,14 +43,13 @@ const STUCK_THRESHOLD_MINUTES = 15;
 const MAX_FORCED_RESUBMITS = 3;
 const FORCED_RESUBMITS_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-// After this long without a webhook, a Pending EntityModeration row is
-// considered lost. Matches TEXT_MODERATION_PENDING_TIMEOUT_MINUTES in
-// `text-moderation-retry.ts` so both cron paths agree.
-const PENDING_MODERATION_TIMEOUT_MINUTES = 30;
-
-const MODERATION_RETRY_LIMIT = 9;
 const FETCH_LIMIT = 500;
 const RECONCILE_CONCURRENCY = 5;
+
+// Caps per tick, so a mass failure is not sent back to the scanner all at once.
+const ERROR_FETCH_LIMIT = 500;
+const ERROR_ARTICLES_PER_TICK = 25;
+const ERROR_IMAGES_PER_TICK = 200;
 
 type StuckArticleRow = { id: number };
 
@@ -52,7 +68,8 @@ async function recordForcedResubmit(articleId: number, textHash: string) {
 
 /**
  * Find articles whose ingestion pipeline has stalled and re-run the state
- * machine for them. Two classes of drift this catches:
+ * machine for them. Two classes of drift this catches (and, after them, the
+ * Error retries in `retryErrorArticles`):
  *   1. `status IN (Published, Processing) AND ingestion IN (Pending, Rescan)` —
  *      scan webhooks completed but the final recompute never fired (lost
  *      webhook, process crash between `recordEntityModerationSuccess` and
@@ -75,7 +92,7 @@ export const articleIngestionReconcile = createJob(
     const stuckBefore = decreaseDate(now, STUCK_THRESHOLD_MINUTES, 'minutes');
     const pendingModerationBefore = decreaseDate(
       now,
-      PENDING_MODERATION_TIMEOUT_MINUTES,
+      TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
       'minutes'
     );
 
@@ -98,7 +115,8 @@ export const articleIngestionReconcile = createJob(
     `;
 
     if (!candidates.length) {
-      return { candidates: 0, advanced: 0, resubmitted: 0, stillStuck: 0, errors: 0 };
+      const errorRetries = await runErrorRetries(now);
+      return { candidates: 0, advanced: 0, resubmitted: 0, stillStuck: 0, errors: 0, errorRetries };
     }
 
     let advanced = 0;
@@ -169,10 +187,8 @@ export const articleIngestionReconcile = createJob(
           const shouldResubmit =
             !moderation ||
             verdictForOtherText ||
-            (moderation.retryCount < MODERATION_RETRY_LIMIT &&
-              (moderation.status === EntityModerationStatus.Failed ||
-                moderation.status === EntityModerationStatus.Expired ||
-                moderation.status === EntityModerationStatus.Canceled ||
+            (moderation.retryCount < TEXT_MODERATION_RETRY_LIMIT &&
+              (TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status) ||
                 (moderation.status === EntityModerationStatus.Pending &&
                   moderation.updatedAt < pendingModerationBefore)));
 
@@ -253,6 +269,7 @@ export const articleIngestionReconcile = createJob(
     });
 
     await limitConcurrency(tasks, RECONCILE_CONCURRENCY);
+    const errorRetries = await runErrorRetries(now);
 
     return {
       candidates: candidates.length,
@@ -261,6 +278,256 @@ export const articleIngestionReconcile = createJob(
       skippedResubmits,
       stillStuck,
       errors,
+      errorRetries,
     };
   }
 );
+
+/**
+ * Merges the job's own fields into the episode, only while it is the episode the job read: a
+ * recompute may have ended it, or written its own fields since.
+ */
+async function updateErrorState(
+  db: Kysely<DB>,
+  id: number,
+  enteredAt: number,
+  patch: Partial<ArticleIngestionErrorState>
+) {
+  await db
+    .withoutPlugins()
+    .updateTable('Article')
+    .set({
+      metadata: sql`jsonb_set(metadata, '{ingestionError}', (metadata->'ingestionError') || ${JSON.stringify(
+        patch
+      )}::jsonb)`,
+    })
+    .where('id', '=', id)
+    .where(sql<boolean>`(metadata->'ingestionError'->>'enteredAt')::bigint = ${enteredAt}`)
+    .execute();
+}
+
+async function textCheckOnPrimary(id: number) {
+  // primary: the recompute just before may have read a newer verdict than the replica holds.
+  return dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+    select: { status: true, retryCount: true },
+  });
+}
+
+/** Moves an article the job could not act on to the back of the queue, so it cannot block the rest. */
+async function markChecked(db: Kysely<DB>, id: number, checkedAt: number) {
+  await db
+    .withoutPlugins()
+    .updateTable('Article')
+    .set({
+      metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', COALESCE(metadata->'ingestionError', ${JSON.stringify(
+        silentIngestionErrorState(checkedAt)
+      )}::jsonb) || ${JSON.stringify({ checkedAt })}::jsonb)`,
+    })
+    .where('id', '=', id)
+    .where('ingestion', '=', ArticleIngestionStatus.Error)
+    .execute();
+}
+
+async function runErrorRetries(now: Date) {
+  return retryErrorArticles(now).catch((e) => {
+    logToAxiom({
+      name: 'article-ingestion-reconcile',
+      type: 'error',
+      message: `error retries failed: ${(e as Error).message}`,
+    });
+    return null;
+  });
+}
+
+type ErrorArticle = {
+  ingestion: ArticleIngestionStatus;
+  userId: number;
+  coverId: number | null;
+  bannerId: number | null;
+  title: string;
+  content: string;
+  metadata: unknown;
+};
+
+/** The retry pass's boundaries: the database, the recompute, the image scanner and the text check. */
+export type ErrorRetryDeps = {
+  db: Kysely<DB>;
+  candidates: (limit: number) => Promise<{ id: number; ingestionError: unknown }[]>;
+  recomputeAndRead: (id: number) => Promise<ErrorArticle | null>;
+  readTextCheck: (
+    id: number
+  ) => Promise<{ status: EntityModerationStatus; retryCount: number } | null>;
+  retryImages: typeof retryArticleErrorImages;
+  resendText: (article: { id: number; title: string; content: string }) => Promise<void>;
+};
+
+const errorRetryDeps: ErrorRetryDeps = {
+  db: kyselyWrite,
+  // Least recently checked first, so a backlog of exhausted episodes cannot starve newer ones.
+  candidates: (limit) => dbRead.$queryRaw<{ id: number; ingestionError: unknown }[]>`
+    SELECT a.id, a.metadata->'ingestionError' AS "ingestionError"
+    FROM "Article" a
+    WHERE a.status IN (${ArticleStatus.Published}::"ArticleStatus", ${ArticleStatus.Processing}::"ArticleStatus")
+      AND a.ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
+    ORDER BY COALESCE((a.metadata->'ingestionError'->>'checkedAt')::bigint, 0), a.id
+    LIMIT ${limit}
+  `,
+  recomputeAndRead: async (id) => {
+    // An input that recovered, or a hold a moderator lifted, needs no retry.
+    await updateArticleImageScanStatus([id]);
+    // primary: read-after-write of the recompute above, which may have written the episode.
+    return dbWrite.article.findUnique({
+      where: { id },
+      select: {
+        ingestion: true,
+        userId: true,
+        coverId: true,
+        bannerId: true,
+        title: true,
+        content: true,
+        metadata: true,
+      },
+    });
+  },
+  readTextCheck: textCheckOnPrimary,
+  retryImages: retryArticleErrorImages,
+  resendText: async ({ id, title, content }) => {
+    await submitTextModerationOrScan({
+      entityType: 'Article',
+      entityId: id,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: articleModerationText(title, content),
+          labels: ['nsfw'],
+          priority: 'low',
+          forceRescan: true,
+          rearmRetries: true,
+        }),
+    });
+  },
+};
+
+/**
+ * Published and Processing articles at ingestion Error, which the stuck-article query above does
+ * not select. Each episode gets retry rounds on `INGESTION_ERROR_ROUND_DAYS`, then one
+ * `article-ingestion-error-exhausted` warning log, and a daily recompute while it stays at Error.
+ */
+export async function retryErrorArticles(now: Date, deps: ErrorRetryDeps = errorRetryDeps) {
+  const rows = await deps.candidates(ERROR_FETCH_LIMIT);
+  const due = rows
+    .filter(
+      ({ ingestionError }) =>
+        ingestionErrorStep(readIngestionErrorState({ ingestionError }), now.getTime()) !== 'wait'
+    )
+    .slice(0, ERROR_ARTICLES_PER_TICK);
+
+  const counts = {
+    candidates: due.length,
+    left: 0,
+    rounds: 0,
+    images: 0,
+    texts: 0,
+    deferred: 0,
+    exhausted: 0,
+    errors: 0,
+  };
+  let imageBudget = ERROR_IMAGES_PER_TICK;
+  const checkedAt = now.getTime();
+
+  for (const { id } of due) {
+    try {
+      const article = await deps.recomputeAndRead(id);
+      if (!article || article.ingestion !== ArticleIngestionStatus.Error) {
+        counts.left++;
+        continue;
+      }
+      // The recompute records an episode for every article it leaves at Error.
+      const state = readIngestionErrorState(article.metadata);
+      if (!state) {
+        await markChecked(deps.db, id, checkedAt);
+        continue;
+      }
+      const step = ingestionErrorStep(state, checkedAt);
+
+      if (step === 'exhaust') {
+        await updateErrorState(
+          deps.db,
+          id,
+          state.enteredAt,
+          ingestionErrorPatch(step, state, checkedAt)
+        );
+        counts.exhausted++;
+        logToAxiom({ name: 'article-ingestion-error-exhausted', type: 'warning', articleId: id });
+        continue;
+      }
+      if (step !== 'round' || imageBudget <= 0) {
+        await updateErrorState(
+          deps.db,
+          id,
+          state.enteredAt,
+          ingestionErrorPatch('check', state, checkedAt)
+        );
+        continue;
+      }
+
+      const images = await deps.retryImages({
+        article: {
+          id,
+          userId: article.userId,
+          coverId: article.coverId,
+          bannerId: article.bannerId,
+        },
+        // A missing blob rarely comes back: one try, in the first round.
+        includeNotFound: state.rounds === 0,
+        budget: imageBudget,
+        fullBudget: imageBudget === ERROR_IMAGES_PER_TICK,
+      });
+      if (images.deferred) {
+        counts.deferred++;
+        continue;
+      }
+      imageBudget -= images.sent;
+      counts.images += images.sent;
+
+      const moderation = articleHasText(article.title, article.content)
+        ? await deps.readTextCheck(id)
+        : null;
+      const resendText = textCheckSpentRetries(moderation);
+      if (resendText) {
+        await deps.resendText({ id, title: article.title, content: article.content });
+        counts.texts++;
+      }
+
+      await updateErrorState(
+        deps.db,
+        id,
+        state.enteredAt,
+        ingestionErrorPatch(step, state, checkedAt)
+      );
+      counts.rounds++;
+      logToAxiom({
+        name: 'article-ingestion-reconcile',
+        type: 'info',
+        articleId: id,
+        action: 'error-retry-round',
+        message: `round ${state.rounds + 1}: ${images.sent} image(s)${
+          resendText ? ', text check' : ''
+        } sent again`,
+      });
+    } catch (e) {
+      counts.errors++;
+      logToAxiom({
+        name: 'article-ingestion-reconcile',
+        type: 'error',
+        message: `error retry failed: ${(e as Error).message}`,
+        articleId: id,
+      });
+      await markChecked(deps.db, id, checkedAt).catch(() => undefined);
+    }
+  }
+  return counts;
+}

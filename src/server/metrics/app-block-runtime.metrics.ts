@@ -176,14 +176,16 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
-  // The DOCUMENT STORE (`/api/v1/blocks/storage/…`, one catch-all route). Four labels by
+  // The DOCUMENT STORE (`/api/v1/blocks/storage/…`, one catch-all route). Three labels by
   // workload, resolved per request from method + path shape: `info` (declaration + usage),
   // `read` (list / get / batch get), `write` (document create / put / delete — the only
-  // ones that can run content moderation and charge quota), `tally` (counters and marks).
+  // ones that can run content moderation and charge quota).
   | 'storage_info'
   | 'storage_read'
   | 'storage_write'
-  | 'storage_tally'
+  // The report moderation API (`POST /api/v1/blocks/moderation/reports`,
+  // `doc-store-report-api.ts`): a dedup insert behind a daily budget, its own workload.
+  | 'storage_report'
   // The per-viewer checkpoint override write — the REST twin of the
   // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
   // into a settings-shaped bucket: it is the only REST route that writes
@@ -742,6 +744,7 @@ type Bundle = {
   mediaServingDegradedTotal: Counter<string>;
   mediaInputRefusedTotal: Counter<string>;
   unlockChargedNotReleasedTotal: Counter<string>;
+  unlockOutcomeUnknownTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -751,7 +754,6 @@ type Bundle = {
   reviewStorageCleanupTotal: Counter<string>;
   reviewStorageSweepTotal: Counter<string>;
   docStoreErrorsTotal: Counter<string>;
-  storageOpsTotal: Counter<string>;
   docStoreEnabled: Gauge<string>;
   storageHookCallsTotal: Counter<string>;
   storageHookCallDurationSeconds: Histogram<string>;
@@ -1164,6 +1166,15 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['read_back']
   );
 
+  // Beside the `app-block-unlock-outcome-unknown` WARN: an unlock whose orchestrator write got no
+  // answer or a 5xx, so whether it charged is unknown. Unlabeled, so it is exported at 0 once registered.
+  const unlockOutcomeUnknownTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_unlock_outcome_unknown_total',
+    'App Block output unlocks whose orchestrator write got no response or a 5xx, so whether the viewer was charged is unknown; one per unlock. Each has an app-block-unlock-outcome-unknown WARN naming the user, workflow and price. Exported at 0 from registration, so a missing series means the code is not deployed.',
+    []
+  );
+
   const outputTruncatedTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_output_truncated_total',
@@ -1327,32 +1338,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // One increment per error envelope the document-store route sends (apps/doc-store-api.ts),
   // whichever layer refused: the route itself, the store, or the token middleware's refusal
   // written in the storage envelope. `code` is the envelope's code, from the closed
-  // `StorageApiCode` set, and `endpoint` is one of the four storage labels. No app label: the
+  // `StorageApiCode` set, and `endpoint` is one of the storage labels. No app label: the
   // per-app split is `civitai_app_block_requests_total`, and this one multiplies by ~25 codes.
   const docStoreErrorsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_doc_store_errors_total',
-    'Document-store error responses by logical endpoint (storage_info|storage_read|storage_write|storage_tally) and the envelope code (the StorageApiCode set in apps/doc-store-api.ts). The server-fault (5xx) codes are published at 0 from the first scrape; a 4xx code appears at its first occurrence, so read those with max_over_time or a > 0 test rather than increase()',
+    'Document-store error responses by logical endpoint (storage_info|storage_read|storage_write|storage_report) and the envelope code (the StorageApiCode set in apps/doc-store-api.ts). The server-fault (5xx) codes are published at 0 from the first scrape; a 4xx code appears at its first occurrence, so read those with max_over_time or a > 0 test rather than increase()',
     ['endpoint', 'code']
-  );
-
-  // One increment per tally operation (a counter increment, a mark, an unmark) the storage route
-  // dispatched (apps/doc-store-api.ts), by operator and by the route that carried it: the
-  // deprecated per-tally routes (`legacy`) or the document PATCH (`v2`). Counted once the caller's
-  // access (and any `?from=` import) has resolved and the operator is known, before the operation
-  // runs: a refusal BY the operation (validation, trust, budget, store) is still counted, since the
-  // question is "who still calls the old routes". NOT counted: the token middleware's refusals, a
-  // stray query parameter, an access or import refusal, and a PATCH whose body shape is refused.
-  // Both labels are closed sets;
-  // no app label (the per-app split is `civitai_app_block_requests_total`).
-  // 🔴 NOT `civitai_app_block_storage_ops_total`: that name is the legacy KV datastore's counter
-  // (`appStorageOpsCounter` in @civitai/telemetry, labels op/outcome). Sharing it would make
-  // whichever registers second inherit the other's labels and silently drop every increment.
-  const storageOpsTotal = getOrCreateCounter(
-    reg,
-    'civitai_app_block_doc_store_tally_ops_total',
-    'App Blocks storage tally operations dispatched, by op (inc|mark|unmark) and route (legacy = the deprecated POST …/counters/:name and PUT|DELETE …/marks/:name, v2 = PATCH /:coll/:key with an update operator). Counted once access has resolved and the operator is known, before the operation runs (refusals by the operation count; token, access and import refusals and malformed PATCH bodies do not); every series is published at 0 from the first scrape',
-    ['op', 'route']
   );
 
   // 1 once this process has confirmed the store's connection is usable (configured, and its role
@@ -1437,7 +1429,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const appStorageRequestsTotal = getOrCreateCounter(
     reg,
     'app_storage_requests_total',
-    'App Blocks document-store requests whose caller access resolved, by app, op (the storage route op: info|list|get|getMany|create|put|delete|patch|increment|mark|unmark|publish|unpublish), via (direct = the public /api/v1/blocks/storage route; service = the signed internal route app-data-go forwards to), viewer (signed_in|signed_out) and token_kind (app|hub|dev|review). Counting one via creates the other via of the same series at 0. app="dev" is every dev token',
+    'App Blocks document-store requests whose caller access resolved, by app, op (the storage route op: info|list|get|getMany|create|put|delete|getMine|putMine|deleteMine, and reportMark|unreportMark for the report mark alias; report on the report API), via (direct = the public /api/v1/blocks/storage route; service = the signed internal route app-data-go forwards to), viewer (signed_in|signed_out) and token_kind (app|hub|dev|review). Counting one via creates the other via of the same series at 0. app="dev" is every dev token',
     ['app', 'op', 'via', 'viewer', 'token_kind']
   );
 
@@ -1672,6 +1664,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     mediaServingDegradedTotal,
     mediaInputRefusedTotal,
     unlockChargedNotReleasedTotal,
+    unlockOutcomeUnknownTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -1681,7 +1674,6 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     reviewStorageCleanupTotal,
     reviewStorageSweepTotal,
     docStoreErrorsTotal,
-    storageOpsTotal,
     docStoreEnabled,
     storageHookCallsTotal,
     storageHookCallDurationSeconds,
@@ -2030,6 +2022,15 @@ export function seedAppBlockMediaMetrics(reg: Registry = client.register): void 
   }
 }
 
+/** Fail-soft emit of one unlock whose charge outcome is unknown (see the counter). */
+export function recordBlockUnlockOutcomeUnknown(): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().unlockOutcomeUnknownTotal.inc();
+  } catch {
+    /* instrument-only */
+  }
+}
+
 /** Fail-soft emit of pass-through output subtrees dropped past the walk cap (see the counter). */
 export function recordOutputTruncated(count: number): void {
   try {
@@ -2158,12 +2159,15 @@ export function recordReviewStorageSweep(outcome: ReviewStorageSweepOutcome): vo
   }
 }
 
-/** The four document-store endpoint labels (`storageEndpointLabel` in apps/doc-store-api.ts). */
+/**
+ * The document-store endpoint labels: the storage catch-all's three (`storageEndpointLabel` in
+ * apps/doc-store-api.ts) and the report API's (`doc-store-report-api.ts`).
+ */
 export const DOC_STORE_ENDPOINTS = [
   'storage_info',
   'storage_read',
   'storage_write',
-  'storage_tally',
+  'storage_report',
 ] as const satisfies readonly AppBlockEndpoint[];
 export type DocStoreEndpoint = (typeof DOC_STORE_ENDPOINTS)[number];
 
@@ -2174,8 +2178,8 @@ export type DocStoreEndpoint = (typeof DOC_STORE_ENDPOINTS)[number];
  * endpoints, a seeded zero no code path can move reads as "never happens", and each seeded row
  * is multiplied by every pod. A test pins this set to the 5xx entries of STORAGE_ERROR_STATUS.
  *
- * `moderation_unavailable` is raised only by the moderation scan, which runs on a document write
- * or a counter increment, never on info or a read. `consent_unavailable` is raised only by the
+ * `moderation_unavailable` is raised only by the moderation scan, which runs on a document write,
+ * never on info or a read. `consent_unavailable` is raised only by the
  * publish-scope check on a create or put; the route's own scope is consent-exempt, so the
  * middleware's permission-state refusal never reaches it.
  */
@@ -2184,12 +2188,12 @@ const DOC_STORE_SEEDED_ERROR_CODES: Partial<Record<StorageApiCode, readonly DocS
   consent_unavailable: ['storage_write'],
   service_unavailable: DOC_STORE_ENDPOINTS,
   internal_error: DOC_STORE_ENDPOINTS,
-  moderation_unavailable: ['storage_write', 'storage_tally'],
-  // Raised only by the permission-hook gate, on a document write or a tally.
-  hook_unavailable: ['storage_write', 'storage_tally'],
+  moderation_unavailable: ['storage_write'],
+  // Raised only by the permission-hook gate, on a document write.
+  hook_unavailable: ['storage_write'],
   // Raised only on the signed internal route (an import, which it refuses), which serves the
-  // writes, the tallies and info, never a read.
-  not_supported_here: ['storage_info', 'storage_write', 'storage_tally'],
+  // writes and info, never a read.
+  not_supported_here: ['storage_info', 'storage_write'],
 };
 
 /** Every outcome of `civitai_app_block_storage_hook_calls_total`, published at 0. */
@@ -2272,22 +2276,6 @@ export function recordAppStorageRequest(labels: {
   }
 }
 
-/** The update operators a storage tally can be (`civitai_app_block_doc_store_tally_ops_total{op}`). */
-export const STORAGE_TALLY_OPS = ['inc', 'mark', 'unmark'] as const;
-export type StorageTallyOp = (typeof STORAGE_TALLY_OPS)[number];
-/** The routes a storage tally can arrive on (`civitai_app_block_doc_store_tally_ops_total{route}`). */
-export const STORAGE_TALLY_ROUTES = ['legacy', 'v2'] as const;
-export type StorageTallyRoute = (typeof STORAGE_TALLY_ROUTES)[number];
-
-/** One tally operation dispatched by the document-store route. Total. */
-export function recordStorageTallyOp(op: StorageTallyOp, route: StorageTallyRoute): void {
-  try {
-    ensureRegisterAppBlockRuntimeMetrics().storageOpsTotal.inc({ op, route });
-  } catch {
-    /* instrument-only — never let a metrics error change a tally's reply */
-  }
-}
-
 /** Set the per-process document-store enabled gauge. Total. */
 export function setDocStoreEnabled(enabled: boolean, reg: Registry = client.register): void {
   try {
@@ -2304,12 +2292,8 @@ export function setDocStoreEnabled(enabled: boolean, reg: Registry = client.regi
  */
 export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): void {
   try {
-    const {
-      reviewStorageCleanupTotal,
-      reviewStorageSweepTotal,
-      docStoreErrorsTotal,
-      storageOpsTotal,
-    } = ensureRegisterAppBlockRuntimeMetrics(reg);
+    const { reviewStorageCleanupTotal, reviewStorageSweepTotal, docStoreErrorsTotal } =
+      ensureRegisterAppBlockRuntimeMetrics(reg);
     for (const outcome of REVIEW_STORAGE_CLEANUP_OUTCOMES) {
       reviewStorageCleanupTotal.inc({ outcome }, 0);
     }
@@ -2318,9 +2302,6 @@ export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): vo
     }
     for (const [code, endpoints] of Object.entries(DOC_STORE_SEEDED_ERROR_CODES)) {
       for (const endpoint of endpoints ?? []) docStoreErrorsTotal.inc({ endpoint, code }, 0);
-    }
-    for (const op of STORAGE_TALLY_OPS) {
-      for (const route of STORAGE_TALLY_ROUTES) storageOpsTotal.inc({ op, route }, 0);
     }
     const { storageHookCallsTotal } = ensureRegisterAppBlockRuntimeMetrics(reg);
     for (const outcome of STORAGE_HOOK_CALL_OUTCOMES) storageHookCallsTotal.inc({ outcome }, 0);
@@ -2395,8 +2376,8 @@ export type AppBlockRateLimitSurface = (typeof APP_BLOCK_RATE_LIMIT_SURFACES)[nu
 
 /**
  * Every bucket an App Blocks limiter can refuse from — the closed `bucket` label set. A bucket
- * name is only meaningful together with its surface: `publish` on `bridge` is the per-install
- * image publish, on `doc_store` the server-side document publish.
+ * name is only meaningful together with its surface: `publish` is the per-install image publish
+ * (`bridge`).
  */
 export const APP_BLOCK_RATE_LIMIT_BUCKETS = [
   // block-catalog-rate-limit.ts — bridge procedures and REST routes
@@ -2422,7 +2403,6 @@ export const APP_BLOCK_RATE_LIMIT_BUCKETS = [
   // store's own lock-timeout refusal
   'read',
   'write',
-  'tally',
   'report',
   'shared-write',
   'contention',

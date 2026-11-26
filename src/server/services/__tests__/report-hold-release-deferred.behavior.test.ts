@@ -20,7 +20,9 @@ const KEPT = 82; // owner 9 has none, so the flag stays
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, ingestion text, "needsReview" text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, ingestion text, "needsReview" text, "blockedFor" text DEFAULT 'CSAM'
+    );
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       images jsonb NOT NULL DEFAULT '[]', "createdAt" timestamp(3) NOT NULL DEFAULT now()

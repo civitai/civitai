@@ -246,7 +246,12 @@ const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getMod
       ...data,
       modelVersions: data.modelVersions.map((version) => {
         const files = withoutFileUrls(view(version.files)) as typeof version.files;
-        return { ...version, files: withheld ? withoutEpochUrls(files) : files };
+        return {
+          ...version,
+          files: withheld ? withoutEpochUrls(files) : files,
+          // A withheld model's files are refused on every host, so there is nothing to point at.
+          offDomainTrainingData: withheld ? null : view.offDomain(version.files),
+        };
       }),
     };
   },
@@ -468,7 +473,7 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
     .use(associationSourceVisible)
-    .query(({ input }) => getAssociatedResourcesSimple(input)),
+    .query(({ input, ctx }) => getAssociatedResourcesSimple(input, ctx.user)),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)

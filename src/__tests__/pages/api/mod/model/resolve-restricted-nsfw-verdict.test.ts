@@ -6,7 +6,15 @@ import type * as RulingService from '~/server/services/text-scan/actions/restric
 
 const m = vi.hoisted(() => ({
   resolve: vi.fn(),
-  session: { user: { id: 7, isModerator: true, permissions: [], bannedAt: null } },
+  session: {
+    user: {
+      id: 7,
+      isModerator: true,
+      permissions: [],
+      bannedAt: null,
+      roles: ['moderator:admin'] as string[],
+    },
+  },
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
@@ -48,6 +56,7 @@ function call(body: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.session.user.roles = ['moderator:admin'];
   m.resolve.mockResolvedValue({ modelId: 42, ruling: 'keep' });
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
@@ -64,5 +73,22 @@ describe('model/resolve-restricted-nsfw-verdict', () => {
     expect(m.resolve).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: 42, ruling: 'keep', userId: 7, revision: 'rev-1' })
     );
+  });
+
+  // The guard against ruling on a lead that changed on screen only works if every ruling carries it.
+  it.each([{}, { revision: '' }])(
+    'refuses a ruling without the revision shown (%o)',
+    async (rev) => {
+      const res = await call({ modelId: 42, ruling: 'keep', ...rev });
+      expect(res.status).toBe(400);
+      expect(m.resolve).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses a moderator without the detections permission', async () => {
+    m.session.user.roles = [];
+    const res = await call({ modelId: 42, ruling: 'keep', revision: 'rev-1' });
+    expect(res.status).toBe(403);
+    expect(m.resolve).not.toHaveBeenCalled();
   });
 });

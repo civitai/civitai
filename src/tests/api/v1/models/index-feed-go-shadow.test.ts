@@ -112,11 +112,12 @@ describe('/api/v1/models — feed-go shadow sampling', () => {
     expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 500, res);
   });
 
-  it('a text query is never sampled (feed-go falls back on every one: v1-models-query)', async () => {
+  it('a text query is offered to the sampler (which mirrors it only with FEED_GO_SHADOW_V1_MODELS_QUERY)', async () => {
     const res = await invoke({ query: 'cat', limit: '1' });
     expect(res.statusCode).toBe(200);
-    expect(mockBegin).not.toHaveBeenCalled();
-    expect(mockFinish).not.toHaveBeenCalled();
+    expect(mockBegin).toHaveBeenCalledWith(expect.anything(), 'list');
+    expect(mockCapture).toHaveBeenCalledWith(SAMPLE, res.body);
+    expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 200, res);
   });
 
   it('a signed-in caller is never sampled (feed-go falls back on every one: v1-models-session)', async () => {

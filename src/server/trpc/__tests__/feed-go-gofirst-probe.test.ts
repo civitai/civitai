@@ -8,12 +8,17 @@
  */
 import superjson from 'superjson';
 import { describe, expect, it, vi } from 'vitest';
-import { createFeedGoShadow, type FeedGoShadowConfig } from '~/server/trpc/feed-go-shadow';
+import {
+  createFeedGoShadow,
+  readFeedGoShadowConfig,
+  type FeedGoShadowConfig,
+} from '~/server/trpc/feed-go-shadow';
 
 const SHADOW_URL = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
 const PROBE_INF_URL = 'http://feed-go.test:9090/internal/probe/image.getInfinite';
 const PROBE_MODELS_URL = 'http://feed-go.test:9090/internal/probe/model.getAll';
+const PROBE_V1_IMAGES_URL = 'http://feed-go.test:9090/internal/probe/api/v1/images';
 const INPUT = '{"json":{"modelVersionId":9,"limit":20}}';
 const STARTED_AT = 1_763_200_000_123.25;
 
@@ -94,7 +99,7 @@ function harness(
   };
   const probeCalls = () =>
     fetchMock.mock.calls.filter(([url]) =>
-      [PROBE_URL, PROBE_INF_URL, PROBE_MODELS_URL].includes(url)
+      [PROBE_URL, PROBE_INF_URL, PROBE_MODELS_URL, PROBE_V1_IMAGES_URL].includes(url)
     );
   return { shadow, probeOutcomes, shadowOutcomes, fetchMock, probeCalls, flush, settle };
 }
@@ -258,7 +263,8 @@ describe('the Go-first probe', () => {
     expect(h.probeOutcomes).toEqual([]);
   });
 
-  it('runs at most once per sample, and never for a REST sample', async () => {
+  // The default config has no v1-images probe URL or rate: a REST sample is not probed.
+  it('runs at most once per sample, and never for a REST sample without its own rate', async () => {
     const h = harness();
     const sample = h.shadow.begin(request());
     h.shadow.probe(sample);
@@ -293,6 +299,69 @@ describe('the Go-first probe', () => {
     await h.settle();
     expect(h.probeOutcomes).toEqual([want]);
     expect(h.shadow.inFlight()).toBe(1); // only the sample's own slot is left
+  });
+
+  it('probes a GET /api/v1/images sample at its own path, with its query and path, at its own rate', async () => {
+    const v1 = (h: ReturnType<typeof harness>) =>
+      h.shadow.beginV1Images(
+        request({
+          url: '/api/v1/images?limit=1&sort=Newest',
+          query: { limit: '1', sort: 'Newest' },
+        })
+      );
+    const h = harness({ config: { probeV1ImagesUrl: PROBE_V1_IMAGES_URL, probeV1ImagesRate: 1 } });
+    const sample = v1(h);
+    expect(sample?.endpoint).toBe('v1-images');
+    h.shadow.probe(sample);
+    h.shadow.probe(sample);
+    await h.settle();
+    const calls = h.probeCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(PROBE_V1_IMAGES_URL);
+    expect(JSON.parse(calls[0][1].body as string)).toEqual({
+      input: 'limit=1&sort=Newest',
+      path: '/api/v1/images',
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      startedAt: STARTED_AT,
+    });
+    expect(h.probeOutcomes).toEqual(['sent']);
+
+    // Its own rate: 0 is off whatever the tRPC probes' rate, and the tRPC rate at 0 leaves it on.
+    const off = harness({
+      config: { probeV1ImagesUrl: PROBE_V1_IMAGES_URL, probeV1ImagesRate: 0, probeRate: 1 },
+    });
+    off.shadow.probe(v1(off));
+    await off.settle();
+    expect(off.probeCalls()).toHaveLength(0);
+    const own = harness({
+      config: { probeV1ImagesUrl: PROBE_V1_IMAGES_URL, probeV1ImagesRate: 1, probeRate: 0 },
+    });
+    own.shadow.probe(v1(own));
+    await own.settle();
+    expect(own.probeCalls()).toHaveLength(1);
+    // The probe flag still gates it.
+    const flagOff = harness({
+      probe: false,
+      config: { probeV1ImagesUrl: PROBE_V1_IMAGES_URL, probeV1ImagesRate: 1 },
+    });
+    flagOff.shadow.probe(v1(flagOff));
+    await flagOff.settle();
+    expect(flagOff.probeCalls()).toHaveLength(0);
+  });
+
+  it('reads the v1-images probe path from FEED_GO_SHADOW_URL and its rate, default 0', () => {
+    const base = { FEED_GO_SHADOW_URL: 'http://feed-go.test:9090' };
+    const c = readFeedGoShadowConfig(base);
+    expect(c.probeV1ImagesUrl).toBe(PROBE_V1_IMAGES_URL);
+    expect(c.probeV1ImagesRate).toBe(0);
+    expect(
+      readFeedGoShadowConfig({ ...base, FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE: '0.25' })
+        .probeV1ImagesRate
+    ).toBe(0.25);
+    expect(
+      readFeedGoShadowConfig({ ...base, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '1' }).probeV1ImagesRate
+    ).toBe(0);
+    expect(readFeedGoShadowConfig({}).probeV1ImagesUrl).toBeUndefined();
   });
 
   it('a fetch that throws synchronously is an error, and frees the slot', () => {

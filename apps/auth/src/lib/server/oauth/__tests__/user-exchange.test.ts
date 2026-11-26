@@ -34,6 +34,8 @@ const h = await vi.hoisted(async () => {
     rate: new Map<string, number>(),
     rateCalls: [] as string[],
     clientIp: '203.0.113.7' as string | null,
+    // When set, the route reads the caller's IP from the request as in production.
+    realClientIp: false,
     logs: [] as Record<string, unknown>[],
   };
 });
@@ -134,10 +136,13 @@ vi.mock('$lib/server/axiom', () => ({
   logAxiomError: async () => undefined,
 }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: () => undefined }));
-vi.mock('$lib/server/auth/request', async (orig) => ({
-  ...(await orig<typeof RequestModule>()),
-  getClientIp: () => h.clientIp,
-}));
+vi.mock('$lib/server/auth/request', async (orig) => {
+  const real = await orig<typeof RequestModule>();
+  return {
+    ...real,
+    getClientIp: (request: Request) => (h.realClientIp ? real.getClientIp(request) : h.clientIp),
+  };
+});
 
 import { decodeJwt, decodeProtectedHeader, SignJWT, importPKCS8 } from 'jose';
 import { TokenScope } from '@civitai/auth/token-scope';
@@ -230,6 +235,7 @@ beforeEach(() => {
   h.rate.clear();
   h.rateCalls = [];
   h.clientIp = '203.0.113.7';
+  h.realClientIp = false;
   h.logs = [];
   invalidateRoleCache();
   process.env.AUTH_JWT_ISSUER = 'https://auth.test';
@@ -403,6 +409,161 @@ describe('user token exchange — rate limits', () => {
     expect(
       h.rateCalls.filter((k) => /^oauth:(token|worker-token|token-overflow):/.test(k))
     ).toEqual([]);
+  });
+
+  it('names the client budget in its 429, so a relay can tell it from a per-viewer limit', async () => {
+    h.rate.set(`oauth:token-exchange:${APP}`, 600);
+    const res = await exchange();
+    expect(res.status).toBe(429);
+    expect(res.body.rateLimit).toMatchObject({ id: 'oauth.token-exchange', kind: 'abuse' });
+  });
+
+  it('charges a valid exchange to the client budget once, and nothing to the miss limit', async () => {
+    expect((await exchange()).status).toBe(200);
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(1);
+    expect(h.rateCalls.filter((k) => k.startsWith('oauth:token-exchange-miss:'))).toEqual([]);
+  });
+
+  it('a flood of unknown subject tokens never spends the client budget', async () => {
+    // One exchange left in the window: on a client charged before the lookup, the first made-up
+    // token would spend it and every real user after it would be refused.
+    h.rate.set(`oauth:token-exchange:${APP}`, 599);
+    for (let i = 0; i < 25; i++) {
+      // Spread over addresses, so the per-(client, IP) miss limit never binds here.
+      h.clientIp = `198.51.100.${i}`;
+      const res = await exchange({ params: { subject_token: `civitai_made-up-${i}` } });
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+      expect(res.body.error).toBe('invalid_grant');
+    }
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(599);
+    h.clientIp = '203.0.113.7';
+    expect((await exchange()).status).toBe(200);
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(600);
+  });
+
+  const unresolved: [string, () => void][] = [
+    ['revoked', () => (h.tables.ApiKey = [])],
+    ['expired', () => (subjectRow().expiresAt = new Date(Date.now() - 1000))],
+    ['a refresh token', () => (subjectRow().type = 'Refresh')],
+    ['a client-credentials token', () => (subjectRow().name = `oauth-cc:${APP}`)],
+  ];
+  it.each(unresolved)('a %s subject never spends the client budget', async (_, mutate) => {
+    h.rate.set(`oauth:token-exchange:${APP}`, 599);
+    const original = { ...subjectRow() };
+    mutate();
+    for (let i = 0; i < 5; i++) expect((await exchange()).body.error).toBe('invalid_grant');
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(599);
+    expect(h.rate.get(`oauth:token-exchange-miss:${APP}:203.0.113.7`)).toBe(5);
+    // Control: the same token, restored, exchanges and spends the last one.
+    h.tables.ApiKey = [original];
+    expect((await exchange()).status).toBe(200);
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(600);
+  });
+
+  it('refuses a (client, IP) past its miss limit, and only that pair', async () => {
+    const attacker = '198.51.100.7';
+    h.clientIp = attacker;
+    for (let i = 0; i < 30; i++) {
+      const res = await exchange({ params: { subject_token: `civitai_made-up-${i}` } });
+      expect(res.body.error).toBe('invalid_grant');
+    }
+    const blocked = await exchange({ params: { subject_token: 'civitai_made-up-x' } });
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('retry-after')).toBe('60');
+    expect(blocked.body.rateLimit).toMatchObject({
+      id: 'oauth.token-exchange-miss',
+      kind: 'abuse',
+    });
+    // The client's budget is untouched, so another viewer's valid token exchanges...
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBeUndefined();
+    h.clientIp = '203.0.113.9';
+    expect((await exchange()).status).toBe(200);
+    // ...and the same address through another client has its own miss budget.
+    h.clientIp = attacker;
+    expect(
+      (await exchange({ caller: RELAY, params: { subject_token: 'civitai_x' } })).body.error
+    ).toBe('invalid_grant');
+  });
+
+  it('keys misses with no resolvable IP on the client alone', async () => {
+    h.clientIp = null;
+    await exchange({ params: { subject_token: 'civitai_made-up' } });
+    expect(h.rateCalls).toContain(`oauth:token-exchange-miss:${APP}:no-ip`);
+  });
+
+  it('a full miss bucket never refuses a valid token on the same (client, IP)', async () => {
+    h.clientIp = '198.51.100.7';
+    for (let i = 0; i < 31; i++) {
+      await exchange({ params: { subject_token: `civitai_made-up-${i}` } });
+    }
+    // The bucket is past its limit: another made-up token on this key is refused as a flood...
+    const blocked = await exchange({ params: { subject_token: 'civitai_made-up-x' } });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.rateLimit).toMatchObject({ id: 'oauth.token-exchange-miss' });
+    // ...but a real user's token on the same key still exchanges, and charges no miss.
+    const misses = h.rate.get(`oauth:token-exchange-miss:${APP}:198.51.100.7`);
+    const res = await exchange();
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.access_token).toEqual(expect.any(String));
+    expect(h.rate.get(`oauth:token-exchange-miss:${APP}:198.51.100.7`)).toBe(misses);
+  });
+
+  it('a full no-IP miss bucket never refuses a valid token', async () => {
+    // A relay that forwards no viewer IP has one bucket for all its viewers.
+    h.clientIp = null;
+    for (let i = 0; i < 31; i++) {
+      await exchange({ caller: RELAY, params: { subject_token: `civitai_made-up-${i}` } });
+    }
+    expect(h.rate.get(`oauth:token-exchange-miss:${RELAY}:no-ip`)).toBeGreaterThanOrEqual(30);
+    expect(
+      (await exchange({ caller: RELAY, params: { subject_token: 'civitai_made-up-x' } })).status
+    ).toBe(429);
+    const res = await exchange({ caller: RELAY });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.access_token).toEqual(expect.any(String));
+  });
+
+  it("a resolving token from an app the resource doesn't list spends no client budget, and is a miss", async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ apps: [OTHER_APP] });
+    const res = await exchange({ caller: RELAY });
+    expect(res.body.error).toBe('unauthorized_client');
+    expect(h.rate.get(`oauth:token-exchange:${RELAY}`)).toBeUndefined();
+    expect(h.rate.get(`oauth:token-exchange-miss:${RELAY}:203.0.113.7`)).toBe(1);
+  });
+
+  it("refuses a flood of tokens from an app the resource doesn't list at the miss limit", async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ apps: [OTHER_APP] });
+    for (let i = 0; i < 30; i++) {
+      expect((await exchange({ caller: RELAY })).body.error).toBe('unauthorized_client');
+    }
+    const blocked = await exchange({ caller: RELAY });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.rateLimit).toMatchObject({ id: 'oauth.token-exchange-miss' });
+    expect(h.rate.get(`oauth:token-exchange:${RELAY}`)).toBeUndefined();
+  });
+
+  it("a listed app exchanging a token that isn't its own spends no client budget, and is a miss", async () => {
+    expect((await exchange({ caller: OTHER_APP })).body.error).toBe('unauthorized_client');
+    expect(h.rate.get(`oauth:token-exchange:${OTHER_APP}`)).toBeUndefined();
+    expect(h.rateCalls.filter((k) => k.startsWith(`oauth:token-exchange-miss:${OTHER_APP}:`))).toHaveLength(1);
+    // Control: the token's own app spends one.
+    expect((await exchange({ caller: APP })).status).toBe(200);
+    expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(1);
+  });
+
+  it('keys misses on the viewer IP a relay forwards to the token route', async () => {
+    // getClientIp is the real one here, so this covers the route passing it into the exchange.
+    h.realClientIp = true;
+    const res = await exchange({
+      caller: RELAY,
+      params: { subject_token: 'civitai_made-up' },
+      headers: { 'x-forwarded-for': '198.51.100.23, 192.0.2.1' },
+    });
+    expect(res.body.error).toBe('invalid_grant');
+    expect(h.rateCalls).toContain(`oauth:token-exchange-miss:${RELAY}:198.51.100.23`);
+    expect(h.rateCalls.filter((k) => k.startsWith('oauth:token-exchange-miss:'))).toEqual([
+      `oauth:token-exchange-miss:${RELAY}:198.51.100.23`,
+    ]);
   });
 
   it("uses the client's staff-set limit when it has one", async () => {

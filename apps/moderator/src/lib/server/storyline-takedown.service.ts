@@ -1,7 +1,7 @@
 import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
-import { ReportStatus } from '$lib/reports';
+import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 
 export type ReportedStoryline = {
   id: number;
@@ -77,7 +77,7 @@ export async function getPostStorylineChapter(
           selectFrom('Report as r')
             .select('r.id')
             .where('r.id', '=', sql<number>`any(h."reportIds")`)
-            .where('r.status', 'in', [ReportStatus.Pending, ReportStatus.Processing])
+            .where('r.status', 'in', OPEN_REPORT_STATUSES)
         )
       )
       .orderBy('h.id', 'desc')

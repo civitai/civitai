@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { readServiceDealFileAccess } from '~/server/services/creator-service-deal-file-access';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { ServiceDisputeResolution } from '~/shared/utils/prisma/enums';
+import type { ServiceFormAnswerLine, ServicePriceLine } from '~/shared/utils/service-request-form';
 
 export const DISPUTE_REVIEW_CLASSES = ['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'C'] as const;
 export type DisputeReviewClass = (typeof DISPUTE_REVIEW_CLASSES)[number];
@@ -170,6 +171,9 @@ export async function getServiceDisputeEvidence({
       previewKind: string;
       maxNsfwLevel: number;
       requestText: string;
+      /** The answers to the service's request form and the price they gave; null without one. */
+      formAnswers: ServiceFormAnswerLine[] | null;
+      priceBreakdown: ServicePriceLine[] | null;
       requestedAt: Date;
       acceptedAt: Date | null;
       dueAt: Date | null;
@@ -190,7 +194,7 @@ export async function getServiceDisputeEvidence({
       (s."bannedAt" IS NOT NULL OR s."deletedAt" IS NOT NULL) AS "sellerUnavailable",
       d."price", d."buzzType"::text AS "buzzType", d."feeAmount", d."revisionsIncluded",
       d."revisionsUsed", d."deliveryDays", d."previewKind"::text AS "previewKind", d."maxNsfwLevel",
-      d."requestText", d."requestedAt", d."acceptedAt", d."dueAt", d."deliveredAt", d."completedAt",
+      d."requestText", d."formAnswers", d."priceBreakdown", d."requestedAt", d."acceptedAt", d."dueAt", d."deliveredAt", d."completedAt",
       d."releaseAt", d."cancellationRequestedAt", d."cancellationReason", d."disputeOpenedAt",
       d."disputeReason", d."disputeResolution"::text AS "disputeResolution",
       o."id" AS "offeringId", o."title" AS "offeringTitle", o."description" AS "offeringDescription"

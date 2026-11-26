@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useDisclosure } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   Text,
   Stack,
@@ -745,9 +745,9 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
   });
 
   const handleDelete = (id: string, name: string) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete OAuth Application',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Are you sure you want to delete <strong>{name}</strong>?
@@ -761,7 +761,6 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
           </Text>
         </Stack>
       ),
-      centered: true,
       labels: { confirm: 'Delete Application', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => deleteMutation.mutate({ id }),
@@ -769,9 +768,9 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
   };
 
   const handleRotateSecret = (id: string, name: string) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Rotate Client Secret',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Generate a new client secret for <strong>{name}</strong>?
@@ -782,7 +781,6 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
           </Text>
         </Stack>
       ),
-      centered: true,
       labels: { confirm: 'Rotate Secret', cancel: 'Cancel' },
       confirmProps: { color: 'orange' },
       onConfirm: () => rotateMutation.mutate({ id }),

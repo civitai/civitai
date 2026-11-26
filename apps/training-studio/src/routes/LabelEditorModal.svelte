@@ -6,6 +6,7 @@
   import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
   import { canAutoLabelImage, captionTriggerHit, repeatsOf, withTags, type Img } from './trainingFlow';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import TagEditor from './TagEditor.svelte';
   import RepeatsStepper from './RepeatsStepper.svelte';
 
@@ -87,6 +88,13 @@
 <!-- The preview adapts to the media: an image, a playable <video>, or an <audio> player for audio clips —
      so captioning an audio/video dataset lets you actually see/hear what you're labeling. -->
 {#snippet mediaPreview(img: Img, cls: string)}
+  <div class="relative">
+    {@render media(img, cls)}
+    <RatingBadge level={img.nsfwLevel} class="absolute left-1.5 top-1.5" />
+  </div>
+{/snippet}
+
+{#snippet media(img: Img, cls: string)}
   {#if img.mediaType === 'audio'}
     <div
       class="flex flex-col items-center justify-center gap-3 rounded border border-dark-4 bg-dark-7 p-4 {cls}"

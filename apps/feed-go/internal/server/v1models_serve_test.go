@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -242,8 +243,9 @@ func TestServeV1ModelsFallsBackBeforeComputing(t *testing.T) {
 		{"list legacy session cookie", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"Cookie": "civitai-token=t"}, "v1-models-session-cookie"},
 		{"list etag value", http.MethodGet, "/api/v1/models?limit=2&etag=abc", nil, "v1-models-etag"},
 		{"list etag repeated", http.MethodGet, "/api/v1/models?etag=&etag=", nil, "v1-models-etag"},
-		{"list If-None-Match", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"If-None-Match": `"x"`}, "v1-models-conditional"},
-		{"[id] If-Modified-Since", http.MethodGet, "/api/v1/models/42", map[string]string{"If-Modified-Since": "Sat, 21 Nov 2026 00:00:00 GMT"}, "v1-models-conditional"},
+		{"list non-ASCII If-None-Match", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"If-None-Match": "\"\xc3\xa9\""}, "v1-models-conditional"},
+		{"[id] non-ASCII If-Modified-Since", http.MethodGet, "/api/v1/models/42", map[string]string{"If-Modified-Since": "Sat, 21 Nov 2026 00:00:00 GMT\xa0"}, "v1-models-conditional"},
+		{"list non-ASCII Cache-Control on a conditional request", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag, "Cache-Control": "no-cache\xa0"}, "v1-models-conditional"},
 		{"[id] Origin", http.MethodGet, "/api/v1/models/42", map[string]string{"Origin": "https://block.example.test"}, "v1-models-origin"},
 		{"list POST", http.MethodPost, "/api/v1/models", nil, "method"},
 		{"[id] HEAD", http.MethodHead, "/api/v1/models/42", nil, "method"},
@@ -294,6 +296,144 @@ func TestServeV1ModelsFallsBackBeforeComputing(t *testing.T) {
 		v1Handler(s, c.target)(w, v1Request(c.target, c.headers))
 		if w.Code != http.StatusOK || up.count() != 0 || *computes != 1 {
 			t.Errorf("%s: code=%d proxied=%d computes=%d, want 200, 0, 1", c.name, w.Code, up.count(), *computes)
+		}
+	}
+}
+
+// A conditional request is answered as Next's res.json answers it (fresh over the answer's ETag;
+// DESIGN.md §16.8): a matching If-None-Match (exact, weak on the request side, or `*`) is a 304 with
+// no body; a mismatch, any If-Modified-Since (Next sets no Last-Modified, so even with a matching
+// If-None-Match), or a request Cache-Control naming no-cache is the normal 200. Both are Go's answer
+// (computed once, counted served); none is proxied. A header fresh reads that is not one ASCII line
+// falls back (TestServeV1ModelsFallsBackBeforeComputing and below).
+func TestServeV1ModelsConditionalRequests(t *testing.T) {
+	const ims = "Sat, 21 Nov 2026 00:00:00 GMT"
+	for _, c := range []struct {
+		name, target string
+		headers      map[string]string
+		code         int
+	}{
+		{"list, exact", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag}, http.StatusNotModified},
+		{"list, weak", "/api/v1/models?limit=2", map[string]string{"If-None-Match": "W/" + v1ListETag}, http.StatusNotModified},
+		{"list, star", "/api/v1/models?limit=2", map[string]string{"If-None-Match": "*"}, http.StatusNotModified},
+		{"list, in a list", "/api/v1/models?limit=2", map[string]string{"If-None-Match": `"x", ` + v1ListETag}, http.StatusNotModified},
+		{"[id], exact", "/api/v1/models/42", map[string]string{"If-None-Match": v1DetailETag}, http.StatusNotModified},
+		{"list, mismatch", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1DetailETag}, http.StatusOK},
+		{"[id], another model's ETag", "/api/v1/models/42", map[string]string{"If-None-Match": v1ListETag}, http.StatusOK},
+		{"list, If-Modified-Since", "/api/v1/models?limit=2", map[string]string{"If-Modified-Since": ims}, http.StatusOK},
+		{"[id], If-Modified-Since", "/api/v1/models/42", map[string]string{"If-Modified-Since": ims}, http.StatusOK},
+		{"list, both headers", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag, "If-Modified-Since": ims}, http.StatusOK},
+		{"[id], star and If-Modified-Since", "/api/v1/models/42", map[string]string{"If-None-Match": "*", "If-Modified-Since": ims}, http.StatusOK},
+		{"list, no-cache", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag, "Cache-Control": "no-cache"}, http.StatusOK},
+		{"[id], max-age=0, no-cache", "/api/v1/models/42", map[string]string{"If-None-Match": v1DetailETag, "Cache-Control": "max-age=0, no-cache"}, http.StatusOK},
+	} {
+		reg := prometheus.NewRegistry()
+		s, up, computes := serveV1Server(t, reg, true)
+		w := httptest.NewRecorder()
+		v1Handler(s, c.target)(w, v1Request(c.target, c.headers))
+		if w.Code != c.code || up.count() != 0 || *computes != 1 {
+			t.Errorf("%s: code=%d proxied=%d computes=%d, want %d, 0, 1", c.name, w.Code, up.count(), *computes, c.code)
+			continue
+		}
+		wantBody, wantType := v1ListBody, "application/json; charset=utf-8"
+		if strings.HasPrefix(c.target, V1ModelsPath+"/") {
+			wantBody = v1DetailBody
+		}
+		if c.code == http.StatusNotModified {
+			wantBody, wantType = "", ""
+		}
+		if got := w.Body.String(); got != wantBody {
+			t.Errorf("%s: body %q, want %q", c.name, got, wantBody)
+		}
+		if got := w.Header().Get("Content-Type"); got != wantType {
+			t.Errorf("%s: Content-Type %q, want %q", c.name, got, wantType)
+		}
+		if n := v1Count(t, reg, v1Endpoint(c.target), "feed_go_requests_total", map[string]string{"outcome": "served"}); n != 1 {
+			t.Errorf("%s: served = %v, want 1", c.name, n)
+		}
+	}
+	// Repeated lines of a header fresh reads: Node joins them, Fresh does not; handed to the app.
+	for _, h := range []http.Header{
+		{"If-None-Match": {`"x"`, v1ListETag}},
+		{"If-Modified-Since": {ims, ims}},
+		{"If-None-Match": {v1ListETag}, "Cache-Control": {"max-age=0", "no-cache"}},
+	} {
+		reg := prometheus.NewRegistry()
+		s, up, computes := serveV1Server(t, reg, true)
+		r := v1Request("/api/v1/models?limit=2", nil)
+		for k, v := range h {
+			r.Header[k] = v
+		}
+		w := httptest.NewRecorder()
+		s.ServeV1ModelsHTTP(w, r)
+		if w.Code != http.StatusTeapot || up.count() != 1 || *computes != 0 ||
+			v1Count(t, reg, EndpointV1Models, "feed_go_fallback_total", map[string]string{"reason": "v1-models-conditional"}) != 1 {
+			t.Errorf("%v: code=%d proxied=%d computes=%d, want a v1-models-conditional fallback", h, w.Code, up.count(), *computes)
+		}
+	}
+}
+
+// The 304 on the wire (a real server, whose net/http writes the status line): every header the 200
+// carries except Content-Type and Content-Length, which net/http drops from a 304 (Node's 304 keeps
+// the Content-Type res.json set: the one divergence, DESIGN.md §16.8), plus net/http's Date; no body.
+func TestServeV1ModelsNotModifiedHeaderSet(t *testing.T) {
+	for _, c := range []struct {
+		target, etag string
+		want         map[string]string
+	}{
+		{"/api/v1/models?limit=2", v1ListETag, map[string]string{
+			"X-Frame-Options":              "DENY",
+			"Vary":                         "Authorization",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Headers": "Authorization, Content-Type, *",
+			"Access-Control-Allow-Methods": "GET",
+			"Cache-Control":                "public, s-maxage=300, stale-while-revalidate=150",
+			"Etag":                         `"vi1v4hbjily"`,
+			"X-Feed-Go-Served":             "go",
+		}},
+		{"/api/v1/models/42", v1DetailETag, map[string]string{
+			"X-Frame-Options":              "DENY",
+			"Vary":                         "Authorization",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Headers": "Authorization, Content-Type, *",
+			"Access-Control-Allow-Methods": "GET",
+			"Cache-Control":                "private, no-store",
+			"Etag":                         `"ueot6baeh9k"`,
+			"X-Feed-Go-Served":             "go",
+		}},
+	} {
+		s, _, _ := serveV1Server(t, prometheus.NewRegistry(), true)
+		srv := httptest.NewServer(v1Handler(s, c.target))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+c.target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("If-None-Match", c.etag)
+		// No User-Agent, as the recorder tests send (Go's default one must not read as a crawler's).
+		req.Header.Set("User-Agent", "")
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		srv.Close()
+		if res.StatusCode != http.StatusNotModified || len(body) != 0 {
+			t.Fatalf("%s: %d with %d body bytes, want 304 with none", c.target, res.StatusCode, len(body))
+		}
+		got := map[string]string{}
+		for k, v := range res.Header {
+			if len(v) != 1 {
+				t.Fatalf("%s: %s sent %d times: %q", c.target, k, len(v), v)
+			}
+			got[k] = v[0]
+		}
+		if got["Date"] == "" {
+			t.Errorf("%s: no Date", c.target)
+		}
+		delete(got, "Date")
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: 304 headers:\n got  %v\n want %v", c.target, got, c.want)
 		}
 	}
 }
@@ -394,6 +534,137 @@ func TestServeV1ModelsComputeFallbacks(t *testing.T) {
 	}
 }
 
+// The ETag Next's generateETag gives Node's not-found body for id 42 (node, 2026-11-25).
+const v1NotFoundETag = `"i8ghaxzmqqv"`
+
+// notFoundV1Server is serveV1Server with the real `[id]` compute over a replica whose model statement
+// returns no row and an empty cache: every `[id]` request is Node's not-found answer.
+func notFoundV1Server(t *testing.T, reg *prometheus.Registry, answerNotFound bool) (*Server, *v1Upstream, *testkit.Redis) {
+	t.Helper()
+	s, up, _ := serveV1Server(t, reg, true)
+	s.computeV1ModelsFn = nil
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	cache := testkit.NewRedis()
+	db := &testkit.DB{Routes: []testkit.Route{{Match: `as "cursorId"`, Rows: func([]any) (*testkit.Rows, error) {
+		return testkit.NewRows([]string{"id"}), nil
+	}}}}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	s.V1Models = &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config: v1models.Config{
+			ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second,
+			AnswerNotFound: answerNotFound,
+		},
+		Now: func() time.Time { return now },
+	}}
+	return s, up, cache
+}
+
+// FEED_GO_V1_MODELS_ANSWER_NOT_FOUND on: a model the statement finds no row for, its lag flag clean,
+// is answered here with exactly Node's 404 (the body res.json writes, the headers of a 200 over that
+// body, Next's JSON Content-Type), counted as outcome not_found and not as a fallback; a request
+// naming its ETag gets Next's 304. Off, or with the lag flag set, the same request is handed to the
+// app (`v1-models-not-found`), as before. Through the real compute: the switch, the statement and
+// the flag are each read where production reads them.
+func TestServeV1ModelsAnswersNotFound(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s, up, cache := notFoundV1Server(t, reg, true)
+	w := httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	// Errorf, not Fatalf, from here to the 304: the status, the headers and the outcome are each
+	// reported, so a regression in one is not hidden behind another.
+	if up.count() != 0 {
+		t.Fatalf("proxied %d, want the 404 answered here (code=%d)", up.count(), w.Code)
+	}
+	if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"No model with id 42"}` {
+		t.Errorf("code=%d body=%s, want Node's 404", w.Code, w.Body.String())
+	}
+	got := map[string]string{}
+	for k, v := range w.Header() {
+		if len(v) != 1 {
+			t.Fatalf("%s sent %d times: %q", k, len(v), v)
+		}
+		got[k] = v[0]
+	}
+	want := map[string]string{
+		"X-Frame-Options":              "DENY",
+		"Vary":                         "Authorization",
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Headers": "Authorization, Content-Type, *",
+		"Access-Control-Allow-Methods": "GET",
+		"Cache-Control":                "private, no-store",
+		"Etag":                         v1NotFoundETag,
+		"Content-Type":                 "application/json; charset=utf-8",
+		"Content-Length":               "31",
+		"X-Feed-Go-Served":             "go",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("404 headers:\n got  %v\n want %v", got, want)
+	}
+	if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": OutcomeNotFound}); n != 1 {
+		t.Errorf("not_found = %v, want 1", n)
+	}
+	for _, o := range []string{"served", "served_empty", "fallback"} {
+		if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": o}); n != 0 {
+			t.Errorf("%s = %v, want 0", o, n)
+		}
+	}
+	if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}); n != 0 {
+		t.Errorf("v1-models-not-found = %v, want 0", n)
+	}
+
+	// Next's 304 to a request naming the 404's ETag (sendEtagResponse runs whatever the status).
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", map[string]string{"If-None-Match": v1NotFoundETag}))
+	if w.Code != http.StatusNotModified || w.Body.Len() != 0 || w.Header().Get("ETag") != v1NotFoundETag || up.count() != 0 {
+		t.Fatalf("If-None-Match: code=%d body=%q ETag=%q proxied=%d, want a 304", w.Code, w.Body.String(), w.Header().Get("ETag"), up.count())
+	}
+
+	// A credentialed request gets the credentialed Vary on the 404, as on the 200.
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", map[string]string{"Cookie": "__Secure-civ-token=t"}))
+	if w.Code != http.StatusNotFound || w.Header().Get("Vary") != "Authorization, Cookie" {
+		t.Errorf("with a session cookie: code=%d Vary=%q, want 404 and the credentialed Vary", w.Code, w.Header().Get("Vary"))
+	}
+
+	// Control: a fresh origin cache entry for the model is Node's 200 (fetchModelResponseCached reads
+	// it before any statement), never the 404, whatever the statement would find.
+	reg2 := prometheus.NewRegistry()
+	s2, up2, cache2 := notFoundV1Server(t, reg2, true)
+	cache2.SetString(v1models.KeyPublicModelResponse+":v2:42:31", jspack.Pack(jspack.Obj{
+		{K: "data", V: jspack.Obj{{K: "id", V: int64(42)}, {K: "name", V: "cached"}}},
+		{K: "cachedAt", V: float64(time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC).Add(-time.Minute).UnixMilli())},
+	}))
+	w = httptest.NewRecorder()
+	s2.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusOK || up2.count() != 0 ||
+		v1Count(t, reg2, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": "served_cached"}) != 1 {
+		t.Errorf("cached model: code=%d proxied=%d body=%s, want the cached 200", w.Code, up2.count(), w.Body.String())
+	}
+
+	// The lag flag set: a recent write the replica may not show yet, handed to the app.
+	cache.SetString("lag-helper:model:42", []byte("1"))
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusTeapot || up.count() != 1 ||
+		v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}) != 1 {
+		t.Fatalf("lag flag set: code=%d proxied=%d, want a v1-models-not-found fallback", w.Code, up.count())
+	}
+
+	// The switch off (the default): handed to the app, as before.
+	reg = prometheus.NewRegistry()
+	s, up, _ = notFoundV1Server(t, reg, false)
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusTeapot || up.count() != 1 ||
+		v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}) != 1 ||
+		v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": OutcomeNotFound}) != 0 {
+		t.Fatalf("switch off: code=%d proxied=%d, want a v1-models-not-found fallback", w.Code, up.count())
+	}
+}
+
 // Inputs the port does not answer fall back through the real compute (no test hook): the text
 // search, a limit Node answers 400, an `[id]` that is not one.
 func TestServeV1ModelsUnsupportedInputs(t *testing.T) {
@@ -414,6 +685,48 @@ func TestServeV1ModelsUnsupportedInputs(t *testing.T) {
 		v1Handler(s, c.target)(httptest.NewRecorder(), v1Request(c.target, nil))
 		if up.count() != 1 || v1Count(t, reg, v1Endpoint(c.target), "feed_go_fallback_total", map[string]string{"reason": c.reason}) != 1 {
 			t.Errorf("%s: proxied=%d, want 1 under %s", c.target, up.count(), c.reason)
+		}
+	}
+}
+
+// countingSearcher answers every text search with no hit and counts the calls.
+type countingSearcher struct{ calls int }
+
+func (c *countingSearcher) SearchModelIDs(context.Context, v1models.SearchRequest) ([]int, error) {
+	c.calls++
+	return []int{}, nil
+}
+
+// A list text query is served only with FEED_GO_V1_MODELS_SERVE_QUERY (Config.ServeQuery): off, it is
+// the `v1-models-query` fallback with no search made, even with a search backend configured; on, it
+// is answered from the search (here no hit: Node's empty page). Through the real compute.
+func TestServeV1ModelsTextQuerySwitch(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		reg := prometheus.NewRegistry()
+		up := &v1Upstream{}
+		search := &countingSearcher{}
+		s := &Server{
+			Metrics: NewMetrics(reg), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			ServeV1Models: true, V1Fallback: up, Resolver: &auth.Resolver{},
+			V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+				Search: search,
+				Config: v1models.Config{BaseURL: "https://s.example", ImageLocation: "https://i.example", ServeQuery: on},
+			}},
+		}
+		w := httptest.NewRecorder()
+		s.ServeV1ModelsHTTP(w, v1Request("/api/v1/models?query=golden&limit=5", nil))
+		if !on {
+			if up.count() != 1 || search.calls != 0 || v1Count(t, reg, EndpointV1Models, "feed_go_fallback_total", map[string]string{"reason": "v1-models-query"}) != 1 {
+				t.Errorf("off: proxied=%d searches=%d, want 1 proxied under v1-models-query and no search", up.count(), search.calls)
+			}
+			continue
+		}
+		if up.count() != 0 || search.calls != 1 || w.Code != http.StatusOK || w.Body.String() != `{"items":[],"metadata":{}}` ||
+			w.Header().Get(ServedByHeader) != ServedByGo {
+			t.Errorf("on: proxied=%d searches=%d code=%d body=%s served-by=%s", up.count(), search.calls, w.Code, w.Body.String(), w.Header().Get(ServedByHeader))
+		}
+		if v := v1Count(t, reg, EndpointV1Models, "feed_go_requests_total", map[string]string{"outcome": "served_empty"}); v != 1 {
+			t.Errorf("on: served_empty = %v, want 1", v)
 		}
 	}
 }
@@ -491,7 +804,8 @@ func TestPublicEndpointNamesTheModelRoutes(t *testing.T) {
 		"/api/v1/models/42":   EndpointV1ModelsID,
 		"/api/v1/models/42/x": EndpointV1ModelsID,
 		"/api/v1/modelsx":     "",
-		"/api/v1/images":      "",
+		"/api/v1/images":      EndpointV1Images,
+		"/api/v1/images/42":   "",
 	} {
 		if got := PublicEndpoint(path); got != want {
 			t.Errorf("PublicEndpoint(%q) = %q, want %q", path, got, want)
@@ -625,11 +939,12 @@ func TestComputeV1ModelsIDCacheWindowByMode(t *testing.T) {
 	}
 }
 
-// Go never serves a Training Data file by its own rules unless the Node app vouched for them: on a
-// public request the statement-hash header is a client's, so it is not read, and a body listing a
-// Training Data candidate falls back (`v1-models-training-data-drift`) even when the header carries
-// this build's hash. A sample's header is Node's: with this build's hash the listing goes on to read
-// the replica (here a replica with no rows route: `v1-models-training-data-unread`).
+// Go never serves a Training Data file by its own rules unless the Node app vouched for them. On a
+// public request the statement-hash header is a client's, so it is not read: the vouch is the rule
+// sets the Node builds now answering published (V1ModelsDeps.Rules), and only exactly this build's
+// lets the listing go on; none, another build's, or a client's header falls back
+// (`v1-models-training-data-drift`). A sample's header is Node's: with this build's hash the listing
+// goes on. Going on reads the replica (here one with no rows route: `v1-models-training-data-unread`).
 func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	cache := testkit.NewRedis()
@@ -651,17 +966,27 @@ func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 	}}}
 	ctx := context.Background()
 	hash := map[string]string{v1models.TrainingDataSQLHeader: v1models.TrainingDataSQLHash}
+	this := map[string]string{v1models.TrainingDataSQLHash: "1"}
+	another := map[string]string{"0000000000000000000000000000000000000000000000000000000000000000;rules=1": "1"}
 	for _, c := range []struct {
 		name    string
 		sampled bool
 		headers map[string]string
+		live    map[string]string // the Node builds' published rule sets (nil: none)
 		reason  string
 	}{
-		{"public, no header", false, nil, "v1-models-training-data-drift"},
-		{"public, a client sending the hash", false, hash, "v1-models-training-data-drift"},
-		{"sample, no header", true, nil, "v1-models-training-data-drift"},
-		{"sample, Node's hash", true, hash, "v1-models-training-data-unread"},
+		{"public, no header", false, nil, nil, "v1-models-training-data-drift"},
+		{"public, a client sending the hash", false, hash, nil, "v1-models-training-data-drift"},
+		{"public, the Node builds publish this build's rules", false, nil, this, "v1-models-training-data-unread"},
+		{"public, the Node builds publish another build's rules", false, hash, another, "v1-models-training-data-drift"},
+		{"sample, no header", true, nil, this, "v1-models-training-data-drift"},
+		{"sample, Node's hash", true, hash, nil, "v1-models-training-data-unread"},
 	} {
+		live := testkit.NewRedis()
+		if c.live != nil {
+			live.SetHash(v1models.KeyTrainingDataRulesLive, c.live)
+		}
+		s.V1Models.Rules = &v1models.TrainingDataRules{Redis: live}
 		r := v1Request("/api/v1/models/42", c.headers)
 		if c.sampled {
 			r = r.WithContext(withSampled(ctx))
@@ -669,6 +994,158 @@ func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 		_, err := s.computeV1ModelsID(ctx, r)
 		if got := fallback.Reason(err); got != c.reason {
 			t.Errorf("%s: %q (%v), want %q", c.name, got, err, c.reason)
+		}
+	}
+}
+
+// The published rule sets are read on a public request only for a body with a Training Data
+// candidate, once per such request, and never kept: a body with no Training Data file reads
+// nothing; each request with one reads the hash again, so a rule set published between two requests
+// decides the second (here another build's starts a rollout: the second falls back as drift).
+func TestV1ModelsTrainingDataRulesReadPerRequestThatNeedsThem(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	cache := testkit.NewRedis()
+	entry := func(id int64, fileType string) []byte {
+		return jspack.Pack(jspack.Obj{
+			{K: "data", V: jspack.Obj{{K: "id", V: id}, {K: "modelVersions", V: []any{jspack.Obj{
+				{K: "id", V: int64(7)},
+				{K: "files", V: []any{jspack.Obj{{K: "id", V: int64(1)}, {K: "type", V: fileType}}}},
+			}}}}},
+			{K: "cachedAt", V: float64(now.Add(-time.Minute).UnixMilli())},
+		})
+	}
+	cache.SetString(v1models.KeyPublicModelResponse+":v2:42:31", entry(42, "Training Data"))
+	cache.SetString(v1models.KeyPublicModelResponse+":v2:43:31", entry(43, "Model"))
+	db := &testkit.DB{}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	live := testkit.NewRedis()
+	live.SetHash(v1models.KeyTrainingDataRulesLive, map[string]string{v1models.TrainingDataSQLHash: "1"})
+	s := &Server{V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config:  v1models.Config{ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second},
+		Now:     func() time.Time { return now },
+	}, Rules: &v1models.TrainingDataRules{Redis: live}}}
+	ctx := context.Background()
+
+	if _, err := s.computeV1ModelsID(ctx, v1Request("/api/v1/models/43", nil)); err != nil {
+		t.Fatalf("no Training Data file: %v", err)
+	}
+	if live.Calls != 0 {
+		t.Fatalf("no Training Data file: %d reads of the published rules, want 0", live.Calls)
+	}
+	// Vouched: the listing goes on to the replica (no rows route here).
+	_, err := s.computeV1ModelsID(ctx, v1Request("/api/v1/models/42", nil))
+	if got := fallback.Reason(err); got != "v1-models-training-data-unread" || live.Calls != 1 {
+		t.Fatalf("first Training Data request: %q after %d reads, want %q after 1", got, live.Calls, "v1-models-training-data-unread")
+	}
+	live.SetHash(v1models.KeyTrainingDataRulesLive, map[string]string{
+		v1models.TrainingDataSQLHash: "1",
+		"0000000000000000000000000000000000000000000000000000000000000000;rules=2": "1",
+	})
+	_, err = s.computeV1ModelsID(ctx, v1Request("/api/v1/models/42", nil))
+	if got := fallback.Reason(err); got != "v1-models-training-data-drift" || live.Calls != 2 {
+		t.Fatalf("second Training Data request: %q after %d reads, want %q after 2", got, live.Calls, "v1-models-training-data-drift")
+	}
+	// A sample is vouched for by its own header: the published rules are not read.
+	r := v1Request("/api/v1/models/42", map[string]string{v1models.TrainingDataSQLHeader: v1models.TrainingDataSQLHash})
+	_, err = s.computeV1ModelsID(ctx, r.WithContext(withSampled(ctx)))
+	if got := fallback.Reason(err); got != "v1-models-training-data-unread" || live.Calls != 2 {
+		t.Fatalf("sample: %q after %d reads, want %q after 2", got, live.Calls, "v1-models-training-data-unread")
+	}
+}
+
+// The list route is vouched for as `[id]` is: on a public request the published rule sets
+// (V1ModelsDeps.Rules) decide a page with a Training Data candidate, so only exactly this build's
+// lets the listing go on to the replica (`v1-models-training-data-unread`: its rows route fails
+// here); none, or another build's, falls back before the read (`v1-models-training-data-drift`).
+// One model, one version with a Training Data file: the cases differ only in the live hash.
+func TestV1ModelsListTrainingDataVouchedByPublishedRules(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-time.Minute)
+	cache := testkit.NewRedis()
+	for k, v := range map[string]jspack.Obj{
+		v1models.KeyDataForModel + ":5001": {{K: "modelId", V: int64(5001)}, {K: "hashes", V: []any{}}, {K: "tags", V: []any{}}, {K: "versions", V: []any{jspack.Obj{
+			{K: "id", V: int64(6001)}, {K: "index", V: int64(0)}, {K: "name", V: "v1"}, {K: "earlyAccessTimeFrame", V: int64(0)},
+			{K: "baseModel", V: "SDXL 1.0"}, {K: "status", V: "Published"}, {K: "flags", V: int64(0)}, {K: "availability", V: "Public"},
+			{K: "nsfwLevel", V: int64(1)}, {K: "description", V: "d"}, {K: "trainedWords", V: []any{}}, {K: "covered", V: true}, {K: "coveredNext", V: false},
+		}}}, {K: "cachedAt", V: at}},
+		v1models.KeyModelTags + ":5001":         {{K: "modelId", V: int64(5001)}, {K: "tagIds", V: []any{int64(11)}}, {K: "cachedAt", V: at}},
+		v1models.KeyBasicTags + ":11":           {{K: "id", V: int64(11)}, {K: "name", V: "style"}, {K: "cachedAt", V: at}},
+		hydrate.KeyBasicUsers + ":1001":         {{K: "id", V: int64(1001)}, {K: "username", V: "artist_one"}, {K: "deletedAt", V: nil}, {K: "image", V: nil}, {K: "cachedAt", V: at}},
+		hydrate.KeyProfilePictures + ":1001":    {{K: "notFound", V: true}},
+		v1models.KeyPaidAccessVersion + ":6001": {{K: "entityId", V: int64(6001)}, {K: "endsAtMs", V: nil}, {K: "timeframeDays", V: nil}, {K: "cachedAt", V: at}},
+		hydrate.KeyVersionImages + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "images", V: []any{jspack.Obj{
+			{K: "id", V: int64(8001)}, {K: "url", V: "u1"}, {K: "nsfwLevel", V: int64(1)}, {K: "type", V: "image"}, {K: "poi", V: false}, {K: "minor", V: false},
+		}}}, {K: "cachedAt", V: at}},
+		v1models.KeyFilesForVersion + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "files", V: []any{
+			jspack.Obj{{K: "id", V: int64(7001)}, {K: "name", V: "a.safetensors"}, {K: "type", V: "Model"}, {K: "visibility", V: "Public"},
+				{K: "modelVersionId", V: int64(6001)}, {K: "hashes", V: []any{}}, {K: "metadata", V: jspack.Obj{{K: "format", V: "SafeTensor"}}}},
+			jspack.Obj{{K: "id", V: int64(7002)}, {K: "name", V: "d.zip"}, {K: "type", V: "Training Data"}, {K: "visibility", V: "Public"},
+				{K: "modelVersionId", V: int64(6001)}, {K: "hashes", V: []any{}}, {K: "metadata", V: jspack.Obj{}}},
+		}}, {K: "cachedAt", V: at}},
+		// The default addons exclude tags at every level, so the image's tag ids are read.
+		hydrate.KeyTagIDs + ":8001":         {{K: "imageId", V: int64(8001)}, {K: "tags", V: []any{int64(1)}}, {K: "cachedAt", V: at}},
+		v1models.KeyMetricPrivacy + ":1001": {{K: "hideModelBuzz", V: false}, {K: "hideModelDownloads", V: false}, {K: "hideModelGenerations", V: false}},
+		// The version's showcase as getVersionShowcaseCache writes an uncurated one.
+		hydrate.KeyVersionShowcase + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "rows", V: []any{}}, {K: "community", V: []any{}}, {K: "cachedAt", V: at}},
+	} {
+		cache.SetString(k, jspack.Pack(v))
+	}
+	rows := testkit.NewRows
+	none := func(cols ...string) func([]any) (*testkit.Rows, error) {
+		return func([]any) (*testkit.Rows, error) { return rows(cols), nil }
+	}
+	var reads [][]int // the candidates each Training Data read bound
+	db := &testkit.DB{Routes: []testkit.Route{
+		{Match: `as "cursorId"`, Rows: func([]any) (*testkit.Rows, error) {
+			return rows([]string{"id", "name", "allowCommercialUse", "type", "nsfwLevel", "status", "availability", "userId", "cursorId", "meta", "minor", "sfwOnly"},
+				[]any{int32(5001), "M", "{Image}", "Checkpoint", int32(1), "Published", "Public", int32(1001), "1|1|5001", map[string]any{}, false, false}), nil
+		}},
+		{Match: `AS deadline`, Rows: none("modelId")},
+		{Match: `FROM "RecommendedResource"`, Rows: none("sourceId", "resourceId", "settings")},
+		{Match: `FROM "ModelVersionMetric"`, Rows: none("modelVersionId", "downloadCount", "thumbsUpCount", "thumbsDownCount")},
+		{Match: `SELECT id, meta FROM "ModelVersion"`, Rows: none("id", "meta")},
+		{Match: `FROM "ModelMetric" WHERE`, Rows: none("modelId", "downloadCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "tippedAmountCount")},
+		{Match: `AS restricted`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			reads = append(reads, ids)
+			return nil, errors.New("no Training Data rows here")
+		}},
+	}}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	s := &Server{Resolver: &auth.Resolver{}, V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config:  v1models.Config{ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second},
+		Now:     func() time.Time { return now },
+	}}}
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		live   map[string]string // the Node builds' published rule sets (nil: none)
+		reason string
+		reads  int
+	}{
+		{"the Node builds publish this build's rules", map[string]string{v1models.TrainingDataSQLHash: "1"}, "v1-models-training-data-unread", 1},
+		{"no Node build has published", nil, "v1-models-training-data-drift", 0},
+		{"the Node builds publish another build's rules", map[string]string{"0000000000000000000000000000000000000000000000000000000000000000;rules=1": "1"}, "v1-models-training-data-drift", 0},
+	} {
+		live := testkit.NewRedis()
+		if c.live != nil {
+			live.SetHash(v1models.KeyTrainingDataRulesLive, c.live)
+		}
+		s.V1Models.Rules = &v1models.TrainingDataRules{Redis: live}
+		reads = nil
+		_, err := s.computeV1Models(ctx, v1Request("/api/v1/models?limit=2", nil))
+		if got := fallback.Reason(err); got != c.reason {
+			t.Errorf("%s: %q (%v), want %q", c.name, got, err, c.reason)
+		}
+		// The published rules are read once, for the page's one candidate; the replica only when vouched.
+		if live.Calls != 1 || len(reads) != c.reads || (c.reads == 1 && !reflect.DeepEqual(reads[0], []int{6001})) {
+			t.Errorf("%s: %d reads of the published rules, Training Data reads %v; want 1 and %d", c.name, live.Calls, reads, c.reads)
 		}
 	}
 }

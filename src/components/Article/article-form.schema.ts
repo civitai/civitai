@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { upsertArticleInput } from '~/server/schema/article.schema';
+import { articleContentSchema, upsertArticleInput } from '~/server/schema/article.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 
 const baseSchema = upsertArticleInput
@@ -17,6 +17,7 @@ const baseSchema = upsertArticleInput
     userNsfwLevel: z.string().optional(),
     moderatorNsfwLevel: z.string().optional(),
     lockedProperties: z.string().array().optional(),
+    content: articleContentSchema,
   });
 
 /**

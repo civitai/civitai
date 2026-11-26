@@ -96,6 +96,7 @@ function post(overrides: Record<string, unknown> = {}) {
     tags: [{ id: 9, name: 'landscape', isCategory: false }],
     collectionId: 12,
     wasPublished: false,
+    unavailable: false,
     unpublishedAt: null,
     unpublishedBy: null,
     parentModelId: null,

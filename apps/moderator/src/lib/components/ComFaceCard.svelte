@@ -3,6 +3,7 @@
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CoverThumb from '$lib/components/triage/CoverThumb.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { isComSafeLevel, type ComFace } from '$lib/com-face';
   import { getEdgeUrl } from '$lib/media/edge-url';
@@ -33,38 +34,49 @@
       {#if cover}
         {@const media = cover.type === 'video' ? 'video' : 'image'}
         <div class="flex shrink-0 flex-col items-start gap-1">
-        <svelte:element
-          this={blurred ? 'div' : 'a'}
-          href={blurred ? undefined : getEdgeUrl(cover.url, { type: media, original: true })}
-          target={blurred ? undefined : '_blank'}
-          rel={blurred ? undefined : 'noreferrer'}
-          role={blurred ? 'img' : undefined}
-          aria-label={blurred ? 'civitai.com cover, hidden' : 'Open the civitai.com cover'}
-          class={cn(
-            'relative block aspect-[4/5] shrink-0 overflow-hidden rounded-lg border bg-dark-6',
-            bare ? 'w-16' : 'w-24',
-            comSafe ? 'border-dark-4' : 'border-red-500'
-          )}
-        >
-          <EdgeMedia
-            src={cover.url}
-            type={cover.type}
-            anim={cover.type === 'video' ? false : undefined}
-            width={200}
-            hoverPlay={!blurred}
-            class={blurred
-              ? 'size-full scale-110 object-cover object-top blur-xl'
-              : 'size-full object-cover object-top'}
-          />
-          <span
+        {#if cover.restricted}
+          <div
             class={cn(
-              'pointer-events-none absolute bottom-1.5 left-1.5 rounded px-1.5 py-px text-[10px] font-semibold',
-              comSafe ? 'bg-black/60 text-white' : 'bg-red-600 text-white'
+              'aspect-[4/5] shrink-0 overflow-hidden rounded-lg border border-dark-4 bg-dark-6',
+              bare ? 'w-16' : 'w-24'
             )}
           >
-            {getBrowsingLevelLabel(cover.nsfwLevel)}{#if !comSafe}&nbsp;· not .com-safe{/if}
-          </span>
-        </svelte:element>
+            <CoverThumb image={cover} />
+          </div>
+        {:else}
+          <svelte:element
+            this={blurred ? 'div' : 'a'}
+            href={blurred ? undefined : getEdgeUrl(cover.url, { type: media, original: true })}
+            target={blurred ? undefined : '_blank'}
+            rel={blurred ? undefined : 'noreferrer'}
+            role={blurred ? 'img' : undefined}
+            aria-label={blurred ? 'civitai.com cover, hidden' : 'Open the civitai.com cover'}
+            class={cn(
+              'relative block aspect-[4/5] shrink-0 overflow-hidden rounded-lg border bg-dark-6',
+              bare ? 'w-16' : 'w-24',
+              comSafe ? 'border-dark-4' : 'border-red-500'
+            )}
+          >
+            <EdgeMedia
+              src={cover.url}
+              type={cover.type}
+              anim={cover.type === 'video' ? false : undefined}
+              width={200}
+              hoverPlay={!blurred}
+              class={blurred
+                ? 'size-full scale-110 object-cover object-top blur-xl'
+                : 'size-full object-cover object-top'}
+            />
+            <span
+              class={cn(
+                'pointer-events-none absolute bottom-1.5 left-1.5 rounded px-1.5 py-px text-[10px] font-semibold',
+                comSafe ? 'bg-black/60 text-white' : 'bg-red-600 text-white'
+              )}
+            >
+              {getBrowsingLevelLabel(cover.nsfwLevel)}{#if !comSafe}&nbsp;· not .com-safe{/if}
+            </span>
+          </svelte:element>
+        {/if}
         {#if blurred && onReveal}
           <button
             type="button"

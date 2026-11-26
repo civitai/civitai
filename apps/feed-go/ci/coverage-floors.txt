@@ -8,14 +8,22 @@
 # the floor to N. Never lower a floor to get a red run green; a removed package goes off the list in
 # the same change that removes it. Packages without tests (testkit) are not listed.
 total 77
+cmd/feed-eval 97
 cmd/feed-go 23
 internal/apipolicy 88
 internal/auth 94
 internal/browsing 98
 internal/chread 93
+internal/chwrite 96
+internal/clock 100
 internal/config 78
 internal/dbpool 95
 internal/devalue 91
+internal/evalcapture 91
+internal/evalcorpus 90
+# evalharness measured 91.02% and 90.93% on two CI runs of one tree (one timing-dependent statement
+# of ~1100): 90 so the floor does not flake.
+internal/evalharness 90
 internal/feed 76
 internal/fallback 91
 internal/flipt 88
@@ -28,6 +36,7 @@ internal/modelfeed 92
 internal/safe 100
 internal/server 93
 internal/shadow 95
+internal/sitesearch 70
 internal/superjson 97
 internal/sysredis 88
 internal/tracing 92

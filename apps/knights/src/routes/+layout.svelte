@@ -59,6 +59,7 @@
       goldPerBuzz={data.goldPerBuzz}
       ladder={data.ladder}
       badges={data.badges}
+      inquisitor={data.inquisitor}
     />
     <main>
       {@render children()}

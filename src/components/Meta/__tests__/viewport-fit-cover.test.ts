@@ -755,9 +755,12 @@ describe('the chokepoints that pay for whole populations', () => {
         'margin-block-start: var(--safe-area-inset-top); }',
     ],
     [
-      'each notification container pays only the edge its own data-position names (bottom block)',
+      // Pins the safe-area floor: the review bar's reserve may raise the margin, never lower it
+      // below the inset (the raised geometry itself is ReviewActionBar.geometry.test.tsx).
+      'each notification container pays only the edge its own data-position names (bottom block, ' +
+        'safe-area floor under the review-bar reserve)',
       ".mantine-Notifications-root[data-position^='bottom-'] { " +
-        'margin-block-end: var(--safe-area-inset-bottom); }',
+        'margin-block-end: max(var(--safe-area-inset-bottom), var(--review-action-bar-reserve, 0px)); }',
     ],
     [
       'each notification container pays only the edge its own data-position names (inline start)',

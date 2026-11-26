@@ -1,0 +1,18 @@
+{
+  "name": "fallback-path",
+  "description": "A path the route does not answer: Node's 404.",
+  "request": {
+    "path": "/api/search/indexes/models_v9/documents",
+    "body": "{}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": null,
+  "expect": {
+    "fallback": "search-path",
+    "nodeStatus": 404
+  }
+}

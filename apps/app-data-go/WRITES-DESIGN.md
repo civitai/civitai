@@ -1,6 +1,7 @@
 # app-data-go: the writes service (P3b), design
 
-**Status:** design, decided by the operator on 2026-11-22 (see "Decided"); nothing built. This follows
+**Status:** design, decided by the operator on 2026-11-22 (see "Decided"); amended by the generic core
+on 2026-11-24 ("Delta: the generic core"), which wins where the two disagree. This follows
 the reads in [DESIGN.md](DESIGN.md), which lists "Any write path (P3b)" under "Not built"
 (`DESIGN.md:568`). Direction from the operator (2026-11-19): the complete app platform runs via the
 registry, and writes go through a registered write service, as a follow-up after reads.
@@ -17,6 +18,96 @@ storage at once: its private `kv` collection and its shared `records` collection
 shared`, `write: own`, `marks: [vote]`, scope `apps:storage:publish`; its `block.manifest.json`),
 reads and writes, signed-in and signed-out. Code citations are to civitai `main` at `1d4f7a0f`; the
 app's to its `main` at `65ce42f`.
+
+## Delta: the generic core (2026-11-24)
+
+[`docs/app-storage-generic-core.md`](../../docs/app-storage-generic-core.md) removes marks, counters,
+tallies, `write: "none"` and publish from the store, and adds viewer-keyed documents (`keyedBy`,
+`@me[/<parent>]`), which are plain shared documents. Where this document and that one disagree, that
+one wins. What it makes of migration step 1:
+
+**Obsolete; not built, and what was built goes with the tally ops (generic core, rollout step 5):**
+
+- the app-wide mark sequence, `mark_head`, `doc_tally.mark_seq`, locks (1b) and (1c), `markSeq` in
+  answers, the mark head in `meta`, the `minMarkSeq` floor, and the count and held overlays (#10130,
+  merged dark, inert);
+- `tallies` on level-stream entities, the `level: counters` stream, `viewer.marks`, and the
+  per-viewer stream's mark rows;
+- vote read-back: `vote` and `unvote` become `PUT` / `DELETE …/records/@me/<recordKey>` on a
+  `keyedBy: "parent+viewer"` collection, and a count is a `keyPrefix=<recordKey>:` list; `report`
+  leaves storage for the moderation API, which this service does not carry;
+- forwarding `PATCH` (`$inc`, `$mark`, `$unmark`), `_publish` and `_unpublish`;
+- the step-1 tests about votes: "an acknowledged vote read back", "a vote changes the tally and
+  `viewer.marks` for the voter only", "a `kv` read after a vote meets the mark floor", "a vote leaves
+  the document's `seq` unchanged".
+
+**What remains, simplified** (one sequence, `seq`; a vote is a write like any other):
+
+| Piece | Where | State |
+|---|---|---|
+| Write routes, `info`, signature, `504`/`503` semantics | here | built, #10143 |
+| `PUT` / `DELETE …/records/@me[/<parent>]` forwarding | here | #10393 |
+| Private keyed get, record overlay, floors and the bounded reopen | here | built, #10158 |
+| Shared reads: the union of the level streams in the viewer's mask and the per-viewer stream; `@me` gets; `keyPrefix`, `author=me`, key-sorted pages | here | #10393 |
+| Signed-out reads from the level streams | here | #10393 |
+| No REST fallback (the step-1 table) | here | #10393: with `APP_DATA_WRITES` on, every read |
+| Region forwarding on the per-viewer and private subscriptions | here | built, behind `APP_DATA_FORWARD_REGION` (default off): while off, the adapter holds every signed-in viewer behind this service to SFW |
+| Second replica, header-hash sticky routing | deployment | not built |
+| Internal route, store `seq`/`recordId`, `app_storage_requests_total{via}` | site | built, #10128, #10142 |
+| The internal route's delete answer names its key (an `@me` delete's derived key) | site | #10392 |
+| `Entity.seq`, `k2`, the private head | adapter | built, #10128 |
+| `Entity.version` on private entities, `k3`; a private item's `version` | adapter, here | built, #10507 |
+| Level streams of plain documents, the shared-level allowlist | adapter | built, dark, #10302, #10343 |
+| `meta.truncated` on level streams | adapter | #10392 |
+| The per-viewer stream | adapter | #10392 |
+| The fifth block-exchange claim | hub | built, #10163, #10192 |
+
+**The per-viewer stream, as simplified.** It carries **every** document of the collection the token's
+user authored, at every rating state REST shows its author (not only the ones no level stream gives
+them): a document is the viewer's own (`author.isViewer`) when this stream holds its key, and `@me`
+is answered from it without the derivation key, which stays the site's. Its `live` and `progress`
+`meta` name `{head, mask, levels, keyedBy}`; a `meta` with no `mask` is the explicit refusal (`401
+refused`); a resolution failure is an `end` with `reason: not_resolved` (`503`). Cursor `v1.`.
+
+**Session decisions in this delta** (each reversible by flag-off; none overrules "Decided"):
+
+1. The union's overlays are dropped once every stream the read used names a head at or above them,
+   not when one does: the level streams poll apart from the per-viewer stream.
+2. A shared read never reopens a stream for its floor: the level streams are every viewer's, so a
+   reopen per viewer is a full re-read of the board. An unmet floor is `503 floor_not_met`. The
+   consequence: a hub-token viewer that sends `minSeq` right after its own write gets `503
+   floor_not_met` until every stream the read uses names a head at or above the write, which is up to
+   one adapter poll (`REGISTRY_ADAPTER_POLL_SECONDS`, default 60 s); the SDK retries a `503` with
+   backoff, so the write reads back late, never wrong. A block token's floor is met sooner, by the
+   overlay this replica acknowledged for it (a hub token's write may have landed on another replica).
+3. app-data-go evaluates no flag. With `APP_DATA_WRITES` on, every read is a cut-over app's and never
+   falls back to REST; the per-app flag `app-data-writes-via-service` decides whether the site hands
+   an app this service at all. The shadow's registry-only answer is unchanged.
+
+**Stream and memory budget (#10393).** Every stream this service opens, private, level or
+per-viewer, takes one slot and its manager's per-stream byte bound from one budget per replica:
+
+| Setting | Default | Bounds |
+|---|---|---|
+| `APP_DATA_MAX_SUBSCRIPTIONS` | 100 | adapter subscriptions per replica, all three kinds together (the replica's share of the adapter's caps, `DESIGN.md`, "Stream budget against the adapter's caps") |
+| `APP_DATA_CACHE_BUDGET_BYTES` | 224 MiB | the byte bounds the open streams reserve together |
+| private: `MAX_STREAMS`, `MAX_BYTES_PER_STREAM`, `MAX_OVERLAY_BYTES_PER_STREAM` | 100, 2 MiB, 128 KiB | a private stream reserves 2 MiB, or 2.125 MiB with the writes on |
+| level: `LEVEL_MAX_STREAMS`, `LEVEL_MAX_RECORDS`, `LEVEL_MAX_BYTES` | 10, 3,000, 8 MiB | a level stream reserves 8 MiB |
+| per-viewer: `VIEWER_MAX_STREAMS`, `VIEWER_MAX_RECORDS`, `VIEWER_MAX_BYTES` | 40, 20,000, 4 MiB | a per-viewer stream reserves 4 MiB; 20,000 records is the adapter's own per-viewer bound |
+| shared overlays (fixed) | 10,000, 16 MiB | apart from the budget; only writes to a collection whose level stream reached `Live` |
+
+The arithmetic, against the deployment's `GOMEMLIMIT` of 400 MiB under a 512 Mi limit: the budget
+plus the shared overlays is 224 + 16 = 240 MiB of cache, 60%, leaving 160 MiB to the runtime, each
+record's overhead past its counted bytes, and in-flight requests. The budget holds the private manager
+alone as before (100 × 2 MiB = 200 MiB with the writes off, 100 × 2.125 MiB = 212.5 MiB on), or, for
+example, 10 level streams (80 MiB), 20 per-viewer (80 MiB) and 30 private (63.75 MiB). A read whose
+stream would pass either the slot count or the bytes opens nothing: `capacity`, `503` on the shared
+path. This replaces the per-cutover sum in "Size, count and alert": the budget bounds the whole
+process, whatever the mix of apps. A read of the level streams the registry refuses `invalid_token`
+is this service's own token refused: `503 service_token_refused`, and the token is re-minted.
+A signed-out read of a collection major not yet seen to resolve on the replica opens one level stream
+first (at most 2 such probes per app at once, then `503 capacity`), so a made-up collection or major
+costs one stream, which the adapter ends `not_resolved`.
 
 ## What is fixed before we start
 
@@ -114,7 +205,19 @@ none named means current. The site decides it: this service forwards a named `ma
 parameter (shape-checked only) and relays the answer, and the site validates it against the
 collection's current major (`resolveSchemaMajor`, `doc-store-schema-major.ts`) and answers
 `409 stale_major`, the same major it stamps on every write (`withSchemaMajor`,
-`doc-store-api.ts:825-833`). No copy of the current major is kept here, so none can be stale.
+`doc-store-api.ts:825-833`). No copy of the current major is kept here for a write, so none can be
+stale. A READ that names no major is likewise of the current major when the adapter names it: every
+private and level stream names `currentMajor` in its `live` and `progress` meta, by the store's own
+rule (`currentCollectionMajors` over `manifestHistory`, in `doc-streams.ts` `collectionFamily`, never
+a second copy), and app-data-go follows a stream that names another major than the one it opened
+(once), remembering it per collection only as where the next read opens (`internal/api/major.go`).
+A stream that names none is read at the major it opened (1 unless a stream named
+another), never refused: app-data-go and the registry adapter ship, and roll back, independently.
+One rule decides the major a request naming none uses, for both: a write naming no major is
+acknowledged (its read-your-writes overlay held) at the major the next no-major read of that
+collection opens, so the read-back's floor finds it. A read that moves releases the streams it alone
+opened at the first major. A hinted major the adapter no longer resolves is dropped (a level stream
+ends `not_resolved`; an empty, unnamed private stream there is checked against major 1).
 **Imports are not v1** (below).
 
 **The internal route.** The public route's path under an `internal` prefix, on the site, running
@@ -282,8 +385,9 @@ would refuse every user (its predicate admits the app's rating against the held 
 `private-feed.ts:312-322`). **Chosen: forward the edge's region.** app-data-go copies the region
 values the edge set on the viewer's request (the edge sets them and strips any a client sent; this
 service never reads a client's) onto the subscription it opens for that viewer, as the adapter's
-region headers. **Precondition:** app-data-go is reachable only through the edge, which strips
-client-sent region headers; otherwise region forwarding is off and the SFW hold applies. A viewer's
+region headers, behind `APP_DATA_FORWARD_REGION` (off: the SFW hold applies). **Decided
+(2026-11-25):** the flag is turned on with this release, trusting the edge's region headers on the
+same terms as the site's own region handling. A viewer's
 streams are keyed by token and region, so a viewer whose region changes opens new ones. The exact mask is
 ANDed with the region hold. Level streams are read as a service, which has no region; the region hold reaches a
 viewer through the mask the per-viewer stream names.
@@ -351,8 +455,10 @@ no fallback to read it elsewhere; the fix is raising the bound.
 **Decided by the operator:** app-data-go reads the level streams under its own service identity, as an
 anonymous viewer, and serves signed-out viewers from them. Registry-only.
 
-- **How app-data-go authenticates to the adapter:** a hub service token for its own client
-  (client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
+- **How app-data-go authenticates to the adapter:** a hub service token for its own service client
+  (`APP_DATA_SERVICE_CLIENT_ID`, a client separate from the relay client: the hub mints a service
+  token only for a client whose grants are exactly the service grant, and refuses a client that is
+  both a relay and a service; client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
   the app index's is (`auth.jwt.ts:15-25`, `:197-212`; `REGISTRY_ADAPTER_SERVICE_CLIENTS`,
   `auth.live.ts:47-57`), and on the shared-level allowlist above. A service subscription otherwise
   reads every rating (`SERVICE_AUDIENCE`, `audience.ts`), so it names one level bit and the adapter
@@ -386,7 +492,9 @@ writing token's caches at once.
 **Why `rev` and `version` cannot order writes.** A private entity's `rev` is a digest (`privateRev`,
 `private-feed.ts:184-192`); `doc.version` restarts at 1 when a key is re-created (`SQL_INSERT_DOC`,
 `SQL_DELETE_DOC`, around `doc-store.ts:834-862`), and a re-created key is a new row with a new
-`record_id` and URN. **Documents are ordered by `doc.seq`, per key.**
+`record_id` and URN. **Documents are ordered by `doc.seq`, per key.** (`version` is still what a
+read answers beside each private item, for the next write's `ifVersion`: format `k3` sends it, and a
+record overlay carries the one its write answered.)
 
 **Marks get their own sequence, and leave `doc.seq` alone.** Giving a mark a `doc.seq` would take
 `usage_app` (lock 2) inside a transaction that today takes none, and would move the revision that
@@ -639,7 +747,8 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
    - the hub: the fifth block-exchange claim, `civitai_viewer_browsing_level`, in the deploy order of
      "The level mask";
    - **a cut-over app's reads never fall back**: each of today's fallback reasons
-     (`apps/app-data-go/internal/metrics/metrics.go:24-26`) gets its answer, behind the app's flag:
+     (`apps/app-data-go/internal/metrics/metrics.go:24-26`) gets its answer, for every read with
+     `APP_DATA_WRITES` on (app-data-go evaluates no flag, decision 3 of the delta):
 
      | Reason | Answer for a cut-over app |
      |---|---|
@@ -758,6 +867,12 @@ On this service (no label carries a token, user, app, collection or key, as the 
 - `app_data_level_stream_records{bit}` against its bound, and `app_data_streams_open` against
   `MAX_STREAMS` (the alerts above);
 - `app_data_signed_out_reads_total{outcome}`;
+- `app_data_shared_refusals_total{reason}`: shared and signed-out reads answered `401`/`503` instead of
+  documents, by a fixed reason set (`metrics.SharedRefusalReasons`: the answer's code, with
+  `viewer_refused`, `block_mismatch`, `block_token_refused` and `signed_out_busy` naming causes whose
+  codes are shared or vague; a reason outside the set counts as `other`). Each such read is also one
+  `app_data_reads_total{source="registry"}` `refused`/`unavailable`/`floor_not_met`, and never an
+  `app_data_fallbacks_total` (whose reasons it reuses: a shared read never goes to REST);
 - **write-to-stream lag**, observed after cutover: the time from a write's acknowledgement to the first
   stream event at a sequence ≥ the write's, as a histogram. It sizes nothing; it measures how stale
   every other reader is.

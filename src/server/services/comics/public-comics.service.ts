@@ -3,19 +3,18 @@ import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
-import {
-  imageNotRestrictedWhere,
-  imageRestrictionSelect,
-  withServableImage,
-} from '~/server/common/image-visibility';
+import { imageNotRestrictedWhere, imageRestrictionSelect } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { parseComicProjectMeta } from '~/server/schema/comics.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import {
+  coverBlockSelect,
   isComicProjectHidden,
   isPanelTainted,
   readerPanelsWhere,
   withholdRestrictedPanelImages,
+  withServableCover,
 } from '~/server/services/comics/chapter-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
@@ -47,7 +46,10 @@ import { COMIC_ON_RED_ERROR } from '~/utils/comic-helpers';
 // The public comic feed and reader, shared by the comics tRPC router and the public REST API.
 
 /** The viewer the feed and reader evaluate for: `user` undefined is anonymous. */
-export type PublicComicsCtx = Pick<Context, 'user'> & {
+export type PublicComicsCtx = Pick<
+  Context,
+  'user' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'
+> & {
   features: Pick<Context['features'], 'isGreen'>;
 };
 
@@ -454,6 +456,7 @@ export async function getPublicComicProjects({
           id: true,
           url: true,
           ...imageRestrictionSelect,
+          ...coverBlockSelect,
           type: true,
           metadata: true,
           width: true,
@@ -467,6 +470,7 @@ export async function getPublicComicProjects({
           id: true,
           url: true,
           ...imageRestrictionSelect,
+          ...coverBlockSelect,
           type: true,
           metadata: true,
           width: true,
@@ -577,8 +581,14 @@ export async function getPublicComicProjects({
   const items = projects.map((p) => {
     const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
     const chapterCount = p.chapters.length;
-    const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user?.id);
-    const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user?.id);
+    const moderator = actsAsModerator(ctx);
+    const { coverImage: servableCover } = withServableCover(
+      p,
+      'coverImage',
+      ctx.user?.id,
+      moderator
+    );
+    const { heroImage: servableHero } = withServableCover(p, 'heroImage', ctx.user?.id, moderator);
     const rawThumbnailUrl =
       servableCover?.url ??
       p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
@@ -658,7 +668,7 @@ export async function getPublicComicForReader({
   if (!projectMeta || projectMeta.status === ComicProjectStatus.Deleted) {
     throw throwNotFoundError('Comic not found');
   }
-  const isModerator = ctx.user?.isModerator === true;
+  const isModerator = actsAsModerator(ctx);
   const isOwner = ctx.user != null && ctx.user.id === projectMeta.userId;
   // Only the owner or a moderator gets non-Published chapters from the
   // SQL select. Public reader viewers (anonymous OR logged-in non-owners)
@@ -672,8 +682,12 @@ export async function getPublicComicForReader({
       name: true,
       description: true,
       userId: true,
-      coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
-      heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+      coverImage: {
+        select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+      },
+      heroImage: {
+        select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+      },
       heroImagePosition: true,
       meta: true,
       genre: true,
@@ -724,6 +738,7 @@ export async function getPublicComicForReader({
                   width: true,
                   height: true,
                   ingestion: true,
+                  blockedFor: true,
                   needsReview: true,
                   tosViolation: true,
                 },
@@ -735,13 +750,14 @@ export async function getPublicComicForReader({
     },
   });
 
-  if (!project || (await isComicProjectHidden(project, ctx.user))) {
+  const viewer = ctx.user && { id: ctx.user.id, isModerator };
+  if (!project || (await isComicProjectHidden(project, viewer))) {
     throw throwNotFoundError('Comic not found');
   }
 
   // Check if viewer is the owner or a moderator
   const canViewDrafts =
-    ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
+    ctx.user != null && (project.userId === ctx.user.id || actsAsModerator(ctx));
 
   // Filter out draft chapters for non-owner, non-mod viewers, chapters
   // with no ready panels, AND chapters whose Ready panels carry any
@@ -791,7 +807,7 @@ export async function getPublicComicForReader({
       entityType: 'ComicChapter',
       entityIds: eaChapterIds,
       userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      isModerator,
     });
     for (const result of accessResults) {
       accessMap.set(result.entityId, result.hasAccess);
@@ -826,7 +842,7 @@ export async function getPublicComicForReader({
     };
   });
 
-  withholdRestrictedPanelImages(chapters, ctx.user?.id);
+  withholdRestrictedPanelImages(chapters, ctx.user?.id, actsAsModerator(ctx));
   // On green, strip imageUrl from NSFW panels so they appear blocked.
   if (ctx.features.isGreen) {
     stripNsfwPanelImages(chapters, !!ctx.user);
@@ -835,8 +851,13 @@ export async function getPublicComicForReader({
   // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
   const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
   const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
-  const { coverImage } = withServableImage(project, 'coverImage', ctx.user?.id);
-  const { heroImage } = withServableImage(project, 'heroImage', ctx.user?.id);
+  const { coverImage } = withServableCover(
+    project,
+    'coverImage',
+    ctx.user?.id,
+    actsAsModerator(ctx)
+  );
+  const { heroImage } = withServableCover(project, 'heroImage', ctx.user?.id, actsAsModerator(ctx));
 
   return {
     id: project.id,

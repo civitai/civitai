@@ -7,7 +7,8 @@ import type {
   User,
 } from '@node-oauth/oauth2-server';
 import { isHttpError } from '@sveltejs/kit';
-import { AccessDeniedError } from '@node-oauth/oauth2-server';
+import { AccessDeniedError, InvalidGrantError } from '@node-oauth/oauth2-server';
+import { MemorializedAccountError } from '$lib/server/auth/account-refusal';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pack } from 'msgpackr';
@@ -40,12 +41,15 @@ import { isAppBlockOauthClientId } from './block-guard';
 import { firstPartyClientForOrigin, originOf, type FirstPartyOriginUse } from './first-party';
 import {
   apiKeyRowScope,
+  carriesClientCredentialsOnlyScope,
+  carriesRunnerOnlyScope,
   hasScope,
   isScopeGrantable,
   scopeFromColumn,
   scopeToString,
   stringToScope,
 } from './scope';
+import { readRunnerAdmission, RUNNER_TOKEN_SCOPE, scopeStringCarriesRunner } from './runner-client';
 import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 
 // Ported from the main app's src/server/oauth/model.ts. Every `prisma.*` call is rewritten to Kysely
@@ -298,6 +302,7 @@ export const oauthModel = {
     } catch (err) {
       // The library turns any non-OAuth error into a 503, which a client retries; a refusal is final.
       if (isHttpError(err, 403)) throw new AccessDeniedError(err.body.message);
+      if (err instanceof MemorializedAccountError) throw new InvalidGrantError(err.message);
       throw err;
     }
   },
@@ -315,11 +320,14 @@ export const oauthModel = {
       .executeTakeFirst();
 
     if (!apiKey) return false;
+    // A client-credentials or runner token is single-purpose: the library's authenticate admits neither.
+    const scope = apiKeyRowScope(apiKey);
+    if (carriesClientCredentialsOnlyScope(scope) || carriesRunnerOnlyScope(scope)) return false;
 
     return {
       accessToken,
       accessTokenExpiresAt: apiKey.expiresAt ?? undefined,
-      scope: scopeToString(apiKeyRowScope(apiKey)),
+      scope: scopeToString(scope),
       client: { id: apiKey.clientId ?? '' } as Client,
       user: { id: apiKey.userId },
     } as unknown as Token;
@@ -487,10 +495,25 @@ function isClientCredentialsUser(user: User): user is User & ClientCredentialsUs
   return (user as Partial<ClientCredentialsUser>).viaClientCredentials === true;
 }
 
-async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
-  const scope = stringToScope(token.scope as unknown as string);
+/**
+ * The scope an authorization-code or refresh grant issues. A recipe runner (`readRunnerAdmission`,
+ * re-read on every grant) never holds more than `RUNNER_TOKEN_SCOPE`: it gets exactly that while its
+ * binding is active (on a refresh, only of a token that already carried it), else UserRead alone. Any
+ * other client gets the stored scope through `stringToScope`, which reads a scope carrying a runner bit
+ * as 0.
+ */
+async function userGrantScope(token: Token, client: Client, user: GrantUser): Promise<bigint> {
+  const requested = stringToScope(token.scope as unknown as string);
+  const admission = await readRunnerAdmission(client.id);
+  if (admission === null) return requested;
+  const runnerGrant =
+    !user.viaRefresh || scopeStringCarriesRunner(token.scope as unknown as string);
+  return admission === 'active' && runnerGrant ? RUNNER_TOKEN_SCOPE : TokenScope.UserRead;
+}
 
+async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
   if (isClientCredentialsUser(user)) {
+    const scope = stringToScope(token.scope as unknown as string);
     const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL, {
       clientCredentials: true,
       ...((await isOfflineGrantOn()) && { mintOrigin: 'client_credentials' as const }),
@@ -509,6 +532,7 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
   // attached the chain, so one grant never mixes the two behaviours; an authorization-code grant
   // reads the flag here.
   const grantUser = user as GrantUser;
+  const scope = await userGrantScope(token, client, grantUser);
   const plan = grantUser.viaRefresh
     ? grantUser.refreshChain &&
       (await planRefreshGrant({

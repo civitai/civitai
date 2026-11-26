@@ -19,8 +19,8 @@ import {
  * where `trainingDataListing` lists them. It reads the same rows with the statement in
  * apps/feed-go/internal/v1models/training_data_listing.sql and decides on them as this service does.
  * This file holds that statement to Node's: the same text as the builder renders (so a change to
- * ownerHeldSql, the report legs or the content restriction fails here until the file is re-rendered),
- * and, run on Postgres (PGlite, with the restriction migrations), the same rows as Node's for one
+ * the report legs or the content restriction fails here until the file is re-rendered), and, run on
+ * Postgres (PGlite), the same rows as Node's for one
  * Training Data file per refusal reason. The predicate over the rows is pinned in Go
  * (internal/v1models/trainingdata_test.go) and by the golden fixtures. Its version, which feed-go also
  * requires to match, is held below to a hash of exactly: training-data-visibility.ts, the body of
@@ -31,8 +31,8 @@ import {
  *
  * The policy this pins is the dataset-sharing restriction as introduced with dataset sharing
  * (civitai/civitai#8193: `trainingDataListing`, `trainingDataOwnerRestrictedSql`,
- * `trainingDataContentRestrictedSql`, `trainingDataServableOnHost`) over the owner legal hold of
- * civitai/civitai#7047 (`ownerHeldSql`); #8274 made the listing skip versions read without files.
+ * `trainingDataContentRestrictedSql`, `trainingDataServableOnHost`); #8274 made the listing skip
+ * versions read without files.
  * The CASES are one per leg of those builders, as they read today.
  */
 
@@ -42,11 +42,6 @@ const GO_SQL = readFileSync(
   path.resolve(__dirname, '../../../../apps/feed-go/internal/v1models/training_data_listing.sql'),
   'utf8'
 );
-const MIGRATIONS = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations'
-);
-const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migration.sql`, 'utf8');
 
 // The tables the statement reads, as training-data-share.behavior.test.ts declares them.
 const SCHEMA = `
@@ -133,13 +128,6 @@ const CASES: Case[] = [
       `UPDATE "ModelFile" SET metadata = '{"nsfwLevel": 4, "fullyRated": false}' WHERE id = ${k.file}`,
     restricted: false,
   },
-  { name: 'the placeholder owner', owner: -1, restricted: true },
-  {
-    name: 'an owner with a hold marker',
-    setup: (k) =>
-      `INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${k.owner}, 'manual', 'test')`,
-    restricted: true,
-  },
   {
     name: 'an owner named on a holding report',
     setup: (k) => `INSERT INTO "CsamReport" ("userId") VALUES (${k.owner})`,
@@ -156,14 +144,6 @@ const CASES: Case[] = [
     name: "an owner named as a report's secondary user",
     setup: (k) =>
       `INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": ${k.owner}}')`,
-    restricted: true,
-  },
-  {
-    name: 'an owner with an image under CSAM review elsewhere',
-    setup: (k) =>
-      `INSERT INTO "Image" (id, "userId", "needsReview") VALUES (${k.image + 5000}, ${
-        k.owner
-      }, 'csam')`,
     restricted: true,
   },
   {
@@ -235,9 +215,6 @@ const versions = () =>
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
-  await db.exec(migration('20261019220000_evidence_hold'));
-  await db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
-  await db.exec(migration('20261227150000_evidence_hold_owner_held'));
   for (const [i, c] of CASES.entries()) {
     const k = idsOf(i, c);
     await db.exec(`
@@ -259,6 +236,8 @@ afterAll(async () => {
 // falls back for a Node that sends a version it does not have.
 const RULES_SOURCE_SHA256: Record<number, string> = {
   1: '27f8827e0fcef8aa29249cc65057f1f4dac0719ce1680d79878483e430b66fad',
+  // 2: trainingDataListings (one read, the decision for this host and for a red-capable one).
+  2: '74438f82a4c2bf886a0322aeccdb259c9a69759f6d45b1e6d355c76153a81946',
 };
 const SERVICE = path.resolve(__dirname, '../training-data-restricted.service.ts');
 const VISIBILITY = path.resolve(__dirname, '../../../shared/utils/training-data-visibility.ts');

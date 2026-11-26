@@ -60,6 +60,7 @@ type Row = {
   status: ServiceOfferingStatus;
   maxNsfwLevel: number;
   price: number;
+  fromPrice: number | null;
   maxOpenDeals: number | null;
   createdAt: Date;
   sellerId: number;
@@ -111,6 +112,11 @@ function matches(value: unknown, filter: unknown): boolean {
         return true;
       case 'lte':
         return (value as number) <= (arg as number);
+      // As SQL compares: NULL on either side is never greater or less.
+      case 'gt':
+        return value !== null && arg !== null && (value as number) > (arg as number);
+      case 'lt':
+        return value !== null && arg !== null && (value as number) < (arg as number);
       case 'in':
         return (arg as unknown[]).includes(value);
       case 'notIn':
@@ -136,14 +142,38 @@ function matches(value: unknown, filter: unknown): boolean {
   });
 }
 
-type OrderBy = Partial<Record<keyof Row, 'asc' | 'desc'>>[];
+type Direction = 'asc' | 'desc' | { sort: 'asc' | 'desc'; nulls: 'first' | 'last' };
+type OrderBy = Partial<Record<keyof Row, Direction>>[];
+const clauses = (orderBy: OrderBy) =>
+  orderBy.map((clause) => {
+    const [[field, dir]] = Object.entries(clause) as [keyof Row, Direction][];
+    const sort = typeof dir === 'string' ? dir : dir.sort;
+    // Postgres puts NULLs last ascending and first descending, unless told.
+    const nullsLast = typeof dir === 'string' ? sort === 'asc' : dir.nulls === 'last';
+    return { field, sort, nullsLast };
+  });
 const compare = (orderBy: OrderBy) => (a: Row, b: Row) => {
-  for (const clause of orderBy) {
-    const [[field, dir]] = Object.entries(clause) as [keyof Row, 'asc' | 'desc'][];
-    const [x, y] = [a[field], b[field]] as [number | Date, number | Date];
-    if (+x !== +y) return (+x < +y ? -1 : 1) * (dir === 'asc' ? 1 : -1);
+  for (const { field, sort, nullsLast } of clauses(orderBy)) {
+    const [x, y] = [a[field], b[field]] as [number | Date | null, number | Date | null];
+    if (x === null || y === null) {
+      if (x === y) continue;
+      return (x === null) === nullsLast ? 1 : -1;
+    }
+    if (+x !== +y) return (+x < +y ? -1 : 1) * (sort === 'asc' ? 1 : -1);
   }
   return 0;
+};
+/**
+ * Prisma's cursor: a keyset on the cursor row's values, compared in SQL, so a NULL on either side
+ * is never past it. The cursor row itself is included; `skip` drops it.
+ */
+const fromCursor = (orderBy: OrderBy, anchor: Row) => (r: Row) => {
+  for (const { field, sort } of clauses(orderBy)) {
+    const [x, y] = [r[field], anchor[field]] as [number | Date | null, number | Date | null];
+    if (x === null || y === null) return false;
+    if (+x !== +y) return sort === 'asc' ? +x > +y : +x < +y;
+  }
+  return true;
 };
 
 const SELLER = 7;
@@ -165,6 +195,7 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
     ingestion: ServiceOfferingIngestionStatus.Scanned,
     coverImageId: null,
     happySortKey: -1,
+    fromPrice: null,
     coverImage: null,
     ...rest,
     seller: {
@@ -224,13 +255,12 @@ beforeEach(() => {
     skip?: number;
     take: number;
   }) => {
-    const sorted = table.filter((r) => matches(r, args.where)).sort(compare(args.orderBy));
-    // Prisma pages from the cursor row's position in the ordering, wherever that row is.
-    const anchor = args.cursor
-      ? [...table].sort(compare(args.orderBy)).find((r) => r.id === args.cursor?.id)
-      : undefined;
-    const start = anchor ? sorted.filter((r) => compare(args.orderBy)(r, anchor) < 0).length : 0;
-    return sorted.slice(start + (args.skip ?? 0), start + (args.skip ?? 0) + args.take);
+    const anchor = args.cursor ? table.find((r) => r.id === args.cursor?.id) : undefined;
+    const sorted = table
+      .filter((r) => matches(r, args.where))
+      .filter((r) => !anchor || fromCursor(args.orderBy, anchor)(r))
+      .sort(compare(args.orderBy));
+    return sorted.slice(args.skip ?? 0, (args.skip ?? 0) + args.take);
   }) as never);
 });
 
@@ -319,13 +349,7 @@ describe('services feed', () => {
       expect(cache).toHaveBeenCalledWith({ userId: VISITOR });
   });
 
-  it.each([
-    ['newest', [5, 4, 3, 2, 1]],
-    ['price_asc', [3, 1, 2, 4, 5]],
-    ['price_desc', [5, 4, 2, 1, 3]],
-  ] as const)('pages through every %s offering once, in order', async (sort, expected) => {
-    // Ids 2 and 4 share a price, so the id tiebreak decides their order.
-    table = [300, 500, 100, 500, 900].map((price) => row({ price }));
+  const pageAll = async (sort: 'newest' | 'price_asc' | 'price_desc') => {
     const seen: number[] = [];
     let cursor: number | undefined;
     for (let page = 0; page < 10; page++) {
@@ -339,8 +363,51 @@ describe('services feed', () => {
       cursor = result.nextCursor;
       if (!cursor) break;
     }
-    expect(seen).toEqual(expected);
-  });
+    return seen;
+  };
+
+  it.each([
+    ['newest', [5, 4, 3, 2, 1]],
+    ['price_asc', [3, 1, 2, 4, 5]],
+    ['price_desc', [5, 4, 2, 1, 3]],
+  ] as const)(
+    'pages through every %s offering once, in order, as saved rows carry it',
+    async (sort, expected) => {
+      // Ids 2 and 4 share a price, so the id tiebreak decides their order.
+      table = [300, 500, 100, 500, 900].map((price) => row({ price, fromPrice: price }));
+      expect(await pageAll(sort)).toEqual(expected);
+    }
+  );
+
+  // Rows saved before request forms have no fromPrice until the backfill runs.
+  it.each([
+    ['price_asc', [1, 2, 3, 4, 5]],
+    ['price_desc', [5, 4, 3, 2, 1]],
+  ] as const)(
+    'pages through every %s offering once while none has a from price',
+    async (sort, expected) => {
+      table = [300, 500, 100, 500, 900].map((price) => row({ price }));
+      expect(await pageAll(sort)).toEqual(expected);
+    }
+  );
+
+  it.each([
+    ['price_asc', [3, 1, 6, 2, 4, 5]],
+    ['price_desc', [6, 1, 3, 5, 4, 2]],
+  ] as const)(
+    'pages through every %s offering once when some have a from price and some not',
+    async (sort, expected) => {
+      table = [
+        row({ fromPrice: 300 }),
+        row(),
+        row({ fromPrice: 100 }),
+        row(),
+        row(),
+        row({ fromPrice: 300 }),
+      ];
+      expect(await pageAll(sort)).toEqual(expected);
+    }
+  );
 
   it('sorts by the happy share, unscored offerings last, ties newest first, and pages without repeats', async () => {
     const half = row({ happySortKey: 0.5 });

@@ -74,7 +74,7 @@ describe('/api/csam-hold-author', () => {
       3,
       expect.objectContaining({ reasons: DEFAULT_REPORT_REASONS })
     );
-    expect(getUserCard).toHaveBeenCalledWith(3);
+    expect(getUserCard).toHaveBeenCalledWith(3, { id: 1 });
   });
 
   it('gives a moderator who cannot open User Lookup the hold history and nothing of the account', async () => {

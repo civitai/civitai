@@ -478,7 +478,7 @@
     "src/server/services/__tests__/model-removal-collection-reindex.test.ts": 3,
     "src/server/services/__tests__/model-upsert.owner-fields.service.test.ts": 1,
     "src/server/services/__tests__/model-version.unpublish-refund.service.test.ts": 1,
-    "src/server/services/__tests__/model.publish-wipe-race.test.ts": 1,
+    "src/server/services/__tests__/model.publish-locked-meta.test.ts": 1,
     "src/server/services/__tests__/model.service.transfer-paid-access-owner.test.ts": 2,
     "src/server/services/__tests__/mystery-box-inventory.service.test.ts": 8,
     "src/server/services/__tests__/mystery-box-odds-page.service.test.ts": 5,

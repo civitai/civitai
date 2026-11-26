@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
-  import { backend, navigate } from '$lib/host';
-  import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
+  import { IconCheck, IconArrowLeft, IconHistory } from '@tabler/icons-svelte';
+  import { backend, hostConfig, navigate } from '$lib/host';
+  import { isMatureNsfwLevel, ratingBreakdown } from '$lib/nsfw-rating';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
@@ -12,20 +12,25 @@
   import DataStep from './DataStep.svelte';
   import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
+  import EditDataStepElements from './EditDataStepElements.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ReviewStepElements from './ReviewStepElements.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
     stampMature,
     defaultRunParams,
     isLabeled,
+    isImgMature,
     isTrainable,
+    applyRatingAnswer,
     expandedCount,
     repeatsOf,
     selectionTakesRepeats,
     labelModeForCard,
     sweepLabelMode,
     labelString,
+    nextImgId,
     runCard,
     runParamsKey,
     runTrainsPairs,
@@ -48,6 +53,13 @@
   import type { TrainingRunPayload } from '$lib/backend';
   import { newSubmitKey } from '$lib/submit-key';
   import { watchReadiness, type ReadinessView } from './uploadReadiness';
+  import {
+    draftEntries,
+    draftModelsAllowed,
+    flowDraftStore,
+    type FlowDraft,
+    type FlowDraftState,
+  } from './flowDraft';
 
   let {
     prices,
@@ -59,6 +71,8 @@
   const elementsUi = $derived(useElements());
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
   const Data = $derived(elementsUi ? DataStepElements : DataStep);
+  const Review = $derived(elementsUi ? ReviewStepElements : ReviewStep);
+  const EditData = $derived(elementsUi ? EditDataStepElements : EditDataStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -117,7 +131,119 @@
     } catch {
       // Malformed hand-off — ignore and start empty.
     }
+    if (!draftStore) return;
+    // Autosave waits for this answer and never overwrites a stored draft the user hasn't seen. A
+    // hand-off is the dataset the user just asked for, so its draft isn't offered and keeps its slot
+    // for a later visit.
+    const handOff = reuseItems.length > 0 || reusePairItems.length > 0;
+    void draftStore.load(nextImgId).then((draft) => {
+      if (unmounted) {
+        if (draft) for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+        return;
+      }
+      // A draft for a model this viewer may no longer pick is left stored, but neither offered nor
+      // overwritten.
+      if (draft && !draftModelsAllowed(draft.state, new Set(enabledModelFlags))) {
+        for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+        return;
+      }
+      if (!draft) draftArmed = true;
+      else if (!handOff && images.length === 0) {
+        draftOffer = draft;
+        draftArmed = true;
+      } else for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+    });
   });
+
+  // The autosave (./flowDraft): kept while the dataset has an uploaded file, offered back on the next
+  // visit, cleared once Start lands. Edit-pair datasets aren't kept.
+  const draftUserId = hostConfig().userId;
+  const draftStore = draftUserId != null ? flowDraftStore(draftUserId) : null;
+  let draftOffer = $state<FlowDraft | null>(null);
+  let draftArmed = $state(false);
+  let unmounted = false;
+  // Whether this visit saved a draft — only then does an emptied dataset clear it, so the offer of
+  // an earlier one survives until the user answers it or builds a new dataset.
+  let draftSaved = false;
+  let submitted = false;
+  const DRAFT_SAVE_DELAY_MS = 500;
+  $effect(() => {
+    if (!draftStore || !draftArmed || !selection || trainsPairs || submitted) return;
+    const entries = draftEntries(images);
+    if (entries.length === 0) {
+      if (draftSaved) {
+        draftSaved = false;
+        void draftStore.clear();
+      }
+      return;
+    }
+    // Serialised now: the save runs later and must not read the live proxies (IndexedDB can't clone them).
+    const state: FlowDraftState = JSON.parse(
+      JSON.stringify({
+        selection,
+        labelMode,
+        trigger,
+        autoLabel,
+        excludeTags,
+        excludeCharacter,
+        excludeSource,
+        reviewName,
+        samplePrompts,
+        runParams,
+        presetType,
+      })
+    );
+    const timer = setTimeout(() => {
+      if (submitted) return;
+      draftSaved = true;
+      if (draftOffer) for (const img of draftOffer.images) URL.revokeObjectURL(img.previewUrl);
+      draftOffer = null;
+      void draftStore.save(
+        {
+          ...state,
+          reviewNameSeed,
+          promptsSeed,
+          paramsSeedTrigger,
+          paramsSeedLoraType,
+          submitKey,
+        },
+        entries
+      );
+    }, DRAFT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
+
+  function resumeDraft() {
+    const draft = draftOffer;
+    if (!draft) return;
+    draftOffer = null;
+    const s = draft.state;
+    selection = s.selection;
+    labelMode = s.labelMode;
+    trigger = s.trigger;
+    autoLabel = s.autoLabel;
+    excludeTags = s.excludeTags;
+    excludeCharacter = s.excludeCharacter;
+    excludeSource = s.excludeSource;
+    reviewName = s.reviewName;
+    reviewNameSeed = s.reviewNameSeed;
+    samplePrompts = s.samplePrompts;
+    promptsSeed = s.promptsSeed;
+    runParams = s.runParams;
+    paramsSeedTrigger = s.paramsSeedTrigger;
+    paramsSeedLoraType = s.paramsSeedLoraType;
+    presetType = s.presetType;
+    if (s.submitKey) submitKey = s.submitKey;
+    images = draft.images;
+    step = 2;
+  }
+
+  function discardDraft() {
+    if (!draftOffer) return;
+    for (const img of draftOffer.images) URL.revokeObjectURL(img.previewUrl);
+    draftOffer = null;
+    void draftStore?.clear();
+  }
   const trainsPairs = $derived(!!selection && runTrainsPairs(selection.runs[0]!));
   const readyPairs = $derived(pairs.filter(isPairReady));
   // The plain Data step's trigger word, unless this is an edit run: that step never shows one, so a word
@@ -149,7 +275,14 @@
       ? readyPairs.filter(
           (p) => isMatureNsfwLevel(p.before.nsfwLevel) || isMatureNsfwLevel(p.after?.nsfwLevel)
         ).length
-      : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+      : images.filter(isImgMature).length
+  );
+  // A pair counts once whatever its two sides were rated, and a dataset with v2 verdicts counts mature by
+  // verdict, not upload rating, so neither gets a breakdown.
+  const matureRatings = $derived(
+    trainsPairs || images.some((i) => i.v2Mature !== undefined)
+      ? []
+      : ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel)).filter((r) => r.mature)
   );
 
   // The blobs the submit sends (buildTrainingRuns / pairItems), keyed order-free.
@@ -162,29 +295,40 @@
   // The server's count under the v2 rating, for the dataset it was made for. Until it answers, or when
   // the rating is off for this user, Review counts from the upload rating as before.
   let ratedMature = $state<{ key: string; count: number } | null>(null);
+  // Whether the server answered with the v2 rating on, so the Data step offers its filters.
+  let ratingV2 = $state(false);
   const RATING_POLLS = 6;
   const RATING_POLL_MS = 5000;
+  // On the Data step, after uploads stop landing, so new images are rated before Review.
+  const RATING_SETTLE_MS = 3000;
   $effect(() => {
-    // After the readiness wait, so Review never reads every file for both at once.
-    if (step !== 3 || !readinessSettled) return;
+    const onData = step === 2 && !trainsPairs;
+    // On Review, after the readiness wait, so Review never reads every file for both at once.
+    if (!onData && (step !== 3 || !readinessSettled)) return;
     const be = backend();
     if (!be.datasetRating) return;
-    const ids = datasetBlobIds;
+    // Keyed on the dataset: setting verdicts re-derives the array, and must not ask again.
     const key = datasetKey;
+    const ids = untrack(() => datasetBlobIds);
+    if (ids.length === 0) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ask = async (poll: number) => {
       try {
         const res = await be.datasetRating!(ids);
         if (stopped || !res.enabled) return;
-        ratedMature = { key, count: res.matureCount };
+        ratingV2 = true;
+        // The letter chips go away under the v2 rating: a letter filter left on would hide images.
+        if (untrack(() => dataFilter).startsWith('rating:')) dataFilter = 'all';
+        const count = applyRatingAnswer(untrack(() => images), res);
+        if (count !== undefined) ratedMature = { key, count };
         if (res.unrated > 0 && poll < RATING_POLLS)
           timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
       } catch {
         // the upload rating's count stands
       }
     };
-    void ask(1);
+    timer = setTimeout(() => void ask(1), onData ? RATING_SETTLE_MS : 0);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -282,6 +426,8 @@
   // load-bearing: a preview hydration resolving after teardown checks membership and revokes its
   // fresh URL instead of leaking it.
   $effect(() => () => {
+    unmounted = true;
+    if (draftOffer) for (const img of draftOffer.images) URL.revokeObjectURL(img.previewUrl);
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
     images = [];
     for (const pair of pairs)
@@ -373,6 +519,11 @@
     }));
     const { workflowIds: ids, failure } = await backend().submitTraining(keyed);
     submitKey = newSubmitKey();
+    // Any run that landed ends the draft: resuming it would resubmit (and charge) that run again.
+    if (ids.length > 0 && draftStore) {
+      submitted = true;
+      await draftStore.end();
+    }
     if (failure)
       submitNotice.set(
         `Started ${ids.length} of ${runs.length} runs. The rest may not have started (${failure}); check your runs list before starting them again.`
@@ -436,6 +587,27 @@
 
   <ServiceStatusBanner />
 
+  {#if draftOffer && step === 1}
+    {@const draft = draftOffer}
+    <div
+      class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-dark-0"
+      role="status"
+    >
+      <IconHistory size={18} stroke={2} class="shrink-0 text-primary" />
+      <p class="min-w-0 flex-1 leading-snug">
+        <span class="font-semibold">You have an unfinished training.</span>
+        {draft.images.length}
+        {draft.images.length === 1 ? 'file' : 'files'} with their labels for
+        {runCard(draft.state.selection.runs[0]!).name}, saved
+        {new Date(draft.savedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.
+      </p>
+      <div class="flex shrink-0 gap-2">
+        <Button size="sm" variant="outline" onclick={discardDraft}>Discard</Button>
+        <Button size="sm" onclick={resumeDraft}>Resume</Button>
+      </div>
+    </div>
+  {/if}
+
   {#if step === 1}
     <Select
       {prices}
@@ -457,7 +629,7 @@
       }}
     />
   {:else if step === 2 && selection && trainsPairs}
-    <EditDataStep
+    <EditData
       bind:pairs
       bind:reuseItems={reusePairItems}
       onContinue={enterReview}
@@ -470,6 +642,7 @@
     <Data
       {selection}
       {prices}
+      {ratingV2}
       findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}
       {reuseItems}
       bind:images
@@ -487,7 +660,7 @@
       }}
     />
   {:else if step === 3 && selection}
-    <ReviewStep
+    <Review
       {selection}
       trigger={runTrigger}
       {labelMode}
@@ -501,6 +674,7 @@
       {repeated}
       {trainsPairs}
       matureCount={reviewMatureCount}
+      {matureRatings}
       readiness={readinessView}
       {readinessUnusableCount}
       onCheckReadinessAgain={() => readinessRound++}

@@ -384,6 +384,46 @@ describe('comics generation inputs the server loads', () => {
         expect((await run('@Beta only')).referenceImagesSkipped).toBe(false);
       }
     );
+
+    // A panel generated with a context panel stores that panel's key; its image can be blocked since.
+    it.each(routes)(
+      '%s returns no stored context key, and keeps a clean candidate key',
+      async (_, run) => {
+        givenRefs(false);
+        const withContext = () => ({
+          id: 1,
+          status: 'Generating',
+          imageUrl: null,
+          metadata: {
+            candidateImages: [{ key: 'clean-key' }],
+            previousPanelImageUrl: 'ctx-blocked',
+            referencePanelImageUrl: 'ctx-blocked',
+            referenceImages: [{ url: 'ctx-blocked', width: 1, height: 1 }],
+          },
+        });
+        dbMock.dbWrite.comicPanel.create.mockImplementation((async () => withContext()) as never);
+        dbMock.dbWrite.comicPanel.update.mockImplementation((async () => withContext()) as never);
+        dbMock.dbWrite.image.findMany.mockResolvedValue([
+          {
+            url: 'ctx-blocked',
+            userId: USER_ID,
+            nsfwLevel: 1,
+            modelRestricted: false,
+            ingestion: 'Blocked',
+            blockedFor: 'moderated',
+          },
+        ] as never);
+        const result = (await run('@Beta')) as {
+          metadata?: unknown;
+          panels?: { metadata: unknown }[];
+        };
+        const metadata = result.panels ? result.panels[0].metadata : result.metadata;
+        expect(JSON.stringify(metadata).includes('ctx-blocked')).toBe(false);
+        expect(
+          (metadata as { candidateImages: { key?: string }[] }).candidateImages.map((c) => c.key)
+        ).toEqual(['clean-key']);
+      }
+    );
   });
 
   // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,

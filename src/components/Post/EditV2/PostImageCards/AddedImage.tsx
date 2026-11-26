@@ -18,7 +18,6 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowBackUp,
@@ -39,10 +38,11 @@ import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { WithheldMedia } from '~/components/EdgeMedia/WithheldMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -285,15 +285,12 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
 
   const handleDelete = () => {
     if (!isBlocked)
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Delete image',
-          message: 'Are you sure you want to delete this image?',
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
-          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
-        },
+      openConfirm({
+        title: 'Delete image',
+        message: 'Are you sure you want to delete this image?',
+        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+        confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
+        onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
       });
     else deleteImageMutation.mutate({ id: image.id });
   };
@@ -603,10 +600,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
 
   const handleRemoveResource = () => {
     if (!canAdd || !modelVersionId) return;
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Remove Resource',
-      children: detected
+      message: detected
         ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
         : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
@@ -620,10 +616,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
 
   const handleCopyResource = () => {
     if (!otherAvailableIDs.length || !modelVersionId) return;
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Copy to All',
-      children: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
+      message: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
       labels: { confirm: 'Yep!', cancel: 'Cancel' },
       confirmProps: { color: 'green' },
       onConfirm: () => {
@@ -880,7 +875,8 @@ function EditDetail() {
                       </div>
                     ))}
                   </div>
-                  {!isBlocked && !('engine' in (image.meta ?? {})) && (
+                  {/* A url-null row is under a moderation block: its meta is not editable. */}
+                  {!isBlocked && image.url !== null && !('engine' in (image.meta ?? {})) && (
                     <div>
                       <Button
                         variant="light"
@@ -937,7 +933,7 @@ function EditDetail() {
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
                   Prompt
                 </h3>
-                {!isBlocked && (
+                {!isBlocked && image.url !== null && (
                   <div className="flex gap-1">
                     <Button
                       variant="light"
@@ -1203,7 +1199,7 @@ function EditDetail() {
             {/* #endregion */}
 
             {/* #region [thumbnail] */}
-            {image.type === MediaType.video && (
+            {image.type === MediaType.video && image.url !== null && (
               <CustomCard className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -1400,17 +1396,21 @@ function PostImage() {
           maxWidth: metadata?.width,
         }}
       >
-        <EdgeMedia
-          src={url}
-          width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
-          type={type}
-          // 🔴 PostImageCards renders every image in the post with no virtualisation, and EdgeImage
-          // sets no `loading`, so without this a 16-image post (p90) fetches all of them eagerly.
-          loading="lazy"
-          className={showPreview ? 'rounded-none' : 'rounded-lg'}
-          anim={type === 'video'}
-          html5Controls
-        />
+        {url === null ? (
+          <WithheldMedia className={showPreview ? 'rounded-none' : 'rounded-lg'} />
+        ) : (
+          <EdgeMedia
+            src={url}
+            width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
+            type={type}
+            // PostImageCards renders every image unvirtualised and EdgeImage sets no default
+            // loading; keep lazy.
+            loading="lazy"
+            className={showPreview ? 'rounded-none' : 'rounded-lg'}
+            anim={type === 'video'}
+            html5Controls
+          />
+        )}
       </div>
       <div className="absolute inset-x-0 top-0 z-10 h-12 bg-gradient-to-b from-black opacity-25" />
       {!!nsfwLevel && (
@@ -1450,7 +1450,7 @@ function PostImage() {
                 Edit image
               </Menu.Item>
             )}
-            {!isBlocked && isOwner && image.id > 0 && (
+            {!isBlocked && isOwner && image.id > 0 && image.url !== null && (
               <AddEventDecorationMenuItem
                 entityType={CosmeticEntity.Image}
                 entityId={image.id}

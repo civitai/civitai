@@ -4,7 +4,7 @@ name: feed-go
 # shadow only of `image.getInfinite`, `model.getAll` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
-# tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
+# tests and a build of the image's two binaries, feed-go and feed-eval (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
 # tidiness and module checksums (`mod`); a run of every fuzz target for a fixed number of
 # executions (`fuzz`); and an allocs/op regression gate on the benchmarks against the merge-base
 # (`bench`). The gate scripts live in apps/feed-go/ci.
@@ -97,7 +97,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       - name: gofmt
         run: |
@@ -246,8 +251,14 @@ jobs:
           [ "$feed" -ge 12 ]
           [ "$models" -ge 5 ]
 
+      # Both binaries the image ships (apps/feed-go/Dockerfile), built as it builds them. The help
+      # path's exit code is cmd/feed-eval's own unit test; this does not see the image's layout.
       - name: go build
-        run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-go ./cmd/feed-go
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-eval ./cmd/feed-eval
+          ls -l /tmp/feed-go /tmp/feed-eval
 
       - name: Redis Cluster logs
         if: failure()
@@ -256,6 +267,9 @@ jobs:
       - name: ClickHouse logs
         if: failure()
         run: docker logs feedgo-clickhouse 2>&1 | tail -n 80
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   # Node <-> Go Flipt parity (packages/civitai-flipt/parity/README.md). Offline: every client reads
   # parity/snapshot.json through an in-process fetcher or transport; the network is used only to
@@ -285,7 +299,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: packages/civitai-flipt/parity/go/go.mod
-          cache-dependency-path: packages/civitai-flipt/parity/go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: packages/civitai-flipt/parity/go/go.sum
 
       - name: gofmt + vet + go.mod tidy
         run: |
@@ -365,6 +384,9 @@ jobs:
           done
           exit $status
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   lint:
     name: feed-go golangci-lint
     runs-on: ubuntu-latest
@@ -376,7 +398,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # Configuration: apps/feed-go/.golangci.yml (v2 format; it also lints the integration tier). Any
       # finding fails the step.
@@ -384,8 +411,13 @@ jobs:
         # golangci/golangci-lint-action v9.3.0
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
+          # Restores everywhere; saves only on a push / dispatch / schedule run on `main`.
+          skip-save-cache: ${{ !(contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main') }}
           version: v2.15.0
           working-directory: apps/feed-go
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   vuln:
     name: feed-go govulncheck
@@ -405,7 +437,12 @@ jobs:
         with:
           go-version: '1.26'
           check-latest: true
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level);
       # advisories in modules or packages it never calls are listed but do not fail the step.
@@ -413,6 +450,9 @@ jobs:
         run: |
           go version
           go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags integration ./...
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   mod:
     name: feed-go go.mod tidy + verify
@@ -428,7 +468,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # `go mod tidy -diff` changes nothing and exits non-zero (printing the diff) when go.mod/go.sum
       # are not tidy; `go mod verify` checks the downloaded modules against go.sum.
@@ -440,6 +485,9 @@ jobs:
           fi
       - name: go mod verify
         run: go mod verify
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   # Each fuzz target for a fixed number of executions, one at a time (`-fuzz` takes one target in one
   # package). A fixed count, not a time budget: -fuzztime in seconds can end in a "context deadline
@@ -470,10 +518,12 @@ jobs:
         internal/auth:FuzzVerify:95000
         internal/devalue:FuzzRoundTrip:200000
         internal/devalue:FuzzString:600000
+        internal/evalcorpus:FuzzStrip:100000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000
         internal/hydrate:FuzzUnpack:230000
+        internal/hydrate:FuzzUnpackMatchesOracle:80000
         internal/modelfeed:FuzzParse:210000
         internal/shadow:FuzzCompare:420000
         internal/shadow:FuzzCompareJSON:620000
@@ -488,7 +538,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       - name: The fuzz targets are the listed set
         run: |
@@ -537,6 +592,9 @@ jobs:
           path: apps/feed-go/internal/*/testdata/fuzz/
           if-no-files-found: ignore
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   # Benchmarks on the PR head and on its merge-base, `-benchmem -count=6`, compared with benchstat
   # (report only: ns/op on a shared runner is noise). The gate is allocs/op only (deterministic):
   # ci/allocs_gate.py fails a benchmark whose every head sample exceeds every base sample by > 5%
@@ -565,7 +623,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/feed-go/go.sum
 
       # The `base` input, else the merge-base with main (the parent if HEAD is already the merge-base).
       # Through env: `base` is free text, and is checked to be a commit before it is used.
@@ -612,12 +675,17 @@ jobs:
       - name: allocs/op gate
         run: |
           set -euo pipefail
-          # Positive control: every benchmark produced its 6 samples (11 benchmarks: superjson Serialize,
+          # Positive control: every benchmark produced its 6 samples (20 benchmarks: superjson Serialize,
           # SerializeBuffer, SerializeColdStart/page and SerializeColdStart/owned-small, hydrate Unpack,
-          # TagIDs and HydratePage/pipelined, feed BuildImages, shadow Compare/golden, Compare/page50
-          # and CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
-          # regression"; raise the count with each new benchmark.
+          # TagIDs, HydratePage/pipelined and UnpackCache/{model-data,tag-ids,follows}, feed BuildImages,
+          # server Route/{as-posts,infinite,model-getall} and DevaluePayload/{as-posts,infinite,
+          # model-getall}, shadow Compare/golden, Compare/page50 and CompareJSON). A filter or build
+          # change that drops benchmarks would otherwise pass as "no regression"; raise the count with
+          # each new benchmark.
           samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
           echo "head samples with allocs/op: $samples"
-          [ "$samples" -ge 66 ]
+          [ "$samples" -ge 120 ]
           python3 ci/allocs_gate.py "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save

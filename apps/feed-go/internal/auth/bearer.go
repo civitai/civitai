@@ -30,6 +30,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
@@ -56,6 +57,8 @@ const (
 	ScopeReadOnly int64 = 1<<0 | 1<<2 | 1<<5 | 1<<8 | 1<<11 | 1<<16 | 1<<17 | 1<<14 | 1<<21 | 1<<23
 	// ScopeClientCredentialsOnly is CLIENT_CREDENTIALS_ONLY_SCOPES: AppStoreCatalogWrite | DownloadLink.
 	ScopeClientCredentialsOnly int64 = 1<<28 | 1<<30
+	// ScopeRunnerOnly is RUNNER_ONLY_SCOPES: RunnerMint.
+	ScopeRunnerOnly int64 = 1 << 33
 )
 
 // ApiKeyType values (packages/civitai-db-schema/src/enums.ts) this service tells apart.
@@ -77,7 +80,8 @@ type APIKeys struct {
 	OrchestratorToken string
 	// ReadTimeout bounds the principal-cache read (0 = 400ms); past it the request falls back.
 	ReadTimeout time.Duration
-	// Now is the clock (nil = time.Now).
+	// Now is the clock key expiry is read at (nil = clock.Now: eval mode's frozen instant, else the wall
+	// clock).
 	Now func() time.Time
 }
 
@@ -85,7 +89,7 @@ func (k *APIKeys) now() time.Time {
 	if k.Now != nil {
 		return k.Now()
 	}
-	return time.Now()
+	return clock.Now()
 }
 
 type redactedKey struct{}
@@ -113,6 +117,16 @@ type resolved struct {
 // derived from it returns the same answer without reading the stores again.
 func WithResolved(ctx context.Context, u *SessionUser, err error) context.Context {
 	return context.WithValue(ctx, resolvedKey{}, &resolved{user: u, err: err})
+}
+
+type observerKey struct{}
+
+// WithResolveObserver has every Resolve with a context derived from ctx call f with its answer (the
+// user, or nil, and the error), after resolving and before returning; the eval capture reads the
+// viewer a computation resolved through it, at no extra store read. f is called from the resolving
+// goroutine, so concurrently when a computation resolves on several: it must be safe for that.
+func WithResolveObserver(ctx context.Context, f func(*SessionUser, error)) context.Context {
+	return context.WithValue(ctx, observerKey{}, f)
 }
 
 // HasAPICredential reports whether the request carries an API credential: a non-empty Authorization
@@ -307,20 +321,24 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 	if err != nil {
 		return nil, err
 	}
-	// A client-credentials token resolves to no session (no caller here opts in).
-	if apiKey.scope&ScopeClientCredentialsOnly != 0 {
+	// Unlike the Node app, nothing here opts in to a client-credentials or runner token.
+	if apiKey.scope&(ScopeClientCredentialsOnly|ScopeRunnerOnly) != 0 {
 		return nil, nil
 	}
 	u, err := r.user(ctx, apiKey.userID)
 	if err != nil {
 		return nil, err
 	}
-	// getBearerTokenUser: a banned user, or the moderation account, has no bearer session.
+	// getBearerTokenUser: a banned or memorialized user, or the moderation account, has no bearer session.
 	banned, ok := jsTruthy(u.raw["bannedAt"])
 	if !ok {
 		return nil, fallback.New("bearer-user-shape")
 	}
-	if banned {
+	memorialized, ok := jsTruthy(u.raw["memorialized"])
+	if !ok {
+		return nil, fallback.New("bearer-user-shape")
+	}
+	if banned || memorialized {
 		return nil, nil
 	}
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
@@ -410,7 +428,7 @@ func (k *APIKeys) readPrincipal(ctx context.Context, hash string, now time.Time)
 		return nil, fallback.New("bearer-key-cache-shape")
 	}
 	out := &cachedAPIKey{userID: userID, scope: scope, typ: typ}
-	if scope&ScopeClientCredentialsOnly != 0 {
+	if scope&(ScopeClientCredentialsOnly|ScopeRunnerOnly) != 0 {
 		return out, nil // refused before the lastUsedAt write
 	}
 	// claimLastUsedWrite: no write while the cached lastUsedAt is within the hour; otherwise the app

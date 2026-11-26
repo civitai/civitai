@@ -31,11 +31,12 @@ import { ANONYMOUS_PRINCIPAL } from '~/server/registry-adapter/auth';
 import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
 import type {
   Adapter,
+  AdapterContext,
   EventMeta,
   StreamEvent,
   SubscribeRequest,
 } from '~/server/registry-adapter/protocol';
-import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
+import { ProtocolError, StreamEnd, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { urnNamespace } from '~/server/registry-adapter/urn';
 
@@ -152,7 +153,11 @@ export function servesAnyUrn(urns: readonly string[], namespace: string): boolea
   return urns.length === 0 || urns.some((urn) => urnNamespace(urn) === namespace);
 }
 
-export function createSubscriber(adapter: Adapter) {
+export function createSubscriber(
+  adapter: Adapter,
+  /** The binding this subscriber serves (`AdapterContext.binding`); absent is HTTP. */
+  opts: { binding?: AdapterContext['binding'] } = {}
+) {
   const compileFilter = createFilterCompiler();
 
   return async function subscribe(
@@ -171,7 +176,13 @@ export function createSubscriber(adapter: Adapter) {
       principal.subject !== null && principal.token !== null
         ? { subject: principal.subject, ...principal.token }
         : null;
-    const ctx = { signal, audience: principal.audience, reader };
+    const ctx = {
+      signal,
+      audience: principal.audience,
+      reader,
+      ...(req.meta ? { meta: req.meta } : {}),
+      ...(opts.binding ? { binding: opts.binding } : {}),
+    };
 
     const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);
@@ -184,8 +195,19 @@ export function createSubscriber(adapter: Adapter) {
     // the consumer's cursor keeps up with the position.
     const held = filter && position === undefined ? new Set<string>() : null;
 
+    // An adapter that ends the stream on purpose before anything is sent (`StreamEnd`) is answered
+    // with that `end` alone, its meta included.
+    const ended = (err: unknown) => {
+      if (err instanceof StreamEnd) return sink.send({ type: 'end', meta: err.meta });
+      throw err;
+    };
     if (position === undefined) {
-      const snapshot = await adapter.snapshot(req.schema, ctx);
+      let snapshot: Awaited<ReturnType<Adapter['snapshot']>>;
+      try {
+        snapshot = await adapter.snapshot(req.schema, ctx);
+      } catch (err) {
+        return ended(err);
+      }
       for await (const entity of snapshot.entities) {
         if (signal.aborted) return;
         if (wanted(entity.urn) && matches(entity.body)) {
@@ -197,7 +219,12 @@ export function createSubscriber(adapter: Adapter) {
     }
     // The cursor is checked before `live`: one the source cannot resume from rejects here, and
     // on a resume nothing has been sent yet, so it is answered with its own status.
-    const changes = await adapter.changes(req.schema, position, ctx);
+    let changes: Awaited<ReturnType<Adapter['changes']>>;
+    try {
+      changes = await adapter.changes(req.schema, position, ctx);
+    } catch (err) {
+      return ended(err);
+    }
     if (signal.aborted) return;
     let reported = bind(position);
     await sink.send({
@@ -217,6 +244,10 @@ export function createSubscriber(adapter: Adapter) {
     };
     for await (const change of changes) {
       if (signal.aborted) return;
+      if ('end' in change) {
+        // The adapter ended the stream on purpose, with its reason.
+        return sink.send({ type: 'end', meta: change.end });
+      }
       if ('progress' in change) {
         await progress(change.progress, change.meta);
       } else if ('upsert' in change) {

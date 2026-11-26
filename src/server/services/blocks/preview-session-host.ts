@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import { base32Decode, base32Encode } from '~/server/utils/base32';
 
 /**
  * App Assistant direct preview: the SESSION HOST civitai mints for one preview session, and the
@@ -24,7 +25,6 @@ const MAC_DOMAIN = 'sandbox-preview:v1:';
 const RAW_BYTES = 38;
 const SIGNED_BYTES = 26;
 const MAC_BYTES = 12;
-const ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 /** The full DNS label: "s" + 61 base32 characters, inside the 63-character label limit. */
 export const PREVIEW_LABEL_LENGTH = 62;
 const LABEL_SHAPE = /^s[a-z2-7]{61}$/;
@@ -40,42 +40,6 @@ export type PreviewLabelFields = {
   /** Unix seconds. */
   exp: number;
 };
-
-export function base32Encode(raw: Uint8Array): string {
-  let out = '';
-  let acc = 0;
-  let bits = 0;
-  for (const byte of raw) {
-    acc = (acc << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      bits -= 5;
-      out += ALPHABET[(acc >>> bits) & 31];
-    }
-    acc &= (1 << bits) - 1;
-  }
-  if (bits > 0) out += ALPHABET[(acc << (5 - bits)) & 31];
-  return out;
-}
-
-/** Lowercase alphabet only (null on any other character). Spare trailing bits are discarded. */
-export function base32Decode(text: string): Buffer | null {
-  const out: number[] = [];
-  let acc = 0;
-  let bits = 0;
-  for (const ch of text) {
-    const v = ALPHABET.indexOf(ch);
-    if (v < 0) return null;
-    acc = (acc << 5) | v;
-    bits += 5;
-    if (bits >= 8) {
-      bits -= 8;
-      out.push((acc >>> bits) & 0xff);
-    }
-    acc &= (1 << bits) - 1;
-  }
-  return Buffer.from(out);
-}
 
 function signedBytes(f: PreviewLabelFields): Buffer {
   const b = Buffer.alloc(SIGNED_BYTES);

@@ -6,6 +6,10 @@ import { createEmail, emailTheme, EMAIL_MUTED_CLASS, renderEmailShell } from '@c
 type VerificationData = { to: string; url: string };
 
 export const verificationEmail = createEmail<VerificationData, void>({
+  template: 'verification',
+  mailClass: 'transactional',
+  // Its link is single-use: never sent to a link tracker (a scanner must not be what spends it).
+  oneTimeTokenLinks: true,
   header: ({ to }) => ({ subject: 'Sign in to Civitai', to }),
   html: ({ url }) =>
     renderEmailShell({

@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { CSAM_LINK_TABLES_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as ImageService from '~/server/services/image.service';
@@ -10,6 +13,38 @@ const { enqueueImageIngestion, preventReplicationLag } = vi.hoisted(() => ({
   enqueueImageIngestion: vi.fn(),
   preventReplicationLag: vi.fn(async () => undefined),
 }));
+
+// The withheld rule a rescan asks runs for real. Image 30 is withheld from a moderator without the
+// grant; every other image is not.
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => holder.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(`
+    ${CSAM_LINK_TABLES_SQL}
+    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
+      "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
+    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
+    CREATE TABLE "BlockedImage" (hash bigint, reason text);
+    CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+    CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+    CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
+    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
+    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL, "deniedAt" timestamptz NOT NULL DEFAULT now(), "retractedAt" timestamptz DEFAULT now());
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
+    INSERT INTO "Image" (id, url, ingestion, "userId") VALUES (10, 'key-10', 'Scanned', 7), (30, 'key-30', 'Scanned', 7);
+    INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (31, 'key-30', 'Blocked', 'CSAM', 8);
+  `);
+}, 60_000);
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -24,7 +59,11 @@ vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
   submitTextModerationOrScan: vi.fn(async () => undefined),
 }));
 
-import { rescanArticle, rescanArticleImage } from '~/server/services/article.service';
+import {
+  rescanArticle,
+  rescanArticleImage,
+  retryArticleErrorImages,
+} from '~/server/services/article.service';
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -172,10 +211,22 @@ const requeued = async () => {
 };
 
 describe('rescanArticle', () => {
+  it('skips a withheld image for a caller without the grant, and re-queues it with the grant', async () => {
+    const withheld = image(30);
+    storeImages({ connected: [CLEAN, withheld] });
+    await rescanArticle({ csamReview: false, id: ARTICLE_ID, isModerator: false });
+    expect(await requeued()).toEqual([CLEAN.id]);
+
+    vi.clearAllMocks();
+    storeImages({ connected: [CLEAN, withheld] });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
+    expect((await requeued()).sort()).toEqual([CLEAN.id, withheld.id]);
+  });
+
   it("re-queues only the author's settled, unblocked images", async () => {
     storeImages({ connected: [CLEAN, ...SKIPPED.map(([, img]) => img)] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
     // Refused on the read, so the write never sees them.
@@ -189,7 +240,7 @@ describe('rescanArticle', () => {
     storeArticle(cover.id);
     storeImages({ connected: [CLEAN], byId: [cover] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect((await requeued()).sort()).toEqual([CLEAN.id, cover.id]);
   });
@@ -200,7 +251,7 @@ describe('rescanArticle', () => {
     storeArticle(cover.id, banner.id);
     storeImages({ connected: [CLEAN], byId: [cover, banner] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect((await requeued()).sort()).toEqual([CLEAN.id, cover.id, banner.id]);
   });
@@ -209,7 +260,7 @@ describe('rescanArticle', () => {
     storeArticle(BLOCKED.id);
     storeImages({ connected: [CLEAN], byId: [BLOCKED] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
   });
@@ -218,7 +269,7 @@ describe('rescanArticle', () => {
     const elsewhere = image(20);
     storeImages({ connected: [CLEAN], byId: [elsewhere] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
   });
@@ -230,7 +281,7 @@ describe('rescanArticle', () => {
       landedAfterRead[changing.id] = change;
       storeImages({ connected: [CLEAN, changing] });
 
-      await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+      await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
       expect(await requeued()).toEqual([CLEAN.id]);
     }
@@ -239,7 +290,13 @@ describe('rescanArticle', () => {
 
 describe('rescanArticleImage', () => {
   const rescan = (img: Img, userId = AUTHOR) =>
-    rescanArticleImage({ articleId: ARTICLE_ID, imageId: img.id, userId, isModerator: true });
+    rescanArticleImage({
+      csamReview: true,
+      articleId: ARTICLE_ID,
+      imageId: img.id,
+      userId,
+      isModerator: true,
+    });
 
   it.each(SKIPPED.filter(([, img]) => img !== PENDING))(
     'refuses %s, so the caller is not told it was sent',
@@ -293,4 +350,55 @@ describe('rescanArticleImage', () => {
       expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
     }
   );
+});
+
+describe("retryArticleErrorImages, the reconcile job's retry round", () => {
+  const FAILED = image(30, { ingestion: 'Error' });
+  const MISSING = image(31, { ingestion: 'NotFound' });
+  const retry = (over: Partial<Parameters<typeof retryArticleErrorImages>[0]> = {}) =>
+    retryArticleErrorImages({
+      article: { id: ARTICLE_ID, userId: AUTHOR, coverId: null, bannerId: null },
+      includeNotFound: true,
+      budget: 10,
+      fullBudget: true,
+      ...over,
+    });
+
+  // Agreed with the Moderation Lead (#10522): the retry never re-submits an image under review.
+  it('never re-submits a failed image a moderator has yet to review', async () => {
+    storeImages({ connected: [image(32, { ingestion: 'Error', needsReview: 'minor' })] });
+
+    expect(await retry()).toEqual({ sent: 0, deferred: false });
+    expect(await requeued()).toEqual([]);
+  });
+
+  it('re-submits the same failed image once nothing awaits review', async () => {
+    storeImages({ connected: [image(32, { ingestion: 'Error' })] });
+
+    expect(await retry()).toEqual({ sent: 1, deferred: false });
+    expect(await requeued()).toEqual([32]);
+  });
+
+  it('re-submits only failed images: a scanned or blocked one is left as it is', async () => {
+    storeImages({ connected: [CLEAN, BLOCK_REASON_ONLY, FAILED] });
+
+    await retry();
+
+    expect(await requeued()).toEqual([FAILED.id]);
+  });
+
+  it('leaves a missing image alone after the first round', async () => {
+    storeImages({ connected: [FAILED, MISSING] });
+
+    await retry({ includeNotFound: false });
+
+    expect(await requeued()).toEqual([FAILED.id]);
+  });
+
+  it('sends nothing when the images exceed what is left of the tick', async () => {
+    storeImages({ connected: [FAILED, MISSING] });
+
+    expect(await retry({ budget: 1, fullBudget: false })).toEqual({ sent: 0, deferred: true });
+    expect(await requeued()).toEqual([]);
+  });
 });

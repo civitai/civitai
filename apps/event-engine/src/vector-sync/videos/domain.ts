@@ -37,14 +37,8 @@ export const videoDomain: Domain<VideoPayload> = {
   getDocs: getVideoDocs,
   topics: VIDEO_TOPICS,
   refFromEvent: videoRefFromEvent,
-  // A block, review or scan change touches only the Image row.
+  // No refresh walk: removals arrive as changes to the Image row.
   cdcTables: ['public.Image', 'public.TagsOnImageNew', 'public.ImageResourceNew'],
-  // Held media and owner holds change no Image row; the walk deletes those points.
-  refresh: {
-    everyMs: config.vectorSync.videoRefreshMinutes * 60_000,
-    batch: 500,
-    startupDelayMs: 10 * 60_000,
-  },
   embedInput: (id, payload) => ({ id: String(id), videoUrl: videoEmbedUrl(payload.url) }),
   rejected: redisRejectedMemo,
   store: videoVectorStore,

@@ -16,25 +16,28 @@ export function sqlRef(ref: string): string {
 
 /**
  * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
- * user) or has an active evidence hold. Names the "EvidenceHeldUser" view, so a database without it
- * fails the statement, which refuses.
+ * user).
  */
 export function heldUserSql(column: string): string {
   const user = sqlRef(column);
   return `(
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(${user} IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (${user})::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
     )`;
+}
+
+/** Whether the "Image" row aliased `image` is itself in the CSAM queue or blocked as CSAM. */
+export function heldItemImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."needsReview" = 'csam' OR ${image}."blockedFor" = 'CSAM')`;
 }
 
 /**
@@ -48,6 +51,8 @@ export function heldUserSql(column: string): string {
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const owner = `${image}."userId"`;
+  // Keep in step with the main app's OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts): an image
+  // blocked for a reason added there and not here is still held here whenever its owner is held.
   return `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
@@ -57,12 +62,53 @@ export function heldImageSql(image: string): string {
 }
 
 /**
- * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
- * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs.
+ * Whether another image on the same stored url as the "Image" row aliased `image` is held by its
+ * own state: a live row in the CSAM queue, blocked as CSAM (`heldItemImageSql`) or listed on any
+ * CsamReport, or a moderator-deleted one that was in CSAM review or is listed. The same file must
+ * not be served through a second row. Item-level only, never the owner's, which is why it is not
+ * `heldUrlSql` (held-url.ts), whose legs also read the owner, post and model. Never NULL.
  */
-export function csamSignalImageSql(image: string): string {
+export function sharedFileHeldImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'sf_i' || image === 'sf_d')
+    throw new Error(`Bad table alias: ${image}`);
+  return `(
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = ${image}.url AND sf_i.id <> ${image}.id
+        AND (${heldItemImageSql(
+          'sf_i'
+        )} OR (sf_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = ${image}.url AND sf_d."imageId" <> ${image}.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+    )
+  )`;
+}
+
+/** `heldImageSql`, false rather than NULL for an image with no review flag or block reason. */
+export function heldImageKnownSql(image: string): string {
+  return `COALESCE(${heldImageSql(image)}, false)`;
+}
+
+/**
+ * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
+ * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs. With
+ * `scanFlag: false` a scan flag alone does not count; with `hold: false` a hold alone does not.
+ */
+export function csamSignalImageSql(
+  image: string,
+  { scanFlag = true, hold = true }: { scanFlag?: boolean; hold?: boolean } = {}
+): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
+  const flagged = scanFlag
+    ? `
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelFlag" sf WHERE sf."itemId" = si.id AND sf.snapshot ->> 'csam' = 'true'
+        )`
+    : '';
   return `(
     EXISTS (
       SELECT 1 FROM "BlockedImage" sb WHERE sb.hash = ${image}."pHash" AND sb.reason = 'CSAM'
@@ -70,10 +116,7 @@ export function csamSignalImageSql(image: string): string {
     OR EXISTS (
       SELECT 1 FROM "ScanLabelItem" si
       WHERE si."imageId" = ${id} AND (
-        si."voidReason" = 'csam-hold'
-        OR EXISTS (
-          SELECT 1 FROM "ScanLabelFlag" sf WHERE sf."itemId" = si.id AND sf.snapshot ->> 'csam' = 'true'
-        )
+        ${hold ? `si."voidReason" = 'csam-hold'` : 'false'}${flagged}
         OR EXISTS (
           SELECT 1 FROM "ScanLabelVote" sv WHERE sv."itemId" = si.id AND sv.reason = 'csam-realistic'
         )

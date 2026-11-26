@@ -9,6 +9,7 @@ import {
   RETRACTED_SERVED_ACTIVITY,
   retractedMediaRateKey,
 } from '@civitai/shared/retracted-media';
+import { SERVED_ACTIVITY } from '@civitai/shared/held-media';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getRetractedMedia } from '~/server/services/retracted-media.service';
@@ -68,7 +69,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       trackModActivity(user.id, {
         entityType: 'image',
         entityId: imageId,
-        activity: RETRACTED_SERVED_ACTIVITY,
+        activity: media.held ? SERVED_ACTIVITY : RETRACTED_SERVED_ACTIVITY,
       }),
     auditEveryRange: true,
     maxBytes: RETRACTED_MEDIA_MAX_BYTES,

@@ -51,6 +51,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { canViewerOpenModel } from '~/server/services/model-visibility.service';
+import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -562,9 +563,11 @@ export const getVotableTags = async ({
   id,
   take = 100,
   isModerator = false,
+  ownerSeesHeld = false,
 }: GetVotableTagsSchema & {
   userId?: number;
   isModerator?: boolean;
+  ownerSeesHeld?: boolean;
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
@@ -596,7 +599,7 @@ export const getVotableTags = async ({
     results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
     // imageTagsCache is keyed by image id alone, so the viewer check runs first.
-    await assertImageVisibleToViewer({ id, userId, isModerator });
+    await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
     // Fetch from cache
@@ -952,7 +955,12 @@ export const findOrCreateTagsByName = async (tags: string[]) => {
   return tagCache;
 };
 
-export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
+export const disableTags = async ({
+  tags,
+  entityIds,
+  entityType,
+  csamReview,
+}: AdjustTagsSchema & { csamReview: boolean }) => {
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
@@ -976,6 +984,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
     // view ever starts honoring `disabled`, and to keep model mutations uniformly busting.
     await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
+    await assertMayLoosenImages(entityIds, { csamReview });
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT "imageId", "tagId"
       FROM "TagsOnImageDetails"

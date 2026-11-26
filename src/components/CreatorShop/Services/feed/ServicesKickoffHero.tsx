@@ -1,21 +1,13 @@
 import { Badge, Button, Card, Group, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconArticle, IconPlayerPlay, IconPlus, IconSparkles } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { SellGate } from '~/components/CreatorShop/Services/SellGate';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
-
-const ServiceOfferingFormModal = dynamic(() =>
-  import('~/components/CreatorShop/Services/ServiceOfferingFormModal').then(
-    (m) => m.ServiceOfferingFormModal
-  )
-);
-const VideoModal = dynamic(() => import('~/components/Events/ScoredEvent/HatTurfVideoModal'));
 
 /** 2400x800 PG art; its left ~35% is plain purple, where the copy sits from `lg` up. */
 export const SERVICES_HERO_IMAGE = 'cad28b23-f957-443e-9370-fc0bfd48a91c';
@@ -87,9 +79,9 @@ export function ServicesKickoffHero() {
             color="gray"
             leftSection={<IconPlayerPlay size={18} />}
             onClick={() =>
-              dialogStore.trigger({
-                component: VideoModal,
-                props: { video: SERVICES_LAUNCH_VIDEO_URL, title: 'Hire a Pro' },
+              openDialog(() => import('~/components/Events/ScoredEvent/HatTurfVideoModal'), {
+                video: SERVICES_LAUNCH_VIDEO_URL,
+                title: 'Hire a Pro',
               })
             }
           >
@@ -133,7 +125,12 @@ function ListServiceButton() {
     );
 
   if (eligibility.data?.canSell)
-    return button(() => dialogStore.trigger({ component: ServiceOfferingFormModal }));
+    return button(() =>
+      openDialog(
+        () => import('~/components/CreatorShop/Services/ServiceOfferingFormModal'),
+        'ServiceOfferingFormModal'
+      )
+    );
 
   return button(() => eligibility.refetch());
 }

@@ -6,14 +6,13 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as RequireLoginMod from '~/components/Login/requireLogin';
 import type * as ToursProviderMod from '~/components/Tours/ToursProvider';
-import { APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT } from '~/server/schema/app-access-request.schema';
 
 /**
- * "Request access" on the `/apps/build` pitch, through the REAL panel, the REAL dialog store and
- * the REAL modal form: the button opens the form, the form validates against the server's own
- * schema before anything is sent, a valid form sends the mutation's input shape, and the viewer
- * sees what became of their request — including that an approval is real: the approved state
- * links to a full load of `/apps/build`, where the assistant is chosen server-side.
+ * "Request access" on the `/apps/build` pitch, through the REAL panel and its REAL inline form:
+ * one click sends a request (the answer is optional), the form validates against the server's own
+ * schema, a request the server approved on the spot reloads the page into the build surface, and
+ * the viewer sees what became of their request — including that an approval is real: the approved
+ * state links to a full load of `/apps/build`, where the assistant is chosen server-side.
  */
 
 type Request = {
@@ -33,6 +32,9 @@ const mocks = vi.hoisted(() => ({
   /** `undefined` = `getMine` has not answered yet; `null` = never asked. */
   request: null as undefined | null | Request,
   submitted: [] as unknown[],
+  /** What the server makes of a submit: pending (manual queue) or approved (auto-approval). */
+  submitResult: 'pending' as 'pending' | 'approved',
+  invalidated: [] as string[],
   submitPending: false,
   submitError: null as null | { message: string },
   requireLogin: vi.fn(),
@@ -57,21 +59,31 @@ vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: makeTrpcProxy({
-    'appAccessRequest.getMine': {
-      useQuery: () => ({ data: mocks.request, isLoading: false }),
+  trpc: makeTrpcProxy(
+    {
+      'appAccessRequest.getMine': {
+        useQuery: () => ({ data: mocks.request, isLoading: false }),
+      },
+      'appAccessRequest.submit': {
+        useMutation: (opts?: { onSuccess?: (row: unknown) => unknown }) => ({
+          mutate: (input: unknown) => {
+            mocks.submitted.push(input);
+            void opts?.onSuccess?.({ id: 501, status: mocks.submitResult });
+          },
+          isPending: mocks.submitPending,
+          error: mocks.submitError,
+        }),
+      },
     },
-    'appAccessRequest.submit': {
-      useMutation: (opts?: { onSuccess?: () => unknown }) => ({
-        mutate: (input: unknown) => {
-          mocks.submitted.push(input);
-          void opts?.onSuccess?.();
+    {
+      // A stable spy: the proxy's default `useUtils` mints a fresh one per read.
+      useUtils: () => ({
+        appAccessRequest: {
+          getMine: { invalidate: async () => void mocks.invalidated.push('getMine') },
         },
-        isPending: mocks.submitPending,
-        error: mocks.submitError,
       }),
-    },
-  }),
+    }
+  ),
 }));
 
 const { AppAccessRequestPanel } = await import('./AppAccessRequestPanel');
@@ -83,9 +95,8 @@ const router = useRouter() as unknown as {
   asPath: string;
   pathname: string;
   replace: ReturnType<typeof vi.fn>;
+  reload: ReturnType<typeof vi.fn>;
 };
-const { DialogProvider } = await import('~/components/Dialog/DialogProvider');
-const { dialogStore, useDialogStore } = await import('~/components/Dialog/dialogStore');
 
 const IDEA = 'A sketchbook app that turns my rough line art into a coloured comic panel.';
 const PENDING: Request = {
@@ -96,25 +107,20 @@ const PENDING: Request = {
   reviewedAt: null,
 };
 
-function render() {
-  renderWithProviders(
-    <>
-      <AppAccessRequestPanel onRequest={mocks.onRequest} />
-      <DialogProvider />
-    </>
-  );
-}
+const ui = () => <AppAccessRequestPanel onRequest={mocks.onRequest} />;
+const render = () => renderWithProviders(ui());
 
 const whatToBuild = () => page.getByTestId('app-access-what-to-build');
-const submit = () => page.getByTestId('app-access-submit');
-/** The dialogs the store holds open. Opening the form pushes onto it synchronously, in the click. */
-const openDialogIds = () => useDialogStore.getState().dialogs.map((d) => d.id);
+const form = () => page.getByTestId('app-access-request-form');
+/** Whether the form's text box holds focus — what the deep link does for an eligible viewer. */
+const textBoxFocused = () => document.activeElement?.id === 'app-access-what-to-build';
 
 beforeEach(() => {
-  dialogStore.closeAll?.();
   mocks.user = { id: 42, username: 'lena_paints', isModerator: false };
   mocks.request = null;
   mocks.submitted = [];
+  mocks.submitResult = 'pending';
+  mocks.invalidated = [];
   mocks.submitPending = false;
   mocks.submitError = null;
   mocks.requireLogin.mockReset();
@@ -124,41 +130,57 @@ beforeEach(() => {
   router.asPath = '/apps/build';
   router.pathname = '/apps/build';
   router.replace.mockClear();
+  router.reload.mockClear();
   mocks.sessionStatus = 'authenticated';
+  (document.activeElement as HTMLElement | null)?.blur?.();
 });
 
 describe('AppAccessRequestPanel — a first request', () => {
-  test('the button opens the form, and a valid form sends the text', async () => {
+  test('🔴 ONE click sends a request: the answer is optional and an empty box is sent as empty', async () => {
     render();
+    await expect.element(whatToBuild()).toHaveValue('');
     await page.getByRole('button', { name: 'Request access' }).click();
-    expect(mocks.onRequest).toHaveBeenCalledTimes(1);
-    // The store read the signed-out case relies on can see an open form.
-    expect(openDialogIds()).toEqual(['app-access-request']);
-    await expect.element(whatToBuild()).toBeInTheDocument();
-
-    await userEvent.fill(whatToBuild().element() as HTMLElement, IDEA);
-    await submit().click();
 
     await vi.waitFor(() => expect(mocks.submitted).toHaveLength(1));
-    expect(mocks.submitted[0]).toEqual({ whatToBuild: IDEA });
+    expect(mocks.submitted[0]).toEqual({ whatToBuild: '' });
+    expect(mocks.onRequest).toHaveBeenCalledTimes(1);
   });
 
-  test('🔴 a too-short idea shows the schema’s message and sends nothing', async () => {
+  test('what the person writes is sent, short answers included', async () => {
+    render();
+    await expect.element(whatToBuild()).toBeInTheDocument();
+    await userEvent.fill(whatToBuild().element() as HTMLElement, IDEA);
+    await page.getByRole('button', { name: 'Request access' }).click();
+    await vi.waitFor(() => expect(mocks.submitted).toEqual([{ whatToBuild: IDEA }]));
+
+    await userEvent.fill(whatToBuild().element() as HTMLElement, 'a game');
+    await page.getByRole('button', { name: 'Request access' }).click();
+    await vi.waitFor(() => expect(mocks.submitted).toHaveLength(2));
+    expect(mocks.submitted[1]).toEqual({ whatToBuild: 'a game' });
+  });
+
+  test('🔴 approved on the spot: the page RELOADS into the build surface', async () => {
+    mocks.submitResult = 'approved';
     render();
     await page.getByRole('button', { name: 'Request access' }).click();
-    await expect.element(whatToBuild()).toBeInTheDocument();
-    await userEvent.fill(whatToBuild().element() as HTMLElement, 'a game');
-    await submit().click();
-    await expect.element(page.getByText(APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT)).toBeInTheDocument();
-    expect(mocks.submitted).toEqual([]);
+    await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
   });
 
-  test('while sending, the submit button is busy; a server refusal is shown in the form', async () => {
+  test('🔴 left pending: no reload; the status query is refetched so the panel shows it', async () => {
+    mocks.submitResult = 'pending';
+    render();
+    await page.getByRole('button', { name: 'Request access' }).click();
+    await vi.waitFor(() => expect(mocks.invalidated).toEqual(['getMine']));
+    expect(router.reload).not.toHaveBeenCalled();
+  });
+
+  test('while sending, the button is busy; a server refusal is shown in the form', async () => {
     mocks.submitPending = true;
     mocks.submitError = { message: 'Your request is waiting for review.' };
     render();
-    await page.getByRole('button', { name: 'Request access' }).click();
-    await expect.element(submit()).toHaveAttribute('data-loading', 'true');
+    await expect
+      .element(page.getByTestId('app-access-request-button'))
+      .toHaveAttribute('data-loading', 'true');
     await expect
       .element(page.getByTestId('app-access-submit-error'))
       .toHaveTextContent('Your request is waiting for review.');
@@ -176,6 +198,7 @@ describe('AppAccessRequestPanel — the viewer’s request status', () => {
       .element(page.getByText('A moderator will review your request.'))
       .toBeInTheDocument();
     expect(page.getByRole('button').elements()).toHaveLength(0);
+    expect(form().elements()).toHaveLength(0);
   });
 
   test('🔴 approved: says access is on, and links to a FULL load of /apps/build', async () => {
@@ -197,9 +220,10 @@ describe('AppAccessRequestPanel — the viewer’s request status', () => {
     // with fresh flags.
     await expect.element(open).toHaveAttribute('href', '/apps/build');
     expect(page.getByRole('button', { name: /Request access/ }).elements()).toHaveLength(0);
+    expect(form().elements()).toHaveLength(0);
   });
 
-  test('declined: says so, and a new request starts from an EMPTY form', async () => {
+  test('declined: says so, and a new request starts from an EMPTY form, one click', async () => {
     mocks.request = {
       ...PENDING,
       status: 'declined',
@@ -207,22 +231,22 @@ describe('AppAccessRequestPanel — the viewer’s request status', () => {
     };
     render();
     await expect.element(page.getByText('Not approved', { exact: true })).toBeInTheDocument();
-    await page.getByRole('button', { name: 'Request access again' }).click();
     await expect.element(whatToBuild()).toHaveValue('');
+    await page.getByRole('button', { name: 'Request access again' }).click();
+    await vi.waitFor(() => expect(mocks.submitted).toEqual([{ whatToBuild: '' }]));
   });
 });
 
 describe('AppAccessRequestPanel — signed out', () => {
-  test('🔴 the button goes to sign-in first and opens no form', async () => {
+  test('🔴 the button goes to sign-in first and sends nothing', async () => {
     mocks.user = null;
     render();
     await page.getByRole('button', { name: 'Request access' }).click();
     // Positive first: the click reached the sign-in flow, so the click's handlers have run.
     expect(mocks.requireLogin).toHaveBeenCalledTimes(1);
     expect(mocks.requireLogin.mock.calls[0][0]).toMatchObject({ reason: 'perform-action' });
-    // The store, not the DOM, is the settled answer: a form opened in the click would already be
-    // in it, while its DOM mounts later, behind a lazy import.
-    expect(openDialogIds()).toEqual([]);
+    expect(mocks.submitted).toEqual([]);
+    expect(form().elements()).toHaveLength(0);
   });
 });
 
@@ -242,13 +266,13 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     );
   };
 
-  test('🔴 an eligible viewer gets the form, and the param is dropped', async () => {
+  test('🔴 an eligible viewer gets the form focused, and the param is dropped', async () => {
     withParam();
     render();
-    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
-    await expect.element(whatToBuild()).toBeInTheDocument();
+    await vi.waitFor(() => expect(textBoxFocused()).toBe(true));
     expectParamDropped();
-    // Not a pitch click, so the click's tracking does not fire.
+    // Not a click, so nothing is sent and the click's tracking does not fire.
+    expect(mocks.submitted).toEqual([]);
     expect(mocks.onRequest).not.toHaveBeenCalled();
   });
 
@@ -263,13 +287,14 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     mocks.request = PENDING;
     withParam();
     render();
-    // Positive control first: the effect ran (it drops the param in the same pass that would open).
+    // Positive control first: the effect ran (it drops the param in the same pass that focuses).
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expectParamDropped();
     await expect
       .element(page.getByTestId('app-access-request-status'))
       .toHaveAttribute('data-status', 'pending');
-    expect(openDialogIds()).toEqual([]);
+    expect(form().elements()).toHaveLength(0);
+    expect(textBoxFocused()).toBe(false);
   });
 
   test('an APPROVED viewer gets no form either', async () => {
@@ -281,10 +306,10 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     withParam();
     render();
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
-    expect(openDialogIds()).toEqual([]);
+    expect(form().elements()).toHaveLength(0);
   });
 
-  test('a DECLINED viewer may ask again, so the form opens', async () => {
+  test('a DECLINED viewer may ask again, so the form is focused', async () => {
     mocks.request = {
       ...PENDING,
       status: 'declined',
@@ -292,33 +317,27 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     };
     withParam();
     render();
-    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
+    await vi.waitFor(() => expect(textBoxFocused()).toBe(true));
     expectParamDropped();
   });
 
-  test('🔴 nothing happens until getMine answers — no form over a status that may be pending', async () => {
+  test('🔴 nothing happens until getMine answers — the param waits for the status', async () => {
     mocks.request = undefined;
     withParam();
-    const ui = () => (
-      <>
-        <AppAccessRequestPanel onRequest={mocks.onRequest} />
-        <DialogProvider />
-      </>
-    );
     const view = await renderWithProviders(ui());
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
     expect(router.replace).not.toHaveBeenCalled();
-    expect(openDialogIds()).toEqual([]);
+    expect(textBoxFocused()).toBe(false);
 
-    // Positive control: once getMine answers "never asked", the same mount opens the form — so
-    // what held it back was the missing answer, not a slow or dead effect.
+    // Positive control: once getMine answers "never asked", the same mount acts — so what held it
+    // back was the missing answer, not a slow or dead effect.
     mocks.request = null;
     await view.rerender(ui());
-    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
+    await vi.waitFor(() => expect(textBoxFocused()).toBe(true));
     expect(router.replace).toHaveBeenCalledTimes(1);
   });
 
-  test('🔴 signed out: sign-in, returning to the URL WITH the param; no form', async () => {
+  test('🔴 signed out: sign-in, returning to the URL WITH the param; nothing sent', async () => {
     mocks.user = null;
     mocks.sessionStatus = 'unauthenticated';
     withParam();
@@ -333,7 +352,7 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     expect(router.replace.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.openLoginHere.mock.invocationCallOrder[0]
     );
-    expect(openDialogIds()).toEqual([]);
+    expect(mocks.submitted).toEqual([]);
   });
 
   test('🔴 a still-LOADING session is not a signed-out one: no sign-in, param kept', async () => {
@@ -346,10 +365,10 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  test('without the param, nothing opens and the URL is left alone', async () => {
+  test('without the param, nothing is focused and the URL is left alone', async () => {
     render();
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
-    expect(openDialogIds()).toEqual([]);
+    expect(textBoxFocused()).toBe(false);
     expect(router.replace).not.toHaveBeenCalled();
   });
 });

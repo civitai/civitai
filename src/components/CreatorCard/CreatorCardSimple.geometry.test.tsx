@@ -39,6 +39,10 @@ const { IntersectionObserverProvider } = await import(
 );
 const { CreatorCardSimple } = await import('~/components/CreatorCard/CreatorCardSimple');
 
+// An absolute URL passes through getEdgeUrl untouched, so the real clip loads with no mock.
+const clip = new URL('../../utils/metadata/__tests__/fixtures/video/core.webm', import.meta.url)
+  .href;
+
 const CARD_WIDTH = 320;
 const NAME = 'AVeryLongCreatorNameThatFillsAnyRoom';
 /** Below this the name reads as "V" / "Jo". */
@@ -85,5 +89,55 @@ describe('CreatorCardSimple name row at a 320px card', () => {
     const { name, actions } = await renderCard([32, 32]);
     expect(name.width).toBeGreaterThanOrEqual(MIN_NAME_WIDTH);
     expect(actions.top).toBeLessThan(name.bottom);
+  });
+});
+
+async function renderVideoBackgroundCard() {
+  await renderAtViewport(
+    <IntersectionObserverProvider>
+      <div style={{ width: CARD_WIDTH }}>
+        <CreatorCardSimple
+          user={{ id: 7, username: NAME }}
+          cosmeticOverwrites={[
+            {
+              id: 1,
+              type: 'ProfileBackground',
+              name: 'video bg',
+              data: { url: clip, type: 'video' },
+            } as never,
+          ]}
+        />
+      </div>
+    </IntersectionObserverProvider>,
+    { width: 390, height: 844 }
+  );
+  await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+  const name = page.getByText(NAME).element();
+  const { left, top, width, height } = name.getBoundingClientRect();
+  return { name, x: left + width / 2, y: top + height / 2 };
+}
+
+describe('CreatorCardSimple with a video profile background', () => {
+  test('the pointer lands on the username link, not the background video', async () => {
+    const { name, x, y } = await renderVideoBackgroundCard();
+    const hit = document.elementFromPoint(x, y);
+    expect(hit?.tagName).not.toBe('VIDEO');
+    expect(hit?.closest('a')).toBe(name.closest('a'));
+  });
+
+  // Firefox builds its context menu from more than the top hit (inferred, not reproduced in
+  // Playwright): a <video> anywhere in the stack at the point wins the menu over the link.
+  test('no video sits anywhere under the username', async () => {
+    const { x, y } = await renderVideoBackgroundCard();
+    const tags = document.elementsFromPoint(x, y).map((el) => el.tagName);
+    expect(tags).not.toContain('VIDEO');
+  });
+
+  test('the background video still plays and loops', async () => {
+    await renderVideoBackgroundCard();
+    const video = document.querySelector('video') as HTMLVideoElement;
+    // Playback is driven by EdgeVideo (play() once in view), not the autoplay attribute.
+    await vi.waitFor(() => expect(video.paused).toBe(false));
+    expect(video.loop).toBe(true);
   });
 });

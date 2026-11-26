@@ -79,7 +79,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   // or a moderator-only route).
   'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
-  'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
+  'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
@@ -720,6 +720,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],
     decision: 'subject',
+  },
+  // The account scrub drops the profile picture.
+  'src/server/services/user.service.ts#deleteUser': {
+    writes: ['profilePictureId: null'],
+    decision: 'clears',
   },
   // A version's own images, or community images that pass the showcase eligibility check.
   'src/server/services/version-showcase-curation.service.ts#setVersionShowcase': {

@@ -79,6 +79,8 @@ const POST_ITEM_MINOR_R_FIRST = 8046;
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Image" (
       "id"          integer PRIMARY KEY,
       "index"       integer,

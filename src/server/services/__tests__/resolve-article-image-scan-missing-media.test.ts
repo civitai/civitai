@@ -44,7 +44,13 @@ const ARTICLE_ID = 77;
 const IMAGE_ID = 4242;
 
 const run = () =>
-  resolveArticleImageScan({ articleId: ARTICLE_ID, imageId: IMAGE_ID, nsfwLevel: 1, userId: 7 });
+  resolveArticleImageScan({
+    csamReview: true,
+    articleId: ARTICLE_ID,
+    imageId: IMAGE_ID,
+    nsfwLevel: 1,
+    userId: 7,
+  });
 
 const ownMocks = [headObject, getImageUploadBackend, queueUpdate];
 

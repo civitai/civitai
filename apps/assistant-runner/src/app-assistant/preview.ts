@@ -11,6 +11,7 @@ import type { ChatTool } from '@civitai/components-chat/core';
 
 import type { Logger } from '../core/interfaces';
 import { DevTunnelError, type DevTunnels, type PreviewOpenAnswer } from './dev-tunnel';
+import { npmInstallRunningProbe, runNpmInstall } from './npm-install';
 
 /**
  * How often a live run stamps its app's tunnel's idle clock. civitai reaps a tunnel 30 minutes
@@ -28,8 +29,9 @@ const DETAIL_CHARS = 500;
  * How long `startDevServer` waits for the dev server it started to listen; its last probe can run
  * up to `PROBE_TIMEOUT_MS` past it. Vite on a scaffolded App Block listens within seconds. The whole
  * Restart is one request whose grant must still cover the tunnel's start after this
- * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app, so
- * this is kept short.
+ * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app and, for
+ * a project whose dependencies are not installed, its install (`NPM_INSTALL_TIMEOUT_MS`), so this
+ * is kept short.
  */
 export const DEV_SERVER_WAIT_MS = 20_000;
 const DEV_SERVER_POLL_MS = 1_000;
@@ -53,7 +55,9 @@ export interface RunnerPreviewDeps {
     call(
       tool: string,
       args: Record<string, unknown>,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      /** `timeoutMs`: how long to wait for its answer (`AppSandbox.call`'s own default unless set). */
+      options?: { timeoutMs?: number }
     ): Promise<{ text: string; isError: boolean }>;
     /**
      * The open app's current preview id (`AppSandbox.previewId`), and a new one
@@ -300,7 +304,16 @@ export class RunnerPreview {
    * to listen. Never a second one: one already running (or started meanwhile by another start, which
    * the sandbox refuses ours for) is only waited for. The project is the directory the sandbox last
    * ran it in, else the app key's own, else the only top-level directory, that holds a
-   * `block.manifest.json`. Throws `DevServerStartError`, saying what failed, when it does not run.
+   * `block.manifest.json`. A project whose dependencies are not installed (an app whose files were
+   * seeded: woken from hibernation, remixed; or one whose last install was cut off) gets
+   * `npm install` first, bounded by `NPM_INSTALL_TIMEOUT_MS`, as the assistant is told to before it
+   * starts one; else `npm run dev` finds no `vite` and exits 127. Installed means npm's own record of
+   * a finished install, `node_modules/.package-lock.json`, which npm (7 and later) writes last: a
+   * `node_modules` alone may be what a killed install left. One that is installed is never installed
+   * into, and none is installed while another npm install runs in the sandbox (the assistant's own,
+   * in a reply): two in one directory break its tree. Throws `DevServerStartError`, saying what
+   * failed, when it does not run (`installing`: another install runs, or the sandbox would not say
+   * whether one does; `install-failed`: ours did not exit 0, or did not answer).
    */
   startDevServer(signal?: AbortSignal): Promise<void> {
     return this.#serial(async () => {
@@ -310,6 +323,10 @@ export class RunnerPreview {
       if (status?.running !== true) {
         const dir = await this.#projectDir(app.app, status, signal);
         if (!dir) throw new DevServerStartError('no-project');
+        if (!(await this.#installed(dir, signal))) {
+          if (await this.#installRunning(signal)) throw new DevServerStartError('installing');
+          await this.#install(dir, signal);
+        }
         const started = await this.#deps.sandbox.call(
           'dev_server_start',
           { command: `cd ${dir} && ${DEV_SERVER_COMMAND}` },
@@ -356,6 +373,70 @@ export class RunnerPreview {
       .map((line) => line.trim())
       .filter(Boolean);
     return dirs.length === 1 && isProjectDir(dirs[0]!) ? dirs[0]! : null;
+  }
+
+  /**
+   * Whether the project's dependencies are installed: `node_modules/.package-lock.json` exists,
+   * which npm writes last in a finished install. Only `test -f`'s own exit 0 says so: a check that
+   * failed otherwise (a tool error, no answer) reads as not installed, so it installs (when no other
+   * install runs). An install over installed dependencies is npm finding little to do; skipping one
+   * that was needed is the dev server's exit 127. (An npm older than 7 writes no such file, so every
+   * start would install; the sandbox's npm is newer.)
+   */
+  async #installed(dir: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: `test -f ${dir}/node_modules/.package-lock.json`, timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      return !probe.isError && exitCodeOf(probe.text) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether an npm install runs anywhere in the sandbox now (`npmInstallRunningProbe`). Only its own
+   * `idle` says none does: a check that failed (a tool error, no answer, another output) reads as one
+   * running, so nothing is installed. A second install beside a running one breaks the project's
+   * tree, which is worse than asking the user to try again.
+   */
+  async #installRunning(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: npmInstallRunningProbe(), timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      return !(
+        !probe.isError &&
+        exitCodeOf(probe.text) === 0 &&
+        outputOf(probe.text).trim() === 'idle'
+      );
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * `cd <dir> && npm install` (`runNpmInstall`: bounded in the sandbox by `NPM_INSTALL_TIMEOUT_MS`,
+   * which kills it past that, and waited for that long plus `CALL_SLACK_MS`). Throws
+   * `install-failed` unless it exited 0. It runs inside the start's turn of `#serial`, so a
+   * `start_preview` meanwhile waits.
+   *
+   * The install keeps running if the page's request times out upstream; the next Restart finds it
+   * installed, or is told it is still installing.
+   */
+  async #install(dir: string, signal?: AbortSignal): Promise<void> {
+    let installed: { text: string; isError: boolean };
+    try {
+      installed = await runNpmInstall(this.#deps.sandbox, dir, signal);
+    } catch {
+      throw new DevServerStartError('install-failed');
+    }
+    if (installed.isError || exitCodeOf(installed.text) !== 0)
+      throw new DevServerStartError('install-failed');
   }
 
   async #hasManifest(dir: string, signal?: AbortSignal): Promise<boolean> {
@@ -846,15 +927,24 @@ export class DevServerNotRunningError extends Error {
 }
 
 /**
- * Starting the dev server failed: `no-project` (which project to start was not clear), `refused` (the
- * sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode` is its code),
- * or `timeout` (it never listened in time).
+ * Starting the dev server failed: `no-project` (which project to start was not clear),
+ * `installing` (its dependencies are not installed, and another npm install runs in the sandbox, or
+ * the sandbox would not say; nothing was installed or started), `install-failed` (its dependencies
+ * were not installed, and `npm install` did not exit 0 or did not answer; nothing was started),
+ * `refused` (the sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode`
+ * is its code), or `timeout` (it never listened in time).
  */
 export class DevServerStartError extends Error {
   override name = 'DevServerStartError';
   readonly exitCode: number | null;
   constructor(
-    readonly reason: 'no-project' | 'refused' | 'exited' | 'timeout',
+    readonly reason:
+      | 'no-project'
+      | 'installing'
+      | 'install-failed'
+      | 'refused'
+      | 'exited'
+      | 'timeout',
     status?: DevServerStatus
   ) {
     super(`The dev server did not start (${reason}).`);

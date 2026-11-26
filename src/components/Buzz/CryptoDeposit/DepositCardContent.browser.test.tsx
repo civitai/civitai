@@ -12,13 +12,14 @@ import { DepositCardContent } from '~/components/Buzz/CryptoDeposit/DepositCardC
 // must name the token they actually picked.
 
 let selectedTicker = 'usdc';
+let selectedNetwork: { network: string } | null = null;
 
 vi.mock('~/components/Buzz/CryptoDeposit/CurrencySelector', () => ({
   useCurrencySelection: () => ({
     selectedTicker,
     selectedCode: '',
     selectedGroup: null,
-    selectedNetwork: null,
+    selectedNetwork,
   }),
   CurrencyBadges: () => null,
   MinDepositInfo: () => null,
@@ -41,8 +42,9 @@ vi.mock('~/components/Buzz/CryptoDeposit/BulkBonusNotice', () => ({ BulkBonusNot
 vi.mock('~/components/Buzz/CryptoDeposit/FiatMenu', () => ({ FiatMenu: () => null }));
 vi.mock('qrcode.react', () => ({ QRCodeSVG: () => null }));
 
-function renderCard(chain: string, ticker: string) {
+function renderCard(chain: string, ticker: string, network: string | null = null) {
   selectedTicker = ticker;
+  selectedNetwork = network ? { network } : null;
   renderWithProviders(
     <DepositCardContent
       depositAddress="So11111111111111111111111111111111111111112"
@@ -77,5 +79,26 @@ describe('DepositCardContent Solana network warning', () => {
     await expect.element(page.getByText(/Bitcoin network/)).toBeInTheDocument();
     expect(document.body.textContent).toMatch(/Send BTC on the/);
     expect(document.body.textContent).not.toMatch(/Solana/);
+  });
+});
+
+describe('DepositCardContent cbBTC notice', () => {
+  const cbBtc = /cbBTC \(wrapped Bitcoin\) is not supported\./;
+
+  it.each(['base', 'eth', 'BASE'])('is on the %s card', async (network) => {
+    renderCard('evm', 'usdc', network);
+    await expect.element(page.getByText(cbBtc)).toBeInTheDocument();
+  });
+
+  it('is still on the Bitcoin card', async () => {
+    renderCard('btc', 'btc');
+    await expect.element(page.getByText(/Bitcoin network/)).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(cbBtc);
+  });
+
+  it('is not on another EVM network card', async () => {
+    renderCard('evm', 'usdc', 'polygon');
+    await expect.element(page.getByText(/So1111/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/cbBTC/);
   });
 });

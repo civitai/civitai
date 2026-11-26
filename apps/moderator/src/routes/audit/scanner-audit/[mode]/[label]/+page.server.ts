@@ -1,3 +1,4 @@
+import { holdsCsamReview } from '$lib/server/held-media';
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { focusedRun } from '$lib/server/scanner-review.service';
@@ -21,5 +22,13 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     latestVersionOnly: true,
   });
 
-  return { mode: params.mode, scanner, label, fullBleed: true, ...run };
+  return {
+    mode: params.mode,
+    scanner,
+    label,
+    fullBleed: true,
+    // The raw workflow route's own rule, so the page never offers a button that only answers 403.
+    canViewRawWorkflow: holdsCsamReview(locals.user),
+    ...run,
+  };
 };

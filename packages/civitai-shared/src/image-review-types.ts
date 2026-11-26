@@ -15,6 +15,9 @@ export const IMAGE_REVIEW_PRECEDENCE = [
 
 export type ImageReviewType = (typeof IMAGE_REVIEW_PRECEDENCE)[number];
 
+/** The review flag only the CSAM review clears: no unblock or other accept lifts an image under it. */
+export const CSAM_REVIEW_FLAG = 'csam' satisfies ImageReviewType;
+
 /** The reviews a grace block's record may put back: never 'csam', which the block keeps on the row, so
  *  one recorded with none left was dismissed. */
 export const RESTORABLE_REVIEWS = IMAGE_REVIEW_PRECEDENCE.filter((review) => review !== 'csam');

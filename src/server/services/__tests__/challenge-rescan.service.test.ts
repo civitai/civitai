@@ -117,7 +117,7 @@ describe('rescanChallenge', () => {
   });
 
   it('forces a fresh scan and never touches ingestion or scannedAt', async () => {
-    await rescanChallenge({ id: 42, moderatorId: 7 });
+    await rescanChallenge({ csamReview: true, id: 42, moderatorId: 7 });
 
     expect(mockSubmitTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'Challenge', entityId: 42, forceRescan: true })
@@ -128,7 +128,7 @@ describe('rescanChallenge', () => {
   });
 
   it('re-queues the cover image for ingestion', async () => {
-    await rescanChallenge({ id: 42, moderatorId: 7 });
+    await rescanChallenge({ csamReview: true, id: 42, moderatorId: 7 });
 
     expect(mockEnqueueImageIngestion).toHaveBeenCalledWith(
       expect.objectContaining({ images: [expect.objectContaining({ id: 900 })] })
@@ -143,7 +143,7 @@ describe('rescanChallenge', () => {
       ingestion: 'Pending',
     });
 
-    await rescanChallenge({ id: 42, moderatorId: 7 });
+    await rescanChallenge({ csamReview: true, id: 42, moderatorId: 7 });
 
     expect(mockEnqueueImageIngestion).not.toHaveBeenCalled();
     expect(mockSubmitTextModeration).toHaveBeenCalled();
@@ -154,13 +154,13 @@ describe('rescanChallenge', () => {
     // this the moderator sees a "rescan queued" confirmation for a scan that never happened.
     mockSubmitTextModeration.mockResolvedValue(undefined);
 
-    await expect(rescanChallenge({ id: 42, moderatorId: 7 })).rejects.toThrow();
+    await expect(rescanChallenge({ csamReview: true, id: 42, moderatorId: 7 })).rejects.toThrow();
   });
 
   it('throws when the challenge does not exist', async () => {
     mockDbWrite.challenge.findUnique.mockResolvedValue(null);
 
-    await expect(rescanChallenge({ id: 42, moderatorId: 7 })).rejects.toThrow();
+    await expect(rescanChallenge({ csamReview: true, id: 42, moderatorId: 7 })).rejects.toThrow();
   });
 });
 

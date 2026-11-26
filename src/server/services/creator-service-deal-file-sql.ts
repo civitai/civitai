@@ -16,6 +16,34 @@ const DEAL = Prisma.sql`"ServiceDeal"`;
  */
 export const liveFile = (f: Prisma.Sql) => Prisma.sql`${f}."removedAt" IS NULL`;
 
+/** How long our own scan-copy delete may take to settle before its marked entry counts as dangling. */
+export const SCAN_COPY_SETTLE_WINDOW_MINUTES = 30;
+
+type GoneOptions = {
+  /** Leave out entries our own copy delete marked within the settle window: still settling. */
+  exceptSettling?: boolean;
+};
+
+/** The entry `e` still points at an image that is gone. */
+export const entryImageGone = (e: Prisma.Sql, { exceptSettling = false }: GoneOptions = {}) =>
+  Prisma.sql`(${e}."imageId" IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = ${e}."imageId")${
+    exceptSettling
+      ? Prisma.sql`
+  AND (${e}."copyDeleteStartedAt" IS NULL
+    OR ${e}."copyDeleteStartedAt" < now() - ${SCAN_COPY_SETTLE_WINDOW_MINUTES}::int * interval '1 minute')`
+      : Prisma.empty
+  })`;
+
+/**
+ * An entry of the file still points at an image that is gone, so nothing shows the image was not
+ * held: the file is refused to everyone and does not count as clear. `f` names the file row.
+ */
+export const fileImageGone = (f: Prisma.Sql, options?: GoneOptions) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ServiceDealFileEntry" e
+  WHERE e."fileId" = ${f}."id" AND ${entryImageGone(Prisma.sql`e`, options)}
+)`;
+
 /**
  * The kinds the Final scan pipeline (unpack, repack, malware scan, verdict) runs on, as text to
  * compare `"kind"::text` with: the pipeline must keep running on a database that does not have the

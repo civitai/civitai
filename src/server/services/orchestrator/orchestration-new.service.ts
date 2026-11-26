@@ -21,6 +21,7 @@
  */
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
+import { dbWrite } from '~/server/db/client';
 import type {
   ImageBackgroundRemovalModel,
   ImageBackgroundRemovalStepTemplate,
@@ -45,7 +46,7 @@ import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { capsGenerationOutput, workflowOutputRestrictions } from './form-graph/output-restrictions';
+import { capsGenerationOutput, outputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -129,7 +130,11 @@ import { BlocklistType } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
+import {
+  toStepMetadata,
+  asResourceValue,
+  capsAsPrivateGeneration,
+} from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt, randomUUID } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
@@ -697,11 +702,10 @@ async function validateAndEnrichResources(
       : Promise.resolve(),
   ]);
 
-  // Private models need a subscription; epochs (raw-AIR included) only need ownership,
-  // which getResourceData and validateRawAirResources have already enforced.
+  // Private models need a subscription; epochs (raw-AIR included) and Draft versions only need
+  // ownership, already enforced by getResourceData and validateRawAirResources.
   const hasPrivate = resources.some((r) => r.availability === Availability.Private);
-  const hasPrivateOrEpoch =
-    hasPrivate || rawAirResources.length > 0 || resources.some((r) => !!r.epochDetails);
+  const isPrivateGeneration = [...resources, ...rawAirResources].some(capsAsPrivateGeneration);
 
   if (hasPrivate && user?.id && !user?.isModerator) {
     // Span localizes the gen-path park: subscription lookup for private use.
@@ -736,7 +740,7 @@ async function validateAndEnrichResources(
   return {
     enrichedResources,
     rawAirResources,
-    isPrivateGeneration: hasPrivateOrEpoch,
+    isPrivateGeneration,
     hasPoiResource: resources.some((r) => r.model.poi),
     // Raw-AIR epochs are not ModelVersions, so the orchestrator has no creator to tip for them.
     hasTipEligibleResource: anyTipEligible(resources),
@@ -1347,7 +1351,7 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
-  /** The submit's ecosystem, or a resource's base model, restricts mature generation. */
+  /** `capsGenerationOutput`: the output is held to PG-13. */
   capOutput: boolean;
 }> {
   data = expandAvatarData(data);
@@ -1375,6 +1379,8 @@ export async function createWorkflowStepsFromGraph({
     )
   );
   const capOutput = capsGenerationOutput({
+    isPrivateGeneration,
+    workflow: data.workflow,
     baseModels: enrichedResources.map((r) => r.baseModel),
     ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
   });
@@ -2078,10 +2084,6 @@ export async function generateFromGraph({
 
   const tips = buildWorkflowTips({ civitaiTip, creatorTip, hasTipEligibleResource });
 
-  // Check if private generation (from workflow metadata)
-  const isPrivateGeneration = !!(workflowMetadata as { isPrivateGeneration?: boolean })
-    ?.isPrivateGeneration;
-
   // Silent checkpoint substitutions recorded by the validation at the top of
   // this function (#3520 / #3665). Read off THIS request's per-request collector
   // — never a shared or cached object — so it describes this submit and no one
@@ -2173,12 +2175,7 @@ export async function generateFromGraph({
       experimental,
       metadata,
       callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
-      ...workflowOutputRestrictions({
-        workflow: data.workflow,
-        isPrivateGeneration,
-        capOutput,
-        allowMatureContent,
-      }),
+      ...outputRestrictions(capOutput, allowMatureContent),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       // Always an idempotency key: the form sends one per click, an API caller may send none,
@@ -3268,11 +3265,26 @@ function formatStep(
 export async function assertUnlockReleasesOutput({
   token,
   workflowId,
+  outsideComicEditor = false,
 }: {
   token: string;
   workflowId: string;
+  /** Callers outside the comic editor skip the per-panel unlock claim, so a comic panel's workflow is refused. */
+  outsideComicEditor?: boolean;
 }) {
+  // The owner-token read first, so a foreign id fails here alike, comic panel or not.
   const workflow = await getWorkflow({ token, path: { workflowId } });
+  // By the panel row, not a tag the owner can edit. This path takes no claim, so any path that
+  // removes a panel row or clears its workflowId must first wait out the panel's unlock claim, as
+  // the comic deletes do.
+  if (outsideComicEditor) {
+    // primary: the panel row is written at submit, just before its workflow can reach the queue.
+    const panel = await dbWrite.comicPanel.findFirst({
+      where: { workflowId },
+      select: { id: true },
+    });
+    if (panel) throw throwBadRequestError('Unlock this from the comic editor.');
+  }
   if (workflow.allowMatureContent === true)
     throw throwBadRequestError('This generation is already unlocked.');
   // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
@@ -3297,20 +3309,16 @@ export async function assertUnlockReleasesOutput({
   if (cap && matureLevels.every((level) => exceedsNsfwLevel(level, cap))) throw capRefusal();
 }
 
-type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };
+type UnlockViewer = { domain: ColorDomain };
 
 /**
- * Generation submits `allowMatureContent: false` on the green domain and for users with mature
- * content off; an unlock there would charge yellow Buzz for outputs they cannot be shown.
+ * Generation submits `allowMatureContent: false` on the green domain; an unlock there would charge
+ * yellow Buzz for outputs it cannot show.
  */
-export function assertUnlockAllowed({ domain, showNsfw }: UnlockViewer) {
+export function assertUnlockAllowed({ domain }: UnlockViewer) {
   if (domain === 'green')
     throw throwBadRequestError(
       'Mature content cannot be unlocked on this site. Open it on civitai.red to unlock.'
-    );
-  if (!showNsfw)
-    throw throwBadRequestError(
-      'Enable mature content in your account settings to unlock this generation.'
     );
 }
 
@@ -3322,7 +3330,7 @@ export async function updateWorkflow({
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
   if (props.allowMatureContent === true) {
     assertUnlockAllowed(viewer);
-    await assertUnlockReleasesOutput(props);
+    await assertUnlockReleasesOutput({ ...props, outsideComicEditor: true });
   }
   const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);

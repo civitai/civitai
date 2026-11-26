@@ -20,6 +20,8 @@ const { mockDisarm, mockUnblock, mockRecord, mockCount, mockCacheRefresh, mockQu
 
 vi.mock('~/server/services/account-deletion-images', () => ({
   disarmAccountDeletionImagePurge: mockDisarm,
+  lockAccountDeletionPendingDeletes: vi.fn(() => 'lock-statement'),
+  releaseAccountDeletionPendingDeletes: vi.fn(() => 'release-statement'),
   unblockAccountDeletionImages: mockUnblock,
   recordPendingImageRestore: mockRecord,
   countPendingAccountDeletionImageRestores: mockCount,
@@ -74,7 +76,11 @@ describe('restoreUser image recovery', () => {
     // Outside the batch, a crash between the two leaves a live account counting down to losing
     // every image it owns.
     expect(batch).toContain('disarm-statement');
-    expect(batch).toHaveLength(2);
+    // The drain's queued deletes are lifted with it, for the same reason.
+    expect(batch).toContain('release-statement');
+    // Locked first, so the release reads everything committed before it.
+    expect(batch.indexOf('lock-statement')).toBe(batch.indexOf('release-statement') - 1);
+    expect(batch).toHaveLength(4);
   });
 
   it('hands the gallery to the job instead of walking it inside the request', async () => {

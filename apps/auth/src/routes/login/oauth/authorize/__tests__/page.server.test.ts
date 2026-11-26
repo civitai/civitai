@@ -6,6 +6,8 @@ import { TokenScope } from '@civitai/auth/token-scope';
 const consentRow = vi.hoisted(() => ({
   current: undefined as Record<string, unknown> | undefined,
 }));
+// Extra OauthClient columns: a recipe-runner client's are set per test.
+const clientExtra = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 // The client's App Store connect listings (listing-offline.ts reads them); none by default, so the
 // client is unlisted and the offline line behaves as it did before listings counted.
 const listingRows = vi.hoisted(() => ({
@@ -14,6 +16,9 @@ const listingRows = vi.hoisted(() => ({
 }));
 vi.mock('$lib/server/db/db', () => ({
   db: {
+    withTables() {
+      return this;
+    },
     selectFrom(table: string) {
       const qb: Record<string, unknown> = {};
       qb.select = () => qb;
@@ -42,6 +47,7 @@ vi.mock('$lib/server/db/db', () => ({
           logoUrl: null,
           isVerified: true,
           redirectUris: ['https://games.example.com/cb'],
+          ...clientExtra.current,
         });
       return qb;
     },
@@ -184,6 +190,7 @@ describe('consent screen load — the offline line', () => {
   const ask = { offline_buzz_limit: '500', offline_buzz_period: 'week' };
   beforeEach(() => {
     consentRow.current = undefined;
+    clientExtra.current = {};
     listingRows.current = [];
     listingRows.fail = false;
   });
@@ -280,6 +287,35 @@ describe('consent screen load — the offline line', () => {
       custom: false,
       granted: true,
     });
+  });
+
+  it.each([
+    // This mock answers the binding read with the client row, so its `status` is the binding's.
+    [
+      'a bound recipe runner: its offline cap columns',
+      { status: 'active' },
+      { limit: 2000, period: 'week' },
+    ],
+    ['the same shape unbound: buzzLimit, as any app', {}, { limit: 800, period: 'month' }],
+  ] as const)('prefills the cap of %s', async (_, binding, cap) => {
+    flags.offlineGrant = true;
+    consentRow.current = {
+      scope: 1,
+      offlineGrantedAt: new Date('2026-11-01T00:00:00Z'),
+      buzzLimit: [{ type: 'sliding', limit: 800, window: 'day', unit: 30 }],
+      offlineBuzzLimit: 2000,
+      offlineBuzzPeriod: 'week',
+    };
+    clientExtra.current = {
+      userId: -1,
+      isConfidential: true,
+      skipConsent: false,
+      accessMode: 'open',
+      grants: ['authorization_code', 'refresh_token'],
+      ...binding,
+    };
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({ cap, custom: false, granted: true });
   });
 
   it('starts unticked when the consent exists without the grant', async () => {

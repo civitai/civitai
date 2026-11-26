@@ -34,3 +34,15 @@ export function openItem(secret: string, playerId: number, token: string): ItemR
     return null;
   }
 }
+
+/**
+ * An in-game inquisitor review, addressed the same way but under its own key: a review token never opens as a feed item,
+ * and a feed token never opens as a review.
+ */
+export const sealReview = (secret: string, moderatorId: number, reviewId: number) =>
+  sealItem(`${secret}:inquisitor-review`, moderatorId, { kind: 'queue', id: reviewId });
+
+export function openReviewToken(secret: string, moderatorId: number, token: string): number | null {
+  const ref = openItem(`${secret}:inquisitor-review`, moderatorId, token);
+  return ref?.kind === 'queue' ? ref.id : null;
+}

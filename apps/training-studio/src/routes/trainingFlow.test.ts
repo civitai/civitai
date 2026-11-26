@@ -15,8 +15,19 @@ import {
   type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import {
+  datasetBatches,
+  imagesInScope,
+  newBatch,
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
+  asDatasetFilter,
+  matchesRatingFilter,
+  matchesVerdictFilter,
+  imgRatingLabel,
+  isImgMature,
+  setVerdicts,
+  applyRatingAnswer,
+  ratingChoices,
   buildTrainingRuns,
   stampMature,
   captionTriggerHit,
@@ -983,16 +994,16 @@ describe('Kohya engine selection and options', () => {
   });
 
   it.each(['sdxl', 'pony', 'illustrious'])(
-    'offers Kohya clip skip for %s, defaulting to 2 with a floor of 2',
+    'offers Kohya clip skip for %s, defaulting to 2 and allowing 1',
     (type) => {
       const kohya = { ...run(type), engine: 'kohya' };
       const { ecosystem } = runVersion(kohya);
       expect(kohyaFieldSupported('clipSkip', ecosystem)).toBe(true);
-      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 2, max: 4 });
+      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 1, max: 4 });
       expect(defaultRunParams(kohya).clipSkip).toBe('2');
       expect(runTrainingParams(kohya, defaultRunParams(kohya), 'tag').kohya?.clipSkip).toBe(2);
-      const picked = { ...defaultRunParams(kohya), clipSkip: '3' };
-      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(3);
+      const picked = { ...defaultRunParams(kohya), clipSkip: '1' };
+      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(1);
     }
   );
 
@@ -1226,5 +1237,165 @@ describe('Krea 2 label modes', () => {
     expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
     // a labeled dataset keeps its format across the swap
     expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
+  });
+});
+
+describe('asDatasetFilter', () => {
+  it('takes the status filters and one per site rating, and nothing else', () => {
+    expect(asDatasetFilter('mature')).toBe('mature');
+    expect(asDatasetFilter('rating:pg13')).toBe('rating:pg13');
+    expect(asDatasetFilter('rating:na')).toBeUndefined();
+    expect(asDatasetFilter('rating:')).toBeUndefined();
+    expect(asDatasetFilter('grid')).toBeUndefined();
+  });
+});
+
+describe('rating filters', () => {
+  const img = (nsfwLevel: string | undefined, status: Img['status'] = 'uploaded') =>
+    ({
+      id: nextImgId(),
+      name: 'a.png',
+      previewUrl: '',
+      mediaType: 'image',
+      status,
+      progress: 1,
+      blobId: 'b',
+      nsfwLevel,
+      tags: [],
+      caption: '',
+    } as unknown as Img);
+
+  it('offers each rating among trainable images, and keeps the selected one at 0', () => {
+    const images = [img('pg'), img('X'), img('x'), img('r', 'blocked')];
+    expect(ratingChoices(images, 'all').map((r) => `${r.label} ${r.count}`)).toEqual([
+      'PG 1',
+      'X 2',
+    ]);
+    expect(ratingChoices(images, 'rating:r').map((r) => `${r.label} ${r.count}`)).toEqual([
+      'PG 1',
+      'X 2',
+      'R 0',
+    ]);
+  });
+
+  it('matches only trainable images of that rating, in any case', () => {
+    expect(matchesRatingFilter(img('X'), 'rating:x')).toBe(true);
+    expect(matchesRatingFilter(img('x', 'blocked'), 'rating:x')).toBe(false);
+    expect(matchesRatingFilter(img('pg'), 'all')).toBeUndefined();
+  });
+});
+
+describe('v2 verdicts on tiles', () => {
+  const img = (blobId: string, nsfwLevel: string | undefined, status: Img['status'] = 'uploaded') =>
+    ({
+      id: nextImgId(),
+      name: `${blobId}.png`,
+      previewUrl: '',
+      mediaType: 'image',
+      status,
+      progress: 1,
+      blobId,
+      nsfwLevel,
+      tags: [],
+      caption: '',
+    } as unknown as Img);
+
+  const rated = (image: Img, verdicts: Record<string, boolean>) => {
+    setVerdicts([image], verdicts);
+    return image;
+  };
+
+  // A restricted verdict reaches the Studio as mature (the main app folds it in), so mature it shows.
+  it('a mature verdict shows Mature and counts mature, whatever the upload rating said', () => {
+    const shown = rated(img('a', 'pg'), { a: true });
+    expect(imgRatingLabel(shown)).toBe('Mature');
+    expect(isImgMature(shown)).toBe(true);
+    expect(matchesVerdictFilter(shown, 'not-mature')).toBe(false);
+  });
+
+  it('a not-mature verdict replaces a mature upload rating', () => {
+    const shown = rated(img('a', 'r'), { a: false });
+    expect(imgRatingLabel(shown)).toBe('Not mature');
+    expect(isImgMature(shown)).toBe(false);
+    expect(matchesVerdictFilter(shown, 'not-mature')).toBe(true);
+  });
+
+  it('an image with no verdict keeps its upload rating and shows as not rated yet', () => {
+    const [a, b] = [img('a', 'r'), img('b', 'pg')];
+    setVerdicts([a, b], { b: false });
+    expect(imgRatingLabel(a)).toBe('R');
+    expect(isImgMature(a)).toBe(true);
+    expect(matchesVerdictFilter(a, 'not-rated')).toBe(true);
+    expect(matchesVerdictFilter(b, 'not-rated')).toBe(false);
+  });
+
+  it('a blocked image never counts, and an unchanged dataset reports no change', () => {
+    const blocked = rated(img('a', 'pg', 'blocked'), { a: true });
+    expect(isImgMature(blocked)).toBe(false);
+    expect(matchesVerdictFilter(blocked, 'not-rated')).toBe(false);
+    expect(setVerdicts([blocked], { a: true })).toBe(false);
+    expect(setVerdicts([img('a', 'pg')], { other: true })).toBe(false);
+  });
+
+  // An auto-label pass holds the tile it started on and writes its result there when it lands.
+  it('sets verdicts on the tiles themselves, so a label pass holding a tile still sees it', () => {
+    const tile = img('a', 'r');
+    const images = [tile];
+    applyRatingAnswer(images, { matureCount: 0, verdicts: { a: false } });
+    expect(images[0]).toBe(tile);
+    expect(tile.v2Mature).toBe(false);
+  });
+
+  it("an answer with no usable count keeps Review's own, and still shows the verdicts", () => {
+    const tile = img('a', 'r');
+    expect(
+      applyRatingAnswer([tile], { matureCount: null, verdicts: { a: false } })
+    ).toBeUndefined();
+    expect(imgRatingLabel(tile)).toBe('Not mature');
+    expect(applyRatingAnswer([], { matureCount: 0, verdicts: {} })).toBe(0);
+    // An answer from a server without verdicts changes nothing, rather than throwing.
+    expect(applyRatingAnswer([tile], { matureCount: 1 })).toBe(1);
+  });
+});
+
+describe('dataset batches', () => {
+  const at = (h: number, m: number) => new Date(2026, 10, 24, h, m).getTime();
+
+  it('imagesInScope keeps only the chosen batch, and the whole dataset when no batch is chosen', () => {
+    const first = newBatch('upload', at(15, 0));
+    const second = newBatch('upload', at(15, 41));
+    const images = [
+      { id: 1, batch: first },
+      { id: 2, batch: second },
+      { id: 3, batch: first },
+      { id: 4 },
+    ];
+    expect(imagesInScope(images, first.id).map((i) => i.id)).toEqual([1, 3]);
+    expect(imagesInScope(images, second.id).map((i) => i.id)).toEqual([2]);
+    expect(imagesInScope(images, null)).toBe(images);
+  });
+
+  it('names each batch by source, per-source number, size and time, oldest first', () => {
+    const upload = newBatch('upload', at(15, 0));
+    const zip = newBatch('zip', at(15, 10));
+    const upload2 = newBatch('upload', at(15, 41));
+    const options = datasetBatches(
+      [{ batch: upload2 }, { batch: upload }, { batch: zip }, { batch: upload2 }, {}],
+      'image'
+    );
+    expect(options.map((o) => o.label.replace(/ · [^·]+$/, ''))).toEqual([
+      'Upload 1 · 1 image',
+      'Zip import 1 · 1 image',
+      'Upload 2 · 2 images',
+    ]);
+    // 12- or 24-hour, whichever the runner's locale uses.
+    expect(options[2]!.label).toMatch(/(3|15):41/);
+  });
+
+  it('gives batches added in the same millisecond distinct, increasing ids', () => {
+    const now = at(9, 0);
+    const a = newBatch('zip', now);
+    const b = newBatch('upload', now);
+    expect(b.id).toBeGreaterThan(a.id);
   });
 });

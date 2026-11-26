@@ -39,7 +39,8 @@ type ImagesQuery struct {
 	IsModerator    bool
 	// IDs is the feed-service hydrate (feedHydrateQuery): exactly these images, whatever their order.
 	IDs []int
-	// PostIDs is the gallery's post completion: only these posts' images.
+	// PostIDs is the gallery's post completion, or image.getInfinite's own `postIds`: only these
+	// posts' images.
 	PostIDs []int
 	// PostID is the input's own `postId` (the REST endpoint): `i."postId" = <postId>`.
 	PostID int
@@ -102,6 +103,19 @@ type ImagesQuery struct {
 	// `IIF(i."userId" IN (-1), i.index, 1000)` ahead of the sort's own order. Only with
 	// PrioritizedUserIDs = [-1].
 	PrioritizedSystemOrder bool
+	// RandomSeed is a collection page's Random order (Sort SortRandom, with a CollectionID): the seed
+	// the `ct` CTE hashes each item id with (`abs(mod(hashtext(concat(ci.id::text, '<seed>')),
+	// 1000000000))`, its "sortKey"), ordered `ct."sortKey" DESC, i."id" DESC`, the sort key selected as
+	// the cursor column. Never cached (isPersonalized).
+	RandomSeed int64
+	// RandomCursor pages a Random collection page inside the CTE: `"sortKey" < <sortKey> OR ("sortKey"
+	// = <sortKey> AND "imageId" < <id>)`; nil = the first page. Its Seed is not read here (RandomSeed).
+	RandomCursor *RandomCursor
+}
+
+// random is a collection page in the Random order.
+func (q *ImagesQuery) random() bool {
+	return q.Sort == SortRandom && q.CollectionID != 0
 }
 
 // reviewReactions is the ReviewReactions enum (the `reactions` schema's z.enum).
@@ -274,9 +288,9 @@ func (q *ImagesQuery) Build() Built {
 	// ownerId)`).
 	pendingView := q.Pending && (q.IsModerator || q.ViewerID != 0)
 	reactions := len(q.Reactions) > 0 && q.ViewerID != 0
-	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView || reactions {
+	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView || reactions || q.random() {
 		// isPersonalized (the user-gallery path, a follow set, a tag combination, prioritizedUserIds,
-		// the pending view, the viewer's own reactions): never cached.
+		// the pending view, the viewer's own reactions, a collection's Random order): never cached.
 		cacheTTL, tags = 0, nil
 	}
 
@@ -286,6 +300,10 @@ func (q *ImagesQuery) Build() Built {
 		// getCursor('i."index"'): ascending, inclusive on its only field; the id tie-break is
 		// appended after the cursor clause, so the cursor stays the index.
 		orderBy, cursorCol, cursorOp = `i."index"`, `i."index"`, ">="
+	case q.random():
+		// The collection's items by their seeded hash, then the image id. The cursor is paged inside
+		// the CTE (collectionCTE), never by a clause here: the caller leaves Cursor 0.
+		orderBy, cursorCol, cursorOp = `ct."sortKey" DESC, i."id" DESC`, `ct."sortKey"`, "<="
 	case q.Sort == SortRecentlyAdded:
 		// The collection's newest items first (only beside a collectionId: ParseInfinite), the cursor
 		// on the item id (getCursor, descending and inclusive).
@@ -434,7 +452,7 @@ func (q *ImagesQuery) Build() Built {
       ` + imageOnSiteSQL + ` as "onSite",
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
+      image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -482,7 +500,16 @@ func (q *ImagesQuery) Build() Built {
 // image items, narrowed to CollectionTagID when set, with the status filter `ci."status" = 'ACCEPTED'`,
 // or for a signed-in viewer `(ci."status" = 'ACCEPTED' OR (ci."status" <> 'REJECTED' AND
 // ci."addedById" = <viewer>))`. Node inlines the tag and the viewer; both are bound here.
+//
+// In the Random order (random) the hash takes the seed (Node inlines `'<seed>'`; bound here as text,
+// first, as the text reads), the CTE pages on its Random cursor (`WHERE ("sortKey" < <key> OR
+// ("sortKey" = <key> AND "imageId" < <id>))`, both inlined in Node, bound here) and ends with `ORDER BY
+// "sortKey" DESC`.
 func (q *ImagesQuery) collectionCTE(a *sqlArgs) string {
+	seed := `''`
+	if q.random() {
+		seed = a.add(strconv.FormatInt(q.RandomSeed, 10)) + `::text`
+	}
 	// Bound in the order the text reads: the collection, the tag, the viewer.
 	collection := a.add(q.CollectionID)
 	tag := ""
@@ -494,6 +521,22 @@ func (q *ImagesQuery) collectionCTE(a *sqlArgs) string {
 	if q.ViewerID != 0 {
 		status = `(ci."status" = 'ACCEPTED' OR (ci."status" <> 'REJECTED' AND ci."addedById" = ` + a.add(q.ViewerID) + `))`
 	}
+	tail := ""
+	if q.random() {
+		if c := q.RandomCursor; c != nil {
+			key, id := a.add(c.SortKey), a.add(c.ID)
+			tail += `
+          WHERE (
+                  "sortKey" < ` + key + `
+                  OR (
+                    "sortKey" = ` + key + `
+                    AND "imageId" < ` + id + `
+                  )
+                )`
+		}
+		tail += `
+          ORDER BY "sortKey" DESC`
+	}
 	return `WITH
         ct AS (
           SELECT "imageId", note, status, "addedById", "collectionItemId", "sortKey"
@@ -504,12 +547,12 @@ func (q *ImagesQuery) collectionCTE(a *sqlArgs) string {
               ci.status,
               ci."addedById",
               ci.id as "collectionItemId",
-              abs(mod(hashtext(concat(ci.id::text, '')), 1000000000)) as "sortKey"
+              abs(mod(hashtext(concat(ci.id::text, ` + seed + `)), 1000000000)) as "sortKey"
             FROM "CollectionItem" ci
             WHERE ci."collectionId" = ` + collection + tag + `
               AND ci."imageId" IS NOT NULL
               AND ` + status + `
-          ) sub
+          ) sub` + tail + `
         )`
 }
 

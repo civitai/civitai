@@ -1,16 +1,9 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type SupportModal from '~/components/Support/SupportModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 
-const SupportModal = dynamic(() => import('~/components/Support/SupportModal'), {
-  ssr: false,
-});
-
-const supportDialog = routedDialogDictionary.addItem('support', {
-  component: SupportModal,
+export const supportDialog = routedDialog<typeof SupportModal>({
   resolve: (query) => ({
     query,
     asPath: '/support',
   }),
 });
-
-export type SupportDialog = typeof supportDialog;

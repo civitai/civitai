@@ -407,7 +407,11 @@ describe('POST dev-tunnel/start', () => {
     store.set(`system:blocks:dev-tunnel-ephemeral-rate-limit:${OWNER}`, '20');
     expect(await startFor(OWNER, UNSUBMITTED_APP)).toMatchObject({
       status: 429,
-      json: { code: 'TOO_MANY_REQUESTS' },
+      json: {
+        code: 'TOO_MANY_REQUESTS',
+        error: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
+        rateLimit: { id: 'apps.dev-tunnel-starts', kind: 'abuse' },
+      },
     });
   });
 

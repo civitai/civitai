@@ -12,6 +12,10 @@
  *     `Event.meta` are bytes too (a JSON object; empty is none). This source sets no
  *     `Entity.meta`, so it is sent empty, which is absent on the wire; `Event.meta` is a `live` or
  *     `progress` event's `meta` (`EventMeta`) when it has one, as the HTTP binding's `meta` field.
+ *   - A shared-collection LEVEL subscription (`level-feed.ts`) is refused here as `bad_request`:
+ *     its entities' `key`, `seq`, `version`, `createdAt` and `updatedAt` have no field in
+ *     `Entity`, so this binding could serve only half of each. The subscriber is told its binding
+ *     (`createSubscriber(adapter, { binding: 'grpc' })`) and the level feed refuses on it.
  *     The private feed's `Entity.key` and `Entity.seq` have no field here.
  *   - `SubscribeRequest.meta` is read as the HTTP binding's `meta` parameter is
  *     (`protocol.ts`), into the call's origin (`request-origin.ts`).
@@ -463,7 +467,7 @@ export function createGrpcServer(
     policyEnforce?: PolicyEnforcer;
   } = {}
 ): grpc.Server {
-  const subscribe = createSubscriber(adapter);
+  const subscribe = createSubscriber(adapter, { binding: 'grpc' });
   const metadataUrl = resourceMetadataUrl(opts.resource);
   const server = new grpc.Server({
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,

@@ -548,6 +548,8 @@ const LEDGER = [
   'src/server/services/blocks/offsite-moderation.service.ts::unpublishOwnListing',
   // Onsite approve mints/flips the AppListing to `approved`.
   'src/server/services/blocks/publish-request.service.ts::approveRequestUnderClaim',
+  // A moderator re-runs the version rating sync: moves `content_rating` in either direction.
+  'src/server/services/blocks/publish-request.service.ts::resyncListingRating',
 ].sort();
 
 /**

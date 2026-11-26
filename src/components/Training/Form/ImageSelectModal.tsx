@@ -98,6 +98,8 @@ export type SelectedImage = {
   meta?: Record<string, unknown>;
   /** Generator selections only — lets the server verify what the job was made from. */
   generationWorkflowId?: string;
+  /** Uploaded selections only: the image row. */
+  imageId?: number;
 };
 
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
@@ -137,6 +139,7 @@ function toSelectedImage(item: GridItem): SelectedImage {
         label: item.img.meta?.prompt ?? '',
         type: item.img.type,
         meta: (item.img.meta as Record<string, unknown> | null) ?? undefined,
+        imageId: item.img.id,
       };
     case 'training':
       return { url: getItemKey(item), label: '', type: MediaType.image };

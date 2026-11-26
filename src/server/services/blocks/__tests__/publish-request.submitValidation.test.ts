@@ -86,10 +86,14 @@ const NO_SURFACE =
   '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
   'model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])';
 
-async function bundle(manifest: Record<string, unknown>): Promise<Buffer> {
+async function bundle(
+  manifest: Record<string, unknown>,
+  extra: Record<string, string> = {}
+): Promise<Buffer> {
   const zip = new JSZip();
   zip.file('block.manifest.json', JSON.stringify(manifest));
   zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+  for (const [path, text] of Object.entries(extra)) zip.file(path, text);
   return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
 }
 
@@ -319,11 +323,15 @@ describe('submitVersion — App Assistant session trace', () => {
       userId: 7713,
       conversationIds: [],
       snapshots: [],
-      signalsVersion: 1,
+      signalsVersion: 2,
       snapshotError: null,
     });
     // The bundle's own index.html was read for the theme signal.
-    expect(data.signals).toMatchObject({ themeCustomized: false, theme: { filesScanned: 1 } });
+    expect(data.signals).toMatchObject({
+      themeCustomized: false,
+      accentCustomized: false,
+      theme: { filesScanned: 1 },
+    });
     await settleFollowUps();
   });
 
@@ -367,6 +375,62 @@ describe('submitVersion — App Assistant session trace', () => {
       new Promise((resolve) => setTimeout(() => resolve('held up'), 5_000)),
     ]);
     expect(outcome).toBe('submitted');
+    await settleFollowUps();
+  });
+});
+
+/**
+ * WARN, NEVER BLOCK: the submit answers `advisories`, whatever the tracing flag says. A bundle with
+ * Civitai's stock look is queued all the same, with the `default-theme` note.
+ */
+describe('submitVersion — advisories', () => {
+  const DEFAULT_THEME = {
+    code: 'default-theme',
+    message:
+      "This app uses Civitai's default theme. A distinct accent helps it stand out in the store: https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look",
+    docsUrl: 'https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look',
+  };
+
+  it('a bundle with the stock look is queued, with the default-theme advisory (tracing off)', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        // A colour literal of its own (v1 reads "customised") but no colour token: still stock.
+        'src/index.css': '.card { border-color: #333333; --civitai-radius: 4px; }',
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories).toEqual([DEFAULT_THEME]);
+    await settleFollowUps();
+  });
+
+  it('a bundle with its own accent is queued with no advisory', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        'src/index.css': '.app { --civitai-color-primary: #7c3aed; }',
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories).toEqual([]);
+    await settleFollowUps();
+  });
+
+  it('with tracing on, the advisory is the same', async () => {
+    tracing.on = true;
+    dbMock.dbRead.appAssistantSessionLink.findMany.mockResolvedValueOnce([]);
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    expect(result.advisories).toEqual([DEFAULT_THEME]);
+    await vi.waitFor(
+      () => expect(dbMock.dbWrite.appPublishRequestTrace.create).toHaveBeenCalledTimes(1),
+      { timeout: 15_000 }
+    );
     await settleFollowUps();
   });
 });

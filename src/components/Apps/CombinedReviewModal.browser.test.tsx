@@ -262,6 +262,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       getReviewStatus: inert,
       listActivePreviews: inert,
       getAgentReview: inert,
+      listAgentReviews: inert,
       getMarketplaceMeta: inert,
       getFeaturedBlocks: inert,
       listAvailable: inert,

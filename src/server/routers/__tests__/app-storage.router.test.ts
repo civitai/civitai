@@ -68,15 +68,13 @@ import {
   POSTS,
   PREFS,
   snapshot,
-  TALLIES,
 } from '~/server/services/apps/__tests__/doc-store.functional';
 
 // Pairwise distinct, and distinct from every figure below.
 const USER = 8_101;
 const OTHER = 8_202;
 const NOBODY = 8_303;
-// Holds only a counter document their increment created, then only a post moderation hid.
-const COUNTER_ONLY = 8_404;
+// Holds only a post moderation hid.
 const HIDDEN_ONLY = 8_505;
 
 const LIMITS = { appBytes: 900_001, appDocs: 9_001, userBytes: 7_003, userDocs: 17 };
@@ -97,13 +95,10 @@ const NOTES: DocCollection = { name: 'notes', config: decl({ visibility: 'privat
 const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 9) });
 const NONE = { bytes: 0, docs: 0 };
 /** What an empty does with each part of the user's figure (`holdings`). */
-const holdings = (
-  parts: Partial<Record<'private' | 'shared' | 'hidden' | 'counters', object>>
-) => ({
+const holdings = (parts: Partial<Record<'private' | 'shared' | 'hidden', object>>) => ({
   private: NONE,
   shared: NONE,
   hidden: NONE,
-  counters: NONE,
   ...parts,
 });
 
@@ -170,11 +165,11 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
     await s.put(uA, PREFS, 'theme', sized(121));
     await s.put(uA, NOTES, 'n1', sized(233));
     await s.put(uA, POSTS, 'post-u', sized(57));
-    // OTHER in A: a private document and a shared post; each marks the other's post.
+    // OTHER in A: a private document and a shared post; each reports the other's post.
     await s.put(oA, PREFS, 'theme', sized(86));
     await s.put(oA, POSTS, 'post-o', sized(39));
-    await s.mark(oA, POSTS, 'post-u', 'vote');
-    await s.mark(uA, POSTS, 'post-o', 'vote');
+    await s.report(oA, POSTS, 'post-u');
+    await s.report(uA, POSTS, 'post-o');
     // USER elsewhere: another app, a removed app, and their own dev namespace of app A.
     await s.put(storeCtx(APP_B.id, 'prod', USER), PREFS, 'theme', sized(309));
     await s.put(storeCtx(APP_GONE, 'prod', USER), PREFS, 'theme', sized(73));
@@ -270,10 +265,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       });
     });
 
-    it('splits the figure by what Empty does with it: a counter document and a hidden post are listed as staying, and an empty removes neither', async () => {
-      // A counter document is created by the first increment and charged to the incrementer:
-      // its data is `{}`, 2 bytes.
-      await h.store.increment(storeCtx(APP_A.id, 'prod', COUNTER_ONLY), TALLIES, 'c1', 'plays');
+    it('splits the figure by what Empty does with it: a hidden post is listed as staying, and an empty removes none of it', async () => {
       await h.store.put(storeCtx(APP_A.id, 'prod', HIDDEN_ONLY), BOARD, 'hid', sized(47));
       await harness.raw(
         `UPDATE appdata.doc SET hidden_at = now(), hidden_by = 1
@@ -281,16 +273,12 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         [APP_A.id]
       );
       const expected = {
-        [COUNTER_ONLY]: {
-          usage: { bytes: 2, docs: 1 },
-          holdings: holdings({ counters: { bytes: 2, docs: 1 } }),
-        },
         [HIDDEN_ONLY]: {
           usage: { bytes: 47, docs: 1 },
           holdings: holdings({ hidden: { bytes: 47, docs: 1 } }),
         },
       };
-      for (const uid of [COUNTER_ONLY, HIDDEN_ONLY] as const) {
+      for (const uid of [HIDDEN_ONLY] as const) {
         const row = {
           appBlockId: APP_A.id,
           name: 'Alpha Notes',
@@ -404,7 +392,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       expect(await snapshot(harness, APP_A.id)).toEqual(after);
     });
 
-    it("with includeShared, also deletes the user's VISIBLE shared posts as an author delete does (marks, app refund, tombstone), leaves a hidden one for moderation, and leaves the other user's post and the user's mark on it", async () => {
+    it("with includeShared, also deletes the user's VISIBLE shared posts as an author delete does (reports, app refund, tombstone), leaves a hidden one for moderation, and leaves the other user's post and the user's report on it", async () => {
       const uA = storeCtx(APP_A.id, 'prod', USER);
       await h.store.put(uA, BOARD, 'note-hidden', sized(29));
       await harness.raw(
@@ -668,9 +656,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       const uD = storeCtx(APP_DEL.id, 'prod', USER);
       await h.store.put(uD, PREFS, 'theme', sized(64));
       await h.store.put(uD, POSTS, 'post-d', sized(48));
-      // A counter document (nobody's) and another user's post (theirs, not the caller's): neither
-      // is the caller's, so neither is exported.
-      await h.store.increment(storeCtx(APP_DEL.id, 'prod', OTHER), TALLIES, 'c1', 'plays');
+      // Another user's post (theirs, not the caller's) is not exported.
       await h.store.put(storeCtx(APP_DEL.id, 'prod', OTHER), POSTS, 'post-o', sized(41));
       await setRecordId(APP_DEL.id, 'prefs', USER, 'theme', RID.dPrefs);
 
@@ -780,7 +766,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
     it('reports what it cannot export, per app and reason, once each, across page boundaries', async () => {
       // Alpha's manifest no longer declares `notes` (the user holds notes/n1 there); their private
       // pref in alpha has no record_id yet; and in the app with no row they hold one private
-      // document plus a counter document they started, which is not theirs to export.
+      // document.
       const collections = {
         prefs: { visibility: 'private' },
         posts: { visibility: 'shared', write: 'own' },
@@ -800,7 +786,6 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
           WHERE app_id = $1 AND ns = 'prod' AND coll = 'prefs' AND scope_uid = $2 AND key = 'theme'`,
         [APP_A.id, USER]
       );
-      await h.store.increment(storeCtx(APP_GONE, 'prod', USER), TALLIES, 'c1', 'plays');
 
       const NOT_DECLARED = { appBlockId: APP_A.id, reason: 'collection_not_declared', docs: 1 };
       const UNREADABLE = { appBlockId: APP_A.id, reason: 'unreadable', docs: 1 };

@@ -57,21 +57,34 @@ describe('getPostEditImages order', () => {
 describe('getPostEditImages thumbnails', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // A block-marked thumbnail follows the feed's rule: the owner gets it only where the block
+  // leaves them the media; a moderator on a session or a full-access key always does.
   it.each([
-    ['1', { id: 1 }],
-    ['2', { id: 2, isModerator: true }],
-  ])('case %s', async (_label, user) => {
+    ['the owner, an exempt block', { id: 1 }, false, true, 'thumb-7'],
+    ['the owner, a block that refuses them', { id: 1 }, false, false, null],
+    ['a moderator', { id: 2, isModerator: true }, true, false, 'thumb-7'],
+    ['a moderator on a scoped key', { id: 2, isModerator: true }, false, false, null],
+  ])('%s', async (_label, user, asModerator, ownerMediaAllowed, expected) => {
     vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([row(7, 0)] as never);
     vi.mocked(thumbnailCache.fetch).mockResolvedValue({
-      7: { id: 70, url: 'thumb-7', width: 1, height: 1, nsfwLevel: 1, blockMarked: true },
+      7: {
+        id: 70,
+        url: 'thumb-7',
+        width: 1,
+        height: 1,
+        nsfwLevel: 1,
+        blockMarked: true,
+        ownerMediaAllowed,
+      },
     } as never);
 
     const images = await getPostEditImages({
       id: 1,
       user: user as SessionUser,
       servableLevels: allBrowsingLevelsFlag,
+      asModerator,
     });
 
-    expect(images.map((x) => x.thumbnailUrl)).toEqual(['thumb-7']);
+    expect(images.map((x) => x.thumbnailUrl)).toEqual([expected]);
   });
 });

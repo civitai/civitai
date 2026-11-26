@@ -67,15 +67,19 @@ export function parseReviewBatchRecord(raw: string | null | undefined): ReviewBa
   }
 }
 
-/** One image's Postgres signals: `retractedAccessColumnsSql` and `unreadableImageSql`, and its raw
- *  blockedFor. */
-export type ImageSignalRow = RetractedAccessRow & { id: number; unreadable: boolean };
+/** One image's Postgres signals: `retractedAccessColumnsSql`, `unreadableImageSql`, `heldImageSql`
+ *  as `held`, and its raw blockedFor. */
+export type ImageSignalRow = RetractedAccessRow & {
+  id: number;
+  unreadable: boolean;
+  held: boolean;
+};
 
 /**
  * Whether an image must go to the held tier, by the rule the retracted-media routes apply to a
  * moderator without the CSAM grant (`retractedViewable`): a minor flag, label or removal alone stays
  * general; a `blockedFor` value `blockedForSignal` reads as a signal does not. An id with no row, or
- * an unfinished scan, cannot be read, so it is held.
+ * an unfinished scan, cannot be read, so it is held. Held media (`held`) stays on the held tier.
  */
 export async function imageRoutesHeld(
   row: ImageSignalRow | undefined,
@@ -89,7 +93,7 @@ export async function imageRoutesHeld(
     readVerdicts: (imageIds: number[]) => Promise<Map<number, ScannerVerdict> | null>;
   }
 ): Promise<boolean> {
-  if (!row || row.unreadable) return true;
+  if (!row || row.unreadable || row.held) return true;
   const viewable = await retractedViewable(row, {
     patterns,
     readVerdict: async () => verdict,

@@ -39,7 +39,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // `endpoint-helpers` spreads `env.TRPC_ORIGINS` at module load; stub the wrapper
 // itself so none of that graph is needed.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 const METRIC = 'civitai_generation_model_substitutions_total';
 

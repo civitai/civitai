@@ -1,6 +1,6 @@
 import { Badge, Button, Code, Group, Loader, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import type { TraceSignals } from '~/shared/app-assistant/trace-signals';
+import { accentCustomizedOf, type TraceSignals } from '~/shared/app-assistant/trace-signals';
 import type { TranscriptStep, TranscriptView } from '~/shared/app-assistant/transcript-view';
 
 /**
@@ -68,12 +68,17 @@ function useGet<T>(url: string | null): Load<T> {
   return load;
 }
 
+/**
+ * `signals` as stored: any version. A v1 row has no `accentCustomized`; `accentCustomizedOf` judges
+ * it from the row's own theme evidence, by the same rule v2 stores.
+ */
 function SignalsSummary({ signals }: { signals: TraceSignals }) {
+  const accent = accentCustomizedOf(signals);
   const theme =
-    signals.themeCustomized === null
+    accent === null
       ? { label: 'Theme: not judged', color: 'gray' }
-      : signals.themeCustomized
-      ? { label: 'Theme customised', color: 'green' }
+      : accent
+      ? { label: 'Own look', color: 'green' }
       : { label: 'Default theme', color: 'yellow' };
   const tools = Object.entries(signals.toolCallCounts).sort((a, b) => b[1] - a[1]);
   return (

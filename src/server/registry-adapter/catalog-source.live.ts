@@ -1,9 +1,14 @@
 /**
- * The real reads behind {@link CatalogReadDeps}. Read-only: the catalog through the store's own
- * listing service, everything else through the read client.
+ * The real reads behind {@link CatalogReadDeps} and {@link DocStreamReadDeps}. Read-only: the
+ * catalog through the store's own listing service, everything else through the read client.
  */
+import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
-import type { CatalogReadDeps, ListingExtras } from '~/server/registry-adapter/catalog-source';
+import type {
+  CatalogReadDeps,
+  DocStreamReadDeps,
+  ListingExtras,
+} from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import {
   capSubListings,
@@ -26,6 +31,7 @@ import {
   publicBetaMessage,
   publicConnectClientId,
   publicForkable,
+  storeOwnerEligibleWhere,
 } from '~/server/services/blocks/app-listing.service';
 import {
   actionsRunSourceBlockId,
@@ -143,6 +149,74 @@ async function readSubListingsByParent(
   return out;
 }
 
+/** The approved publish requests of the blocks given (`CatalogReadDeps.loadApproved`). */
+async function loadApprovedRequests(appBlockIds: string[]) {
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    where: { appBlockId: { in: appBlockIds }, status: 'approved' },
+    select: {
+      id: true,
+      appBlockId: true,
+      version: true,
+      manifest: true,
+      bundleSha256: true,
+      forgejoCommitSha: true,
+      sourceCommit: true,
+      reviewedAt: true,
+    },
+  });
+  return rows.flatMap(({ appBlockId, forgejoCommitSha, ...r }) =>
+    appBlockId ? [{ ...r, appBlockId, commitSha: forgejoCommitSha }] : []
+  );
+}
+
+/**
+ * The ids of the approved blocks whose owner may still have apps in the store: the store's owner
+ * rule (`storeOwnerEligibleWhere`: not banned, not deleted) applied to the block's canonical owner,
+ * its app's `OauthClient.userId` (`resolveCanonicalListingOwner`, on-site with a block). A banned
+ * or deleted owner's apps resolve on no document stream, as they leave the store.
+ */
+async function readOwnerEligibleBlockIds(): Promise<Set<string>> {
+  const rows = await dbRead.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT ab.id FROM app_blocks ab
+    JOIN "OauthClient" oc ON oc.id = ab.app_id
+    WHERE ab.status = 'approved'
+      AND ${storeOwnerEligibleWhere(Prisma.sql`oc."userId"`)}`);
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * The real reads behind {@link DocStreamReadDeps}: every approved, on-site block whose owner is
+ * eligible, with its listing's rating, whatever the listing's visibility. Read-only, through the
+ * read client.
+ */
+export function liveDocStreamReadDeps(): DocStreamReadDeps {
+  return {
+    async loadResolvableBlocks() {
+      const [rows, eligible] = await Promise.all([
+        dbRead.appBlock.findMany({
+          where: { status: 'approved', externalUrl: null },
+          select: {
+            id: true,
+            blockId: true,
+            version: true,
+            status: true,
+            contentRating: true,
+            manifest: true,
+            appListing: { select: { contentRating: true } },
+          },
+        }),
+        readOwnerEligibleBlockIds(),
+      ]);
+      return rows.flatMap(({ appListing, ...block }) =>
+        eligible.has(block.id)
+          ? [{ ...block, listingContentRating: appListing?.contentRating ?? null }]
+          : []
+      );
+    },
+    loadApproved: loadApprovedRequests,
+  };
+}
+
 /**
  * `listings`: the listing stream is on, so the cards keep their store fields and extras are read.
  * `onSubListingsCapped` is told, per catalog read, of each listing whose items were capped and how
@@ -195,24 +269,7 @@ export function liveCatalogReadDeps({
         },
       }),
 
-    async loadApproved(appBlockIds) {
-      const rows = await dbRead.appBlockPublishRequest.findMany({
-        where: { appBlockId: { in: appBlockIds }, status: 'approved' },
-        select: {
-          id: true,
-          appBlockId: true,
-          version: true,
-          manifest: true,
-          bundleSha256: true,
-          forgejoCommitSha: true,
-          sourceCommit: true,
-          reviewedAt: true,
-        },
-      });
-      return rows.flatMap(({ appBlockId, forgejoCommitSha, ...r }) =>
-        appBlockId ? [{ ...r, appBlockId, commitSha: forgejoCommitSha }] : []
-      );
-    },
+    loadApproved: loadApprovedRequests,
 
     loadSourceRepoUrls: (listingIds) => readListingSourceRepoUrls(listingIds, dbRead),
 

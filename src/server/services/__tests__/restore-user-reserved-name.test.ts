@@ -18,6 +18,8 @@ vi.mock('~/server/services/user-restriction.service', async (importOriginal) => 
 vi.mock('~/server/services/account-deletion-images', async (importOriginal) => ({
   ...(await importOriginal<typeof AccountDeletionImages>()),
   disarmAccountDeletionImagePurge: vi.fn(() => 'disarm-statement'),
+  lockAccountDeletionPendingDeletes: vi.fn(() => 'lock-statement'),
+  releaseAccountDeletionPendingDeletes: vi.fn(() => 'release-statement'),
   recordPendingImageRestore: vi.fn(async () => true),
   countPendingAccountDeletionImageRestores: vi.fn(async () => 0),
 }));
@@ -136,7 +138,7 @@ describe('restoreUser and a banned account', () => {
     // The guarded write and the purge disarm commit or roll back together, the write first so it
     // takes the row lock before anything else is written.
     const batch = dbMock.dbWrite.$transaction.mock.calls[0][0] as unknown[];
-    expect(batch).toHaveLength(2);
+    expect(batch).toHaveLength(4);
     expect(batch[0]).toBe(write.mock.results[0].value);
   });
 
@@ -154,20 +156,21 @@ describe('restoreUser and a banned account', () => {
       restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
     ).rejects.toThrow(/banned, restored or deleted again meanwhile/);
     expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(guardedWrite);
-    // One batch: the guarded write, the purge disarm, the reclaim and its ownership record.
+    // One batch: the guarded write, the purge disarm, the drain's lock and release, the reclaim and
+    // its ownership record.
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(4);
+    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(6);
   });
 
   it('reports how many models the reclaim moved, and none when there was nothing to reclaim', async () => {
     deleted(null);
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }, { id: 502 }, { id: 503 }]);
-    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, { count: 2 }, 2]);
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, 0, [], { count: 2 }, 2]);
     await expect(
       restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
     ).resolves.toMatchObject({ modelsRestored: 2, modelIds: [501, 502, 503] });
 
-    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0]);
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, 0, []]);
     await expect(restore('back')).resolves.toMatchObject({ modelsRestored: 0, modelIds: [] });
   });
 

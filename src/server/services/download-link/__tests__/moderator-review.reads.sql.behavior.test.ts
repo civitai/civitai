@@ -52,17 +52,14 @@ beforeAll(async () => {
       (1, '{}'),
       (2, '{"needsReview": true}'),
       (3, '{}'),
-      (4, '{"removedWithOwner": true, "statusBeforeRemoval": "Draft"}'),
       (5, NULL),
       (6, '{"needsReview": false}');
     INSERT INTO "ModelVersion" (id, "modelId", meta) VALUES
       (10, 1, '{}'),
       (20, 2, '{}'),
       (30, 3, '{"needsReview": true}'),
-      (40, 4, '{}'),
       (50, 5, NULL),
-      (60, 6, '{"needsReview": false}'),
-      (31, 1, '{"removedWithOwner": true}');
+      (60, 6, '{"needsReview": false}');
   `);
   db = new Kysely<DB>({ dialect: dialect(pg) });
 });
@@ -70,15 +67,12 @@ afterAll(() => pg.close());
 
 describe('readModeratorFlags', () => {
   it.each([
-    ['an unflagged version (control)', 10, { inReview: false, removedWithOwner: false }],
-    ['a model flagged for review', 20, { inReview: true, removedWithOwner: false }],
-    ['a version flagged for review', 30, { inReview: true, removedWithOwner: false }],
-    ["a model kept after its owner's removal", 40, { inReview: false, removedWithOwner: true }],
-    ['null meta on both', 50, { inReview: false, removedWithOwner: false }],
-    ['needsReview set false', 60, { inReview: false, removedWithOwner: false }],
-    // Only the model's flag marks a kept model; the version's meta is not read for it.
-    ['removedWithOwner on the version only', 31, { inReview: false, removedWithOwner: false }],
-    ['a missing version', 999, { inReview: false, removedWithOwner: false }],
+    ['an unflagged version (control)', 10, { inReview: false }],
+    ['a model flagged for review', 20, { inReview: true }],
+    ['a version flagged for review', 30, { inReview: true }],
+    ['null meta on both', 50, { inReview: false }],
+    ['needsReview set false', 60, { inReview: false }],
+    ['a missing version', 999, { inReview: false }],
   ])('%s', async (_label, id, expected) => {
     expect(await readModeratorFlags(db, id)).toEqual(expected);
   });

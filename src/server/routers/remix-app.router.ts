@@ -16,7 +16,6 @@ import {
 import { POST_CREATE_RATE_LIMIT_KEY, postRateLimits } from '~/server/schema/post.schema';
 import type { Context } from '~/server/createContext';
 import { rateLimit } from '~/server/middleware.trpc';
-import { CacheTTL } from '~/server/common/constants';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -47,6 +46,7 @@ import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 import { REMIX_RUN_LIMITS } from '~/shared/remix-apps/replay';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
@@ -66,13 +66,13 @@ function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: bool
 const imageId = z.number().int().positive();
 
 /** Each submit rewrites the shared registry cache. */
-const submitRateLimit = rateLimit({ limit: 20, period: CacheTTL.hour });
+const submitRateLimit = rateLimit(usageLimits('apps.remix-submits'));
 /** Each uncached quote is an orchestrator what-if. */
-const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
+const quoteRateLimit = rateLimit(usageLimits('apps.remix-quotes'));
 /** Called on every image view; it only reaches a what-if for an image the viewer can team-remix. */
-const teamQuoteRateLimit = rateLimit({ limit: 120, period: CacheTTL.xs });
+const teamQuoteRateLimit = rateLimit(usageLimits('apps.remix-team-quotes'));
 /** run, start and advance each price the next workflow with a what-if before they submit it. */
-const runStepRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
+const runStepRateLimit = rateLimit(usageLimits('apps.remix-run-steps'));
 
 const nonce = z.string().min(8).max(64);
 const quote = z.number().int().nonnegative();

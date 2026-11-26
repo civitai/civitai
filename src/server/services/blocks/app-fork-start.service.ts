@@ -41,8 +41,17 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -58,10 +67,10 @@ import {
   FORK_NOT_ALLOWED_MESSAGE,
   FORK_NO_APPROVED_VERSION_MESSAGE,
   FORK_PARENT_UNAVAILABLE_MESSAGE,
-  FORK_RATE_LIMITED_MESSAGE,
+  forkRateLimitedMessage,
   FORK_SETTING_DISABLED_MESSAGE,
   FORK_SOURCE_UNREADABLE_MESSAGE,
-  FORK_START_LIMITS,
+  FORK_START_LIMIT_IDS,
   FORK_TOO_LARGE_MESSAGE,
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
@@ -73,6 +82,7 @@ import {
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_MAX_IMPORT_COLLECTIONS,
   APP_STORAGE_MAX_IMPORTS,
+  APP_STORAGE_PUBLISH_SCOPE,
   isCollectionExportable,
   type DeclaredStorageCollection,
 } from '~/shared/constants/block-storage.constants';
@@ -157,6 +167,8 @@ export async function buildForkSeedZip(
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
   prefillParentStorageImports(manifest);
+  // After the prefill: the import still reaches every exportable PARENT collection, tallies included.
+  stripDeprecatedStoragePrimitives(manifest);
   manifest.blockId = forkSlug;
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
@@ -258,6 +270,55 @@ export function prefillParentStorageImports(manifest: Record<string, unknown>): 
     justifications[APP_STORAGE_IMPORT_SCOPE] = defaultForkImportJustification(parentName);
   }
   manifest.scopeJustifications = justifications;
+}
+
+/**
+ * Remove the deprecated tally primitives from a fork's OWN collections, in place
+ * (docs/app-storage-generic-core.md, rollout step 3). A fork's first submit has no previous approved
+ * version, so submit refuses any `marks`, `counters` or `write: "none"` it declares
+ * (`deprecatedPrimitiveErrors`); a seed copied as-is from a parent that still declares them could
+ * never be submitted unedited. So: `marks` and `counters` go from every collection, and a collection
+ * with `write: "none"` goes whole (it held nothing but counters and marks). Everything else (schemas,
+ * indexes, the imports prefill) is kept. A `collections` left empty is removed, and a `storage` left
+ * with neither collections nor imports too, since the schema requires at least one of them.
+ * When `storage` goes, so do the storage scopes and their `scopeJustifications` entries:
+ * `appStorageScopeErrors` refuses each of them with nothing in `storage` for it to reach, and the
+ * manifest validator refuses a justification for a scope that is not requested.
+ */
+export function stripDeprecatedStoragePrimitives(manifest: Record<string, unknown>): void {
+  const storage = manifest.storage;
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return;
+  const store = storage as Record<string, unknown>;
+  const collections = store.collections;
+  if (!collections || typeof collections !== 'object' || Array.isArray(collections)) return;
+  const kept: Record<string, unknown> = {};
+  for (const [name, decl] of Object.entries(collections as Record<string, unknown>)) {
+    if (!decl || typeof decl !== 'object' || Array.isArray(decl)) {
+      kept[name] = decl;
+      continue;
+    }
+    const { marks: _marks, counters: _counters, ...rest } = decl as Record<string, unknown>;
+    if (rest.write === 'none') continue;
+    kept[name] = rest;
+  }
+  if (Object.keys(kept).length > 0) store.collections = kept;
+  else delete store.collections;
+  if (store.collections !== undefined || store.imports !== undefined) return;
+  delete manifest.storage;
+  const storageScopes = [
+    APP_STORAGE_BASE_SCOPE,
+    APP_STORAGE_PUBLISH_SCOPE,
+    APP_STORAGE_IMPORT_SCOPE,
+  ];
+  if (Array.isArray(manifest.scopes)) {
+    manifest.scopes = (manifest.scopes as unknown[]).filter(
+      (s) => !(storageScopes as unknown[]).includes(s)
+    );
+  }
+  const justifications = manifest.scopeJustifications;
+  if (justifications && typeof justifications === 'object' && !Array.isArray(justifications)) {
+    for (const scope of storageScopes) delete (justifications as Record<string, unknown>)[scope];
+  }
 }
 
 /** The sandbox service's cap on a seed's uncompressed size (`SEED_MAX_UNCOMPRESSED_BYTES`). */
@@ -383,12 +444,22 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 // ---------------------------------------------------------------------------
 
 /**
- * Count one fork start against each of the user's windows ({@link FORK_START_LIMITS}). Refuses
+ * Count one fork start against each of the user's windows ({@link FORK_START_LIMIT_IDS}). Refuses
  * with TOO_MANY_REQUESTS past any cap, and FAILS CLOSED (SERVICE_UNAVAILABLE) when the counter
  * cannot be read: every start builds and uploads a copy of an app's source.
  */
-async function consumeForkStart(userId: number): Promise<void> {
-  for (const { windowSeconds, max } of FORK_START_LIMITS) {
+async function consumeForkStart(user: SessionUser): Promise<void> {
+  // The user's limits, from the registry (a KeyValue override, else the code defaults).
+  const limits = await Promise.all(
+    FORK_START_LIMIT_IDS.map(async (id) => {
+      const { window } = getUsageLimitDef(id);
+      if (window.type !== 'rolling') throw new Error(`${id} is not a rolling window`);
+      return { id, windowSeconds: window.seconds, max: await resolveUserAppLimit(id, user) };
+    })
+  );
+  const message = forkRateLimitedMessage(limits[0].max, limits[1].max);
+  const userId = user.id;
+  for (const { id, windowSeconds, max } of limits) {
     const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
@@ -400,7 +471,16 @@ async function consumeForkStart(userId: number): Promise<void> {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
     if (count > max) {
-      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: FORK_RATE_LIMITED_MESSAGE });
+      // A failed TTL read falls back to the whole window: the wait is at most that.
+      const ttl = await boundedClusterCall('consumeForkStart', () => redis.ttl(key)).catch(
+        () => windowSeconds
+      );
+      throwAppRateLimited(id, ttl > 0 ? ttl : windowSeconds, message, {
+        limit: max,
+        used: count,
+        windowSeconds,
+        resetAt: new Date(Date.now() + (ttl > 0 ? ttl : windowSeconds) * 1000),
+      });
     }
   }
 }
@@ -527,7 +607,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_NO_APPROVED_VERSION_MESSAGE });
   }
 
-  await consumeForkStart(user.id);
+  await consumeForkStart(user);
 
   // Reserve a slug: free in the database, then claimed atomically by the session's SET NX.
   const now = new Date();

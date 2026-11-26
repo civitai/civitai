@@ -617,6 +617,41 @@ describe('the .com face listing re-check', () => {
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
   });
 
+  /** The JobQueue rows written: [entityId, entityType, type] each. */
+  const levelJobs = () =>
+    db.$executeRaw.mock.calls
+      .filter(([sql]) => JSON.stringify(sql).includes('INSERT INTO \\"JobQueue\\"'))
+      .map(([, ...values]) => values.flatMap((v) => (v as { values?: unknown[] }).values ?? [v]));
+
+  it('queues the level for the nsfw-level job when the refresh after a removal throws', async () => {
+    arrange({ waiting: [{ since: ago(60_000), attempt: 1, nextAt: NOW.toISOString() }] });
+    db.model.findUnique.mockResolvedValue({
+      ...withFace,
+      sfwCoverImageId: null,
+      meta: { comFaceRemoved: { at: ago(60_000), sfwCoverImageId: COVER_ID, reason: 'detected' } },
+    } as never);
+    mockUpdateModelNsfwLevels.mockRejectedValueOnce(new Error('level service down'));
+
+    await processComFaceRechecks(NOW);
+
+    expect(levelJobs()).toEqual([[MODEL_ID, 'Model', 'UpdateNsfwLevel']]);
+    // The re-check retry stays too: the level job is a second way back, not a replacement.
+    expect(db.keyValue.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('queues no level job when the refresh after a removal works (control)', async () => {
+    arrange({ waiting: [{ since: ago(60_000), attempt: 1, nextAt: NOW.toISOString() }] });
+    db.model.findUnique.mockResolvedValue({
+      ...withFace,
+      sfwCoverImageId: null,
+      meta: { comFaceRemoved: { at: ago(60_000), sfwCoverImageId: COVER_ID, reason: 'detected' } },
+    } as never);
+
+    await processComFaceRechecks(NOW);
+
+    expect(levelJobs()).toEqual([]);
+  });
+
   it('keeps going past a model whose bookkeeping throws, and queues that edit again', async () => {
     const OTHER = 43;
     arrange({ fresh: [MODEL_ID, OTHER] });

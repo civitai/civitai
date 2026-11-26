@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import {
-  bountyNsfwFlagLevel,
+  bountyImageNsfwLevel,
   getTextRatedBountyLevels,
   mayBeTextRated,
 } from '~/server/services/bounty-rated-level';
@@ -20,6 +20,10 @@ import {
   entityImageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -119,6 +123,7 @@ const ogImageSelect = {
 
 const ogArticleImageSelect = {
   ...ogImageSelect,
+  id: true,
   ingestion: true,
   needsReview: true,
   modelRestricted: true,
@@ -402,6 +407,12 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
       .catch(() => null),
   ]);
   if (!article) return null;
+  const listed = await getReportListedHiddenImageIds(
+    [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
+    SIGNED_OUT_REPORT_LISTED
+  );
+  const shown = (image: typeof article.coverImage) =>
+    image && !listed.has(image.id) ? notFlagged(servableArticleImage(image)) : null;
   // Cover-image NSFW handling is done downstream via getSafeImage() +
   // buildEntityImage(null) — when the cover is NSFW the template renders the
   // LogoPlaceholder instead, while still showing title/content/stats.
@@ -419,12 +430,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     title: article.title,
     description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(
-      getSafeImage(
-        notFlagged(servableArticleImage(article.coverImage)) ??
-          notFlagged(servableArticleImage(article.bannerImage))
-      )
-    ),
+    ...buildEntityImage(getSafeImage(shown(article.coverImage) ?? shown(article.bannerImage))),
     stats,
   };
 }
@@ -584,8 +590,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
       FROM "ImageConnection" ic
       JOIN "Image" i ON i.id = ic."imageId"
       WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
-        AND i."tosViolation" IS NOT TRUE
-        AND ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+        AND ${Prisma.join(entityImageVisibilityConditions({ seesReportListed: false }), ' AND ')}
       LIMIT 1
     `,
   ]);
@@ -596,11 +601,10 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
   const textRated = mayBeTextRated(bounty)
     ? await getTextRatedBountyLevels([id])
     : new Map<number, number>();
-  const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(id));
-  const image =
-    images[0] && flagLevel != null
-      ? { ...images[0], nsfwLevel: Math.max(images[0].nsfwLevel, flagLevel) }
-      : images[0];
+  const image = images[0] && {
+    ...images[0],
+    nsfwLevel: bountyImageNsfwLevel(bounty, textRated.get(id), images[0].nsfwLevel),
+  };
 
   const stats: StatItem[] = metric
     ? [

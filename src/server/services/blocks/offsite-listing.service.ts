@@ -137,6 +137,9 @@ import {
   newUlid,
 } from '~/server/utils/app-block-ids';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import { STANDING_LIMIT_RETRY_SECONDS, throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE submission service (Design B1).
@@ -205,7 +208,8 @@ function slugTakenError(slug: string): TRPCError {
  * `rateLimit` bounds the submit RATE). Mods bypass the router rate-limit but are
  * still subject to this cap.
  */
-export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
+/** The code default; the enforced cap is the user's resolved `apps.offsite-pending`. */
+export const MAX_PENDING_OFFSITE_SUBMISSIONS = getUsageLimitDef('apps.offsite-pending').base;
 
 /**
  * The author-written text a submission or patch carries. Tagline and description edits on a
@@ -372,14 +376,20 @@ export async function submitExternalListing(opts: {
 
   // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
   // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
-  const pendingCount = await dbRead.appListingPublishRequest.count({
-    where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
-  });
-  if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
-    });
+  const [pendingCount, maxPending] = await Promise.all([
+    dbRead.appListingPublishRequest.count({
+      where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
+    }),
+    resolveUserAppLimit('apps.offsite-pending', userId),
+  ]);
+  if (pendingCount >= maxPending) {
+    // A standing allowance: it frees when a submission is withdrawn or reviewed, at no set time.
+    throwAppRateLimited(
+      'apps.offsite-pending',
+      STANDING_LIMIT_RETRY_SECONDS,
+      `You have ${pendingCount} pending submissions (max ${maxPending}). Withdraw one or wait for review before submitting another.`,
+      { limit: maxPending, used: pendingCount }
+    );
   }
 
   const slug = input.slug;
@@ -1519,6 +1529,69 @@ async function loadOwnedEditableListing(
   };
 }
 
+/** The refusal for an edit of an on-site listing's manifest-governed links. */
+export const ONSITE_MANIFEST_LINK_MESSAGE =
+  "An on-site app's source repository and issue tracker links come from the `repository` and " +
+  '`bugs` keys in block.manifest.json. Set them there and submit a new version; the listing ' +
+  'takes them when that version is approved.';
+
+/** The refusal for an edit of an on-site listing's manifest-governed name / tagline / description. */
+export const ONSITE_MANIFEST_COPY_MESSAGE =
+  "An on-site app's name, tagline and description come from the `name`, `tagline` and " +
+  '`description` keys in block.manifest.json. Set them there and submit a new version; the ' +
+  'listing takes them when that version is approved.';
+
+/**
+ * The refusal for an edit of an on-site listing's category. Not "set it in the manifest": the
+ * listing takes the APP's category (`AppBlock.category`), which an approve fills from the
+ * manifest only while it is unset, so a moderator's curation survives version bumps.
+ */
+export const ONSITE_MANIFEST_CATEGORY_MESSAGE =
+  "An on-site app's category comes from the `category` key in block.manifest.json while the " +
+  'app has no category yet; once one is set, a moderator changes it. The listing takes it when ' +
+  'a version is approved.';
+
+/**
+ * 🔴 An ON-SITE listing's `name` / `tagline` / `description` / `category` and `sourceRepoUrl` /
+ * `issueTrackerUrl` are MANIFEST-GOVERNED: the draft is minted with them at submit and every
+ * block-version approve re-syncs all six (`buildListingScalarSync` — `category` from the app's
+ * own column — and the issue-tracker sync in `publish-request.service`), and an on-site revision
+ * apply copies assets only. A listing write of any of them would therefore be overwritten at the next approve
+ * (draft / pending / owner-unpublished) or dropped by the revision apply (approved) while
+ * reporting success, so it is refused up front instead. The key being PRESENT is the trigger —
+ * an explicit `null` clear is refused too. Off-site listings, whose copy and links the author
+ * owns, are untouched. One message per group the patch names, all of them in one refusal, so
+ * the caller learns every refused key at once.
+ *
+ * ONE EXCEPTION, `moderatorMaySetCategory`: the operator made category read-only for on-site
+ * OWNERS. A moderator writing the LIVE listing (`updateListing`, never a revision draft, whose
+ * on-site apply would drop it) may still set it — that is how a curated category reaches the
+ * listing before the app's next approved version, since curation writes only the app.
+ */
+export function assertNoOnsiteManifestPatch(
+  kind: string | null,
+  patch: Pick<
+    UpdateListingPatch,
+    'name' | 'tagline' | 'description' | 'category' | 'sourceRepoUrl' | 'issueTrackerUrl'
+  >,
+  opts: { moderatorMaySetCategory?: boolean } = {}
+): void {
+  if (kind !== 'onsite') return;
+  const refused: string[] = [];
+  if (patch.name !== undefined || patch.tagline !== undefined || patch.description !== undefined) {
+    refused.push(ONSITE_MANIFEST_COPY_MESSAGE);
+  }
+  if (patch.category !== undefined && !opts.moderatorMaySetCategory) {
+    refused.push(ONSITE_MANIFEST_CATEGORY_MESSAGE);
+  }
+  if (patch.sourceRepoUrl !== undefined || patch.issueTrackerUrl !== undefined) {
+    refused.push(ONSITE_MANIFEST_LINK_MESSAGE);
+  }
+  if (refused.length > 0) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: refused.join(' ') });
+  }
+}
+
 /**
  * AUTHOR: edit an off-site listing without withdrawing it. State-aware (see the
  * section header). Owner-bound (non-owner → NOT_OWNED/FORBIDDEN). Returns the
@@ -1547,6 +1620,10 @@ export async function updateListing(opts: {
       'this listing is an internal revision draft and cannot be edited directly'
     );
   }
+  // Before anything is written, and before any branch can open a shadow revision.
+  assertNoOnsiteManifestPatch(listing.kind, patch, {
+    moderatorMaySetCategory: listing.callerRole === 'moderator',
+  });
   // Before any branch below can open a shadow revision, for the reason the hoists below give.
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
@@ -1624,6 +1701,16 @@ export async function updateListing(opts: {
   // is a SHADOW rather than the live listing); every other branch writes to the parent
   // anyway, so it applies the whole patch in one update exactly as before.
   const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
+  // 🔴 ON-SITE CATEGORY RIDES WITH THE BETA HALF, onto the LIVE listing. The only on-site category
+  // write `assertNoOnsiteManifestPatch` lets through is a moderator's, and it is allowed because it
+  // lands on the live row. Staged on a shadow it would be dropped by the on-site revision apply
+  // (assets only) while the save reported success, so the material branch below must never stage
+  // it. Category is trivial, so applying it in place matches every other branch.
+  const liveParentPatch: UpdateListingPatch = { ...betaPatch };
+  if (listing.kind === 'onsite' && restPatch.category !== undefined) {
+    liveParentPatch.category = restPatch.category;
+    delete restPatch.category;
+  }
 
   const audit = {
     moderator: listing.callerRole === 'moderator',
@@ -1698,6 +1785,8 @@ export async function updateListing(opts: {
       //
       // The feature this branch exists for is untouched: `tagline`, `description` and
       // `category` are not material, so "unpublish → fix your copy → republish" still works.
+      // (Off-site only: an on-site listing's copy and category come from its app and
+      // `assertNoOnsiteManifestPatch` refused them above.)
       const material = materialPatchChanges(effectivePatch, {
         externalUrl: listing.externalUrl,
         name: listing.name,
@@ -1714,7 +1803,11 @@ export async function updateListing(opts: {
             `because that change needs moderator review and an unpublished listing has no ` +
             `way to reach it. Republish the listing first, then edit ` +
             `${material.length > 1 ? 'those fields' : 'that field'} — the edit will be ` +
-            `staged for review. Tagline, description and category can be edited now.`
+            `staged for review.` +
+            // On-site tagline/description/category are manifest-governed and refused above.
+            (listing.kind === 'onsite'
+              ? ``
+              : ` Tagline, description and category can be edited now.`)
         );
       }
       // Everything left is trivial, so edit IN PLACE exactly like draft/pending: the
@@ -1819,8 +1912,8 @@ export async function updateListing(opts: {
       // invalid URL as material precisely so it routes here, so that path was reachable
       // through the ordinary edit form. Build both payloads, mint the shadow, THEN write.
       const shadowData = buildListingPatchData(restPatch, patchOpts);
-      const betaData = patchHasAnyField(betaPatch)
-        ? buildListingPatchData(betaPatch, patchOpts)
+      const betaData = patchHasAnyField(liveParentPatch)
+        ? buildListingPatchData(liveParentPatch, patchOpts)
         : null;
       const { shadowId } = await beginListingRevision({
         listingId,
@@ -1847,6 +1940,7 @@ export async function updateListing(opts: {
         if (issueTrackerWrite.write) {
           await writeListingIssueTrackerUrl(tx, shadowId, issueTrackerWrite.value);
         }
+        // The beta half — plus an on-site moderator's category — goes to the LIVE parent.
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
         if (audit.moderator) {
           await recordModeratorListingEdit({ ...audit, db: tx, appListingId: shadowId });
@@ -3141,6 +3235,9 @@ export async function updateRevisionDraft(opts: {
   if (patch.forkable !== undefined) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
   }
+  // A shadow carries its parent's kind, so an on-site revision is refused the same way — with no
+  // moderator category exception: the on-site revision apply would drop it.
+  assertNoOnsiteManifestPatch(shadow.kind, patch);
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
     surface: 'offsite-listing',
@@ -3388,11 +3485,13 @@ async function resolveApprovalContentRating(
  * its store art happens to be tame — an under-rating of the runtime, produced by looking at
  * a picture. So the app's declaration is a FLOOR that is raised by mature media and never
  * lowered by tame media: exactly {@link resolveListingRatingFloorInTx}, the same helper
- * `approveRequest`'s draft→approved transition and `republishOwnListing` use, so all three
- * on-site rating sites have ONE spelling.
+ * `approveRequest`'s draft→approved transition, reset restore and subsequent-version
+ * re-sync and `republishOwnListing` use, so the on-site rating sites have ONE spelling.
  *
  * A moderator override may still RAISE above the floor (a mod may always rate up) and is
- * ignored when it would lower.
+ * ignored when it would lower. It is stored only as the listing's `contentRating`; the next
+ * approved version's re-sync (`resolveVersionListingRating`) keeps it by recognising a rating
+ * above what the previous version's declaration gives.
  *
  * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
  * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a

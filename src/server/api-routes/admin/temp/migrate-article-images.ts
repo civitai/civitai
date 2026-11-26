@@ -1,9 +1,8 @@
 import { ArticleStatus, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
-import { contentRemovalHeldSql } from '~/server/services/legal-hold.service';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -16,6 +15,9 @@ import {
   checkSavedArticleContentUrls,
   recomputeArticleIngestion,
 } from '~/server/services/article.service';
+import { deferContentUrls, probeContentUploads } from '~/server/services/article-content-link-hold';
+import { recordedKeys } from '~/server/services/image-url-ownership';
+import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -32,6 +34,10 @@ type MigrationStats = {
   articlesSkipped: number;
   /** Migrated articles with content keys that have no issue record. */
   articlesWithUnrecordedKeys: number;
+  /** Content urls with no upload in the image store: no row created, deferred on their article (dry run counts them only). */
+  uploadsAbsent: number;
+  /** New content urls linked unchecked: the image store, or the issue-record lookup, gave no answer. */
+  uploadsUnchecked: number;
   errors: number;
 };
 
@@ -121,16 +127,7 @@ async function runRollback(params: MigrationParams): Promise<{
       )
   `;
   const sharedImageIds = new Set(sharedImages.map((r) => r.imageId));
-  // A held owner's images are left as they are, tags included.
-  const heldImages = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT i.id FROM "Image" i
-    WHERE i.id IN (${Prisma.join(imageIds)})
-      AND ${contentRemovalHeldSql(Prisma.raw('i."userId"'), true)}
-  `;
-  const heldImageIds = new Set(heldImages.map((r) => r.id));
-  const orphanedImageIds = imageIds.filter(
-    (id) => !sharedImageIds.has(id) && !heldImageIds.has(id)
-  );
+  const orphanedImageIds = imageIds.filter((id) => !sharedImageIds.has(id));
 
   log(
     `${orphanedImageIds.length} images are article-only (will delete), ${sharedImageIds.size} shared with other entities (will keep)`
@@ -150,9 +147,7 @@ async function runRollback(params: MigrationParams): Promise<{
   if (orphanedImageIds.length > 0) {
     const tagResult = await dbWrite.$executeRaw`
       DELETE FROM "TagsOnImageNew" t
-      USING "Image" i
-      WHERE t."imageId" = i.id AND i.id IN (${Prisma.join(orphanedImageIds)})
-        AND NOT ${contentRemovalHeldSql(Prisma.raw('i."userId"'), true)}
+      WHERE t."imageId" IN (${Prisma.join(orphanedImageIds)})
     `;
     tagsDeleted = tagResult;
     log(`Deleted ${tagsDeleted} tag associations`);
@@ -170,7 +165,6 @@ async function runRollback(params: MigrationParams): Promise<{
   if (orphanedImageIds.length > 0) {
     const deleted = await deleteImages(orphanedImageIds, {
       actor: { system: 'migrate-article-images' },
-      onlyWhere: Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('"Image"."userId"'), true)}`,
       keepStoredFiles: true,
     });
     imagesDeleted = deleted.length;
@@ -329,11 +323,44 @@ async function processBatch(
     }
   }
 
+  // Probed before the transaction: a probe can take seconds, and a batch holds many urls.
+  const existingUrls = new Set(
+    (
+      await dbRead.image.findMany({
+        where: { url: { in: [...allUrls] } },
+        select: { url: true },
+      })
+    ).map((img) => img.url)
+  );
+  // A one-off pass, not re-run every settle, so neither the count cap nor the time budget applies.
+  // An unreadable store still stops it: the urls it never answered for are counted, and linked.
+  // Only keys minted by the current upload path are known to live in the store the probe asks.
+  const bareNew = [...allUrls].filter((url) => !existingUrls.has(url) && isProbeableMediaKey(url));
+  const { recorded, readFailed } = await recordedKeys(bareNew);
+  const newUrls = [...recorded];
+  if (readFailed) {
+    // Linked unprobed, as on main; counted, so a partial pass is visible.
+    const unread = bareNew.length - recorded.size;
+    stats.uploadsUnchecked += unread;
+    log(`  ⚠️  issue record lookup failed: up to ${unread} new urls unchecked`);
+  }
+  const { absent, present } = await probeContentUploads(newUrls, {
+    max: Infinity,
+    budgetMs: Infinity,
+  });
+  for (const url of absent) allUrls.delete(url);
+  stats.uploadsAbsent += absent.size;
+  const unchecked = newUrls.length - absent.size - present.size;
+  stats.uploadsUnchecked += unchecked;
+  if (unchecked) log(`  ⚠️  ${unchecked} new urls unchecked: the image store did not answer`);
+
   if (dryRun) {
-    log(`[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs`);
+    log(
+      `[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs, ${absent.size} absent, ${unchecked} unchecked`
+    );
     stats.articlesProcessed += articles.length;
     stats.imagesCreated += allUrls.size;
-    stats.connectionsCreated += articleUrlPairs.length;
+    stats.connectionsCreated += articleUrlPairs.filter(({ url }) => !absent.has(url)).length;
     return;
   }
 
@@ -411,18 +438,45 @@ async function processBatch(
     });
   }
 
-  // Recompute every article in the batch. Articles with images flip to
-  // Pending (webhook recomputes them back to Scanned once scans complete);
-  // text-only articles stay wherever their text-moderation state puts them.
-  const recomputeTasks = batchIds.map((articleId) => async () => {
+  // Before the recompute, so it keeps these articles off public while their uploads are missing.
+  const now = new Date();
+  const unheld = new Set<number>();
+  for (const article of articles) {
+    const deferred = getContentMedia(article.content)
+      .map((item) => item.url)
+      .filter((url) => absent.has(url));
+    if (!deferred.length) continue;
     try {
-      await recomputeArticleIngestion(articleId);
+      await deferContentUrls({
+        articleId: article.id,
+        content: article.content,
+        urls: deferred,
+        editorId: article.userId,
+        now,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
-      log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
+      log(`  ⚠️  article ${article.id}: hold write for absent uploads failed: ${msg}`);
       stats.errors++;
+      // Its absent urls now have neither a row nor a hold; counted in errors, linked on its next edit.
+      unheld.add(article.id);
     }
-  });
+  }
+
+  // Recompute every article in the batch whose hold write did not fail. Articles with images flip to
+  // Pending (webhook recomputes them back to Scanned once scans complete);
+  // text-only articles stay wherever their text-moderation state puts them.
+  const recomputeTasks = batchIds
+    .filter((articleId) => !unheld.has(articleId))
+    .map((articleId) => async () => {
+      try {
+        await recomputeArticleIngestion(articleId);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
+        stats.errors++;
+      }
+    });
   await limitConcurrency(recomputeTasks, concurrency);
 
   stats.articlesProcessed += articles.length;
@@ -474,6 +528,8 @@ async function runMigration(
     connectionsCreated: 0,
     articlesSkipped: 0,
     articlesWithUnrecordedKeys: 0,
+    uploadsAbsent: 0,
+    uploadsUnchecked: 0,
     errors: 0,
   };
   let lastProcessedEnd = params.start;

@@ -20,6 +20,10 @@ const { dbHandle, replicaHandle } = vi.hoisted(() => ({
 }));
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
+vi.mock('../redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../redis')>()),
+  getSysRedis: () => ({ get: async () => '{}', set: async () => 'OK' }),
+}));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -72,9 +76,12 @@ CREATE TABLE "Image" (
   "scanJobs" JSONB
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+-- The acting moderator holds the super role, so no image is withheld from them.
+CREATE TABLE "UserRole" ("userId" INTEGER, "role" TEXT);
+INSERT INTO "UserRole" VALUES (2, 'moderator:admin');
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MatureRepriceError } from '$lib/mature-charge';
+import { DatasetUnreadableError, MatureRepriceError } from '$lib/mature-charge';
 import { RunWithheldError } from '$lib/server/withheld';
 
 const continueTrainingWhatIf = vi.fn();
@@ -16,6 +16,8 @@ vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,
   throwTextCheckHttpError: () => undefined,
 }));
+const logToAxiom = vi.fn();
+vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 let kohyaAllowed = false;
 vi.mock('$lib/server/flipt', () => ({
   isKohyaAllowed: async () => kohyaAllowed,
@@ -97,6 +99,22 @@ describe('POST /api/continue-training, mature reprice', () => {
       status: 409,
       body: { message: refusal.message, matureCount: 3 },
     });
+  });
+
+  it('answers 503 with the retry message and logs the count when source images cannot be read', async () => {
+    const refusal = new DatasetUnreadableError(1);
+    continueTraining.mockRejectedValueOnce(refusal);
+    await expect(post(body)).rejects.toMatchObject({
+      status: 503,
+      body: { message: refusal.message },
+    });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'training-studio-dataset-unreadable',
+        userId: 1,
+        payload: { unreadable: 1 },
+      })
+    );
   });
 });
 

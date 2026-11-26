@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, type KeyObject } from 'crypto';
 import { decodeProtectedHeader, jwtVerify } from 'jose';
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import { env } from '$env/dynamic/private';
 import { logToAxiom } from '$lib/server/axiom';
 
@@ -44,6 +45,12 @@ export interface VerifiedBlockToken {
    * as SFW.
    */
   maxBrowsingLevel: number | null;
+  /**
+   * The viewer's own browsing level (the site's `viewerBrowsingLevel` claim), or null when absent, which
+   * the site reads as PG (`resolveViewerBrowsingLevel`). A present value that is not a non-negative integer
+   * is a shape the site refuses, and so is the token here (`claim shape`).
+   */
+  viewerBrowsingLevel: number | null;
 }
 
 export type BlockTokenRefusal =
@@ -57,6 +64,7 @@ export type BlockTokenRefusal =
   | 'dev token'
   | 'review token'
   | 'private run'
+  | 'runner token'
   | 'too old';
 
 // The site's kid: sha256 of the key's modulus, first 32 hex characters (`computeKeyId`).
@@ -155,8 +163,19 @@ export async function verifyBlockTokenForExchange(
     return { ok: false, reason: 'signature or claims' };
   }
 
-  const { sub, appId, appBlockId, blockInstanceId, jti, scopes, iat, exp, aud, maxBrowsingLevel } =
-    payload;
+  const {
+    sub,
+    appId,
+    appBlockId,
+    blockInstanceId,
+    jti,
+    scopes,
+    iat,
+    exp,
+    aud,
+    maxBrowsingLevel,
+    viewerBrowsingLevel,
+  } = payload;
   if (
     typeof sub !== 'string' ||
     typeof appId !== 'string' ||
@@ -169,7 +188,9 @@ export async function verifyBlockTokenForExchange(
     !Array.isArray(scopes) ||
     !scopes.every((s) => typeof s === 'string') ||
     typeof iat !== 'number' ||
-    typeof exp !== 'number'
+    typeof exp !== 'number' ||
+    // The site's shape guard (`verifyBlockToken`): optional, but when present a non-negative integer.
+    (viewerBrowsingLevel !== undefined && !isBrowsingLevelClaim(viewerBrowsingLevel))
   ) {
     return { ok: false, reason: 'claim shape' };
   }
@@ -186,6 +207,8 @@ export async function verifyBlockTokenForExchange(
   ) {
     return { ok: false, reason: 'private run' };
   }
+  // A recipe-runner token may only submit a workflow on the site; it is never exchanged.
+  if (payload.mintOrigin !== undefined) return { ok: false, reason: 'runner token' };
   if (nowSeconds - iat > MAX_AGE_SECONDS + CLOCK_TOLERANCE_SECONDS) {
     return { ok: false, reason: 'too old' };
   }
@@ -200,12 +223,8 @@ export async function verifyBlockTokenForExchange(
       scopes: scopes as string[],
       iat,
       exp,
-      maxBrowsingLevel:
-        typeof maxBrowsingLevel === 'number' &&
-        Number.isInteger(maxBrowsingLevel) &&
-        maxBrowsingLevel >= 0
-          ? maxBrowsingLevel
-          : null,
+      maxBrowsingLevel: isBrowsingLevelClaim(maxBrowsingLevel) ? maxBrowsingLevel : null,
+      viewerBrowsingLevel: isBrowsingLevelClaim(viewerBrowsingLevel) ? viewerBrowsingLevel : null,
     },
   };
 }

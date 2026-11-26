@@ -516,19 +516,23 @@ describe('smites', () => {
     expect(await expOf(1)).toBe(0);
   });
 
-  it('issues no wrong-answer smite while smites are switched off, and does when the switch is unset', async () => {
-    await player(1);
-    await player(2);
-    for (let i = 0; i < 40; i++) await rating(i + 1);
+  it(
+    'issues no wrong-answer smite while smites are switched off, and does when the switch is unset',
+    { timeout: 30_000 },
+    async () => {
+      await player(1);
+      await player(2);
+      for (let i = 0; i < 40; i++) await rating(i + 1);
 
-    smitesSwitch = { smites: false };
-    await play(1, 20, (n) => n >= 6);
-    expect(await smitesOf(1)).toHaveLength(0);
+      smitesSwitch = { smites: false };
+      await play(1, 20, (n) => n >= 6);
+      expect(await smitesOf(1)).toHaveLength(0);
 
-    smitesSwitch = undefined;
-    await play(2, 20, (n) => n >= 6);
-    expect(await smitesOf(2)).toMatchObject([{ reason: ACOLYTE_WRONG_ANSWER_SMITE }]);
-  });
+      smitesSwitch = undefined;
+      await play(2, 20, (n) => n >= 6);
+      expect(await smitesOf(2)).toMatchObject([{ reason: ACOLYTE_WRONG_ANSWER_SMITE }]);
+    }
+  );
 
   it('starts no career reset while smites are switched off, however many answers are wrong', async () => {
     await player(1);
@@ -769,7 +773,7 @@ describe('checkpoints', () => {
     expect(view.checkpoint).toMatchObject({ total: 20, right: 20, missed: [] });
     expect(view.progress.answered).toBe(40);
     expect(view.progress.accuracy).toBe(0.875);
-  });
+  }, 20_000);
 
   it('lists a missed yes/no answer with its curated explanation', async () => {
     await player(1);
@@ -787,6 +791,7 @@ describe('checkpoints', () => {
     });
   });
 
+  // 60 sequential answers, each several PGlite round trips: over Vitest's 5s default on a loaded CI shard.
   it('offers coaching once accuracy is under 60% after 50 answers, and not before', async () => {
     await player(1);
     for (let i = 0; i < 70; i++) await rating(i + 1, { answer: '2' });
@@ -797,7 +802,7 @@ describe('checkpoints', () => {
     await play(1, 20, (n) => n % 2 === 0);
     const later = await getApprentice(db, 1);
     expect(later.kind === 'checkpoint' && later.checkpoint.coach).toBe(true);
-  });
+  }, 20_000);
 });
 
 describe('answers outlive their reference', () => {

@@ -16,10 +16,30 @@ export async function profilePictureUserIds(
   return pictureUserIds(db, imageIds);
 }
 
+/** The main app's `PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY`: a bulk moderation can reach many users. */
+const SESSION_EVICT_CONCURRENCY = 10;
+
+/** Deletes these users' sessions, a few at a time; the next session read re-produces each. */
+async function evictSessions(userIds: number[]) {
+  const ids = [...new Set(userIds)];
+  for (let at = 0; at < ids.length; at += SESSION_EVICT_CONCURRENCY)
+    await Promise.all(
+      ids.slice(at, at + SESSION_EVICT_CONCURRENCY).map((id) =>
+        getRedis()
+          .del(`${REDIS_KEYS.USER.SESSION}:${id}`)
+          .catch((error) =>
+            logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'session' })
+          )
+      )
+    );
+}
+
 // The main app caches a user's profile picture for a day, and avatars are shown or hidden on its
 // rating. A held or blocked picture also clears the legacy `User.image` naming
 // it, by the statement the main app runs; the users whose picture is held or blocked get their
-// basic-user entry, session and search document refreshed.
+// basic-user entry and search document refreshed. Every user the pictures reach loses their
+// session, whose shape carries the avatar url, as in the main app's `refreshProfilePicturesForUsers`:
+// a re-rate can hide a picture without clearing `User.image`.
 // Never throws: it follows a committed moderation write.
 export async function bustProfilePictures(
   target: { imageIds: number[] } | { userIds: number[] }
@@ -37,14 +57,7 @@ export async function bustProfilePictures(
       bustCachedObject(REDIS_KEYS.CACHES.BASIC_USERS, changedUserIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'basic-users' })
       ),
-      // The session shape carries the avatar url; the next session read re-produces it.
-      ...changedUserIds.map((id) =>
-        getRedis()
-          .del(`${REDIS_KEYS.USER.SESSION}:${id}`)
-          .catch((error) =>
-            logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'session' })
-          )
-      ),
+      evictSessions(userIds),
       syncSearchIndexBulk({
         entityType: 'user',
         entityIds: changedUserIds,

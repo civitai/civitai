@@ -7,7 +7,10 @@ import { stagesWorkedBy } from '../queue/ranks';
 import { isRank } from '../ranks';
 import { headingOf } from './headings';
 import { playableItems } from './items';
-import { YESNO_KEY_PREFIX } from './keys';
+import { MOD_TAG_REVIEW_AXIS, readWithoutJit } from '@civitai/db/knights';
+import { axisKey, YESNO_KEY_PREFIX } from './keys';
+
+const TAG_REVIEW_KEY = axisKey(MOD_TAG_REVIEW_AXIS);
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -32,7 +35,7 @@ function unanswered(
   exclude: number[]
 ) {
   return (
-    playableItems(db)
+    playableItems(db, { tagReview: axis === TAG_REVIEW_KEY })
       .where('i.questionKey', '=', axis)
       .where('i.minRank', 'in', stages)
       .where('img.userId', 'is distinct from', userId)
@@ -49,17 +52,20 @@ function unanswered(
           )
         )
       )
-      .where((eb) =>
-        // The same words about the same image under another id are the same question.
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('KnightsVote as v')
-              .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
-              .select(sql<number>`1`.as('one'))
-              .where('v.playerId', '=', userId)
-              .whereRef('o.imageId', '=', 'i.imageId')
-              .whereRef('o.prompt', '=', 'i.prompt')
+      // The same words about the same image under another id are the same question, except for tag review: a re-flagged
+      // tag is asked again as a new item (a new episode) with the same words, and is judged afresh.
+      .$if(axis !== TAG_REVIEW_KEY, (qb) =>
+        qb.where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('KnightsVote as v')
+                .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
+                .select(sql<number>`1`.as('one'))
+                .where('v.playerId', '=', userId)
+                .whereRef('o.imageId', '=', 'i.imageId')
+                .whereRef('o.prompt', '=', 'i.prompt')
+            )
           )
         )
       )
@@ -131,6 +137,8 @@ export async function pickYesNo(
     secret: string;
     share: number;
     stretch: number;
+    /** The moderator tag review source is switched on: its axis is offered, whatever `share` says. */
+    tagReview?: boolean;
     force?: boolean;
     /** Question ids the player has skipped. */
     exclude?: number[];
@@ -163,7 +171,10 @@ export async function pickYesNo(
       .where('key', 'like', `${YESNO_KEY_PREFIX}%`)
       .orderBy('key', 'asc')
       .execute()
-  ).map((q) => q.key);
+  )
+    .map((q) => q.key)
+    // The tag review axis follows its own switch; every other axis follows the share.
+    .filter((key) => (key === TAG_REVIEW_KEY ? input.tagReview === true : input.share > 0));
   if (axes.length === 0) return null;
 
   const { axis: current, run } = await currentStretch(
@@ -181,13 +192,9 @@ export async function pickYesNo(
   ];
 
   for (const axis of order) {
-    const found = await unanswered(
-      db,
-      input.userId,
-      axis,
-      stages,
-      input.exclude ?? []
-    ).executeTakeFirst();
+    const found = await readWithoutJit(db, (trx) =>
+      unanswered(trx, input.userId, axis, stages, input.exclude ?? []).executeTakeFirst()
+    );
     if (!found) continue;
     const heading = headingOf(axis, YESNO_KEY_PREFIX);
     return {

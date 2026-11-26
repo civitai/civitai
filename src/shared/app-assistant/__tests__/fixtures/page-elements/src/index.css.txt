@@ -43,6 +43,24 @@ body {
   padding: 16px;
 }
 
+/* Make it yours (recommended, not required). Without this the app wears
+   Civitai's stock accent, like every other app built from this template.
+   Uncomment the rule below and pick your colours: the <civitai-*> elements
+   inside the app root read these tokens, so everything drawn in the primary
+   accent follows. Scope it to the app root, NEVER to :root — at :root it only
+   TIES with the token sheet imported in src/main.ts, so it wins or silently
+   loses on stylesheet order alone. If you rebrand, index.html's boot skeleton
+   colours should follow (see the note there). Check the result in BOTH the
+   light and the dark theme. Guide:
+   https://developer.civitai.com/apps/guide/theming.md#give-your-app-its-own-look
+
+[data-block-root] {
+  --civitai-color-primary: #7c3aed;
+  --civitai-color-primary-hover: #6d28d9;
+  --civitai-color-primary-fg: #ffffff;
+}
+*/
+
 [data-dimmed] {
   color: var(--civitai-color-text-dimmed);
 }

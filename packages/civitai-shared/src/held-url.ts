@@ -7,6 +7,12 @@ import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, sqlRef } from './held-media';
  * parameters in the caller's statement.
  */
 
+/**
+ * The first key of the CSAM hold decision's advisory lock (`pg_advisory_xact_lock(hashtext(key),
+ * entityId)`), for every writer that must not land between a decision's check and its write.
+ */
+export const csamHoldLockKey = (entityType: string) => `csam-hold:${entityType}`;
+
 /** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
 export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
 /**
@@ -37,7 +43,7 @@ export function postTextCsamHeldText(text: string): string {
  * too.
  */
 export function csamQueueHeldText(entityType: string, entity: string): string {
-  if (!/^[A-Za-z]+$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
   const e = /^\d{1,18}$/.test(entity) ? entity : sqlRef(entity);
   if (/^"?(qh|qm|qd)"?\./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
   return `(
@@ -80,17 +86,13 @@ export function reportNamesText(report: string, user: string): string {
   return `(${c}."userId" = ${u} OR ${c}.details ->> 'secondaryUserId' = (${u})::text)`;
 }
 
-/**
- * `user` has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
- * verified evidence copy. Names the "EvidenceHeldUser" view, so a database without it fails the
- * statement.
- */
+/** `user` is named on a CSAM report that is unsent, or sent without a verified evidence copy. */
 export function ownerHeldText(user: string): string {
   const u = sqlRef(user);
-  return `(EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${u}) OR EXISTS (
+  return `EXISTS (
     SELECT 1 FROM "CsamReport" hc WHERE ${reportNamesText('hc', u)}
       AND (hc."reportSentAt" IS NULL OR NOT ${evidenceVerifiedText('hc')})
-  ))`;
+  )`;
 }
 
 /** `user` is named on any CSAM report. */
@@ -125,13 +127,16 @@ export function imageCoveredText(image: string, user: string): string {
  * An unreadable fact fails the statement rather than reading as not held.
  * With `matureUnderage: false` a `mature-underage` unpublish alone does not hold: it takes the
  * media off the site but does not limit which moderators may view it.
+ * With `owners: false` only a moderator delete flagged for CSAM review that no verified report covers
+ * holds. Use it to decide which moderators may view media, never for what cdn-access retracts.
  */
 export function heldUrlSql(
   url: string,
   {
     exceptImageId,
     matureUnderage = true,
-  }: { exceptImageId?: string; matureUnderage?: boolean } = {}
+    owners = true,
+  }: { exceptImageId?: string; matureUnderage?: boolean; owners?: boolean } = {}
 ): string {
   const u = sqlRef(url);
   const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
@@ -143,6 +148,12 @@ export function heldUrlSql(
           OR COALESCE(hmv.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
           OR COALESCE(hmo.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)`
     : '';
+  if (!owners)
+    return `EXISTS (
+    SELECT 1 FROM "ImageCdnModeratorDelete" hd
+    WHERE hd.url = ${u} AND hd."csamReview"
+      AND NOT ${imageCoveredText('hd."imageId"', 'hd."userId"')}
+  )`;
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx
@@ -183,26 +194,6 @@ export function heldUrlSql(
 // The CASE, not a WHERE: Postgres may run the cast before a WHERE's pattern test.
 const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
   FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids`;
-
-/**
- * Whether the url `url` (a column reference) carries bytes under an evidence hold: an image row on
- * it, or a moderator delete of one, is held. Bytes are per url, so a copy row is held with it.
- */
-export function evidenceHeldUrlSql(url: string): string {
-  const u = sqlRef(url);
-  if (/^eh_/.test(u)) throw new Error(`Alias taken inside evidenceHeldUrlSql: ${u}`);
-  return `(
-    EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h JOIN "Image" eh_i ON eh_i.id = eh_h."imageId"
-      WHERE eh_i.url = ${u}
-    )
-    OR EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h
-      JOIN "ImageCdnModeratorDelete" eh_d ON eh_d."imageId" = eh_h."imageId"
-      WHERE eh_d.url = ${u}
-    )
-  )`;
-}
 
 /**
  * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete

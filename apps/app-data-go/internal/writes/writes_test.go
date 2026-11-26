@@ -266,8 +266,6 @@ var allowedOutbound = map[string]bool{
 
 // 1. Every route's forward: the method, path, query, body bytes and Authorization the site sees,
 // and the site's status, body and Content-Type / Retry-After passed back.
-// Fails on origin/main: none of these routes exists there, so every call is the mux's 404 and the
-// site receives nothing (`len(got) != 1`).
 func TestEachRouteIsForwardedExactly(t *testing.T) {
 	cases := []struct {
 		name, op   string
@@ -303,18 +301,13 @@ func TestEachRouteIsForwardedExactly(t *testing.T) {
 		{"delete with a padded ifVersion", "delete",
 			call{method: "DELETE", path: "/v1/apps/stamp-book/collections/pages/records/p:2?ifVersion=007", auth: "Bearer civitai_tok-delz-85"},
 			"DELETE", "/api/internal/blocks/storage/pages/p:2", "from=stamp-book&ifVersion=7", 200, `{"deleted":false}`},
-		{"mark", "mark",
-			call{method: "PATCH", path: "/v1/apps/meme-poll/collections/entries/records/e-5", auth: "Bearer civitai_tok-mark-96",
-				body: []byte(`{"$mark":"vote"}`)},
-			"PATCH", "/api/internal/blocks/storage/entries/e-5", "from=meme-poll", 200, `{"marked":true,"count":4,"markSeq":3}`},
-		{"unmark", "unmark",
-			call{method: "PATCH", path: "/v1/apps/star-chart/collections/stars/records/s-6", auth: "Bearer civitai_tok-unmark-17",
-				body: []byte(`{"$unmark":"fave"}`)},
-			"PATCH", "/api/internal/blocks/storage/stars/s-6", "from=star-chart", 200, `{"marked":false,"count":0,"markSeq":9}`},
-		{"increment", "increment",
-			call{method: "PATCH", path: "/v1/apps/click-count/collections/counters/records/c-7", auth: "Bearer civitai_tok-inc-28",
-				body: []byte(`{"$inc":{"clicks":2}}`)},
-			"PATCH", "/api/internal/blocks/storage/counters/c-7", "from=click-count", 429, `{"code":"rate_limited"}`},
+		{"put refused 429", "put",
+			call{method: "PUT", path: "/v1/apps/click-count/collections/counters/records/c-7", auth: "Bearer civitai_tok-inc-28",
+				body: []byte(`{"data":{"clicks":2}}`)},
+			// The site's 429 carries the house rateLimit meta; it is passed on byte for byte. An INVARIANT
+			// guard: the pass-through predates the meta, so this pins it rather than covering a regression.
+			"PUT", "/api/internal/blocks/storage/counters/c-7", "from=click-count", 429,
+			`{"code":"rate_limited","rateLimit":{"retryAfterSeconds":7,"retryAt":"2026-01-01T00:00:07.000Z","id":"apps.doc-store","kind":"abuse"}}`},
 		{"info", "info",
 			call{method: "GET", path: "/v1/apps/quota-view/info", auth: "Bearer civitai_tok-info-39"},
 			"GET", "/api/internal/blocks/storage", "from=quota-view", 200, `{"usage":{"bytes":10}}`},
@@ -409,7 +402,6 @@ func recompute(key, method, path, query, ts string, body []byte, h http.Header) 
 // 2. The signature the site receives verifies under the canonical rule, recomputed from what the
 // site received, for a body and for none, with region headers and without, under a site URL with a
 // path prefix (signed as sent).
-// Fails on origin/main: no forward, so no signature (`len(got) != 2`).
 func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 	const clock = 1_795_000_123
 	r := newRig(t, func(f *Forwarder) { f.Now = func() time.Time { return time.Unix(clock, 0) } })
@@ -453,7 +445,6 @@ func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 
 // 3. A block token is verified here first: a valid one is forwarded unchanged; a forged, expired or
 // anonymous one is 401 and the site receives nothing. An opaque token and no token are 401 too.
-// Fails on origin/main: the routes are 404 there (`rec.Code != 401`).
 func TestBlockTokensAreVerifiedBeforeAnythingIsSent(t *testing.T) {
 	r := newRig(t)
 	valid := blockToken(t, siteKey, nil)
@@ -496,7 +487,6 @@ func TestBlockTokensAreVerifiedBeforeAnythingIsSent(t *testing.T) {
 
 // 4. An answer that is lost is 504 outcome unknown, and the site saw exactly one request: never a
 // retry. A site 501 (the import refusal, raised before any write) is passed on as it is.
-// Fails on origin/main: the route is 404 there (`rec.Code != 504`).
 func TestALostAnswerIsUnknownAndNeverRetried(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -570,7 +560,6 @@ func TestAnAnswerPastTheBoundIsUnknown(t *testing.T) {
 
 // 5. `503 not_forwarded` is only this service's own refusal, before anything is sent: the key set
 // unavailable, shutting down, no verifier, the request not buildable. The site receives nothing.
-// Fails on origin/main: the routes are 404 there (`rec.Code != 503`).
 func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 	cases := map[string]struct {
 		tweak func(*rig)
@@ -591,8 +580,8 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 			if auth == "" {
 				auth = "Bearer " + blockToken(t, siteKey, map[string]any{"jti": "blk-nf-" + strings.ReplaceAll(name, " ", "-")})
 			}
-			rec := r.do(t, call{method: "PATCH", path: "/v1/apps/not-sent/collections/votes/records/v-1", auth: auth,
-				body: []byte(`{"$mark":"vote"}`)})
+			rec := r.do(t, call{method: "PUT", path: "/v1/apps/not-sent/collections/votes/records/v-1", auth: auth,
+				body: []byte(`{"data":{"vote":1}}`)})
 			e := decode(t, rec)
 			if rec.Code != 503 || e.Code != "not_forwarded" || rec.Header().Get("Retry-After") == "" {
 				t.Fatalf("%d %+v; want 503 not_forwarded with Retry-After", rec.Code, e)
@@ -600,7 +589,7 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 			if n := len(r.site.requests()); n != 0 {
 				t.Fatalf("🔴 the site received %d requests", n)
 			}
-			if r.writes("mark", "unavailable") != 1 {
+			if r.writes("put", "unavailable") != 1 {
 				t.Fatal("not counted as unavailable")
 			}
 		})
@@ -609,7 +598,6 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 
 // 6. A named major is forwarded and judged by the site: its `409 stale_major` is relayed byte for byte,
 // status, body and Content-Type, and counted as the store's 4xx.
-// Fails on origin/main: the route is 404 there (`rec.Code != 409`).
 func TestTheSitesStaleMajorIsRelayedUnchanged(t *testing.T) {
 	r := newRig(t)
 	const stale = `{"code":"stale_major","message":"stale major","error":"stale major","details":{"currentMajor":2}}`
@@ -630,8 +618,6 @@ func TestTheSitesStaleMajorIsRelayedUnchanged(t *testing.T) {
 
 // The site's refusals of the forward itself (its signature check, its internal route off) are 503
 // not_forwarded, outcome signature, never the user's own 401 or 404; every other 401 and 404 is relayed.
-// Fails on origin/main: the route is 404 there; on the previous commit the two refusals were relayed
-// as 401 and 404 (`rec.Code != 503`).
 func TestTheSitesRefusalOfTheForwardIsNotForwarded(t *testing.T) {
 	cases := []struct {
 		name, body string
@@ -672,12 +658,10 @@ func TestTheSitesRefusalOfTheForwardIsNotForwarded(t *testing.T) {
 
 // The region headers the client sent are copied onto the forward, only those present, and a
 // malformed or repeated one is refused 400 invalid_region with nothing sent.
-// Fails on origin/main: the route is 404 there; on the previous commit no region header was copied
-// (`Cf-Ipcountry != "GB"`).
 func TestTheRegionHeadersAreForwardedAndChecked(t *testing.T) {
 	r := newRig(t)
-	rec := r.do(t, call{method: "PATCH", path: "/v1/apps/region-app/collections/polls/records/q-1", auth: "Bearer civitai_tok-region-1",
-		body: []byte(`{"$unmark":"vote"}`), header: map[string]string{"CF-IPCountry": "GB", "X-IsUK": "1"}})
+	rec := r.do(t, call{method: "PUT", path: "/v1/apps/region-app/collections/polls/records/q-1", auth: "Bearer civitai_tok-region-1",
+		body: []byte(`{"data":{"vote":0}}`), header: map[string]string{"CF-IPCountry": "GB", "X-IsUK": "1"}})
 	got := r.site.requests()
 	if rec.Code != 200 || len(got) != 1 {
 		t.Fatalf("%d, %d requests", rec.Code, len(got))
@@ -718,9 +702,7 @@ func TestTheRegionHeadersAreForwardedAndChecked(t *testing.T) {
 
 // A write on a REUSED keep-alive connection that the site reads in full and then drops without an
 // answer is 504 unknown, and the site saw exactly one copy of it: nothing re-sends it.
-// Fails on origin/main: the route is 404 there (`rec.Code != 504`). Over HTTP/1 a POST was never
-// replayed by Go's transport, so against the previous commit this is an invariant guard; the
-// `GetBody = nil` it pins matters for transports that replay from GetBody (HTTP/2).
+// It pins `GetBody = nil`, which matters for transports that replay a request from GetBody (HTTP/2).
 func TestAWriteOnAReusedConnectionIsNeverReplayed(t *testing.T) {
 	var n atomic.Int32
 	var mu sync.Mutex
@@ -771,8 +753,6 @@ func TestAWriteOnAReusedConnectionIsNeverReplayed(t *testing.T) {
 
 // 8. Shape refusals: 4xx with a code, and the site receives nothing. The boundary body (exactly
 // BodyLimit bytes) is the positive control: it is sent.
-// Fails on origin/main: the routes are 404 there (`rec.Code != tc.status`, every case's status is
-// 400 or 413).
 func TestShapeRefusalsSendNothing(t *testing.T) {
 	r := newRig(t)
 	pad := func(n int) []byte {
@@ -792,10 +772,6 @@ func TestShapeRefusalsSendNothing(t *testing.T) {
 		{"bad key", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/bad*key", body: []byte(`{}`)}, 400, "invalid_request", "put"},
 		{"key too long", call{method: "DELETE", path: "/v1/apps/shape-app/collections/notes/records/" + strings.Repeat("k", 129)}, 400, "invalid_request", "delete"},
 		{"oversized body", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/big-1", body: pad(BodyLimit + 1)}, 413, "too_large", "put"},
-		{"two operators", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-1", body: []byte(`{"$mark":"vote","$unmark":"vote"}`)}, 400, "invalid_request", "patch"},
-		{"one operator twice", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-2", body: []byte(`{"$mark":"vote","$mark":"star"}`)}, 400, "invalid_request", "patch"},
-		{"another operator", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-3", body: []byte(`{"$set":{"a":1}}`)}, 400, "invalid_request", "patch"},
-		{"no operator", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-4", body: []byte(`{}`)}, 400, "invalid_request", "patch"},
 		{"an array body", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/a-1", body: []byte(`[{"data":1}]`)}, 400, "invalid_request", "put"},
 		{"invalid JSON", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/a-2", body: []byte(`{"data":`)}, 400, "invalid_request", "put"},
 		{"two values", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/a-3", body: []byte(`{} {}`)}, 400, "invalid_request", "put"},
@@ -874,11 +850,33 @@ func TestThePreflightsAllowTheWrites(t *testing.T) {
 		rec := r.do(t, call{method: "OPTIONS", path: path})
 		methods := strings.Split(rec.Header().Get("Access-Control-Allow-Methods"), ", ")
 		sort.Strings(methods)
-		if rec.Code != 204 || strings.Join(methods, ",") != "DELETE,GET,OPTIONS,PATCH,POST,PUT" ||
+		if rec.Code != 204 || strings.Join(methods, ",") != "DELETE,GET,OPTIONS,POST,PUT" ||
 			rec.Header().Get("Access-Control-Allow-Headers") != "Authorization, Content-Type" ||
 			rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Fatalf("%s: %d %v", path, rec.Code, rec.Header())
 		}
+	}
+}
+
+// PATCH (the tally operators' `$inc`, `$mark`, `$unmark`) is no route here: the mux answers 405 and
+// nothing reaches the site.
+func TestTheTallyPatchIsNotARoute(t *testing.T) {
+	r := newRig(t)
+	for _, body := range []string{`{"$mark":"vote"}`, `{"$inc":{"plays":1}}`, `{"$unmark":"vote"}`} {
+		rec := r.do(t, call{method: "PATCH", path: "/v1/apps/tally-gone/collections/votes/records/v-1",
+			auth: "Bearer civitai_tok-tally-gone-1", body: []byte(body)})
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s: %d %s; want 405", body, rec.Code, rec.Body)
+		}
+	}
+	if n := len(r.site.requests()); n != 0 {
+		t.Fatalf("🔴 the site received %d requests for a removed route", n)
+	}
+	// Positive control: a PUT on the same path is forwarded.
+	rec := r.do(t, call{method: "PUT", path: "/v1/apps/tally-gone/collections/votes/records/v-1",
+		auth: "Bearer civitai_tok-tally-gone-2", body: []byte(`{"data":{"vote":1}}`)})
+	if rec.Code != 200 || len(r.site.requests()) != 1 {
+		t.Fatalf("the PUT control: %d, %d requests", rec.Code, len(r.site.requests()))
 	}
 }
 

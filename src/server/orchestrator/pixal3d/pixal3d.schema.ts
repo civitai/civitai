@@ -3,11 +3,8 @@
  *
  * Zod schema for the Pixal3D 3D-model generation form. Pixal3D is a
  * `modelVersion` of the Trellis2 comfy pipeline, exposed as its own ecosystem.
- * Like Tripo and Hunyuan3D it is image-to-3D only, so there is no text-to-3D
- * branch and no `process` discriminator.
- *
- * Mirrors `src/server/orchestrator/hunyuan3d/hunyuan3d.schema.ts` (the other
- * comfy 3D ecosystem):
+ * It is image-to-3D only, so there is no text-to-3D branch and no `process`
+ * discriminator. Contents:
  * - `sourceImageSchema` reused for the "URL or upload" pattern.
  * - `toPixal3dPolyGenInput` converts validated form data to the
  *   `Trellis2ImageTo3dComfyPolyGenInput` shape (`engine: 'comfy',

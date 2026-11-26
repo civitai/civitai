@@ -1,17 +1,11 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
-// The real hold predicate has its own suite; here a held owner is one listed in "Held".
-vi.mock('~/server/services/legal-hold.service', () => ({
-  ownerHeldSql: (owner: Prisma.Sql) => Prisma.sql`(${owner} IN (SELECT "userId" FROM "Held"))`,
-}));
 
 import { apply, dryRun, parseArgs, type Deps } from '../oneoffs/backfill-deleted-model-versions';
 
 const LIVE = 1;
 const DELETED_OWNER = 2;
-const HELD = 3;
 const OLD = '2026-01-01 00:00:00';
 
 let db: PGlite;
@@ -23,7 +17,6 @@ beforeAll(async () => {
       ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation',
        'GatherInterest', 'Deleted');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
-    CREATE TABLE "Held" ("userId" int);
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status "ModelStatus" NOT NULL,
       "deletedBy" int, meta jsonb
@@ -37,21 +30,18 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "User", "Held", "Model", "ModelVersion";
-    INSERT INTO "User" VALUES (${LIVE}, NULL), (${DELETED_OWNER}, now()), (${HELD}, now());
-    INSERT INTO "Held" VALUES (${HELD});
+    TRUNCATE "User", "Model", "ModelVersion";
+    INSERT INTO "User" VALUES (${LIVE}, NULL), (${DELETED_OWNER}, now());
     INSERT INTO "Model" VALUES
       (10, ${DELETED_OWNER}, 'Deleted', NULL, NULL),
       (11, ${LIVE}, 'Deleted', NULL, NULL),
-      (12, ${LIVE}, 'Published', NULL, NULL),
-      (13, ${HELD}, 'Deleted', NULL, NULL);
+      (12, ${LIVE}, 'Published', NULL, NULL);
     INSERT INTO "ModelVersion" VALUES
       (1, 10, 'Published', '${OLD}'),
       (2, 10, 'Scheduled', '${OLD}'),
       (3, 10, 'Draft', '${OLD}'),
       (4, 11, 'Published', '${OLD}'),
-      (5, 12, 'Published', '${OLD}'),
-      (6, 13, 'Published', '${OLD}');
+      (5, 12, 'Published', '${OLD}');
   `);
 });
 
@@ -80,7 +70,7 @@ function makeDeps(overrides: Partial<Deps> = {}) {
 }
 
 describe('backfill-deleted-model-versions', () => {
-  it('flips Published and Scheduled versions of Deleted models, skipping held owners', async () => {
+  it('flips Published and Scheduled versions of Deleted models', async () => {
     const { deps } = makeDeps();
     const options = parseArgs(['--apply', '--chunk', '2', '--pause-ms', '5']);
 
@@ -92,7 +82,6 @@ describe('backfill-deleted-model-versions', () => {
       3: 'Draft',
       4: 'Deleted',
       5: 'Published',
-      6: 'Published',
     });
     const updatedAt = await db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM "ModelVersion" WHERE "updatedAt" <> '${OLD}'`
@@ -114,22 +103,6 @@ describe('backfill-deleted-model-versions', () => {
       'models:11',
       'sleep:5',
     ]);
-  });
-
-  it('re-checks the hold in the UPDATE, so a hold placed after the select still stops it', async () => {
-    let selects = 0;
-    const { deps } = makeDeps({
-      query: async <T>(sql: Prisma.Sql) => {
-        const rows = (await db.query<T>(sql.text, sql.values)).rows;
-        if (sql.text.trimStart().startsWith('SELECT') && selects++ === 0)
-          await db.exec(`INSERT INTO "Held" VALUES (${DELETED_OWNER})`);
-        return rows;
-      },
-    });
-
-    await apply(parseArgs(['--apply']), deps);
-
-    expect(await statuses()).toMatchObject({ 1: 'Published', 2: 'Scheduled', 4: 'Deleted' });
   });
 
   it('stops on the first orchestrator error and records the versions it did not bust', async () => {
@@ -170,7 +143,7 @@ describe('backfill-deleted-model-versions', () => {
     expect((await statuses())[1]).toBe('Published');
     const lines = vi.mocked(deps.log).mock.calls.map(([line]) => line);
     expect(lines).toContain('  owner not deleted, account-delete: 1 models, 1 versions');
-    expect(lines).toContain('  Published: 2 to flip, 1 held');
+    expect(lines).toContain('  Published: 2 to flip');
   });
 
   it('refuses a chunk over 2000', () => {

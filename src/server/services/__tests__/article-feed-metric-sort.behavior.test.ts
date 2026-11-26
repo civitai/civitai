@@ -36,6 +36,7 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, mode text, minor boolean NOT NULL DEFAULT false,
       "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Article" (id int PRIMARY KEY, cover text, "coverId" int, "bannerId" int,
       title text, "publishedAt" timestamp, "nsfwLevel" int, "userNsfwLevel" int, "userId" int,
       "createdAt" timestamp DEFAULT now(), "updatedAt" timestamp DEFAULT now(), unlisted boolean,

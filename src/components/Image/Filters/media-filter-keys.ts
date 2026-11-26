@@ -31,6 +31,7 @@ export const mediaFilterKeys = [
   'techniques',
   'hatTeams',
   'hatTurfMine',
+  'hatTurfExpired',
   'hideTurfHats',
   'hideWornHats',
 ] as const;
@@ -61,6 +62,7 @@ export const hubExcludedFilterKeys: MediaFilterKey[] = [
   // Hat Turf's: per player and per event, and the main feed's only.
   'hatTeams',
   'hatTurfMine',
+  'hatTurfExpired',
   'hideTurfHats',
   'hideWornHats',
 ];

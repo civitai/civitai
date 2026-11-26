@@ -1,6 +1,5 @@
 import { env } from '$env/dynamic/private';
-
-const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
+import { mainAppBase } from '../main-app-base';
 
 /** An opt-out type and when anyone first switched it off, i.e. since when users could have. */
 export type SilenceType = { type: string; firstSeen: Date };
@@ -20,7 +19,7 @@ export async function fetchSilenceTypes(fetcher: typeof fetch = fetch): Promise<
   try {
     const token = env.WEBHOOK_TOKEN;
     if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
-    const base = trimSlash(env.CIVITAI_APP_URL || 'https://civitai.com');
+    const base = mainAppBase();
     const res = await fetcher(`${base}/api/mod/knights/notification-types`, {
       headers: { 'x-webhook-token': token },
       signal: AbortSignal.timeout(5000),

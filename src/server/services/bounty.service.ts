@@ -1,8 +1,6 @@
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
 import { randomBytes } from 'crypto';
-import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
-import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { heldEntryOnBountySql } from '~/server/services/held-review.service';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -714,7 +712,10 @@ export const updateBountyById = async ({
         ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
-      if (liftedTextScanPoi && isRemovedWithOwner(existing.meta))
+      if (
+        liftedTextScanPoi &&
+        (existing.meta as { removedWithOwner?: unknown } | null)?.removedWithOwner === true
+      )
         throw throwBadRequestError('This bounty is kept hidden until its payout settles');
 
       if (
@@ -1175,16 +1176,14 @@ export const deleteBountyById = async ({
     }
   }
 
-  const markerView = await holdMarkerViewExists();
   const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
   const result = await dbWrite.$transaction(async (tx) => {
     if (!(await lockBountyForPayout(tx, id))) return null;
     const stored = await tx.bounty.findUnique({ where: { id } });
     if (!stored) return null;
-    // A held entrant, or an award recorded for manual resolution, keeps the bounty: hidden and
-    // detached from its owner, deleted later by `bounty-payout-retry`.
-    const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
-      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
+    // An award recorded for manual resolution keeps the bounty: hidden and detached from its
+    // owner, deleted later by `bounty-payout-retry`.
+    const keepsBounty = openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable);
     const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${keepsBounty}`;
     const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
       WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
@@ -1200,7 +1199,8 @@ export const deleteBountyById = async ({
               'availabilityBeforeRemoval', b.availability,
               'userIdBeforeRemoval', b."userId"
             )
-        WHERE b.id = ${id} AND ${keepsBounty} AND ${notRemovedWithOwnerSql('b.meta')}
+        WHERE b.id = ${id} AND ${keepsBounty}
+          AND (b.meta ->> 'removedWithOwner') IS DISTINCT FROM 'true'
       )
       SELECT EXISTS (SELECT 1 FROM gone) AS gone`;
     return { bounty: stored, gone };
@@ -1230,18 +1230,24 @@ export const deleteBountyById = async ({
   return result?.bounty ?? null;
 };
 
-/** The ids of the bounties' images the viewer may see, by the entity image rules. */
+/**
+ * The ids of the bounties' images the viewer may see, by the entity image rules and the bounty
+ * search index's exclusions.
+ */
 async function getVisibleBountyImageIds({
   bountyIds,
   userId,
   isModerator,
-}: {
-  bountyIds: number[];
-  userId?: number;
-  isModerator?: boolean;
-}) {
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) {
   if (bountyIds.length === 0) return [];
-  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed: !!seesReportListed,
+    ownerSeesReportListed,
+  });
   const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
     SELECT ic."imageId"
     FROM "ImageConnection" ic
@@ -1252,6 +1258,10 @@ async function getVisibleBountyImageIds({
   `;
   return rows.map(({ imageId }) => imageId);
 }
+
+type BountyImageViewer = { userId?: number; isModerator?: boolean } & Partial<
+  Omit<ReportListedViewer, 'userId'>
+>;
 
 /** Generation data its uploader hid goes only to the uploader and moderators. */
 const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
@@ -1266,8 +1276,16 @@ export const getBountyImages = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
+  seesReportListed,
+  ownerSeesReportListed,
+}: GetByIdInput & BountyImageViewer) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds: [id],
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
     // image-connection-orphan-safe: imageIds were read from Image just above.
@@ -1408,12 +1426,16 @@ export const getImagesForBounties = async ({
   bountyIds,
   userId,
   isModerator,
-}: {
-  bountyIds: number[];
-  userId?: number;
-  isModerator?: boolean;
-}) => {
-  const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds,
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
     // image-connection-orphan-safe: imageIds were read from Image just above.
@@ -2289,27 +2311,17 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
   return { settled };
 }
 
-/** A kept bounty is detached from its owner, who is recorded in meta.userIdBeforeRemoval. */
-const keptBountyOwnerSql = Prisma.raw(
-  `COALESCE(b."userId", (b.meta ->> 'userIdBeforeRemoval')::int)`
-);
-
 /**
  * Kept bounties that never had a payout or supporters, or whose payout is settled: any other still
- * owes supporters. One whose owner or an entrant is held waits for the first run after the hold ends,
- * and one with an award recorded for manual resolution waits until it is resolved.
+ * owes supporters. One with an award recorded for manual resolution waits until it is resolved.
  */
-
 export async function deleteSettledKeptBounties() {
-  const markerView = await holdMarkerViewExists();
   const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
   const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
     WHERE b.meta ->> 'removedWithOwner' = 'true'
       AND ((b."payoutRecordedAt" IS NULL
           AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id))
         OR (b.complete AND b."payoutSettledAt" >= b."payoutRecordedAt"))
-      AND NOT ${ownerHeldSql(keptBountyOwnerSql)}
-      AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
       AND NOT ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
     WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),

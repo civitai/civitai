@@ -38,8 +38,12 @@ import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { lockoutFor, voteGate } from '$lib/server/vote-limits/runtime';
+import { pauseFor, voteGate } from '$lib/server/vote-limits/runtime';
+import type { Pause } from '$lib/server/vote-limits/gate';
+import { limitedMessage } from '$lib/vote-limit-copy';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { skillChecks } from '$lib/server/skill-check/runtime';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
@@ -54,6 +58,7 @@ import {
 } from '$lib/server/apprenticeship/apprenticeship.service';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
+import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -117,6 +122,7 @@ async function acolyteLevelCard(progress: Notice | null, userId: number): Promis
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
+  if (await inquisitorQueueOpen(locals.user)) return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
@@ -145,7 +151,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
   // An Acolyte whose career reset is due falls through to the queue page, which serves nothing until it lands.
   if (status.rank === 'Acolyte' && !muted && !(status.smites >= status.maxSmites)) {
-    const view = await getApprentice(db, locals.user.id);
+    const view = await getApprentice(db, locals.user.id, {
+      skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+    });
     if (view.kind !== 'not-acolyte') {
       return {
         mode: 'apprentice' as const,
@@ -157,8 +165,8 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   }
 
   // A muted player sees their record but is served nothing to judge: no item, no vote-pace lookup.
-  const lockedUntil =
-    !muted && !locals.user.isModerator ? await lockoutFor(db, locals.user.id, now) : null;
+  const pause = !muted && !locals.user.isModerator ? await pauseFor(db, locals.user.id, now) : null;
+  const lockedUntil = pause?.until ?? null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
   // A muted Acolyte keeps the apprentice meter (read only: the apprenticeship serves them nothing to answer).
@@ -185,6 +193,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     resetPending,
     apprenticeMeter,
     lockoutSeconds,
+    lockoutWindowSeconds: pause?.windowSeconds ?? null,
     question: picked?.question ?? null,
     item: picked?.item ?? null,
   };
@@ -209,19 +218,19 @@ async function standingOnCard(form: FormData, userId: number) {
   }
 }
 
-const limitedFailure = (until: Date) =>
+const limitedFailure = ({ until, windowSeconds }: Pause) =>
   fail(429, {
-    message: 'You are judging too quickly. Rest a little.',
+    message: limitedMessage(windowSeconds),
     lockoutSeconds: Math.max(1, Math.ceil((until.getTime() - queueDeps.now().getTime()) / 1000)),
   });
 
 /** The pause a refusal answers: the one `/play` shows, so refused votes never give a different countdown. */
-async function pauseEnd(userId: number, refusedUntil: Date) {
+async function pauseEnd(userId: number, refused: Pause): Promise<Pause> {
   try {
-    return (await lockoutFor(db, userId, queueDeps.now(), refusedUntil)) ?? refusedUntil;
+    return (await pauseFor(db, userId, queueDeps.now(), refused)) ?? refused;
   } catch (error) {
     console.error('knights: could not read the vote lockout', { userId, error });
-    return refusedUntil;
+    return refused;
   }
 }
 
@@ -332,6 +341,8 @@ async function recordVote(
               answer,
               blockReason,
               isModerator: locals.user.isModerator,
+              serveJudged: (await skillChecks()).serveJudged,
+              skillChecks: (await skillChecks()).enabled,
             },
             // Graded in this request, so the warning or smite shows on the answer that caused it.
             { ...queueDeps, grade: { settings: await hiddenSettings(), ...resetDeps } }
@@ -356,7 +367,9 @@ async function recordVote(
     void announceMoves(db, before);
     if (result.status === 'limited') {
       refused('limited', { ref, itemId }, locals.user.id);
-      return limitedFailure(await pauseEnd(locals.user.id, result.until));
+      return limitedFailure(
+        await pauseEnd(locals.user.id, { until: result.until, windowSeconds: null })
+      );
     }
     if (result.status === 'rejected') {
       // Press timing only on not-open: it tells a vote that waited too long from an item that settled under the player.
@@ -382,6 +395,7 @@ async function recordVote(
 }
 
 export const actions: Actions = {
+  ...inquisitorActions,
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
     const arrivedAt = queueDeps.now().getTime();
@@ -406,7 +420,8 @@ export const actions: Actions = {
     refused(outcome.busy ? 'busy' : 'limited', parsed, userId);
     if (outcome.busy) return busyFailure();
     // A running cooldown already covers the shown end (pauses are frozen into it): only a fresh trip reads the ledger.
-    return limitedFailure(outcome.tripped ? await pauseEnd(userId, outcome.until) : outcome.until);
+    const refusedPause = { until: outcome.until, windowSeconds: outcome.windowSeconds ?? null };
+    return limitedFailure(outcome.tripped ? await pauseEnd(userId, refusedPause) : refusedPause);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
@@ -514,7 +529,10 @@ export const actions: Actions = {
           version: typeof version === 'string' ? version : null,
           answer,
         },
-        apprenticeDeps
+        {
+          ...apprenticeDeps,
+          skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+        }
       );
       if (result.status === 'rejected') {
         return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });

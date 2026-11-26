@@ -62,7 +62,7 @@ func TestPprofOnInternalMuxOnlyWhenToggleOn(t *testing.T) {
 			t.Errorf("public %s: %d, want 404", p, code)
 		}
 	}
-	for _, p := range []string{"/metrics", "/healthz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images", "/internal/shadow/model.getAll", ProbePathPrefix + Procedure} {
+	for _, p := range []string{"/metrics", "/healthz", "/readyz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images", "/internal/shadow/model.getAll", ProbePathPrefix + Procedure} {
 		if code := statusOf(public, p); code != http.StatusNotFound {
 			t.Errorf("public %s: %d, want 404 (internal routes stay internal)", p, code)
 		}

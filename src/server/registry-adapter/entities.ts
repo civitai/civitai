@@ -6,11 +6,11 @@ import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, isKnownRating } from '~/server/registry-adapter/audience';
 import type { Entity } from '~/server/registry-adapter/protocol';
 import {
-  HEAD_STEP,
   JSON_SCHEMA_DIALECT,
   collectionSchemaDocuments,
   deriveCollectionMajors,
   exportedCollections,
+  manifestHistory,
 } from '~/server/registry-adapter/collection-schema';
 import type { ListingStoreFields } from '~/server/registry-adapter/catalog-source';
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
@@ -84,12 +84,23 @@ export type CatalogApp = {
 };
 
 /**
+ * What a document stream's resolver reads of an app (`doc-streams.ts`): its block, its approved
+ * releases and its listing's rating. A {@link CatalogApp} is one; so is an app of the
+ * document-stream read (`readDocStreamApps`), which carries no other listing field.
+ */
+export type DocStreamApp = {
+  listing: Pick<CatalogApp['listing'], 'contentRating'>;
+  block: CatalogApp['block'];
+  approved: CatalogApp['approved'];
+};
+
+/**
  * The content rating an app entity publishes: the listing's if known ({@link isKnownRating},
  * `xxx` included, so a listing rated `xxx` is published as `xxx` and never as its block's rating),
  * else the block's if known, else whichever is set (null if neither), which `audienceAdmits`
  * fails closed on. A shared document has none of its own (`doc-streams.ts`).
  */
-export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null => {
+export const appContentRating = (app: Pick<DocStreamApp, 'listing' | 'block'>): string | null => {
   const listing = app.listing.contentRating;
   const block = app.block?.contentRating ?? null;
   if (isKnownRating(listing)) return listing;
@@ -373,10 +384,7 @@ export function buildEntities(
     const publishable = block !== null && block.status === 'approved';
 
     const derivation = publishable
-      ? deriveCollectionMajors([
-          ...app.approved.map((r) => ({ id: r.id, manifest: r.manifest })),
-          { id: HEAD_STEP, manifest: block.manifest },
-        ])
+      ? deriveCollectionMajors(manifestHistory(app.approved, block.manifest))
       : null;
 
     const exported = publishable

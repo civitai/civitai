@@ -34,6 +34,13 @@ const (
 	MissOfficialModels   = "official-models"   // getOfficialModelIds' fetchThroughCache entry (model.getAll)
 	MissImageTags        = "image-tags"        // imageTagsCache (image.getInfinite with include 'tags'; never written)
 	MissUserFollows      = "user-follows"      // userFollowsCache (image.getInfinite with followed; never written nor kept)
+	// MissVersionShowcase is getVersionShowcaseCache (the v1 models routes' and image.getInfinite's
+	// curated-showcase guard, ShowcaseState): only the curated-or-not decision is computed, never
+	// an entry, so nothing is written or kept.
+	MissVersionShowcase = "version-showcase"
+	// MissImageResources (resources.go) is imageResourcesCache (the public images endpoint): computed
+	// from the replica only while the Node lookup reads it too (ImageResourcesFromReplica), never
+	// written back nor kept.
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
@@ -41,7 +48,7 @@ const (
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
-	MissUserFollows}
+	MissUserFollows, MissVersionShowcase, MissImageResources, MissCreatorMemberships, MissGalleryHold}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -108,6 +115,15 @@ type MissCompute struct {
 	// falls back (`metrics-miss-failed`). It bounds only that wait, never this lookup's own ClickHouse
 	// read (MetricsTimeout's); a MetricsTimeout that ends first still ends the wait.
 	MetricsLockWait time.Duration
+	// ImageResourcesFromReplica reports whether the Node app's image-resources lookup reads the
+	// replica: ImageResourceUseWriteFlag read and off. Only then is an image-resources miss computed
+	// (computeImageResources); nil, or false (the flag on, or not known), leaves it falling back
+	// (`image-resources-miss`).
+	ImageResourcesFromReplica func() bool
+	// TierMetadataKey is TIER_METADATA_KEY as config reads it (`tier` when unset): the product
+	// metadata key the creator-membership origin reads a tier from (CreatorMembershipsComputed), used
+	// as given, so the empty string is the empty key, as in Node; it has no default here.
+	TierMetadataKey string
 	// waitSleep, when set (tests), replaces the timer between lock-wait reads (sleepLockWait): called
 	// with the delay, it returns nil to read next or an error to end the wait.
 	waitSleep func(ctx context.Context, d time.Duration) error
@@ -165,9 +181,10 @@ type recentEntry struct {
 //   - for a cache not written back, each answer (a record or "no row") is kept for recentTTL and
 //     answers the next miss of that id without a query. For one written back nothing is kept: the
 //     written cache entry answers repeats, and a kept answer could outlive the bust that should
-//     replace it. The image meta and the user follows are never kept either (memoized): Node keeps no
-//     per-pod copy of either, so a meta its owner just hid is never served again (and its multi-KB
-//     values would crowd the cap), and a viewer's changed follow set is read back at once.
+//     replace it. The image meta, the user follows and the creator memberships are never kept
+//     either (memoized): Node keeps no per-pod copy of any, so a meta its owner just hid is never
+//     served again (and its multi-KB values would crowd the cap), a viewer's changed follow set is
+//     read back at once, and so is a membership a subscription change just busted.
 //
 // The records are shared between callers and must be treated as read-only.
 func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
@@ -261,15 +278,21 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 }
 
 // memoized is whether lookupShared keeps cache's answers in recent: true for a cache not written
-// back, except the image meta and the user follows. Node keeps neither in a per-pod L1 (imageMetaCache
-// deliberately, userFollowsCache has none), so a hideMeta flip must not leave the old prompt served
-// from a process's copy, and a viewer who changes their follow set must read the new one back at once.
+// back, except the image meta, the user follows and the creator memberships. Node keeps none of them
+// in a per-pod L1 (imageMetaCache deliberately; userFollowsCache and getValidCreatorMembershipMap's
+// packed keys have none), so a hideMeta flip must not leave the old prompt served from a process's
+// copy, a viewer who changes their follow set must read the new one back at once, and a membership
+// a subscription change busted must not read its old value here.
 // The tag ids, model frames, model decorations and version showcases are kept: none depends on the
 // viewer (the showcase lookup reads no user, and the per-viewer image filter runs on every read), Node
 // keeps tag ids in a per-pod L1 far longer than recentTTL, and a model frame or decoration is the same
-// lookup the image ones keep.
+// lookup the image ones keep. The version-showcase decision (MissVersionShowcase, ShowcaseState) does
+// not go through lookupShared and keeps nothing, so it is false for it too, as for the image resources
+// (MissImageResources, computeImageResources). Nor is the gallery hold (MissGalleryHold, GalleryHolds):
+// it is a safety rule, and a kept answer could outlive the bust a minor or SFW-only flag change sends.
 func (c *MissCompute) memoized(cache string) bool {
-	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows
+	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows && cache != MissVersionShowcase &&
+		cache != MissImageResources && cache != MissCreatorMemberships && cache != MissGalleryHold
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
@@ -487,7 +510,7 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			val, ttl = append(append(make(jspack.Obj, 0, len(rec)+1), rec...), jspack.KV{K: "cachedAt", V: now}), spec.ttl
 		}
 		b := jspack.Pack(val)
-		e, st := decodeBytes(b, 0, now, orderedCaches[spec.key])
+		e, st := decodeValue(string(b), 0, now, optsFor(spec.key))
 		if st != stateEntry {
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}

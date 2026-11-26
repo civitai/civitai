@@ -129,9 +129,31 @@ const catalog = (): CatalogApp[] => [
       contentRating: sourceRating,
       manifest: sourceManifest(),
     },
-    approved: [],
+    approved: approvedManifests.map((m, i) => ({
+      id: `pr-${i + 1}`,
+      version: `0.${i + 1}.0`,
+      manifest: m,
+      bundleSha256: null,
+      commitSha: null,
+      sourceCommit: null,
+      reviewedAt: new Date(Date.UTC(2026, 9, i + 1)),
+    })),
   },
 ];
+/** The source app's approved manifests, oldest first; the enforced one is `sourceManifest()`. */
+let approvedManifests: unknown[];
+/** An approved manifest whose `journal` declared `t` a number: the enforced string `t` is a new major. */
+const numberTManifest = () => ({
+  ...sourceManifest(),
+  storage: {
+    collections: {
+      journal: {
+        visibility: 'private',
+        schema: { type: 'object', properties: { t: { type: 'number' } } },
+      },
+    },
+  },
+});
 
 /** The poll's sleep: each poll waits for {@link wake}. */
 let wakers: Array<() => void>;
@@ -259,19 +281,39 @@ const TOKENS: Record<string, VerifiedToken> = {
   // host (every level = 31), through the source app's own client or the importing consumer's.
   'owner-own-block-sfw': userToken(OWNER, SOURCE_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: SOURCE_ID, blockInstanceId: INSTALL_SFW, maxBrowsingLevel: 3 },
+    block: {
+      appBlockId: SOURCE_ID,
+      blockInstanceId: INSTALL_SFW,
+      maxBrowsingLevel: 3,
+      viewerBrowsingLevel: null,
+    },
   }),
   'owner-own-block-xxx': userToken(OWNER, SOURCE_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: SOURCE_ID, blockInstanceId: INSTALL_XXX, maxBrowsingLevel: 31 },
+    block: {
+      appBlockId: SOURCE_ID,
+      blockInstanceId: INSTALL_XXX,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: null,
+    },
   }),
   'owner-grantee-block-sfw': userToken(OWNER, CONSUMER_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: CONSUMER_ID, blockInstanceId: INSTALL_CON_SFW, maxBrowsingLevel: 3 },
+    block: {
+      appBlockId: CONSUMER_ID,
+      blockInstanceId: INSTALL_CON_SFW,
+      maxBrowsingLevel: 3,
+      viewerBrowsingLevel: null,
+    },
   }),
   'owner-grantee-block-xxx': userToken(OWNER, CONSUMER_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: CONSUMER_ID, blockInstanceId: INSTALL_CON_XXX, maxBrowsingLevel: 31 },
+    block: {
+      appBlockId: CONSUMER_ID,
+      blockInstanceId: INSTALL_CON_XXX,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: null,
+    },
   }),
   // A user-exchange token for the same user, client and settings: no block binding.
   'owner-grantee-full': userToken(OWNER, CONSUMER_CLIENT, {
@@ -329,6 +371,7 @@ const upserts = (events: StreamEvent[]) =>
 
 beforeEach(() => {
   sourceRating = 'pg13';
+  approvedManifests = [];
   now = Date.UTC(2026, 10, 19, 12);
   runGateReadable = true;
   revokedInstalls = new Set();
@@ -994,13 +1037,38 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     );
   });
 
+  it("each record carries its document's store version (the number a write's ifVersion is compared against)", async () => {
+    // Versions distinct from each other and from every seq.
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 6, seq: 41, data: { t: OWNER_CANARY } },
+      {
+        key: 'entry-7c',
+        recordId: OWNER_RECORD_2,
+        version: 13,
+        seq: 88,
+        data: { t: OWNER_CANARY_2 },
+      },
+    ]);
+    const { events } = await snapshotOf('owner-own');
+    expect(
+      upsertEntities(events)
+        .map((e) => ({ key: e.key, version: e.version }))
+        .sort((a, b) => ((a.key as string) < (b.key as string) ? -1 : 1))
+    ).toEqual([
+      { key: 'entry-1', version: 6 },
+      { key: 'entry-7c', version: 13 },
+    ]);
+  });
+
   it('live names the head its snapshot read; a poll whose head moved sends a progress with it, after its changes', async () => {
     const run = subscribe(
       composeAdapter(entities, publicFeed(), privateFeed()),
       await principalOf('owner-own')
     );
     await settle(run);
-    expect(positions(run.events)).toEqual([{ type: 'live', meta: { head: { seq: 97 } } }]);
+    expect(positions(run.events)).toEqual([
+      { type: 'live', meta: { head: { seq: 97 }, currentMajor: 1 } },
+    ]);
 
     // A write to the record: the next poll sends it, then the head it read.
     docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
@@ -1012,7 +1080,9 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const batch = run.events.slice(mark);
     expect(batch.map((e) => e.type)).toEqual(['upsert', 'progress']);
     expect(upsertEntities(batch).map((e) => e.seq)).toEqual([102]);
-    expect(positions(batch)).toEqual([{ type: 'progress', meta: { head: { seq: 102 } } }]);
+    expect(positions(batch)).toEqual([
+      { type: 'progress', meta: { head: { seq: 102 }, currentMajor: 1 } },
+    ]);
     // The progress closes the batch at the upsert's own position.
     expect((batch[1] as { cursor: string }).cursor).toBe((batch[0] as { cursor: string }).cursor);
 
@@ -1024,10 +1094,49 @@ describe('a private record carries its seq, and the stream its head (read-your-w
       {
         type: 'progress',
         cursor: (batch[1] as { cursor: string }).cursor,
-        meta: { head: { seq: 115 } },
+        meta: { head: { seq: 115 }, currentMajor: 1 },
       },
     ]);
     // Nothing moved: nothing sent.
+    const still = run.events.length;
+    await poll(run);
+    expect(run.events.length).toBe(still);
+    run.stop();
+    wake();
+  });
+
+  it('🔴 live and progress name the collection current major: 2 at its second major, then 3 when one is minted, the head unchanged', async () => {
+    approvedManifests = [numberTManifest()];
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    expect(positions(run.events)).toEqual([
+      { type: 'live', meta: { head: { seq: 97 }, currentMajor: 2 } },
+    ]);
+    // A third major minted (an approval between the two that declared `t` a boolean): no write,
+    // so the head is unchanged, and the progress names the new major.
+    approvedManifests = [
+      numberTManifest(),
+      {
+        ...sourceManifest(),
+        storage: {
+          collections: {
+            journal: {
+              visibility: 'private',
+              schema: { type: 'object', properties: { t: { type: 'boolean' } } },
+            },
+          },
+        },
+      },
+    ];
+    const mark = run.events.length;
+    await poll(run);
+    expect(positions(run.events.slice(mark))).toEqual([
+      { type: 'progress', meta: { head: { seq: 97 }, currentMajor: 3 } },
+    ]);
+    // Nothing moved since: nothing sent.
     const still = run.events.length;
     await poll(run);
     expect(run.events.length).toBe(still);
@@ -1061,13 +1170,15 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const sent = run.events.slice(before);
     expect(upsertEntities(sent).map((e) => e.seq)).toEqual([124]);
     // The head it names is the one read before the keyset, never the later write's.
-    expect(positions(sent)).toEqual([{ type: 'progress', meta: { head: { seq: 124 } } }]);
+    expect(positions(sent)).toEqual([
+      { type: 'progress', meta: { head: { seq: 124 }, currentMajor: 1 } },
+    ]);
     // The next poll sees the write and names its head.
     const mark = run.events.length;
     await poll(run);
     expect(upsertEntities(run.events.slice(mark)).map((e) => e.seq)).toEqual([131]);
     expect(positions(run.events.slice(mark))).toEqual([
-      { type: 'progress', meta: { head: { seq: 131 } } },
+      { type: 'progress', meta: { head: { seq: 131 }, currentMajor: 1 } },
     ]);
     run.stop();
     wake();
@@ -1124,12 +1235,65 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const events = await resume();
     expect(events.map((e) => e.type)).toEqual(['live', 'upsert', 'progress']);
     expect(positions(events)).toEqual([
-      { type: 'live', meta: undefined },
-      { type: 'progress', meta: { head: { seq: 97 } } },
+      { type: 'live', meta: { currentMajor: 1 } },
+      { type: 'progress', meta: { head: { seq: 97 }, currentMajor: 1 } },
     ]);
     expect(upsertEntities(events).map((e) => ({ urn: e.urn, key: e.key, seq: e.seq }))).toEqual([
       { urn: OWNER_URN, key: 'entry-1', seq: 41 },
     ]);
+  });
+
+  it('🔴 a cursor saved under k2 (keys and seqs, no version) resumes as a change: every record is sent again with its version', async () => {
+    const owner = await principalOf('owner-own');
+    const binding = requestBinding({ schema: SCHEMA, urns: [] }, owner.subject);
+    const adapter = composeAdapter(entities, publicFeed(), privateFeed());
+    const first = subscribe(adapter, owner);
+    await settle(first);
+    first.stop();
+    wake();
+    await first.done;
+    const schemas = upsertEntities(first.events)[0].schemas;
+    const raw = unbindCursor(
+      (first.events.find((e) => e.type === 'live') as { cursor: string }).cursor,
+      binding
+    );
+    const digest = /^p1\.([0-9a-f]{32})$/.exec(raw)?.[1] as string;
+    const resume = async () => {
+      const run = subscribe(adapter, await principalOf('owner-own'), bindCursor(raw, binding));
+      await settle(run);
+      run.stop();
+      wake();
+      await run.done;
+      return run.events;
+    };
+
+    // Control: the cursor as this release saved it resumes with nothing to send but `live`.
+    expect((await resume()).map((e) => e.type)).toEqual(['live']);
+
+    // The same state as the k2 release saved it: its read digest and revs, its head kept.
+    const state = JSON.parse((await store.get(digest)) as string) as Record<string, unknown>;
+    state.read = sha256Hex(sortedKeyJson({ f: 'k2', read: [[OWNER_RECORD, 3, 41]] })).slice(0, 32);
+    const k2Rev = sha256Hex(
+      sortedKeyJson({
+        f: 'k2',
+        key: 'entry-1',
+        seq: 41,
+        rev: docRev({ version: 3, data: { t: OWNER_CANARY } }, schemas),
+      })
+    ).slice(0, 16);
+    state.served = [[OWNER_URN, k2Rev]];
+    await store.put(digest, sortedKeyJson(state), `${SCHEMA}#x`);
+
+    const events = await resume();
+    expect(events.map((e) => e.type)).toEqual(['live', 'upsert']);
+    expect(
+      upsertEntities(events).map((e) => ({
+        urn: e.urn,
+        key: e.key,
+        seq: e.seq,
+        version: e.version,
+      }))
+    ).toEqual([{ urn: OWNER_URN, key: 'entry-1', seq: 41, version: 3 }]);
   });
 });
 
@@ -1186,7 +1350,7 @@ describe('🔴 a namespace head that goes back (seqs restarted) expires the curs
     head = 600;
     await poll(run);
     expect(run.events.flatMap((e) => (e.type === 'progress' ? [e.meta] : []))).toEqual([
-      { head: { seq: 600 } },
+      { head: { seq: 600 }, currentMajor: 1 },
     ]);
     head = 550;
     wake();

@@ -53,7 +53,6 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useRouter } from 'next/router';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
-import { openConfirmModal } from '@mantine/modals';
 import { showErrorNotification } from '~/utils/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
@@ -79,6 +78,7 @@ import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGeneration
 import { NoContent } from '~/components/NoContent/NoContent';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { Notifications } from '@mantine/notifications';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -247,9 +247,9 @@ export default function BountyEntryDetailsPage({
             e.preventDefault();
             e.stopPropagation();
 
-            openConfirmModal({
+            openConfirm({
               title: 'Delete this entry?',
-              children: (
+              message: (
                 <Stack>
                   <Text size="sm">Are you sure you want to delete this entry?</Text>
                   <Text c="red.4" size="sm">
@@ -258,7 +258,6 @@ export default function BountyEntryDetailsPage({
                   </Text>
                 </Stack>
               ),
-              centered: true,
               labels: { confirm: 'Delete', cancel: 'Cancel' },
               confirmProps: { color: 'red' },
               onConfirm: () => {

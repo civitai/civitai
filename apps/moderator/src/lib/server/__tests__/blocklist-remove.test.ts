@@ -528,6 +528,29 @@ describe('upsertBlocklist', () => {
     expect(rows[12].data).toEqual(data);
   });
 
+  it('a removal that keeps the count is allowed', async () => {
+    const entries = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES - 1);
+    const data = [...entries, `(${entries[0]})`];
+    rows[12] = { type: 'ProfanityWord', data };
+    const { count } = await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: [data.at(-1)!],
+    });
+    expect(count).toBe(1);
+  });
+
+  it('a removal that lowers the count below the floor is refused', async () => {
+    const entries = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES);
+    const data = [...entries, `(${entries[0]})`];
+    rows[12] = { type: 'ProfanityWord', data };
+    await expect(
+      removeBlocklistItems({ id: 12, userId: MOD_ID, type: 'ProfanityWord', items: [entries[1]] })
+    ).rejects.toBeInstanceOf(BlocklistBelowFloorError);
+    expect(rows[12].data).toEqual(data);
+  });
+
   it('decides the floor through managedProfanityEntries', async () => {
     const data = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES + 5);
     rows[12] = { type: 'ProfanityWord', data };

@@ -26,17 +26,41 @@ export interface Entity {
   /**
    * A private document's `seq` (`private-feed.ts`): where its last write sits in its app
    * namespace's write order, the order a stream's head (`EventMeta`) is compared in. Set, sent and
-   * withheld exactly as `key` is.
+   * withheld exactly as `key` is. A shared-collection level stream (`level-feed.ts`) sets it too.
    */
   seq?: number;
+  /**
+   * What a shared-collection LEVEL STREAM's entity carries beside its body (`level-feed.ts`): the
+   * document's `version`, its `createdAt` and `updatedAt` (ISO 8601). A plain document: no author,
+   * no tallies, no marks. Set by the level feed, sent by the HTTP binding only, as `key` is. The
+   * private feed (`private-feed.ts`) sets `version` too, never the timestamps.
+   */
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /**
- * What a `live` or `progress` event tells its consumer beside the cursor (the spec's `Event.meta`:
- * a JSON object; absent is none). Only the private feed sets one today: its head
- * (`private-feed.ts`).
+ * What a `live`, `progress` or `end` event tells its consumer beside the cursor (the spec's
+ * `Event.meta`: a JSON object; absent is none). The private feed sets its heads
+ * (`private-feed.ts`); a level stream its head, its levels mode and its block, and on `end` the
+ * reason it ended (`level-feed.ts`).
  */
 export type EventMeta = Record<string, unknown>;
+
+/**
+ * An adapter ending a stream on purpose, with the `meta` its `end` event carries (its `reason`):
+ * thrown by `snapshot` or `changes` before anything is sent, so the subscription is answered with
+ * that `end` alone, or yielded mid-stream as a {@link Change}. Only the level feed ends a stream
+ * this way (`level-feed.ts`); every other `end` carries no meta.
+ */
+export class StreamEnd extends Error {
+  readonly meta: EventMeta;
+  constructor(meta: EventMeta) {
+    super(`stream ended: ${String(meta.reason ?? 'no reason')}`);
+    this.meta = meta;
+  }
+}
 
 /**
  * What an adapter's change feed yields: an upsert or a delete with the cursor after it, or a
@@ -45,7 +69,8 @@ export type EventMeta = Record<string, unknown>;
 export type Change =
   | { upsert: Entity; cursor: string }
   | { delete: string; cursor: string }
-  | { progress: string; meta?: EventMeta };
+  | { progress: string; meta?: EventMeta }
+  | { end: EventMeta };
 
 /**
  * What `Adapter.changes` resolves to: the changes, and the `meta` the `live` event before them
@@ -58,7 +83,7 @@ export type StreamEvent =
   | { type: 'delete'; urn: string; cursor: string }
   | { type: 'live'; cursor: string; meta?: EventMeta }
   | { type: 'progress'; cursor: string; meta?: EventMeta }
-  | { type: 'end' };
+  | { type: 'end'; meta?: EventMeta };
 
 export interface SubscribeRequest {
   schema: string;
@@ -119,6 +144,16 @@ export interface AdapterContext {
    * read (`private-feed.ts`). Absent or null is anonymous. No other stream reads it.
    */
   reader?: (PrincipalToken & { subject: string }) | null;
+  /**
+   * The request's `meta` (spec rule 10). Only the level feed reads it, to route and bind a
+   * subscription (`level-feed.ts`); no other stream does.
+   */
+  meta?: RequestMeta;
+  /**
+   * The binding the subscription arrived on; absent is HTTP. Only the level feed reads it: it
+   * refuses a gRPC level subscription (`level-feed.ts`), whose entities `Entity` cannot carry.
+   */
+  binding?: 'http' | 'grpc';
 }
 
 export interface Adapter {

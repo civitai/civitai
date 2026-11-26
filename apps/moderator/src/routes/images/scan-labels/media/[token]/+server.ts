@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '$env/dynamic/public';
 import { getEdgeUrl, getVideoUrls } from '$lib/media/edge-url';
 import { mediaForToken, type CardMedia } from '$lib/server/scan-label.service';
+import { holdsCsamReview } from '$lib/server/held-media';
 
 // The media of the card a moderator holds, streamed from the CDN under the card's token. Reached
 // through the Scan Labels page grant (it sits under that path), and only for the claim's own holder.
@@ -46,7 +47,12 @@ const empty = (status: number) =>
 export const GET: RequestHandler = async ({ params, url, locals, request, fetch }) => {
   if (!locals.user) return empty(401);
   const token = z.string().uuid().safeParse(params.token);
-  const media = token.success ? await mediaForToken(token.data, locals.user.id) : null;
+  const media = token.success
+    ? await mediaForToken(token.data, {
+        userId: locals.user.id,
+        csamReview: holdsCsamReview(locals.user),
+      })
+    : null;
   if (!media) return empty(404);
   // Only the CDN itself is ever fetched: a key getEdgeUrl passes through untouched, or a missing
   // base, would otherwise send this request somewhere else, this app included.

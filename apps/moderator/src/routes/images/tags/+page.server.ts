@@ -3,16 +3,22 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseIdList, parseQuery } from '$lib/server/query';
 import { getImageTagReviewQueue, moderateImageTags } from '$lib/server/image-tags.service';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
   limit: z.coerce.number().int().min(10).max(100).catch(50),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit } = parseQuery(url, querySchema);
-  const data = await getImageTagReviewQueue({ cursor, limit });
-  return { limit, wide: true, ...data };
+  const { items, nextCursor } = await getImageTagReviewQueue({ cursor, limit });
+  return {
+    limit,
+    wide: true,
+    items: await withheldRows(items, locals.user, 'image-tags', (i) => i.id, withheldRow),
+    nextCursor,
+  };
 };
 
 // Access is enforced globally (hooks.server.ts). `disable=true` approves the removal (tag disabled),
@@ -29,6 +35,8 @@ export const actions: Actions = {
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     if (tagId !== undefined && !Number.isFinite(tagId))
       return fail(400, { error: 'Invalid tag id.' });
+    const withheld = await withheldRefusal(locals.user, [imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     const { tagIds } = await moderateImageTags({
       imageId,
@@ -44,6 +52,8 @@ export const actions: Actions = {
     const form = await request.formData();
     const disable = form.get('disable') === 'true';
     const imageIds = parseIdList(String(form.get('imageIds') ?? ''));
+    const withheld = await withheldRefusal(locals.user, imageIds);
+    if (withheld) return fail(403, { error: withheld });
 
     await Promise.all(
       imageIds.map((imageId) => moderateImageTags({ imageId, disable, userId: locals.user.id }))

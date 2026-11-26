@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 
@@ -19,11 +18,6 @@ vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Revocation>()),
   revokeUserTokens,
-}));
-
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  assertAccountNotUnderLegalHold: vi.fn(async () => ({ legs: [], markerView: false })),
 }));
 
 // event-engine-common is a git submodule and is not checked out by default; user.service's graph
@@ -155,8 +149,51 @@ describe('restoring an account', () => {
     dbMock.dbWrite.user.findFirst
       .mockResolvedValueOnce({ id: USER, deletedAt: new Date(), meta: {} } as never)
       .mockResolvedValueOnce(null as never);
-    dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
+    dbMock.dbWrite.$transaction.mockResolvedValue([{}, 0, 0, []] as never);
     await restoreUser({ id: USER, username: 'someone', email: 'someone@example.test' } as never);
     expect(forgetGenerationToken).toHaveBeenCalledWith(USER);
+  });
+});
+
+// The ban's OAuth and app-access legs (ban-access-cleanup.service, covered on its own): every ban
+// reaches both, for the banned user; an unban reaches neither.
+describe('a ban disables OAuth apps and app access', () => {
+  const MODERATOR = 17;
+  const appAccessDeclines = () =>
+    dbMock.dbWrite.$queryRaw.mock.calls.filter(([sql]) =>
+      String((sql as { sql?: string })?.sql ?? sql).includes('UPDATE "AppAccessRequest"')
+    );
+
+  beforeEach(() => {
+    dbMock.dbWrite.oauthClient.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.oauthConsent.deleteMany.mockResolvedValue({ count: 0 } as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('🔴 a moderator ban reaches both legs, for the banned user, attributed to the moderator', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(null) as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
+    await toggleBan({ id: USER, userId: MODERATOR, isModerator: true } as never);
+
+    expect(dbMock.dbWrite.oauthClient.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: USER }) })
+    );
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ userId: USER }),
+    });
+    const [declines] = appAccessDeclines();
+    expect(declines).toBeDefined();
+    const values = (declines[0] as { values: unknown[] }).values;
+    // Positional binds: reviewedById (the moderator), reviewSource, then the declined user.
+    expect(values).toEqual([MODERATOR, 'moderator', USER]);
+  });
+
+  it('🔴 an unban reaches neither: nothing is re-enabled or re-granted', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    await toggleBan({ id: USER, userId: MODERATOR, isModerator: true } as never);
+    expect(dbMock.dbWrite.oauthClient.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).not.toHaveBeenCalled();
+    expect(appAccessDeclines()).toHaveLength(0);
   });
 });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
@@ -98,9 +98,9 @@ export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
 
   const handleRevoke = (clientId: string, appName: string) => {
     const catalogCount = activeCatalogItemCount(clientId);
-    openConfirmModal({
+    openConfirm({
       title: 'Revoke App Access',
-      children: (
+      message: (
         <Text size="sm">
           Are you sure you want to revoke access for <strong>{appName}</strong>? This will
           disconnect the app and delete all its tokens. You&apos;ll need to re-authorize if you want

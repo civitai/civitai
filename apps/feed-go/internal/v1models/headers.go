@@ -15,13 +15,15 @@ import (
 )
 
 // The response headers Node sends with a 200 on `GET /api/v1/models` and `GET /api/v1/models/[id]`
-// (DESIGN.md §16.8). They decide how Cloudflare and browsers cache the public API, so a served answer
-// must carry exactly Node's, and the shadow compares them (shadow.RESTComparedHeaders). The goldens
+// (DESIGN.md §16.8), and on `GET /api/v1/images` (PublicEndpoint as on `[id]`, with its handler's own
+// Cache-Control: HeaderInput.NoStore; DESIGN.md §13.8). They decide how Cloudflare and browsers cache
+// the public API, so a served answer must carry exactly Node's, and the shadow compares them (shadow.RESTComparedHeaders). The goldens
 // pin the result against the real Node route (testdata/golden/v1-models-headers, configheaders.json).
 //
 // Not reproduced, so the request falls back instead (internal/server/v1models_serve.go): the list's
-// X-Expires (an `etag` query), `[id]`'s block-scope CORS headers (an Origin), and Next's 304 to a
-// conditional request.
+// X-Expires (an `etag` query), `[id]`'s block-scope CORS headers (an Origin), and a conditional
+// request Fresh does not decide as Next does (ConditionalUnsupported). Next's 304 to the others is
+// these same headers with no body (Fresh, writeV1Models).
 const (
 	corsAllowOrigin  = "*"
 	corsAllowHeaders = "Authorization, Content-Type, *"
@@ -68,6 +70,12 @@ var configHeaders = func() []Header {
 	return out
 }()
 
+// ConfigHeaders is configheaders.json's list: the headers next.config.mjs headers() gives every route
+// this service answers (the REST routes and the tRPC procedures alike), which the router sets before
+// the route runs, so they are also on the 451 a blocked region gets (server.writeRegionBlocked) and on
+// the 503 image.getInfinite answers a failed feed call with (server.writeFeedUnavailable).
+func ConfigHeaders() []Header { return slices.Clone(configHeaders) }
+
 // HeaderInput is what the two routes' headers depend on.
 type HeaderInput struct {
 	// Detail: `GET /api/v1/models/[id]` (PublicEndpoint, Cache-Control set by the handler on every 200).
@@ -78,6 +86,11 @@ type HeaderInput struct {
 	VerifiedCrawler bool
 	// Nsfw is the list's parsed `nsfw` (unused on `[id]`).
 	Nsfw bool
+	// NoStore is a handler's own `private, no-store` over the wrapper's Cache-Control, for a reason
+	// other than these (`GET /api/v1/images` above SFW: feed.V1Input.WithinSFW). PublicEndpoint's
+	// headers are otherwise the ones `[id]` gets, so that route's 200 is ResponseHeaders with Detail
+	// false, Nsfw false and this.
+	NoStore bool
 }
 
 // ResponseHeaders are the headers Node sends with a 200 whose body is body (the bytes res.json
@@ -94,7 +107,7 @@ func ResponseHeaders(in HeaderInput, body []byte) []Header {
 	if in.Credentialed || in.VerifiedCrawler {
 		cc = apipolicy.PrivateCacheControl()
 	}
-	if in.Detail || in.Nsfw {
+	if in.Detail || in.Nsfw || in.NoStore {
 		cc = noStoreCacheControl
 	}
 	return append(out,

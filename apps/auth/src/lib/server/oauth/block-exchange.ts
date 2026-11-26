@@ -13,6 +13,7 @@ import { basicCredentials } from './http';
 import {
   chargeTokenExchangeFailure,
   checkTokenExchangeRateLimit,
+  oauthRateLimitRef,
   oauthRetryAfter,
   rateLimitedResponse,
 } from './rate-limit';
@@ -35,9 +36,10 @@ import { raceTimeout } from './timeout';
 // consent-exempt, so it is not the viewer's consent: access is decided by the allowlisted relay, the app's
 // listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`.
 //
-// The minted token carries the block token's binding (`@civitai/auth` `AccessTokenJwtClaims.block`), as four
+// The minted token carries the block token's binding (`@civitai/auth` `AccessTokenJwtClaims.block`), as five
 // claims written together: `civitai_token_kind: 'block-exchange'`, `civitai_app_block_id`,
-// `civitai_block_instance_id` and `civitai_max_browsing_level`. With them the registry adapter's private feed
+// `civitai_block_instance_id`, `civitai_max_browsing_level` and `civitai_viewer_browsing_level` (the viewer's
+// own level, read with the ceiling as the site's `resolveViewerBrowsingLevel` reads them). With them the registry adapter's private feed
 // (`src/server/registry-adapter/private-feed.ts`) reads no more than the site's document store would with the
 // block token itself, on every poll: mature ratings within the token's ceiling, only while the token's block
 // is its client's one approved block, and nothing once the install is revoked. The hub still refuses a token
@@ -92,6 +94,13 @@ const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
  * ceiling holds all three.
  */
 export const MATURE_BROWSING_LEVELS = 4 | 8 | 16;
+
+/**
+ * The viewer level written for a block token that carries none: PG, the site's `publicBrowsingLevelsFlag`,
+ * which is what `resolveViewerBrowsingLevel` reads an absent `viewerBrowsingLevel` as (pinned by
+ * `block-exchange.test.ts`). The minted token then reads exactly what the block token would on the site.
+ */
+export const ABSENT_VIEWER_BROWSING_LEVEL = 1;
 
 /** The one scope a minted token holds. */
 export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
@@ -222,7 +231,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     const headers = new Headers(NO_STORE);
     for (const [k, v] of new Headers(extra)) headers.set(k, v);
     if (error === 'rate_limited') {
-      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error]);
+      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error], {
+        limit: oauthRateLimitRef('token-exchange'),
+      });
     }
     return json(
       { error, error_description: DESCRIPTION[error] },
@@ -236,9 +247,10 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
   const refuseUnauthenticated = async (error: ExchangeError, reason: string) => {
     if (!(await chargeTokenExchangeFailure(input.clientIp))) {
       return rateLimitedResponse(
-        oauthRetryAfter('token-exchange'),
+        oauthRetryAfter('token-exchange-ip'),
         new Headers(NO_STORE),
-        DESCRIPTION.rate_limited
+        DESCRIPTION.rate_limited,
+        { limit: oauthRateLimitRef('token-exchange-ip') }
       );
     }
     return refuse(
@@ -301,7 +313,8 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return rateLimitedResponse(
         oauthRetryAfter('token-exchange'),
         new Headers(NO_STORE),
-        DESCRIPTION.rate_limited
+        DESCRIPTION.rate_limited,
+        { limit: oauthRateLimitRef('token-exchange') }
       );
     }
     if (!allow.callers.has(caller.id)) {
@@ -432,6 +445,7 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
           appBlockId: block.appBlockId,
           blockInstanceId: block.blockInstanceId,
           maxBrowsingLevel: ceiling,
+          viewerBrowsingLevel: block.viewerBrowsingLevel ?? ABSENT_VIEWER_BROWSING_LEVEL,
         },
       },
       {

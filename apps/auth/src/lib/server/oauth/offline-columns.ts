@@ -21,7 +21,11 @@ export type ChainOrigin = Extract<MintOrigin, 'auth_code' | 'device_code'>;
 
 type OfflineDB = Omit<DB, 'ApiKey' | 'OauthConsent'> & {
   ApiKey: DB['ApiKey'] & { mintOrigin: MintOrigin | null; refreshFamilyId: string | null };
-  OauthConsent: DB['OauthConsent'] & { offlineGrantedAt: Date | null };
+  OauthConsent: DB['OauthConsent'] & {
+    offlineGrantedAt: Date | null;
+    offlineBuzzLimit: number | null;
+    offlineBuzzPeriod: string | null;
+  };
 };
 
 export type OfflineExecutor = Kysely<OfflineDB>;

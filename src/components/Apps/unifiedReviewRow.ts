@@ -1,5 +1,10 @@
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import {
+  bootCheckFailed,
+  bootCheckUnavailable,
+  type ReviewBootCheckSummary,
+} from '~/shared/utils/review-boot-check';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
@@ -196,6 +201,8 @@ export type UnifiedReviewRow = {
 
 export type ReviewRowSignals = {
   previewState: string | null;
+  /** The review boot check's result + mode, or null/absent when none was recorded. */
+  previewBootCheck?: ReviewBootCheckSummary | null;
   agentReview?: AgentReviewSummary | null;
   sensitiveCount: number;
 };
@@ -276,12 +283,14 @@ export function onsiteRequestToUnifiedRow(
   // `agentReview` when the viewer has the agentic surface); history rows never do.
   const pendingSignals = req as {
     previewState?: string | null;
+    previewBootCheck?: ReviewBootCheckSummary | null;
     agentReview?: AgentReviewSummary | null;
   };
   const signals: ReviewRowSignals | undefined =
     'previewState' in pendingSignals
       ? {
           previewState: pendingSignals.previewState ?? null,
+          previewBootCheck: pendingSignals.previewBootCheck ?? null,
           ...('agentReview' in pendingSignals ? { agentReview: pendingSignals.agentReview } : {}),
           sensitiveCount: sensitiveScopeCount(req.manifest),
         }
@@ -557,6 +566,21 @@ export function reviewRowLane(
   }
   if (result.lane === 'agent-clean' && listingEditCheckBadge(row.listingEditCheck)) {
     return { lane: 'flagged', reasons: ['the listing edit hit the impersonation check'] };
+  }
+  // An enforced boot check that could not run (or failed) means nobody confirmed the app starts:
+  // a live preview alone is not enough for the fast lane.
+  if (
+    result.lane === 'agent-clean' &&
+    (bootCheckUnavailable(signals.previewBootCheck) || bootCheckFailed(signals.previewBootCheck))
+  ) {
+    return {
+      lane: 'flagged',
+      reasons: [
+        bootCheckFailed(signals.previewBootCheck)
+          ? 'the boot check found the app never finishes loading'
+          : "the boot check couldn't run",
+      ],
+    };
   }
   // POSITIVE: only a LIVE review preview can be agent-clean (the app was seen running).
   if (result.lane === 'agent-clean' && signals.previewState !== 'preview-live') {

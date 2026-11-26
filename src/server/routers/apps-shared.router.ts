@@ -95,7 +95,7 @@ import {
   checkSharedWithdrawRateLimit,
   reserveSharedWrite,
 } from '~/server/utils/shared-storage-rate-limit';
-import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
 import {
   tagSharedStorageOutcome,
   withSharedStorageMetrics,
@@ -292,6 +292,7 @@ export async function resolveSharedContext(
   op: SharedOp
 ): Promise<SharedContext> {
   const resolved = await resolveBlockToken(blockToken, {
+    admitRunner: false,
     // 🔴 APPROVAL FIRST, then revocation — the reverse of the bridge and per-user storage.
     // For an instance that is both revoked and not approved this path answers
     // `app block is not approved` where those two answer `block instance revoked`, and it
@@ -821,7 +822,11 @@ async function withSharedWriteBudget<T>(
 ): Promise<T> {
   const budget = await reserveSharedWrite(ctx.uid, ctx.appBlockId);
   if (!budget.allowed)
-    throwSharedRateLimited(budget, `Too many submissions — retry in ${budget.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      budget.retryAfterSeconds,
+      `Too many submissions — retry in ${budget.retryAfterSeconds}s`
+    );
   let landed = false;
   try {
     return await write(() => {
@@ -1240,7 +1245,12 @@ async function voteSharedRowUnmetered(blockToken: string, key: string): Promise<
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed)
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many votes — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
@@ -1297,7 +1307,12 @@ async function unvoteSharedRowUnmetered(
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed)
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many votes — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   const rows = (
@@ -1336,7 +1351,11 @@ async function withdrawSharedRowUnmetered(
   // bucket lives beside the constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
   if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   const client = await pool.connect();
@@ -1389,7 +1408,11 @@ async function reportSharedRowUnmetered(
   // other buckets — the containment is defence-in-depth, not the auth boundary).
   const rl = await checkSharedReportRateLimit(uid, appBlockId);
   if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many reports — retry in ${rl.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many reports — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   const exists = (await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key]))
@@ -1591,7 +1614,11 @@ async function incrementSharedCounterUnmetered(
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
   if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many increments — retry in ${rl.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many increments — retry in ${rl.retryAfterSeconds}s`
+    );
 
   // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
   // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`).

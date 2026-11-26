@@ -14,6 +14,7 @@ package registry
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -50,6 +51,17 @@ type Entity struct {
 	// Key is a private document's storage key, sent beside its body by the adapter's private feed only
 	// (src/server/registry-adapter/private-feed.ts); empty on every other entity.
 	Key string `json:"key,omitempty"`
+	// Seq is a private document's `seq`, where its last write sits in its app namespace's write order,
+	// sent beside its key by the same feed (body format k2). Zero when the entity carries none: every
+	// other entity, and a private one from an adapter before k2.
+	Seq int64 `json:"seq,omitempty"`
+	// Version is the document's numeric version, sent by the adapter's level streams for a shared
+	// document (src/server/registry-adapter/level-feed.ts) and by its private feed from body format
+	// k3. CreatedAt and UpdatedAt are a shared document's, from the level streams. Zero on every
+	// other entity, and Version zero on a private one from an adapter before k3.
+	Version   int64  `json:"version,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // Event is one protocol event. Cursor is empty on End, and on any event a registry cannot resume
@@ -63,6 +75,11 @@ type Event struct {
 	Of EventType
 	// Reason says why a Malformed event could not be decoded. It never contains the event's data.
 	Reason string
+	// Meta is the `meta` object a live, progress or end event carried, as sent (the spec's
+	// `Event.meta`); nil when it carried none. The adapter's private feed names its head there,
+	// `{"head":{"seq":N}}`, and an end its reason, `{"reason":"levels_on"}`. Read by the consumer;
+	// nothing here interprets it.
+	Meta json.RawMessage
 }
 
 // Code is an error's name: the `error` field of the JSON body or of an `error` event ("Errors").
@@ -103,12 +120,18 @@ func CodeOf(err error) Code {
 	return Unavailable
 }
 
-// Request is a subscribe request. This consumer never sends `urns`, `filter` or `meta`.
+// Request is a subscribe request. This consumer never sends `urns` or `filter`.
 type Request struct {
 	Schema string
 	Cursor string
 	// Token, when set, is this subscription's bearer token, in place of Client.Token.
 	Token string
+	// Meta, when set, is sent as the request's `meta` (a JSON object, as its compact text): the
+	// adapter's level streams are named there, `{"level":4}`.
+	Meta json.RawMessage
+	// Headers, when set, are sent on the request beside the ones set here (the viewer's region
+	// headers, session.Region). They never replace Accept, Authorization or User-Agent.
+	Headers map[string]string
 }
 
 // MaxLine bounds one SSE line. The largest app entity is a few KiB.
@@ -183,6 +206,13 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 	if req.Cursor != "" {
 		q.Set("cursor", req.Cursor)
 	}
+	if len(req.Meta) > 0 {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, req.Meta); err != nil || compact.Len() == 0 || compact.Bytes()[0] != '{' {
+			return nil, &Error{Code: BadRequest, Message: "meta must be a JSON object"}
+		}
+		q.Set("meta", compact.String())
+	}
 	base.RawQuery = q.Encode()
 
 	sctx, cancel := context.WithCancel(ctx)
@@ -190,6 +220,13 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 	if err != nil {
 		cancel()
 		return nil, &Error{Code: BadRequest, Message: err.Error()}
+	}
+	for name, v := range req.Headers {
+		switch http.CanonicalHeaderKey(name) {
+		case "Accept", "Authorization", "User-Agent":
+		default:
+			hr.Header.Set(name, v)
+		}
 	}
 	hr.Header.Set("Accept", "text/event-stream")
 	token := c.Token
@@ -330,7 +367,15 @@ func ParseEvent(typ EventType, data []byte) Event {
 	switch typ {
 	case Upsert, Delete, Live, Progress:
 	case End:
-		return Event{Type: End} // End carries nothing a consumer reads
+		// An end's only readable field is its `meta` (why the origin ended the stream); data that
+		// cannot be read is an end all the same.
+		var p struct {
+			Meta json.RawMessage `json:"meta"`
+		}
+		if json.Unmarshal(data, &p) != nil || len(p.Meta) == 0 || p.Meta[0] != '{' {
+			return Event{Type: End}
+		}
+		return Event{Type: End, Meta: p.Meta}
 	default:
 		return Event{}
 	}
@@ -338,9 +383,10 @@ func ParseEvent(typ EventType, data []byte) Event {
 		return Event{Type: Malformed, Of: typ, Cursor: cursor, Reason: reason}
 	}
 	var p struct {
-		Entity *Entity `json:"entity"`
-		URN    string  `json:"urn"`
-		Cursor string  `json:"cursor"`
+		Entity *Entity         `json:"entity"`
+		URN    string          `json:"urn"`
+		Cursor string          `json:"cursor"`
+		Meta   json.RawMessage `json:"meta"`
 	}
 	err := json.Unmarshal(data, &p)
 	var typeErr *json.UnmarshalTypeError
@@ -373,6 +419,8 @@ func ParseEvent(typ EventType, data []byte) Event {
 	}
 	ev := Event{Type: typ, Cursor: p.Cursor}
 	switch typ {
+	case Live, Progress:
+		ev.Meta = p.Meta
 	case Upsert:
 		if p.Entity == nil || p.Entity.URN == "" {
 			return malformed(p.Cursor, "upsert without an entity urn")

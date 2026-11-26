@@ -1,6 +1,7 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s
 // and `image.getInfinite`'s, computed only with ServeModelGetAll / ServeInfinite), the public REST
-// `GET /api/v1/models` routes (computed only with ServeV1Models, v1models_serve.go), and the internal
+// `GET /api/v1/models` routes (computed only with ServeV1Models, v1models_serve.go) and
+// `GET /api/v1/images` route (computed only with ServeV1Images, v1images_serve.go), and the internal
 // shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images` and `/api/v1/models` routes).
 package server
@@ -18,12 +19,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/devalue"
@@ -61,7 +64,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated, EndpointSearch}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -109,16 +112,30 @@ func verifiedCrawler(r *http.Request) bool {
 
 // Server wires a request to the port.
 type Server struct {
-	Resolver *auth.Resolver
-	Deps     *feed.Deps
-	Hosts    browsing.HostColors
+	// Readiness answers the internal /readyz (the zero value is ready); Drain fails it at shutdown.
+	Readiness Readiness
+	Resolver  *auth.Resolver
+	Deps      *feed.Deps
+	Hosts     browsing.HostColors
 	// HostPrimaries is each color's SERVER_DOMAIN_<COLOR> (config.HostPrimaries): the board color of
 	// image.getInfinite's `newCreators` reads it.
 	HostPrimaries map[string]string
 	RegionRules   []browsing.RegionRule
 	// RegionBlockRules is REGION_BLOCK_CONFIG (config.RegionBlockRules): a public request from a region
-	// on it is handed to Fallback, where applyApiRequestPolicy answers the 451.
+	// on it is the app's 451, answered here with AnswerRegionBlocked, else handed to the route's
+	// fallback, where applyApiRequestPolicy answers it.
 	RegionBlockRules []browsing.RegionRule
+	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): write the app's 451 to a
+	// request from a blocked region here (writeRegionBlocked, outcome `region_blocked`) instead of
+	// proxying it as the `region-blocked` fallback. Off, the request is handed back as before.
+	AnswerRegionBlocked bool
+	// AnswerInfiniteFeedUnavailable is FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE (default off): on the
+	// public image.getInfinite route, write the app's 503 here (writeFeedUnavailable, outcome
+	// `feed_unavailable`) for a feed-service failure the app answers with it whatever
+	// feed-service-degrade says (feed.UnavailableError), instead of handing the request back as the
+	// `feed-unavailable` / `feed-status` fallback, where the app calls the feed again. Off, the request
+	// is handed back as before.
+	AnswerInfiniteFeedUnavailable bool
 	// Fallback serves what this service does not (a reverse proxy to the Node app). Required to serve
 	// public traffic; nil only in shadow-only deployments, where the public route is not exposed.
 	Fallback http.Handler
@@ -129,6 +146,12 @@ type Server struct {
 	// ProbeQueue bounds concurrent Go-first probes (probe.go); a full queue drops the probe. Its own
 	// queue, so a probe never takes a comparison's slot; the solo-phase CPU method sees both.
 	ProbeQueue chan struct{}
+	// Parity is the serve-side parity sampler (serveparity.go): a sampled served answer is replayed to
+	// the Node app after it is written, and compared. nil (or a zero Rate) = off.
+	Parity *ServeParity
+	// EvalCapture is the eval capture (evalcapture.go, FEED_GO_EVAL_CAPTURE): nil = off, and then no
+	// tap does anything.
+	EvalCapture *EvalCapture
 	// AllowedOrigins is the app's origin allow-list (config.AllowedOriginHosts). A public request whose
 	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
 	// answers it (401 in production), and this service never serves one the app would refuse.
@@ -153,6 +176,15 @@ type Server struct {
 	// route. Off, every request there is the `model-getall-off` fallback (proxied to the Node app)
 	// before anything is computed or a serve slot taken.
 	ServeModelGetAll bool
+	// PersonalHotLead reads the `personal-hot-lead` flag per viewer (personal_lead.go); nil = every
+	// request that flag could lead is the model-getall-personal-hot-lead-unknown fallback.
+	PersonalHotLead UserFlagReader
+	// UserHubs reads the `user-hubs` flag per viewer (hubs.go) for an image.getInfinite `hubId`; nil =
+	// every such request is the infinite-hub-flag-unknown fallback.
+	UserHubs UserFlagReader
+	// FliptDeploymentID is FLIPT_DEPLOYMENT_ID: the `deploymentId` targeting property Node's
+	// buildFliptContext adds when it is set.
+	FliptDeploymentID string
 	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch (default off: every answer is
 	// superjson). On, an answer this service computes on a public route is written as devalue, byte for
 	// byte as the app writes it, exactly when the app would: a web bundle that can read it
@@ -164,13 +196,40 @@ type Server struct {
 	V1Models *V1ModelsDeps
 	// ServeV1Models is FEED_GO_SERVE_V1_MODELS (default off); off, every request is the v1-models-off fallback.
 	ServeV1Models bool
+	// ServeV1Images is FEED_GO_SERVE_V1_IMAGES (default off); off, every request on the public
+	// `/api/v1/images` route is the v1-images-off fallback (v1images_serve.go).
+	ServeV1Images bool
+	// V1BearerAuth is FEED_GO_V1_BEARER_AUTH (default off; needs FEED_GO_BEARER_AUTH, so Resolver.APIKeys
+	// is set): `[id]`, shadow and public alike, decides an API credential as the Node route does
+	// (v1DetailCredential, auth.Resolver.DetailCredential; DESIGN.md §16.10) instead of falling back on
+	// every one (`bearer-token`). The list is unaffected either way. Off, both routes behave exactly as
+	// before it existed.
+	V1BearerAuth bool
 	// V1Fallback serves what the public `/api/v1/models` routes do not (a reverse proxy to the Node app
 	// that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from Fallback). The routes
 	// are mounted only when it is set.
 	V1Fallback http.Handler
+	// V1ImagesFallback serves what the public `/api/v1/images` route does not
+	// (FEED_GO_V1_IMAGES_FALLBACK_URL: the Node pool that answers that route). The route is mounted
+	// only when it is set; V1Fallback is never used for it.
+	V1ImagesFallback http.Handler
 	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
 	// such sample falls back.
 	Associated *modelfeed.AssocDeps
+	// Search serves the public `POST /api/search/*` route (sitesearch.go): the search backend and the
+	// rate-limit store. The shadow needs neither (it reshapes the backend response Node recorded).
+	Search *SearchDeps
+	// ServeSearch is FEED_GO_SERVE_SEARCH (default off); off, every request on the public
+	// `/api/search/*` route is the search-off fallback.
+	ServeSearch bool
+	// SearchFallback serves what the public `/api/search/*` route does not (FEED_GO_SEARCH_FALLBACK_URL:
+	// the Node app answering it). The route is mounted only when it is set.
+	SearchFallback http.Handler
+	// EvalMode is FEED_GO_EVAL_MODE (default off; config.LoadEval, DESIGN.md §19.7): every request a
+	// public route hands back is answered with the hand-back stub (handBack: HandbackStatus and
+	// HandbackReasonHeader) instead of being proxied, so no fallback upstream is ever dialled; and the
+	// internal shadow and probe routes are not mounted (InternalMux).
+	EvalMode bool
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -255,9 +314,10 @@ func (s *Server) endPhase(ctx context.Context, p phaseClock, endpoint, phase, ou
 	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(endpoint, phase, outcome).Add(wall)
 }
 
-// aloneInFlight: the caller's shadow sample is the only sample or probe holding a queue slot.
+// aloneInFlight: the caller's shadow sample is the only sample, probe or serve-parity replay holding a
+// queue slot.
 func (s *Server) aloneInFlight() bool {
-	return len(s.ShadowQueue) == 1 && len(s.ProbeQueue) == 0
+	return len(s.ShadowQueue) == 1 && len(s.ProbeQueue) == 0 && s.parityQueueLen() == 0
 }
 
 // computed is one answer. payload may be a pooled buffer's bytes (buf): whoever ends up holding the
@@ -282,14 +342,20 @@ type computed struct {
 	// answers that did the work.
 	trivial bool
 	// viewerClass is the sample's viewer class when the endpoint reports one (model-associated:
-	// modelfeed.ViewerClasses); "" = not reported. The comparison result is also counted under it.
+	// modelfeed.ViewerClasses; the tRPC feeds: FeedViewerClasses); "" = not reported. The body's
+	// comparison result, and the headers' for the tRPC feeds, are also counted under it.
 	viewerClass string
 	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
 	cached bool
 	// notFound: the `/api/v1/models/[id]` not-found body, which Node answers with a 404
-	// (v1models.Answer.NotFound). Compared in the shadow; never served (v1models_serve.go).
+	// (v1models.Answer.NotFound). Compared in the shadow. The public route writes it as Node's 404 only
+	// when absent is also set, and falls back on every other one (v1models_serve.go).
 	notFound bool
+	// absent: a notFound answer the public route may write as Node's 404 (v1models.Answer.Absent:
+	// FEED_GO_V1_MODELS_ANSWER_NOT_FOUND on, no statement row, the lag flag clean). Recorded as outcome
+	// not_found (OutcomeNotFound).
+	absent bool
 	// headers are a REST answer's response headers (v1models.ResponseHeaders): what the public route
 	// writes and what the shadow compares. nil for the tRPC answers and for /api/v1/images.
 	headers []v1models.Header
@@ -297,15 +363,16 @@ type computed struct {
 
 // compute answers a request, or returns a fallback/other error.
 func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error) {
-	req, signedOut, err := s.prepare(ctx, r)
+	req, user, err := s.prepareViewer(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	signedOut := user == nil
 	res, err := feed.Serve(ctx, s.Deps, req)
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: res.Value()}
+	out := &computed{value: res.Value(), viewerClass: feedViewerClass(user, false)}
 	if signedOut {
 		// createContext: cacheable only without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
@@ -320,35 +387,44 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 // feed.Serve takes them, and whether there is no session user at all. The Go-first probe runs the
 // same steps (probe.go).
 func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bool, error) {
+	req, user, err := s.prepareViewer(ctx, r)
+	if err != nil {
+		return feed.Request{}, false, err
+	}
+	return req, user == nil, nil
+}
+
+// prepareViewer is prepare with the session user it resolved (nil: none) instead of whether there is one.
+func (s *Server) prepareViewer(ctx context.Context, r *http.Request) (feed.Request, *auth.SessionUser, error) {
 	if r.Method != http.MethodGet {
-		return feed.Request{}, false, fallback.New("method")
+		return feed.Request{}, nil, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.Request{}, false, fallback.Wrap("input-envelope", err)
+		return feed.Request{}, nil, fallback.Wrap("input-envelope", err)
 	}
 	in, err := feed.Parse(raw)
 	if err != nil {
-		return feed.Request{}, false, err
+		return feed.Request{}, nil, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return feed.Request{}, false, fallback.New("verified-bot")
+		return feed.Request{}, nil, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return feed.Request{}, false, err
+		return feed.Request{}, nil, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	cap := browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))
 
 	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned}
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 	}
-	return req, user == nil, nil
+	return req, user, nil
 }
 
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
@@ -357,15 +433,16 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // carries createContext's public TTL unless its input is viewer-scoped (InfiniteInput.ViewerScoped).
 // Shadowed, and served on the public route only with ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
-	req, cacheable, err := s.prepareInfinite(ctx, r)
+	req, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	cacheable := user == nil && !crawler
 	ans, err := feed.ServeInfinite(ctx, s.Infinite, req)
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: ans.Value, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: feedViewerClass(user, crawler)}
 	if cacheable && !req.Input.ViewerScoped() {
 		// createContext: cacheable without a session user and without a verified crawler, unless
 		// noEdgeCacheWhen(isViewerScopedInfiniteFeed) lowers it, as it does for a viewer-scoped input.
@@ -377,34 +454,41 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 	return out, nil
 }
 
-// prepareInfinite is computeInfinite up to the handler call, and whether createContext makes the
-// answer edge-cacheable (no session user at all, and no verified crawler); the Go-first probe runs
-// the same steps. A verified crawler (verifiedCrawler) counts as signed in for the domain cap where
-// NSFW is viewable (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
-func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
+// prepareInfiniteViewer is computeInfinite up to the handler call, with the session user it resolved
+// (nil: none) and whether the request is a verified crawler's (createContext makes the answer
+// edge-cacheable with neither); the Go-first probe runs the same steps. A verified crawler
+// (verifiedCrawler) counts as signed in for the domain cap where NSFW is viewable
+// (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
+func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (feed.InfiniteRequest, *auth.SessionUser, bool, error) {
 	if s.Infinite == nil {
-		return feed.InfiniteRequest{}, false, fallback.New("infinite-unconfigured")
+		return feed.InfiniteRequest{}, nil, false, fallback.New("infinite-unconfigured")
 	}
 	if r.Method != http.MethodGet {
-		return feed.InfiniteRequest{}, false, fallback.New("method")
+		return feed.InfiniteRequest{}, nil, false, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, fallback.Wrap("input-envelope", err)
+		return feed.InfiniteRequest{}, nil, false, fallback.Wrap("input-envelope", err)
 	}
-	in, err := feed.ParseInfinite(raw)
+	in, err := feed.ParseInfiniteWith(raw, s.Infinite.Ports)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, err
+		return feed.InfiniteRequest{}, nil, false, err
 	}
 	crawler := verifiedCrawler(r)
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, err
+		return feed.InfiniteRequest{}, nil, false, err
+	}
+	if in.HubID != 0 {
+		// getInfiniteImagesHandler's first step: the `userHubs` feature gate.
+		if err := s.userHubs(ctx, user); err != nil {
+			return feed.InfiniteRequest{}, nil, false, err
+		}
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	canViewNsfw := browsing.CanViewNsfw(color, restricted, isModerator)
 	req := feed.InfiniteRequest{
 		Input:      in,
@@ -415,23 +499,31 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 		req.ViewerUsername = user.Username
 	}
-	return req, user == nil && !crawler, nil
+	return req, user, crawler, nil
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
 // fallback/other error. Viewer, domain cap and region rules are read as for the gallery procedure.
 // Cache policy is createContext's, not edgeCacheIt's (model.router.ts's skipEdgeCache hands it a copy
 // of ctx.cache): public TTL signed out, none for a session.
+//
+// A viewer the `personal-hot-lead` flag is on for falls back on every page of a feed Node leads
+// (personalHotLead), here and so in the shadow too (an `unsupported` sample, never a diff). The
+// Go-first probe does not run that gate: it measures cache presence, which the gate does not read.
 func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
-	req, signedOut, err := s.prepareModelGetAll(ctx, r)
+	req, user, err := s.prepareModelGetAllViewer(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.personalHotLead(ctx, req, user); err != nil {
+		return nil, err
+	}
+	signedOut := user == nil
 	ans, err := modelfeed.Serve(ctx, s.Models, req)
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: ans.Value, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: feedViewerClass(user, false)}
 	if signedOut {
 		// createContext: cacheable without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
@@ -442,44 +534,52 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	return out, nil
 }
 
-// prepareModelGetAll is computeModelGetAll up to the handler call, and whether there is no session
-// user at all; the Go-first probe runs the same steps.
-func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, bool, error) {
+// prepareModelGetAllViewer is computeModelGetAll up to the handler call, with the session user it
+// resolved (nil: none); the Go-first probe runs the same steps.
+func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) (modelfeed.Request, *auth.SessionUser, error) {
 	if s.Models == nil {
-		return modelfeed.Request{}, false, fallback.New("model-getall-unconfigured")
+		return modelfeed.Request{}, nil, fallback.New("model-getall-unconfigured")
 	}
 	if r.Method != http.MethodGet {
-		return modelfeed.Request{}, false, fallback.New("method")
+		return modelfeed.Request{}, nil, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return modelfeed.Request{}, false, fallback.Wrap("input-envelope", err)
+		return modelfeed.Request{}, nil, fallback.Wrap("input-envelope", err)
 	}
-	in, err := modelfeed.Parse(raw)
+	in, err := modelfeed.ParseWith(raw, s.Models.Config.Ports)
 	if err != nil {
-		return modelfeed.Request{}, false, err
+		return modelfeed.Request{}, nil, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return modelfeed.Request{}, false, fallback.New("verified-bot")
+		return modelfeed.Request{}, nil, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return modelfeed.Request{}, false, err
+		return modelfeed.Request{}, nil, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	req := modelfeed.Request{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
 	if authorized {
 		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
 	}
-	return req, user == nil, nil
+	return req, user, nil
 }
 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
 // error. The body is plain JSON, as `res.json` writes it.
 func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, error) {
+	return s.computeV1For(ctx, r, false)
+}
+
+// computeV1For is computeV1; serving, a request whose session resolves to a user (a banned one
+// included) falls back (`v1-images-session`) instead of being answered for that viewer: the public
+// route serves signed-out callers only (v1ImagesServeOnly hands a session cookie back first; this
+// holds whatever cookie name the resolver reads).
+func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool) (*computed, error) {
 	if s.V1 == nil {
 		return nil, fallback.New("v1-unconfigured")
 	}
@@ -500,13 +600,21 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 	if err != nil {
 		return nil, err
 	}
+	if serving && user != nil {
+		return nil, fallback.New("v1-images-session")
+	}
+	if serving && r.URL != nil && r.URL.Host != "" {
+		// An absolute-form request line: r.Host is the URL's host and the Host header Node reads for
+		// nextPage is gone (v1ModelsHost). A Node sample is rebuilt in origin form.
+		return nil, fallback.New("v1-host")
+	}
 	var viewer *feed.Viewer
 	viewerUsername := ""
 	if user != nil && !user.Banned {
 		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
 		viewerUsername = user.Username
 	}
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	ans, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
 		Input: in, Viewer: viewer, ViewerUsername: viewerUsername, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
 	})
@@ -539,18 +647,25 @@ func (c *computed) release() {
 // writer falls back (writeSerializeWithFallback).
 func (c *computed) encode(ctx context.Context) error {
 	if trpc.DevalueWrite(ctx, c.ttl) {
+		_, phase := tracing.StartPhase(ctx, tracing.PhaseEncodeDevalue)
 		b, err := devalue.PayloadBuffer(c.value)
 		if err == nil {
 			c.payload, c.dbuf, c.devalue = b.Bytes(), b, true
+			phase.SetInt(tracing.AttrResponseBytes, len(c.payload))
+			phase.End()
 			return nil
 		}
+		phase.End()
 		c.devalueRefused = err
 	}
+	_, phase := tracing.StartPhase(ctx, tracing.PhaseEncodeSuperjson)
+	defer phase.End()
 	buf, err := superjson.SerializeBuffer(c.value)
 	if err != nil {
 		return err
 	}
 	c.payload, c.buf = buf.Bytes(), buf
+	phase.SetInt(tracing.AttrResponseBytes, len(c.payload))
 	return nil
 }
 
@@ -579,7 +694,8 @@ func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *comput
 // that the tRPC route runs before anything else and this service hands to the app rather than answer:
 //
 //   - a region on REGION_BLOCK_CONFIG (getRegion: cf-ipcountry, cf-region-code for US states, x-isuk
-//     true|1 as GB) is `region-blocked`, and the app answers its 451 with its own body and headers.
+//     true|1 as GB) is errRegionBlocked: the app's 451, which answerRegionBlocked writes here with
+//     AnswerRegionBlocked on, and which is otherwise the `region-blocked` fallback (the app answers it).
 //   - a user agent matching a crawler pattern is `crawler-user-agent`: verifyBot may then set the
 //     verified-crawler header (it also needs the IP in that crawler's published ranges), which changes
 //     the answer, and only the app holds those ranges. A request whose user agent matches none can
@@ -590,13 +706,20 @@ func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *comput
 // answer (trpc.WriteResult; the app's private default unless the answer is edge-cacheable).
 func (s *Server) apiRequestPolicy(r *http.Request) error {
 	// IsRegionRestricted is isRegionBlocked's match over any rule list (same region key and date).
-	if browsing.IsRegionRestricted(s.RegionBlockRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now()) {
-		return fallback.New("region-blocked")
+	if regionMatches(s.RegionBlockRules, r) {
+		return errRegionBlocked
 	}
 	if apipolicy.IsCrawlerUserAgent(r.Header.Get("User-Agent")) {
 		return fallback.New("crawler-user-agent")
 	}
 	return nil
+}
+
+// regionMatches is IsRegionRestricted over rules for r's region (countryOf, cf-region-code), at the
+// clock answers are computed at (clock.Now: FEED_GO_EVAL_NOW in eval mode, else the wall clock). Every
+// region rule a route reads goes through it, so a dated rule is read at one instant everywhere.
+func regionMatches(rules []browsing.RegionRule, r *http.Request) bool {
+	return browsing.IsRegionRestricted(rules, countryOf(r), r.Header.Get("cf-region-code"), clock.Now())
 }
 
 func countryOf(r *http.Request) string {
@@ -850,6 +973,13 @@ const (
 // request policy, the origin check, and fn inside a serve slot. An answer is written here; any
 // fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedure string, off error, fn func(context.Context, *http.Request) (*computed, error)) {
+	withProfileLabels(r.Context(), endpoint, "serve", func(ctx context.Context) {
+		s.serveLabelled(w, r.WithContext(ctx), endpoint, procedure, off, fn)
+	})
+}
+
+// serveLabelled is serve under the request's profile labels (withProfileLabels).
+func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint, procedure string, off error, fn func(context.Context, *http.Request) (*computed, error)) {
 	start := time.Now()
 	// The request's span (tracing on only): the compute, its store spans and the proxy hop are its
 	// children, and the duration exemplar is its trace id.
@@ -861,6 +991,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 	if s.WriteDevalue && trpc.CanDecodeDevalueResponse(r.Header) {
 		// runWithResponseWriteFormat: the answer may be devalue (encode decides, after the cache policy).
 		r = r.WithContext(trpc.WithDevalueWrite(r.Context()))
+	}
+	// The eval capture reads the viewer the compute resolves (nil with the capture off: r unchanged).
+	var viewer *viewerObs
+	if s.EvalCapture.on() {
+		var vctx context.Context
+		vctx, viewer = s.observeViewer(r.Context())
+		r = r.WithContext(vctx)
 	}
 	var (
 		c   *computed
@@ -893,24 +1030,65 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteResult(w, c.payload, c.ttl)
 		s.noteWriteFormat(ctx, endpoint, c)
+		// The serve-side parity sample (off by default) copies what it compares before the release;
+		// its replay starts only after the answer is written and never touches w.
+		replay := s.sampleParity(r, endpoint, c, viewer)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		s.startParity(replay)                          //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
+		s.sampleServeCapture(r, endpoint, viewer, nil) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
+		return
+	}
+	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
+		return
+	}
+	// r, not ctx, carries the devalue mark (set above, after the span).
+	if s.answerFeedUnavailable(ctx, span, start, w, endpoint, procedure, trpc.DevalueWrite(r.Context(), nil), err) {
 		return
 	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}
-	if s.Fallback == nil {
+	if s.Fallback == nil && !s.EvalMode {
 		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
 	}
-	// Set before the proxy copies the Node app's headers in, so it is on the proxy's own 502 too.
-	w.Header().Set(ServedByHeader, ServedByNode)
 	// The original request (and its context): the budget bounded only this service's own compute.
-	s.proxy(w, r, endpoint)
+	s.handBack(s.Fallback, w, r, endpoint, err)
+	s.sampleServeCapture(r, endpoint, viewer, err) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
+}
+
+// HandbackStatus and HandbackReasonHeader are eval mode's hand-back stub (EvalMode): a request a
+// public route would proxy to the Node app is answered with HandbackStatus, an empty body, and the
+// fallback reason in HandbackReasonHeader (fallback.Reason; HandbackReasonError for a compute error,
+// which has none). 599 is outside every status the app or this service answers, so a replay can never
+// mistake the stub for an answer.
+const (
+	HandbackStatus       = 599
+	HandbackReasonHeader = "X-Feed-Go-Handback-Reason"
+	HandbackReasonError  = "error"
+)
+
+// handBack hands a public request this service did not answer (err: the fallback, or the compute
+// error) to upstream, the route's Node app. Every public route's hand-back goes through it, so eval
+// mode's stub covers them all: with EvalMode the stub is written and upstream is never called (it may
+// be nil). Otherwise ServedByHeader says the Node app answered (set before the proxy copies the app's
+// headers in, so it is on the proxy's own 502 too) and the request is proxied.
+func (s *Server) handBack(upstream http.Handler, w http.ResponseWriter, r *http.Request, endpoint string, err error) {
+	w.Header().Set(ServedByHeader, ServedByNode)
+	if s.EvalMode {
+		reason := fallback.Reason(err)
+		if reason == "" {
+			reason = HandbackReasonError
+		}
+		w.Header().Set(HandbackReasonHeader, reason)
+		w.WriteHeader(HandbackStatus)
+		return
+	}
+	s.proxyVia(upstream, w, r, endpoint)
 }
 
 // serveFallback records a public request that was not answered here (err, a fallback or an error)
@@ -952,6 +1130,22 @@ type ShadowRequest struct {
 	// sample (shadow.RESTComparedHeaders), "" for shadow.ComparedHeaders (a tRPC sample, or a REST one
 	// from a sampler that predates the REST list).
 	ResponseHeaderSet string `json:"responseHeaderSet,omitempty"`
+	// Upstream is a site-search sample's search-backend response, as Node received it (its 200 body):
+	// the shadow reshapes it rather than asking the backend again (DESIGN.md §18.4).
+	Upstream json.RawMessage `json:"upstream,omitempty"`
+	// SampleRate is the effective rate the Node sampler took this sample at: its configured rate times
+	// the share of selected requests its per-second bucket and in-flight cap admitted for the endpoint
+	// over a recent window (0: not sent, an older sampler). Read only for the eval capture's weight;
+	// a value outside (0, 1] is ignored (sampleRateOr).
+	SampleRate float64 `json:"sampleRate,omitempty"`
+	// CorpusOnly marks a corpus-only sample (FEED_GO_SHADOW_CORPUS_ONLY_RATE, DESIGN.md §19.6 T4): a
+	// credentialed request Node took the credential out of, sent for the eval capture only. It is never
+	// computed or compared, carries no Node answer, and is refused if it still carries a credential
+	// (captureCorpusOnly).
+	CorpusOnly bool `json:"corpusOnly,omitempty"`
+	// Credential is a corpus-only sample's credential class: evalcorpus.CredentialHeader or
+	// evalcorpus.CredentialQuery, exactly (anything else is refused).
+	Credential string `json:"credential,omitempty"`
 }
 
 // ResponseHeaderSetREST marks a sample whose ResponseHeaders are shadow.RESTComparedHeaders.
@@ -983,6 +1177,14 @@ func (s *Server) ShadowV1Handler(w http.ResponseWriter, r *http.Request) {
 // shadowHandler answers 202 at once and compares in the background; a full queue drops the sample.
 // Every endpoint shares one queue, so the solo-phase CPU method (DESIGN.md §10.1) sees every sample.
 func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint string) {
+	withProfileLabels(r.Context(), endpoint, "shadow", func(ctx context.Context) {
+		s.shadowHandlerLabelled(w, r.WithContext(ctx), endpoint) //nolint:contextcheck // the background work runs on the server's background context after the 202 is written: it must outlive the request
+	})
+}
+
+// shadowHandlerLabelled is shadowHandler under the sample's profile labels (withProfileLabels); its
+// background goroutine runs the comparison under them too.
+func (s *Server) shadowHandlerLabelled(w http.ResponseWriter, r *http.Request, endpoint string) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -1035,7 +1237,30 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 		return
 	}
 	var req ShadowRequest
-	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
+	err = json.Unmarshal(body, &req)
+	if err == nil && req.CorpusOnly {
+		// Capture-only: never computed or compared, so no shadow result is counted. Done here rather
+		// than on a goroutine: the viewer is not resolved (a corpus-only request carries no cookie
+		// and no credential, so it is signed out) and Record only strips, signs and queues, so it
+		// costs no I/O. It holds the queue slot (released by defer) and the shutdown registration
+		// (s.shadows, released by this handler's defer) until it returns; a panic is recovered and
+		// counted as the sample goroutine's is, and answered 500.
+		s.endPhase(spanCtx, decode, endpoint, "decode", "ok")
+		code := http.StatusInternalServerError
+		func() {
+			defer func() { <-s.ShadowQueue }()
+			defer func() {
+				if p := recover(); p != nil {
+					s.panicked("eval-capture", p, debug.Stack())
+				}
+			}()
+			code = s.captureCorpusOnly(spanCtx, endpoint, req)
+		}()
+		setOutcome(span, "corpus_only")
+		w.WriteHeader(code)
+		return
+	}
+	if err != nil || len(req.Node) == 0 {
 		s.endPhase(spanCtx, decode, endpoint, "decode", "bad_request")
 		<-s.ShadowQueue
 		setOutcome(span, "bad_request")
@@ -1065,7 +1290,7 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 		if s.Tracer != nil {
 			ctx = trace.ContextWithSpan(ctx, span)
 		}
-		s.compare(ctx, endpoint, req)
+		withProfileLabels(ctx, endpoint, "shadow", func(ctx context.Context) { s.compare(ctx, endpoint, req) })
 	}()
 }
 
@@ -1103,9 +1328,11 @@ func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure stri
 }
 
 // SyntheticV1Request rebuilds the REST request a v1-images sample describes: its path and raw query
-// string as Node received them, and the forwarded headers.
+// string as Node received them, and the forwarded headers. It is marked as a sample (withSampled): its
+// verified-crawler header is the app's own decision, which the response headers read
+// (v1ImagesCompute), as on the model routes.
 func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, V1ImagesPath, nil)
+	r, err := http.NewRequestWithContext(withSampled(auth.WithRedactedCredentials(ctx)), http.MethodGet, V1ImagesPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1126,42 +1353,42 @@ func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, 
 
 func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest) {
 	build, computeFn := SyntheticRequest, s.compute
-	compareFn, classify := shadow.Compare, shadow.Classify
 	if s.computeFn != nil {
 		computeFn = s.computeFn
 	}
 	switch endpoint {
 	case EndpointV1Images:
-		build, computeFn = SyntheticV1Request, s.computeV1
-		compareFn, classify = shadow.CompareJSON, shadow.ClassifyJSON
-		if s.computeV1Fn != nil {
-			computeFn = s.computeV1Fn
-		}
+		// The public route's compute, with the headers it writes (v1ImagesCompute; computeV1Fn in tests).
+		build, computeFn = SyntheticV1Request, s.v1ImagesCompute(false)
 	case EndpointInfinite:
-		// The superjson envelope, as for the gallery; classified by image id (a flat page).
 		build, computeFn = SyntheticInfiniteRequest, s.computeInfinite
-		classify = shadow.ClassifyFlat
 		if s.computeInfiniteFn != nil {
 			computeFn = s.computeInfiniteFn
 		}
 	case EndpointModelGetAll:
-		// The superjson envelope, as for the gallery; classified by model id (a flat page).
 		build, computeFn = SyntheticModelGetAllRequest, s.computeModelGetAll
-		classify = shadow.ClassifyFlat
 		if s.computeModelsFn != nil {
 			computeFn = s.computeModelsFn
 		}
 	}
-	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
-		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	if b, c, ok := s.v1ModelsRoute(endpoint); ok {
+		build, computeFn = b, c
 	}
-	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
-		build, computeFn, classify = b, c, cl
+	if b, c, ok := s.associatedRoute(endpoint); ok {
+		build, computeFn = b, c
 	}
+	if b, c, ok := s.searchRoute(endpoint); ok {
+		build, computeFn = b, c
+	}
+	// How the two answers are compared: the one selection the parity replay and the eval harness make
+	// too (CompareSelection).
+	sel := CompareSelection(endpoint)
 	span := trace.SpanFromContext(ctx)
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
 	// the marker off this context (auth.WithRedactedCredentials).
 	ctx = auth.WithRedactedCredentials(ctx)
+	// The eval capture reads the viewer the compute resolves (nil observer with the capture off).
+	ctx, viewer := s.observeViewer(ctx)
 	r, err := build(ctx, req)
 	if err != nil {
 		setOutcome(span, "bad_request")
@@ -1189,6 +1416,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			}
 			s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 			tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback"), time.Since(start).Seconds())
+			s.captureShadow(ctx, endpoint, req, r, viewer, compareOutcome{result: result, reason: reason})
 			return
 		}
 		s.endPhase(ctx, phase, endpoint, "compute", "error")
@@ -1196,6 +1424,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "error").Inc()
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "go_error").Inc()
 		s.noteError(ctx, slog.LevelWarn, "shadow compute failed", "shadow", endpoint, err)
+		s.captureShadow(ctx, endpoint, req, r, viewer, compareOutcome{result: "go_error"})
 		return
 	}
 	// Released once the comparison and its classification (the last readers of payload) are done.
@@ -1212,13 +1441,55 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
 	tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "shadow", served), time.Since(start).Seconds())
 	phase = s.startPhase()
-	report, err := compareFn(c.payload, req.Node)
+	sink := compareSink{source: SourceShadow, results: s.Metrics.ShadowResults, diffs: s.Metrics.ShadowDiffs, response: s.Metrics.ShadowResponse}
+	// The phase ends once compared, before the result is counted (a reader of the result then sees
+	// the phase).
+	out := s.compareAnswer(ctx, sel, sink, c, req.Node, req.ResponseHeaders, req.ResponseHeaderSet,
+		func(ok bool) {
+			outcome := "ok"
+			if !ok {
+				outcome = "bad_request"
+			}
+			s.endPhase(ctx, phase, endpoint, "compare", outcome)
+		})
+	s.captureShadow(ctx, endpoint, req, r, viewer, out)
+}
+
+// compareOutcome is what one comparison found, for the eval capture: the body's result (a
+// feed_go_shadow_compare_total result), the headers' (match | mismatch | uncompared), and the
+// categories of every differing path (body and headers; no values). reason is a fallback's reason when
+// there was no comparison.
+type compareOutcome struct {
+	result, header, reason string
+	categories             []string
+}
+
+// compareSink is where one comparison is counted: the comparison families curried with its source
+// (shadow: a Node sample; serve-parity: a replay of a served answer, serveparity.go).
+type compareSink struct {
+	source                   string
+	results, diffs, response *prometheus.CounterVec
+}
+
+// compareAnswer compares Go's answer c with Node's (node; nodeHeaders, nil = not sent) by sel
+// (CompareSelection of the endpoint) and counts the result, the differing categories and the header
+// comparison into sink, and returns them. It is the one comparison both the shadow sample and the
+// serve-side parity replay run. The two bodies that cannot be compared are result bad_request.
+// compared (nil = none) runs once the comparison is done (ok false: bad_request), before the result
+// is counted.
+func (s *Server) compareAnswer(ctx context.Context, sel Selection, sink compareSink, c *computed, node []byte, nodeHeaders map[string]string, headerSet string,
+	compared func(ok bool)) compareOutcome {
+	endpoint := sel.Endpoint
+	span := trace.SpanFromContext(ctx)
+	report, err := sel.Compare(c.payload, node)
 	if err != nil {
-		s.endPhase(ctx, phase, endpoint, "compare", "bad_request")
-		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
-		return
+		if compared != nil {
+			compared(false)
+		}
+		sink.results.WithLabelValues(endpoint, "bad_request").Inc()
+		return compareOutcome{result: "bad_request"}
 	}
-	result := classify(report, c.payload, req.Node)
+	result := sel.Classify(report, c.payload, node)
 	if c.trivial && result == "match" {
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
@@ -1229,41 +1500,48 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// The compared headers, a separate result from the body's: the body's match rate keeps its
 	// meaning, and the response's is its own figure. The status is not compared (DESIGN.md §7).
 	var respDiffs []shadow.Diff
+	respResult := "uncompared"
 	switch {
-	case req.ResponseHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
-		// A sampler that predates the field sends none; the /api/v1/images port writes no headers of
-		// its own yet; and a model list sample with an `etag` query has none computed
-		// (v1ModelsHeadersUnknown): nothing to compare.
-		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
+	case nodeHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
+		// A sampler that predates the field sends none; a model list sample with an `etag` query has
+		// none computed (v1ModelsHeadersUnknown), nor an images sample whose body has no known
+		// JSON.stringify text (v1ImagesCompute): nothing to compare.
+		sink.response.WithLabelValues(endpoint, "uncompared").Inc()
 	default:
-		goHeaders, names := trpc.ResultHeaders(c.ttl), shadow.ComparedHeaders
-		if isRESTEndpoint(endpoint) {
-			// The model routes: the headers the public route writes (v1models_serve.go).
+		goHeaders := trpc.ResultHeaders(c.ttl)
+		if sel.REST {
+			// The REST routes: the headers the public route writes (v1models_serve.go, v1images_serve.go).
 			goHeaders = v1models.HeaderMap(c.headers)
-			if req.ResponseHeaderSet == ResponseHeaderSetREST {
-				names = shadow.RESTComparedHeaders
-			}
 		}
-		respDiffs = shadow.CompareResponseHeaders(goHeaders, req.ResponseHeaders, names)
+		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, sel.HeaderNames(headerSet))
+		respResult = "match"
 		if len(respDiffs) > 0 {
-			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "mismatch").Inc()
-		} else {
-			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "match").Inc()
+			respResult = "mismatch"
+		}
+		sink.response.WithLabelValues(endpoint, respResult).Inc()
+		if c.viewerClass != "" && sink.source == SourceShadow && isFeedViewerEndpoint(endpoint) {
+			// Who may cache the answer differs by viewer (signed out: the edge), so the headers'
+			// result is read per class too.
+			s.Metrics.ShadowResponseViewer.WithLabelValues(endpoint, c.viewerClass, respResult).Inc()
 		}
 	}
-	s.endPhase(ctx, phase, endpoint, "compare", "ok")
+	if compared != nil {
+		compared(true)
+	}
 	if span.IsRecording() {
 		span.SetAttributes(attrShadowResult.String(result))
 	}
-	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
-	if c.viewerClass != "" {
+	sink.results.WithLabelValues(endpoint, result).Inc()
+	if c.viewerClass != "" && sink.source == SourceShadow {
 		s.Metrics.ShadowViewer.WithLabelValues(endpoint, c.viewerClass, result).Inc()
 	}
 	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
 	diffs = append(diffs, report.Diffs...)
 	diffs = append(diffs, respDiffs...)
+	categories := make([]string, 0, len(diffs))
 	for _, d := range diffs {
-		s.Metrics.ShadowDiffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
+		sink.diffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
+		categories = append(categories, d.Category)
 	}
 	unexpected := 0
 	for _, d := range respDiffs {
@@ -1283,15 +1561,16 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		if bodyDiffers(result) || unexpected > 0 {
 			level = slog.LevelInfo
 		}
-		s.Log.Log(ctx, level, "shadow diff", traceAttrs(ctx, []any{"endpoint", endpoint, "result", result, "paths", paths,
+		s.Log.Log(ctx, level, "shadow diff", traceAttrs(ctx, []any{"endpoint", endpoint, "source", sink.source, "result", result, "paths", paths,
 			"truncated", report.Truncated})...)
 	}
+	return compareOutcome{result: result, header: respResult, categories: categories}
 }
 
-// isRESTEndpoint: the REST ports (v1-images, v1-models, v1-models-id).
+// isRESTEndpoint: the REST ports (v1-images, v1-models, v1-models-id, site-search).
 func isRESTEndpoint(endpoint string) bool {
 	switch endpoint {
-	case EndpointV1Images, EndpointV1Models, EndpointV1ModelsID:
+	case EndpointV1Images, EndpointV1Models, EndpointV1ModelsID, EndpointSearch:
 		return true
 	}
 	return false

@@ -18,7 +18,7 @@ import {
 } from '@mantine/core';
 import { IconInfoCircle, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { GeneratorMessage, MessageAudience, MessageKind } from '~/shared/generation/messages';
@@ -284,20 +284,17 @@ export function GeneratorMessagesSection() {
   });
 
   const confirmDelete = (message: GeneratorMessage) =>
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete generator message?',
-        message: (
-          <Text size="sm">
-            <b>{message.name || 'Unnamed message'}</b> stops showing as soon as caches refresh.
-          </Text>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Delete' },
-        confirmProps: { color: 'red' },
-        // ConfirmDialog awaits this and never catches; onError already reports it.
-        onConfirm: () => deleteMutation.mutateAsync({ id: message.id }).catch(() => undefined),
-      },
+    openConfirm({
+      title: 'Delete generator message?',
+      message: (
+        <Text size="sm">
+          <b>{message.name || 'Unnamed message'}</b> stops showing as soon as caches refresh.
+        </Text>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Delete' },
+      confirmProps: { color: 'red' },
+      // onError reports the failure; the catch lets the confirm close either way.
+      onConfirm: () => deleteMutation.mutateAsync({ id: message.id }).catch(() => undefined),
     });
 
   return (

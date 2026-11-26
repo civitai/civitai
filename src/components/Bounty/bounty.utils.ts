@@ -1,5 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import type { SemanticBountySearchInput } from '~/server/schema/semantic-bounty-search.schema';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import dayjs from '~/shared/utils/dayjs';
@@ -19,6 +20,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { BountySort, BountyStatus } from '~/server/common/enums';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -137,7 +139,11 @@ export const useSemanticBountyFeed = (
   query: string | undefined
 ) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const input = toSemanticBountySearchInput(filters, query ?? '', browsingLevel);
+  const { asTyped } = useSearchAsTyped(query);
+  const input = {
+    ...toSemanticBountySearchInput(filters, query ?? '', browsingLevel),
+    ...spellcheckFor(asTyped),
+  };
   const { data, ...rest } = trpc.semanticBountySearch.search.useInfiniteQuery(input, {
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -156,6 +162,7 @@ export const useSemanticBountyFeed = (
     ...rest,
     bounties,
     isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
     correctedQuery: data?.pages[0]?.correctedQuery,
     // Identifies the search, so the feed can scroll to the top when it changes.
     searchKey: query ? JSON.stringify(input) : undefined,

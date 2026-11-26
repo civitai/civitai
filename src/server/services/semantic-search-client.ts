@@ -53,7 +53,11 @@ const GATE_KIND = {
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number } | { imageUrl: string };
+/** `spellcheck: false`: the service searches the text as typed, without its spelling correction. */
+export type SearchQuery =
+  | { text: string; spellcheck?: false }
+  | { similarTo: number }
+  | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -165,6 +169,8 @@ export type GuardRead = {
   rules: string[];
   mode: string;
   version: string | null;
+  /** Set only when the service refused the text (it served no hits for it). */
+  refused?: true;
 };
 
 export const GUARD_NONE: GuardRead = { outcome: 'none', rules: [], mode: '', version: null };
@@ -180,6 +186,7 @@ export function readGuard(raw: unknown): GuardRead {
     rules: Array.isArray(g.rules) ? g.rules.filter((r): r is string => typeof r === 'string') : [],
     mode: typeof g.mode === 'string' ? g.mode : '',
     version: typeof g.version === 'string' ? g.version : null,
+    ...(g.refused === true ? { refused: true as const } : {}),
   };
 }
 
@@ -300,6 +307,7 @@ export function searchServiceSource(
       {
         collection,
         query: query.text,
+        ...(query.spellcheck === false ? { spellcheck: false } : {}),
         filter: qdrantFilter,
         offset,
         limit,
@@ -353,6 +361,85 @@ function withMatchesFirst(
     const head = first.ids.slice(args.offset, args.offset + args.limit);
     const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;
     return { ...first, ids: [...head, ...(tail?.ids ?? [])] };
+  };
+}
+
+// How many of the closest "more like this" matches a preferred tag can reorder.
+export const PREFER_WINDOW = 500;
+
+/**
+ * The first `total` ids, one block at a time: a range read at once takes a bulkhead slot per block,
+ * and SEMANTIC_SEARCH_CONCURRENCY slots per pod is fewer than a window's blocks.
+ */
+async function readInOrder(
+  source: CandidateSource,
+  args: Parameters<CandidateSource>[0],
+  total: number
+) {
+  let read: Awaited<ReturnType<CandidateSource>> = { ids: [] };
+  const ids: number[] = [];
+  while (ids.length < total) {
+    const limit = Math.min(MAX_CANDIDATE_LIMIT, total - ids.length);
+    read = await source({ ...args, offset: ids.length, limit });
+    ids.push(...read.ids);
+    // A short block is the end of the ranking.
+    if (read.ids.length < limit) break;
+  }
+  return { ...read, ids };
+}
+
+/**
+ * "More like this" with the images carrying `tagId` among the closest `PREFER_WINDOW` first (in
+ * similarity order), then the plain ranking without them. A tagged image outside the window is
+ * never pulled in, so the boost reorders the neighbourhood and never widens it. Later pages reuse
+ * the plain ranking's blocks. Matches are fetched once per source, so make one per request.
+ */
+export function withPreferredTagFirst(
+  source: CandidateSource,
+  tagId: number,
+  window = PREFER_WINDOW
+): CandidateSource {
+  let split:
+    | Promise<{
+        matches: number[];
+        others: number[];
+        size: number;
+        plain: Awaited<ReturnType<CandidateSource>>;
+      }>
+    | undefined;
+  return async (args) => {
+    if (!('similarTo' in args.query)) return source(args);
+    split ??= (async () => {
+      const first = await readInOrder(source, args, window);
+      const plain = first.ids;
+      if (!plain.length) return { matches: [], others: [], size: 0, plain: first };
+      const { ids } = await readInOrder(
+        source,
+        {
+          ...args,
+          filter: {
+            ...args.filter,
+            ids: plain,
+            tagIds: [...new Set([...(args.filter.tagIds ?? []), tagId])],
+          },
+        },
+        plain.length
+      );
+      const matched = new Set(ids);
+      // In similarity order, whatever order the matches query returned them in.
+      const matches = plain.filter((id) => matched.has(id));
+      const others = plain.filter((id) => !matched.has(id));
+      return { matches, others, size: plain.length, plain: first };
+    })();
+    const { matches, others, size, plain } = await split;
+    if (!matches.length) return source(args);
+    const head = [...matches, ...others].slice(args.offset, args.offset + args.limit);
+    const past = Math.max(0, args.offset - size);
+    const tail =
+      head.length < args.limit && size === window
+        ? await source({ ...args, offset: window + past, limit: args.limit - head.length })
+        : undefined;
+    return { ...plain, ...tail, ids: [...head, ...(tail?.ids ?? [])] };
   };
 }
 
@@ -420,13 +507,16 @@ export function auditedTextCandidates({
   filter,
   viewer,
   audit,
+  spellcheck,
 }: {
   source: CandidateSource;
   text: string;
   filter: CandidateFilter;
   viewer: SearchViewer;
   audit: (correction: string) => Promise<unknown>;
+  spellcheck?: false;
 }) {
+  const query: SearchQuery = spellcheck === false ? { text, spellcheck } : { text };
   const state = {
     correctedQuery: undefined as string | undefined,
     refused: false,
@@ -436,7 +526,7 @@ export function auditedTextCandidates({
   };
   let audited = false;
   const candidates = async (offset: number, limit: number) => {
-    const result = await source({ query: { text }, filter, offset, limit, viewer });
+    const result = await source({ query, filter, offset, limit, viewer });
     state.first ??= { ids: result.ids, guard: result.guard, cacheHit: result.cacheHit };
     if (!audited && result.correctedQuery !== undefined) {
       audited = true;
