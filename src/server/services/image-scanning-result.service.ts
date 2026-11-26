@@ -26,7 +26,6 @@ import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
-import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
@@ -365,15 +364,4 @@ export async function processImageScanningWorkflow({
     nsfwLevel: outcome.nsfwLevel,
     log: IMAGE_SCANNING_LOG,
   });
-
-  // The image scan never sees the prompt. Not awaited: the scan waits on the orchestrator, and the
-  // orchestrator re-sends a webhook that is slow to answer.
-  const { prompt, negativePrompt } = (image.meta ?? {}) as {
-    prompt?: string;
-    negativePrompt?: string;
-  };
-  if (prompt?.trim() && orchestratorNsfwLevelMap[scan.nsfwLevel] >= orchestratorNsfwLevelMap.r)
-    void labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt }).catch(
-      () => null
-    );
 }

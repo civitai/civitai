@@ -198,7 +198,6 @@ const SYS_KEY_LEDGER = [
   'system:text-scan:modes',
   'system:text-scan:web-search',
   'system:upload-key-owner',
-  'system:upload-prompt-scan-retry',
   'system:user-score-multipliers',
   'training:status',
   'urllists',
@@ -250,7 +249,7 @@ describe('REDIS_SYS_KEYS ledger', () => {
   });
 
   // The ledger's size, written out: a change to it is a change to this number too.
-  it('holds 194 keys', () => {
-    expect(SYS_KEY_LEDGER.length).toBe(194);
+  it('holds 193 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(193);
   });
 });

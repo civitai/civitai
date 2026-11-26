@@ -155,20 +155,12 @@ describe('recordScanLabelFlag', () => {
 
   it('hangs a second flag on the same item and keeps the earliest flag time', async () => {
     await flag();
-    await flag({
-      workflowId: 'wf-2',
-      source: 'xguard-prompt',
-      reason: 'young',
-      flaggedAt: new Date('2026-10-13T09:00:00Z'),
-    });
+    await flag({ workflowId: 'wf-2', flaggedAt: new Date('2026-10-13T09:00:00Z') });
 
     expect(await items()).toEqual([
       { imageId: IMAGE, status: 'open', firstFlaggedAt: new Date('2026-10-13T09:00:00Z') },
     ]);
-    expect((await flags()).map((f) => f.flaggerVersion)).toEqual([
-      'orchestrator@2026-10-12',
-      'xguard-prompt@2026-10-13',
-    ]);
+    expect((await flags()).map((f) => f.workflowId)).toEqual(['wf-1', 'wf-2']);
   });
 
   it('keeps the earliest flag time when a later flag arrives', async () => {
@@ -240,7 +232,7 @@ describe('recordScanLabelFlag', () => {
       await postImages([101, 102, 103, 104]);
       for (const imageId of [101, 102, 103]) await flag({ imageId, workflowId: `wf-${imageId}` });
 
-      await flag({ imageId: 102, workflowId: 'wf-102-rescan', source: 'xguard-prompt' });
+      await flag({ imageId: 102, workflowId: 'wf-102-rescan' });
       await flag({ imageId: 104, workflowId: 'wf-104' });
 
       expect(await queued()).toEqual([101, 102, 103]);
