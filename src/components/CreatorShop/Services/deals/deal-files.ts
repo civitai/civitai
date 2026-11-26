@@ -2,6 +2,7 @@ import { constants } from '~/server/common/constants';
 import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FINAL_EXTENSIONS,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
@@ -103,6 +104,7 @@ export function uploadRefusal(
   if (kind === 'Attachment' && (finalVideo || isVideoLike(file, extension)))
     return "Videos can't be attached.";
   if (!finalVideo && isVideoLike(file, extension)) return SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM;
+  if (extension === 'pdf') return SERVICE_FINAL_PDF_REFUSAL;
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
     return `.${extension || '(none)'} files can't be ${verb}. Use a .zip for anything else.`;
   if (file.size > SERVICE_FINAL_MAX_BYTES)
