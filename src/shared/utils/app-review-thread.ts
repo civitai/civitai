@@ -66,14 +66,19 @@ export type ReplyRoute =
 export function routeReply({
   authorRole,
   reviewer,
+  authorUserId,
 }: {
   authorRole: ReviewMessageAuthorRole;
   reviewer: ReplyReviewer;
+  /** The poster. A reviewer replying on their own app's submission cannot be the one told. */
+  authorUserId?: number;
 }): ReplyRoute {
   if (authorRole === 'moderator') return { to: 'developer' };
   if (!reviewer || reviewer.deletedAt || reviewer.bannedAt || reviewer.isModerator !== true) {
     return { to: 'queue' };
   }
+  // Routed to themselves, nobody would hear it: the queue takes it instead.
+  if (authorUserId != null && reviewer.id === authorUserId) return { to: 'queue' };
   return { to: 'reviewer', userId: reviewer.id };
 }
 
@@ -141,7 +146,10 @@ export function canSubmitReviewReply(draft: string, pending: boolean): boolean {
   return !pending && normalizeReviewMessageBody(draft).ok;
 }
 
-/** The decided statuses a developer is offered the conversation on. */
+/**
+ * A request someone has decided (approved or rejected): the statuses the developer is offered
+ * the conversation on, and the ones that carry a reviewer (`decisionReviewer`). One rule.
+ */
 export function isDecidedReviewStatus(status: string | null | undefined): boolean {
   return status === 'approved' || status === 'rejected';
 }

@@ -127,6 +127,14 @@ describe('routeReply', () => {
     expect(
       routeReply({ authorRole: 'developer', reviewer: { ...live, isModerator: null } })
     ).toEqual(queue);
+    // The reviewer replying on their own app's submission: nobody else would be told.
+    expect(routeReply({ authorRole: 'developer', reviewer: live, authorUserId: 31 })).toEqual(
+      queue
+    );
+    expect(routeReply({ authorRole: 'developer', reviewer: live, authorUserId: 77 })).toEqual({
+      to: 'reviewer',
+      userId: 31,
+    });
   });
 
   it('a moderator reply goes to the developer side, whoever reviewed', () => {

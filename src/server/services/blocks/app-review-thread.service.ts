@@ -270,7 +270,7 @@ export async function postReviewMessage(opts: {
           select: { id: true, deletedAt: true, bannedAt: true, isModerator: true },
         })
       : null;
-  const route = routeReply({ authorRole: role, reviewer });
+  const route = routeReply({ authorRole: role, reviewer, authorUserId: viewer.userId });
 
   const message = await dbWrite.appReviewMessage.create({
     data: {
