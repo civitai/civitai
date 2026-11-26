@@ -141,6 +141,15 @@ function extensionFor(key: string, contentType: string | null): string {
   return (mime && EXT_BY_MIME[mime]) || 'bin';
 }
 
+const BLOCKED_BLOB_PATH = '/v2/consumer/blobs/blocked/';
+const blockedPlaceholder = (url: string) => {
+  try {
+    return new URL(url).pathname.startsWith(BLOCKED_BLOB_PATH);
+  } catch {
+    return false;
+  }
+};
+
 async function fetchBlob({
   baseUrl,
   token,
@@ -156,6 +165,8 @@ async function fetchBlob({
   key: string;
   contentType: string | null;
   nsfwLevel: string | null;
+  /** Set when the orchestrator withholds the blob: by header, or by resolving to its placeholder. */
+  blockedReason: string | null;
 } | null> {
   const key = blobKeyFromAir(air);
   try {
@@ -174,6 +185,9 @@ async function fetchBlob({
       key,
       contentType: response.headers.get('content-type'),
       nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
+      blockedReason:
+        response.headers.get('x-blocked-reason') ??
+        (blockedPlaceholder(response.url) ? 'blocked' : null),
     };
   } catch {
     return null;
@@ -239,7 +253,8 @@ async function uploadDatasetZip({
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
-      rated.push({ mediaType: 'image', nsfwLevel: blob.nsfwLevel });
+      // A blocked blob never counts as rated, whatever level it carries.
+      rated.push({ mediaType: 'image', nsfwLevel: blob.blockedReason ? null : blob.nsfwLevel });
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,

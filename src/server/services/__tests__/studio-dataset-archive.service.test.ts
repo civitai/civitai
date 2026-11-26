@@ -468,6 +468,35 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
   });
 
+  // A blocked blob never counts as rated, whatever level it carries (as for an extraction entry).
+  it.each([
+    [
+      'says it is withheld',
+      () => {
+        const res = blobResponse('png-bytes', 'image/png', 'pg');
+        res.headers.set('x-blocked-reason', 'Withheld');
+        return res;
+      },
+    ],
+    [
+      'resolved to the blocked placeholder',
+      () => {
+        const res = blobResponse('png-bytes', 'image/png', 'pg');
+        Object.defineProperty(res, 'url', {
+          value: 'https://orch.example/v2/consumer/blobs/blocked/token',
+        });
+        return res;
+      },
+    ],
+  ])('a zip with an item whose blob %s stays Private and not fully rated', async (_, blocked) => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/BBB') ? blocked() : blobResponse('png-bytes', 'image/png', 'pg')
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 1, fullyRated: false });
+  });
+
   it('a zip with no rated item stays Private and records no rating', async () => {
     lockedRow(shared);
     fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png', null));
