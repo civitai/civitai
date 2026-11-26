@@ -3,6 +3,7 @@ import {
   assertMayLoosenImages,
   loosensImageLevel,
   loosensImageLevelSql,
+  withheldImageIds,
 } from '~/server/services/moderator-withheld.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
@@ -8146,8 +8147,14 @@ export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
   csamReview,
-}: UpdateImageAcceptableMinorInput & { csamReview: boolean }) {
-  if (acceptableMinor) await assertMayLoosenImages([id], { csamReview });
+  isModerator,
+}: UpdateImageAcceptableMinorInput & { csamReview: boolean; isModerator: boolean }) {
+  if (acceptableMinor) {
+    if (isModerator) await assertMayLoosenImages([id], { csamReview });
+    // A contest manager gets the refusal of any entry they may not rule on.
+    else if ((await withheldImageIds([id], { csamReview: false })).has(id))
+      throw throwAuthorizationError();
+  }
   // primary: whether this write changes the flag decides whether shared caches are purged.
   const before = await dbWrite.image.findUnique({
     where: { id },

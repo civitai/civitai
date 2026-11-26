@@ -1444,6 +1444,7 @@ export async function updateImageAcceptableMinorHandler({
     const image = await updateImageAcceptableMinor({
       ...input,
       csamReview: !!ctx.features?.csamReports,
+      isModerator: !!isModerator,
     });
     return image;
   } catch (error) {

@@ -247,8 +247,21 @@ describe('updateImageAcceptableMinor', () => {
         acceptableMinor: true,
         collectionId: 1,
         csamReview: false,
+        isModerator: true,
       })
     );
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-moderator a withheld image with the generic refusal', async () => {
+    const refused = await updateImageAcceptableMinor({
+      id: WITHHELD,
+      acceptableMinor: true,
+      collectionId: 1,
+      csamReview: false,
+      isModerator: false,
+    }).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'UNAUTHORIZED' });
     expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
   });
 
@@ -260,6 +273,7 @@ describe('updateImageAcceptableMinor', () => {
         acceptableMinor: true,
         collectionId: 1,
         csamReview: false,
+        isModerator: true,
       })
     );
     await settle(
@@ -268,6 +282,7 @@ describe('updateImageAcceptableMinor', () => {
         acceptableMinor: false,
         collectionId: 1,
         csamReview: false,
+        isModerator: true,
       })
     );
     expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(2);
