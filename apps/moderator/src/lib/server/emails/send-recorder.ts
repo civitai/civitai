@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/private';
 import { createRemoteSendRecorder, setEmailSendRecorder } from '@civitai/email';
 import { logToAxiom } from '$lib/server/axiom';
 import { tryCivitaiInternalUrl } from '$lib/server/civitai-url';
+import { mainAppHostFetch } from '$lib/server/main-app-fetch';
 
 /**
  * Registers the moderator app's email send recorder: each send's row (its tags and send id, never
@@ -12,6 +13,7 @@ import { tryCivitaiInternalUrl } from '$lib/server/civitai-url';
 export function registerEmailSendRecorder(): boolean {
   const recorder = createRemoteSendRecorder({
     baseUrl: tryCivitaiInternalUrl() ?? '',
+    fetch: mainAppHostFetch,
     token: env.AUTH_INTERNAL_TOKEN ?? '',
     onError: (reason) =>
       void logToAxiom({

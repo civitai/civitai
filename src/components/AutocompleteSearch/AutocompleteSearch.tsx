@@ -83,8 +83,18 @@ import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearch
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  SEARCH_POLICY_MESSAGE,
+  searchRefusedByLine,
+} from '~/shared/constants/search-refusal.constants';
+
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { browserChecksProfanity, getSearchRefusal } from '~/components/Search/search-refusal';
+import {
+  browserChecksProfanity,
+  getSearchRefusal,
+  refusedByOf,
+  type SearchRefusal,
+} from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -101,6 +111,13 @@ import {
   setPendingSearchUpload,
 } from '~/components/Search/ImageSearchUpload/pending-search-upload';
 import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
+
+/** The dropdown's refusal items that show the policy message, as the refusal each one is. */
+const REFUSAL_ITEMS: Record<string, SearchRefusal> = {
+  profanity: 'profanity',
+  disabled: 'poi',
+  'blocked-words': 'blocked-words',
+};
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -781,43 +798,23 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               </Stack>
             );
           }
-          if (key === 'profanity') {
+          const refusedBy = Object.hasOwn(REFUSAL_ITEMS, key)
+            ? refusedByOf(REFUSAL_ITEMS[key])
+            : undefined;
+          if (refusedBy) {
             return (
               <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search query contains inappropriate content that violates our community
-                  guidelines.
+                <Text size="sm" align="center" weight={600}>
+                  {SEARCH_POLICY_MESSAGE.title}
                 </Text>
-                {profanityAnalysis.matches.length > 0 && (
+                <Text size="xs" align="center">
+                  {SEARCH_POLICY_MESSAGE.body}
+                </Text>
+                {currentUser?.isModerator && (
                   <Text size="xs" align="center" c="dimmed">
-                    Flagged terms: {profanityAnalysis.matches.join(', ')}
+                    {searchRefusedByLine(refusedBy)}
                   </Text>
                 )}
-                <Text size="xs" align="center">
-                  Please refine your search terms to find appropriate content.
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'disabled') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search includes terms tied to real people. Content depicting real people is
-                  filtered from search results.
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'blocked-words') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search query contains blocked words and has been filtered.
-                </Text>
-                <Text size="xs" align="center">
-                  Please try a different search term.
-                </Text>
               </Stack>
             );
           }

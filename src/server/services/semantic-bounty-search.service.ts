@@ -76,6 +76,7 @@ export async function searchSemanticBounties({
     items: [] as HydratedBounty[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,

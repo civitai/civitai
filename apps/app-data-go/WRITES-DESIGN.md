@@ -56,6 +56,7 @@ one wins. What it makes of migration step 1:
 | Internal route, store `seq`/`recordId`, `app_storage_requests_total{via}` | site | built, #10128, #10142 |
 | The internal route's delete answer names its key (an `@me` delete's derived key) | site | #10392 |
 | `Entity.seq`, `k2`, the private head | adapter | built, #10128 |
+| `Entity.version` on private entities, `k3`; a private item's `version` | adapter, here | this change |
 | Level streams of plain documents, the shared-level allowlist | adapter | built, dark, #10302, #10343 |
 | `meta.truncated` on level streams | adapter | #10392 |
 | The per-viewer stream | adapter | #10392 |
@@ -479,7 +480,9 @@ writing token's caches at once.
 **Why `rev` and `version` cannot order writes.** A private entity's `rev` is a digest (`privateRev`,
 `private-feed.ts:184-192`); `doc.version` restarts at 1 when a key is re-created (`SQL_INSERT_DOC`,
 `SQL_DELETE_DOC`, around `doc-store.ts:834-862`), and a re-created key is a new row with a new
-`record_id` and URN. **Documents are ordered by `doc.seq`, per key.**
+`record_id` and URN. **Documents are ordered by `doc.seq`, per key.** (`version` is still what a
+read answers beside each private item, for the next write's `ifVersion`: format `k3` sends it, and a
+record overlay carries the one its write answered.)
 
 **Marks get their own sequence, and leave `doc.seq` alone.** Giving a mark a `doc.seq` would take
 `usage_app` (lock 2) inside a transaction that today takes none, and would move the revision that

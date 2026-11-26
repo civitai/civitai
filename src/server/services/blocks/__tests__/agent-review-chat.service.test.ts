@@ -142,6 +142,9 @@ describe('agentReviewChat — request shape', () => {
 
     const call = mockGetTextCompletion.mock.calls[0][0];
     expect(call.model).toBe(AGENT_REVIEW_CHAT_MODEL);
+    // Pinned literal, not the constant: the previous id was retired by OpenRouter and every
+    // call 404'd while the line above stayed green.
+    expect(call.model).toBe('anthropic/claude-haiku-5.5');
     expect(call.temperature).toBe(0);
     expect(typeof call.maxTokens).toBe('number');
     // A server-authored SYSTEM message is prepended, carrying the report summary

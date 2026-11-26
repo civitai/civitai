@@ -72,7 +72,12 @@ async function withoutCsamFlaggedImages<T extends { id: number }>(items: T[]) {
   return items.filter((item) => !flaggedIds.has(item.id));
 }
 
-const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
+const emptyPage = () => ({
+  items: [],
+  nextCursor: undefined,
+  correctedQuery: undefined,
+  refused: false as boolean,
+});
 
 export async function searchSemanticImages({
   input,
@@ -138,13 +143,12 @@ export async function searchSemanticImages({
   if (userIds && !userIds.length) return emptyPage();
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
   // A named tag that does not exist can match nothing.
-  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size)
-    return { items: [], nextCursor: undefined, correctedQuery: undefined };
+  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size) return emptyPage();
   const strip = stripBlockedTagIds(
     [...new Set([...(input.tagIds ?? []), ...(namedTagIds ?? [])])],
     blockedTags.map((t) => t.id)
   );
-  if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
+  if (strip.emptyResult) return emptyPage();
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
   const addonsFor = (level: number) =>

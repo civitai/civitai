@@ -9,6 +9,10 @@ import {
   getArticles,
   getCivitaiNews,
 } from '~/server/services/article.service';
+import {
+  getReportListedHiddenImageIds,
+  type ReportListedViewer,
+} from '~/server/services/report-listed-visibility';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 /**
@@ -31,6 +35,21 @@ const COVER_ON_TAKEN_DOWN = 6;
 const COVER_ABOVE_GALLERY = 7;
 const BANNER_ON_TAKEN_DOWN = 8;
 const COVER_ON_LIVE = 9;
+const LISTED_COVER = 14;
+const LISTED_BANNER_ONLY = 15;
+
+const OWNER = 5;
+const LISTED_COVER_IMAGE = 30;
+const LISTED_BANNER_IMAGE = 31;
+// Who sees an image listed on a report, by the rule bounty images follow (#10483).
+const listedViewers = {
+  anonymous: { seesReportListed: false },
+  stranger: { userId: 6, seesReportListed: false, ownerSeesReportListed: true },
+  ownerOnScopedKey: { userId: OWNER, seesReportListed: false },
+  moderatorWithoutGrant: { userId: 7, seesReportListed: false, ownerSeesReportListed: true },
+  owner: { userId: OWNER, seesReportListed: false, ownerSeesReportListed: true },
+  grantHolder: { userId: 7, seesReportListed: true, ownerSeesReportListed: true },
+};
 
 let pg: PGlite;
 
@@ -45,8 +64,9 @@ beforeAll(async () => {
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, ingestion text NOT NULL, "needsReview" text, "postId" int,
-      "nsfwLevel" int NOT NULL DEFAULT 1
+      "nsfwLevel" int NOT NULL DEFAULT 1, "userId" int NOT NULL DEFAULT ${OWNER}
     );
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     -- Model 50 is taken down, 51 is minor with a PG gallery level, 52 is live and unflagged.
     INSERT INTO "Model" (id, mode, minor, "gallerySettings") VALUES
       (50, 'TakenDown', false, NULL), (51, NULL, true, '{"level": 1}'), (52, NULL, false, NULL);
@@ -71,13 +91,24 @@ beforeAll(async () => {
       (${COVER_ON_TAKEN_DOWN}, 20, ${BANNER}),
       (${COVER_ABOVE_GALLERY}, 21, NULL),
       (${BANNER_ON_TAKEN_DOWN}, NULL, 22),
-      (${COVER_ON_LIVE}, 23, NULL);
+      (${COVER_ON_LIVE}, 23, NULL),
+      (${LISTED_COVER}, ${LISTED_COVER_IMAGE}, ${BANNER}),
+      (${LISTED_BANNER_ONLY}, NULL, ${LISTED_BANNER_IMAGE});
+    INSERT INTO "Image" (id, ingestion) VALUES
+      (${LISTED_COVER_IMAGE}, 'Scanned'), (${LISTED_BANNER_IMAGE}, 'Scanned');
+    INSERT INTO "CsamReport" ("userId", images) VALUES
+      (${OWNER}, '[{"id": ${LISTED_COVER_IMAGE}}, "${LISTED_BANNER_IMAGE}"]');
   `);
 });
 afterAll(() => pg.close());
 
-async function cardCoverId(articleId: number) {
-  const q = Prisma.sql`SELECT ${articleCardCoverIdSql} AS "coverId" FROM "Article" a WHERE a.id = ${articleId}`;
+async function cardCoverId(
+  articleId: number,
+  viewer: ReportListedViewer = listedViewers.anonymous
+) {
+  const q = Prisma.sql`SELECT ${articleCardCoverIdSql(
+    viewer
+  )} AS "coverId" FROM "Article" a WHERE a.id = ${articleId}`;
   const { rows } = await pg.query<{ coverId: number | null }>(q.text, q.values as unknown[]);
   return rows[0]?.coverId ?? null;
 }
@@ -112,6 +143,48 @@ describe('article card cover', () => {
 
   it('gives no image when there is neither', async () => {
     expect(await cardCoverId(NEITHER)).toBeNull();
+  });
+
+  it.each(['anonymous', 'stranger', 'ownerOnScopedKey', 'moderatorWithoutGrant'] as const)(
+    'gives the %s no image for a listed cover or a listed banner, without falling back',
+    async (who) => {
+      expect(await cardCoverId(LISTED_COVER, listedViewers[who])).toBeNull();
+      expect(await cardCoverId(LISTED_BANNER_ONLY, listedViewers[who])).toBeNull();
+    }
+  );
+
+  it.each(['owner', 'grantHolder'] as const)(
+    'gives the %s the listed cover and the listed banner',
+    async (who) => {
+      expect(await cardCoverId(LISTED_COVER, listedViewers[who])).toBe(LISTED_COVER_IMAGE);
+      expect(await cardCoverId(LISTED_BANNER_ONLY, listedViewers[who])).toBe(LISTED_BANNER_IMAGE);
+    }
+  );
+});
+
+describe('getReportListedHiddenImageIds', () => {
+  const raw = (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const q = Prisma.sql(strings, ...(values as never[]));
+    return pg.query(q.text, q.values as unknown[]).then((r) => r.rows);
+  };
+  const hidden = async (viewer: ReportListedViewer) =>
+    [
+      ...(await getReportListedHiddenImageIds(
+        [COVER, LISTED_COVER_IMAGE, LISTED_BANNER_IMAGE],
+        viewer,
+        { $queryRaw: raw } as never
+      )),
+    ].sort();
+
+  it.each(['anonymous', 'stranger', 'ownerOnScopedKey', 'moderatorWithoutGrant'] as const)(
+    'names the listed article images for the %s, and no other',
+    async (who) => {
+      expect(await hidden(listedViewers[who])).toEqual([LISTED_COVER_IMAGE, LISTED_BANNER_IMAGE]);
+    }
+  );
+
+  it.each(['owner', 'grantHolder'] as const)('names none for the %s', async (who) => {
+    expect(await hidden(listedViewers[who])).toEqual([]);
   });
 });
 
@@ -151,7 +224,28 @@ describe('article card reads use the card cover', () => {
     } as Parameters<typeof getArticles>[0]).catch(() => undefined);
 
     expect(issued).toHaveLength(1);
-    expect(issued[0]).toContain(`${articleCardCoverIdSql.text} AS "coverId"`);
+    expect(issued[0]).toContain(
+      `${articleCardCoverIdSql({ seesReportListed: false }).text} AS "coverId"`
+    );
+  });
+
+  it.each([
+    ['the uploader on a session', { seesReportListed: false, ownerSeesReportListed: true }],
+    ['a viewer who sees report-listed images', { seesReportListed: true }],
+  ])('the article feed selects the card cover for %s', async (_, viewer) => {
+    await getArticles({
+      limit: 10,
+      sort: ArticleSort.Newest,
+      period: MetricTimeframe.AllTime,
+      periodMode: 'published',
+      browsingLevel: 1,
+      sessionUser: { id: OWNER },
+      reportListedViewer: viewer,
+    } as Parameters<typeof getArticles>[0]).catch(() => undefined);
+
+    const forViewer = articleCardCoverIdSql({ userId: OWNER, ...viewer }).text;
+    expect(forViewer).not.toBe(articleCardCoverIdSql({ seesReportListed: false }).text);
+    expect(issued[0]).toContain(`${forViewer} AS "coverId"`);
   });
 
   it('Civitai News follows the article availability rule', async () => {
@@ -165,6 +259,8 @@ describe('article card reads use the card cover', () => {
     await getCivitaiNews().catch(() => undefined);
 
     expect(issued).toHaveLength(1);
-    expect(issued[0]).toContain(`${articleCardCoverIdSql.text} AS "coverId"`);
+    expect(issued[0]).toContain(
+      `${articleCardCoverIdSql({ seesReportListed: false }).text} AS "coverId"`
+    );
   });
 });

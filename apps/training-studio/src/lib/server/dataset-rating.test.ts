@@ -68,7 +68,8 @@ vi.mock('./redis', () => {
 });
 const flagVariant = vi.hoisted(() => vi.fn(async () => flag.variant));
 vi.mock('./flipt', () => ({ flagVariant }));
-vi.mock('./axiom', () => ({ logToAxiom: async () => undefined, safeError: (e: unknown) => e }));
+const axiomLog = vi.hoisted(() => vi.fn(async (_data: { message?: string }) => undefined));
+vi.mock('./axiom', () => ({ logToAxiom: axiomLog, safeError: (e: unknown) => e }));
 vi.mock('./orchestrator', () => ({ orchestratorClient: () => ({}) }));
 // Hand-listed: the package's dist can't be loaded through importOriginal (see train-core.test.ts).
 vi.mock('@civitai/orchestration-client', () => ({
@@ -194,6 +195,18 @@ describe('one rating call', () => {
     });
     // A scan submitted with the user's own token is charged to them.
     expect(invokeScan).not.toHaveBeenCalled();
+  });
+
+  it('keeps only the mature bit, whatever else an answer carries', async () => {
+    scan.mockResolvedValueOnce(
+      Response.json({
+        results: [{ key: 'blob-2.png', mature: true, restricted: true, label: 'extra' }],
+      })
+    );
+    const { signal } = new AbortController();
+    expect(await rateImage(client, 'blob-2.png', signal)).toStrictEqual({
+      rating: { mature: true },
+    });
   });
 
   it.each([
@@ -361,22 +374,55 @@ describe('the rating job', () => {
 });
 
 describe('starting a job', () => {
-  it('starts nothing for a user whose job is still running', async () => {
-    let release!: () => void;
+  /** A scan that holds each call until `release` is called for its key. */
+  const heldScans = () => {
+    const held = new Map<string, () => void>();
     scan.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          release = () => resolve(false);
-        })
+      (item: { key: string }) => new Promise((resolve) => held.set(item.key, () => resolve(false)))
     );
+    return (key: string) => held.get(key)!();
+  };
+  const scannedKeys = () => scan.mock.calls.map((c) => (c[0] as { key: string }).key);
+
+  it('an image uploaded while a job runs is rated by one more job when it ends', async () => {
+    const release = heldScans();
     warmDatasetRating('t', 9, 1, ['a.png'], 'c');
-    warmDatasetRating('t', 9, 1, ['b.png'], 'c');
-    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
-    expect(scan.mock.calls[0]![0].key).toBe('a.png');
-    release();
+    await vi.waitFor(() => expect(scannedKeys()).toEqual(['a.png']));
+    warmDatasetRating('t', 9, 1, ['a.png', 'b.png'], 'c');
+    await new Promise((r) => setTimeout(r, 20));
+    // Not alongside the running job: one job per user at a time.
+    expect(scannedKeys()).toEqual(['a.png']);
+    release('a.png');
+    await vi.waitFor(() => expect(scannedKeys()).toEqual(['a.png', 'b.png']));
+    release('b.png');
     await vi.waitFor(() =>
-      expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false })
+      expect(store.get('rating:radio-alpha:m1:b.png')).toEqual({ mature: false })
     );
+  });
+
+  it('a flood of calls during a job yields one rerun, with the latest images, and no more', async () => {
+    const jobsDone = () =>
+      axiomLog.mock.calls.filter(([d]) => d.message === 'dataset rating job').length;
+    axiomLog.mockClear();
+    const release = heldScans();
+    warmDatasetRating('t', 10, 1, ['a.png'], 'c');
+    await vi.waitFor(() => expect(scannedKeys()).toEqual(['a.png']));
+    for (const keys of [['b.png'], ['b.png', 'c.png'], ['d.png']])
+      warmDatasetRating('t', 10, 1, keys, 'c');
+    release('a.png');
+    await vi.waitFor(() => expect(scannedKeys()).toEqual(['a.png', 'd.png']));
+    // A call during the rerun is not kept: the next look asks again.
+    warmDatasetRating('t', 10, 1, ['e.png'], 'c');
+    release('d.png');
+    await vi.waitFor(() => expect(jobsDone()).toBe(2));
+    // The rerun's log is written before it ends: one macrotask lets its finally run.
+    await new Promise((r) => setTimeout(r, 0));
+    // Once the rerun is over, a new look starts a job again, and nothing ran e.png in between.
+    warmDatasetRating('t', 10, 1, ['f.png'], 'c');
+    await vi.waitFor(() => expect(scannedKeys()).toContain('f.png'));
+    expect(scannedKeys()).toEqual(['a.png', 'd.png', 'f.png']);
+    release('f.png');
+    await vi.waitFor(() => expect(jobsDone()).toBe(3));
   });
 
   it('a later view after a call that reached the rater and failed sends nothing again', async () => {
