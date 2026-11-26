@@ -285,7 +285,6 @@ func TestTheWritesTimeoutCapFitsTheDrain(t *testing.T) {
 
 // A write setting with the writes off does nothing: the start goes on, and the setting is named in a
 // warning (never its value), so turning the writes off never needs the others removed first.
-// Fails on the previous commit: there this load returned an error (`err != nil`).
 func TestWriteSettingsWithTheWritesOffAreAWarningNotAFailure(t *testing.T) {
 	for _, off := range []string{"", "false", "0"} {
 		c, err := load(map[string]string{
@@ -355,7 +354,6 @@ func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
 
 // Shared reads are on exactly when the writes and the registry path both are: the level streams need
 // the relay client's service token, and the shared routes are the writes' (dark until then).
-// Fails on origin/main: Config has no SharedReads (the test does not compile).
 func TestSharedReadsNeedTheWritesAndTheRegistry(t *testing.T) {
 	both := relayEnv()
 	for k, v := range writesEnv() {

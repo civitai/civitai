@@ -118,8 +118,6 @@ func itemsOf(g got) string {
 
 // An acknowledged write is read back on the same token before the adapter polls again, on the list
 // and on the keyed get: a put, a create, a delete. Another token's reads never change.
-// Fails on origin/main: Forwarder has no Acked field there (the test does not compile); the
-// behavioural assertion is the list showing `note-1={"text":"PUT-31"}` after the put.
 func TestAnAcknowledgedWriteIsReadBackBeforeAnyPoll(t *testing.T) {
 	site := newFakeWriteSite(t, 30)
 	s := newWritesStack(t, site)
@@ -180,8 +178,6 @@ func TestAnAcknowledgedWriteIsReadBackBeforeAnyPoll(t *testing.T) {
 // A read's floor (writes on): met by the head, the registry's answer; above it, `503 floor_not_met`
 // with Retry-After after the one reopen, and no REST read; malformed, 400. Writes off, `minSeq` is
 // not read at all: the read answers as before.
-// Fails on origin/main: `minSeq` is ignored there, so the read above the head answers 200
-// (`g.status != 503`).
 func TestAReadsFloorIsAnsweredOrRefusedNeverReadFromREST(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	s.reg.records["civitai_carol"] = []registry.Entity{keyedEnt("rid-c1", "c-1", 30, "CAROL-30")}
@@ -218,8 +214,6 @@ func TestAReadsFloorIsAnsweredOrRefusedNeverReadFromREST(t *testing.T) {
 // The keyed get answers from the stream only: the record (the newer of two rows of one key), a 404 for
 // a key it does not hold or a stream that holds nothing, and each refusal as its code. Writes off it
 // is the mux's 404.
-// Fails on origin/main: with writes on, GET of the key path is the mux's 405 there (only PUT, DELETE
-// and OPTIONS are registered), so `g.status != 200` fails.
 func TestTheKeyedGetIsAnsweredFromTheStreamOnly(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	s.reg.records["civitai_dave"] = []registry.Entity{
@@ -280,7 +274,7 @@ func TestTheKeyedGetIsAnsweredFromTheStreamOnly(t *testing.T) {
 // Every reason a stream cannot answer has its answer for a read that is not read from REST
 // (WRITES-DESIGN.md, the fallback-reason table): the token's own refusals 401 (a spent block token as
 // `block_token_spent`), a collection the private feed does not serve 501, the rest 503 with
-// Retry-After. Fails on origin/main: there is no streamRefusal (the test does not compile).
+// Retry-After.
 func TestEveryStreamReasonHasAnAnswer(t *testing.T) {
 	// `empty` is not among them: an empty stream is an empty answer (the keyed get's 404), never a
 	// refusal.
@@ -322,7 +316,6 @@ func TestEveryStreamReasonHasAnAnswer(t *testing.T) {
 // A stream that holds nothing and names no head (the origin's answer to a token it refuses) stays an
 // empty answer after an acknowledged write: an overlay never turns it into a one-record answer. With
 // the writes on it is never read from REST either (CUT OVER).
-// Fails on 3c012af11b: the list answered `source: registry` with the overlay record alone.
 func TestAnAckNeverTurnsARefusedStreamIntoARegistryAnswer(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 60))
 	s.store.by["civitai_erin"] = restAnswer{200, `{"items":[{"key":"e-1","data":{"text":"REST-E1"},"version":3}],"nextCursor":null}`}

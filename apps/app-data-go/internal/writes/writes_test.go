@@ -266,8 +266,6 @@ var allowedOutbound = map[string]bool{
 
 // 1. Every route's forward: the method, path, query, body bytes and Authorization the site sees,
 // and the site's status, body and Content-Type / Retry-After passed back.
-// Fails on origin/main: none of these routes exists there, so every call is the mux's 404 and the
-// site receives nothing (`len(got) != 1`).
 func TestEachRouteIsForwardedExactly(t *testing.T) {
 	cases := []struct {
 		name, op   string
@@ -404,7 +402,6 @@ func recompute(key, method, path, query, ts string, body []byte, h http.Header) 
 // 2. The signature the site receives verifies under the canonical rule, recomputed from what the
 // site received, for a body and for none, with region headers and without, under a site URL with a
 // path prefix (signed as sent).
-// Fails on origin/main: no forward, so no signature (`len(got) != 2`).
 func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 	const clock = 1_795_000_123
 	r := newRig(t, func(f *Forwarder) { f.Now = func() time.Time { return time.Unix(clock, 0) } })
@@ -448,7 +445,6 @@ func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 
 // 3. A block token is verified here first: a valid one is forwarded unchanged; a forged, expired or
 // anonymous one is 401 and the site receives nothing. An opaque token and no token are 401 too.
-// Fails on origin/main: the routes are 404 there (`rec.Code != 401`).
 func TestBlockTokensAreVerifiedBeforeAnythingIsSent(t *testing.T) {
 	r := newRig(t)
 	valid := blockToken(t, siteKey, nil)
@@ -491,7 +487,6 @@ func TestBlockTokensAreVerifiedBeforeAnythingIsSent(t *testing.T) {
 
 // 4. An answer that is lost is 504 outcome unknown, and the site saw exactly one request: never a
 // retry. A site 501 (the import refusal, raised before any write) is passed on as it is.
-// Fails on origin/main: the route is 404 there (`rec.Code != 504`).
 func TestALostAnswerIsUnknownAndNeverRetried(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -565,7 +560,6 @@ func TestAnAnswerPastTheBoundIsUnknown(t *testing.T) {
 
 // 5. `503 not_forwarded` is only this service's own refusal, before anything is sent: the key set
 // unavailable, shutting down, no verifier, the request not buildable. The site receives nothing.
-// Fails on origin/main: the routes are 404 there (`rec.Code != 503`).
 func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 	cases := map[string]struct {
 		tweak func(*rig)
@@ -604,7 +598,6 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 
 // 6. A named major is forwarded and judged by the site: its `409 stale_major` is relayed byte for byte,
 // status, body and Content-Type, and counted as the store's 4xx.
-// Fails on origin/main: the route is 404 there (`rec.Code != 409`).
 func TestTheSitesStaleMajorIsRelayedUnchanged(t *testing.T) {
 	r := newRig(t)
 	const stale = `{"code":"stale_major","message":"stale major","error":"stale major","details":{"currentMajor":2}}`
@@ -625,8 +618,6 @@ func TestTheSitesStaleMajorIsRelayedUnchanged(t *testing.T) {
 
 // The site's refusals of the forward itself (its signature check, its internal route off) are 503
 // not_forwarded, outcome signature, never the user's own 401 or 404; every other 401 and 404 is relayed.
-// Fails on origin/main: the route is 404 there; on the previous commit the two refusals were relayed
-// as 401 and 404 (`rec.Code != 503`).
 func TestTheSitesRefusalOfTheForwardIsNotForwarded(t *testing.T) {
 	cases := []struct {
 		name, body string
@@ -667,8 +658,6 @@ func TestTheSitesRefusalOfTheForwardIsNotForwarded(t *testing.T) {
 
 // The region headers the client sent are copied onto the forward, only those present, and a
 // malformed or repeated one is refused 400 invalid_region with nothing sent.
-// Fails on origin/main: the route is 404 there; on the previous commit no region header was copied
-// (`Cf-Ipcountry != "GB"`).
 func TestTheRegionHeadersAreForwardedAndChecked(t *testing.T) {
 	r := newRig(t)
 	rec := r.do(t, call{method: "PUT", path: "/v1/apps/region-app/collections/polls/records/q-1", auth: "Bearer civitai_tok-region-1",
@@ -713,9 +702,7 @@ func TestTheRegionHeadersAreForwardedAndChecked(t *testing.T) {
 
 // A write on a REUSED keep-alive connection that the site reads in full and then drops without an
 // answer is 504 unknown, and the site saw exactly one copy of it: nothing re-sends it.
-// Fails on origin/main: the route is 404 there (`rec.Code != 504`). Over HTTP/1 a POST was never
-// replayed by Go's transport, so against the previous commit this is an invariant guard; the
-// `GetBody = nil` it pins matters for transports that replay from GetBody (HTTP/2).
+// It pins `GetBody = nil`, which matters for transports that replay a request from GetBody (HTTP/2).
 func TestAWriteOnAReusedConnectionIsNeverReplayed(t *testing.T) {
 	var n atomic.Int32
 	var mu sync.Mutex
@@ -766,8 +753,6 @@ func TestAWriteOnAReusedConnectionIsNeverReplayed(t *testing.T) {
 
 // 8. Shape refusals: 4xx with a code, and the site receives nothing. The boundary body (exactly
 // BodyLimit bytes) is the positive control: it is sent.
-// Fails on origin/main: the routes are 404 there (`rec.Code != tc.status`, every case's status is
-// 400 or 413).
 func TestShapeRefusalsSendNothing(t *testing.T) {
 	r := newRig(t)
 	pad := func(n int) []byte {
@@ -873,9 +858,8 @@ func TestThePreflightsAllowTheWrites(t *testing.T) {
 	}
 }
 
-// The tally PATCH ($inc, $mark, $unmark) was removed with App Storage's tallies: PATCH is no route
-// here, so the mux answers 405 and nothing reaches the site.
-// Fails on origin/main: the PATCH route forwarded `{"$mark":"vote"}` there (one site request).
+// PATCH (the tally operators' `$inc`, `$mark`, `$unmark`) is no route here: the mux answers 405 and
+// nothing reaches the site.
 func TestTheTallyPatchIsNotARoute(t *testing.T) {
 	r := newRig(t)
 	for _, body := range []string{`{"$mark":"vote"}`, `{"$inc":{"plays":1}}`, `{"$unmark":"vote"}`} {
