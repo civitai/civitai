@@ -33,7 +33,11 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
         onUndo: () =>
           toggleHiddenMutation
             .mutateAsync({ kind: 'image', data, hidden: false })
-            .catch((error) => showErrorNotification({ error, title: 'Could not undo' })),
+            .catch((error) => {
+              // The hook already shows its own toast for a rate limit.
+              if (error?.data?.code !== 'TOO_MANY_REQUESTS')
+                showErrorNotification({ error, title: 'Could not undo' });
+            }),
       });
     });
 
