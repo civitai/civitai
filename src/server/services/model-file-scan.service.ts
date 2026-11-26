@@ -1054,7 +1054,8 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     fileId,
     modelVersionId,
     trainingDataUrl,
-    // An extraction's entries (up to TRAINING_DATA_MAX_RATED_ENTRIES) are kept as counts only.
+    // Counts only: an extraction lists up to TRAINING_DATA_MAX_RATED_ENTRIES entries, too many to
+    // store on every scan result.
     rawScanResult: {
       source: 'orchestrator',
       workflowId: event.workflowId,

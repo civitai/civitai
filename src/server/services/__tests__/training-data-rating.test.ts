@@ -154,6 +154,18 @@ describe('extractionRating over a captioned zip', () => {
       });
   });
 
+  it('counts an image as unrated when its header read fails or is refused, without throwing', async () => {
+    const unleveled2 = { ...unleveled, air: 'urn:air:other:other:orchestrator:blob@03.png' };
+    mockHeadBlob
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ response: new Response(null, { status: 503 }) });
+    expect(await extractionRating({ entries: [image04, unleveled, unleveled2] }, 'wf-1')).toEqual({
+      nsfwLevel: NsfwLevel.PG,
+      fullyRated: false,
+    });
+    expect(mockHeadBlob).toHaveBeenCalledTimes(2);
+  });
+
   it('counts a rejected entry as unrated', async () => {
     expect(
       await extractionRating({ entries: [image04, caption], rejected: [{ air: 'x' }] }, 'wf-1')
