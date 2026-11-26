@@ -31,10 +31,9 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
       showImageHiddenNotification({
         imageId,
         onUndo: () =>
-          toggleHiddenMutation.mutate(
-            { kind: 'image', data, hidden: false },
-            { onError: (error) => showErrorNotification({ error, title: 'Could not undo' }) }
-          ),
+          toggleHiddenMutation
+            .mutateAsync({ kind: 'image', data, hidden: false })
+            .catch((error) => showErrorNotification({ error, title: 'Could not undo' })),
       });
     });
 
