@@ -66,7 +66,12 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { clickhouseDownloads } from '~/server/clickhouse/downloads-client';
 import { readsDedicatedDownloadsClickhouse } from '~/server/services/downloads-clickhouse';
 import { listModelEngagements } from '@civitai/db-queries/model';
-import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import {
+  deletePostRows,
+  splitLifted,
+  type DeleteActor,
+  type LiftedRow,
+} from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -154,6 +159,7 @@ import { bustModelSaleCacheForModels } from '~/server/services/paid-access.servi
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  lockAccountDeletionPendingDeletes,
   releaseAccountDeletionPendingDeletes,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
@@ -162,6 +168,7 @@ import {
   afterCsamImageBlock,
   CSAM_IMAGE_BLOCK,
   deleteImages,
+  refreshLiftedKeptHides,
 } from '~/server/services/image.service';
 import {
   refreshHasReceivedReviews,
@@ -1817,18 +1824,20 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         ),
       ]
     : [];
-  const [, , , reclaimed] = await dbWrite
+  const [, , , lifted, reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      lockAccountDeletionPendingDeletes(id),
       releaseAccountDeletionPendingDeletes(id),
       ...reclaim,
     ])
     .catch(refuseIfBannedMeanwhile);
   const modelsRestored = (reclaimed as Prisma.BatchPayload | undefined)?.count ?? 0;
+  await refreshLiftedKeptHides(splitLifted(lifted as LiftedRow[]));
   await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
