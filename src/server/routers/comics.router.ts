@@ -43,6 +43,7 @@ import {
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import {
+  blockLeavesMedia,
   coverBlockSelect,
   panelImageVisibilitySelect,
   withholdRestrictedPanelImages,
@@ -698,7 +699,7 @@ async function primarySourceRows(urls: string[]) {
   // primary: a block or re-rating must show up on the next read, not after replica lag.
   return dbWrite.image.findMany({
     where: { url: { in: urls } },
-    select: { url: true, ...imageRestrictionSelect },
+    select: { url: true, ...imageRestrictionSelect, ...coverBlockSelect },
   });
 }
 
@@ -1147,8 +1148,7 @@ export const comicsRouter = router({
       // comic's workspace to investigate flagged content. All public-state
       // mutations stay owner-only via their own checks.
       const isOwner = project.userId === ctx.user.id;
-      const isModerator = ctx.user.isModerator === true;
-      if (!isOwner && !isModerator) throw throwAuthorizationError();
+      if (!isOwner && !actsAsModerator(ctx)) throw throwAuthorizationError();
 
       const projectRefs = await dbWrite.comicProjectReference.findMany({
         where: { projectId: project.id },
@@ -1276,8 +1276,7 @@ export const comicsRouter = router({
       });
       if (!project) throw throwNotFoundError();
       const isOwner = project.userId === ctx.user.id;
-      const isModerator = ctx.user.isModerator === true;
-      if (!isOwner && !isModerator) throw throwAuthorizationError();
+      if (!isOwner && !actsAsModerator(ctx)) throw throwAuthorizationError();
 
       const chapter = await dbWrite.comicChapter.findUnique({
         where: {
@@ -1317,7 +1316,11 @@ export const comicsRouter = router({
       });
 
       if (!chapter) throw throwNotFoundError();
+      const storedImageUrls = new Map(chapter.panels.map((panel) => [panel.id, panel.imageUrl]));
       withholdRestrictedPanelImages([chapter], ctx.user.id, actsAsModerator(ctx));
+      // A panel whose image was withheld gives no candidate its key: the selected one is that image.
+      const withheld = (panel: { id: number; imageUrl: string | null }) =>
+        !!storedImageUrls.get(panel.id) && panel.imageUrl === null;
 
       // Same green-domain mature-content stripping as `getProject`.
       if (ctx.features.isGreen) {
@@ -1340,6 +1343,7 @@ export const comicsRouter = router({
           rows.every(
             (row) =>
               isImageServable(row, ctx.user.id) &&
+              blockLeavesMedia(row, ctx.user.id, actsAsModerator(ctx)) &&
               (!ctx.features.isGreen || hasSafeBrowsingLevel(row.nsfwLevel))
           )
         );
@@ -1348,7 +1352,11 @@ export const comicsRouter = router({
         ...chapter,
         panels: chapter.panels.map((panel) => ({
           ...panel,
-          metadata: viewerPanelMetadata(panel.metadata, { isOwner, keepSourceImage }),
+          metadata: viewerPanelMetadata(panel.metadata, {
+            isOwner,
+            keepSourceImage,
+            withheld: withheld(panel),
+          }),
         })),
       };
     }),
@@ -1396,7 +1404,7 @@ export const comicsRouter = router({
         },
       });
 
-      if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
+      if (!project || (project.userId !== ctx.user.id && !actsAsModerator(ctx))) {
         throw throwAuthorizationError();
       }
       withholdRestrictedPanelImages(project.chapters, ctx.user.id, actsAsModerator(ctx));

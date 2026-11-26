@@ -668,7 +668,7 @@ export async function getPublicComicForReader({
   if (!projectMeta || projectMeta.status === ComicProjectStatus.Deleted) {
     throw throwNotFoundError('Comic not found');
   }
-  const isModerator = ctx.user?.isModerator === true;
+  const isModerator = actsAsModerator(ctx);
   const isOwner = ctx.user != null && ctx.user.id === projectMeta.userId;
   // Only the owner or a moderator gets non-Published chapters from the
   // SQL select. Public reader viewers (anonymous OR logged-in non-owners)
@@ -750,13 +750,14 @@ export async function getPublicComicForReader({
     },
   });
 
-  if (!project || (await isComicProjectHidden(project, ctx.user))) {
+  const viewer = ctx.user && { id: ctx.user.id, isModerator };
+  if (!project || (await isComicProjectHidden(project, viewer))) {
     throw throwNotFoundError('Comic not found');
   }
 
   // Check if viewer is the owner or a moderator
   const canViewDrafts =
-    ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
+    ctx.user != null && (project.userId === ctx.user.id || actsAsModerator(ctx));
 
   // Filter out draft chapters for non-owner, non-mod viewers, chapters
   // with no ready panels, AND chapters whose Ready panels carry any
@@ -806,7 +807,7 @@ export async function getPublicComicForReader({
       entityType: 'ComicChapter',
       entityIds: eaChapterIds,
       userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      isModerator,
     });
     for (const result of accessResults) {
       accessMap.set(result.entityId, result.hasAccess);

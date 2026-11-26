@@ -320,3 +320,108 @@ describe("the owner's project list", () => {
     });
   });
 });
+
+describe("a panel's metadata when its image is withheld", () => {
+  const chapterWith = async (image: object, sourceRow?: object) => {
+    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({ id: 3, userId: OWNER } as never);
+    dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
+      projectId: 3,
+      position: 0,
+      panels: [
+        {
+          id: 7,
+          imageUrl: 'panel-key',
+          image,
+          metadata: {
+            candidateImages: [{ key: 'panel-key' }, { key: 'other-key' }],
+            sourceImageUrl: 'source-key',
+          },
+        },
+      ],
+    } as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue(
+      (sourceRow ? [{ url: 'source-key', ...sourceRow }] : []) as never
+    );
+    const { panels } = await callerFor(UPLOADER).getChapter({ projectId: 3, chapterPosition: 0 });
+    const metadata = panels[0].metadata as {
+      candidateImages: { key?: string }[];
+      sourceImageUrl?: string;
+    };
+    return {
+      imageUrl: panels[0].imageUrl,
+      keys: metadata.candidateImages.map((c) => c.key ?? null),
+      source: metadata.sourceImageUrl ?? null,
+    };
+  };
+
+  it('gives the owner no candidate key on a blocked panel, and keeps them on a clean one', async () => {
+    expect(await chapterWith({ ...blockedImage(BlockedReason.Moderated) })).toMatchObject({
+      imageUrl: null,
+      keys: [null, null],
+    });
+    expect(await chapterWith({ ...cleanImage })).toMatchObject({
+      imageUrl: 'panel-key',
+      keys: ['panel-key', 'other-key'],
+    });
+  });
+
+  it('gives the owner no source image that a block refuses them', async () => {
+    const blockedSource = { ...blockedImage(BlockedReason.Moderated), nsfwLevel: NsfwLevel.PG };
+    expect((await chapterWith({ ...cleanImage }, blockedSource)).source).toBeNull();
+    expect((await chapterWith({ ...cleanImage }, { ...cleanImage })).source).toBe('source-key');
+  });
+});
+
+describe('a moderator on a scoped key', () => {
+  it("is refused another owner's chapter and project, which a session moderator reads", async () => {
+    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({ id: 3, userId: OWNER } as never);
+    dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
+      projectId: 3,
+      position: 0,
+      panels: [cleanPanel],
+    } as never);
+    const chapter = (scopedKey: boolean) =>
+      callerFor(MODERATOR, scopedKey).getChapter({ projectId: 3, chapterPosition: 0 });
+    await expect(chapter(false)).resolves.toBeTruthy();
+    await expect(chapter(true)).rejects.toThrow();
+  });
+
+  it('gets no draft chapter on the public reader, which a session moderator gets', async () => {
+    const draftChapters = async (scopedKey: boolean) => {
+      dbMock.dbRead.comicProject.findUnique.mockResolvedValue({
+        id: 3,
+        name: 'Comic',
+        userId: OWNER,
+        status: 'Active',
+        tosViolation: false,
+        publishedAt: new Date(0),
+        nsfwLevel: 1,
+        user: { username: 'creator', bannedAt: null },
+        meta: null,
+        coverImage: null,
+        heroImage: null,
+        chapters: [
+          {
+            id: 1,
+            projectId: 3,
+            name: 'Draft',
+            position: 0,
+            status: 'Draft',
+            nsfwLevel: 1,
+            publishedAt: null,
+            availability: 'Public',
+            earlyAccessEndsAt: null,
+            earlyAccessConfig: null,
+            panels: [{ ...cleanPanel, status: 'Ready' }],
+          },
+        ],
+      } as never);
+      dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+      return (await callerFor(MODERATOR, scopedKey).getPublicProjectForReader({ id: 3 })).chapters
+        .length;
+    };
+    expect(await draftChapters(false)).toBe(1);
+    // With only a draft, the comic is not found at all.
+    await expect(draftChapters(true)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});

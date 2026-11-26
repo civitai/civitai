@@ -72,9 +72,8 @@ export function withServableCover<
 }
 
 /**
- * Withholds each panel image `viewerId` may not see, and the media of every one that fails
- * `ownerMediaAllowed` (a block, not an owner-clearable hold) from everyone but a moderator, its owner
- * included. A blocked panel keeps its image row, so the owner still sees the block and its reason.
+ * Withholds each panel image `viewerId` may not see, and the media of every one `blockLeavesMedia`
+ * refuses them, its owner included. A blocked panel keeps its image row, so the owner still sees the block and its reason.
  * Unlike a tainted panel this keeps the chapter up: the flag is never cleared (only a re-rating below
  * R lifts it), so holding the chapter back would not clear.
  */
@@ -89,7 +88,7 @@ export function withholdRestrictedPanelImages(
       if (!isImageServable(panel.image, viewerId)) {
         panel.imageUrl = null;
         panel.image = null;
-      } else if (!actsAsModerator && !ownerMediaAllowed(panel.image)) {
+      } else if (!blockLeavesMedia(panel.image, viewerId, actsAsModerator)) {
         panel.imageUrl = null;
       }
     }
