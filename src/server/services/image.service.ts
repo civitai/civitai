@@ -392,6 +392,7 @@ import {
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
 import { childSafetyImageFinding } from '@civitai/db-queries/child-safety-case';
+import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 import { sql, type RawBuilder } from 'kysely';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -2099,7 +2100,7 @@ export const actionPendingTosReports = async (ids: number[], actorId: number) =>
 /** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
 const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
-/** The image's reports for one reason that are not yet actioned. */
+/** The image's open reports (`OPEN_REPORT_STATUSES`) for one reason. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) =>
   (await getOpenImageReportIdsByImage([id], reason)).get(id) ?? [];
 
@@ -2112,7 +2113,9 @@ export const getOpenImageReportIdsByImage = async (imageIds: number[], reason: R
       JOIN "ImageReport" i ON i."reportId" = r.id
       WHERE i."imageId" = ANY(${ids}::int[])
         AND r.reason = ${reason}::"ReportReason"
-        AND r.status <> 'Actioned'::"ReportStatus"
+        AND r.status IN (${Prisma.join(
+          OPEN_REPORT_STATUSES.map((status) => Prisma.sql`${status}::"ReportStatus"`)
+        )})
     `;
     for (const { imageId, id } of rows) byImage.set(imageId, [...(byImage.get(imageId) ?? []), id]);
   }

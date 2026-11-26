@@ -46,6 +46,7 @@ const TOS_ACTIONED = 71;
 const NSFW_OPEN = 72;
 const TOS_PROCESSING = 73;
 const OTHER_TOS_OPEN = 74;
+const TOS_UNACTIONED = 75; // reviewed and left up: no later removal actions it
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -96,10 +97,10 @@ beforeEach(async () => {
     INSERT INTO "Report" (id, reason, status) VALUES
       (${TOS_OPEN}, 'TOSViolation', 'Pending'), (${TOS_ACTIONED}, 'TOSViolation', 'Actioned'),
       (${NSFW_OPEN}, 'NSFW', 'Pending'), (${TOS_PROCESSING}, 'TOSViolation', 'Processing'),
-      (${OTHER_TOS_OPEN}, 'TOSViolation', 'Pending');
+      (${OTHER_TOS_OPEN}, 'TOSViolation', 'Pending'), (${TOS_UNACTIONED}, 'TOSViolation', 'Unactioned');
     INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
       (${HELD}, ${TOS_OPEN}), (${HELD}, ${TOS_ACTIONED}), (${HELD}, ${NSFW_OPEN}),
-      (${HELD}, ${TOS_PROCESSING}), (${OTHER}, ${OTHER_TOS_OPEN});
+      (${HELD}, ${TOS_PROCESSING}), (${HELD}, ${TOS_UNACTIONED}), (${OTHER}, ${OTHER_TOS_OPEN});
   `);
 });
 
@@ -152,7 +153,7 @@ describe('/api/mod/remove-images held removal', () => {
 });
 
 describe('open image reports', () => {
-  it('maps each image to its TOS reports that are not actioned, leaving other reasons out', async () => {
+  it('maps each image to its Pending or Processing TOS reports, leaving other reasons out', async () => {
     const byImage = await getOpenImageReportIdsByImage([HELD, OTHER, 99], 'TOSViolation' as never);
 
     expect([...byImage.keys()].sort()).toEqual([HELD, OTHER]);
@@ -168,6 +169,9 @@ describe('open image reports', () => {
         [...batch].sort()
       );
     }
+    expect([...(await getOpenImageReportIds(HELD, 'TOSViolation' as never))].sort()).toEqual(
+      [TOS_OPEN, TOS_PROCESSING].sort()
+    );
     expect(await getOpenImageReportIds(HELD, 'NSFW' as never)).toEqual([NSFW_OPEN]);
   });
 });

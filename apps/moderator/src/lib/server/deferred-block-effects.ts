@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 import { violationUserMessage } from '$lib/violations';
 import { ReportStatus } from '$lib/reports';
 import { dbWrite } from './db';
@@ -189,7 +190,7 @@ export async function fireDeferredBlockEffects(
         .selectFrom('ImageReport as ir')
         .innerJoin('Report as r', 'r.id', 'ir.reportId')
         .select(['ir.imageId', 'r.id'])
-        .where('r.status', 'in', [ReportStatus.Pending, ReportStatus.Processing])
+        .where('r.status', 'in', OPEN_REPORT_STATUSES)
         .where((eb) =>
           eb.or(
             scoped.map((c) =>
