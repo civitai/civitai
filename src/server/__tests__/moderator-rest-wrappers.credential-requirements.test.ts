@@ -63,7 +63,9 @@ const wrappers: {
   },
   {
     name: 'defineModeratorStreamEndpoint',
-    handler: defineModeratorStreamEndpoint(moderatorStreamHandler) as unknown as Handler,
+    handler: defineModeratorStreamEndpoint('test.credentialProbeStream', {
+      handler: moderatorStreamHandler,
+    }) as unknown as Handler,
     inner: moderatorStreamHandler,
     notModerator: 403,
   },

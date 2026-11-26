@@ -1,7 +1,10 @@
 import type * as CivitaiAuth from '@civitai/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { Tracker } from '~/server/clickhouse/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
 import type { ReviewAgentChatDeps } from '~/server/api-routes/mod/apps/review-agent/v1/chat/completions';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -38,7 +41,7 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   };
 });
 
-const { reviewAgentChat } = await import(
+const { reviewAgentChat, REVIEW_AGENT_CHAT_ENDPOINT } = await import(
   '~/server/api-routes/mod/apps/review-agent/v1/chat/completions'
 );
 const { defineModeratorStreamEndpoint } = await import('~/server/utils/moderator-endpoint');
@@ -77,10 +80,11 @@ function makeDeps(
     isAppBlocksEnabled: vi.fn(async () => true),
     isLaneEnabled: vi.fn(async () => true),
     getReport: vi.fn(async () => REPORT as never),
-    loadFiles: vi.fn(async () => [
-      { path: 'src/a.js', content: Buffer.from('export const a = 1;'), binary: false },
-    ]),
-    loadDiff: vi.fn(async () => ({ files: [], truncated: false })),
+    loadBundle: vi.fn(async () => ({
+      slug: 'my-app',
+      files: [{ path: 'src/a.js', content: Buffer.from('export const a = 1;'), binary: false }],
+    })),
+    diffBundle: vi.fn(async () => ({ files: [], truncated: false })),
     fetch,
     apiKey: () => 'test-openrouter-key',
   } satisfies ReviewAgentChatDeps;
@@ -147,7 +151,10 @@ async function call(
     end: () => res,
   };
   // The route's own default export is exactly this: the wrapper around the handler.
-  await defineModeratorStreamEndpoint(reviewAgentChat(deps))(req as never, res as never);
+  await defineModeratorStreamEndpoint(REVIEW_AGENT_CHAT_ENDPOINT.name, {
+    rateLimit: REVIEW_AGENT_CHAT_ENDPOINT.rateLimit,
+    handler: reviewAgentChat(deps),
+  })(req as never, res as never);
   return {
     status,
     json: json as { error?: { message: string } },
@@ -164,8 +171,31 @@ const events = (stream: string) =>
     .map((e) => e.slice(6))
     .map((d) => (d === '[DONE]' ? d : JSON.parse(d)));
 
+/** What the rate limiter's counter reads after this call's increment. */
+const rate = vi.hoisted(() => ({ count: 1, keys: [] as string[], ex: [] as unknown[] }));
+/** The audit row each reply writes; stubbed, since the tracker is a network boundary. */
+let audit: ReturnType<typeof vi.spyOn<Tracker, 'retoolAudit'>>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  rate.count = 1;
+  rate.keys = [];
+  rate.ex = [];
+  redisMock.sysRedis.multi.mockImplementation(() => {
+    const chain = {
+      set: vi.fn((key: string, _v: string, opts: { EX: number }) => {
+        rate.keys.push(key);
+        rate.ex.push(opts.EX);
+        return chain;
+      }),
+      incr: vi.fn(() => chain),
+      exec: vi.fn(async () => ['OK', rate.count]),
+    };
+    return chain;
+  });
+  redisMock.sysRedis.ttl.mockResolvedValue(412);
+  audit?.mockRestore();
+  audit = vi.spyOn(Tracker.prototype, 'retoolAudit').mockResolvedValue(undefined as never);
   h.user = { ...MOD };
   dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
     id: 31,
@@ -308,8 +338,8 @@ describe('what the model is sent', () => {
       () => sse([delta({ content: 'At src/a.js:1.' }), delta({}, 'stop')]),
     ]);
     await call(deps);
-    expect(deps.loadFiles).toHaveBeenCalledTimes(1);
-    expect(deps.loadFiles).toHaveBeenCalledWith(PUBREQ);
+    expect(deps.loadBundle).toHaveBeenCalledTimes(1);
+    expect(deps.loadBundle).toHaveBeenCalledWith(PUBREQ);
     const toolTurn = (bodies[1].messages as Array<{ role: string; content: string }>).at(-1)!;
     expect(toolTurn.role).toBe('tool');
     expect(JSON.parse(toolTurn.content).content).toBe('1: export const a = 1;');
@@ -322,7 +352,118 @@ describe('what the model is sent', () => {
       (t) => t.function.name
     );
     expect(tools).toEqual(['read_report_section']);
-    expect(deps.loadFiles).not.toHaveBeenCalled();
+    expect(deps.loadBundle).not.toHaveBeenCalled();
+  });
+
+  it('extracts the bundle once per reply, for the file tools and the diff alike', async () => {
+    const step = (id: string, name: string, args: object) => () =>
+      sse([
+        delta({
+          tool_calls: [{ index: 0, id, function: { name, arguments: JSON.stringify(args) } }],
+        }),
+        delta({}, 'tool_calls'),
+      ]);
+    const { deps } = makeDeps([
+      step('c1', 'list_files', {}),
+      step('c2', 'get_diff', {}),
+      step('c3', 'read_file', { path: 'src/a.js' }),
+      () => sse([delta({ content: 'Read it.' }), delta({}, 'stop')]),
+    ]);
+    await call(deps);
+    expect(deps.fetch).toHaveBeenCalledTimes(4);
+    expect(deps.loadBundle).toHaveBeenCalledTimes(1);
+    expect(deps.diffBundle).toHaveBeenCalledTimes(1);
+    // The diff is computed from the very bundle the file tools read, not a second extraction.
+    const loaded = await deps.loadBundle.mock.results[0].value;
+    expect(deps.diffBundle).toHaveBeenCalledWith(PUBREQ, loaded);
+  });
+});
+
+describe('the per-moderator rate limit and the reply record', () => {
+  it('counts every call against the moderator, 30 per 10 minutes', async () => {
+    const { deps } = makeDeps();
+    rate.count = 30;
+    expect((await call(deps)).status).toBe(200);
+    expect(rate.keys).toEqual([
+      `${REDIS_SYS_KEYS.RETOOL_ENDPOINT.RATE_LIMIT}:apps.review-agent.chat:${MOD.id}`,
+    ]);
+    expect(rate.ex).toEqual([600]);
+  });
+
+  it('refuses the call past the limit with 429, before any flag, report or model', async () => {
+    const { deps } = makeDeps();
+    rate.count = 31;
+    const r = await call(deps);
+    expect(r.status).toBe(429);
+    expect(r.json).toEqual({
+      error: 'Rate limit exceeded',
+      retryAfterSeconds: 412,
+      limit: 30,
+      windowSeconds: 600,
+    });
+    expect(r.headers['retry-after']).toBe('412');
+    expect(deps.isAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(deps.getReport).not.toHaveBeenCalled();
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
+
+  it('records each reply: who, which request, steps and tokens, and none of its text', async () => {
+    const usage = (prompt: number, completion: number) => ({
+      choices: [],
+      usage: { prompt_tokens: prompt, completion_tokens: completion },
+    });
+    const { deps } = makeDeps([
+      () =>
+        sse([
+          delta({
+            tool_calls: [{ index: 0, id: 'c1', function: { name: 'list_files', arguments: '{}' } }],
+          }),
+          delta({}, 'tool_calls'),
+          usage(1500, 20),
+        ]),
+      () => sse([delta({ content: 'SECRET-REPLY-TEXT' }), delta({}, 'stop'), usage(1800, 90)]),
+    ]);
+    await call(deps, { headers: { 'x-review-report-id': 'arar_1' } });
+
+    const expected = {
+      actorId: MOD.id,
+      publishRequestId: PUBREQ,
+      reportId: 'arar_1',
+      requestId: expect.stringMatching(/^revchat-/),
+      finish: 'stop',
+      steps: 2,
+      promptTokens: 3300,
+      completionTokens: 110,
+      toolChars: expect.any(Number),
+    };
+    const lines = loggingMock.logToAxiom.mock.calls.map((c: unknown[]) => c[0]);
+    expect(lines).toEqual([
+      {
+        name: 'app-blocks.review.agent-chat',
+        type: 'info',
+        message: 'review agent chat reply',
+        ...expected,
+      },
+    ]);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith({
+      action: 'apps.review-agent.chat',
+      privileged: false,
+      outcome: 'ok',
+      payload: {},
+      affected: expected,
+    });
+    const recorded = JSON.stringify([lines, audit.mock.calls]);
+    expect(recorded).not.toContain('SECRET-REPLY-TEXT');
+    expect(recorded).not.toContain('Why was buzz:read flagged?');
+    expect(recorded).not.toContain('export const a = 1;');
+  });
+
+  it('writes no record for a call refused before any reply', async () => {
+    const { deps } = makeDeps();
+    deps.isAppBlocksEnabled.mockResolvedValue(false);
+    expect((await call(deps)).status).toBe(403);
+    expect(audit).not.toHaveBeenCalled();
   });
 });
 

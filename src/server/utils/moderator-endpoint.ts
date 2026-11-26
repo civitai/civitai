@@ -153,6 +153,38 @@ export async function authorizeModerator(
   return { actor, apiKeyId };
 }
 
+/**
+ * The per-actor rate limit every moderator endpoint applies. Per actor, not per endpoint: one
+ * moderator running a script must not lock out the rest. `SET NX EX` + `INCR` in one MULTI so the
+ * key always gets its TTL — a crash between the two would otherwise strand a TTL-less counter and
+ * lock the actor out permanently. Answers 429 itself and returns false when the actor is over it.
+ */
+async function withinActorRateLimit(
+  name: string,
+  actorId: number,
+  limit: { max: number; windowSeconds: number },
+  res: NextApiResponse
+): Promise<boolean> {
+  // Key namespace still says RETOOL: it is a stored key, and renaming it would reset every live
+  // counter mid-window. Rename with the ClickHouse event, or not at all.
+  const rateKey = `${REDIS_SYS_KEYS.RETOOL_ENDPOINT.RATE_LIMIT}:${name}:${actorId}` as const;
+  const multiResult = await sysRedis
+    .multi()
+    .set(rateKey, '0', { NX: true, EX: limit.windowSeconds })
+    .incr(rateKey)
+    .exec();
+  if (Number(multiResult[1]) <= limit.max) return true;
+  const retryAfter = await sysRedis.ttl(rateKey);
+  res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
+  res.status(429).json({
+    error: 'Rate limit exceeded',
+    retryAfterSeconds: retryAfter,
+    limit: limit.max,
+    windowSeconds: limit.windowSeconds,
+  });
+  return false;
+}
+
 export type ModeratorStreamCtx = {
   actor: SessionUser;
   apiKeyId: number | null;
@@ -160,16 +192,27 @@ export type ModeratorStreamCtx = {
   res: NextApiResponse;
 };
 
+export type ModeratorStreamDefinition = {
+  rateLimit?: { max: number; windowSeconds: number };
+  /**
+   * Writes the response itself. Return `{ affected: {...} }` to write an audit row for the call
+   * (`affected` is its `affected` column); return nothing for a call that did no work, such as a
+   * refusal. A throw is audited as an error.
+   */
+  handler: (ctx: ModeratorStreamCtx) => Promise<unknown>;
+};
+
 /**
  * A moderator POST route that writes its own response (a stream) instead of returning JSON. The
- * same actor rule as {@link defineModeratorEndpoint}, refused with the same statuses and body
- * shape; the handler owns everything after it, input validation, limits and the response
- * included. No audit row and no per-actor rate limit: a route that needs either uses
- * `defineModeratorEndpoint`.
+ * same actor rule and per-actor rate limit as {@link defineModeratorEndpoint}, refused with the
+ * same statuses and body shape; the handler owns everything after them, input validation and the
+ * response included. The audit row records no request parameters (a stream route's body is the
+ * caller's content), only what the handler returns as `affected`.
+ *
+ * @param name  stable id for the audit row and rate-limit key, as for `defineModeratorEndpoint`.
  */
-export function defineModeratorStreamEndpoint(
-  handler: (ctx: ModeratorStreamCtx) => Promise<unknown>
-) {
+export function defineModeratorStreamEndpoint(name: string, def: ModeratorStreamDefinition) {
+  const limit = def.rateLimit ?? DEFAULT_RATE_LIMIT;
   return async function moderatorStreamEndpoint(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
@@ -178,7 +221,31 @@ export function defineModeratorStreamEndpoint(
     const authorized = await authorizeModerator(req, res);
     if ('error' in authorized)
       return res.status(authorized.status).json({ error: authorized.error });
-    await handler({ ...authorized, req, res });
+    if (!(await withinActorRateLimit(name, authorized.actor.id, limit, res))) return;
+
+    const tracker = new Tracker(req, res);
+    let result: unknown;
+    try {
+      result = await def.handler({ ...authorized, req, res });
+    } catch (e) {
+      void tracker.retoolAudit({
+        action: name,
+        privileged: false,
+        outcome: 'error',
+        errorMsg: (e as Error).message ?? String(e),
+        payload: {},
+      });
+      throw e;
+    }
+    const { affected } = extractAffected(result);
+    if (affected)
+      void tracker.retoolAudit({
+        action: name,
+        privileged: false,
+        outcome: 'ok',
+        payload: {},
+        affected,
+      });
   };
 }
 
@@ -291,28 +358,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
       input = parsed.data as z.output<S>;
     }
 
-    // Per actor, not per endpoint: one moderator running a script must not lock out the rest.
-    // `SET NX EX` + `INCR` in one MULTI so the key always gets its TTL — a crash between the two would
-    // otherwise strand a TTL-less counter and lock the actor out permanently.
-    const limit = spec.rateLimit;
-    // Key namespace still says RETOOL: it is a stored key, and renaming it would reset every live
-    // counter mid-window. Rename with the ClickHouse event, or not at all.
-    const rateKey = `${REDIS_SYS_KEYS.RETOOL_ENDPOINT.RATE_LIMIT}:${name}:${actor.id}` as const;
-    const multiResult = await sysRedis
-      .multi()
-      .set(rateKey, '0', { NX: true, EX: limit.windowSeconds })
-      .incr(rateKey)
-      .exec();
-    if (Number(multiResult[1]) > limit.max) {
-      const retryAfter = await sysRedis.ttl(rateKey);
-      res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-      return res.status(429).json({
-        error: 'Rate limit exceeded',
-        retryAfterSeconds: retryAfter,
-        limit: limit.max,
-        windowSeconds: limit.windowSeconds,
-      });
-    }
+    if (!(await withinActorRateLimit(name, actor.id, spec.rateLimit, res))) return;
 
     const auditPayload = auditablePayload(raw, input, Boolean(def.input), def.auditExclude);
     const tracker = new Tracker(req, res);

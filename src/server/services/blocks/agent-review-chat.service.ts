@@ -309,10 +309,17 @@ const SOURCE_TOOLS = [
   fn(
     'read_file',
     'Read a text file of the submitted bundle, with line numbers to cite. Long files come in ' +
-      'pieces: pass `start_line` to read on.',
+      'pieces: pass the `nextStartLine` you were given as `start_line` to read on, and ' +
+      '`nextStartChar`, when given, as `start_char` (a line too long for one piece, such as ' +
+      'minified code, comes in pieces of its own).',
     {
       path: { type: 'string', description: 'A path exactly as list_files gives it.' },
       start_line: { type: 'integer', minimum: 1 },
+      start_char: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Character offset in `start_line` to start from.',
+      },
     },
     ['path']
   ),
@@ -410,22 +417,41 @@ export function createReviewChatTools(sources: ReviewChatSources): ReviewChatToo
     if (file.binary) return failure('That file is binary.');
     const lines = file.content.toString('utf8').split('\n');
     const start = clampInt(args.start_line, 1, Math.max(lines.length, 1), 1);
+    // Where in the first line to start: how a line too long for one piece is read on.
+    const startChar = clampInt(args.start_char, 0, (lines[start - 1] ?? '').length, 0);
     const out: string[] = [];
     let chars = 0;
     let line = start;
+    let cut: { nextStartChar: number; lineChars: number } | undefined;
     for (; line <= lines.length && line < start + L.readFileLines; line++) {
-      const numbered = `${line}: ${lines[line - 1]}`;
-      if (chars + numbered.length > L.toolOutputChars) break;
-      out.push(numbered);
-      chars += numbered.length + 1;
+      const prefix = `${line}: `;
+      const text = line === start ? lines[line - 1].slice(startChar) : lines[line - 1];
+      if (chars + prefix.length + text.length > L.toolOutputChars) {
+        // A line that does not fit even on its own (a minified bundle): return as much of it as
+        // fits and say where in it to read on, so every call advances.
+        if (out.length === 0) {
+          const room = L.toolOutputChars - prefix.length;
+          out.push(prefix + text.slice(0, room));
+          cut = { nextStartChar: startChar + room, lineChars: lines[line - 1].length };
+          line++;
+        }
+        break;
+      }
+      out.push(prefix + text);
+      chars += prefix.length + text.length + 1;
     }
     const endLine = line - 1;
     return result({
       path,
       startLine: start,
+      ...(startChar > 0 ? { startChar } : {}),
       endLine,
       totalLines: lines.length,
-      ...(endLine < lines.length ? { nextStartLine: endLine + 1 } : {}),
+      ...(cut
+        ? { lineChars: cut.lineChars, nextStartLine: endLine, nextStartChar: cut.nextStartChar }
+        : endLine < lines.length
+        ? { nextStartLine: endLine + 1 }
+        : {}),
       content: out.join('\n'),
     });
   };
@@ -496,6 +522,16 @@ type UpstreamToolCall = {
 
 export type ReviewChatFinish = 'stop' | 'length';
 
+/** How one reply went, for its log line: never any of its text. */
+export type ReviewChatOutcome = {
+  finish: ReviewChatFinish;
+  /** Model requests made. */
+  steps: number;
+  /** Token counts the model reported, summed over the steps (0 where a step reported none). */
+  promptTokens: number;
+  completionTokens: number;
+};
+
 /**
  * Streamed after a reply that stopped at a cap. The element shows a `length` finish like any other,
  * so without this a cut-off answer reads as complete.
@@ -519,9 +555,10 @@ export class ReviewChatUpstreamError extends Error {}
  * Runs one reply: model steps over OpenRouter, the tools in between, streaming the model's text
  * out through `onText` as it arrives (tool calls are never sent to the page). At most `maxSteps`
  * steps; the last one, or the first after the tool budget is spent, runs with
- * `tool_choice: 'none'` so the reply ends in words. Resolves with how the last step finished.
+ * `tool_choice: 'none'` so the reply ends in words. Resolves with how the last step finished,
+ * the steps run and the tokens the model reported.
  */
-export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChatFinish> {
+export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChatOutcome> {
   const { request, tools, onText } = args;
   const L = REVIEW_AGENT_CHAT_LIMITS;
   const messages: UpstreamMessage[] = [
@@ -530,8 +567,18 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
   ];
   let wroteText = false;
   let streamed = 0;
+  let steps = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  const done = (finish: ReviewChatFinish): ReviewChatOutcome => ({
+    finish,
+    steps,
+    promptTokens,
+    completionTokens,
+  });
 
   for (let step = 1; step <= L.maxSteps; step++) {
+    steps = step;
     const lastStep = step === L.maxSteps || tools.spent();
     const response = await args.fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
       method: 'POST',
@@ -544,6 +591,8 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
         max_tokens: request.maxTokens,
         temperature: 0,
         stream: true,
+        // The step's token counts, in a last chunk with no choices: for the reply's log line.
+        stream_options: { include_usage: true },
       }),
       signal: args.signal,
       timeoutMs: L.stepTimeoutMs,
@@ -563,6 +612,10 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
         continue;
       }
       if (chunk.error) throw new ReviewChatUpstreamError('the model stream reported an error');
+      if (chunk.usage) {
+        promptTokens += tokenCount(chunk.usage.prompt_tokens);
+        completionTokens += tokenCount(chunk.usage.completion_tokens);
+      }
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       const piece = choice.delta?.content;
@@ -578,7 +631,7 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
         streamed += kept.length;
         if (kept) onText(neutralizeChatMarkup(kept));
         wroteText = true;
-        if (kept.length < piece.length) return 'length';
+        if (kept.length < piece.length) return done('length');
       }
       for (const delta of choice.delta?.tool_calls ?? []) {
         const at = typeof delta.index === 'number' ? delta.index : calls.length;
@@ -596,7 +649,7 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
 
     const made = calls.filter(Boolean);
     if (finish !== 'tool_calls' || made.length === 0 || lastStep)
-      return finish === 'length' ? 'length' : 'stop';
+      return done(finish === 'length' ? 'length' : 'stop');
 
     messages.push({ role: 'assistant', content: text || null, tool_calls: made });
     for (const [i, call] of made.entries()) {
@@ -607,11 +660,16 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
       messages.push({ role: 'tool', tool_call_id: call.id, content });
     }
   }
-  return 'stop';
+  return done('stop');
+}
+
+function tokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 type UpstreamChunk = {
   error?: unknown;
+  usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
   choices?: Array<{
     delta?: {
       content?: string | null;

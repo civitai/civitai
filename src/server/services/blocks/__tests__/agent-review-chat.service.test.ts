@@ -225,6 +225,45 @@ describe('createReviewChatTools', () => {
     expect(out.endLine).toBeLessThan(5000);
   });
 
+  it('pages through a line longer than one piece, such as a minified bundle', async () => {
+    // One 300,000-character line, then a short one. Each character is distinct from its
+    // neighbours, so a piece that repeats or skips characters cannot reassemble to the original.
+    const minified = Array.from({ length: 300_000 }, (_, i) =>
+      String.fromCharCode(97 + (i % 26))
+    ).join('');
+    const s = sources({ loadFiles: async () => [file('dist/app.min.js', `${minified}\nafter`)] });
+
+    const first = await run(s, 'read_file', { path: 'dist/app.min.js' });
+    expect(first).toMatchObject({
+      startLine: 1,
+      endLine: 1,
+      totalLines: 2,
+      lineChars: 300_000,
+      nextStartLine: 1,
+      nextStartChar: 11_997,
+    });
+    expect(first.content).toBe(`1: ${minified.slice(0, 11_997)}`);
+
+    let read = '';
+    let args: Record<string, unknown> = { path: 'dist/app.min.js' };
+    let out = first;
+    let calls = 0;
+    while (out.nextStartLine === 1 && calls < 100) {
+      read += (out.content as string).replace(/^1: /, '');
+      args = { path: 'dist/app.min.js', start_line: 1, start_char: out.nextStartChar };
+      out = await run(s, 'read_file', args);
+      calls++;
+    }
+    // 300,000 / 11,997 is just over 25: 26 pieces, the last of which also reaches line 2.
+    expect(calls).toBe(25);
+    expect(out).toMatchObject({ startLine: 1, startChar: 25 * 11_997, endLine: 2 });
+    expect(out.nextStartLine).toBeUndefined();
+    const [rest, second] = (out.content as string).split('\n');
+    read += rest.replace(/^1: /, '');
+    expect(read).toBe(minified);
+    expect(second).toBe('2: after');
+  });
+
   it('refuses a binary file and a path the bundle lacks', async () => {
     const s = sources({ loadFiles: async () => [file('img.png', 'PNG', true)] });
     expect(await run(s, 'read_file', { path: 'img.png' })).toEqual({
@@ -338,7 +377,7 @@ function stubModel(answers: Array<() => Response>) {
 async function reply(answers: Array<() => Response>, s = sources()) {
   const model = stubModel(answers);
   const text: string[] = [];
-  const finish = await runReviewChat({
+  const outcome = await runReviewChat({
     request: REQUEST,
     systemMessage: 'SERVER SYSTEM',
     tools: createReviewChatTools(s),
@@ -346,7 +385,7 @@ async function reply(answers: Array<() => Response>, s = sources()) {
     fetch: model.fetch,
     onText: (t) => text.push(t),
   });
-  return { ...model, text: text.join(''), finish };
+  return { ...model, text: text.join(''), finish: outcome.finish, outcome };
 }
 
 describe('runReviewChat', () => {
@@ -418,6 +457,38 @@ describe('runReviewChat', () => {
       () => say('Found it.'),
     ]);
     expect(r.text).toBe('Let me look.\n\nFound it.');
+  });
+
+  it('reports the steps and the tokens the model reported, summed over the steps', async () => {
+    const usage = (prompt: number, completion: number) => ({
+      choices: [],
+      usage: { prompt_tokens: prompt, completion_tokens: completion },
+    });
+    const r = await reply([
+      () =>
+        sse([
+          delta({
+            tool_calls: [{ index: 0, id: 'c', function: { name: 'list_files', arguments: '{}' } }],
+          }),
+          delta({}, 'tool_calls'),
+          usage(1200, 35),
+        ]),
+      () => sse([delta({ content: 'Done.' }), delta({}, 'stop'), usage(1900, 140)]),
+    ]);
+    expect(r.outcome).toEqual({
+      finish: 'stop',
+      steps: 2,
+      promptTokens: 3100,
+      completionTokens: 175,
+    });
+    expect(r.bodies[0]).toMatchObject({ stream_options: { include_usage: true } });
+    // A step that reports no usage counts as none, never as NaN.
+    expect((await reply([() => say('Hi.')])).outcome).toEqual({
+      finish: 'stop',
+      steps: 1,
+      promptTokens: 0,
+      completionTokens: 0,
+    });
   });
 
   it('fails on a refused model request', async () => {

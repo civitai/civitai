@@ -7487,23 +7487,23 @@ async function getPreviousApprovedFiles(
 export async function getPublishRequestDiff(opts: {
   publishRequestId: string;
 }): Promise<BundleLineDiff> {
-  const pending = await loadPublishRequestFiles(opts.publishRequestId);
+  return diffPendingBundle(opts.publishRequestId, await loadPendingBundle(opts.publishRequestId));
+}
+
+/**
+ * The line diff of a pending bundle already loaded with {@link loadPendingBundle}, so a caller
+ * that also reads the files (the review agent chat) extracts the bundle once.
+ */
+export async function diffPendingBundle(
+  publishRequestId: string,
+  pending: PendingBundle
+): Promise<BundleLineDiff> {
   // A row with neither bundle pointer is unexpected → no diffable artifact.
   if (!pending.files) return { files: [], truncated: false };
   // Diff against the version BEFORE this row (exclude self so re-reviewing an
   // approved row doesn't compare it to itself → an all-empty diff).
-  const previousFiles = await getPreviousApprovedFiles(pending.slug, opts.publishRequestId);
+  const previousFiles = await getPreviousApprovedFiles(pending.slug, publishRequestId);
   return computeBundleLineDiff(pending.files, previousFiles);
-}
-
-/**
- * The files of a publish request's pending bundle, for the review agent chat's read-only source
- * tools. Empty for a row with neither bundle pointer. Same caps as the diff (`readZipEntryCapped`).
- */
-export async function getPublishRequestBundleFiles(opts: {
-  publishRequestId: string;
-}): Promise<Array<{ path: string; content: Buffer }>> {
-  return (await loadPublishRequestFiles(opts.publishRequestId)).files ?? [];
 }
 
 /** Whether a bundle file is binary, by the same rule the line diff elides binaries with. */
@@ -7511,14 +7511,17 @@ export function isBinaryBundleFile(path: string, content: Buffer): boolean {
   return isBinaryExtension(path) || looksBinary(content);
 }
 
+export type PendingBundle = {
+  slug: string;
+  files: Array<{ path: string; content: Buffer }> | null;
+};
+
 /**
- * A publish request's pending bundle, extracted. PUSH-ORIGINATED requests carry an empty
- * bundleKey, so they are reconstructed from Forgejo at the pushed sha (as approveRequest does).
- * `files` is null for a row with neither pointer.
+ * A publish request's pending bundle, extracted (same caps as the diff, `readZipEntryCapped`).
+ * PUSH-ORIGINATED requests carry an empty bundleKey, so they are reconstructed from Forgejo at
+ * the pushed sha (as approveRequest does). `files` is null for a row with neither pointer.
  */
-async function loadPublishRequestFiles(
-  publishRequestId: string
-): Promise<{ slug: string; files: Array<{ path: string; content: Buffer }> | null }> {
+export async function loadPendingBundle(publishRequestId: string): Promise<PendingBundle> {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: publishRequestId },
