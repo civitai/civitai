@@ -4,7 +4,10 @@ import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { viewerCanSeeSourceMedia } from '~/server/utils/image-media-visibility';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/** A blocked source never counts as seen by anyone but a moderator, its owner and the image's owner included. */
+/**
+ * A blocked source counts as seen only by a moderator, and by its own owner where the block is
+ * exempt (`ownerMediaAllowed`); the image's owner is held to the same.
+ */
 
 const IMAGE_OWNER = 7;
 const OTHER = 8;
@@ -47,6 +50,12 @@ describe('viewerCanSeeSourceMedia', () => {
   it("refuses a viewer their own blocked source on someone else's image, and keeps a clean one", async () => {
     expect(await sees({ id: OTHER }, source(OTHER, true))).toBe(false);
     expect(await sees({ id: OTHER }, source(OTHER, false))).toBe(true);
+  });
+
+  it('leaves the owner a source of theirs held only for an exempt block', async () => {
+    const held = { ...source(IMAGE_OWNER, true), blockedFor: BlockedReason.AiNotVerified };
+    expect(await sees({ id: IMAGE_OWNER }, held)).toBe(true);
+    expect(await sees({ id: OTHER }, { ...held, userId: OTHER })).toBe(true);
   });
 
   it('leaves a moderator a blocked source', async () => {

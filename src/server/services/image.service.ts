@@ -90,7 +90,7 @@ import {
   CSAM_REVIEW_FLAG,
   unblockedMetadataSql,
   scanKeepsRowSql,
-  ownerMediaSql,
+  blockedMediaListConditions,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -2985,8 +2985,7 @@ const getAllImagesUncaptured = async (
     AND.push(
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${ownerId})`
     );
-    // A block hides the image from everyone; its owner keeps only what `ownerMediaAllowed` allows.
-    AND.push(...imageBlockedForConditions({ userId: ownerId }), ownerMediaSql(ownerId));
+    AND.push(...blockedMediaListConditions({ userId: ownerId }));
   }
 
   if (disablePoi) {
@@ -5213,11 +5212,10 @@ export const getImagesForPosts = async ({
     imageWhere.push(
       userId
         ? Prisma.sql`(i."ingestion" != 'Blocked' OR i."userId" = ${userId})`
-        : Prisma.sql`i."ingestion" != 'Blocked'`,
-      ownerMediaSql(userId)
+        : Prisma.sql`i."ingestion" != 'Blocked'`
     );
   }
-  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
+  imageWhere.push(...blockedMediaListConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {

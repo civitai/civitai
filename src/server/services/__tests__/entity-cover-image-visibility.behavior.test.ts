@@ -735,6 +735,7 @@ describe('a blocked or ToS-violating bounty image', () => {
   });
 
   // [label, entityType, entityId, cover for anonymous/stranger, for the owner, for a moderator]
+  // The owner column split from the moderator one in civitai/civitai#10505: a block refuses the owner too.
   const cases: [string, string, number, number | null, number, number][] = [
     ["a bounty's first connected image, blocked", 'Bounty', 3001, 3012, 3012, 3011],
     ["a bounty's only image, violating the ToS", 'Bounty', 3002, null, 3013, 3013],

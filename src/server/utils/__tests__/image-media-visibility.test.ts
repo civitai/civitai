@@ -1,7 +1,7 @@
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { describe, expect, it } from 'vitest';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import {
   canViewImageMedia,
@@ -150,6 +150,21 @@ describe('image.get media for a viewer', () => {
     expect(await withViewerMedia(ctxFor(viewers['signed in on the mature domain']), image)).toBe(
       image
     );
+  });
+
+  it("refuses a blocked image's media to its owner unless the block is exempt; a moderator keeps it", async () => {
+    const blocked = (blockedFor: string) => ({
+      nsfwLevel: NsfwLevel.PG,
+      userId: OWNER_ID,
+      postId: null,
+      ingestion: 'Blocked',
+      blockedFor,
+    });
+    const owner = ctxFor(viewers['the owner on the SFW domain']);
+    const moderator = ctxFor(viewers['a moderator on the SFW domain']);
+    expect(await viewerCanSeeImageMedia(owner, blocked(BlockedReason.Moderated))).toBe(false);
+    expect(await viewerCanSeeImageMedia(owner, blocked(BlockedReason.AiNotVerified))).toBe(true);
+    expect(await viewerCanSeeImageMedia(moderator, blocked(BlockedReason.Moderated))).toBe(true);
   });
 
   it('keeps a crawler-only answer out of the shared signed-out edge cache', async () => {

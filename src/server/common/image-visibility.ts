@@ -688,3 +688,16 @@ export function imageBlockedForConditions({
       : Prisma.sql`(i."blockedFor" IS NULL OR (i."userId" = ${userId} AND ${ownerMediaAllowedSql()}))`,
   ];
 }
+
+/**
+ * The block terms of a list that serves media: a blocked image is moderators' alone, plus its
+ * owner's where `ownerMediaAllowed` allows. Empty for a moderator.
+ */
+export const blockedMediaListConditions = ({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] =>
+  isModerator ? [] : [...imageBlockedForConditions({ userId }), ownerMediaSql(userId)];

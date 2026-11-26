@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
-import { imageBlockedForConditions, ownerMediaSql } from '~/server/common/image-visibility';
+import {
+  blockedMediaListConditions,
+  imageBlockedForConditions,
+} from '~/server/common/image-visibility';
 import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 /**
@@ -117,12 +120,12 @@ const ids = async (where: Prisma.Sql[]) => {
 // The bounty image read: the entity rules and the CsamReport exclusion.
 const bountyImages = (userId?: number) =>
   ids(entityImageVisibilityConditions({ userId, seesReportListed: false }));
-// The image feed's block terms (`getAllImagesUncaptured` and the post image lists).
+// The image feed's block terms (`getAllImagesUncaptured` and `getImagesForPosts`), with the
+// ingestion term the two share.
 const feedImages = (userId?: number) =>
   ids([
     Prisma.sql`(i.ingestion != 'Blocked' OR i."userId" = ${userId ?? null})`,
-    ...imageBlockedForConditions({ userId }),
-    ownerMediaSql(userId),
+    ...blockedMediaListConditions({ userId }),
   ]);
 
 describe.each([
@@ -152,7 +155,7 @@ describe.each([
         ? await ids([
             ...entityImageVisibilityConditions({ isModerator: true, seesReportListed: false }),
           ])
-        : await ids([...imageBlockedForConditions({ isModerator: true }), Prisma.sql`TRUE`]);
+        : await ids([...blockedMediaListConditions({ isModerator: true }), Prisma.sql`TRUE`]);
     expect(served).toEqual(read === bountyImages ? all.filter((id) => id !== 9) : all);
   });
 });

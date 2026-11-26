@@ -45,4 +45,15 @@ describe('getAppealDetails', () => {
     await getAppealDetails({ id: 1, userId: 99, isModerator: true });
     expect(imageSelect()).toEqual({ id: true, url: true, userId: true });
   });
+
+  it("returns the appealed image's url to a moderator and not to its owner", async () => {
+    // A fake that honours `select`, as Prisma does: the response is what the select asks for.
+    const row: Record<string, unknown> = { id: 55, url: 'u', userId: OWNER };
+    findImage.mockImplementation((async ({ select }: { select: Record<string, boolean> }) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => select[key]))) as never);
+    const ownerView = await getAppealDetails({ id: 1, userId: OWNER });
+    expect(ownerView.entityDetails).toEqual({ id: 55, userId: OWNER });
+    const modView = await getAppealDetails({ id: 1, userId: 99, isModerator: true });
+    expect(modView.entityDetails).toEqual({ id: 55, url: 'u', userId: OWNER });
+  });
 });

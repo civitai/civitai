@@ -11,7 +11,10 @@ import {
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 
 type MediaFields = {
   url: string;
@@ -30,7 +33,7 @@ export type MediaCredentialViewer = Pick<Context, 'user' | 'features' | 'req'> &
 
 /** A moderator on a session or a full-access key: the one viewer a block leaves the media to. */
 export const actsAsModerator = (ctx: Pick<Context, 'user'> & Credential) =>
-  !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+  credentialViews(ctx).asModerator;
 
 /**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
@@ -118,7 +121,8 @@ export async function viewerCanSeeImageMedia(
     blockedFor: string | null;
   }
 ) {
-  // A block refuses the media to everyone but a moderator, its owner included.
+  // A block refuses the media to everyone but a moderator and, for an exempt block, its owner
+  // (`ownerMediaAllowed`).
   if (!actsAsModerator(ctx) && !ownerMediaAllowed(image)) return false;
   const media = { nsfwLevel: image.nsfwLevel, user: { id: image.userId } };
   const canSee =

@@ -60,10 +60,10 @@ export function withServableCover<
 }
 
 /**
- * Withholds each panel image `viewerId` may not see, and the media of every one `blockLeavesMedia`
- * refuses them, its owner included. A blocked panel keeps its image row, so the owner still sees the block and its reason.
- * Unlike a tainted panel this keeps the chapter up: the flag is never cleared (only a re-rating below
- * R lifts it), so holding the chapter back would not clear.
+ * Withholds each panel image `viewerId` may not see, and the media of each one `blockLeavesMedia`
+ * refuses them. A blocked panel keeps its image row so its owner still sees the block.
+ * Unlike a tainted panel this keeps the chapter up: only a re-rating below R lifts the restriction,
+ * so holding the chapter back would never end.
  */
 export function withholdRestrictedPanelImages(
   chapters: { panels: { imageUrl: string | null; image: PanelImage | null }[] }[],
