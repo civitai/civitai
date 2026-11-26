@@ -110,6 +110,24 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
+  test('the payload carries the recorded duration, and leaves it out when none is recorded', async () => {
+    const pg = await pglite(`
+      ${video(1)}
+      ${video(2, `UPDATE "Image" SET metadata = '{}' WHERE id = 2;`)}
+    `);
+    try {
+      const docs = await getVideoDocs(pg as unknown as Pg, [1, 2]);
+      expect(docs.get(1)?.duration).toBe(10);
+      expect(docs.get(2)).not.toHaveProperty('duration', expect.anything());
+      const { points, deps } = fakes(pg);
+      await syncIds(getVideoDocs, [1, 2], deps);
+      expect(points.get(1)?.duration).toBe(10);
+      expect(JSON.stringify(points.get(2))).not.toContain('duration');
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test('a Blocked rating is not written, and removes a point it lands on', async () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)}

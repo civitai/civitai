@@ -16,6 +16,8 @@ export type VideoPayload = ImagePayload & {
   /** sha256 of the stored key: a replaced file is re-embedded. */
   docHash: string;
   url: string;
+  /** Seconds, as recorded on the Image; absent when none is. */
+  duration?: number;
   payloadHash?: string;
 };
 
@@ -48,6 +50,7 @@ export async function getVideoDocs(
         search_text: '',
         docHash: createHash('sha256').update(row.url).digest('hex'),
         url: row.url,
+        duration: row.duration ?? undefined,
       },
     ])
   );

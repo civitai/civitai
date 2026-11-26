@@ -15,6 +15,8 @@ export const VIDEO_COLLECTION: CollectionSpec<VideoPayload> = {
     ['userId', { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false }],
     ['postId', { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false }],
     ['sortAt', { type: 'datetime', on_disk: true }],
+    // Create it by hand before deploying: bootstrap builds a missing index before the consumer subscribes.
+    ['duration', { type: 'float', on_disk: true }],
   ],
 };
 
