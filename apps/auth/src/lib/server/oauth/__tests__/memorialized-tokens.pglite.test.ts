@@ -82,7 +82,8 @@ const PRELUDE = `
   CREATE TABLE "UserRole" ("userId" INTEGER, "role" TEXT);
   CREATE TABLE "OauthClient" (
     "id" TEXT PRIMARY KEY, "userId" INTEGER, "grants" TEXT[] NOT NULL DEFAULT '{}',
-    "isConfidential" BOOLEAN NOT NULL DEFAULT false, "secret" TEXT, "allowedScopes" TEXT NOT NULL DEFAULT '1'
+    "isConfidential" BOOLEAN NOT NULL DEFAULT false, "secret" TEXT, "allowedScopes" TEXT NOT NULL DEFAULT '1',
+    "skipConsent" BOOLEAN NOT NULL DEFAULT false, "accessMode" TEXT NOT NULL DEFAULT 'open'
   );
 `;
 

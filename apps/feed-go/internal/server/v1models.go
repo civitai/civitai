@@ -43,22 +43,19 @@ func (s *Server) ShadowV1ModelsIDHandler(w http.ResponseWriter, r *http.Request)
 	s.shadowHandler(w, r, EndpointV1ModelsID) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
-// v1ModelsRoute is compare's dispatch for the two model endpoints: the request rebuild, the compute
-// (with the response headers the public route writes, v1ModelsCompute) and the classification (both
-// bodies are plain JSON, compared with shadow.CompareJSON).
+// v1ModelsRoute is compare's dispatch for the two model endpoints: the request rebuild and the compute
+// (with the response headers the public route writes, v1ModelsCompute). How the answers are compared
+// is CompareSelection's.
 func (s *Server) v1ModelsRoute(endpoint string) (
 	build func(context.Context, ShadowRequest) (*http.Request, error),
 	compute func(context.Context, *http.Request) (*computed, error),
-	classify func(*shadow.Report, []byte, []byte) string,
 	ok bool,
 ) {
 	switch endpoint {
-	case EndpointV1Models:
-		return SyntheticV1ModelsRequest, s.v1ModelsCompute(endpoint, false), shadow.ClassifyJSON, true
-	case EndpointV1ModelsID:
-		return SyntheticV1ModelsRequest, s.v1ModelsCompute(endpoint, false), ClassifyV1ModelID, true
+	case EndpointV1Models, EndpointV1ModelsID:
+		return SyntheticV1ModelsRequest, s.v1ModelsCompute(endpoint, false), true
 	}
-	return nil, nil, nil, false
+	return nil, nil, false
 }
 
 // ClassifyV1ModelID classifies a `[id]` comparison: one model, so no order or membership within it —

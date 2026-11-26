@@ -2,6 +2,8 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 import { protectedProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { buzzLimitSchema, type BuzzLimit } from '~/server/schema/api-key.schema';
@@ -93,7 +95,7 @@ export const oauthConsentRouter = router({
             viaSubject: (ctx as unknown as { subject?: unknown }).subject ?? null,
           },
         })
-        .catch(() => {});
+        .catch(() => undefined);
 
       return { success: true, buzzLimit: input.buzzLimit };
     }),
@@ -107,6 +109,14 @@ export const oauthConsentRouter = router({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
       });
       if (!consent) throw new TRPCError({ code: 'NOT_FOUND' });
+
+      // A runner client loses the runs the user authorized. First, so a failure here changes
+      // nothing and a retry runs every step.
+      await revokeRunnerAuthorizations(kyselyWrite, {
+        userId: ctx.user.id,
+        clientId: input.clientId,
+        reason: 'disconnected',
+      });
 
       // Delete all tokens for this client+user
       await dbWrite.apiKey.deleteMany({

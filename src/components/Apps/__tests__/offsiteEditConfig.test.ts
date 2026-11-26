@@ -8,7 +8,9 @@ import {
   hasScalarChanges,
   isApprovedEdit,
   isUnpublishedEdit,
-  listingLinksFromManifest,
+  listingFieldsFromManifest,
+  onsiteCategoryEditableByModerator,
+  MANIFEST_COPY_FIELD_NOTE,
   MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
@@ -106,13 +108,15 @@ describe('kind-aware editing (isOnsiteEdit)', () => {
   it('an ON-SITE patch still carries every OTHER changed scalar', () => {
     // The narrowing must be surgical: this is what stops "drop externalUrl" turning into
     // "the on-site details form saves nothing".
+    // (Name / tagline / description / category are manifest-governed on-site, so the field
+    // changed here is one the form still owns.)
     const ctx = makeCtx({ kind: 'onsite' });
     const patch = buildScalarPatch(ctx, {
       ...editContextToForm(ctx),
-      name: 'Renamed',
+      contentRating: 'pg13',
       externalUrl: 'https://evil.example.com/',
     });
-    expect(patch.name).toBe('Renamed');
+    expect(patch.contentRating).toBe('pg13');
     expect(patch.externalUrl).toBeUndefined();
   });
 
@@ -441,13 +445,8 @@ describe('materialEditBlockedReason', () => {
     const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
     expect(offsite).toMatch(/App URL/);
     expect(onsite).not.toMatch(/App URL/);
-    // Both still name the three fields that exist for either kind, so the on-site branch is
-    // a narrowing rather than a different (or empty) sentence.
-    for (const copy of [offsite, onsite]) {
-      expect(copy).toMatch(/name/i);
-      expect(copy).toMatch(/source repository/i);
-      expect(copy).toMatch(/content rating/i);
-    }
+    // Both name the content rating as locked; only off-site can still change its name and links.
+    for (const copy of [offsite, onsite]) expect(copy).toMatch(/content rating/i);
   });
 
   it('🔴 the locked set is exactly the SERVER’s material set — one list, not two', () => {
@@ -467,6 +466,35 @@ describe('materialEditBlockedReason', () => {
     const offsite = materialEditBlockedReason(makeCtx({ status: 'removed' }))!;
     const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
     for (const copy of [offsite, onsite]) expect(copy).toMatch(/issue tracker/i);
+  });
+
+  /**
+   * 🔴 ON-SITE, PINNED WHOLE. The name, tagline, description and both links come from the
+   * manifest, so the on-site notice must neither call them "locked until republish" nor say the
+   * tagline and description "can be edited now" — both were true only of off-site.
+   */
+  it('🔴 the ON-SITE notice says the copy and links come from the manifest (owner)', () => {
+    expect(
+      materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite', role: 'owner' }))
+    ).toBe(
+      'This app is unpublished, so its content rating is locked. Changing it needs moderator ' +
+        'review, and an unpublished listing has no way to reach it. Republish the app from the ' +
+        'Publishing tab first, then edit it — the edit is staged for review. Its name, tagline, ' +
+        'description, source repository and issue tracker come from block.manifest.json, and ' +
+        'its category is set by the manifest or a moderator.'
+    );
+  });
+
+  it('🔴 the ON-SITE notice for a seated editor names the owner, not a tab they cannot see', () => {
+    expect(
+      materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite', role: 'editor' }))
+    ).toBe(
+      'This app is unpublished, so its content rating is locked. Changing it needs moderator ' +
+        "review, and an unpublished listing has no way to reach it. The app's owner has to " +
+        'republish it before it can be edited — the Publishing tab that does it is theirs, not ' +
+        'yours. Its name, tagline, description, source repository and issue tracker come from ' +
+        'block.manifest.json, and its category is set by the manifest or a moderator.'
+    );
   });
 });
 
@@ -936,9 +964,9 @@ describe('on-site source repository / issue tracker come from the manifest', () 
     });
 
   it('only an explicit on-site kind is manifest-owned; offsite and ABSENT are author-owned', () => {
-    expect(listingLinksFromManifest(withLinks('onsite'))).toBe(true);
-    expect(listingLinksFromManifest(withLinks('offsite'))).toBe(false);
-    expect(listingLinksFromManifest(withLinks())).toBe(false);
+    expect(listingFieldsFromManifest(withLinks('onsite'))).toBe(true);
+    expect(listingFieldsFromManifest(withLinks('offsite'))).toBe(false);
+    expect(listingFieldsFromManifest(withLinks())).toBe(false);
   });
 
   it('🔴 an ON-SITE patch never carries either link — changed or cleared', () => {
@@ -951,12 +979,12 @@ describe('on-site source repository / issue tracker come from the manifest', () 
         ...editContextToForm(ctx),
         sourceRepoUrl,
         issueTrackerUrl,
-        tagline: 'still saved',
+        contentRating: 'pg13',
       });
       expect('sourceRepoUrl' in patch).toBe(false);
       expect('issueTrackerUrl' in patch).toBe(false);
       // The narrowing is surgical: the rest of the patch still goes out.
-      expect(patch.tagline).toBe('still saved');
+      expect(patch.contentRating).toBe('pg13');
     }
   });
 
@@ -979,6 +1007,96 @@ describe('on-site source repository / issue tracker come from the manifest', () 
       issueTrackerUrl:
         'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
         'version; the listing takes it when that version is approved.',
+    });
+  });
+});
+
+/**
+ * 🔴 ON-SITE NAME / TAGLINE / DESCRIPTION ARE MANIFEST-GOVERNED. The listing is minted with the
+ * manifest's `name` / `tagline` / `description` at submit and re-synced from them on every
+ * block-version approve, so the edit form shows the three read-only and never sends them (the
+ * server refuses the keys on an on-site listing).
+ */
+describe('on-site name / tagline / description / category come from the app', () => {
+  it('🔴 an ON-SITE patch never carries name, tagline, description or category — changed or cleared', () => {
+    // makeCtx's category is 'utility', so both rows are a real change.
+    const ctx = makeCtx({ kind: 'onsite' });
+    for (const [name, tagline, description, category] of [
+      ['Renamed', 'A different tagline', 'A different description', 'games'],
+      ['Renamed', '', '', null],
+    ] as const) {
+      const patch = buildScalarPatch(ctx, {
+        ...editContextToForm(ctx),
+        name,
+        tagline,
+        description,
+        category,
+        contentRating: 'pg13',
+      });
+      expect('name' in patch).toBe(false);
+      expect('tagline' in patch).toBe(false);
+      expect('description' in patch).toBe(false);
+      expect('category' in patch).toBe(false);
+      // The narrowing is surgical: the rest of the patch still goes out.
+      expect(patch.contentRating).toBe('pg13');
+    }
+  });
+
+  it('a MODERATOR writing the listing itself may still change an on-site category', () => {
+    expect(onsiteCategoryEditableByModerator(makeCtx({ kind: 'onsite', role: 'moderator' }))).toBe(
+      true
+    );
+    // Owners and editors may not; nor may anyone on an off-site listing (it is simply editable).
+    for (const role of ['owner', 'editor', undefined] as const) {
+      expect(
+        onsiteCategoryEditableByModerator(makeCtx({ kind: 'onsite', role })),
+        String(role)
+      ).toBe(false);
+    }
+    expect(onsiteCategoryEditableByModerator(makeCtx({ kind: 'offsite', role: 'moderator' }))).toBe(
+      false
+    );
+    // An approved listing with a revision open saves to the revision, whose on-site apply drops it.
+    expect(
+      onsiteCategoryEditableByModerator(
+        makeCtx({ kind: 'onsite', role: 'moderator', status: 'approved', shadowId: 'shadow-1' })
+      )
+    ).toBe(false);
+
+    const ctx = makeCtx({ kind: 'onsite', role: 'moderator' });
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), category: 'games' });
+    expect(patch.category).toBe('games');
+  });
+
+  it('CONTROL: an OFF-SITE patch still carries all four, cleared ones as null', () => {
+    const ctx = makeCtx({ kind: 'offsite' });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      name: 'Renamed',
+      tagline: 'A different tagline',
+      description: '',
+      category: 'games',
+    });
+    expect(patch.name).toBe('Renamed');
+    expect(patch.tagline).toBe('A different tagline');
+    expect(patch.description).toBeNull();
+    expect(patch.category).toBe('games');
+  });
+
+  it('the read-only notes name the manifest key each field comes from', () => {
+    expect(MANIFEST_COPY_FIELD_NOTE).toEqual({
+      name:
+        'Comes from "name" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      tagline:
+        'Comes from "tagline" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      description:
+        'Comes from "description" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      category:
+        'Comes from "category" in block.manifest.json while your app has no category yet; once ' +
+        'one is set, a moderator changes it. The listing takes it when a version is approved.',
     });
   });
 });

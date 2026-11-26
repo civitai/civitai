@@ -91,18 +91,18 @@ func (s *Server) ShadowSearchHandler(w http.ResponseWriter, r *http.Request) {
 	s.shadowHandler(w, r, EndpointSearch) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
-// searchRoute is compare's dispatch for the route: the request rebuild, the compute (the shadow's:
-// the recorded backend response, and the call in the compared body) and the classification.
+// searchRoute is compare's dispatch for the route: the request rebuild and the compute (the shadow's:
+// the recorded backend response, and the call in the compared body). How the answers are compared is
+// CompareSelection's.
 func (s *Server) searchRoute(endpoint string) (
 	build func(context.Context, ShadowRequest) (*http.Request, error),
 	compute func(context.Context, *http.Request) (*computed, error),
-	classify func(*shadow.Report, []byte, []byte) string,
 	ok bool,
 ) {
 	if endpoint != EndpointSearch {
-		return nil, nil, nil, false
+		return nil, nil, false
 	}
-	return SyntheticSearchRequest, s.searchCompute(false), ClassifySearch, true
+	return SyntheticSearchRequest, s.searchCompute(false), true
 }
 
 // SyntheticSearchRequest rebuilds the request a site-search sample describes: a POST to its path with

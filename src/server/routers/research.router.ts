@@ -36,8 +36,6 @@ const trackSchema = z.object({
   filters: z
     .object({
       tags: z.number().array().optional(),
-      misaligned: z.boolean().optional(),
-      ratingModel: z.string().optional(),
     })
     .optional(),
 });
@@ -199,14 +197,6 @@ export const researchRouter = router({
         WHERE it."imageId" = i.id
           AND it."tagId" IN (${Prisma.join(track.filters.tags)})
       )`);
-      }
-
-      if (track.filters?.misaligned) {
-        where.push(Prisma.sql`i."nsfwLevel" != i."aiNsfwLevel" AND i."aiNsfwLevel" > 0`);
-      }
-
-      if (track.filters?.ratingModel) {
-        where.push(Prisma.sql`i."aiModel" = ${track.filters.ratingModel}`);
       }
 
       // Another user's image, so the shared rule with no viewer.

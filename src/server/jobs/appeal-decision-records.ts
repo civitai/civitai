@@ -300,6 +300,8 @@ const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
   OR (
     ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
     AND ${r}."removalNsfw" IN ('None', 'Soft')
+    -- aiNsfwLevel is no longer written, so this arm passes only images rated before it stopped;
+    -- new realPerson/poi records are skipped.
     AND ${r}."aiNsfwLevel" IN (1, 2)
   ),
   false

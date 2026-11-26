@@ -13,6 +13,9 @@ import {
   bustOAuthBuzzLimitCache,
   expireOrchestratorUserTokens,
 } from '$lib/server/orchestrator-cache';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
+import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
 import { db } from '$lib/server/db/db';
 import { logOAuthEvent } from './audit-log';
 import {
@@ -25,6 +28,7 @@ import {
 import { offlineAllowedForClient } from './listing-offline';
 import { offlineDb, type ChainOrigin, type MintOrigin } from './offline-columns';
 import { scopeToColumn } from './scope';
+import { readRunnerAdmission } from './runner-client';
 
 // Offline access as a separate grant, behind the `oauth-offline-grant` Flipt flag. With the flag OFF
 // none of this runs and the hub issues exactly what it did before: a refresh token on every
@@ -85,6 +89,8 @@ export async function hasOfflineGrant(userId: number, clientId: string): Promise
 // `month`, default `day`). The consent screen shows it on the offline line, prefilled with the
 // consent's current cap if it has one, and the user may raise, lower or clear it. The approval stores
 // it as the consent's `buzzLimit` (the same budgets array Connected apps edits), or null when cleared.
+// A recipe-runner client's cap goes to `offlineBuzzLimit`/`offlineBuzzPeriod` instead, which only
+// this flow writes; its `buzzLimit` stays the live-session cap. Null there refuses every runner mint.
 // What the cap applies to, and why null means no cap, is in the main app's
 // src/server/orchestrator/offline-spend-cap.ts.
 
@@ -148,19 +154,44 @@ export function offlineCapAfterApproval(opts: {
   return { change: true, budgets };
 }
 
-/** A consent's columns the authorize flow reads with the flag on. */
+/** A bound runner, suspended or not, keeps its cap in the offline cap columns. */
+const isRunnerForCap = async (clientId: string) => (await readRunnerAdmission(clientId)) !== null;
+
+/**
+ * A consent's columns the authorize flow reads with the flag on. `offlineCap` is the cap the offline
+ * line edits, as budgets: `buzzLimit`, or for a recipe-runner client its offline cap columns.
+ */
 export async function readConsentForOffline(
   userId: number,
-  clientId: string
+  clientId: string,
+  runner?: boolean
 ): Promise<
-  { scope: string | number | bigint; offlineGrantedAt: Date | null; buzzLimit: unknown } | undefined
+  | { scope: string | number | bigint; offlineGrantedAt: Date | null; offlineCap: unknown }
+  | undefined
 > {
-  return offlineDb()
-    .selectFrom('OauthConsent')
-    .select(['scope', 'offlineGrantedAt', 'buzzLimit'])
-    .where('userId', '=', userId)
-    .where('clientId', '=', clientId)
-    .executeTakeFirst();
+  const [row, isRunner] = await Promise.all([
+    offlineDb()
+      .selectFrom('OauthConsent')
+      .select(['scope', 'offlineGrantedAt', 'buzzLimit', 'offlineBuzzLimit', 'offlineBuzzPeriod'])
+      .where('userId', '=', userId)
+      .where('clientId', '=', clientId)
+      .executeTakeFirst(),
+    runner ?? isRunnerForCap(clientId),
+  ]);
+  if (!row) return undefined;
+  const runnerCap =
+    row.offlineBuzzLimit != null &&
+    (SIMPLE_BUZZ_LIMIT_PERIODS as readonly unknown[]).includes(row.offlineBuzzPeriod)
+      ? simpleBuzzLimitToBudgets({
+          limit: row.offlineBuzzLimit,
+          period: row.offlineBuzzPeriod as SimpleBuzzLimit['period'],
+        })
+      : null;
+  return {
+    scope: row.scope,
+    offlineGrantedAt: row.offlineGrantedAt,
+    offlineCap: isRunner ? runnerCap : row.buzzLimit,
+  };
 }
 
 /**
@@ -182,20 +213,21 @@ export async function grantOffline(opts: {
   now?: Date;
 }): Promise<void> {
   const now = opts.now ?? new Date();
-  const existing = await readConsentForOffline(opts.userId, opts.clientId);
-  const current = existing?.buzzLimit ?? null;
-  // An unbroken grant keeps its start: the runner mint refuses authorizations made before it, so a
-  // re-approval must not read as a new grant. Only a decline clears it.
-  const grantedAt = existing?.offlineGrantedAt ?? now;
+  const runner = await isRunnerForCap(opts.clientId);
+  const existing = await readConsentForOffline(opts.userId, opts.clientId, runner);
+  const current = existing?.offlineCap ?? null;
   const cap = offlineCapAfterApproval({
     current,
     proposed: opts.proposed,
     submitted: opts.submitted,
   });
-  // pg serializes a JS array as a Postgres array, not JSON, so the jsonb value goes as a string.
-  const capColumn = cap.change
-    ? { buzzLimit: cap.budgets ? JSON.stringify(cap.budgets) : null }
-    : {};
+  const runnerCap = cap.change && cap.budgets ? budgetsToSimpleBuzzLimit(cap.budgets) : null;
+  const capColumn = !cap.change
+    ? {}
+    : runner
+    ? { offlineBuzzLimit: runnerCap?.limit ?? null, offlineBuzzPeriod: runnerCap?.period ?? null }
+    : // pg serializes a JS array as a Postgres array, not JSON, so the jsonb value goes as a string.
+      { buzzLimit: cap.budgets ? JSON.stringify(cap.budgets) : null };
   await offlineDb()
     .insertInto('OauthConsent')
     .values({
@@ -206,15 +238,19 @@ export async function grantOffline(opts: {
       ...capColumn,
     })
     .onConflict((oc) =>
-      oc.columns(['userId', 'clientId']).doUpdateSet({
-        offlineGrantedAt: grantedAt,
+      oc.columns(['userId', 'clientId']).doUpdateSet((eb) => ({
+        // An unbroken grant keeps its start: the runner mint refuses authorizations made before it,
+        // so a re-approval must not read as a new grant. In the statement, so a decline that lands
+        // after the read above is not undone. Only a decline clears it.
+        offlineGrantedAt: eb.fn.coalesce('OauthConsent.offlineGrantedAt', eb.val(now)),
         ...capColumn,
         updatedAt: now,
         ...(opts.rememberScope && { scope: scopeToColumn(opts.scope) }),
-      })
+      }))
     )
     .execute();
-  if (cap.change) await bustOAuthBuzzLimitCache(opts.userId, opts.clientId);
+  // The orchestrator caches `buzzLimit` only; a runner's cap is read live at mint and submit.
+  if (cap.change && !runner) await bustOAuthBuzzLimitCache(opts.userId, opts.clientId);
 }
 
 /**
@@ -246,11 +282,18 @@ export async function grantOfflineImplied(opts: {
 
 /**
  * The user unticked the offline line: the consent, if any, loses its offline grant, and when it had
- * one, the refresh tokens that grant let the app hold are deleted too (the app keeps working while
- * its current access token lasts, then needs the user again).
+ * one, its recipe-run authorizations are revoked and the refresh tokens that grant let the app hold
+ * are deleted too (the app keeps working while its current access token lasts, then needs the user
+ * again).
  */
 export async function declineOffline(userId: number, clientId: string): Promise<void> {
   if (!(await hasOfflineGrant(userId, clientId))) return;
+  // First: a failure here leaves the grant in place, so a retry runs every step again.
+  await revokeRunnerAuthorizations(db as unknown as Kysely<DB>, {
+    userId,
+    clientId,
+    reason: 'offline_declined',
+  });
   await offlineDb()
     .updateTable('OauthConsent')
     // The runner cap goes with the grant: a later grant must not inherit a cap nobody re-approved.

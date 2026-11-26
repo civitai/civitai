@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
@@ -307,7 +306,7 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	c := &computed{payload: goBody, ttl: rep.ttl, trivial: rep.trivial}
 	sink := compareSink{source: SourceServeParity, results: s.Metrics.ParityResults, diffs: s.Metrics.ParityDiffs, response: s.Metrics.ParityResponse}
 	nodeHeaders := pickResponseHeaders(rec.header)
-	out := s.compareAnswer(ctx, rep.endpoint, sink, c, env.Result.Data, nodeHeaders, "", shadow.Compare, trpcClassify(rep.endpoint), nil)
+	out := s.compareAnswer(ctx, CompareSelection(rep.endpoint), sink, c, env.Result.Data, nodeHeaders, "", nil)
 	s.captureParity(rep, env.Result.Data, nodeHeaders, out)
 	return ParityCompared
 }
@@ -342,23 +341,7 @@ func (s *Server) serveReplay(rec *replayRecorder, req *http.Request) (outcome st
 // (pickShadowResponseHeaders): shadow.ComparedHeaders only, lowercased, each value cut at 1024
 // characters, Set-Cookie as the literal `present`.
 func pickResponseHeaders(h http.Header) map[string]string {
-	out := map[string]string{}
-	for _, name := range shadow.ComparedHeaders {
-		v := strings.Join(h.Values(name), ", ")
-		if v == "" {
-			// An empty value is absent, Set-Cookie included (as the Node sampler reads it).
-			continue
-		}
-		if name == "set-cookie" {
-			out[name] = "present"
-			continue
-		}
-		if len(v) > maxComparedHeaderValue {
-			v = v[:maxComparedHeaderValue]
-		}
-		out[name] = v
-	}
-	return out
+	return PickResponseHeaders(h, shadow.ComparedHeaders)
 }
 
 // maxComparedHeaderValue is the Node sampler's cut on a mirrored header value.
