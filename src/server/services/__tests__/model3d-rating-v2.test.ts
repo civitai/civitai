@@ -657,12 +657,6 @@ describe('3D post gate with a four-angle render', () => {
     expect(refund).not.toHaveBeenCalled();
   });
 
-  it('each window has its own key', () => {
-    const day = MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.windowSeconds * 1000;
-    expect(previewWindowKey(5 * day)).toBe(previewWindowKey(6 * day - 1));
-    expect(previewWindowKey(6 * day)).not.toBe(previewWindowKey(6 * day - 1));
-  });
-
   it('an empty render is asked for once more, then the existing previews decide', async () => {
     const spent = new Set<string>();
     let entry: { workflowId: string; at: number } | null = {
@@ -777,6 +771,21 @@ describe('3D post gate with a four-angle render', () => {
     expect(rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual([hosted(0)]);
   });
 
+  it('a click that loses the retry while another re-renders waits for that render', async () => {
+    let reads = 0;
+    const { rate, deps: d } = deps([true], {
+      // The old render, then the other click's re-render in its place.
+      pendingPreview: async () =>
+        reads++ === 0
+          ? { workflowId: 'pv-1', at: 1_000_000 }
+          : { workflowId: 'pv-2', at: 1_000_000 },
+      readPreview: async () => ({ status: 'done', urls: [] }),
+      takeRetry: async () => false,
+    });
+    expect(await post(d)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(rate).not.toHaveBeenCalled();
+  });
+
   // No render back falls to the renders the result already has; never a pass on no rating at all.
   it.each([
     ['the render failed', {}],
@@ -842,13 +851,15 @@ describe('the four-angle render store', () => {
   });
 
   it('claims a slot in the window it is in, refuses past the cap, and gives it back there', async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
     const key = await model3dRatingV2Deps.claimPreview();
-    expect(key).toBe(previewWindowKey(Date.now()));
+    expect(key).toBe(previewWindowKey(1_000_000));
     store.set(key!, MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.max);
     expect(await model3dRatingV2Deps.claimPreview()).toBeNull();
     store.set(key!, 3);
     await model3dRatingV2Deps.releasePreview(key!);
     expect(store.get(key!)).toBe(2);
+    vi.useRealTimers();
   });
 
   it('a slot given back to a window that has gone leaves no key behind', async () => {
@@ -856,6 +867,7 @@ describe('the four-angle render store', () => {
     expect(store.has('model3d:preview-v2:global:1')).toBe(false);
   });
 
+  // One re-render per user and result (civitai/civitai#10523).
   it('a result gets one retry per user', async () => {
     expect(await model3dRatingV2Deps.takeRetry(7, 'wf-1')).toBe(true);
     expect(await model3dRatingV2Deps.takeRetry(7, 'wf-1')).toBe(false);

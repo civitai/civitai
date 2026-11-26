@@ -318,14 +318,19 @@ async function previewAngles(
       return now - pending.at > PREVIEW_EXPIRY_SECONDS * 1000 ? [] : 'pending';
     }
     const urls = state.urls.filter(isRateableMediaUrl);
-    if (urls.length || !(await deps.takeRetry(user.id, workflowId).catch(() => false))) return urls;
+    if (urls.length) return urls;
+    if (!(await deps.takeRetry(user.id, workflowId).catch(() => false))) {
+      // The retry is spent; if another click is re-rendering right now, wait for that render.
+      const current = await deps.pendingPreview(user.id, workflowId).catch(() => pending);
+      return current?.workflowId === pending.workflowId ? [] : 'pending';
+    }
     await deps.clearPendingPreview(user.id, workflowId).catch(() => undefined);
   }
   return submitAngles({ user, req, mesh, workflowId, now }, deps);
 }
 
-/** Asks for the render once: a click while another asks waits for that render, and the user's own
- *  limit is spent before the shared window. */
+/** Asks for the render once: a click while another asks returns pending without asking again, and
+ *  the user's own limit is spent before the shared window. */
 async function submitAngles(
   args: {
     user: SessionUser;
