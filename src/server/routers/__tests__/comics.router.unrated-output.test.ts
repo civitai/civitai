@@ -655,8 +655,9 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
       const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
       return {
         imageUrl: result.imageUrl,
-        keyed: ('candidates' in result ? result.candidates : []).filter((c) => 'key' in c && c.key)
-          .length,
+        keyed: ('candidates' in result ? result.candidates ?? [] : []).filter(
+          (c) => 'key' in c && c.key
+        ).length,
         picked: result.candidateImages.includes('picked'),
       };
     };
