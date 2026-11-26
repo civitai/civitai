@@ -1247,14 +1247,18 @@ export type ServiceDealFileDownload = {
   removed: boolean;
 };
 
+/** An image in the file `f` is held for CSAM or a minor: `finalLevelGate` serves it to no one. */
+export const finalCsamHeldSql = (f: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+  -- Refuses serving; entryOnlyOverLevel, which keeps evidence, also counts poi and ingestion.
+  WHERE e."fileId" = ${f}."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
+    OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
+    OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE))`;
+
 /** The columns `finalLevelGate` reads, over the file row `f`. */
 const finalLevelColumns = Prisma.sql`f."scannedEtag",
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
-        -- Refuses serving; entryOnlyOverLevel, which keeps evidence, also counts poi and ingestion.
-        WHERE e."fileId" = f."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
-          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
-          OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE)) AS "csamHeld",
+      ${finalCsamHeldSql(Prisma.sql`f`)} AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
       -- Not entryImageGone: a rated entry whose copy was let go (imageId cleared) counts here too.

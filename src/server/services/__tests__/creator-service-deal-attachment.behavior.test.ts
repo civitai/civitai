@@ -1529,6 +1529,57 @@ describe('review images', () => {
     expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
   });
 
+  /** Points an entry of the Final at a scanned image, as its unpack did. */
+  async function withScanImage(dealId: number, finalId: number) {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion) VALUES ('scan', 'Scanned') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         VALUES ($1, $2, 0, 'a.png', 1, $3, 'Passed')`,
+      [finalId, dealId, id]
+    );
+    return id;
+  }
+
+  // A Final flagged after it passed is served nowhere outside the CSAM path; no copy of it is made.
+  it.each([
+    ['a minor', (imageId: number) => q(`UPDATE "Image" SET minor = true WHERE id = $1`, [imageId])],
+    [
+      'held for CSAM review',
+      (imageId: number) => q(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = $1`, [imageId]),
+    ],
+    [
+      'listed in a CSAM report',
+      (imageId: number) =>
+        q(`INSERT INTO "CsamReport" ("userId", images) VALUES ($1, $2::jsonb)`, [
+          SELLER,
+          JSON.stringify([{ id: imageId }]),
+        ]),
+    ],
+    [
+      'in an open child-safety case',
+      async (imageId: number) => {
+        await q(`INSERT INTO "Report" (status, reason) VALUES ('Pending', 'CSAM')`);
+        await q(
+          `INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, (SELECT max(id) FROM "Report"))`,
+          [imageId]
+        );
+      },
+    ],
+    ['gone', (imageId: number) => q(`DELETE FROM "Image" WHERE id = $1`, [imageId])],
+  ])('neither offers nor copies a Final whose scan image is %s', async (_n, flag) => {
+    const { dealId, finalId } = await reviewed();
+    const imageId = await withScanImage(dealId, finalId);
+    // The same Final with a clean scan image is offered, so what follows is the flag's doing.
+    expect(await picker(dealId)).toEqual([finalId]);
+    await flag(imageId);
+    expect(await picker(dealId)).toEqual([]);
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
+    expect(await linked()).toEqual([]);
+  });
+
   it('deletes a copy that lost its slot to another attach while it was made', async () => {
     const { dealId, finalId } = await reviewed();
     preview.entryCopy.mockImplementationOnce(async () => {
