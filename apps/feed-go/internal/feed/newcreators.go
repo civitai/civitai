@@ -39,7 +39,8 @@ func NewCreatorBoardID(boardColor string) string {
 type NewCreatorBoards struct {
 	Cache  redis.UniversalClient
 	Prefix string
-	// Now is the staleness clock (nil = time.Now; tests replace it).
+	// Now is the staleness clock (nil = clock.Now, eval mode's frozen instant or the wall clock; tests
+	// replace it).
 	Now func() time.Time
 }
 

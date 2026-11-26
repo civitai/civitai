@@ -80,7 +80,8 @@ type APIKeys struct {
 	OrchestratorToken string
 	// ReadTimeout bounds the principal-cache read (0 = 400ms); past it the request falls back.
 	ReadTimeout time.Duration
-	// Now is the clock (nil = time.Now).
+	// Now is the clock key expiry is read at (nil = clock.Now: eval mode's frozen instant, else the wall
+	// clock).
 	Now func() time.Time
 }
 
