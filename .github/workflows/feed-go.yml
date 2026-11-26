@@ -251,16 +251,13 @@ jobs:
           [ "$feed" -ge 12 ]
           [ "$models" -ge 5 ]
 
-      # Both binaries the image ships (apps/feed-go/Dockerfile), built static as it builds them. The
-      # image has no shell, so a job runs feed-eval as `/feed-eval <subcommand>`: `--help` must exit 0.
+      # Both binaries the image ships (apps/feed-go/Dockerfile), built as it builds them. The help
+      # path's exit code is cmd/feed-eval's own unit test; this does not see the image's layout.
       - name: go build
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-go ./cmd/feed-go
           CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-eval ./cmd/feed-eval
-          out=$(/tmp/feed-eval --help)
-          echo "$out" | head -1
-          [[ "$out" == "usage: feed-eval signatures"* ]]
           ls -l /tmp/feed-go /tmp/feed-eval
 
       - name: Redis Cluster logs
