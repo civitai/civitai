@@ -2247,6 +2247,10 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
+  // When the row first passed the public feed gates; written only by set_image_sort_at, which adds it
+  // to sortAt within the release cap. Raw SQL only, so Prisma never selects it and code may deploy
+  // before the migration.
+  firstVisibleAt    DateTime? // @no-type
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
