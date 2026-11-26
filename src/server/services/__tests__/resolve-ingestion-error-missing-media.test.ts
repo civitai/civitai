@@ -68,7 +68,8 @@ const IMAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const PROBE_BUCKET = 'resolved-upload-backend-bucket';
 const PROBE_S3_CLIENT = { __sentinel: 'resolved-upload-backend-client' } as never;
 
-const resolve = () => resolveIngestionError({ id: 4242, nsfwLevel: 1, userId: 7 });
+const resolve = () =>
+  resolveIngestionError({ csamReview: true, id: 4242, nsfwLevel: 1, userId: 7 });
 
 /**
  * Every mock this FILE owns. Reset as a set rather than one at a time, so adding a collaborator

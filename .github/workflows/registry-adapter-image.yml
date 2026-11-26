@@ -17,9 +17,19 @@ name: Registry adapter image
 # is caught by lint.yml's `Registry adapter bundle loads its externals` step, which builds it on
 # every non-draft PR.
 #
-# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
-# here is not draft-gated, so nothing is dispatched).
+# ── NOT ON PULL REQUESTS OR PUSHES: THE 2-HOUR MAIN BATCH ────────────────────────────────
+#
+# Across 36 recent runs of the two image builds on PRs and `main` neither caught anything, so they
+# run only on a dispatch: the 2-hour main batch (lint.yml's `batch-suites` job dispatches this
+# workflow with `batch: true` when a path below changed since the last green batch; a red run turns
+# the `Batch suites (main batch)` commit status red, which opens a CI-watch item naming the commit
+# range, and nothing bisects it automatically), a hand dispatch
+# (`gh workflow run registry-adapter-image.yml -R civitai/civitai --ref <branch>`), or the `full-ci`
+# label's dispatcher on a draft PR.
+#
+# The pull_request trigger stays, with a job that skips on it, ONLY so the paths list keeps one
+# copy here: the batch and the `full-ci` dispatcher read `on.pull_request.paths`. A skipped job
+# starts no runner.
 on:
   pull_request:
     branches: [main, release]
@@ -37,22 +47,13 @@ on:
       - 'patches/**'
       - '.dockerignore'
       - '.github/workflows/registry-adapter-image.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'apps/registry-adapter/**'
-      - 'src/server/registry-adapter/**'
-      - 'src/env/**'
-      - 'scripts/**'
-      - 'tsconfig.json'
-      - 'packages/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'patches/**'
-      - '.dockerignore'
-      - '.github/workflows/registry-adapter-image.yml'
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -60,14 +61,14 @@ permissions:
 # A PR push cancels its PR's in-flight run; on `main` the group queues instead, for the reason in
 # lint.yml's `concurrency` comment.
 concurrency:
-  group: registry-adapter-image-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  group: registry-adapter-image-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   image:
     name: Registry adapter image build
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     steps:
       # Submodules, as the release build checks out (the tag-webhook's SUBMODULES=true).

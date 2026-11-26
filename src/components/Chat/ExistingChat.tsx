@@ -18,7 +18,7 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconAlertTriangle,
   IconArrowBack,
@@ -1438,14 +1438,13 @@ function DisplayMessages({
                             color="red"
                             aria-label="Delete message"
                             onClick={() =>
-                              openConfirmModal({
+                              openConfirm({
                                 title: 'Delete this message?',
-                                children: (
+                                message: (
                                   <Text size="sm">
                                     It disappears for everyone in this conversation.
                                   </Text>
                                 ),
-                                centered: true,
                                 labels: { confirm: 'Delete', cancel: 'Cancel' },
                                 confirmProps: { color: 'red' },
                                 onConfirm: () => deleteMessage({ messageId: c.id }),

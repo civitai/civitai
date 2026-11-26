@@ -16,7 +16,11 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
+import {
+  IMAGE_REVIEW_PRECEDENCE,
+  CSAM_REVIEW_FLAG,
+  REVIEWS_KEPT_WHEN_LIFTED,
+} from '@civitai/shared/image-review-types';
 import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import {
@@ -24,14 +28,17 @@ import {
   minorContentRestrictedSql,
 } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
-import { hasBlockMarker } from '~/server/common/image-block-marker';
+import { OWNER_MEDIA_EXEMPT_BLOCKS, hasBlockMarker } from '~/server/common/image-block-marker';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
+  minusPriorKeysSql,
 } from '~/server/utils/image-removal-mode';
 
-export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
+export { CSAM_REVIEW_FLAG, KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
 
 /**
@@ -83,6 +90,35 @@ export const hasBlockMarkerSql = (alias = 'i') => {
     OR ${t}."blockedFor" IS NOT NULL
   )`;
 };
+
+/** SQL twin of `ownerMediaAllowed`, never NULL. */
+export const ownerMediaAllowedSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(CASE
+    WHEN ${t}."blockedFor" IS NOT NULL
+      THEN ${t}."blockedFor" IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
+    ELSE ${t}."ingestion" <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+  END)`;
+};
+
+/**
+ * For a read that serves media: the viewer's own images only where `ownerMediaAllowed`. Other
+ * images are left to the caller's rules. `TRUE` with no viewer.
+ */
+export const ownerMediaSql = (ownerId?: number | null, alias = 'i') =>
+  ownerId
+    ? Prisma.sql`(${Prisma.raw(`"${alias}"`)}."userId" <> ${ownerId} OR ${ownerMediaAllowedSql(
+        alias
+      )})`
+    : Prisma.sql`TRUE`;
+
+/** `ownerMediaAllowed` as a Prisma `Image` filter. */
+export const ownerMediaAllowedWhere = (): Prisma.ImageWhereInput => ({
+  OR: [
+    { blockedFor: { in: [...OWNER_MEDIA_EXEMPT_BLOCKS] } },
+    { blockedFor: null, ingestion: { not: ImageIngestionStatus.Blocked } },
+  ],
+});
 
 /** `NOT hasBlockMarkerSql` as a Prisma `Image` filter. */
 export const noBlockMarkerWhere = (): Prisma.ImageWhereInput => ({
@@ -451,10 +487,78 @@ export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
   THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
 
+/**
+ * The row holds a CSAM block. NULL when `blockedFor` is NULL: a filter negates it with `IS NOT TRUE`.
+ * A scan's block write, `keepPendingAppealFlags` and an appeal filing never give such a row the
+ * 'appeal' review.
+ */
+export const csamBlockedSql = (alias?: 'i') =>
+  Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
+
+/** An unblock may lift the image: it has no CSAM block and no CSAM review flag. */
+export const liftableByUnblock = (image: {
+  blockedFor: string | null;
+  needsReview: string | null;
+}) => image.blockedFor !== BlockedReason.CSAM && image.needsReview !== CSAM_REVIEW_FLAG;
+/** `liftableByUnblock` as the unblock statement's own gate. */
+export const liftableByUnblockSql = Prisma.sql`("blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM} AND "needsReview" IS DISTINCT FROM ${CSAM_REVIEW_FLAG})`;
+
+/** An appeal on the image whose id is `imageId` is still Pending. */
+export const pendingImageAppealSql = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "Appeal" a
+  WHERE a."entityType" = 'Image'::"EntityType"
+    AND a."entityId" = ${imageId}
+    AND a.status = 'Pending'::"AppealStatus")`;
+
+/**
+ * Reviews only a moderator clears, so a scan never replaces one whatever it ranks. Known gaps, both
+ * leaving a review a moderator then clears: an appeal approved while a scan is in flight gets
+ * 'appeal' back from that scan, and a 'csam' review cleared while a scan is in flight gets 'csam'
+ * back from it.
+ */
+const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
+
+/**
+ * `needsReview` after a write that sets `key`, by who writes it: 'human' (an unblock, an approved
+ * appeal) writes `key`; 'block' (a scan that leaves the row blocked) settles every review but
+ * 'csam', keeping 'appeal' when it is stored, being set, or an appeal is pending, unless the row
+ * holds a CSAM block; 'verdict' (any other scan) never clears or lowers a review, and replaces a
+ * stored key only by one ranked higher, except that a pending appeal's 'appeal' takes any key but
+ * 'csam'. Its SQL reads
+ * "Image".id, so it is only for an UPDATE of "Image". `csamBlock` is whether the row holds a CSAM
+ * block once the write lands; it defaults to the stored one.
+ */
+export function reviewKeyAfterSql(
+  actor: 'verdict' | 'block' | 'human',
+  key: string | null | Prisma.Sql,
+  csamBlock: Prisma.Sql = csamBlockedSql()
+) {
+  const next =
+    typeof key === 'string' || key === null ? Prisma.sql`${key}::text` : Prisma.sql`(${key})::text`;
+  if (actor === 'human') return next;
+  if (actor === 'block')
+    // A stored 'appeal' and a Pending appeal are read at write time, so an appeal filed while the
+    // scan ran keeps its flag.
+    return Prisma.sql`(CASE WHEN "needsReview" = 'csam' THEN "needsReview"
+      WHEN ${csamBlock} THEN NULL
+      WHEN ${next} = 'appeal' OR "needsReview" = 'appeal' OR ${pendingImageAppealSql(
+      Prisma.sql`"Image".id`
+    )} THEN 'appeal' END)`;
+  return Prisma.sql`(CASE
+    WHEN "needsReview" = 'csam' THEN "needsReview"
+    WHEN ${next} = 'appeal' THEN ${next}
+    WHEN "needsReview" IS NULL THEN ${next}
+    WHEN "needsReview" = ANY(${REVIEWS_ONLY_A_MODERATOR_CLEARS}::text[]) THEN "needsReview"
+    WHEN array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], ${next})
+      < array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], "needsReview") THEN ${next}
+    ELSE "needsReview"
+  END)`;
+}
+
 /** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
 export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
   Prisma.sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
-    THEN (${metadata}) - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+    THEN (${metadata})${minusPriorKeysSql}
     ELSE ${metadata} END)`;
 
 /** The image's owner has deleted their account (in its grace period, or not yet purged). */
@@ -476,12 +580,20 @@ export const liftedNsfwLevelSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN 
 /** For RETURNING: the lifted row stayed blocked because its owner is deleted. */
 export const liftKeptBlockedSql = Prisma.sql`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
 
+/** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
+const ratingKeptWhenLiftedSql = Prisma.sql`(CASE
+  WHEN jsonb_typeof("metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+    AND "metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text <> ${String(KEPT.nsfwLevel)}
+  THEN jsonb_build_object(${PRIOR_NSFW_LEVEL_KEY}::text, "metadata"->${PRIOR_NSFW_LEVEL_KEY}::text,
+    ${PRIOR_NSFW_LOCKED_KEY}::text, "metadata"->${PRIOR_NSFW_LOCKED_KEY}::text)
+  ELSE '{}'::jsonb END)`;
+
 /** `metadata` for a lifted row: the breadcrumbs off, or while the owner is deleted, recording the lift. */
 export function liftedUnderGraceSql(stripped: Prisma.Sql) {
   return Prisma.sql`(CASE WHEN ${ownerDeletedSql}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql})
+    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql}) || ${ratingKeptWhenLiftedSql}
   ELSE ${stripped} END)`;
 }
 
@@ -490,7 +602,7 @@ export const liftedMetadataSql = liftedUnderGraceSql(withoutGraceMarkersSql());
 
 /** `metadata` for an unblock: also drops the rule keys; while the owner is deleted, `liftedUnderGraceSql` records the lift for the account restore. */
 export const unblockedMetadataSql = liftedUnderGraceSql(
-  Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
+  Prisma.sql`"metadata" - 'ruleId' - 'ruleReason'${minusPriorKeysSql}`
 );
 
 /** The `ingestion` a scan error writes. Reads the row before the error's retry count is added. */
@@ -521,6 +633,13 @@ export const withoutMinorFlag = <T extends { minor?: boolean | null }>({
 export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: number }) =>
   isMinorContentRestricted({ minor: image.minor === true, nsfwLevel: image.nsfwLevel });
 
+/** A minor-flagged image the minor content rule restricts, as this viewer sees it: hidden unless they uploaded it or moderate. */
+export const minorMatureHidden = (
+  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
+  viewerId?: number,
+  isModerator?: boolean
+) => !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);
+
 /**
  * A minor-flagged image the minor content rule restricts is shown only to its owner and
  * moderators, whatever the viewer's browsing settings, as SQL over `"Image" i`. With no viewer it
@@ -545,3 +664,40 @@ export const isImageNotFlagged = (image: {
   minor: boolean | null;
   nsfwLevel: number;
 }) => !image.acceptableMinor && !isMinorMatureImage(image);
+
+/**
+ * An image with any `blockedFor` reason is hidden from everyone but moderators, as SQL over
+ * `"Image" i`; its owner keeps it only where `ownerMediaAllowed` does. `ownerKeepsBlockedRow` is for
+ * a read that serves the owner the row without its media (the image page). Empty for a
+ * moderator.
+ */
+export function imageBlockedForConditions({
+  userId,
+  isModerator,
+  ownerKeepsBlockedRow = false,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+  ownerKeepsBlockedRow?: boolean;
+}): Prisma.Sql[] {
+  if (isModerator) return [];
+  if (!userId) return [Prisma.sql`(i."blockedFor" IS NULL)`];
+  return [
+    ownerKeepsBlockedRow
+      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+      : Prisma.sql`(i."blockedFor" IS NULL OR (i."userId" = ${userId} AND ${ownerMediaAllowedSql()}))`,
+  ];
+}
+
+/**
+ * The block terms of a list that serves media: a blocked image is moderators' alone, plus its
+ * owner's where `ownerMediaAllowed` allows. Empty for a moderator.
+ */
+export const blockedMediaListConditions = ({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] =>
+  isModerator ? [] : [...imageBlockedForConditions({ userId }), ownerMediaSql(userId)];

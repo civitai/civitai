@@ -1,10 +1,14 @@
 import { sql } from '@civitai/db/kysely';
+import { KEPT_HIDE_MARKER } from '@civitai/db-queries/pending-deletes';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import {
   GRACE_PRIOR_BLOCKED_FOR_KEY,
   GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_KEYS,
   GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  GRACE_PRIOR_NSFW_LEVEL_KEY,
+  GRACE_PRIOR_NSFW_LOCKED_KEY,
   LIFT_KEPT_ACTIVITY,
   LIFT_WHILE_OWNER_DELETED,
 } from '@civitai/shared/account-deletion-grace';
@@ -52,6 +56,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
+/** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
 const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
@@ -85,8 +90,10 @@ const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "I
  *  only cause on record. */
 const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
 /** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
- *  clears the breadcrumbs an account restore reads. */
-const KEPT_BY_REMOVE = sql<boolean>`(${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL))`;
+ *  clears the breadcrumbs an account restore reads, and so does an image a kept delete hid, whose
+ *  marker the block drops so the delete's release cannot lift it. */
+const KEPT_BY_REMOVE = sql<boolean>`(NOT COALESCE("metadata" ? ${KEPT_HIDE_MARKER}::text, false)
+  AND (${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL)))`;
 
 /** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
  *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
@@ -100,6 +107,11 @@ END)`;
 /** The image's owner has deleted their account (in its grace period, or not yet purged). */
 const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
 
+const MINUS_GRACE_KEYS = sql.join(
+  GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+  sql` - `
+);
+
 /**
  * The grace-block breadcrumbs off `metadata`; a non-object value is left as it is.
  *
@@ -109,7 +121,7 @@ const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "
  */
 const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
   sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
-    THEN (${metadata}) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
+    THEN (${metadata}) - ${MINUS_GRACE_KEYS}
     ELSE ${metadata} END)`;
 
 // A lift (approved appeal, accept) while the owner is deleted keeps the row blocked and records the
@@ -127,11 +139,18 @@ const LIFTED_INGESTION = sql<
 >`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
 const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
 const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
+/** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
+const RATING_KEPT_WHEN_LIFTED = sql`(CASE
+  WHEN jsonb_typeof("metadata"->${GRACE_PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+    AND "metadata"->>${GRACE_PRIOR_NSFW_LEVEL_KEY}::text <> ${String(KEPT.nsfwLevel)}
+  THEN jsonb_build_object(${GRACE_PRIOR_NSFW_LEVEL_KEY}::text, "metadata"->${GRACE_PRIOR_NSFW_LEVEL_KEY}::text,
+    ${GRACE_PRIOR_NSFW_LOCKED_KEY}::text, "metadata"->${GRACE_PRIOR_NSFW_LOCKED_KEY}::text)
+  ELSE '{}'::jsonb END)`;
 /** `metadata` for a lifted row: `stripped`, or while the owner is deleted, that recording the lift. */
 const liftedMetadata = (stripped: RawBuilder<unknown>) => sql`(CASE WHEN ${OWNER_DELETED}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${GRACE_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
+    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}) || ${RATING_KEPT_WHEN_LIFTED}
   ELSE ${stripped} END)`;
 
 const recompute = async (imageId: number) => {
@@ -214,6 +233,13 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** An accept refused because the image's review flag is no longer the one its page showed. */
+export class ImageChangedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} changed since it was shown`);
+  }
+}
+
 /** A verdict on a report refused for an image under the CSAM review flag: that queue decides it. */
 export class CsamReviewImageError extends Error {
   constructor(readonly imageId: number) {
@@ -244,14 +270,7 @@ export class ImageNotFoundError extends Error {
   }
 }
 
-export async function acceptImage({
-  imageId,
-  removeMinorFlag = false,
-  userId,
-  deferAppealEmail = false,
-  restoreRemoved = false,
-  keepModeratorRemoved = false,
-}: {
+type AcceptImageInput = {
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
@@ -263,7 +282,35 @@ export async function acceptImage({
    *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
-}): Promise<ClosedAppeal | undefined> {
+  /** The review flag a queue page showed. When given (and this is not a report verdict), an image whose
+   *  flag has changed since is not accepted, and this throws `ImageChangedError`. */
+  shownNeedsReview?: string | null;
+};
+
+/** Accepts an image. An image under the CSAM review flag is left as it is: only the CSAM review
+ *  clears that flag, through `acceptCsamReviewedImage`. */
+export function acceptImage(input: AcceptImageInput) {
+  return acceptImageUnder(input, false);
+}
+
+/** The CSAM queue's accept, the one path that clears the CSAM review flag. Called only from that
+ *  queue's own view, behind `holdsCsamReview`. */
+export function acceptCsamReviewedImage(input: Omit<AcceptImageInput, 'restoreRemoved'>) {
+  return acceptImageUnder(input, true);
+}
+
+async function acceptImageUnder(
+  {
+    imageId,
+    removeMinorFlag = false,
+    userId,
+    deferAppealEmail = false,
+    restoreRemoved = false,
+    keepModeratorRemoved = false,
+    shownNeedsReview,
+  }: AcceptImageInput,
+  clearsCsamReview: boolean
+): Promise<ClosedAppeal | undefined> {
   const readImage = (db: Kysely<DB>) =>
     db
       .selectFrom('Image')
@@ -279,6 +326,9 @@ export async function acceptImage({
     return;
   }
   const nr = img.needsReview;
+  // Not for a report verdict: its page shows one image on several cards and does not reload between
+  // verdicts, so a second verdict must not fail on the first one's flag change.
+  const checksShown = shownNeedsReview !== undefined && !keepModeratorRemoved;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
   // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
@@ -311,7 +361,14 @@ export async function acceptImage({
     })
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    .$if(!clearsCsamReview, (qb) =>
+      qb.where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+    )
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    // A stale accept would lift an image whose child-safety case keeps a moderator's pending delete.
+    .$if(checksShown, (qb) =>
+      qb.where('needsReview', 'is not distinct from', shownNeedsReview ?? null)
+    )
     .$if(keepModeratorRemoved, (qb) =>
       qb.where(
         sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
@@ -331,9 +388,17 @@ export async function acceptImage({
     ])
     .executeTakeFirst();
   if (!updated) {
+    if (checksShown) {
+      const now = await dbWrite
+        .selectFrom('Image')
+        .select('needsReview')
+        .where('id', '=', imageId)
+        .executeTakeFirst();
+      if (now && now.needsReview !== shownNeedsReview) throw new ImageChangedError(imageId);
+    }
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
-    if (keepModeratorRemoved) {
-      // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
+    // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
+    if (keepModeratorRemoved || !clearsCsamReview) {
       const flagged = await dbWrite
         .selectFrom('Image')
         .select('id')
@@ -341,6 +406,8 @@ export async function acceptImage({
         .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
         .executeTakeFirst();
       if (flagged) throw new CsamReviewImageError(imageId);
+    }
+    if (keepModeratorRemoved) {
       const removed = await dbWrite
         .selectFrom('Image')
         .select(
@@ -580,8 +647,8 @@ export async function blockImage({
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${MINUS_GRACE_KEYS} - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${MINUS_GRACE_KEYS} - 'ruleId' - 'ruleReason'`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a
@@ -825,6 +892,8 @@ export async function keepPendingAppealFlags(db: Kysely<DB>, imageIds: readonly 
     .set({ needsReview: 'appeal' })
     .where('id', 'in', [...imageIds])
     .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+    // A row holding a CSAM block never takes the appeal flag (main app: keepPendingAppealFlags).
+    .where(sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM}) IS NOT TRUE`)
     .where((eb) =>
       eb.exists(
         eb
@@ -919,6 +988,7 @@ async function runAppealCascade(
         username: appellant.username ?? 'User',
         approved,
         imageIds: [imageId],
+        userId: appeal.userId,
       });
   }
 }
@@ -959,6 +1029,7 @@ export async function sendBulkAppealEmails(
         username: u.username ?? 'User',
         approved,
         imageIds,
+        userId,
       });
   }
 }

@@ -21,6 +21,7 @@ import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.co
 import { isHatTurfLive } from '~/server/events/turf/live';
 import { TURF_SCORE_TIER_KEY } from '~/server/events/turf/config';
 import { SERVICES_MIN_CREATOR_SCORE } from '~/shared/constants/creator-service.constants';
+import { CREATOR_SHOP_MIN_CREATOR_SCORE } from '~/shared/constants/cosmetic-shop.constants';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { getUsageLimitConfig } from '~/server/services/usage-limit-config.service';
 import {
@@ -218,6 +219,14 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
         })
       ),
     ]),
+    {
+      key: 'creator-shop',
+      minScore: CREATOR_SHOP_MIN_CREATOR_SCORE,
+      label: 'Open a Creator Shop',
+      surface: 'creatorShop',
+      scoreKind: 'total',
+      source: 'compiled',
+    },
     {
       key: 'creator-program',
       minScore: CREATOR_PROGRAM_MIN_CREATOR_SCORE,

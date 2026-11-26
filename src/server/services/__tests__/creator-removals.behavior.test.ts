@@ -98,17 +98,11 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" ("id" serial PRIMARY KEY, "reason" text NOT NULL);
     CREATE TABLE "UserReport" ("userId" integer NOT NULL, "reportId" integer NOT NULL);
-    -- Stands in for the hold-marker view; its definition is pinned against the real migration in
-    -- remove-blocked-images-hold-guard.behavior.test.ts.
-    CREATE TABLE "EvidenceHeldUser" ("userId" integer PRIMARY KEY, "heldUntil" timestamp(3));
-    CREATE TABLE "EvidenceHoldImage" ("imageId" integer PRIMARY KEY, "userId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(
-    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport"`
-  );
+  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "CsamReport"`);
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (${RESTORED}, ${OWNER}, NULL),
@@ -141,35 +135,6 @@ describe('the removed-images list', () => {
     expect(result.total).toBe(3);
   });
 
-  // A hold marker's kept image reads as a moderator block; an appeal link on it would tell its
-  // owner something unusual is going on. The case above is the control.
-  it('lists the same removals to an owner under a hold marker, with no appeal', async () => {
-    const before = await getMyRemovedImages(OWNER, NOW);
-    await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
-
-    const held = await getMyRemovedImages(OWNER, NOW);
-
-    expect(before.items.some((i) => i.canAppeal)).toBe(true);
-    expect(held.items.map((i) => i.imageId)).toEqual(before.items.map((i) => i.imageId));
-    expect(held.items.map((i) => i.canAppeal)).toEqual(held.items.map(() => false));
-  });
-
-  it('gives a held owner’s item exactly what an ordinary non-appealable item gets', async () => {
-    // Blocked by a scan rather than a moderator: a state any owner can reach, and never appealable.
-    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'tos' WHERE id = ${REJECTED}`);
-    const ordinary = (await getMyRemovedImages(OWNER, NOW)).items.find(
-      (i) => i.imageId === REJECTED
-    );
-    await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
-    const held = (await getMyRemovedImages(OWNER, NOW)).items.find(
-      (i) => i.imageId === STILL_REMOVED
-    );
-
-    expect(ordinary?.canAppeal).toBe(false);
-    const comparable = (item: typeof held) => ({ ...item, imageId: 0, removedAt: null });
-    expect(comparable(held)).toStrictEqual(comparable(ordinary));
-  });
-
   it('lists an owner a CSAM report names as before the report, with no appeal', async () => {
     const before = await getMyRemovedImages(OWNER, NOW);
     await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`);
@@ -181,35 +146,6 @@ describe('the removed-images list', () => {
       ...before,
       items: before.items.map((i) => ({ ...i, canAppeal: false })),
     });
-  });
-
-  // A hold's kept image stays refused until it is purged or released, even after the hold ends.
-  it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
-    const ALSO_REMOVED = 9;
-    holder.chQuery.mockResolvedValue({
-      json: async () => [
-        ...ownRemovals,
-        { ownerId: OWNER, imageId: ALSO_REMOVED, removedAt: REMOVED_AT },
-      ],
-    });
-    await holder.db.exec(
-      `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (${ALSO_REMOVED}, ${OWNER}, 'moderated')`
-    );
-    const canAppeal = async () =>
-      Object.fromEntries(
-        (await getMyRemovedImages(OWNER, NOW)).items.map((i) => [i.imageId, i.canAppeal])
-      );
-
-    const before = await canAppeal();
-    expect(before[STILL_REMOVED]).toBe(true);
-    expect(before[ALSO_REMOVED]).toBe(true);
-
-    await holder.db.exec(
-      `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${STILL_REMOVED}, ${OWNER})`
-    );
-
-    // Only the kept image changes.
-    expect(await canAppeal()).toEqual({ ...before, [STILL_REMOVED]: false });
   });
 
   it('still says it stopped at the limit when an appeal reversed one of those rows', async () => {

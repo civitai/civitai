@@ -107,6 +107,40 @@ describe('parseDiagnostics', () => {
     expect(r.total).toBe(0);
     expect(r.sawAnyErrorTs).toBe(0);
   });
+
+  it('keeps each diagnostic with its position, code and chained message', () => {
+    // A plain-format message chain continues on indented lines after the first.
+    const out = [
+      `src/a/__tests__/x.test.ts(2,7): ${TS}2322: Type '{ a: { b: string; }; }' is not assignable to type 'A'.`,
+      "  The types of 'a.b' are incompatible between these types.",
+      "    Type 'string' is not assignable to type 'number'.",
+      'some unrelated line',
+      '  indented but not after a diagnostic',
+      `src/b/__tests__/y.test.ts:4:9 - ${TS}2304: Cannot find name 'q'.`,
+      '  not a plain-format chain',
+    ].join('\n');
+    const r = parseDiagnostics(out);
+    expect(r.total).toBe(2);
+    expect(r.diagnostics).toEqual([
+      {
+        file: 'src/a/__tests__/x.test.ts',
+        line: 2,
+        col: 7,
+        code: 2322,
+        message:
+          "Type '{ a: { b: string; }; }' is not assignable to type 'A'.\n" +
+          "  The types of 'a.b' are incompatible between these types.\n" +
+          "    Type 'string' is not assignable to type 'number'.",
+      },
+      {
+        file: 'src/b/__tests__/y.test.ts',
+        line: 4,
+        col: 9,
+        code: 2304,
+        message: "Cannot find name 'q'.",
+      },
+    ]);
+  });
 });
 
 // ------------------------------------------------------- outcome truth table
@@ -742,6 +776,8 @@ function runGate(
       TYPECHECK_TESTS_BASELINE: baseline,
       TYPECHECK_TESTS_ALLOW_EMPTY: '',
       TYPECHECK_TESTS_CONFIG_DIR: '',
+      // CI sets this; cases that want the annotation output opt in explicitly.
+      GITHUB_ACTIONS: '',
       ...env,
     },
   });
@@ -1022,6 +1058,39 @@ describe('the gate, end to end: a working checker produces the right verdict', (
     expect(res.status).toBe(1);
     expect(res.all).toContain('look like a RENAME');
     expect(res.all).toContain('src/a/__tests__/x.test.ts  ->  src/moved/__tests__/x.test.ts');
+  });
+
+  it('under Actions, annotates a blocking error with file, line, col and TS code', () => {
+    const planted = `src/c/__tests__/z.test.ts(7,3): ${TS}2345: Argument of type 'number' is not assignable.`;
+    const run = (env: NodeJS.ProcessEnv) =>
+      runGate(
+        wrapperStub('annot', emit([...unchanged, planted])),
+        fixtureBaseline('c-annot', BASE_FILES),
+        [],
+        env
+      );
+    const res = run({ GITHUB_ACTIONS: 'true' });
+    expect(res.status).toBe(1);
+    expect(res.stdout.split('\n').filter((l) => l.startsWith('::error'))).toEqual([
+      "::error file=src/c/__tests__/z.test.ts,line=7,col=3,title=TS2345::Argument of type 'number' is not assignable.",
+    ]);
+    // Outside Actions the output carries no workflow commands, and the verdict is the same.
+    const local = run({});
+    expect(local.status).toBe(1);
+    expect(local.all).not.toContain('::error');
+  });
+
+  it('under Actions, a passing run prints no annotations', () => {
+    const res = runGate(
+      wrapperStub('annot-pass', emit(unchanged)),
+      fixtureBaseline('c-annot-pass', BASE_FILES),
+      [],
+      {
+        GITHUB_ACTIONS: 'true',
+      }
+    );
+    expect(res.status).toBe(0);
+    expect(res.all).not.toMatch(/^::/m);
   });
 
   it('parses a PRETTY-format run identically — the format that used to PASS at zero', () => {

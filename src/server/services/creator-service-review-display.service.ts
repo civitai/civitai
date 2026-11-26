@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
-import { reviewImageVisibleSql } from '~/server/services/creator-service-deal-review-images';
+import {
+  reviewImageLevelSql,
+  reviewImageVisibleSql,
+} from '~/server/services/creator-service-review-image-sql';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
 import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
@@ -23,6 +26,10 @@ export async function serviceReviewViewer({
 }) {
   return {
     levels: (browsingLevel ?? servable) & servable,
+    // A list of other users' posts, so it takes the feed rule, as the offering feed does: buyers
+    // this viewer hid, and a block either way. A block with the seller 404s the offering for anyone
+    // but a moderator, so it never reaches here. isReviewImageBlockedForViewer is the narrower rule
+    // for opening one review image by id: blocks only, and moderators pass.
     excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
   };
 }
@@ -58,7 +65,7 @@ type ReviewImageRow = {
 
 const reviewImageColumns = Prisma.sql`ri."reviewId", i."id", i."name", i."url", i."hash", i."width",
   i."height", i."type"::text AS "type", i."metadata", i."userId",
-  GREATEST(i."nsfwLevel", d."maxNsfwLevel") AS "nsfwLevel"`;
+  ${reviewImageLevelSql} AS "nsfwLevel"`;
 
 /** Newest first, paged by review id. `levels`: the viewer's levels, already limited to the domain. */
 export async function getServiceOfferingReviews({

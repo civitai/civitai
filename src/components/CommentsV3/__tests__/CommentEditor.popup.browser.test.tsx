@@ -16,9 +16,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => ({}),
   useOptionalFeatureFlags: () => ({}),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'tester' }),
-}));
 vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useOwnedSticker: () => ({ sticker: [] }),
@@ -73,7 +70,8 @@ describe.each([
     renderWithProviders(
       <div style={{ padding: '120px 24px' }}>
         <CommentEditor autoFocus {...props} />
-      </div>
+      </div>,
+      { user: { id: 1, username: 'tester' } }
     );
     await vi.waitFor(() => expect(document.querySelector('.ProseMirror')).not.toBeNull());
 

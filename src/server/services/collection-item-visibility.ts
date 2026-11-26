@@ -7,6 +7,7 @@ import {
   publishedPostSql,
 } from '~/server/services/collection-cover-visibility';
 import { assertImagesVisibleToViewer } from '~/server/services/image-visibility.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { getHiddenModelIds } from '~/server/services/model-visibility.service';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -59,8 +60,11 @@ export async function assertCollectionItemsVisibleToViewer({
 }) {
   const wanted = [...new Set(ids)];
   if (wanted.length === 0) return;
-  if (itemKey === 'imageId')
-    return assertImagesVisibleToViewer({ ids: wanted, userId, isModerator });
+  if (itemKey === 'imageId') {
+    // After the visibility check, so a refusal never says what an image the viewer can't see is.
+    await assertImagesVisibleToViewer({ ids: wanted, userId, isModerator });
+    return assertNotDealFileImages(wanted, 'used here');
+  }
 
   const { from, alias, visible } = itemTable(itemKey);
   const viewable = isModerator

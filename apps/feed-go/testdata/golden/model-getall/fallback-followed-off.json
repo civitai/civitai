@@ -1,0 +1,37 @@
+{
+  "name": "fallback-followed-off",
+  "description": "`followed` with its switch off (the default): not served.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"followed\":true,\"browsingLevel\":1}}",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1003
+    }
+  },
+  "redis": {},
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": []
+  },
+  "expect": {
+    "fallback": "input-followed"
+  }
+}

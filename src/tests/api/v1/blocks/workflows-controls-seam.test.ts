@@ -482,7 +482,7 @@ describe('assertBlockWorkflowMintedForViewer reaches the wire', () => {
     // to the SAME token the middleware admitted — a stripped-wrong or hardcoded
     // value would still reach a mocked verifier, and every other assertion here
     // would stay green.
-    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam', { admitRunner: false });
   });
 });
 

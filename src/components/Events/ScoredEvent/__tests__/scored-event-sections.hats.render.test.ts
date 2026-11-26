@@ -232,7 +232,7 @@ describe('ScoredEventSections: Your hats', () => {
   });
 });
 
-// Justin (2026-11-03): where we say which team you're on, it is your showcase hat, not the team cap.
+// 2026-11-03: where we say which team you're on, it is your showcase hat, not the team cap.
 describe('ScoredEventSections: your team panel hat', () => {
   const heroHat = (hat: typeof showcase.hat) => {
     showcase.hat = hat;

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createOwnerImageSearch,
   createSemanticImageSearch,
+  setImageSearchAsTyped,
   withSemanticImageSearch,
 } from '~/components/Search/semanticImageSearchClient';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -31,6 +32,43 @@ const meili = () => ({
 const imageRequest = (params: Record<string, unknown>) => ({
   indexName: IMAGES_SEARCH_INDEX,
   params: { query: 'fox', hitsPerPage: 50, page: 0, ...params },
+});
+
+describe('the image search page searched as typed', () => {
+  const sent = async (asTyped: string | undefined, query: string) => {
+    const search = fakeSearch([{ ids: [1] }]);
+    const client = withSemanticImageSearch(
+      meili() as never,
+      createSemanticImageSearch({ search, asTyped: () => asTyped })
+    );
+    await client.search([imageRequest({ query })] as never);
+    return search.mock.calls[0][0];
+  };
+
+  it('sends the original text with the spelling correction off', async () => {
+    expect(await sent('Shikata nee', 'Shikata nee')).toMatchObject({
+      query: 'Shikata nee',
+      spellcheck: false,
+    });
+  });
+
+  it('ends the choice once another query is searched, so retyping it is corrected again', async () => {
+    const search = fakeSearch([{ ids: [1] }, { ids: [1] }, { ids: [1] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+    setImageSearchAsTyped('Shikata nee');
+    await client.search([imageRequest({ query: 'Shikata nee' })] as never);
+    await client.search([imageRequest({ query: 'anime girl' })] as never);
+    await client.search([imageRequest({ query: 'Shikata nee', page: 1 })] as never);
+    expect(search.mock.calls.map(([input]) => input.spellcheck)).toEqual([
+      false,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('leaves the correction on for a new search (control)', async () => {
+    expect(await sent('Shikata nee', 'anime girl')).not.toHaveProperty('spellcheck');
+  });
 });
 
 describe('withSemanticImageSearch', () => {
@@ -188,19 +226,5 @@ describe('createOwnerImageSearch', () => {
     });
     const { hits } = await run(searchOwner, '  ');
     expect(hits[0].user).toBeUndefined();
-  });
-
-  it('still answers a typed query from the semantic search, user as it returns it', async () => {
-    const searchImages = vi.fn(async () => ({
-      hits: [{ id: 9, user: { id: 3, username: 'other' } }],
-    }));
-    const searchOwner = createOwnerImageSearch({
-      searchImages: searchImages as never,
-      getMyImages: getMyImages as never,
-      getUser: () => caller,
-    });
-    const { hits } = await run(searchOwner, 'woodblock');
-    expect(searchImages).toHaveBeenCalledTimes(1);
-    expect(hits[0].user?.username).toBe('other');
   });
 });

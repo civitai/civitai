@@ -10,6 +10,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // session served by the sandbox service's preview gateway; off (or missing), the dev tunnel as
   // before. Evaluated with the user's context; fails closed.
   APP_ASSISTANT_DIRECT_PREVIEW = 'app-assistant-direct-preview',
+  // App Assistant session tracing (`~/server/services/app-assistant/session-tracing.service`). On:
+  // each finished server-runner turn upserts its chat ↔ app link row and emits one ClickHouse
+  // event, and a submit snapshots the linked chats. Off, missing or unreachable: every one of those
+  // writes is a no-op. Reads (moderator-only) do not depend on it. BOOLEAN ONLY: evaluated with no
+  // entity and no context, so a segment rule matches nothing. Create the key in Flipt (disabled)
+  // before this deploys: a missing key logs an error on every eval (once per finished turn).
+  APP_ASSISTANT_TRACING = 'app-assistant-tracing',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
@@ -216,6 +223,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
+  // Daily challenge plan (daily-plan.ts). Both default-off: off/unknown/unreachable gives the fixed
+  // rubric and default judge. SCHEDULE enables calendar entries; ROTATION picks a rubric set by
+  // date for any day without an applied entry.
+  DAILY_CHALLENGE_SCHEDULE = 'daily-challenge-schedule',
+  DAILY_CHALLENGE_RUBRIC_ROTATION = 'daily-challenge-rubric-rotation',
   // Streams the two large evidence archives straight to object storage instead of staging them
   // on the container's local scratch volume first. DEFAULT-OFF — `isFlipt` returns false for an
   // unknown flag or an unreachable Flipt, which leaves the long-standing disk-staging path in
@@ -237,8 +249,16 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // Every push of a Feature Pages comment or its moderation state to the data.civitai.com platform,
+  // inline at post time and from the mirror jobs. Read with no user everywhere, so a segment rollout
+  // never matches: on is `enabled` true, the brake is `enabled` false.
+  FEATURE_PAGES_MIRROR = 'feature-pages-mirror',
   // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
   MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
+  // The "see it on civitai.red" pointer for a training dataset .com refuses for its rating
+  // (`trainingDataPublicView`). Off, missing or unreachable: no pointer, the dataset is absent as
+  // before. BOOLEAN ONLY: evaluated with no entity and no context.
+  TRAINING_DATA_RED_POINTER = 'training-data-red-pointer',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -322,6 +342,19 @@ export enum FLIPT_FEATURE_FLAGS {
   // APP_DATA_SHADOW_URL SET. A missing key makes `evaluateBoolean` throw, bypass the eval cache and
   // log an error on every call, and with the URL set every eligible App Storage list reads it.
   APP_DATA_REGISTRY_SHADOW = 'app-data-registry-shadow',
+  // The App Storage writes cutover: while on for an app, the page-run block token mint answers
+  // with `appData: { url, slug }`, which the run host forwards in BLOCK_INIT, and the app's SDK
+  // then sends its own collections and `info()` to the app-data service instead of the site.
+  // EVALUATED PER APP like the shadow flag above: entityId = the app block id (`apb_…`), context
+  // `{ blockId }`. Also needs APP_DATA_SERVICE_PUBLIC_URL; unset, the flag is never read. See
+  // `src/server/services/apps/app-data-writes-routing.ts` (which spells the key as
+  // APP_DATA_WRITES_VIA_SERVICE_FLAG; a test pins the two equal).
+  //
+  // DEFAULT-OFF and SILENT: read with `getFliptBoolean` (after any local override), so a missing
+  // key, an evaluation error or an unreachable Flipt all read as off WITHOUT an error log. It is
+  // read on every page-run mint, and a log line per mint would be a storm. Create the key
+  // (enabled: false) anyway: a missing key also skips the eval cache.
+  APP_DATA_WRITES_VIA_SERVICE = 'app-data-writes-via-service',
   // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
   // depends on, Node's superjson envelope) to feed-go's
   // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,
@@ -347,6 +380,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // FEED_GO_SHADOW_URL and the rate / in-flight knobs with FEED_GO_SHADOW, with a per-second bucket
   // per route. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_V1_MODELS = 'feed-go-shadow-v1-models',
+  // The same mirror for `POST /api/search/*` (the site's search UI), to feed-go's
+  // `/internal/shadow/api/search`: the request body, the search call Node made, the backend's 200
+  // body and Node's answer, so feed-go reshapes the same backend answer without calling it again.
+  // DEFAULT-OFF. Global boolean, read at most once per 5s per process; shares FEED_GO_SHADOW_URL and
+  // the rate / in-flight knobs with FEED_GO_SHADOW, with its own per-second bucket. See
+  // `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_SITE_SEARCH = 'feed-go-shadow-site-search',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -451,13 +491,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
   // `storage-migration-run.service.ts`.
   APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
-  // Server-side PUBLISH and UNPUBLISH in the document store (`POST /storage/_publish/:to`,
-  // `/_unpublish/:to`: copy a viewer's own private documents into a shared collection in one call,
-  // on its own publish budget). EVALUATED PER APP like the moderation pair above (entityId = the
-  // app block id, NO context): ramp by boolean, percentage, or an ENTITY_ID segment of app block
-  // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
-  // PUBLISH in `doc-store-api.ts`.
-  APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
   // A shared document PUT that would change no stored row is free of the shared-write budget:
   // when the body's content hash and index rows equal the stored document's (the caller's own,
   // visible, at the version any `ifVersion` names), the route answers with the stored document
@@ -469,6 +502,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
   // `putIfUnchanged` in `doc-store.ts`.
   APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE = 'app-blocks-storage-unchanged-writes-free',
+  // Viewer-keyed collection writes (see `isViewerKeyedOpen`): create DEFAULT ON, with a closed segment
+  // (app block id = SOURCE app through an import, context { collection }) per migration target.
+  // Absent or unreachable reads as closed.
+  APP_BLOCKS_STORAGE_VIEWER_KEYED_OPEN = 'app-blocks-storage-viewer-keyed-open',
   // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
   // submit, on the git-push path and at approve, for a hook that is new or changed against the
   // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push
@@ -492,6 +529,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
+  // App Blocks "Request access" (`submitAppAccessRequest`). On for a requester whose account
+  // passes `isEligibleForAutoApproval`: the request is written APPROVED, which is the builder
+  // grant, instead of waiting in the moderator queue. EVALUATED PER REQUESTER — entityId = the
+  // user id, context = `buildFliptContext(user)`. DEFAULT-OFF: off, absent or Flipt unreachable,
+  // every request lands pending, as before.
+  APP_ACCESS_AUTO_APPROVE = 'app-access-auto-approve',
   // App Block host media serving, per viewer. See `decideBlockMediaServing` in
   // `block-media-serving.ts`, including what happens with no flag answer.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
@@ -531,11 +574,17 @@ export enum FLIPT_FEATURE_FLAGS {
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
+  // Variant: `log` | `enforce`; any other answer, a missing flag or an error included, is off.
+  // Read by bearer-scope-tighten.ts.
+  BEARER_SCOPE_TIGHTEN = 'bearer-scope-tighten',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
   // app-step-positions.ts.
   APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
+  // Variant: `shadow` | `enforce`; any other answer, a missing flag or an error included, is off.
+  // The App Block review boot check; read by review-boot-check.service.ts.
+  APP_BLOCKS_REVIEW_BOOT_CHECK = 'app-blocks-review-boot-check',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
@@ -686,7 +735,7 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
   // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
   // apps are refused. Off: blob urls are accepted as before. Unreadable: answers on (refused).
-  // EVALUATED PER APP like `app-blocks-storage-publish` (entityId = the app block id, NO context):
+  // EVALUATED PER APP like `app-blocks-shared-data-moderation` (entityId = the app block id, NO context):
   // ramp it with an ENTITY_ID segment of app block ids. Read ONLY through
   // `appUsesScannedSourceRows` (`services/blocks/source-scanned-rows.ts`), so the host's picker,
   // the copy and the generation gate answer the same for one app.
@@ -750,6 +799,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag state (enabled: false) before this code serves traffic.
   IMAGE_METRICS_DEDICATED_CLICKHOUSE = 'image-metrics-dedicated-clickhouse',
 
+  // On, with CLICKHOUSE_DOWNLOADS_HOST and CLICKHOUSE_DOWNLOADS_USERNAME set: the user-downloads
+  // cache lookup reads the dedicated downloads replica (`~/server/services/downloads-clickhouse`).
+  // Kill: disable.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before deploy.
+  USER_DOWNLOADS_DEDICATED_CLICKHOUSE = 'user-downloads-dedicated-clickhouse',
+
+  // On, with CLICKHOUSE_DOWNLOADS_HOST and CLICKHOUSE_DOWNLOADS_USERNAME set: the download
+  // limiter's count reads the dedicated downloads replica; its address branch also needs
+  // CLICKHOUSE_DOWNLOADS_IP_HASH_KEY. Kill: disable.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before deploy.
+  DOWNLOAD_COUNT_DEDICATED_CLICKHOUSE = 'download-count-dedicated-clickhouse',
+
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
   // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
   // sections mount right after hydration (`~/components/ClientOnlySection`). Off (and unknown, or a
@@ -775,6 +836,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // The Training Studio's v2 dataset rating (apps/training-studio/src/lib/server/dataset-rating.ts), a
   // variant flag: a mature-level variant (s1-s4) is on; off, no match or unknown is off.
   TRAINING_STUDIO_DATASET_RATING_V2 = 'trainingStudioDatasetRatingV2',
+  // variant flag, read like TRAINING_STUDIO_DATASET_RATING_V2: gates posting a 3D result on the v2 rater.
+  MODEL3D_RATING_V2 = 'model3dRatingV2',
   // Gates sending the reporter's page capture to HQ.
   FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
   // Gates the `feedback-hq-sync` job: a feedback row's triage status follows its HQ task. Off (or

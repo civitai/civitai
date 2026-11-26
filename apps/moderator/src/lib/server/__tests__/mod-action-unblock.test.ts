@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MOD_ACTION } from '@civitai/moderation';
+import {
+  DummyDriver,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+} from 'kysely';
 
 /**
  * The main app's Unblock reaches the spoke's accept through this registry. Review queues refuse to
@@ -13,7 +20,29 @@ const { acceptImage, blockImage } = vi.hoisted(() => ({
 }));
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
-vi.mock('../db', () => ({ dbRead: {}, dbWrite: {} }));
+// Every read answers no rows: the images are not on the primary, so nothing is withheld and the
+// write decides (the withheld refusal itself is pinned in image-action-access.pglite.test.ts).
+const { emptyDb } = vi.hoisted(() => ({ emptyDb: { current: null as unknown } }));
+vi.mock('../db', () => ({
+  get dbRead() {
+    return emptyDb.current;
+  },
+  get dbWrite() {
+    return emptyDb.current;
+  },
+}));
+vi.mock('../redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../redis')>()),
+  getSysRedis: () => ({ get: async () => '{}', set: async () => 'OK' }),
+}));
+emptyDb.current = new Kysely({
+  dialect: {
+    createAdapter: () => new PostgresAdapter(),
+    createDriver: () => new DummyDriver(),
+    createIntrospector: (db) => new PostgresIntrospector(db),
+    createQueryCompiler: () => new PostgresQueryCompiler(),
+  },
+});
 vi.mock('../image-moderation.service', () => ({
   acceptImage,
   blockImage,

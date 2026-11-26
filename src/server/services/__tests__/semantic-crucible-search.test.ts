@@ -5,6 +5,7 @@ import {
   type CandidateFilter,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
+import type { GuardRead } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 loggingMock.logToAxiom.mockImplementation(async () => undefined);
@@ -89,18 +90,20 @@ const run = (
     isGreen = false,
     cap,
     correctedQuery,
+    guard,
   }: {
     input?: Record<string, unknown>;
     user?: SessionUser;
     isGreen?: boolean;
     cap?: number;
     correctedQuery?: string;
+    guard?: GuardRead;
   } = {}
 ) => {
   const filters: CandidateFilter[] = [];
   const candidateSource: CandidateSource = async ({ filter, offset, limit }) => {
     filters.push(filter);
-    return { ids: ranked.slice(offset, offset + limit), correctedQuery };
+    return { ids: ranked.slice(offset, offset + limit), correctedQuery, guard };
   };
   const result = searchSemanticCrucibles({
     input: { query: 'neon arena', browsingLevel: 31, limit: 20, ...input } as never,
@@ -308,5 +311,62 @@ describe('searchSemanticCrucibles', () => {
     const page = await run([1], { user: moderator, correctedQuery: 'corrected' }).result;
     expect(page.items).toEqual([]);
     expect(page).not.toHaveProperty('refusal');
+  });
+});
+
+describe('crucibles: a refused page', () => {
+  const MOD = { id: 1, isModerator: true } as SessionUser;
+  const VIEWER = { id: 7 } as SessionUser;
+  const NO_MATCH = { items: [], nextCursor: undefined, correctedQuery: undefined };
+  const enforceFlag: GuardRead = {
+    outcome: 'flag',
+    rules: ['block:rule_a'],
+    mode: 'enforce',
+    version: 'v1',
+    refused: true,
+  };
+  const minusRefused = (page: object) => {
+    const { refused, ...rest } = page as { refused?: unknown };
+    return rest;
+  };
+
+  it('marks a page with no matches as not refused', async () => {
+    expect(await run([], { user: VIEWER }).result).toEqual({ ...NO_MATCH, refused: false });
+  });
+
+  it.each([
+    ['by the word audit', () => h.includesInappropriate.mockReturnValue('poi' as never), undefined],
+    ['by the search service', () => undefined, enforceFlag],
+  ])('is, %s, a no-match page plus `refused` for a non-moderator', async (_, setup, guard) => {
+    setup();
+    const page = await run(guard ? [] : [1], { user: VIEWER, guard }).result;
+    expect(page).toMatchObject({ refused: true });
+    expect(minusRefused(page)).toEqual(NO_MATCH);
+    expect(Object.hasOwn(page, 'refusedBy')).toBe(false);
+  });
+
+  it('names the check to a moderator', async () => {
+    h.includesInappropriate.mockReturnValue('poi' as never);
+    expect(await run([1], { user: MOD }).result).toMatchObject({
+      refused: true,
+      refusedBy: 'real people',
+    });
+  });
+
+  it("names the search service's check to a moderator", async () => {
+    expect(await run([], { user: MOD, guard: enforceFlag }).result).toMatchObject({
+      refused: true,
+      refusedBy: 'query guard',
+    });
+  });
+
+  it('names a refused spelling correction to a moderator', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? ('blocked' as never) : false
+    );
+    expect(await run([1], { user: MOD, correctedQuery: 'corrected' }).result).toMatchObject({
+      refused: true,
+      refusedBy: 'blocked words',
+    });
   });
 });

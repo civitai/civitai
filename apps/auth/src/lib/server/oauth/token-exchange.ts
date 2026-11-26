@@ -7,6 +7,7 @@ import { getSysRedis } from '$lib/server/redis';
 import { waitForRedisReady } from '$lib/server/redis-ready';
 import { raceTimeout } from './timeout';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
+import { isMemorializedFlags } from '@civitai/shared/memorial';
 import { checkClientAccess, userHasRole } from './access';
 import { SYSTEM_USER_ID, SYSTEM_WORKLOAD_ROLE } from './constants';
 import { apiKeyRowScope, carriesNonUserScope, scopeFromColumn } from './scope';
@@ -118,12 +119,14 @@ export async function userRefusal(
   }
   const user = await db
     .selectFrom('User')
-    .select(['id', 'username', 'deletedAt', 'bannedAt', 'muted'])
+    .select(['id', 'username', 'deletedAt', 'bannedAt', 'muted', 'flags'])
     .where('id', '=', userId)
     .executeTakeFirst();
   if (!user) return { reason: 'user not found', refusal: 'invalid_grant' };
   if (user.deletedAt) return { reason: 'user deleted', refusal: 'invalid_grant' };
   if (user.bannedAt) return { reason: 'user banned', refusal: 'invalid_grant' };
+  if (isMemorializedFlags(user.flags))
+    return { reason: 'user memorialized', refusal: 'invalid_grant' };
   if (isRefusedModerationAccount(user, 'oauth-token')) {
     return { reason: 'moderation account', refusal: 'invalid_grant' };
   }

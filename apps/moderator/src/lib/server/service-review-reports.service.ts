@@ -7,6 +7,8 @@ import type {
 } from '$lib/service-review-report';
 import { dbWrite } from './db';
 import { callModEndpoint } from './user-actions.service';
+import { holdsCsamReview } from './held-media';
+import { listWithheldIds } from './retracted-media';
 
 const heldText = (entityType: string) =>
   sql<boolean>`EXISTS (SELECT 1 FROM "TextScanHold" th
@@ -15,10 +17,12 @@ const heldText = (entityType: string) =>
 
 /**
  * The reviews these reports are about, keyed by report id; a report not on a review is absent. Read
- * on the primary, so a hide or hold just made shows on the reload.
+ * on the primary, so a hide or hold just made shows on the reload. An image withheld from `viewer`
+ * is sent with no key.
  */
 export async function getReportedServiceReviews(
-  reportIds: number[]
+  reportIds: number[],
+  viewer: App.Locals['user'] | undefined
 ): Promise<Map<number, ReportedServiceReview>> {
   const ids = [...new Set(reportIds)].filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return new Map();
@@ -27,6 +31,7 @@ export async function getReportedServiceReviews(
     .selectFrom('ServiceDealReviewReport as rr')
     .innerJoin('ServiceDealReview as r', 'r.id', 'rr.serviceDealReviewId')
     .innerJoin('Report as rep', 'rep.id', 'rr.reportId')
+    .leftJoin('User as buyer', 'buyer.id', 'r.buyerId')
     .select([
       'rr.reportId',
       'r.id as reviewId',
@@ -36,7 +41,9 @@ export async function getReportedServiceReviews(
       'r.sellerReply',
       sql<string | null>`rep.details -> 'serviceDealReview' ->> 'comment'`.as('reportedComment'),
       sql<string | null>`rep.details -> 'serviceDealReview' ->> 'sellerReply'`.as('reportedReply'),
-      sql<boolean>`r."publishedAt" IS NOT NULL`.as('shown'),
+      // As the offering page lists it: a banned or deleted buyer's review stays published, unlisted.
+      sql<boolean>`r."publishedAt" IS NOT NULL AND buyer."id" IS NOT NULL
+        AND buyer."bannedAt" IS NULL AND buyer."deletedAt" IS NULL`.as('shown'),
       sql<boolean>`r."hiddenAt" IS NOT NULL`.as('hidden'),
       heldText('ServiceDealReview').as('commentHeld'),
       heldText('ServiceDealReviewReply').as('replyHeld'),
@@ -49,7 +56,22 @@ export async function getReportedServiceReviews(
     .where('rr.reportId', 'in', ids)
     .execute();
 
-  return new Map(rows.map(({ reportId, ...review }) => [reportId, review]));
+  const withheld = await listWithheldIds(
+    rows.flatMap((row) => row.images.map((image) => image.id)),
+    { csamReview: holdsCsamReview(viewer) },
+    'service-review-reports'
+  );
+  return new Map(
+    rows.map(({ reportId, ...review }) => [
+      reportId,
+      {
+        ...review,
+        images: review.images.map((image) =>
+          withheld.has(image.id) ? { id: image.id, url: '', restricted: true as const } : image
+        ),
+      },
+    ])
+  );
 }
 
 /** The review a report names, read from its own row: never from the form. */

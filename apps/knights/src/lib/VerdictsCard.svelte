@@ -1,4 +1,5 @@
 <script lang="ts">
+  import HomeCard from './HomeCard.svelte';
   import Icon from './Icon.svelte';
   import { recapView } from './recap-view';
   import type { Recap } from './server/daily/daily.service';
@@ -7,13 +8,11 @@
   const view = $derived(recap ? recapView(recap) : null);
 </script>
 
-<section class="card" aria-labelledby="verdicts-title">
-  <p class="eyebrow" id="verdicts-title">Yesterday's verdicts</p>
+<HomeCard id="verdicts-title" eyebrow="Yesterday's verdicts" title={view?.headline ?? 'No verdicts yet'}>
   {#if view}
-    <h2>{view.headline}</h2>
     <ul class="stats">
       {#each view.stats as stat (stat.key)}
-        <li class={stat.key}>
+        <li class="home-card-box {stat.key}">
           <b>{stat.value}</b>
           <span class="label">{stat.label}</span>
           <span class="note">{stat.note}</span>
@@ -28,27 +27,11 @@
       </div>
     </div>
   {:else}
-    <h2>No verdicts yet</h2>
     <p class="empty">Play today's Watch and your verdicts will be waiting here tomorrow.</p>
   {/if}
-</section>
+</HomeCard>
 
 <style>
-  .card {
-    padding: 24px;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 12px;
-    background: var(--io-surface);
-  }
-  .eyebrow {
-    margin: 0 0 8px;
-  }
-  h2 {
-    margin: 0 0 16px;
-    color: var(--io-parchment);
-    font: 700 1.25rem/1.3 var(--io-font-display);
-    letter-spacing: 0.02em;
-  }
   .stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -62,9 +45,6 @@
     flex-direction: column;
     gap: 2px;
     padding: 12px;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 8px;
-    background: var(--io-bg);
   }
   b {
     color: var(--io-parchment);

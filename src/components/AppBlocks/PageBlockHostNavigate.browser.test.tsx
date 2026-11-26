@@ -47,10 +47,6 @@ import type * as TrpcModule from '~/utils/trpc';
  * the constraint is recorded at the call site instead.
  */
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 SPREAD the real module and override only `trpc`, rather than the wholesale
 // factory the sibling PageBlockHost suites use. Those predate
 // `local-rules/no-wholesale-module-mock` and are red on it today: a hand-written

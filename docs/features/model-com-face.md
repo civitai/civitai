@@ -2,7 +2,9 @@
 
 One model, two faces. A creator can give a model a separate title, description and cover for
 civitai.com, which shows no mature content, while civitai.red keeps the original listing. With
-nothing set, both sites show the same listing.
+nothing set, both sites show the same title and description. The cover can still differ without a
+face: a non-mature model's civitai.com showcase cover (`docs/features/version-showcase.md`) applies
+to civitai.com viewers on its own.
 
 The editor presents the two faces as the model's civitai.red card and its civitai.com card.
 

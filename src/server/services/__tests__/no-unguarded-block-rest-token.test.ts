@@ -250,6 +250,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'The document store, every operation behind one catch-all: it reads the viewer’s PRIVATE documents, reads and writes the app’s SHARED documents (public within the app, attributed to the viewer), sets marks and counters other users see, and files reports. A suspended app left reachable here could keep reading a signed-in user’s stored data, keep publishing under their name and keep moving public tallies after the takedown. ALREADY refused before this gate as well, by delegation: its resolver (apps/doc-store-access.ts) takes the strict approval read (resolveStrictAppBlockApproval) and gives an app that is not approved no storage at all.',
   },
+  'src/pages/api/v1/blocks/moderation/reports.ts': {
+    exposure: 'WRITE',
+    why: 'Files the viewer’s moderation report on one of the app’s shared documents (a report row the moderator queue reads), attributed to that signed-in user. A suspended app left reachable here could keep filing reports in a viewer’s name and keep pushing documents into the moderators’ queue after the takedown. ALREADY refused before this gate as well, by delegation: it resolves the same storage access as the storage route (apps/doc-store-access.ts), which gives an app that is not approved no storage at all.',
+  },
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
     exposure: 'WRITE',
     why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
@@ -385,6 +389,8 @@ const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
 const DELIBERATELY_UNWRAPPED: Record<string, string> = {
   'src/pages/api/v1/me.ts':
     'NOT a block route. AuthedEndpoint (session cookie / API key / OAuth token). Wrapping it would dead-code the block path — the inner session check 401s before block claims do anything — so blocks use the dedicated /api/v1/blocks/me, which IS wrapped. Nothing here reads a block token, so there is no app to approve.',
+  'src/pages/api/internal/blocks/storage/[[...path]].ts':
+    'WRAPPED, one module away. The document store’s internal route (app-data-go’s forwarded writes) is the public storage route’s exact chain, withBlockScope included with the same options, behind a caller signature that must run BEFORE the middleware; so the chain is built in src/server/services/apps/doc-store-internal-route.ts and the page re-exports it. The entries into that chain are pinned there by doc-store-internal-route.test.ts, which fails if the set grows or shrinks.',
 };
 
 /** The file extensions Next.js dispatches as an API page. */
@@ -1375,6 +1381,8 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/entitlements.ts',
     'src/pages/api/v1/blocks/goods/purchase.ts',
     'src/pages/api/v1/blocks/me.ts',
+    // The report moderation API: files a report in the viewer's name.
+    'src/pages/api/v1/blocks/moderation/reports.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
     'src/pages/api/v1/blocks/shared-storage/increment.ts',

@@ -10,7 +10,8 @@
  * only the I/O answered from the fixture: the model statement (`pgDbRead.cancellableQuery`, whose SQL
  * is captured), the per-id caches' `fetch`, and the small replica reads.
  *
- * It requires the fixture's `expect.body` to be the exact bytes `res.json` writes, and `expect.sql` the
+ * It requires the fixture's `expect.body` to be the exact bytes `res.json` writes, with the status
+ * `expect.status` (200 when absent; the [id] not-found answer is a 404), and `expect.sql` the
  * model statement this code builds (whitespace-normalised text and its values). feed-go's golden
  * harness (apps/feed-go/internal/v1models/golden_test.go) requires the same bytes and the same
  * statement from Go over the same world, so the two are held to each other through the fixture.
@@ -31,6 +32,10 @@
  * trainingDataListing's statement (`dbRead.$queryRaw`) is captured like the model statement and
  * answered from the fixture's `trainingData` rows of the candidate versions; `expect.trainingDataSql`
  * pins it, its text byte for byte (feed-go hashes those exact bytes to detect drift). isRedCapableHost reads SERVER_DOMAIN_RED* from the environment set below.
+ *
+ * A text `query` (resolveModelSearchIds) is answered from the fixture's `search.hits`; its call (the
+ * index, the text and the params) is captured and pinned as `expect.search`, which feed-go's harness
+ * requires its own search call to equal.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
@@ -83,9 +88,13 @@ type Fixture = {
   world: World;
   expect: {
     fallback?: string;
+    /** The status the handler answers with; absent = 200. */
+    status?: number;
     body?: string | null;
     sql?: { text: string; values: unknown[] } | null;
     trainingDataSql?: { text: string; values: unknown[] } | null;
+    /** The text search's call (`index.search(q, params)`), when Node made one. */
+    search?: { index: string; q: string; params: Record<string, unknown> } | null;
   };
 };
 
@@ -108,6 +117,7 @@ const state = vi.hoisted(() => ({
   world: {} as Record<string, any>,
   sql: [] as { text: string; values: unknown[] }[],
   trainingDataSql: [] as { text: string; values: unknown[] }[],
+  search: [] as { index: string; q: string; params: Record<string, unknown> }[],
   // The header cases run the real endpoint wrappers; the body cases pass straight to the handler.
   realWrappers: false,
 }));
@@ -333,9 +343,21 @@ vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => 
   };
 });
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: any) => handler }));
+// The text search (resolveModelSearchIds): the call is captured, its params as JSON.stringify sends
+// them (undefined members dropped), and answered with the fixture's `search.hits`, in order. A
+// fixture without `search` has no search answer: a call then fails the case.
 vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
   ...(await importOriginal<typeof MeiliClient>()),
-  searchClient: undefined,
+  searchClient: {
+    index: (index: string) => ({
+      search: async (q: string, params: Record<string, unknown>) => {
+        state.search.push({ index, q, params: JSON.parse(JSON.stringify(params)) });
+        const hits = state.world.search?.hits as number[] | undefined;
+        if (!hits) throw new Error('the fixture has no search answer');
+        return { hits: hits.map((id) => ({ id })) };
+      },
+    }),
+  },
   withMeili: (_op: string, fn: () => unknown) => fn(),
 }));
 vi.mock('~/env/client', async (importOriginal) => {
@@ -405,8 +427,10 @@ const fixtures = loadFixtures();
 
 describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
   it('finds the fixtures (a glob that matched nothing would pass every case below)', () => {
-    expect(fixtures.length).toBeGreaterThanOrEqual(31);
-    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(24);
+    expect(fixtures.length).toBeGreaterThanOrEqual(38);
+    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(29);
+    // The text search is reached: fixtures whose search call Node makes.
+    expect(fixtures.filter(({ fx }) => fx.expect.search).length).toBeGreaterThanOrEqual(4);
     // The Training Data listing is reached: fixtures whose statement Node sends.
     expect(fixtures.filter(({ fx }) => fx.expect.trainingDataSql).length).toBeGreaterThanOrEqual(5);
   });
@@ -426,8 +450,10 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
             values: jsonValue(state.trainingDataSql[0].values),
           }
         : null;
-      const actual = { status: res.statusCode, body, sql, trainingDataSql };
+      const search = state.search[0] ?? null;
+      const actual = { status: res.statusCode, body, sql, trainingDataSql, search };
       expect(state.sql.length, `${file}: one model statement at most`).toBeLessThanOrEqual(1);
+      expect(state.search.length, `${file}: one search call at most`).toBeLessThanOrEqual(1);
       expect(
         state.trainingDataSql.length,
         `${file}: one training data statement at most`
@@ -435,12 +461,19 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
       const want = f.expect.trainingDataSql;
       expect(
         actual,
-        `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql, trainingDataSql })}`
+        `GOLDEN-ACTUAL ${file} ${JSON.stringify({
+          status: res.statusCode,
+          body,
+          sql,
+          trainingDataSql,
+          search,
+        })}`
       ).toEqual({
-        status: 200,
+        status: f.expect.status ?? 200,
         body: f.expect.body,
         sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
         trainingDataSql: want ?? null,
+        search: f.expect.search ?? null,
       });
     },
     120_000
@@ -461,6 +494,7 @@ async function runFixture(f: Fixture, extraHeaders: Record<string, string>, real
   state.world = f.world;
   state.sql = [];
   state.trainingDataSql = [];
+  state.search = [];
   state.realWrappers = realWrappers;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(f.now));
@@ -475,13 +509,15 @@ async function runFixture(f: Fixture, extraHeaders: Record<string, string>, real
       const id = f.world.tagIdsByName?.[args?.where?.name];
       return id ? { id } : null;
     });
-    // trainingDataListing's statement (the only `$queryRaw` these routes send): captured, and
-    // answered with the fixture's rows of the candidate versions (`ANY($1::int[])`).
+    // trainingDataListing's statement: captured, and answered with the fixture's rows of the
+    // candidate versions (`ANY($1::int[])`). The versions' curated showcase read is answered empty:
+    // no fixture curates a showcase, so each version keeps its own images.
     dbMock.dbRead.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...values);
+      if (sql.text.includes('FROM "ModelVersionShowcaseItem"')) return [];
       state.trainingDataSql.push({ text: sql.text, values: sql.values });
       const candidates = (sql.values[0] ?? []) as number[];
       return (revive(f.world.trainingData ?? []) as Record<string, unknown>[])
@@ -523,7 +559,8 @@ type HeaderCase = {
   name: string;
   fixture: string;
   request: { headers: Record<string, string> };
-  expect: { headers: Record<string, string> };
+  /** status: the status the route answers with; absent = 200. */
+  expect: { status?: number; headers: Record<string, string> };
 };
 
 const headerCases: { file: string; hc: HeaderCase }[] = readdirSync(HEADER_DIR)
@@ -552,7 +589,7 @@ describe('feed-go /api/v1/models header cases: the real Node response headers', 
       expect(
         { status: res.statusCode, headers },
         `HEADERS-ACTUAL ${file} ${JSON.stringify(headers)}`
-      ).toEqual({ status: 200, headers: hc.expect.headers });
+      ).toEqual({ status: hc.expect.status ?? 200, headers: hc.expect.headers });
     },
     120_000
   );

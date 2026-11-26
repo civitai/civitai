@@ -1,14 +1,9 @@
+import {
+  bustPublicModelResponseCache,
+  publicModelResponseKey,
+} from '~/server/services/public-model-response-cache';
 import { Prisma } from '@prisma/client';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
-import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
-import {
-  contentKeptError,
-  deleteUnlessHeld,
-  heldModelIdsSql,
-  isLegalHoldAbort,
-  modelRowHeldSql,
-  ownerHeld,
-} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -1672,19 +1667,6 @@ async function purgeModelVersionByHashCacheById(modelVersionIds: number[]) {
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
 }
 
-/** A statement whose hold check could not be read is refused as held, as `deleteUnlessHeld` does. */
-const refuseOnHoldAbort = <T>(statement: Promise<T>) =>
-  statement.catch((e: unknown) => {
-    throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
-  });
-
-/** The versions `ids` with their model owner as `m."userId"`, for `deleteUnlessHeld`. */
-const versionOwnerSql = (ids: number[]) => Prisma.sql`
-  FROM "ModelVersion" mv
-  JOIN "Model" m ON m.id = mv."modelId"
-  WHERE mv.id = ANY(${ids}::int[])
-`;
-
 export const deleteVersionById = async ({
   id,
   isModerator,
@@ -1762,26 +1744,8 @@ export const deleteVersionById = async ({
 
     // The caller returns the whole row, so it is read here, under the lock taken above.
     const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
-    // A held owner's version is refused, and the throw rolls back the access rows removed above.
-    const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
-    const outcome = await deleteUnlessHeld(
-      tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(reviews, true)}
-        DELETE FROM "ModelVersion" mv
-        USING "Model" m
-        WHERE mv.id = ${id}
-          AND m.id = mv."modelId"
-          AND NOT ${modelRowHeldSql()}
-      `,
-      {
-        expected: 1,
-        isModerator,
-        db: tx,
-        ownerFrom: versionOwnerSql([id]),
-        held: modelRowHeldSql(),
-      }
-    );
-    if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
+    const removed = await tx.$executeRaw`DELETE FROM "ModelVersion" WHERE id = ${id}`;
+    if (!removed) throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -3028,6 +2992,8 @@ export const earlyAccessPurchase = async ({
       meta: {
         [buzzTransactionKey]: buzzTransactionId,
         [purchase.purchasedAtKey]: new Date().toISOString(),
+        [purchase.amountKey]: amount,
+        [purchase.buzzTypeKey]: buzzType,
       },
       addedById: userId,
     });
@@ -3236,38 +3202,7 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
-
-export function publicModelResponseKey(
-  modelId: number,
-  browsingLevel: number
-): RedisKeyTemplateCache {
-  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
-  // so entries built by the previous code are not read.
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
-}
-
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
-export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
-  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
-  if (modelIds.length === 0) return;
-  const keys = modelIds.flatMap((id) => [
-    publicModelResponseKey(id, allBrowsingLevelsFlag),
-    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
-  ]);
-  await redis.del(keys).catch(() => undefined);
-}
+export { bustPublicModelResponseCache, publicModelResponseKey };
 
 /**
  * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
@@ -3802,12 +3737,6 @@ export const mergeVersions = async ({
     }
   }
 
-  // Checked again in the delete below; this only spares a held owner the long transaction.
-  if (
-    await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`, modelRowHeldSql())
-  )
-    throw contentKeptError(false);
-
   // Populated inside the tx after files are moved to the target — captures any
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
@@ -4094,18 +4023,12 @@ export const mergeVersions = async ({
             SELECT "userId" FROM "ResourceReview"
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
-      await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededByTarget, true)}
-        DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
-      `);
+      await tx.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})`;
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
         JOIN "ResourceReview" b ON a."userId" = b."userId" AND a.id < b.id
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
-      await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededBySource, true)}
-        DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
-      `);
+      await tx.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})`;
       await tx.resourceReview.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -4155,29 +4078,10 @@ export const mergeVersions = async ({
       await tx.paidAccess.deleteMany({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
-      // A held owner's merge is refused, and the throw rolls back the whole merge.
-      const outcome = await deleteUnlessHeld(
-        tx.$executeRaw`
-          WITH ${keepHeldReviewsCte(
-            reviewsOnVersionsSql(Prisma.sql`SELECT unnest(${sourceVersionIds}::int[])`),
-            true
-          )}
-          DELETE FROM "ModelVersion" mv
-          USING "Model" m
-          WHERE mv.id = ANY(${sourceVersionIds}::int[])
-            AND m.id = mv."modelId"
-            -- One model: its owners, present and past, checked once rather than once per version.
-            AND m.id NOT IN (${heldModelIdsSql(Prisma.sql`SELECT ${modelId}::int`, true)})
-        `,
-        {
-          expected: new Set(sourceVersionIds).size,
-          isModerator: false,
-          db: tx,
-          ownerFrom: versionOwnerSql(sourceVersionIds),
-          held: modelRowHeldSql(),
-        }
-      );
-      if (outcome === 'short')
+      const removed = await tx.$executeRaw`
+        DELETE FROM "ModelVersion" WHERE id = ANY(${sourceVersionIds}::int[])
+      `;
+      if (removed < new Set(sourceVersionIds).size)
         throw throwNotFoundError('One or more source versions no longer exist.');
 
       // 13. Update the model's lastVersionAt
@@ -4200,6 +4104,9 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // A showcase failure never fails the merge.
+  const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.

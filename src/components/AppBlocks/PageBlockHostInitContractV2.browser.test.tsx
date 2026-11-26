@@ -28,8 +28,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * scaffold): only the ambient tRPC client and useCurrentUser are stubbed.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically
@@ -199,7 +197,12 @@ const baseProps = {
  * from a genuine zero, so nothing is asserted until the channel has been proven
  * to carry traffic.
  */
-async function mountAndCaptureInit(overrides: Partial<typeof baseProps> = {}) {
+async function mountAndCaptureInit(
+  overrides: Partial<typeof baseProps> & {
+    tokenKind?: 'block' | 'oauth';
+    appData?: { url: string; slug: string };
+  } = {}
+) {
   await renderWithProviders(
     <PageBlockHost
       {...baseProps}
@@ -556,6 +559,53 @@ describe('PageBlockHost BLOCK_INIT — storageMode is set from the SURFACE', () 
     expect(init.token.scopes.filter((s) => s.startsWith('apps:storage'))).toEqual([]);
     expect(init.token.scopes).toContain('ai:write');
     expect(init).not.toHaveProperty('storageMode');
+    posts.stop();
+  });
+});
+
+describe('PageBlockHost BLOCK_INIT — appData is the mint decision, forwarded on page-run only', () => {
+  // `slug` equals baseProps.blockId; the URL is distinct from every other fixture value.
+  const SERVICE = { url: 'https://records.example.test/v2', slug: 'lanternfish-studio' };
+
+  test('🔴 page-run with a block token forwards { url, slug } as given', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'page-run',
+      tokenKind: 'block',
+      appData: SERVICE,
+    });
+    expect(init.appData).toEqual({
+      url: 'https://records.example.test/v2',
+      slug: 'lanternfish-studio',
+    });
+    posts.stop();
+  });
+
+  test('page-run without a decision from the mint: the key is ABSENT', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'page-run',
+      tokenKind: 'block',
+    });
+    expect(init).not.toHaveProperty('appData');
+    posts.stop();
+  });
+
+  test('private-run with the same decision: the key is ABSENT', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'private-run',
+      tokenKind: 'block',
+      appData: SERVICE,
+    });
+    expect(init).not.toHaveProperty('appData');
+    posts.stop();
+  });
+
+  test('an OAuth token with the same decision: the key is ABSENT', async () => {
+    const { posts, init } = await mountAndCaptureInit({
+      surface: 'page-run',
+      tokenKind: 'oauth',
+      appData: SERVICE,
+    });
+    expect(init).not.toHaveProperty('appData');
     posts.stop();
   });
 });

@@ -130,3 +130,109 @@ func TestExchangeNeverFollowsARedirect(t *testing.T) {
 		t.Fatalf("🔴 the redirect target was reached %d times", n)
 	}
 }
+
+// A 429 holds every exchange back for at least the wait the hub named: no call reaches the hub
+// before it, a user's or a block token's, and the first one after it does.
+func TestExchangeWaitsOutA429BeforeAskingTheHubAgain(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		body   string
+		wait   time.Duration
+	}{
+		{"Retry-After seconds", "30", `{"error":"rate_limited"}`, 30 * time.Second},
+		{"the meta's retryAfterSeconds", "", `{"error":"rate_limited","rateLimit":{"retryAfterSeconds":45,"retryAt":"2023-11-14T22:14:05.000Z"}}`, 45 * time.Second},
+		{"retry_after", "", `{"error":"rate_limited","retry_after":20}`, 20 * time.Second},
+		{"the longest of header and meta", "10", `{"error":"rate_limited","retry_after":10,"rateLimit":{"retryAfterSeconds":40}}`, 40 * time.Second},
+		{"an HTTP-date", "Tue, 14 Nov 2023 22:14:50 GMT", `{}`, 30 * time.Second},
+		{"no wait named", "", `{"error":"rate_limited"}`, minRateLimitHold},
+		{"a wait past the cap", "86400", `{}`, maxRateLimitHold},
+		{"an HTTP-date past the cap", "Wed, 15 Nov 2023 22:14:20 GMT", `{}`, maxRateLimitHold},
+		{"seconds past the duration range", "1000000000000", `{}`, maxRateLimitHold},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			e := hub(t, func(w http.ResponseWriter, _ *http.Request) {
+				if calls.Add(1) == 1 {
+					if tc.header != "" {
+						w.Header().Set("Retry-After", tc.header)
+					}
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, tc.body)
+					return
+				}
+				_, _ = io.WriteString(w, `{"access_token":"eyJexchanged","expires_in":900}`)
+			})
+			// 2023-11-14T22:14:20Z, so the HTTP-date case names a wait of 30 s.
+			now := time.Unix(1_700_000_060, 0)
+			e.Now = func() time.Time { return now }
+
+			_, err := e.ExchangeBlock(context.Background(), "a.b.c")
+			var rl *RateLimitedError
+			if !errors.As(err, &rl) || errors.Is(err, ErrRefused) || rl.RetryAfter != tc.wait {
+				t.Fatalf("first exchange: got %v, want a non-refusal RateLimitedError of %s", err, tc.wait)
+			}
+			// Just inside the wait: neither exchange reaches the hub.
+			now = now.Add(tc.wait - time.Second/2)
+			for _, call := range []func(context.Context, string) (Token, error){e.Exchange, e.ExchangeBlock} {
+				_, err = call(context.Background(), "civitai_user-token")
+				if !errors.As(err, &rl) || rl.RetryAfter != time.Second/2 {
+					t.Fatalf("inside the wait: got %v, want a RateLimitedError of 500ms", err)
+				}
+			}
+			if n := calls.Load(); n != 1 {
+				t.Fatalf("🔴 the hub was asked %d times inside the wait, want 1", n)
+			}
+			// Once the wait has passed, the hub is asked again.
+			now = now.Add(time.Second / 2)
+			if tok, err := e.Exchange(context.Background(), "civitai_user-token"); err != nil || tok.Access != "eyJexchanged" {
+				t.Fatalf("after the wait: %+v %v", tok, err)
+			}
+			if n := calls.Load(); n != 2 {
+				t.Fatalf("the hub was asked %d times, want 2", n)
+			}
+		})
+	}
+}
+
+// The hub's 429 on subjects it could not find is keyed by this client AND the viewer's address
+// (apps/auth `token-exchange-miss`): it holds nothing back here, so a flood of made-up tokens from
+// one viewer never stops another viewer's exchange. The per-client budget's 429 still holds all.
+func TestAHubLimitOnSubjectsItCannotFindHoldsNoOtherExchange(t *testing.T) {
+	cases := []struct {
+		id   string
+		held bool
+	}{
+		{"oauth.token-exchange-miss", false},
+		{"oauth.token-exchange", true},
+		{"", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			var calls atomic.Int32
+			e := hub(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				_ = r.ParseForm()
+				if r.PostForm.Get("subject_token") == "civitai_made-up" {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, `{"error":"rate_limited","retry_after":60,"rateLimit":{"retryAfterSeconds":60,"id":"`+tc.id+`","kind":"abuse"}}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"access_token":"eyJexchanged","expires_in":900}`)
+			})
+			var rl *RateLimitedError
+			if _, err := e.Exchange(context.Background(), "civitai_made-up"); !errors.As(err, &rl) || errors.Is(err, ErrRefused) {
+				t.Fatalf("the 429: %v", err)
+			}
+			_, err := e.Exchange(context.Background(), "civitai_alice")
+			if held := err != nil; held != tc.held {
+				t.Fatalf("🔴 after a 429 naming %q, another viewer's exchange: %v (held %v, want %v)", tc.id, err, held, tc.held)
+			}
+			if want := map[bool]int32{true: 1, false: 2}[tc.held]; calls.Load() != want {
+				t.Fatalf("the hub was asked %d times, want %d", calls.Load(), want)
+			}
+		})
+	}
+}

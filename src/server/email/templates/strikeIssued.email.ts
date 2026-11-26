@@ -4,6 +4,8 @@ import { SUPPORT_URL } from '~/server/email/templates/moderation/moderationActio
 import {
   EMAIL_MUTED_CLASS,
   emailTheme,
+  renderEmailCallout,
+  renderEmailSummary,
   simpleEmailWithTemplate,
 } from '~/server/email/templates/util';
 import { strikeReasonPublicLabel } from '~/server/schema/strike.schema';
@@ -31,16 +33,13 @@ const formatDate = (date: Date) =>
   });
 
 export const strikeIssuedEmail = createEmail({
+  template: 'strikeIssued',
+  mailClass: 'transactional',
   header: ({ to }: StrikeEmailData) => ({
     subject: 'Civitai - Strike Issued on Your Account',
     to,
   }),
   html({ username, reason, points, activePoints, expiresAt }: StrikeEmailData) {
-    const color = {
-      warningBackground: '#fef2f2',
-      warningBorder: '#fecaca',
-    };
-
     // Primary CTA target: the user's own account-standing view (feature-flagged
     // behind `features.strikes`). Anchored to the StrikesCard (#strikes).
     const strikesUrl = `${getBaseUrl()}/user/account#strikes`;
@@ -53,26 +52,20 @@ export const strikeIssuedEmail = createEmail({
     const small = 'font-size: 14px; line-height: 22px;';
 
     return simpleEmailWithTemplate({
+      icon: '⚠️',
+      accent: 'red',
+      eyebrow: 'Account standing',
       header: 'Strike Notice',
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
-        <p style="margin: 0 0 16px 0;">A strike has been issued on your Civitai account.</p>
-        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="${
-          color.warningBackground
-        }" style="background-color: ${color.warningBackground}; border: 1px solid ${
-        color.warningBorder
-      }; border-radius: 4px;">
-          <tr>
-            <td style="padding: 16px; ${small} color: ${emailTheme.text};">
-              <strong>Reason:</strong><br/>
-              ${escapeHtml(reasonLabel)}
-            </td>
-          </tr>
-        </table>
-        <p style="margin: 16px 0 0 0;">
-          <strong>Strike Points Issued:</strong> ${points}<br/>
-          <strong>Total Active Points:</strong> ${activePoints}<br/>
-          <strong>Strike Expires:</strong> ${formatDate(expiresAt)}
-        </p>`,
+        <p style="margin: 0;">A strike has been issued on your Civitai account.</p>
+        ${renderEmailCallout(`<strong>Reason:</strong><br/>${escapeHtml(reasonLabel)}`, {
+          accent: 'red',
+        })}
+        ${renderEmailSummary([
+          { label: 'Strike Points Issued', value: `${points}` },
+          { label: 'Total Active Points', value: `${activePoints}` },
+          { label: 'Strike Expires', value: formatDate(expiresAt) },
+        ])}`,
       btnUrl: strikesUrl,
       btnLabel: 'View Your Active Strikes',
       afterButton: `<p style="margin: 0 0 12px 0; ${small}"><em>Please note: Accumulating additional strikes may result in temporary or permanent restrictions on your account.</em></p>

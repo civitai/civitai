@@ -50,7 +50,6 @@
     cardSupportsKohya,
     kohyaSeedCard,
     runEngine,
-    restoreRun,
     runSupportsKohya,
     withEngine,
     runFromPrice,
@@ -103,7 +102,10 @@
   let runs = $state<Run[]>(
     untrack(() =>
       initial
-        ? initial.runs.map((run) => restoreRun(run, kohyaEnabled, enabledFlags))
+        // A restored Kohya run (Back, Train again) falls back to AI Toolkit for a viewer without the gate.
+        ? initial.runs.map((run) =>
+            kohyaEnabled || runEngine(run) !== 'kohya' ? run : withEngine(run, 'ai-toolkit', enabledFlags)
+          )
         : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
@@ -1053,7 +1055,7 @@
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
         </svg>
-        Nothing is saved until you start training
+        Nothing is charged until you start training
       </p>
     {/snippet}
   </StickySummary>

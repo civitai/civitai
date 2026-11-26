@@ -101,6 +101,13 @@ describe('GET /api/dataset-blob', () => {
     expect(await (await get('air=ds-1.png&workflowId=wf-1')).text()).toBe('bytes');
   });
 
+  it("passes on the blob's scan rating, so the grid can badge it", async () => {
+    upstream.mockResolvedValueOnce(
+      new Response('bytes', { headers: { 'content-type': 'image/png', 'x-nsfw-level': 'x' } })
+    );
+    expect((await get('air=ds-1.png&workflowId=wf-1')).headers.get('x-nsfw-level')).toBe('x');
+  });
+
   it("serves an image edit's starting image, for the edit-pair picker", async () => {
     const air = encodeURIComponent(`${BLOB}start-1.png?sig=1`);
     expect(await (await get(`air=${air}&workflowId=gen-1`)).text()).toBe('bytes');

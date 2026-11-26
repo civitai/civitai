@@ -15,6 +15,7 @@ import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 import type { CrucibleContentType } from '~/shared/constants/crucible.constants';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 const crucibleQueryParamsSchema = z.object({
   status: commaDelimitedEnumArray(Object.values(CrucibleStatus)).optional(),
@@ -103,7 +104,15 @@ export const useQueryCrucibles = (
     isRefetching: rest.isRefetching,
   });
 
-  return { data, crucibles, isLoading: isLoading || loadingPreferences, ...rest };
+  return {
+    data,
+    crucibles,
+    isLoading: isLoading || loadingPreferences,
+    serverRefusal: query
+      ? pageRefusal(semantic.data?.pages[0], semantic.isPlaceholderData)
+      : undefined,
+    ...rest,
+  };
 };
 
 export function useFollowedCrucibleIds({ enabled = true }: { enabled?: boolean } = {}) {

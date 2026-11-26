@@ -30,7 +30,6 @@ import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entitie
 import { hasLaterVerdictUnderLock, readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { POI_HASH_MATCH_KEY } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
 import { TEXT_SCAN_FLAGS_KEY } from '~/server/services/text-scan/flag-snapshot';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -50,10 +49,17 @@ export type LockReviewState = {
 };
 
 export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.";
-/** Moderators only; never shown to the owner. */
-export const LOCK_REVIEW_HELD =
-  "The owner's account is under an evidence hold, so this review can't be approved now.";
 /** Moderators only. */
+/**
+ * Whether a real-person or minor detection on the model aliased `m` still waits for a moderator: a
+ * text-scan flag the scan raised again, or a poi hash match. With `hasPendingMinorHashMatch`, what
+ * stops a lock review's approval; the nsfw lock backfill skips the same models.
+ */
+export const modelDetectionHeldSql = Prisma.sql`COALESCE(
+  m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
+  OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
+  OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE)`;
+
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
 /** The re-judging job only: the lock is no longer the intent lock it judged, so a moderator decides. */
@@ -248,7 +254,6 @@ export async function resolveLockReviewAppeal({
     if (invalid) throw throwBadRequestError(invalid);
   }
 
-  const markerView = approve ? await holdMarkerViewExists() : false;
   // The listing an approval rules on, so it overturns only an intent detection of that text.
   const ruledTextHash = approve ? await storedListingTextHash(modelId) : null;
   // Outside the row lock: it reads the model's files and every moderator-flagged minor model's.
@@ -273,7 +278,6 @@ export async function resolveLockReviewAppeal({
         lockedProperties: string[] | null;
         poi: boolean;
         minor: boolean;
-        held: boolean;
         ownerFiled: boolean;
         detectionHeld: boolean;
         lockSource: string | null;
@@ -288,12 +292,7 @@ export async function resolveLockReviewAppeal({
           'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
         ) AS "verdictMeta",
         a."userId" = m."userId" AS "ownerFiled",
-        COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
-          OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
-          OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE) AS "detectionHeld",
-        ${
-          approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
-        } AS held
+        ${modelDetectionHeldSql} AS "detectionHeld"
       FROM "Appeal" a
       JOIN "Model" m ON m.id = a."entityId"
       WHERE a.id = ${appealId} AND a."entityType" = 'Model' AND a."entityId" = ${modelId}
@@ -316,7 +315,6 @@ export async function resolveLockReviewAppeal({
         throw throwBadRequestError(
           'The model has changed owner since this was requested; reject the review instead.'
         );
-      if (row.held) throw throwBadRequestError(LOCK_REVIEW_HELD);
       const locked = row.lockedProperties ?? [];
       if (row.poi || row.minor)
         throw throwBadRequestError(

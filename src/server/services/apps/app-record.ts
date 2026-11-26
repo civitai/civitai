@@ -37,10 +37,9 @@ import type { DeclaredStorageCollection } from '~/shared/constants/block-storage
 /**
  * Who a record belongs to.
  *   - `user`:   a person; portable with them.
- *   - `app`:    the app itself (documents the app created).
- *   - `nobody`: an aggregate (a counter document); not portable.
+ *   - `app`:    the app itself (documents the app created, and any document no user authored).
  */
-export type RecordOwner = { kind: 'user'; userId: number } | { kind: 'app' } | { kind: 'nobody' };
+export type RecordOwner = { kind: 'user'; userId: number } | { kind: 'app' };
 
 export type AppRecordWriter = { app: string; version: string | null };
 
@@ -113,7 +112,6 @@ export type RecordSourceRow = Pick<DocRecord, 'key' | 'data' | 'version' | 'auth
  *   private    | (anyone)            | user: the row's scope (`scope_uid`), docs and logs
  *   shared     | a user              | user: that user, under every write policy
  *   shared     | the app             | app
- *   shared     | a counter increment | nobody
  *
  * A shared document's owner is its creator, fixed at creation, whatever the collection's write
  * policy (`own`, `anyone`, `owner`, `none`) and whatever it was when the document was written:
@@ -137,8 +135,6 @@ export function recordOwner(policy: RecordOwnerPolicy, row: RecordSourceRow): Re
       return { kind: 'user', userId: row.author.uid };
     case 'app':
       return { kind: 'app' };
-    case 'counter':
-      return { kind: 'nobody' };
   }
 }
 

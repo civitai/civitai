@@ -5,6 +5,7 @@ import {
   BLOCK_INIT_FRAGMENT_DENYLIST,
   blockInitFragmentEnabled,
   blockInitFragmentEnabledWith,
+  blockInitAppData,
   blockInitStorageMode,
   type BlockHostSurface,
 } from '../blockInitFragmentGate';
@@ -392,5 +393,42 @@ describe('BLOCK_INIT storageMode — decided per surface', () => {
       absent += 1;
     }
     expect(absent).toBe(4);
+  });
+});
+
+describe("blockInitAppData — forwards the mint's decision only on a page run with a block token", () => {
+  const SERVICE = { url: 'https://records.example.test/v2', slug: 'kestrel-notes' };
+  const ALL_HOLD = {
+    surface: 'page-run' as BlockHostSurface,
+    tokenKind: 'block' as const,
+    blockId: 'kestrel-notes',
+    appData: SERVICE,
+  };
+
+  it('all hold: exactly { appData: { url, slug } }, a copy', () => {
+    const out = blockInitAppData(ALL_HOLD);
+    expect(out).toEqual({
+      appData: { url: 'https://records.example.test/v2', slug: 'kestrel-notes' },
+    });
+    expect(out.appData).not.toBe(SERVICE);
+  });
+
+  it.each(ALL_SURFACES.filter((s) => s !== 'page-run'))(
+    'surface %s: the key is ABSENT',
+    (surface) => {
+      expect(Object.keys(blockInitAppData({ ...ALL_HOLD, surface }))).toEqual([]);
+    }
+  );
+
+  it.each([['oauth' as const], [undefined]])('token kind %s: the key is ABSENT', (tokenKind) => {
+    expect(Object.keys(blockInitAppData({ ...ALL_HOLD, tokenKind }))).toEqual([]);
+  });
+
+  it('no decision from the mint: the key is ABSENT', () => {
+    expect(Object.keys(blockInitAppData({ ...ALL_HOLD, appData: undefined }))).toEqual([]);
+  });
+
+  it("a slug that is not this frame's blockId: the key is ABSENT", () => {
+    expect(Object.keys(blockInitAppData({ ...ALL_HOLD, blockId: 'osprey-board' }))).toEqual([]);
   });
 });

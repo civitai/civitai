@@ -27,7 +27,8 @@ import App from 'next/app';
 import Head from 'next/head';
 import { serializeJsonLd } from '@civitai/shared/json-ld';
 import type { ReactElement } from 'react';
-import { useState } from 'react';
+import { lazy, useState } from 'react';
+import { registerReportProblemButton } from '~/utils/notifications';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -104,7 +105,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import {
   ShellBootstrapProvider,
   useShellBootstrap,
@@ -130,6 +130,15 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
+
+// Lazy: the button loads with the first toast that offers it.
+registerReportProblemButton(
+  lazy(() =>
+    import('~/components/Feedback/ReportProblemButton').then((m) => ({
+      default: m.ReportProblemButton,
+    }))
+  )
+);
 
 // React Query Devtools renders a container div and mounts its UI imperatively
 // in an effect, so it is not SSR-safe: the server emits its div but the client
@@ -407,11 +416,9 @@ function MyApp(props: CustomAppProps) {
                                                     <AuctionContextProvider>
                                                       <BaseLayout>
                                                         {isProd && <TrackPageView />}
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
                                                       </BaseLayout>
                                                     </AuctionContextProvider>
                                                   </ToursProvider>
@@ -745,6 +752,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // Without the request, region cannot reach a cacheable render's flags.
     req: botCache ? undefined : request,
   });
+  // The signed-out per-visitor rollouts (`~/server/services/signed-out-rollout`). Same rule as the
+  // region: a cacheable render gets no request, so its flags never vary per visitor.
+  if (typeof window === 'undefined') {
+    const { applySignedOutRolloutFlags } = await import('~/server/services/signed-out-rollout');
+    applySignedOutRolloutFlags(flags, { user: session?.user, req: botCache ? undefined : request });
+  }
 
   const domain = getRequestDomainColor(request);
 

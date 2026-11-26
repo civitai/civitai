@@ -1,4 +1,4 @@
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   ExternalLinkWarningBody,
   ExternalLinkWarningTitle,
@@ -9,11 +9,10 @@ import {
  * handle back to the Civitai tab and can navigate it.
  */
 export function openExternalLinkWarning(href: string) {
-  openConfirmModal({
+  openConfirm({
     title: <ExternalLinkWarningTitle />,
-    centered: true,
     labels: { cancel: 'Cancel', confirm: 'Continue' },
-    children: <ExternalLinkWarningBody href={href} />,
+    message: <ExternalLinkWarningBody href={href} />,
     onConfirm: () => {
       window.open(href, '_blank', 'noopener,noreferrer');
     },

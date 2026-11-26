@@ -1,0 +1,261 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`unguarded moderator Keep/Remove (differential) > keep all flagged incl. blocked tag (queues blocked review) 1`] = `
+{
+  "r": {
+    "tagIds": [
+      10,
+      13,
+    ],
+  },
+  "s": {
+    "act": [
+      {
+        "activity": "moderateTag",
+        "entityId": 100,
+        "entityType": "image",
+        "userId": 9001,
+      },
+    ],
+    "img": [
+      {
+        "id": 100,
+        "needsReview": "tag",
+        "nsfwLevel": 32,
+      },
+    ],
+    "rev": [
+      {
+        "imageId": 100,
+        "tagId": 13,
+      },
+    ],
+    "tags": [
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 10,
+      },
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 11,
+      },
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 13,
+      },
+    ],
+  },
+}
+`;
+
+exports[`unguarded moderator Keep/Remove (differential) > keep named tag 1`] = `
+{
+  "r": {
+    "tagIds": [
+      10,
+    ],
+  },
+  "s": {
+    "act": [
+      {
+        "activity": "moderateTag",
+        "entityId": 100,
+        "entityType": "image",
+        "userId": 9001,
+      },
+    ],
+    "img": [
+      {
+        "id": 100,
+        "needsReview": null,
+        "nsfwLevel": 16,
+      },
+    ],
+    "rev": [],
+    "tags": [
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 10,
+      },
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 11,
+      },
+    ],
+  },
+}
+`;
+
+exports[`unguarded moderator Keep/Remove (differential) > nothing flagged returns empty, writes nothing 1`] = `
+{
+  "r": {
+    "tagIds": [
+      10,
+    ],
+  },
+  "r2": {
+    "tagIds": [],
+  },
+  "s": {
+    "act": [
+      {
+        "activity": "moderateTag",
+        "entityId": 100,
+        "entityType": "image",
+        "userId": 9001,
+      },
+    ],
+    "img": [
+      {
+        "id": 100,
+        "needsReview": null,
+        "nsfwLevel": 16,
+      },
+    ],
+    "rev": [],
+    "tags": [
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 10,
+      },
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 11,
+      },
+    ],
+  },
+}
+`;
+
+exports[`unguarded moderator Keep/Remove (differential) > remove all flagged (empty tagIds), incl. blocked tag 1`] = `
+{
+  "r": {
+    "tagIds": [
+      10,
+      13,
+    ],
+  },
+  "s": {
+    "act": [
+      {
+        "activity": "moderateTag",
+        "entityId": 100,
+        "entityType": "image",
+        "userId": 9001,
+      },
+    ],
+    "img": [
+      {
+        "id": 100,
+        "needsReview": null,
+        "nsfwLevel": 4,
+      },
+    ],
+    "rev": [],
+    "tags": [
+      {
+        "attributes": 1024,
+        "imageId": 100,
+        "tagId": 10,
+      },
+      {
+        "attributes": 0,
+        "imageId": 100,
+        "tagId": 11,
+      },
+      {
+        "attributes": 1024,
+        "imageId": 100,
+        "tagId": 13,
+      },
+    ],
+  },
+}
+`;
+
+exports[`unguarded moderator Keep/Remove (differential) > unflagged named tag still written (as before) 1`] = `
+{
+  "r": {
+    "tagIds": [
+      11,
+    ],
+  },
+  "s": {
+    "act": [
+      {
+        "activity": "moderateTag",
+        "entityId": 100,
+        "entityType": "image",
+        "userId": 9001,
+      },
+    ],
+    "img": [
+      {
+        "id": 100,
+        "needsReview": null,
+        "nsfwLevel": 16,
+      },
+    ],
+    "rev": [],
+    "tags": [
+      {
+        "attributes": 512,
+        "imageId": 100,
+        "tagId": 10,
+      },
+      {
+        "attributes": 1024,
+        "imageId": 100,
+        "tagId": 11,
+      },
+    ],
+  },
+}
+`;
+
+exports[`unguarded moderator Keep/Remove (differential) > with Replace and Append tag rules 1`] = `
+{
+  "r": {
+    "tagIds": [
+      10,
+    ],
+  },
+  "s": {
+    "act": [
+      {
+        "activity": "moderateTag",
+        "entityId": 100,
+        "entityType": "image",
+        "userId": 9001,
+      },
+    ],
+    "img": [
+      {
+        "id": 100,
+        "needsReview": null,
+        "nsfwLevel": 16,
+      },
+    ],
+    "rev": [],
+    "tags": [
+      {
+        "attributes": 1024,
+        "imageId": 100,
+        "tagId": 10,
+      },
+      {
+        "attributes": 17478,
+        "imageId": 100,
+        "tagId": 11,
+      },
+    ],
+  },
+}
+`;

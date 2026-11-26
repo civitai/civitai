@@ -35,13 +35,18 @@ export const reportStatusActions = ({ rulingsOnly = false } = {}) => ({
       status,
       userId: locals.user.id,
       ip: getClientAddress(),
+      liftScanHide: true,
     });
+    if (!result.ok && 'held' in result) return fail(409, { error: result.error });
     // `gone` rather than a bare message: the page reloads the queue on it, so the row the moderator
     // is looking at leaves the screen instead of sitting there accepting further clicks.
     if (!result.ok) return fail(410, { error: result.error, gone: true });
     if (!result.changed)
       return fail(409, { error: 'Someone else already set that status. Reload.' });
-    return { success: true };
+    return {
+      success: true,
+      ...('notice' in result && result.notice ? { notice: result.notice } : {}),
+    };
   },
 
   saveNotes: saveNotesAction(),

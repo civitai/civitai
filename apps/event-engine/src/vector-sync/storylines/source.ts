@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { normalizeTitle, nsfwLevels } from '../models/document';
-import { coverImageCleanSql, heldImageSql, heldUserSql } from '../held';
+import { coverImageCleanSql, csamFlaggedImageSql } from '../image-flags';
 import { storylineDocument } from './document';
 
 /** NsfwLevel.Blocked: a chapter 1 post at it, or unrated, hides the storyline. */
@@ -19,7 +19,6 @@ export const STORYLINE_FROM = `"Storyline" st
 /**
  * Which storylines get a point: the site's `storylineSemanticEligibleText`
  * (storyline-visibility.sql.ts) as SQL, held to it by the site's storyline-eligibility parity test.
- * Nothing held is indexed: not the owner, chapter 1's author, or any of chapter 1's images.
  * Whether the publication time has passed is not part of it: the payload's rootPublishedAt is
  * filtered at query time.
  */
@@ -29,8 +28,9 @@ export const STORYLINE_ELIGIBLE_SQL = `(st."tosViolation" = false AND st."minorB
   AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
   AND rp."nsfwLevel" NOT IN (0, ${BLOCKED}) AND rp."publishedAt" IS NOT NULL
   AND rp.availability = 'Public'
-  AND NOT ${heldUserSql('st."userId"')} AND NOT ${heldUserSql('rp."userId"')}
-  AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = rp.id AND ${heldImageSql('ri')})
+  AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = rp.id AND ${csamFlaggedImageSql(
+    'ri'
+  )})
   AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = rp.id AND (rt."csamHeld"
     OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
       AND th."entityId" = rt.id AND th.label = 'csam' AND th.status = 'Pending'))))`;

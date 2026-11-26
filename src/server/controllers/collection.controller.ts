@@ -98,6 +98,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { dbRead } from '../db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
@@ -328,6 +329,7 @@ export const saveItemHandler = async ({
         ...input,
         userId: user.id,
         isModerator: user.isModerator,
+        csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
       },
     });
@@ -410,6 +412,7 @@ export const bulkSaveItemsHandler = async ({
         ...input,
         userId,
         isModerator,
+        csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
       },
       permissions,
@@ -447,6 +450,7 @@ export const upsertCollectionHandler = async ({
         ...input,
         userId: user.id,
         isModerator: user.isModerator,
+        asModerator: actsAsModerator(ctx),
         isMember: !!user.tier && user.tier !== 'free',
       },
       // Read without the owner's view, the editor saw a hidden cover as none; an image: null keeps it.
@@ -494,7 +498,12 @@ export const updateCollectionCoverImageHandler = async ({
 
   try {
     const collection = await updateCollectionCoverImage({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        asModerator: actsAsModerator(ctx),
+      },
     });
 
     return collection;
@@ -648,6 +657,7 @@ export const updateCollectionItemsStatusHandler = async ({
       input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -766,6 +776,7 @@ export const addSimpleImagePostHandler = async ({
         imageIds,
         userId,
         isModerator,
+        csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
       },
       permissions,
@@ -916,7 +927,12 @@ export const setCollectionItemNsfwLevelHandler = async ({
     if (!permissions.manage)
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
-    return await setCollectionItemNsfwLevel({ ...input, userId: user.id });
+    return await setCollectionItemNsfwLevel({
+      ...input,
+      userId: user.id,
+      isModerator: user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

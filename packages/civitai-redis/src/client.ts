@@ -2638,9 +2638,6 @@ export const REDIS_SYS_KEYS = {
     // only as the fallback for ratings written before the move. Remove with that fallback, after
     // DATASET_RATING_SYS_FALLBACK_UNTIL in apps/training-studio/src/lib/server/dataset-rating.ts.
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
-    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:<blobId lowercased>,
-    // so a failed or unanswered rating is not sent again on every view.
-    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -2766,7 +2763,8 @@ export const REDIS_SYS_KEYS = {
     USER_CUT: 'session:user-cut',
     // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
     FAMILY_LIVE: 'session:family-live',
-    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser. Written only once
+    // the browser has two families or an account list; a single-family browser has none.
     DEVICE_FAMILIES: 'session:device-families',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
@@ -3103,6 +3101,10 @@ const REDIS_KEYS_UNPREFIXED = {
     // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
     // See `src/server/services/blocks/github-actions-oidc.service.ts`.
     ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
+    // One-use marker for a recipe-runner block token at submit: `${RUNNER_SUBMIT_JTI}:${jti}`, SET NX
+    // with a TTL just past the token's expiry (verifier clock tolerance). The attempt ledger bounds a
+    // replay if it is evicted.
+    RUNNER_SUBMIT_JTI: 'blocks:runner-submit-jti',
     // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
     // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
     // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
@@ -3238,6 +3240,12 @@ const REDIS_KEYS_UNPREFIXED = {
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
+    // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
+    // without re-rating.
+    MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
+    MODEL3D_PREVIEW_V2_PENDING: 'generation:model3d-preview-v2-pending',
+    MODEL3D_PREVIEW_V2_RETRY: 'generation:model3d-preview-v2-retry',
+    MODEL3D_RATING_V2_CLEAR: 'generation:model3d-rating-v2-clear',
   },
   TRAINING: {
     // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
@@ -3257,6 +3265,10 @@ const REDIS_KEYS_UNPREFIXED = {
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
     // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
     STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:m<level>:<blobId
+    // lowercased>, so a failed or unanswered rating is not sent again on every view. Lost early, the
+    // blob is sent once more, within the daily allowance.
+    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
     // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
     // acts on, and how. Written by hand with an expiry; deleting it, or its eviction, refuses every call.
     RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
@@ -3271,6 +3283,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
     // src/lib/server/oauth/offline-grant.ts.
     REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
+    // A ban's mark on a self-only client it disabled: see src/server/services/oauth-ban-marker.ts.
+    BAN_DISABLED: 'oauth:ban-disabled',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
@@ -3400,6 +3414,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     FEATURE_PAGES_SERVICE_TOKEN: 'packed:caches:feature-pages-service-token',
+    FEATURE_PAGES_VIEWER_HANDLE: 'packed:caches:feature-pages-viewer-handle',
     // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
     // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
     // the display read of a placement space. See placement-space.service.ts.
@@ -3410,6 +3425,7 @@ const REDIS_KEYS_UNPREFIXED = {
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures:v4',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
+    VERSION_SHOWCASE: 'packed:caches:version-showcase',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
@@ -3448,6 +3464,8 @@ const REDIS_KEYS_UNPREFIXED = {
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
+    // Legacy annual-sub-payment and reward rows, per user and query window.
+    LEGACY_PREPAID_DELIVERIES: 'packed:caches:legacy-prepaid-deliveries',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
@@ -3571,6 +3589,7 @@ const REDIS_KEYS_UNPREFIXED = {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
     HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
+    FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },
   LIVE_NOW: 'live-now',
   TAG: 'tag',
@@ -3747,6 +3766,16 @@ const REDIS_KEYS_UNPREFIXED = {
       key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
      */
     CANDIDATES: 'semantic-search:candidates',
+  },
+  FEED_GO: {
+    /*
+      Use: the Training Data listing rule sets (trainingDataListingRulesId) of the Node builds now
+      answering the public model API, read by feed-go before it serves a body listing a Training
+      Data file (src/server/services/feed-go-training-data-rules.ts).
+      Structure: hash, field = rule set id, value '1'; each field expires
+      FEED_GO_TRAINING_DATA_RULES_TTL_MS after its last write (HPEXPIRE), so the hash holds only the builds still answering.
+     */
+    TRAINING_DATA_RULES_LIVE: 'feed-go:training-data-rules-live',
   },
 } as const;
 

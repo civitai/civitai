@@ -23,6 +23,8 @@ export type Reactor = {
 export type ReactorPage = {
   reaction: ReactorType | null;
   counts: Record<ReactorType, number>;
+  /** How many of `counts[reaction]` the list leaves out by the reactors' own privacy choices. Absent when unknown. */
+  hidden?: number;
   reactors: Reactor[];
   /** Pass as `after` for the next page (older accounts), or null on the last page. */
   next: number | null;

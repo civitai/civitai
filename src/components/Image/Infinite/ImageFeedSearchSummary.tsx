@@ -2,6 +2,7 @@ import { Alert, Anchor, Button, Chip, Pill, Text, Title } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import type { ReactNode } from 'react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { ImagesQueryParamSchema } from '~/components/Image/image-query-params';
@@ -14,6 +15,8 @@ import useIsClient from '~/hooks/useIsClient';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { SEARCH_AS_TYPED_PARAM } from '~/components/Search/useSearchAsTyped';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
 
 const isEmptyFilter = (value: unknown) =>
   value === undefined || (Array.isArray(value) && value.length === 0);
@@ -22,6 +25,8 @@ type Props = {
   query: string;
   /** "More like this": the image matched while no query is set. */
   similarTo?: number;
+  /** "More like this" steering, for a viewer who may steer (`MoreLikeThisPrefer`). */
+  preferRow?: ReactNode;
   correctedQuery?: string;
   filters: Parameters<typeof ignoredWhileSearching>[0];
   failed: boolean;
@@ -33,6 +38,7 @@ type Props = {
 export function ImageFeedSearchSummary({
   query,
   similarTo,
+  preferRow,
   correctedQuery,
   filters,
   failed,
@@ -67,6 +73,10 @@ export function ImageFeedSearchSummary({
           query: removeEmpty({
             ...router.query,
             ...Object.fromEntries(inUrl.map((key) => [key, patch[key as keyof typeof patch]])),
+            // A changed or cleared query is corrected again.
+            ...('query' in patch && { [SEARCH_AS_TYPED_PARAM]: undefined }),
+            // A preference belongs to its anchor.
+            ...(('query' in patch || 'similarTo' in patch) && { prefer: undefined }),
           }),
         },
         undefined,
@@ -79,7 +89,6 @@ export function ImageFeedSearchSummary({
   };
 
   const ignored = ignoredWhileSearching(filters);
-  const shownQuery = correctedQuery && correctedQuery !== query ? correctedQuery : undefined;
 
   return (
     <div className="flex flex-col gap-2 pb-2">
@@ -95,11 +104,7 @@ export function ImageFeedSearchSummary({
           <>Images matching &ldquo;{query}&rdquo;</>
         )}
       </Title>
-      {shownQuery && (
-        <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>
-        </Text>
-      )}
+      <CorrectedQueryNote query={query} correctedQuery={correctedQuery} />
       {unavailable ? (
         <Alert color="gray" p="xs">
           <Text size="sm">
@@ -193,6 +198,7 @@ export function ImageFeedSearchSummary({
           Clear search
         </Anchor>
       </div>
+      {similarTo && !unavailable && preferRow}
       {isClient && !failed && ignored.length > 0 && (
         <Tooltip label={IMAGE_FEED_SEARCH_UNAVAILABLE_REASON} multiline w={280} withArrow>
           <Text size="xs" c="dimmed" className="w-fit">

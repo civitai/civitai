@@ -1,6 +1,5 @@
 import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
@@ -25,6 +24,7 @@ import {
 import type { GuestFrameCounts, GuestFrameEvent } from './devTunnelGuestReload';
 import {
   blockInitFragmentEnabled,
+  blockInitAppData,
   blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
@@ -67,7 +67,7 @@ import {
   resolveShareLinkRequest,
   SHARE_LINK_RATE_LIMITED_ERROR,
 } from './deepLinkLogic';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
@@ -116,7 +116,7 @@ import {
   ConfirmedStepNoticeBody,
   type ConfirmedStepStandingChoice,
 } from './ConfirmedStepConsentBody';
-import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { openAlert } from '~/components/Dialog/Common/AlertDialog';
 import GuardedConfirmDialog from './GuardedConfirmDialog';
 import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -235,9 +235,9 @@ import { hostRefusal, navigateDiagnostic } from './appFeedbackDiagnostics';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
-import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
@@ -247,6 +247,7 @@ import {
   sharedStorageErrorReply,
   storageErrorMessage,
 } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -257,36 +258,6 @@ import {
 // IframeHost. Both now go through `openBlockConsentModal`, which owns the lazy
 // component reference alongside the dedupe id and the props shape — the three
 // things the two surfaces must agree on.
-
-// Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
-// insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-
-// Host-mediated image-upload modal for the OPEN_IMAGE_UPLOAD bridge. A block asks
-// the host to let the user upload an image; the bytes flow through civitai's
-// session-authed upload + REAL scan, and the iframe only ever gets back a
-// moderated, SFW-ceiling'd, unflagged image id.
-const BlockImageUploadModal = dynamic(() => import('./BlockImageUploadModal'), {
-  ssr: false,
-});
-
-// Sibling of BlockImageUploadModal for the OPEN_IMAGE_UPLOAD bridge's
-// `purpose: 'generationSource'` mode: an UNSCANNED private generation input (an
-// img2img source), uploaded through the SAME consumer-blob util the generator
-// uses (uploadConsumerBlob) — no createImage/scan/gate. The orchestrator scans
-// the generation OUTPUT. Returns only { url, width, height }.
-const BlockGenerationSourceUploadModal = dynamic(
-  () => import('./BlockGenerationSourceUploadModal'),
-  { ssr: false }
-);
-
-const BlockTrainingDataUploadModal = dynamic(() => import('./BlockTrainingDataUploadModal'), {
-  ssr: false,
-});
-
-const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
-
-const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), { ssr: false });
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -808,6 +779,10 @@ export interface PageBlockHostProps {
    *  `projectBlockInitMaturity`). Absent → the block falls back to
    *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel?: number;
+  /** The app-data service this app's document store moved to, as the token mint decided it
+   *  (server-side, per app). Forwarded as BLOCK_INIT.appData through `blockInitAppData`, which
+   *  drops it on any surface but `page-run`. Absent on every other caller. */
+  appData?: { url: string; slug: string };
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -1009,6 +984,7 @@ export function PageBlockHost({
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
+  appData,
   viewer,
   theme,
   onConsentGranted,
@@ -1582,6 +1558,9 @@ export function PageBlockHost({
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
       // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
       ...blockInitStorageMode(surface),
+      // The mint's per-app decision, forwarded only on `page-run` with a block token; the key is
+      // ABSENT otherwise. See `blockInitAppData`.
+      ...blockInitAppData({ surface, tokenKind, blockId, appData }),
       // Keyed on `surface` too: `blockErrors:v1` only where the host collects non-fatal errors.
       capabilities: pageHostCapabilities(surface),
     }),
@@ -1600,6 +1579,7 @@ export function PageBlockHost({
       domain,
       maxBrowsingLevel,
       effectiveBrowsingLevel,
+      appData,
     ]
   );
   buildInitPayloadRef.current = buildInitPayload;
@@ -2961,6 +2941,7 @@ export function PageBlockHost({
           send('APP_WORKFLOWS_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3007,6 +2988,7 @@ export function PageBlockHost({
           send('CANCEL_APP_WORKFLOW_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3044,31 +3026,31 @@ export function PageBlockHost({
         };
         const count = imageIndexes?.length;
         const noun = count == null ? 'these results' : `${count} result${count === 1 ? '' : 's'}`;
-        dialogStore.trigger({
-          component: ConfirmDialog,
-          props: {
-            title: 'Publish to the shared grid?',
-            message: `Publish ${noun} to ${
-              appName ? `“${appName}”` : 'this app'
-            }’s shared grid? Published images are scanned and become visible to other viewers of this app.`,
-            labels: { confirm: 'Publish', cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              try {
-                const result = await publishGenerationOutputsMutation.mutateAsync({
-                  blockToken: token,
-                  workflowId,
-                  ...(imageIndexes ? { imageIndexes } : {}),
-                });
-                reply({ result });
-              } catch (err) {
-                reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape) = consent declined → settle the
-            // block's promise with an explicit signal rather than leaving it to time out.
-            onCancel: () => reply({ error: 'publish canceled' }),
+        openConfirm({
+          title: 'Publish to the shared grid?',
+          message: `Publish ${noun} to ${
+            appName ? `“${appName}”` : 'this app'
+          }’s shared grid? Published images are scanned and become visible to other viewers of this app.`,
+          labels: { confirm: 'Publish', cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            try {
+              const result = await publishGenerationOutputsMutation.mutateAsync({
+                blockToken: token,
+                workflowId,
+                ...(imageIndexes ? { imageIndexes } : {}),
+              });
+              reply({ result });
+            } catch (err) {
+              reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape) = consent declined → settle the
+          // block's promise with an explicit signal rather than leaving it to time out.
+          onCancel: () => reply({ error: 'publish canceled' }),
         });
       }
     );
@@ -3107,6 +3089,7 @@ export function PageBlockHost({
           send('IMAGES_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3139,6 +3122,7 @@ export function PageBlockHost({
           send('WORKFLOW_MEDIA_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3183,6 +3167,7 @@ export function PageBlockHost({
         send('BUZZ_BALANCE_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3225,6 +3210,7 @@ export function PageBlockHost({
           send('BUZZ_TRANSACTIONS_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3255,6 +3241,7 @@ export function PageBlockHost({
         send('BUZZ_ACCOUNTS_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3291,6 +3278,7 @@ export function PageBlockHost({
           send('DAILY_COMPENSATION_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3327,6 +3315,7 @@ export function PageBlockHost({
         send('VIEWER_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3407,24 +3396,24 @@ export function PageBlockHost({
             }
           : undefined;
         let purchased = false;
-        dialogStore.trigger<BuyBuzzModalProps>({
-          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
-          // against each other in the dialog store's exists-check.
-          id: `block-buy-buzz-${requestId}`,
-          component: BuyBuzzModal,
-          props: {
+        openDialog(
+          () => import('~/components/Modals/BuyBuzzModal'),
+          {
             minBuzzAmount: amount,
             attribution,
             onPurchaseSuccess: () => {
               purchased = true;
             },
           },
-          options: {
+          {
+            // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+            // against each other in the dialog store's exists-check.
+            id: `block-buy-buzz-${requestId}`,
             onClose: () => {
               send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
             },
-          },
-        });
+          }
+        );
       }
     );
     return off;
@@ -3530,6 +3519,7 @@ export function PageBlockHost({
             requestId,
             value: null,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3577,6 +3567,7 @@ export function PageBlockHost({
             requestId,
             ok: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3625,6 +3616,7 @@ export function PageBlockHost({
             ok: false,
             deleted: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3689,6 +3681,7 @@ export function PageBlockHost({
           requestId,
           keys: [],
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3737,6 +3730,7 @@ export function PageBlockHost({
           limitBytes: 0,
           limitRows: 0,
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3832,7 +3826,10 @@ export function PageBlockHost({
           nextCursor: result.nextCursor,
         });
       } catch (err) {
-        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          ...sharedStorageErrorReply(err),
+        });
       }
     });
     return off;
@@ -3859,7 +3856,10 @@ export function PageBlockHost({
           );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNT_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3887,7 +3887,10 @@ export function PageBlockHost({
           );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
-          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNTS_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -4149,7 +4152,11 @@ export function PageBlockHost({
               : null,
           });
         } catch (err) {
-          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: null,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -4283,8 +4290,10 @@ export function PageBlockHost({
   //            is classified from the content (processSaveBytes) and only
   //            image/JSON/text — or a validated .zip (@civitai/app-sdk/save-zip: structure,
   //            local headers, entry names/types, declared sizes, then an inflate
-  //            check before the download) — can be saved, under the classified
-  //            extension.
+  //            check before the download), or a structurally checked binary glTF
+  //            (.glb) / binary FBX (.fbx) 3D model (@civitai/app-sdk/save-model3d) — can be
+  //            saved, under the classified extension. Per-file caps: 50 MB, a 3D
+  //            model 100 MB (SAVE_BYTES_MODEL_3D_MAX_BYTES), a zip 256 MB.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
   //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes (a zip:
   //            SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW) per rolling window; past
@@ -4354,7 +4363,12 @@ export function PageBlockHost({
           send('SAVE_IMAGE_RESULT', { requestId, ok: true });
         } catch (err) {
           if (unmounted.aborted) return;
-          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SAVE_IMAGE_RESULT', {
+            requestId,
+            ok: false,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         } finally {
           if (holdsZipSlot) saveZipVerifyInFlightRef.current -= 1;
         }
@@ -4403,7 +4417,12 @@ export function PageBlockHost({
         await downloadUrlAsBlob(image.url, sanitizeDownloadFilename(req.filename, image.url));
         send('SAVE_IMAGE_RESULT', { requestId, ok: true });
       } catch (err) {
-        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        send('SAVE_IMAGE_RESULT', {
+          requestId,
+          ok: false,
+          error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         // Release the slot on EVERY exit that acquired one (success / refusal /
         // error) so the gate can't leak slots and wedge shut.
@@ -4787,10 +4806,9 @@ export function PageBlockHost({
 
       if (purpose === 'trainingData') {
         let resolvedImages: TrainingDataUpload[] | null = null;
-        dialogStore.trigger({
-          id: `block-training-data-upload-${requestId}`,
-          component: BlockTrainingDataUploadModal,
-          props: {
+        openDialog(
+          () => import('./BlockTrainingDataUploadModal'),
+          {
             onResolved: (images: TrainingDataUpload[]) => {
               resolvedImages = images;
               for (const image of images) {
@@ -4798,7 +4816,8 @@ export function PageBlockHost({
               }
             },
           },
-          options: {
+          {
+            id: `block-training-data-upload-${requestId}`,
             onClose: () => {
               const images = resolvedImages as TrainingDataUpload[] | null;
               send(
@@ -4811,8 +4830,8 @@ export function PageBlockHost({
                   : { requestId }
               );
             },
-          },
-        });
+          }
+        );
         return;
       }
 
@@ -4821,16 +4840,16 @@ export function PageBlockHost({
       // moderated 'display' branch below is untouched.
       if (purpose === 'generationSource') {
         let resolvedSource: BlockSourceImageInfo | null = null;
-        dialogStore.trigger({
-          id: `block-generation-source-upload-${requestId}`,
-          component: BlockGenerationSourceUploadModal,
-          props: {
+        openDialog(
+          () => import('./BlockGenerationSourceUploadModal'),
+          {
             scannedRows: scannedSourcePath,
             onResolved: (result: BlockSourceImageInfo) => {
               resolvedSource = result;
             },
           },
-          options: {
+          {
+            id: `block-generation-source-upload-${requestId}`,
             onClose: () => {
               if (resolvedSource) {
                 send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolvedSource });
@@ -4838,8 +4857,8 @@ export function PageBlockHost({
                 send('IMAGE_UPLOAD_RESULT', { requestId });
               }
             },
-          },
-        });
+          }
+        );
         return;
       }
 
@@ -4871,10 +4890,9 @@ export function PageBlockHost({
       // moderated projection on Scanned + within-SFW-ceiling + unflagged.
       if (asyncScan) {
         let accepted = false;
-        dialogStore.trigger({
-          id: `block-image-upload-${requestId}`,
-          component: BlockImageUploadModal,
-          props: {
+        openDialog(
+          () => import('./BlockImageUploadModal'),
+          {
             share: shareWith,
             // BLOCKING-mode callback — unused in async mode (onAccepted drives the
             // early resolve); a no-op that satisfies the modal's required prop.
@@ -4904,15 +4922,16 @@ export function PageBlockHost({
               );
             },
           },
-          options: {
+          {
+            id: `block-image-upload-${requestId}`,
             onClose: () => {
               // Dismissed WITHOUT accepting → bare (cancelled) result, no poller.
               // On accept, onClose fires AFTER onAccepted set `accepted`, so the
               // early-resolve reply is not followed by a spurious cancel.
               if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId, ...echo(false) });
             },
-          },
-        });
+          }
+        );
         return;
       }
 
@@ -4920,19 +4939,19 @@ export function PageBlockHost({
       // app's other viewers only when the app asked (`shareWith`, above).
       let resolved: BlockUploadedImageInfo | null = null;
       let resolvedShared = false;
-      dialogStore.trigger({
-        // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
-        // each other in the dialog store's exists-check.
-        id: `block-image-upload-${requestId}`,
-        component: BlockImageUploadModal,
-        props: {
+      openDialog(
+        () => import('./BlockImageUploadModal'),
+        {
           share: shareWith,
           onResolved: (result: BlockUploadedImageInfo, meta?: { shared: boolean }) => {
             resolved = result;
             resolvedShared = meta?.shared === true;
           },
         },
-        options: {
+        {
+          // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
+          // each other in the dialog store's exists-check.
+          id: `block-image-upload-${requestId}`,
           onClose: () => {
             // A successful upload set `resolved` before the modal closed itself;
             // otherwise the user cancelled → reply with a bare (cancelled) result.
@@ -4946,8 +4965,8 @@ export function PageBlockHost({
               send('IMAGE_UPLOAD_RESULT', { requestId, ...echo(false) });
             }
           },
-        },
-      });
+        }
+      );
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
@@ -4982,10 +5001,9 @@ export function PageBlockHost({
       }
 
       let picked: BlockPickedImageInfo[] = [];
-      dialogStore.trigger({
-        id: `block-image-picker-${request.requestId}`,
-        component: BlockImagePickerModal,
-        props: {
+      openDialog(
+        () => import('./BlockImagePickerModal'),
+        {
           sources: request.sources,
           max: request.max,
           publicOnly: request.publicOnly,
@@ -4993,10 +5011,11 @@ export function PageBlockHost({
             picked = result;
           },
         },
-        options: {
+        {
+          id: `block-image-picker-${request.requestId}`,
           onClose: () => send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked)),
-        },
-      });
+        }
+      );
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
@@ -5060,7 +5079,11 @@ export function PageBlockHost({
                 selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
               );
             } catch (err) {
-              send('MEDIA_UPLOAD_RESULT', { requestId, error: run.mediaUploadErrorMessage(err) });
+              send('MEDIA_UPLOAD_RESULT', {
+                requestId,
+                error: run.mediaUploadErrorMessage(err),
+                ...rateLimitReplyFields(err),
+              });
             }
           } catch {
             send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_FAILED_ERROR });
@@ -5072,24 +5095,24 @@ export function PageBlockHost({
       }
 
       let uploaded: BlockMediaUploadInfo | null = null;
-      dialogStore.trigger({
-        id: `block-media-upload-${requestId}`,
-        component: BlockMediaUploadModal,
-        props: {
+      openDialog(
+        () => import('./BlockMediaUploadModal'),
+        {
           kind,
           scannedRows: scannedSourcePath,
           onResolved: (result: BlockMediaUploadInfo) => {
             uploaded = result;
           },
         },
-        options: {
+        {
+          id: `block-media-upload-${requestId}`,
           onClose: () =>
             send(
               'MEDIA_UPLOAD_RESULT',
               uploaded ? { requestId, selected: uploaded } : { requestId }
             ),
-        },
-      });
+        }
+      );
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
@@ -5151,7 +5174,7 @@ export function PageBlockHost({
           );
         } catch (err) {
           release();
-          reply({ error: mediaUploadBatchStartError(err) });
+          reply({ error: mediaUploadBatchStartError(err), ...rateLimitReplyFields(err) });
           return;
         }
         const { batchId, expiresAt } = started;
@@ -5372,7 +5395,11 @@ export function PageBlockHost({
       } catch (err) {
         // NOT_FOUND / FORBIDDEN (proc) · too-large · parse-failed (fetch/unzip/
         // abort) — a single error discriminant, never a hang.
-        send('WILDCARD_PACK_RESULT', { requestId, error: classifyWildcardPackError(err) });
+        send('WILDCARD_PACK_RESULT', {
+          requestId,
+          error: classifyWildcardPackError(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         // Release the in-flight slot on EVERY exit (success, too-large early
         // return, or error) so the concurrency gate can't leak slots and wedge
@@ -5419,7 +5446,11 @@ export function PageBlockHost({
         }, RESOURCE_FILE_DEADLINE_MS);
         send('RESOURCE_FILE_RESULT', { requestId, file });
       } catch (err) {
-        send('RESOURCE_FILE_RESULT', { requestId, error: classifyResourceFileError(err) });
+        send('RESOURCE_FILE_RESULT', {
+          requestId,
+          error: classifyResourceFileError(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         resourceFileInFlightRef.current -= 1;
       }
@@ -5511,42 +5542,42 @@ export function PageBlockHost({
           collectionId,
           collection: identity.identity,
         });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
           // not reproducible, since rendering a Mantine modal costs >1 ms.)
           id: `block-collection-follow-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: copy.message,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a write that is under way.
-              settlement.markConsented();
-              try {
-                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
-                // actor and target, so `collectionId` is the ONLY thing the block
-                // influences.
-                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
-                else await unfollowCollectionMutation.mutateAsync({ collectionId });
-                settlement.reply({ result: { collectionId, followed: follow } });
-              } catch (err) {
-                // FORBIDDEN from the collection services (e.g. a private
-                // collection this viewer may not follow) lands here as a message,
-                // never as a hang.
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a write that is under way.
+            settlement.markConsented();
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              settlement.reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op.
+          onCancel: settlement.decline,
         });
       })();
     });
@@ -5617,7 +5648,7 @@ export function PageBlockHost({
         } catch (err) {
           const error = classifyEntityReactionError(err);
           reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
-          latch.reply({ error });
+          latch.reply({ error, ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -5667,7 +5698,7 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          latch.reply({ error: classifyEntityReactionError(err), ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -5728,6 +5759,7 @@ export function PageBlockHost({
           send('GENERATION_SOURCE_PERSISTED', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       })();
@@ -5810,7 +5842,10 @@ export function PageBlockHost({
           // here as a legible message rather than a wedged button. The server's
           // refusals are deliberately uniform where they would otherwise be an
           // existence oracle.
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         if (preview.images.length === 0) {
@@ -5818,48 +5853,48 @@ export function PageBlockHost({
           return;
         }
         const copy = buildCreatePostConsentCopy({ appName, preview });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two CREATE_POST_FROM_APP calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           id: `block-create-post-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: <CreatePostConsentBody copy={copy} preview={preview} />,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            size: 'lg',
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a post that is being created.
-              settlement.markConsented();
-              try {
-                const result = await createPostFromAppMutation.mutateAsync({
-                  blockToken: token,
-                  sources: sources as never,
-                  ...(title != null ? { title } : {}),
-                  ...(detail != null ? { detail } : {}),
-                  ...(tags ? { tags } : {}),
-                  ...(modelVersionId != null ? { modelVersionId } : {}),
-                  // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
-                  // SERVER'S OWN preview — never from the block. Preview and
-                  // write resolve `sources` independently, so a workflow that
-                  // gains an output between them would publish more images than
-                  // the dialog displayed. The server refuses on a mismatch.
-                  confirmedImageCount: preview.images.length,
-                });
-                settlement.reply({ result });
-              } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op and
-            // the confirm path settles it.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: <CreatePostConsentBody copy={copy} preview={preview} />,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          size: 'lg',
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a post that is being created.
+            settlement.markConsented();
+            try {
+              const result = await createPostFromAppMutation.mutateAsync({
+                blockToken: token,
+                sources: sources as never,
+                ...(title != null ? { title } : {}),
+                ...(detail != null ? { detail } : {}),
+                ...(tags ? { tags } : {}),
+                ...(modelVersionId != null ? { modelVersionId } : {}),
+                // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
+                // SERVER'S OWN preview — never from the block. Preview and
+                // write resolve `sources` independently, so a workflow that
+                // gains an output between them would publish more images than
+                // the dialog displayed. The server refuses on a mismatch.
+                confirmedImageCount: preview.images.length,
+              });
+              settlement.reply({ result });
+            } catch (err) {
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op and
+          // the confirm path settles it.
+          onCancel: settlement.decline,
         });
       })();
     });
@@ -5913,7 +5948,10 @@ export function PageBlockHost({
             quoteId,
           })) as TrainingQuotePreview;
         } catch (err) {
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         const thumbnails = resolveTrainingConsentThumbnails(preview, trainingUploadsRef.current);
@@ -5925,11 +5963,11 @@ export function PageBlockHost({
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
             ? () =>
-                dialogStore.trigger<BuyBuzzModalProps>({
-                  id: `block-training-buy-buzz-${requestId}`,
-                  component: BuyBuzzModal,
-                  props: { minBuzzAmount: preview.shortfall ?? undefined },
-                })
+                openDialog(
+                  () => import('~/components/Modals/BuyBuzzModal'),
+                  { minBuzzAmount: preview.shortfall ?? undefined },
+                  { id: `block-training-buy-buzz-${requestId}` }
+                )
             : undefined;
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
@@ -5969,14 +6007,20 @@ export function PageBlockHost({
                 } catch (err) {
                   if (!reviewMode) reportAppSubmitError(appBlockId, 'training_submit', err);
                   // Never resent: the quote is spent once. See runTrainingGate.ts.
-                  settlement.reply(trainingSubmitReplyFromError(err));
+                  settlement.reply({
+                    ...trainingSubmitReplyFromError(err),
+                    ...rateLimitReplyFields(err),
+                  });
                   return;
                 }
                 if (!reviewMode) reportAppSubmitResult(appBlockId, 'training_submit', result);
                 settlement.reply(trainingSubmitReplyFromResult(result));
                 refreshBuzzCapNotice();
               } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+                settlement.reply({
+                  error: err instanceof Error ? err.message : 'unknown',
+                  ...rateLimitReplyFields(err),
+                });
               }
             },
             onCancel: settlement.decline,
@@ -6015,35 +6059,29 @@ export function PageBlockHost({
     ) => {
       const copy = buildConfirmedStepDailyLimitCopy({ appName, total, dailyLimit });
       dailyLimitRaise.onConfirmedStepRefusal(() =>
-        dialogStore.trigger({
+        openAlert({
           id: `block-confirmed-step-limit-${requestId}`,
-          component: AlertDialog,
-          props: {
-            type: 'info',
-            title: copy.title,
-            size: 'md',
-            children: ({ handleClose }: { handleClose: () => void }) => (
-              <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
-            ),
-          },
+          type: 'info',
+          title: copy.title,
+          size: 'md',
+          children: ({ handleClose }: { handleClose: () => void }) => (
+            <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
+          ),
         })
       );
     };
     const showUnconfirmedNotice = (requestId: string) => {
-      dialogStore.trigger({
+      openAlert({
         id: `block-confirmed-step-unconfirmed-${requestId}`,
-        component: AlertDialog,
-        props: {
-          type: 'info',
-          title: CONFIRMED_STEP_UNCONFIRMED_NOTICE.title,
-          size: 'md',
-          children: ({ handleClose }: { handleClose: () => void }) => (
-            <ConfirmedStepNoticeBody
-              text={CONFIRMED_STEP_UNCONFIRMED_NOTICE.body}
-              onClose={handleClose}
-            />
-          ),
-        },
+        type: 'info',
+        title: CONFIRMED_STEP_UNCONFIRMED_NOTICE.title,
+        size: 'md',
+        children: ({ handleClose }: { handleClose: () => void }) => (
+          <ConfirmedStepNoticeBody
+            text={CONFIRMED_STEP_UNCONFIRMED_NOTICE.body}
+            onClose={handleClose}
+          />
+        ),
       });
     };
     const off = onMessage<unknown>('RUN_CONFIRMED_STEP', (raw) => {
@@ -6078,7 +6116,10 @@ export function PageBlockHost({
             quoteId,
           })) as ConfirmedStepQuotePreview;
         } catch (err) {
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         // The viewer's own limit binds and the confirm cannot override it: explain,
@@ -6102,7 +6143,7 @@ export function PageBlockHost({
             if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
             // Never resent: the quote is spent once.
             const failed = trainingSubmitReplyFromError(err);
-            settlement.reply(failed);
+            settlement.reply({ ...failed, ...rateLimitReplyFields(err) });
             if ('error' in failed && failed.error === 'submission-unconfirmed') {
               showUnconfirmedNotice(requestId);
             }
@@ -6142,7 +6183,10 @@ export function PageBlockHost({
             try {
               await submitConsented();
             } catch (err) {
-              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
             }
             return;
           }
@@ -6154,11 +6198,11 @@ export function PageBlockHost({
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
             ? () =>
-                dialogStore.trigger<BuyBuzzModalProps>({
-                  id: `block-confirmed-step-buy-buzz-${requestId}`,
-                  component: BuyBuzzModal,
-                  props: { minBuzzAmount: preview.shortfall ?? undefined },
-                })
+                openDialog(
+                  () => import('~/components/Modals/BuyBuzzModal'),
+                  { minBuzzAmount: preview.shortfall ?? undefined },
+                  { id: `block-confirmed-step-buy-buzz-${requestId}` }
+                )
             : undefined;
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
@@ -6204,7 +6248,10 @@ export function PageBlockHost({
                 });
                 await submitConsented();
               } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+                settlement.reply({
+                  error: err instanceof Error ? err.message : 'unknown',
+                  ...rateLimitReplyFields(err),
+                });
               }
             },
             onCancel: settlement.decline,

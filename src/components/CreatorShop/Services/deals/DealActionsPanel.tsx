@@ -1,5 +1,5 @@
 import { Button, Group, Paper, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   cancellationCodeOptions,
@@ -42,9 +42,9 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
     danger = false,
     confirmLabel = title
   ) =>
-    openConfirmModal({
+    openConfirm({
       title,
-      children: <Text size="sm">{body}</Text>,
+      message: <Text size="sm">{body}</Text>,
       labels: { confirm: confirmLabel, cancel: 'Back' },
       confirmProps: danger ? { color: 'red' } : undefined,
       onConfirm,

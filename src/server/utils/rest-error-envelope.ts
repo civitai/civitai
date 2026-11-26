@@ -19,7 +19,8 @@ import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
  *     {@link GENERIC_SERVER_ERROR_MESSAGE}. That single value change IS the
  *     #3845 fix — the shipped CLI renders `error` in preference to `message`, so
  *     leaving it verbatim would have left the disclosure fully visible.
- *   - `rateLimit` — OPTIONAL, on a 429 only: `{ retryAfterSeconds, retryAt }`
+ *   - `rateLimit` — OPTIONAL, on a 429 only: `{ retryAfterSeconds, retryAt }`, plus the
+ *     limit's `id` and `kind` where the refusal names them (and its counts for a product limit)
  *     (`RateLimitMeta`), sent alongside a `Retry-After` header.
  *
  * Nothing is removed or retyped, so both shipped consumers keep working:

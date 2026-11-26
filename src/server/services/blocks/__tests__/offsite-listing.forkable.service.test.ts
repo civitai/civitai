@@ -196,24 +196,28 @@ describe('updateListing — the fork opt-in', () => {
     await expect(
       updateListing({
         listingId: LISTING,
-        patch: { forkable: true, tagline: 'new tagline' },
+        patch: { forkable: true, contentRating: 'pg13' },
         userId: OWNER,
       })
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: FORKABLE_UNAVAILABLE_MESSAGE });
-    // Hoisted: the tagline half was not applied either.
+    // Hoisted: the content-rating half was not applied (nor staged) either.
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
     expect(forkableWrites()).toEqual([]);
   });
 
-  it('rides along with a trivial edit: the tagline in place, the opt-in on the same live row', async () => {
+  // On-site name/tagline/description/category are manifest-governed (refused), so the in-place
+  // edit here is a DRAFT's content rating (a draft takes every edit in place).
+  it('rides along with an in-place edit: the rating in place, the opt-in on the same row', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(onsiteListing({ status: 'draft' }));
     await updateListing({
       listingId: LISTING,
-      patch: { tagline: 'new tagline', forkable: true },
+      patch: { contentRating: 'pg13', forkable: true },
       userId: OWNER,
     });
     expect(mockWrite.appListing.update).toHaveBeenCalledWith({
       where: { id: LISTING },
-      data: { tagline: 'new tagline' },
+      data: { contentRating: 'pg13' },
     });
     expect(forkableWrites()).toEqual([[true, LISTING]]);
   });
@@ -231,7 +235,9 @@ describe('updateListing — the fork opt-in', () => {
     );
     const res = await updateListing({
       listingId: LISTING,
-      patch: { name: 'Renamed App', forkable: true },
+      // The content rating: the material field an on-site listing still takes (its name is
+      // manifest-governed and refused).
+      patch: { contentRating: 'pg13', forkable: true },
       userId: OWNER,
     });
     expect(res.requiresReview).toBe(true);

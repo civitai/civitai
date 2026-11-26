@@ -38,12 +38,21 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: vi.fn(),
   isAppBlocksPostCreationEnabled: vi.fn(),
 }));
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...((await importOriginal()) as Record<string, unknown>),
-  isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
-  isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
-  ensureFliptInitialized: async () => undefined,
-}));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown> & {
+    readFliptBoolean: (...a: unknown[]) => Promise<boolean | null>;
+  };
+  return {
+    ...actual,
+    isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
+    isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
+    readFliptBoolean: async (flag: string, ...rest: unknown[]) =>
+      flag.startsWith('app-block-')
+        ? h.isFlipt(flag, ...rest)
+        : actual.readFliptBoolean(flag, ...rest),
+    ensureFliptInitialized: async () => undefined,
+  };
+});
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => h.sessionUser(...a) },
 }));
@@ -207,7 +216,8 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
 
   it('applies the per-user 60-per-hour rateLimit to THIS procedure', async () => {
     await call();
-    expect(h.rateLimitApplied).toEqual([expect.objectContaining({ limit: 60, period: 3600 })]);
+    // The registry entry (60 an hour by default, pinned in app-usage-limits.registry.test.ts).
+    expect(h.rateLimitApplied).toEqual([{ usageLimitIds: ['apps.generation-source-saves'] }]);
   });
 
   it.each([

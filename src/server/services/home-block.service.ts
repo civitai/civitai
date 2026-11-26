@@ -286,7 +286,10 @@ export const getHomeBlockById = async ({
     }
   }
 
-  const block = await getHomeBlockCached(row, domain, metadata);
+  const block = await getHomeBlockCached(row, domain, metadata, {
+    resolveHomeBlockMetadata,
+    getHomeBlockData,
+  });
   const rotation = metadata.cosmeticShopSection;
   if (!block?.cosmeticShopSection || !rotation?.random) return block;
 
@@ -343,6 +346,8 @@ export type HomeBlockWithData = {
   userId?: number;
   index?: number | null;
   sourceId?: number | null;
+  /** The source row's owner, on `getHomeBlocks` rows read with `includeSource`. */
+  source?: { userId: number } | null;
   collection?: GetCollectionWithItems;
   leaderboards?: GetLeaderboardsWithResults;
   announcements?: GetAnnouncements;

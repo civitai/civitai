@@ -13,6 +13,7 @@ import {
   getAutoFeatureUserId,
   isAutoFeaturedRow,
 } from '~/server/common/auto-feature';
+import { intervalDays } from '~/server/utils/sql-interval';
 
 export type AutoFeatureCandidate = {
   imageId: number;
@@ -189,14 +190,6 @@ async function getEligibleCollectionIds(poolFallback: number[]) {
   if (state === null) return null;
   return state.eligibleIds.filter((id) => poolFallback.includes(id));
 }
-
-/**
- * `make_interval(days => n)` with `n` inlined rather than bound. Prisma binds a JS number as int8
- * and `make_interval` takes int4, so a bound parameter throws 42883 on every run. Callers pass a
- * value the schema has already bounded to an integer, which is what makes inlining it safe.
- */
-const intervalDays = (days: number) =>
-  Prisma.sql`make_interval(days => ${Prisma.raw(String(days))})`;
 
 /**
  * Built rather than issued so a test can read `.sql` off it directly. The alternative is

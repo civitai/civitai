@@ -46,9 +46,8 @@ vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
   },
 }));
 vi.mock('~/components/Search/useSearchRefusal', () => ({
-  useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
+  useSearchRefusal: () => ({ refusal: state.refusal }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/hooks/useEngagedModelMembership', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useEngagedModelsPrefetch: () => undefined,

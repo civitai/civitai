@@ -27,7 +27,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * tRPC queries IframeHost drives at render must report `isLoading: false` so the
  * init handshake is allowed to start.
  */
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // 🔴 `useOptionalFeatureFlags` IS LISTED TOO, AND OMITTING IT BREAKS THE WHOLE FILE.
 // This factory REPLACES the module (deliberately — see the note above), so it must

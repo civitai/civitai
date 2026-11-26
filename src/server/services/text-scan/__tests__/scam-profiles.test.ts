@@ -193,6 +193,15 @@ describe('scam profiles', () => {
     expect((await load('CommentV3', [1])).size).toBe(0);
   });
 
+  it('CommentV3 scans a Feature Pages comment whatever its author, and still not a model comment by the same author', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      { id: 1, entityType: 'featurePage', userId: 9, updatedAt: EDITED, content: 'x' },
+      { id: 2, entityType: 'model', userId: 9, updatedAt: EDITED, content: 'y' },
+    ] as never);
+    eligible();
+    expect([...(await load('CommentV3', [1, 2])).keys()]).toEqual([1]);
+  });
+
   it('ResourceReview scans details and skips short ones', async () => {
     dbMock.dbWrite.resourceReview.findMany.mockResolvedValue([
       { id: 3, userId: 4, updatedAt: EDITED, details: '<p>Great model</p>' },

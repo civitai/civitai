@@ -140,5 +140,6 @@ func (s *Sources) ImageTags(ctx context.Context, imageIDs []int, viewerID int, i
 // ImageResources is imageResourcesCache.fetch for the public images endpoint.
 func (s *Sources) ImageResources(ctx context.Context, imageIDs []int) (map[int][]ImageResource, error) {
 	imageIDs = Unique(imageIDs)
-	return imageResourcesFrom(imageIDs, s.Packed.Get(ctx, KeyImageResources, imageIDs, 0))
+	got, writable := s.read(ctx, KeyImageResources, imageIDs, 0)
+	return s.imageResourcesFrom(ctx, imageIDs, got, writable)
 }

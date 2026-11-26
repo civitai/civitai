@@ -12,7 +12,9 @@ import { Flags } from '~/shared/utils/flags';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { isImageNotRestricted } from '~/server/common/image-visibility';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { heldUrlSql } from '@civitai/shared/held-url';
 import {
+  BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_PUBLISHED_APP_ID_META_KEY,
   BLOCK_SHARED_UPLOAD_APP_ID_META_KEY,
 } from '~/shared/utils/block-provenance-metadata';
@@ -25,7 +27,9 @@ import {
  *
  * SECURITY — the read is scoped to bare (`postId IS NULL`) images whose
  * {@link BLOCK_PUBLISHED_APP_ID_META_KEY} or {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}
- * EQUALS the caller's verified appId. 🔴 NEVER `blockUploadedAppId`: the app's own
+ * EQUALS the caller's verified appId, plus the viewer's OWN rows whose
+ * {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} equals it (see the generation-source note
+ * below). 🔴 NEVER `blockUploadedAppId`: the app's own
  * bytes uploads carry it with no share and no dialog. On top of that, the per-viewer
  * clamp (mirroring canonical `getAllImages`' non-owner path) applies:
  *   - blocked-users / blocked-tags → EXCLUDED at the query level (omitted),
@@ -39,6 +43,11 @@ import {
  * 🔴 A SHARED-UPLOAD ROW (only the shared key matches) is judged at the viewer's
  * ceiling INTERSECTED WITH SFW, with no `ratingPending` owner branch: `pending` is
  * `hidden` for everyone, its uploader included.
+ *
+ * 🔴 A GENERATION-SOURCE ROW ({@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}, an output the app
+ * kept privately with no publish confirm) is NOT cross-user: the SQL admits it only for its own
+ * author, from the app that kept it, and never when its url is held. Anything the clamp would not
+ * show is omitted rather than reported `hidden`.
  */
 
 /** Bound the read — a grid page never needs more, and each id is a row lookup. */
@@ -76,9 +85,11 @@ const GATED_IMAGE_EDGE_WIDTH = 1200;
  * image's author, their own not-yet-rated image comes back `visible` WITH the url
  * and WITHOUT `nsfwLevel`/`contentRating` — show the pixels, claim no rating.
  * This grants the author nothing they did not already hold: the row exists only
- * because THEIR workflow produced it and they confirmed the publish, and the
- * block already received that image's orchestrator url from its own
- * `pollWorkflow`. Every OTHER viewer gets `hidden`, exactly as before.
+ * because THEIR workflow produced it and they confirmed the publish (or, for a
+ * generation source, their app kept it for them), and the block already received
+ * that image's orchestrator url from its own `pollWorkflow`. Every OTHER viewer
+ * gets `hidden` for a published row, exactly as before, and nothing at all for a
+ * row only its generation-source key admits.
  *
  * 🔴 `nsfwLevel`/`contentRating` ARE OPTIONAL ON `visible` FOR THAT REASON ONLY,
  * and that IS a wire break for a deployed block. They are present on every rated
@@ -131,15 +142,19 @@ type GatedImageRow = Pick<
   | 'blockedFor'
   | 'modelRestricted'
 > & {
-  /** The PUBLISHED key matches this app. Otherwise only
-   *  {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} did (see the module note). */
+  /** The PUBLISHED key matches this app. Otherwise {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}
+   *  or {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} did (see the module note). */
   viaPublished: boolean | null;
+  /** {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} matches this app. True whenever it matches,
+   *  whichever arm of the SQL admitted the row, so the caller still checks the owner. */
+  viaSource: boolean | null;
 };
 
 export async function getBlockGatedImagesByIds(input: {
   imageIds: number[];
   browsingLevel: number;
-  /** OauthClient id of the CALLING app — scopes the read to images IT published or was allowed to share. */
+  /** OauthClient id of the CALLING app — scopes the read to images IT published or was allowed to
+   *  share, and to the viewer's own generation sources it kept. */
   appId: string;
   /** The requesting viewer: sources their blocked-users / blocked-tags sets, and the owner exceptions. */
   userId: number;
@@ -189,14 +204,25 @@ export async function getBlockGatedImagesByIds(input: {
       i."id", i."userId", i."url", i."nsfwLevel", i."ingestion", i."width", i."height",
       i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor",
       i."modelRestricted",
-      (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${input.appId})
-        AS "viaPublished"
+      (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${
+    input.appId
+  })
+        AS "viaPublished",
+      (i."metadata"->>(${BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${
+    input.appId
+  })
+        AS "viaSource"
     FROM "Image" i
     WHERE i."id" = ANY(${orderedIds}::int[])
       AND i."postId" IS NULL
       AND (
         i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
         OR i."metadata"->>(${BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}::text) = ${input.appId}
+        OR (
+          i."metadata"->>(${BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}::text) = ${input.appId}
+          AND i."userId" = ${input.userId}
+          AND NOT ${Prisma.raw(heldUrlSql('i."url"'))}
+        )
       )
       ${excludedUserFrag}
       ${excludedTagFrag}
@@ -209,6 +235,11 @@ export async function getBlockGatedImagesByIds(input: {
   for (const id of orderedIds) {
     const row = byId.get(id);
     if (!row) continue;
+    if (row.viaPublished !== true && row.viaSource === true && row.userId === input.userId) {
+      const source = ownSourceImage(row, input.browsingLevel);
+      if (source) images.push(source);
+      continue;
+    }
     if (!isImageNotRestricted(row, input.userId)) {
       images.push({ imageId: id, status: 'hidden' });
       continue;
@@ -280,4 +311,28 @@ export async function getBlockGatedImagesByIds(input: {
     });
   }
   return { images };
+}
+
+/**
+ * The viewer's own generation source (the SQL bound the row to them), clamped like a published
+ * row: a flagged, blocked or above-ceiling source is omitted, an unrated one is `ratingPending`.
+ */
+function ownSourceImage(row: GatedImageRow, browsingLevel: number): BlockGatedImage | null {
+  const verdict = classifyGatedImageForViewer(row, browsingLevel);
+  if (verdict.status === 'hidden') return null;
+  const shown = {
+    url: getEdgeUrl(row.url, { width: GATED_IMAGE_EDGE_WIDTH }),
+    width: row.width,
+    height: row.height,
+  };
+  if (verdict.status === 'pending') {
+    return { imageId: row.id, status: 'visible', ratingPending: true, ...shown };
+  }
+  return {
+    imageId: row.id,
+    status: 'visible',
+    nsfwLevel: row.nsfwLevel,
+    contentRating: contentRatingFromNsfwLevel(row.nsfwLevel),
+    ...shown,
+  };
 }

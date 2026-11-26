@@ -853,10 +853,13 @@ export async function updateWorkflow({
   workflowId,
   token,
   throwOnError,
+  signal,
   ...body
 }: UpdateWorkflowRequest & {
   token: string;
   workflowId: string;
+  /** Bounds the write; the read-back after it is not. */
+  signal?: AbortSignal;
   /**
    * Surface a refused update (the orchestrator's 400 for an unlock it won't charge, a 403 for
    * insufficient Buzz) as a throw. Off by default, as for `deleteWorkflow`: the generated client
@@ -866,7 +869,12 @@ export async function updateWorkflow({
 }) {
   const client = createOrchestratorClient(token);
 
-  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body,
+    ...(signal ? { signal } : {}),
+  });
   if (throwOnError && !response?.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
@@ -878,8 +886,8 @@ export async function updateWorkflow({
  * differently from an error:
  *   - `insufficient-funds`: the orchestrator's 403, it could not take the yellow charge;
  *   - `no-response`: no HTTP response at all (the client resolves with `response: undefined` when
- *     the fetch throws, our `signal` firing included). The write may still be in flight at the
- *     orchestrator, so the caller must not treat it as failed.
+ *     the fetch throws, our `signal` firing included), or a 5xx. Either way the write may have
+ *     landed or still be in flight, so the caller must not treat it as failed.
  * Every other failure throws as `throwOrchestratorFailure` maps it.
  */
 export async function liftWorkflowMatureRestriction({
@@ -898,7 +906,7 @@ export async function liftWorkflowMatureRestriction({
     body: { allowMatureContent: true },
     ...(signal ? { signal } : {}),
   });
-  if (!response) return { outcome: 'no-response' };
+  if (!response || response.status >= 500) return { outcome: 'no-response' };
   if (response.status === 403) return { outcome: 'insufficient-funds' };
   if (!response.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });

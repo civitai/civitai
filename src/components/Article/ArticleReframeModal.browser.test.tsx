@@ -15,7 +15,6 @@ const h = vi.hoisted(() => ({
   keep: vi.fn<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
 vi.mock('~/providers/AppProvider', async (orig) => ({
   ...(await orig<object>()),
   useAppContext: () => ({ domain: 'blue' }),
@@ -151,7 +150,8 @@ describe('ArticleReframeContent', () => {
         target="banner"
         onKeep={onKeep}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     await page.getByRole('button', { name: /Generate banner/ }).click();
     await vi.waitFor(() =>
@@ -182,7 +182,8 @@ describe('ArticleReframeContent', () => {
         target="banner"
         onKeep={onKeep}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     await page.getByRole('button', { name: /Generate banner/ }).click();
     await vi.waitFor(() => expect(h.submit).toHaveBeenCalled());
@@ -201,7 +202,8 @@ describe('ArticleReframeContent', () => {
         target="banner"
         onKeep={onKeep}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     const warning = page.getByText(/narrower than the suggested/);
     await page.getByRole('button', { name: /Generate banner/ }).click();

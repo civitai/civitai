@@ -6,7 +6,6 @@ import type * as UserAvatarModule from '~/components/UserAvatar/UserAvatar';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, isModerator: true }) }));
 // Media and avatars need the app's content-settings and feature-flag providers; the control
 // under test doesn't.
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
@@ -58,7 +57,8 @@ describe('CrucibleEntryGrid — removing an entry', () => {
         entries={[entry(1), entry(2)]}
         onEntryClick={onEntryClick}
         status={CrucibleStatus.Active}
-      />
+      />,
+      { user: { id: 1, isModerator: true } }
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -72,7 +72,8 @@ describe('CrucibleEntryGrid — removing an entry', () => {
         onEntryClick={onEntryClick}
         onRemoveEntry={onRemoveEntry}
         status={CrucibleStatus.Active}
-      />
+      />,
+      { user: { id: 1, isModerator: true } }
     );
     await expect.poll(() => removeButtons()).toHaveLength(2);
 

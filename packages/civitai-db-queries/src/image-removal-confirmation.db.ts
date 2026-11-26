@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { ReportStatus } from '@civitai/db-schema/enums';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // A removal that repeats the reason an image's approved appeal overturned does not take effect on one
@@ -99,6 +100,12 @@ export function isSameRemovalReason(
   if (!requested || !knownReasons.has(requested)) return true;
   return overturned === requested;
 }
+
+/**
+ * The report statuses a removal may action. `Unactioned` is a moderator's decision to leave the
+ * item up, so a later removal, held or not, leaves that report as it is.
+ */
+export const OPEN_REPORT_STATUSES = [ReportStatus.Pending, ReportStatus.Processing] as const;
 
 export type RemovalRequest = {
   imageId: number;

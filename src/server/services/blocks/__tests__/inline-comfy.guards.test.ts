@@ -45,11 +45,11 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *     population, so the mechanism is written out here rather than re-guessed.
  *
  *     WHY A NON-OWNER CANNOT REACH IT (`generation.service.ts`, canGenerate):
- *       isPrivate   = availability === 'Private' || status in {Draft, Training}
+ *       isPrivate   = isRestrictedGenerationResource(item)  (Private, or status !== 'Published')
  *       canGenerate = covered && hasValidStatus &&
  *                     (!isPrivate || isOwnedByUser || user.isModerator)
  *     and `getEpochDetails` returns non-null ONLY when `status !== 'Published'`,
- *     so an epoch resource is always Draft/Training. Therefore EVERY resource
+ *     so an epoch resource is always unpublished, hence `isPrivate`. Therefore EVERY resource
  *     that can set `hasPrivate`, and every epoch, also sets `isPrivate` — which
  *     forces `canGenerate = false` for a non-owner non-moderator, and the
  *     canGenerate guard throws before `hasPrivate` is ever computed.
@@ -385,7 +385,7 @@ describe('assertViewerEntitledToInlineResources — the owner Private subscripti
   });
 
   it('a NON-moderator OWNER with no subscription may use their own EPOCH resource', async () => {
-    // In production an epoch resource is always Draft/Training (`getEpochDetails`
+    // In production an epoch resource is always unpublished (`getEpochDetails`
     // returns non-null only when `status !== 'Published'`), which is itself
     // `isPrivate`, so this row's `canGenerate: true` encodes the OWNER.
     mockGetResourceData.mockResolvedValue([

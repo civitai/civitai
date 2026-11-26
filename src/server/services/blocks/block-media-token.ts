@@ -1,3 +1,4 @@
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import { openToken, sealToken } from '~/server/utils/sealed-token';
 
 /**
@@ -127,12 +128,7 @@ export function openBlockMediaTicket(token: unknown): BlockMediaTicket | null {
   if (anonymous !== undefined && anonymous !== true) return null;
   if (viewerId !== null && (typeof viewerId !== 'number' || !Number.isInteger(viewerId)))
     return null;
-  if (
-    typeof viewerBrowsingLevel !== 'number' ||
-    !Number.isInteger(viewerBrowsingLevel) ||
-    viewerBrowsingLevel < 0
-  )
-    return null;
+  if (!isBrowsingLevelClaim(viewerBrowsingLevel)) return null;
   return {
     ...claims,
     viewerId,

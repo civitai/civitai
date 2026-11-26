@@ -1,5 +1,6 @@
 import { getBearerTokenUser, getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import type { VerifyToken } from '~/server/registry-adapter/auth';
+import { parseClientIdList } from '~/server/registry-adapter/auth';
 import {
   DEFAULT_HUB_ISSUER,
   createHubJwtVerifier,
@@ -51,12 +52,10 @@ export type CivitaiTokenConfig = {
 };
 
 /**
- * REGISTRY_ADAPTER_SERVICE_CLIENTS: OAuth client ids separated by commas or whitespace. Unset or
+ * REGISTRY_ADAPTER_SERVICE_CLIENTS: an OAuth client-id list ({@link parseClientIdList}). Unset or
  * empty is no client, so no service token is accepted.
  */
-export function parseServiceClients(raw: string | undefined): ReadonlySet<string> {
-  return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
-}
+export const parseServiceClients = parseClientIdList;
 
 /**
  * The site's verification of a registry token: a hub access token issued for this source

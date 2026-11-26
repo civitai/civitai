@@ -8,9 +8,16 @@ import {
   setFeedGoTransportEnabled,
   setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
+  setFeedGoTransportSignedOutEnabled,
+  setFeedGoTransportSignedOutInfiniteEnabled,
+  setFeedGoTransportSignedOutModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
-import { setClientShadowCompareEnabled } from '~/utils/trpc-shadow-compare';
+import {
+  setClientShadowCompareEnabled,
+  setClientShadowCompareSignedOutEnabled,
+} from '~/utils/trpc-shadow-compare';
+import { ensureSignedOutRolloutBucket } from '~/shared/utils/signed-out-rollout-bucket';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 import { setSemanticComicSearchEnabled } from '~/components/Search/semanticComicSearchFlag';
@@ -124,6 +131,13 @@ export const FeatureFlagsProvider = ({
     setFeedGoTransportModelGetAllEnabled(!!featureFlags.feedGoTransportModelGetAll);
     setFeedGoTransportInfiniteEnabled(!!featureFlags.feedGoTransportInfinite);
     setClientShadowCompareEnabled(!!featureFlags.clientShadowCompare);
+    // The signed-out twins: only a browser rendered as signed out reads them (`~/utils/trpc`).
+    setFeedGoTransportSignedOutEnabled(!!featureFlags.feedGoTransportSignedOut);
+    setFeedGoTransportSignedOutModelGetAllEnabled(
+      !!featureFlags.feedGoTransportSignedOutModelGetAll
+    );
+    setFeedGoTransportSignedOutInfiniteEnabled(!!featureFlags.feedGoTransportSignedOutInfinite);
+    setClientShadowCompareSignedOutEnabled(!!featureFlags.clientShadowCompareSignedOut);
     setFeedEventsEnabled(impressionTelemetryOn(featureFlags));
   }
 
@@ -149,6 +163,12 @@ export const FeatureFlagsProvider = ({
   useEffect(() => {
     setTrpcUnifiedBatchWindowEnabled(!!featureFlags.trpcUnifiedBatchWindow);
   }, [featureFlags.trpcUnifiedBatchWindow]);
+  // A signed-out visitor's rollout bucket (`~/shared/utils/signed-out-rollout-bucket`): written once,
+  // by the browser, so the signed-out per-visitor flags can be decided from the next page load on.
+  const signedIn = !!session.data;
+  useEffect(() => {
+    if (!signedIn) ensureSignedOutRolloutBucket();
+  }, [signedIn]);
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>

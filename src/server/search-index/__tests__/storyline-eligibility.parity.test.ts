@@ -23,21 +23,15 @@ const SCHEMA = `
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, NULL, NULL),
-    (5, NULL, NULL), (6, NULL, NULL), (-1, NULL, NULL);
-  -- 4 is a CsamReport's subject, 5 its secondary user, 6 under an evidence hold, -1 the placeholder
-  -- owner (named on a report, which holds none of its kept images).
+    (5, NULL, NULL);
+  -- 4 is a CsamReport's subject, 5 its secondary user.
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   INSERT INTO "CsamReport" ("userId", details, images) VALUES
     (4, '{}', '[]'), (NULL, '{"secondaryUserId": "5"}', '[{"id": 2100}]'), (NULL, '{}', '["2600"]'),
-    (-1, '{}', '[]'),
     -- Malformed rows the rule must read past without failing the statement.
     (NULL, '{"secondaryUserId": "abc"}', '{"id": 100}'),
     (NULL, '{"secondaryUserId": "123456789012345678901"}', '"100"');
-  CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-  INSERT INTO "EvidenceHold" VALUES (6, NULL);
-  CREATE VIEW "EvidenceHeldUser" AS
-    SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
   CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "postId" int,
     "needsReview" text, "blockedFor" text, ingestion text NOT NULL DEFAULT 'Scanned',
     "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
@@ -179,22 +173,19 @@ const spec: ParitySpec = {
     // A scheduled chapter 1 is indexed; the query's rootPublishedAt filter holds it back.
     storyline(15, 'eligible:scheduled', { publishedAt: `now() + interval '1 day'` }),
     storyline(16, 'eligible:mixedLevel', { postLevel: '5' }),
-    storyline(17, 'ownerReported', { owner: '4', postAuthor: '1' }),
-    storyline(18, 'ownerSecondaryReported', { owner: '5', postAuthor: '1' }),
-    storyline(19, 'ownerEvidenceHold', { owner: '6', postAuthor: '1' }),
-    // Chapter 1 by a held author, with an image whose owner is clean.
-    storyline(20, 'postAuthorHeld', { postAuthor: '6' }),
+    storyline(17, 'eligible:ownerReported', { owner: '4', postAuthor: '1' }),
+    storyline(18, 'eligible:ownerSecondaryReported', { owner: '5', postAuthor: '1' }),
+    // Chapter 1 by a reported author, with an image whose owner is clean: holds hide nothing.
+    storyline(20, 'eligible:postAuthorHeld', { postAuthor: '4' }),
     storyline(21, 'imageListed', {}),
     storyline(22, 'imageCsamReview', { image: `1, 'csam', NULL` }),
     storyline(23, 'imageBlockedCsam', { image: `1, NULL, 'CSAM'` }),
-    storyline(24, 'imageOwnerHeld', { image: `4, NULL, NULL` }),
+    storyline(24, 'eligible:imageOwnerHeld', { image: `4, NULL, NULL` }),
     storyline(25, 'eligible:noImage', { image: false }),
     storyline(26, 'imageListedAsText', {}),
-    storyline(27, 'imageOwnerSecondaryReported', { image: `5, NULL, NULL` }),
-    storyline(28, 'imageOwnerEvidenceHold', { image: `6, NULL, NULL` }),
+    storyline(27, 'eligible:imageOwnerSecondaryReported', { image: `5, NULL, NULL` }),
     // An owner's verification block is theirs to lift, so it does not count their report against it.
     storyline(29, 'eligible:aiNotVerifiedImage', { image: `4, NULL, 'AiNotVerified'` }),
-    storyline(30, 'eligible:placeholderImageOwner', { image: `-1, NULL, NULL` }),
     // One held image among clean ones is enough.
     storyline(31, 'anyImageHeld', { secondImage: `1, 'csam', NULL` }),
     storyline(32, 'textHeld', { text: 'held' }),
@@ -215,9 +206,11 @@ const spec: ParitySpec = {
     cover(43, 'coverPoi', `poi = true`),
     cover(44, 'coverUnrated', `"nsfwLevel" = 0`),
     cover(45, 'coverBlocked', `"nsfwLevel" = 32`),
-    cover(46, 'coverHeld', `"userId" = 4`),
+    cover(46, 'eligible:coverHeld', `"userId" = 4`),
   ],
   clauses: [
+    'imageListedAsText',
+    'imageListed',
     'tosViolation',
     'bannedOwner',
     'deletedOwner',
@@ -231,17 +224,8 @@ const spec: ParitySpec = {
     'postBlocked',
     'postUnpublished',
     'postPublic',
-    'ownerReported',
-    'ownerSecondaryReported',
-    'ownerEvidenceHold',
-    'postAuthorHeld',
-    'imageListed',
     'imageCsamReview',
     'imageBlockedCsam',
-    'imageOwnerHeld',
-    'imageListedAsText',
-    'imageOwnerSecondaryReported',
-    'imageOwnerEvidenceHold',
     'anyImageHeld',
     'textHeld',
     'textPendingHold',
@@ -254,7 +238,6 @@ const spec: ParitySpec = {
     'coverPoi',
     'coverUnrated',
     'coverBlocked',
-    'coverHeld',
   ],
   site: async (prisma) =>
     (await prisma.$queryRawUnsafe<{ id: number }[]>(SITE)).map((r) => Number(r.id)),

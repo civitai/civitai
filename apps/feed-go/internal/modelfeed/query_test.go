@@ -418,3 +418,32 @@ func TestBuildTakenDownSplitCursor(t *testing.T) {
 		t.Fatalf("%s appears %d times, want once per UNION branch:\n%s", clause, got, norm(stmt.Text))
 	}
 }
+
+// Hide Paid is getModelsRaw's clause since the free-version rule: no live gate on the model, or a
+// Published version with no live gate (freePublishedVersionExistsSql), which must also be Public when
+// private models are hidden. HidePrivate alone adds nothing.
+func TestBuildHidePaidFreeVersion(t *testing.T) {
+	const gated = `(NOT EXISTS (SELECT 1 FROM "PaidAccess" pa JOIN "ModelVersion" mv ON mv.id = pa."entityId" WHERE pa."entityType" = 'ModelVersion' AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW()) AND mv.status = 'Published'::"ModelStatus" AND mv."modelId" = m.id) OR EXISTS (SELECT 1 FROM "ModelVersion" fv WHERE fv."modelId" = m.id AND fv.status = 'Published'::"ModelStatus"`
+	const free = ` AND NOT EXISTS (SELECT 1 FROM "PaidAccess" pa JOIN "ModelVersion" mv ON mv.id = pa."entityId" WHERE pa."entityType" = 'ModelVersion' AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW()) AND mv.status = 'Published'::"ModelStatus" AND mv.id = fv.id)))`
+	const public = ` AND fv.availability = 'Public'::"Availability"`
+	base := PageQuery{Take: 10, Sort: SortNewest, BrowsingLevel: 1}
+	for _, c := range []struct {
+		name                  string
+		hidePaid, hidePrivate bool
+		want                  string
+	}{
+		{"hide paid, private models hidden", true, true, gated + public + free},
+		{"hide paid, private models shown", true, false, gated + free},
+	} {
+		q := base
+		q.HidePaid, q.HidePrivate = c.hidePaid, c.hidePrivate
+		if got := norm(build(t, q).Text); !strings.Contains(got, c.want) {
+			t.Errorf("%s: missing\n%s\nin\n%s", c.name, c.want, got)
+		}
+	}
+	q := base
+	q.HidePrivate = true
+	if got := norm(build(t, q).Text); strings.Contains(got, `"PaidAccess"`) || strings.Contains(got, `fv.`) {
+		t.Errorf("hide private alone: a paid-access clause in\n%s", got)
+	}
+}

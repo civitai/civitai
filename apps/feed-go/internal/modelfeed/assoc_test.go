@@ -128,10 +128,11 @@ func newAssocEnv(rows ...testRow) *assocEnv {
 					if d != nil {
 						v = *d
 					}
-					out = append(out, []any{id, v})
+					// The gated version ids: read only under Hide Paid, which this procedure never sets.
+					out = append(out, []any{id, v, nil})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, out...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, out...), nil
 		}},
 		{Match: `AS full_mv(id)`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			e.mu.Lock()
@@ -591,12 +592,12 @@ func TestAssocFallbacks(t *testing.T) {
 			e.deps.Gates = nil
 			return AssocRequest{Input: assocIn(9001, lvl(1))}
 		}},
-		{"gate-rules-ecosystem", func(e *assocEnv) AssocRequest {
-			e.gates.rules = []GateRule{{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"SDXL"}}}
-			return AssocRequest{Input: assocIn(9001, lvl(1))}
-		}},
 		{"gate-rules-testers", func(e *assocEnv) AssocRequest {
 			e.gates.rules = []GateRule{{AvailableTo: "testers", Presentation: "hidden", ModelVersionIDs: []int{6001}}}
+			return AssocRequest{Input: assocIn(9001, lvl(1)), Viewer: &Viewer{ID: 1003}}
+		}},
+		{"gate-rules-testers", func(e *assocEnv) AssocRequest {
+			e.gates.rules = []GateRule{{AvailableTo: "testers", Presentation: "hidden", Ecosystems: []string{"SDXL"}}}
 			return AssocRequest{Input: assocIn(9001, lvl(1)), Viewer: &Viewer{ID: 1003}}
 		}},
 		{"model-assoc-unconfigured", func(e *assocEnv) AssocRequest {
@@ -696,6 +697,24 @@ func TestAssocCanGenerate(t *testing.T) {
 	e.gates.rules = []GateRule{{AvailableTo: "nobody", Presentation: "disabled", ModelVersionIDs: []int{6001}}}
 	if !gen(e, nil) {
 		t.Fatal("a disabled rule keeps canGenerate: want true")
+	}
+	// Ecosystem targets (served, no longer the gate-rules-ecosystem fallback): the SDXL 1.0 version is
+	// in the SDXL ecosystem; the Pony ecosystem (a child of SDXL) and other keys do not reach it.
+	e.gates.rules = []GateRule{{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"SDXL"}}}
+	if gen(e, nil) || gen(e, &Viewer{ID: 1004, IsModerator: true}) {
+		t.Fatal("hidden nobody rule on the SDXL ecosystem: want false")
+	}
+	e.gates.rules = []GateRule{{AvailableTo: "moderators", Presentation: "hidden", Ecosystems: []string{"SDXL"}}}
+	if gen(e, &Viewer{ID: 1003}) || !gen(e, &Viewer{ID: 1004, IsModerator: true}) {
+		t.Fatal("hidden moderators rule on the SDXL ecosystem: want false for a user, true for a moderator")
+	}
+	e.gates.rules = []GateRule{{AvailableTo: "nobody", Presentation: "hidden", Ecosystems: []string{"Pony", "Flux1"}}}
+	if !gen(e, nil) {
+		t.Fatal("hidden rule on other ecosystems (a child of SDXL included): want true")
+	}
+	e.gates.rules = []GateRule{{AvailableTo: "testers", Presentation: "hidden", Ecosystems: []string{"Pony"}}}
+	if !gen(e, &Viewer{ID: 1003}) {
+		t.Fatal("hidden testers rule naming only another ecosystem, a signed-in user: want true (no fallback)")
 	}
 	// The rules are read only when a shown card could generate.
 	e = twoModelEnv()

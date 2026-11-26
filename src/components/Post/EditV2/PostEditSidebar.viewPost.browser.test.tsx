@@ -49,7 +49,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ canWrite: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/hooks/useCatchNavigation', () => ({ useCatchNavigation: () => undefined }));
 vi.mock('~/components/Tours/ToursProvider', () => ({
   useTourContext: () => ({ runTour: vi.fn(), running: false }),
@@ -101,7 +100,7 @@ beforeEach(() => {
 describe('View Post in the edit sidebar', () => {
   test('a one-image post goes to the post page, not the image page', async () => {
     mocks.images = [saved(7)];
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await viewPost().click();
     expect(useRouter().push).toHaveBeenCalledExactlyOnceWith('/posts/41');
@@ -109,7 +108,7 @@ describe('View Post in the edit sidebar', () => {
 
   test('a several-image post goes to the post page (control)', async () => {
     mocks.images = [saved(7), saved(8)];
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await viewPost().click();
     expect(useRouter().push).toHaveBeenCalledExactlyOnceWith('/posts/41');
@@ -117,7 +116,7 @@ describe('View Post in the edit sidebar', () => {
 
   test('a one-image post whose image is still uploading still navigates', async () => {
     mocks.images = [uploading()];
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await viewPost().click();
     expect(useRouter().push).toHaveBeenCalledExactlyOnceWith('/posts/41');
@@ -126,7 +125,7 @@ describe('View Post in the edit sidebar', () => {
   test('a collection entry replaces the history entry with the post page', async () => {
     mocks.collectionId = 3;
     mocks.images = [saved(7)];
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await page.getByRole('button', { name: 'View Entry', exact: true }).click();
     expect(useRouter().replace).toHaveBeenCalledExactlyOnceWith('/posts/41');

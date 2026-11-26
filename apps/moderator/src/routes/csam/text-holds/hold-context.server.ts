@@ -9,6 +9,8 @@ import {
   type ProfileMedia,
 } from '$lib/server/user-lookup.service';
 import type { HoldContext, HoldParent, HoldProfile } from './hold-context';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { blankCover, listWithheldIds } from '$lib/server/retracted-media';
 
 type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId'>;
 
@@ -229,4 +231,29 @@ export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, Hol
   for (const h of commentHolds)
     contexts.set(h.id, { profile: null, parent: parents.get(h.id) ?? null });
   return contexts;
+}
+
+/** The holds with every image withheld from `viewer` sent without its key: the entity's media, the
+ *  profile tiles and the comment parent's. The page's grant is not the CSAM review grant. */
+export async function withheldHoldMedia<
+  T extends { coverImages: AppealCoverImage[] } & HoldContext
+>(holds: T[], viewer: App.Locals['user'] | undefined): Promise<T[]> {
+  const media = (hold: T) => [
+    ...hold.coverImages,
+    ...(hold.profile?.images ?? []),
+    ...(hold.parent?.images ?? []),
+  ];
+  const withheld = await listWithheldIds(
+    holds.flatMap((hold) => media(hold).map((image) => image.id)),
+    { csamReview: holdsCsamReview(viewer) },
+    'csam-text-holds'
+  );
+  const shown = (images: AppealCoverImage[]): AppealCoverImage[] =>
+    images.map((image) => (withheld.has(image.id) ? blankCover(image) : image));
+  return holds.map((hold) => ({
+    ...hold,
+    coverImages: shown(hold.coverImages),
+    profile: hold.profile && { ...hold.profile, images: shown(hold.profile.images) },
+    parent: hold.parent && { ...hold.parent, images: shown(hold.parent.images) },
+  }));
 }

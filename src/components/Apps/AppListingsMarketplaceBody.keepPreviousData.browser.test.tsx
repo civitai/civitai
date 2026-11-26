@@ -95,8 +95,6 @@ function setSort(next: string) {
   for (const l of mocks.listeners) l();
 }
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 // Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
 // a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({

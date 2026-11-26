@@ -189,6 +189,26 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
     expect(charge.toAccountType).toBe(buzzType);
   });
 
+  it.each(['blue', 'green', 'yellow'] as const)(
+    "records a %s purchase's currency on the grant",
+    async (buzzType) => {
+      seed({ acceptsBlueBuzz: true });
+
+      await earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType,
+      });
+
+      expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meta: expect.objectContaining({ 'download-buzzType': buzzType }),
+        })
+      );
+    }
+  );
+
   it('rejects blue when the creator has not opted in', async () => {
     seed({ acceptsBlueBuzz: false });
 
@@ -357,6 +377,8 @@ describe('earlyAccessPurchase — a user who already holds access is not charged
         meta: {
           'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}`,
           'download-purchasedAt': expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+          'download-amount': 500,
+          'download-buzzType': 'yellow',
         },
       })
     );
@@ -438,6 +460,14 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
 
     // 200 is under the free cap, so the cap is a no-op and the sale takes 20%.
     expect(charged()).toBe(160);
+    expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          'generation-amount': 160,
+          'generation-buzzType': 'yellow',
+        }),
+      })
+    );
   });
 
   it('never bills zero: the floor holds when a discount reaches the whole price', async () => {

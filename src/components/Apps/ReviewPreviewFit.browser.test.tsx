@@ -76,8 +76,6 @@ import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publis
  * This file is the empirical half, and it is the one that can see layout at all.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, username: 'mod' }) }));
-
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagsMod>()),
   // The real hook needs a provider this harness does not mount. Only the two
@@ -210,7 +208,8 @@ function renderInModalPanel(children: React.ReactNode, overflow: 'hidden' | 'aut
       }}
     >
       {children}
-    </div>
+    </div>,
+    { user: { id: 1, username: 'mod' } }
   );
 }
 
@@ -369,7 +368,8 @@ describe('the mod review preview fits its panel instead of being clipped out of 
           slug="review-fit-app"
           iframeSrc={SAME_ORIGIN_SRC}
         />
-      </div>
+      </div>,
+      { user: { id: 1, username: 'mod' } }
     );
     await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
 

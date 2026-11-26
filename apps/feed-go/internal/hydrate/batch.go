@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 )
 
 // Batch collects the cache reads of one dependency stage and sends them in ONE Pipelined call per
@@ -58,14 +60,14 @@ type PackedRead struct {
 	ids  []int
 	ttl  time.Duration
 	cmds []*redis.StringCmd
-	// ordered is whether key is an ordered cache's (orderedCaches): its entries hold Ordered.
-	ordered bool
+	// opts is how key's values decode (optsFor): an ordered cache's entries hold Ordered.
+	opts decodeOpts
 }
 
 // Queue adds the `${key}:${id}` GETs of ids to b, with Get's semantics (see Get). Nothing is queued for
 // no ids or no client: every id is then a miss.
 func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration) *PackedRead {
-	r := &PackedRead{p: p, ids: ids, ttl: ttl, ordered: orderedCaches[key]}
+	r := &PackedRead{p: p, ids: ids, ttl: ttl, opts: optsFor(key)}
 	if len(ids) == 0 || p.Redis == nil {
 		return r
 	}
@@ -98,12 +100,12 @@ func (r *PackedRead) read() (map[int]Entry, map[int]bool) {
 		}
 		return out, writable
 	}
-	now := time.Now()
+	now := clock.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}
 	for i, cmd := range r.cmds {
-		e, st := entryState(cmd, r.ttl, now, r.ordered)
+		e, st := entryState(cmd, r.ttl, now, r.opts)
 		if st == stateEntry {
 			out[r.ids[i]] = e
 			continue

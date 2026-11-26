@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { engage, seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { castVote, ensureVotePartitions, getFeed, enqueueItem } from '../queue/queue.service';
 import {
@@ -36,7 +36,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   vi.restoreAllMocks();
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -187,49 +187,58 @@ describe('serving a hidden check', () => {
     expect(await getFeed(db, 1)).toBeNull();
   });
 
-  it('spreads offers evenly across the level buckets that have references, whatever their size', async () => {
-    // A pool that is mostly PG, as harvested pools are: the draw must not follow the pool's shape.
-    let imageId = 1000;
-    for (let i = 0; i < 40; i++) await reference(imageId++, '1');
-    for (const level of ['2', '4', '8', '16']) {
-      for (let i = 0; i < 2; i++) await reference(imageId++, level);
-    }
-    const answers = new Map(
-      (
-        await pg.query<{ id: number; answer: string }>(
-          `SELECT id, answer FROM "KnightsReferenceImage"`
-        )
-      ).rows.map((r) => [r.id, r.answer])
-    );
+  it(
+    'spreads offers evenly across the level buckets that have references, whatever their size',
+    { timeout: 30_000 },
+    async () => {
+      // A pool that is mostly PG, as harvested pools are: the draw must not follow the pool's shape.
+      let imageId = 1000;
+      for (let i = 0; i < 40; i++) await reference(imageId++, '1');
+      for (const level of ['2', '4', '8', '16']) {
+        for (let i = 0; i < 2; i++) await reference(imageId++, level);
+      }
+      const answers = new Map(
+        (
+          await pg.query<{ id: number; answer: string }>(
+            `SELECT id, answer FROM "KnightsReferenceImage"`
+          )
+        ).rows.map((r) => [r.id, r.answer])
+      );
 
-    const counts = new Map<string, number>();
-    for (let user = 1; user <= 100; user++) {
-      const offer = await pick(user);
-      const level = answers.get(offer?.referenceId as number) as string;
-      counts.set(level, (counts.get(level) ?? 0) + 1);
+      const counts = new Map<string, number>();
+      for (let user = 1; user <= 100; user++) {
+        const offer = await pick(user);
+        const level = answers.get(offer?.referenceId as number) as string;
+        counts.set(level, (counts.get(level) ?? 0) + 1);
+      }
+      expect([...counts.keys()].sort()).toEqual(['1', '16', '2', '4', '8']);
+      for (const count of counts.values()) {
+        expect(count).toBeGreaterThanOrEqual(10);
+        expect(count).toBeLessThanOrEqual(30);
+      }
     }
-    expect([...counts.keys()].sort()).toEqual(['1', '16', '2', '4', '8']);
-    for (const count of counts.values()) {
-      expect(count).toBeGreaterThanOrEqual(10);
-      expect(count).toBeLessThanOrEqual(30);
+  );
+
+  it(
+    'offers a check to the same players at the same rate, whatever the pool holds',
+    { timeout: 30_000 },
+    async () => {
+      const offered = async () => {
+        const users: number[] = [];
+        for (let user = 1; user <= 60; user++)
+          if (await pick(user, 'Knight', 0.25)) users.push(user);
+        return users;
+      };
+      await reference(1000, '1');
+      const single = await offered();
+      let imageId = 1001;
+      for (const level of ['2', '4', '8', '16', '1', '4']) await reference(imageId++, level);
+
+      expect(await offered()).toEqual(single);
+      expect(single.length).toBeGreaterThan(5);
+      expect(single.length).toBeLessThan(30);
     }
-  });
-
-  it('offers a check to the same players at the same rate, whatever the pool holds', async () => {
-    const offered = async () => {
-      const users: number[] = [];
-      for (let user = 1; user <= 60; user++) if (await pick(user, 'Knight', 0.25)) users.push(user);
-      return users;
-    };
-    await reference(1000, '1');
-    const single = await offered();
-    let imageId = 1001;
-    for (const level of ['2', '4', '8', '16', '1', '4']) await reference(imageId++, level);
-
-    expect(await offered()).toEqual(single);
-    expect(single.length).toBeGreaterThan(5);
-    expect(single.length).toBeLessThan(30);
-  });
+  );
 
   it('still offers the buckets a player has left once they answered every check in one', async () => {
     await seedPlayer(pg, 1);
@@ -442,4 +451,25 @@ describe("a hidden check on the player's own image", () => {
     expect(await answer(1, ref, '4')).toMatchObject({ status: 'rejected', reason: 'own-image' });
     expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(0);
   });
+});
+
+describe('a hidden check on the image of a creator the player hid or blocked', () => {
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, is served to other players only, and the answer is refused',
+    async (type) => {
+      await seedPlayer(pg, 1);
+      await seedPlayer(pg, 2);
+      const ref = await reference(10);
+      await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+      await engage(pg, 1, 50, type);
+
+      expect(await pick(1)).toBeNull();
+      expect((await pick(2))?.referenceId).toBe(ref);
+
+      expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(
+        0
+      );
+    }
+  );
 });

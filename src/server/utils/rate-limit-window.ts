@@ -6,6 +6,8 @@ export type RateLimit = {
   id?: string;
   /** Unset means abuse: a refusal then carries no counts. */
   kind?: RateLimitKind;
+  /** An abuse rule whose refusal still carries its counts (the registry's `reportsCounts`). */
+  reportsCounts?: boolean;
   limit: number;
   period: number; // seconds
   userReq?: (user: SessionUser) => boolean;
@@ -89,7 +91,8 @@ export function bindingRefusal(usages: RuleUsage[]): RuleUsage | undefined {
 
 /**
  * The meta for the binding refusal, or `undefined` when no rule refused or the binding rule has
- * no retry time (limit 0). Abuse rules (no `kind: 'product'`) carry no counts.
+ * no retry time (limit 0). Abuse rules carry no counts, unless the registry marks them
+ * `reportsCounts`.
  */
 export function rateLimitMetaForRefusal(
   usages: RuleUsage[],
@@ -103,10 +106,12 @@ export function rateLimitMetaForRefusal(
   };
   const { rule } = refusal;
   if (rule.id) meta.id = rule.id;
-  if (rule.kind !== 'product') return meta;
+  // A registry rule names its kind; a hand-written rule with none is abuse and says nothing.
+  if (rule.kind) meta.kind = rule.kind;
+  if (rule.kind !== 'product' && !rule.reportsCounts) return meta;
   return {
     ...meta,
-    kind: 'product',
+    kind: rule.kind === 'product' ? 'product' : 'abuse',
     limit: rule.limit,
     used: refusal.used,
     remaining: refusal.remaining,

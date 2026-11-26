@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
@@ -55,6 +56,19 @@ type Config struct {
 	RedHosts []string
 	// FetchConcurrency bounds the parallel reads (0 = DefaultFetchConcurrency).
 	FetchConcurrency int
+	// ServeQuery is FEED_GO_V1_MODELS_SERVE_QUERY (default off): a public list request with a text
+	// `query` is answered here (with Deps.Search) instead of falling back (`v1-models-query`).
+	ServeQuery bool
+	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on the public list, a
+	// model-data cache miss is computed with the cache's own lookup (it needs FEED_GO_COMPUTE_MISSES:
+	// Sources' Compute) instead of falling back (`v1-models-data-miss`). A shadow sample computes it
+	// whenever ComputeMisses is on, this switch or not (ListRequest.Serving).
+	ServeDataMiss bool
+	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public `[id]` request whose
+	// model statement returns no row, with the model's lag flag read clean, is answered with Node's
+	// 404 (Answer.Absent) instead of falling back (`v1-models-not-found`). Any other not-found answer
+	// still falls back.
+	AnswerNotFound bool
 }
 
 // Deps are what the port reads.
@@ -67,15 +81,18 @@ type Deps struct {
 	Addons func(context.Context) []browsing.Addon
 	// Blocked is the blocked browsing tag list (the list's `tag` filter); nil: a `tag` falls back.
 	Blocked *feed.BlockedTags
-	Config  Config
-	Now     func() time.Time
+	// Search is the models search index the Node app's text search reads (SEARCH_HOST); nil: a text
+	// `query` falls back (`v1-models-query`).
+	Search ModelSearcher
+	Config Config
+	Now    func() time.Time
 }
 
 func (d *Deps) now() time.Time {
 	if d.Now != nil {
 		return d.Now()
 	}
-	return time.Now()
+	return clock.Now()
 }
 
 func (d *Deps) limit() int {
@@ -137,6 +154,9 @@ type item struct {
 type withVersions struct {
 	items      []*item
 	nextCursor string
+	// statementRows is how many rows the model statement returned, before any was dropped (no model
+	// data, no version left, an excluded tag): 0 means the statement itself found no model.
+	statementRows int
 }
 
 // resolvedAddons is loadBlockedBrowsingContext's resolution: the addons at `onlySelectableLevels(level
@@ -188,11 +208,11 @@ func (d *Deps) getModelsWithVersions(ctx context.Context, in withVersionsInput) 
 		}
 	}
 
-	raws, nextCursor, err := d.getModelsRaw(ctx, &in.raw, in.hidePrivate)
+	raws, nextCursor, statementRows, err := d.getModelsRaw(ctx, &in.raw, in.hidePrivate)
 	if err != nil {
 		return nil, err
 	}
-	out := &withVersions{nextCursor: nextCursor}
+	out := &withVersions{nextCursor: nextCursor, statementRows: statementRows}
 	if len(raws) == 0 {
 		return out, nil
 	}
@@ -207,21 +227,23 @@ func (d *Deps) getModelsWithVersions(ctx context.Context, in withVersionsInput) 
 }
 
 // getModelsRaw is the model statement and its transform: each row with its model data (versions
-// filtered as getModelsRaw filters them), creator and paid-access gate.
-func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool) ([]*rawItem, string, error) {
+// filtered as getModelsRaw filters them), creator and paid-access gate. statementRows is how many
+// rows the statement returned (the lookahead row included), before the transform dropped any.
+func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool) ([]*rawItem, string, int, error) {
 	text, args, err := RawQuery(in)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	maps, err := queryRows(ctx, d.DB, text, args...)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
+	statementRows := len(maps)
 	rows := make([]ModelRow, 0, len(maps))
 	for _, m := range maps {
 		r, err := modelRowFrom(m)
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		rows = append(rows, r)
 	}
@@ -234,7 +256,7 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 		rows = rows[:len(rows)-1]
 	}
 	if len(rows) == 0 {
-		return nil, nextCursor, nil
+		return nil, nextCursor, statementRows, nil
 	}
 	modelIDs := make([]int, len(rows))
 	userIDs := make([]int, len(rows))
@@ -251,10 +273,13 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 	)
 	g := d.group(ctx)
 	g.Go(func(ctx context.Context) (err error) { users, pictures, err = d.Sources.Users(ctx, userIDs); return })
-	g.Go(func(ctx context.Context) (err error) { data, err = d.modelData(ctx, modelIDs); return })
+	g.Go(func(ctx context.Context) (err error) {
+		data, err = d.modelData(ctx, modelIDs, in.ComputeDataMiss)
+		return
+	})
 	g.Go(func(ctx context.Context) (err error) { gated, err = d.paidAccessGates(ctx, modelIDs); return })
 	if err := g.Wait(); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 
 	showSfwFace := showsSfwFace(in.BrowsingLevel)
@@ -334,7 +359,7 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 			sfwFace: showSfwFace,
 		})
 	}
-	return items, nextCursor, nil
+	return items, nextCursor, statementRows, nil
 }
 
 // showsSfwFace is showsSfwFace: a level with no mature bits.

@@ -11,7 +11,7 @@ import '~/__tests__/mocks/db.mock';
 const { mockGetLiveProviderTokens } = vi.hoisted(() => ({ mockGetLiveProviderTokens: vi.fn() }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 vi.mock('~/server/services/provider-download/provider-token.store', () => ({
   getLiveProviderTokens: mockGetLiveProviderTokens,

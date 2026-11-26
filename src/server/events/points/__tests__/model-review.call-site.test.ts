@@ -44,6 +44,7 @@ vi.mock('~/server/services/user.service', () => ({
   getBasicDataForUsers: vi.fn(async () => new Map()),
   getCosmeticsForUsers: vi.fn(async () => ({})),
   getProfilePicturesForUsers: vi.fn(async () => ({})),
+  toggleBookmarked: vi.fn(async () => true),
 }));
 
 import {

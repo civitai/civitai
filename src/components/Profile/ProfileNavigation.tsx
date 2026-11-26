@@ -20,7 +20,7 @@ import {
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { canShowProfileAppsTab } from '~/components/Profile/profile-apps-tab';
 import {
@@ -44,8 +44,8 @@ const ProfileHiddenTabsModal = dynamic(
     ssr: false,
   }
 );
-const openProfileHiddenTabs =
-  createDialogTrigger<ProfileHiddenTabsModalProps>(ProfileHiddenTabsModal);
+const openProfileHiddenTabs = (props: ProfileHiddenTabsModalProps) =>
+  dialogStore.trigger({ component: ProfileHiddenTabsModal, props });
 
 type ProfileNavigationProps = {
   username: string;
@@ -223,7 +223,10 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
         aria-label="Choose profile tabs"
         onClick={() =>
           openProfileHiddenTabs({
-            props: { userId: user.id, username, privacySettings, tabs: hideableTabs },
+            userId: user.id,
+            username,
+            privacySettings,
+            tabs: hideableTabs,
           })
         }
       >

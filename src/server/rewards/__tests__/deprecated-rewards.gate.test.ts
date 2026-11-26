@@ -48,11 +48,10 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),
-  getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
   getTransactionByExternalId: vi.fn(async () => null),
-  createBuzzTransaction: vi.fn(),
+  getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
 }));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({

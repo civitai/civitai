@@ -1,15 +1,14 @@
-import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { heldModelIdsSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
-import { legalHoldSkipReason } from '~/server/utils/legal-hold';
 import {
   deleteModelFileObject,
   getQuarantineBucket,
   resolveModelFileDeleteTarget,
 } from '~/utils/s3-utils';
 import { createJob } from './job';
+import { Prisma } from '@prisma/client';
+import { trainingDataOnOpenReportSql } from '~/server/services/training-data-restricted.service';
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks');
@@ -19,7 +18,6 @@ type OldTrainingRow = {
   mf_id: number;
   job_id: string | null;
   url: string;
-  held: boolean;
 };
 
 /**
@@ -235,6 +233,7 @@ export const deleteOldTrainingData = createJob(
     // uncapped count for this reason; so does this.
     // Resolved once, beside the switch, so a pass cannot change mode halfway through.
     const dryRun = await isFlipt(FLIPT_FEATURE_FLAGS.TRAINING_DATA_PURGE_DRY_RUN);
+    const onOpenReport = trainingDataOnOpenReportSql(Prisma.raw('mv.id'));
 
     const [{ total }] = await dbWrite.$queryRaw<{ total: bigint }[]>`
       SELECT count(*) as total
@@ -246,15 +245,14 @@ export const deleteOldTrainingData = createJob(
              (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
         AND mf."dataPurged" is not true
         AND mf.visibility != 'Public'
+        AND NOT ${onOpenReport}
     `;
 
-    const markerView = await holdMarkerViewExists();
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       WITH picked AS MATERIALIZED (
       SELECT mf.id                                        as mf_id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
-             mf.url,
-             mv."modelId"
+             mf.url
       FROM "ModelVersion" mv
              JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
       WHERE mv."uploadType" = 'Trained'
@@ -263,6 +261,7 @@ export const deleteOldTrainingData = createJob(
              (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
         AND mf."dataPurged" is not true
         AND mf.visibility != 'Public'
+        AND NOT ${onOpenReport}
       -- 🔴 RANDOM, AND A DETERMINISTIC ORDER WOULD BE A BUG HERE. Several outcomes leave a row
       -- eligible forever by design: a non-allowlisted bucket and an unparseable url can never
       -- succeed, and a still-referenced object must not. Under any stable order those rows hold
@@ -282,10 +281,7 @@ export const deleteOldTrainingData = createJob(
       ORDER BY random()
       LIMIT ${DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS}
       )
-      SELECT p.mf_id, p.job_id, p.url, p."modelId" IN (${heldModelIdsSql(
-        Prisma.sql`SELECT "modelId" FROM picked`,
-        markerView
-      )}) as held
+      SELECT p.mf_id, p.job_id, p.url
       FROM picked p
     `;
 
@@ -312,22 +308,8 @@ export const deleteOldTrainingData = createJob(
     let skippedJobs = 0;
     let dryRunWouldDelete = 0;
     let dryRunWouldSkip = 0;
-    let legalHoldSkipped = 0;
 
-    for (const { mf_id, job_id, url, held } of oldTraining) {
-      const holdReason = legalHoldSkipReason(held);
-      if (holdReason) {
-        legalHoldSkipped += 1;
-        if (dryRun) dryRunWouldSkip += 1;
-        else skippedJobs += 1;
-        logJob({
-          type: 'info',
-          message: dryRun ? `Dry run, would skip` : `Skipped, object left in place`,
-          data: { reason: holdReason, jobId: job_id, modelFileId: mf_id },
-        });
-        continue;
-      }
-
+    for (const { mf_id, job_id, url } of oldTraining) {
       try {
         // 🔴 `deleteModelFileObject`, NOT a bare `deleteObject(bucket, key)` off `parseKey`.
         // That is what this loop used to do, and it is why nothing was ever purged from the
@@ -481,7 +463,6 @@ export const deleteOldTrainingData = createJob(
         eligibleTotal: Number(total),
         dryRunWouldDelete,
         dryRunWouldSkip,
-        legalHoldSkipped,
       },
     });
 

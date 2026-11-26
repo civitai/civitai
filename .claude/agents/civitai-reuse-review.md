@@ -123,10 +123,11 @@ A new pool, a new lock, or a hand-rolled `Promise.all` batcher is a finding.
 - `EdgeMedia/` — **CLAUDE.md requires it over `next/image`.** A raw `<img>` or `next/image` in the diff
   is a finding every time.
 - `MasonryGrid/`, `MasonryColumns/`, `InView/`, `IntersectionObserver/`, `EndOfFeed/` — infinite feeds.
-- `Dialog/` — `dialogStore.trigger({ component, props })` (`dialogStore.ts`), with the dialog calling
-  `useDialogContext()`; confirms use `Dialog/Common/ConfirmDialog`; URL-routed dialogs go in
-  `routed-dialog/registry.ts`. A bare `<Modal>` with local `opened` state, or a new `@mantine/modals`
-  call, bypasses it.
+- `Dialog/` — `openDialog(() => import('…'), props)` (`openDialog.ts`), with the dialog calling
+  `useDialogContext()`; confirms use `openConfirm`, alerts `openAlert`, arbitrary content
+  `openContentDialog` (`Dialog/Common/`); URL-routed dialogs go in `routed-dialog/registry.ts` with
+  their component in `RoutedDialogProvider`. A bare `<Modal>` with local `opened` state, a new
+  per-modal opener file that only passes through, or a `@mantine/modals` call bypasses it.
 - `ImageGuard/`, `BrowsingLevel/`, `HiddenPreferences/` — NSFW/blur gating. Never re-derive this.
 - `UserAvatar/`, `CreatorCard/`, `Cards/`, `CardTemplates/`, `IconBadge/`, `UserStatBadges/`.
 - `LoginRedirect/`, `LoginPopover/`, `JoinPopover/`, `RequireMembership/`, `Gated/` — gating an action

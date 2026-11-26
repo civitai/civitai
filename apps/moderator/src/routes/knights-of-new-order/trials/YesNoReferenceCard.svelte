@@ -6,7 +6,6 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
@@ -14,8 +13,9 @@
   import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import YesNoPicker from './YesNoPicker.svelte';
   import type { YesNoReferenceItem } from '$lib/server/knights/yesno-reference.service';
+  import TrialMedia from './TrialMedia.svelte';
 
-  let { item }: { item: YesNoReferenceItem } = $props();
+  let { item }: { item: YesNoReferenceItem & { restricted: boolean } } = $props();
 
   const toggle = new FormState({ reload: true, onSuccess: null });
   const save = new FormState({
@@ -43,9 +43,8 @@
     : 'opacity-60'}"
 >
   <a href={imageLookupUrl(item.imageId)} class="shrink-0 self-start">
-    <EdgeMedia
-      src={item.imageKey}
-      name={item.imageName}
+    <TrialMedia
+      {item}
       width={240}
       alt="Image {item.imageId}"
       class="max-h-64 rounded-md"
@@ -76,6 +75,8 @@
       <p class="text-xs text-dark-2">
         Acolytes have answered this pair, so it can't be edited or deleted. Deactivate it to stop serving it.
       </p>
+    {:else if item.restricted}
+      <p class="text-sm text-dark-2">Withheld from you, so its answer is not editable here.</p>
     {:else}
       {#if save.error}<ErrorAlert message={save.error} />{/if}
       <form method="POST" action="?/updateYesNo" use:enhance={save.enhance} class="flex flex-col gap-2">
@@ -109,13 +110,15 @@
     {#if toggle.error}<ErrorAlert message={toggle.error} />{/if}
     {#if remove.error}<ErrorAlert message={remove.error} />{/if}
     <div class="flex flex-wrap gap-2">
-      <form method="POST" action="?/toggleYesNo" use:enhance={toggle.enhance}>
-        <input type="hidden" name="id" value={item.id} />
-        <input type="hidden" name="active" value={String(!item.active)} />
-        <Button type="submit" size="sm" variant="outline" disabled={toggle.submitting}
-          >{item.active ? 'Deactivate' : 'Activate'}</Button
-        >
-      </form>
+      {#if item.active || !item.restricted}
+        <form method="POST" action="?/toggleYesNo" use:enhance={toggle.enhance}>
+          <input type="hidden" name="id" value={item.id} />
+          <input type="hidden" name="active" value={String(!item.active)} />
+          <Button type="submit" size="sm" variant="outline" disabled={toggle.submitting}
+            >{item.active ? 'Deactivate' : 'Activate'}</Button
+          >
+        </form>
+      {/if}
       <form
         bind:this={deleteForm}
         method="POST"

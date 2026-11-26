@@ -49,7 +49,6 @@
     cardSupportsKohya,
     kohyaSeedCard,
     runEngine,
-    restoreRun,
     runSupportsKohya,
     withEngine,
     runFromPrice,
@@ -102,7 +101,10 @@
   let runs = $state<Run[]>(
     untrack(() =>
       initial
-        ? initial.runs.map((run) => restoreRun(run, kohyaEnabled, enabledFlags))
+        // A restored Kohya run (Back, Train again) falls back to AI Toolkit for a viewer without the gate.
+        ? initial.runs.map((run) =>
+            kohyaEnabled || runEngine(run) !== 'kohya' ? run : withEngine(run, 'ai-toolkit', enabledFlags)
+          )
         : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
@@ -860,7 +862,7 @@
                 </button>
                 <div class="ml-auto shrink-0">{@render priceTag(runPrice, 'text-[13px]')}</div>
                 {#if multi}
-                  <civitai-action-button
+                  <studio-icon-button
                     class="shrink-0"
                     label={`Remove run ${ri + 1}`}
                     disabled={!removalAllowed(ri)}
@@ -872,8 +874,8 @@
                       removeRun(ri);
                     }}
                   >
-                    <span slot="icon"><IconX size={14} stroke={2} /></span>
-                  </civitai-action-button>
+                    <IconX size={16} stroke={2} />
+                  </studio-icon-button>
                 {/if}
               </div>
               {@render rowEnginePicker(r, ri)}
@@ -967,7 +969,7 @@
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
         </svg>
-        Nothing is saved until you start training
+        Nothing is charged until you start training
       </p>
     {/snippet}
   </StickySummary>

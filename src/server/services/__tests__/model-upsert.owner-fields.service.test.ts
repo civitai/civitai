@@ -409,38 +409,47 @@ describe('moderation-flow meta keys', () => {
   });
 });
 
-// A content wipe's removal record: client meta can neither set nor change it, a moderator's included
-// (their edit form sends stored meta back, which could put a stale record onto a live model).
-describe('removal record keys', () => {
-  const RECORD = {
-    removedWithOwner: true,
-    statusBeforeRemoval: 'Published',
-    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+// The nsfw lock backfill's record decides what a revert touches: an owner's save cannot change it.
+describe('nsfwLockBackfill', () => {
+  const STORED_BACKFILL = {
+    at: '2026-11-25T00:00:00.000Z',
+    bucket: 'scan-locks',
+    priorLockedProperties: ['nsfw', 'tags'],
+    revertedAt: '2026-11-26T00:00:00.000Z',
   };
 
   it.each([
-    ['an owner', OWNER_ID, false],
-    ['a moderator', MODERATOR_ID, true],
-  ])('drops them from %s’s meta on a model without them', async (_, userId, isModerator) => {
-    mockStored({ meta: {} });
+    ['leaves it out', {}],
+    [
+      'sends a stale copy without revertedAt',
+      { nsfwLockBackfill: { ...STORED_BACKFILL, revertedAt: undefined } },
+    ],
+    [
+      'sends a forged one',
+      { nsfwLockBackfill: { at: 'x', bucket: 'other', priorLockedProperties: [] } },
+    ],
+  ])('keeps the stored record when an owner save %s', async (_case, sent) => {
+    mockStored({ meta: { nsfwLockBackfill: STORED_BACKFILL } });
+
     await upsert({
       id: MODEL_ID,
-      userId,
-      isModerator,
-      meta: { ...RECORD, hideBuzz: true } as ModelUpsertInput['meta'],
+      userId: OWNER_ID,
+      meta: { ...sent, hideBuzz: true } as ModelUpsertInput['meta'],
     });
-    expect(updateData().meta).toEqual({ hideBuzz: true });
+
+    expect(updateData().meta).toEqual({ nsfwLockBackfill: STORED_BACKFILL, hideBuzz: true });
   });
 
-  it('keeps the stored record when a moderator saves different values', async () => {
-    mockStored({ meta: RECORD });
+  it('does not let an owner save add one the model never had', async () => {
+    mockStored({ meta: null });
+
     await upsert({
       id: MODEL_ID,
-      userId: MODERATOR_ID,
-      isModerator: true,
-      meta: { removedWithOwner: false, statusBeforeRemoval: 'Draft' } as ModelUpsertInput['meta'],
+      userId: OWNER_ID,
+      meta: { nsfwLockBackfill: STORED_BACKFILL, hideBuzz: true } as ModelUpsertInput['meta'],
     });
-    expect(updateData().meta).toEqual(RECORD);
+
+    expect(updateData().meta).toEqual({ hideBuzz: true });
   });
 });
 
@@ -604,37 +613,6 @@ describe('a moderator lifting the nsfw lock', () => {
 });
 
 describe('the locked row', () => {
-  const RECORD = {
-    removedWithOwner: true,
-    statusBeforeRemoval: 'Published',
-    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
-  };
-
-  it('refuses an owner’s save of a model a content wipe kept, writing nothing', async () => {
-    mockStored({ meta: RECORD });
-    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID })).rejects.toThrow(/not authorized/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  it('refuses it when the wipe kept the model after the save read it', async () => {
-    mockStored({ meta: {} });
-    mockLocked({ meta: RECORD });
-    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID })).rejects.toThrow(/not authorized/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  it('keeps the record a wipe wrote after a moderator’s save read the model', async () => {
-    mockStored({ meta: {} });
-    mockLocked({ meta: RECORD });
-    await upsert({
-      id: MODEL_ID,
-      userId: MODERATOR_ID,
-      isModerator: true,
-      meta: { hideBuzz: true } as ModelUpsertInput['meta'],
-    });
-    expect(updateData().meta).toEqual({ ...RECORD, hideBuzz: true });
-  });
-
   it('keeps a moderation key written after an owner’s save read the model', async () => {
     mockStored({ meta: {} });
     mockLocked({ meta: { cannotPublish: true } });
@@ -1195,6 +1173,38 @@ describe('cover gate', () => {
       expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
     );
   });
+
+  // The form sends both covers; an unchanged featured one a reader skips for now must not refuse
+  // the edit to the other.
+  it('validates only the cover the save changes', async () => {
+    mockStored({ coverImageId: null, sfwCoverImageId: 7 });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 9, sfwCoverImageId: 7 });
+
+    expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
+      expect.objectContaining({ coverImageId: 9, sfwCoverImageId: undefined })
+    );
+  });
+});
+
+describe('a change in maturity', () => {
+  // `updateModelNsfwLevels` recomputes the level; it is seen here as its UPDATE.
+  const recomputed = () =>
+    mockDbWrite.$queryRaw.mock.calls.some(([query]) =>
+      ((query as { strings?: string[] })?.strings ?? []).join('').includes('SET "nsfwLevel" = (')
+    );
+
+  it('recomputes the model level when the owner marks the model mature', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: true });
+    expect(recomputed()).toBe(true);
+  });
+
+  it('does not recompute it when maturity, the face and the covers are unchanged', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+    expect(recomputed()).toBe(false);
+  });
 });
 
 describe('.com face re-check after a listing edit', () => {
@@ -1312,6 +1322,16 @@ describe('.com face re-check after a listing edit', () => {
     mockLocked({ sfwCoverImageId: null });
     await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 5 })).rejects.toThrow(
       'civitai.com card changed while you were editing'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an owner’s save whose .red cover changed after the save read it', async () => {
+    // The version showcase writes this cover too.
+    mockStored({ coverImageId: 4 });
+    mockLocked({ coverImageId: 9 });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 7 })).rejects.toThrow(
+      'cover changed while you were editing'
     );
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });

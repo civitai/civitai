@@ -36,7 +36,8 @@ import { thumbnailCache } from '~/server/redis/caches';
 const OWNER = 3300;
 const STRANGER = 4400;
 
-const BLOCKED_FOR = /\(i\."blockedFor" IS NULL(?: OR i\."userId" = \$(\d+))?\)/g;
+// The owner's exemption is held to `ownerMediaAllowedSql`, which follows the id.
+const BLOCKED_FOR = /\(i\."blockedFor" IS NULL(?:\)| OR \(i\."userId" = \$(\d+) AND )/g;
 
 async function blockedForClauses(
   viewer: { id: number; isModerator?: boolean } | undefined,
@@ -145,7 +146,12 @@ describe('getAllImages requiringMeta', () => {
 // civitai/civitai#10097: a marked custom thumbnail keeps its level; its url goes to the owner view or a moderator.
 describe('getAllImages thumbnails', () => {
   const VIDEO = 9100;
-  const run = async (user: { id: number } | undefined, asOwner: boolean) => {
+  const run = async (
+    user: { id: number } | undefined,
+    asOwner: boolean,
+    // A Blocked rating alone marks it; a block does not leave it to its owner.
+    ownerMediaAllowed = true
+  ) => {
     queryWithTimeoutMock.mockResolvedValue({
       rows: [
         {
@@ -164,7 +170,15 @@ describe('getAllImages thumbnails', () => {
       ],
     });
     const fetch = vi.spyOn(thumbnailCache, 'fetch').mockResolvedValue({
-      [VIDEO]: { id: 1, url: 'thumb-url', width: 1, height: 1, nsfwLevel: 16, blockMarked: true },
+      [VIDEO]: {
+        id: 1,
+        url: 'thumb-url',
+        width: 1,
+        height: 1,
+        nsfwLevel: 16,
+        blockMarked: true,
+        ownerMediaAllowed,
+      },
     } as never);
     try {
       const { items } = await getAllImages({
@@ -195,5 +209,9 @@ describe('getAllImages thumbnails', () => {
 
   it('gives the owner without the owner view no url for a marked thumbnail', async () => {
     expect(await run({ id: OWNER }, false)).toEqual({ url: undefined, level: 16 });
+  });
+
+  it('gives the owner, viewing as owner, no url for a blocked thumbnail', async () => {
+    expect(await run({ id: OWNER }, true, false)).toEqual({ url: undefined, level: 16 });
   });
 });

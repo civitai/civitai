@@ -15,7 +15,6 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
 }));
 
 // The report page always has a signed-in moderator.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, isModerator: true }) }));
 // Off, so a not-held image keeps the CDN copy these tests load; the retracted-media fallback is
 // `CsamHeldMedia.browser.test.tsx`'s.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -83,7 +82,8 @@ const renderCard = (data: ModerationImageModel) =>
   renderWithProviders(
     <IntersectionObserverProvider>
       <CsamImageCard data={data} height={100} />
-    </IntersectionObserverProvider>
+    </IntersectionObserverProvider>,
+    { user: { id: 1, isModerator: true } }
   );
 
 const media = async (selector: string) => {
@@ -103,7 +103,8 @@ describe('CsamHeldMedia onShown', () => {
     held();
     const onShown = vi.fn();
     await renderWithProviders(
-      <CsamHeldMedia image={image} onClick={() => undefined} onShown={onShown} />
+      <CsamHeldMedia image={image} onClick={() => undefined} onShown={onShown} />,
+      { user: { id: 1, isModerator: true } }
     );
     const img = (await media('img[src="/api/mod/held-media/41"]')) as HTMLImageElement;
     expect(onShown).not.toHaveBeenCalled();
@@ -117,7 +118,8 @@ describe('CsamHeldMedia onShown', () => {
     notHeld();
     const onShown = vi.fn();
     await renderWithProviders(
-      <CsamHeldMedia image={image} onClick={() => undefined} onShown={onShown} />
+      <CsamHeldMedia image={image} onClick={() => undefined} onShown={onShown} />,
+      { user: { id: 1, isModerator: true } }
     );
     const img = (await media('[data-testid="cdn-media"]')) as HTMLImageElement;
 
@@ -130,7 +132,8 @@ describe('CsamHeldMedia onShown', () => {
     held();
     const onShown = vi.fn();
     await renderWithProviders(
-      <CsamHeldMedia image={image} onClick={() => undefined} onShown={onShown} />
+      <CsamHeldMedia image={image} onClick={() => undefined} onShown={onShown} />,
+      { user: { id: 1, isModerator: true } }
     );
     loadImage((await media('img')) as HTMLImageElement, 0);
     expect(onShown).not.toHaveBeenCalled();
@@ -154,7 +157,8 @@ describe('CsamHeldMedia onShown', () => {
       held();
       const onShown = vi.fn();
       await renderWithProviders(
-        <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />
+        <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />,
+        { user: { id: 1, isModerator: true } }
       );
       const el = (await media('video')) as HTMLVideoElement;
       el.dispatchEvent(new Event('loadedmetadata'));
@@ -168,7 +172,8 @@ describe('CsamHeldMedia onShown', () => {
     held();
     const onShown = vi.fn();
     await renderWithProviders(
-      <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />
+      <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />,
+      { user: { id: 1, isModerator: true } }
     );
     const el = (await media('video')) as HTMLVideoElement;
     expect(el.hasAttribute('controls')).toBe(true);
@@ -191,7 +196,8 @@ describe('CsamHeldMedia onShown', () => {
     notHeld();
     const onShown = vi.fn();
     await renderWithProviders(
-      <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />
+      <CsamHeldMedia image={video} onClick={() => undefined} onShown={onShown} />,
+      { user: { id: 1, isModerator: true } }
     );
     const el = (await media('video[data-testid="cdn-media"]')) as HTMLVideoElement;
     expect(el.hasAttribute('controls')).toBe(true);

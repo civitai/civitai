@@ -1,4 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 // A Knight vote is graded when it is cast only if that vote decided the image. Until then it stays
 // Pending and the decision grades it (the settle rewrites only Pending votes); a round that ends
@@ -32,6 +38,13 @@ const {
     mockClearRatings: vi.fn(),
     mockUpdateLevel: vi.fn(),
   };
+});
+
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+// The withheld rule a down-rating consensus asks runs for real.
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => holder.db);
+  return { kyselyRead: db, kyselyWrite: db };
 });
 
 vi.mock('~/server/games/new-order/utils', () => ({
@@ -100,11 +113,28 @@ import { NsfwLevel, NewOrderImageRatingStatus } from '~/server/common/enums';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 const CLEAN = 1;
+const WITHHELD = 2; // withheld from a moderator without the grant
 const PLAYER = 5;
 
 const rows: Record<number, { needsReview: string | null }> = {
   [CLEAN]: { needsReview: null },
+  [WITHHELD]: { needsReview: null },
 };
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(CSAM_LINK_TABLES_SQL);
+  await holder.db.exec(`
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, url text NOT NULL, ingestion text NOT NULL DEFAULT 'Scanned',
+      "needsReview" text, "blockedFor" text, "userId" int NOT NULL, "pHash" bigint, "postId" int
+    );
+    ${WITHHELD_TABLES_SQL}
+    INSERT INTO "Image" (id, url, "userId") VALUES (${CLEAN}, 'key-1', 7);
+    INSERT INTO "Image" (id, url, "userId") VALUES (${WITHHELD}, 'key-2', 7);
+    INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (3, 'key-2', 'Blocked', 'CSAM', 8);
+  `);
+}, 60_000);
 const row = (id: number, select: Record<string, boolean>) => {
   const full: Record<string, unknown> = {
     id,
@@ -157,17 +187,19 @@ async function castVote({
   voteNumber,
   rating,
   tally,
+  imageId = CLEAN,
 }: {
   voteNumber: number;
   rating: NsfwLevel;
   tally: { level: NsfwLevel; score: number };
+  imageId?: number;
 }) {
-  knightPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+  knightPool.exists.mockImplementation(async (id: number) => id === imageId);
   knightPool.getCount.mockResolvedValue(voteNumber - 1);
   knightPool.increment.mockResolvedValue(voteNumber);
   ratingsCounter.getAll.mockResolvedValue([{ value: `Knight-${tally.level}`, score: tally.score }]);
   const tracker = { newOrderImageRating: vi.fn().mockResolvedValue(undefined) };
-  await addImageRating({ playerId: PLAYER, imageId: CLEAN, rating, chTracker: tracker as any });
+  await addImageRating({ playerId: PLAYER, imageId, rating, chTracker: tracker as any });
   const calls = tracker.newOrderImageRating.mock.calls;
   return calls.length ? (calls[0][0].status as NewOrderImageRatingStatus) : 'not recorded';
 }
@@ -213,6 +245,50 @@ describe('grading a Knight vote when it is cast', () => {
     expect(knightPool.reset).toHaveBeenCalledWith({ id: CLEAN });
     expect(voidedIds()).toEqual([CLEAN]);
   });
+
+  it('a consensus that would lower a withheld image leaves its level and sends it to a moderator', async () => {
+    mockUpdateLevel.mockResolvedValue(NsfwLevel.X);
+    expect(
+      await castVote({ voteNumber: 5, rating: NsfwLevel.X, tally: CONSENSUS_X, imageId: WITHHELD })
+    ).toBe(NewOrderImageRatingStatus.Pending);
+    expect(mockUpdateLevel).not.toHaveBeenCalled();
+    expect(inquisitorPool.getCount).toHaveBeenCalledWith(WITHHELD);
+    expect(voidedIds()).toEqual([]);
+  });
+
+  it('judges the loosening against the primary level when the replica still has the old one', async () => {
+    dbMock.dbRead.image.findUnique.mockImplementation(async (args: any) => ({
+      ...row(args.where.id, args.select),
+      ...('nsfwLevel' in args.select && { nsfwLevel: NsfwLevel.X }),
+    }));
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.XXX } as never);
+    mockUpdateLevel.mockResolvedValue(NsfwLevel.X);
+    expect(
+      await castVote({ voteNumber: 5, rating: NsfwLevel.X, tally: CONSENSUS_X, imageId: WITHHELD })
+    ).toBe(NewOrderImageRatingStatus.Pending);
+    expect(mockUpdateLevel).not.toHaveBeenCalled();
+  });
+
+  // A moderator's own rating writes at once, under the moderator's own grant.
+  it.each([false, true])(
+    "forwards a moderator's grant (%s) to the rating write",
+    async (csamReview) => {
+      knightPool.exists.mockImplementation(async (id: number) => id === WITHHELD);
+      knightPool.getCount.mockResolvedValue(0);
+      const tracker = { newOrderImageRating: vi.fn().mockResolvedValue(undefined) };
+      await addImageRating({
+        playerId: PLAYER,
+        imageId: WITHHELD,
+        rating: NsfwLevel.X,
+        chTracker: tracker as any,
+        isModerator: true,
+        csamReview,
+      }).catch(() => undefined);
+      expect(mockUpdateLevel).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: WITHHELD, isModerator: true, csamReview })
+      );
+    }
+  );
 
   it('control: a vote below the limit voids nothing', async () => {
     expect(await castVote({ voteNumber: 3, rating: NsfwLevel.X, tally: NO_CONSENSUS })).toBe(

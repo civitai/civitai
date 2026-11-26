@@ -1,3 +1,4 @@
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { Workflow } from '@civitai/orchestration-client';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
@@ -22,7 +23,7 @@ import type {
  * both it still reports the output `available` with a url that does not serve the
  * real media (an image serves blurred, a video does not serve at all):
  *   - the SITE asked for it: an SFW app's submit sends `allowMatureContent: false`
- *     (`blockOutputClamp`, from the token's `maxBrowsingLevel`), and a base model that
+ *     (`outputRestrictions`, from the token's `maxBrowsingLevel`), and a base model that
  *     restricts mature output adds `nsfwLevel: 'pg13'`;
  *   - the PAYING POOL caused it: a submit that sent no `allowMatureContent` has it set
  *     at charge time from the Buzz account that paid (the orchestrator's mature-content
@@ -218,11 +219,7 @@ export function blockOutputCeilingFromClaims(claims: {
 }): BlockOutputCeiling {
   const viewer = claims.viewerBrowsingLevel;
   const flooredForSignedInViewer =
-    typeof claims.sub === 'string' &&
-    USER_SUB_RE.test(claims.sub) &&
-    typeof viewer === 'number' &&
-    Number.isInteger(viewer) &&
-    viewer >= 0;
+    typeof claims.sub === 'string' && USER_SUB_RE.test(claims.sub) && isBrowsingLevelClaim(viewer);
   return {
     maxBrowsingLevel: resolveViewerBrowsingLevel(
       flooredForSignedInViewer

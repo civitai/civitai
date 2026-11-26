@@ -188,31 +188,6 @@ describe('recordOwner: the owner rule, cell by cell', () => {
       { author: { kind: 'app' } },
       { kind: 'app' },
     ],
-    // A counter document: nobody's, under every write policy.
-    [
-      'shared none, counter document → nobody',
-      { kind: 'docs', visibility: 'shared', write: 'none' },
-      { author: { kind: 'counter' }, data: {} },
-      { kind: 'nobody' },
-    ],
-    [
-      'shared own, counter document → nobody',
-      { kind: 'docs', visibility: 'shared', write: 'own' },
-      { author: { kind: 'counter' }, data: {} },
-      { kind: 'nobody' },
-    ],
-    [
-      'shared owner, counter document → nobody',
-      { kind: 'docs', visibility: 'shared', write: 'owner' },
-      { author: { kind: 'counter' }, data: {} },
-      { kind: 'nobody' },
-    ],
-    [
-      'shared anyone, counter document → nobody',
-      { kind: 'docs', visibility: 'shared', write: 'anyone' },
-      { author: { kind: 'counter' }, data: {} },
-      { kind: 'nobody' },
-    ],
   ];
 
   it.each(cells)('%s', (_name, policy, over, owner) => {
@@ -334,7 +309,7 @@ describe('toAppRecord', () => {
     ['own', {}, { kind: 'user', userId: AUTHOR_UID }],
     ['anyone', { lastWriterUid: EDITOR_UID }, { kind: 'user', userId: AUTHOR_UID }],
     ['owner', { author: { kind: 'app' } }, { kind: 'app' }],
-    ['none', { author: { kind: 'counter' }, data: {} }, { kind: 'nobody' }],
+    ['none', { author: { kind: 'app' } }, { kind: 'app' }],
   ] as const)('a shared %s record keeps the URN the feed publishes', (write, over, owner) => {
     const rec = build({ kind: 'docs', visibility: 'shared', write }, over);
     expect(rec.urn).toBe(FEED_URN);

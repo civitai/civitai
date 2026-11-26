@@ -32,12 +32,17 @@ export function getKlein9bNoticeHtml({
 }
 
 export const klein9bNoticeEmail = createEmail({
+  template: 'klein9bNotice',
+  mailClass: 'transactional',
   header: ({ to, variant }: Klein9bNoticeData) => ({
     subject: KLEIN9B_NOTICE[variant].subject,
     to,
   }),
   html(data: Klein9bNoticeData) {
     return simpleEmailWithTemplate({
+      icon: '📢',
+      accent: 'blue',
+      eyebrow: 'Creator notice',
       header: KLEIN9B_NOTICE[data.variant].subject,
       body: getKlein9bNoticeHtml(data),
     });

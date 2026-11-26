@@ -44,6 +44,7 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { callerTagsRefusal } from '~/shared/utils/app-block-tags';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
@@ -68,6 +69,7 @@ import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/wo
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
+  isFlagProtected,
   middleware,
   moderatorProcedure,
   protectedProcedure,
@@ -95,6 +97,8 @@ import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/cli
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
+import { expandServiceDealPrompt } from '~/server/services/creator-service-expand-prompt.service';
+import { expandServiceDealPromptSchema } from '~/server/schema/creator-service-deal.schema';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -135,17 +139,17 @@ const orchestratorMiddlewareFor = (options?: { allowRestricted: boolean }) =>
     const user = ctx.user;
     if (!user) throw throwAuthorizationError();
     const token = await getOrchestratorToken(user.id, ctx, options);
-    const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+    // Domain only: the viewer's mature-content setting must not withhold or block their own generations.
+    const allowMatureContent = ctx.domain === 'green' ? false : undefined;
     return next({
       ctx: {
         ...ctx,
         user,
         token,
         allowMatureContent,
-        hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+        hideMatureContent: ctx.domain === 'green',
       },
     });
-    // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
   });
 const orchestratorMiddleware = orchestratorMiddlewareFor();
 
@@ -265,6 +269,22 @@ export const orchestratorRouter = router({
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     }),
+  expandServiceDealPrompt: orchestratorEnhanceProcedure
+    .use(isFlagProtected('creatorServices'))
+    .use(rateLimit({ limit: 60, period: 3600 }))
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(expandServiceDealPromptSchema)
+    .mutation(({ ctx, input }) =>
+      expandServiceDealPrompt({
+        dealId: input.id,
+        sellerId: ctx.user.id,
+        instructions: input.instructions,
+        token: ctx.token,
+        isGreen: ctx.domain === 'green',
+        isModerator: ctx.user.isModerator,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      })
+    ),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
   queryWorkflowsByTags: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -326,7 +346,7 @@ export const orchestratorRouter = router({
       const result = await updateWorkflow({
         ...input,
         token: ctx.token,
-        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+        viewer: { domain: ctx.domain },
       });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
@@ -476,6 +496,9 @@ export const orchestratorRouter = router({
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
+      // `.input(z.any())` leaves tags unchecked.
+      const tagsRefusal = callerTagsRefusal(inputTags);
+      if (tagsRefusal) throw new TRPCError({ code: 'BAD_REQUEST', message: tagsRefusal });
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(

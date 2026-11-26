@@ -8,6 +8,8 @@ export type PublishQueryInput = {
   epoch: number;
   ownRights?: boolean;
   shareDataset?: boolean;
+  /** Add the run as a new version of one of the owner's models; the entry asks which. */
+  asVersion?: boolean;
 };
 
 export function publishSearchParams({
@@ -15,8 +17,10 @@ export function publishSearchParams({
   epoch,
   ownRights,
   shareDataset,
+  asVersion,
 }: PublishQueryInput): URLSearchParams {
   const params = new URLSearchParams({ workflowId, epoch: String(epoch) });
+  if (asVersion) params.set('target', 'existing');
   // No choice leaves the stored one as it is.
   if (ownRights === undefined && shareDataset === undefined) return params;
   params.set('ownRights', ownRights ? '1' : '0');

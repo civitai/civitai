@@ -12,7 +12,18 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
+
+// hasLabel reports whether series m carries a label named name.
+func hasLabel(m *dto.Metric, name string) bool {
+	for _, l := range m.GetLabel() {
+		if l.GetName() == name {
+			return true
+		}
+	}
+	return false
+}
 
 // metricValue reads one series of a counter (its value) or histogram (its sample count) by name and
 // exact label set; found is false when the series does not exist.
@@ -25,6 +36,15 @@ func metricValue(t *testing.T, reg *prometheus.Registry, name string, labels map
 	for _, mf := range mfs {
 		if mf.GetName() != name {
 			continue
+		}
+		// The comparison families carry `source` (shadow | serve-parity): a query that names no source
+		// reads the shadow sample's series, as every test written before the serve-side sampler does.
+		if _, ok := labels[SourceLabel]; !ok && len(mf.GetMetric()) > 0 && hasLabel(mf.GetMetric()[0], SourceLabel) {
+			withSource := map[string]string{SourceLabel: SourceShadow}
+			for k, v := range labels {
+				withSource[k] = v
+			}
+			labels = withSource
 		}
 	series:
 		for _, m := range mf.GetMetric() {

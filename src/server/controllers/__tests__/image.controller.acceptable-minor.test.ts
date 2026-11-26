@@ -1,5 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as ImageService from '~/server/services/image.service';
 
@@ -24,6 +30,26 @@ const IMAGE_IN_B = 22;
 const IMAGE_IN_BOOKMARKS = 33;
 const IMAGE_REJECTED_IN_A = 44;
 const IMAGE_ADDED_BY_OTHER_IN_A = 55;
+const WITHHELD_IN_A = 66; // withheld from a moderator without the grant
+
+// The withheld rule runs for real.
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => holder.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(`
+    ${CSAM_LINK_TABLES_SQL}
+    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
+      "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
+    ${WITHHELD_TABLES_SQL}
+    INSERT INTO "Image" (id, url, ingestion, "userId") VALUES (${IMAGE_IN_A}, 'key-a', 'Scanned', ${OWNER}),
+      (${WITHHELD_IN_A}, 'key-w', 'Scanned', ${OWNER});
+    INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (67, 'key-w', 'Blocked', 'CSAM', 8);
+  `);
+}, 60_000);
 const entry = (
   id: number,
   collectionId: number,
@@ -36,6 +62,7 @@ const ROWS = [
   entry(3, BOOKMARKS, IMAGE_IN_BOOKMARKS, { mode: 'Bookmark' }),
   entry(4, COLLECTION_A, IMAGE_REJECTED_IN_A, { status: 'REJECTED' }),
   entry(5, COLLECTION_A, IMAGE_ADDED_BY_OTHER_IN_A, { addedById: 999 }),
+  entry(6, COLLECTION_A, WITHHELD_IN_A),
 ];
 
 // Answers from ROWS by the where it is given, and like Prisma an absent key matches every row,
@@ -86,6 +113,18 @@ const call = (
   updateImageAcceptableMinorHandler({ input: { ...input, acceptableMinor: true }, ctx: ctx(user) });
 
 describe('updateImageAcceptableMinorHandler', () => {
+  it('refuses a manager a withheld entry exactly as an entry they may not rule on', async () => {
+    const ordinary = await call(MANAGER, { id: IMAGE_IN_B, collectionId: COLLECTION_A }).catch(
+      (e: unknown) => e
+    );
+    const withheld = await call(MANAGER, { id: WITHHELD_IN_A, collectionId: COLLECTION_A }).catch(
+      (e: unknown) => e
+    );
+    expect(withheld).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect((withheld as Error).message).toBe((ordinary as Error).message);
+    expect(mocks.updateImageAcceptableMinor).not.toHaveBeenCalled();
+  });
+
   it('refuses an image that is not an item of the given collection', async () => {
     await expect(
       call(MANAGER, { id: IMAGE_IN_B, collectionId: COLLECTION_A })

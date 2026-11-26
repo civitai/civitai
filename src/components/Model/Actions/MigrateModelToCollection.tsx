@@ -45,7 +45,7 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
       title="Migrate to Collection"
       onClose={handleClose}
       closeOnClickOutside={!migrateMutation.isPending}
-      closeOnEscape={!migrateMutation.isPending}
+      closeOnEscape={dialog.closeOnEscape && !migrateMutation.isPending}
       withCloseButton={!migrateMutation.isPending}
       closeButtonProps={{
         'aria-label': 'Close migrate to collection modal',

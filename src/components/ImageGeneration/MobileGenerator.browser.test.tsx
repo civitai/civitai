@@ -51,7 +51,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ challengePlatform: true, generationPresets: true }),
   useOptionalFeatureFlags: () => ({ mobileGenerator: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // The challenges and presets buttons are their own components with their own data; stand-ins
 // mark where they sit.
 vi.mock('~/components/Challenges/ChallengeIndicator', () => ({

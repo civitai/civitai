@@ -1,5 +1,7 @@
 import { Alert, Button, Center, Loader, MultiSelect, Text, TextInput, Title } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -9,7 +11,6 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { NoContent } from '~/components/NoContent/NoContent';
 import type { FeedbackRating } from '~/components/SemanticSearch/SemanticSearchFeedback';
 import { SemanticSearchFeedback } from '~/components/SemanticSearch/SemanticSearchFeedback';
 import type { PickedTag } from '~/components/SemanticSearch/TagMultiPicker';
@@ -21,6 +22,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { pageRefusal } from '~/components/Search/search-refusal';
+import { semanticSearchStatus } from '~/components/SemanticSearch/SemanticSearchError';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 
 export function SemanticImageSearch() {
   const router = useRouter();
@@ -39,8 +43,10 @@ export function SemanticImageSearch() {
   // Clips are a separate index, so Video is searched on its own rather than mixed with images.
   const videos = !!semanticVideoSearch && types.length === 1 && types[0] === MediaType.video;
 
+  const { asTyped } = useSearchAsTyped(query);
   const input = {
     query: imageId ? undefined : query,
+    ...spellcheckFor(asTyped && !imageId),
     imageId,
     browsingLevel,
     tagIds: tags.map((t) => t.id),
@@ -48,7 +54,9 @@ export function SemanticImageSearch() {
     baseModels,
     types,
   };
-  const enabled = !!input.query || !!input.imageId;
+  // As the feeds: a query the browser refuses is never searched.
+  const { refusal } = useSearchRefusal(input.query, 'images_semantic', 'semantic');
+  const enabled = (!!input.query && !refusal) || !!input.imageId;
   const options = {
     getNextPageParam: (lastPage: { nextCursor?: number }) => lastPage.nextCursor,
     retry: false,
@@ -61,12 +69,20 @@ export function SemanticImageSearch() {
     ...options,
     enabled: enabled && videos,
   });
-  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetching } = videos
-    ? videoResults
-    : imageResults;
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isPlaceholderData,
+  } = videos ? videoResults : imageResults;
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const latencyMs = data?.pages[0]?.latencyMs;
   const correctedQuery = data?.pages[0]?.correctedQuery;
+  const serverRefusal = pageRefusal(data?.pages[0], isPlaceholderData);
 
   const searchKey = JSON.stringify(input);
   useScrollToTopOnChange(searchKey);
@@ -98,6 +114,17 @@ export function SemanticImageSearch() {
     if (!q) return;
     router.push({ pathname: '/search/semantic', query: { q } }, undefined, { shallow: true });
   };
+
+  const status = semanticSearchStatus({
+    refusal,
+    serverRefusal,
+    enabled,
+    isLoading,
+    error: isError ? error : null,
+    empty: !items.length,
+    idleMessage: `Enter a query to search ${videos ? 'videos' : 'images'} by meaning.`,
+    emptyMessage: `No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`,
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -164,11 +191,7 @@ export function SemanticImageSearch() {
         </Alert>
       )}
 
-      {correctedQuery && !isError && (
-        <Text size="sm">
-          Showing results for <strong>{correctedQuery}</strong>
-        </Text>
-      )}
+      {!isError && <CorrectedQueryNote query={query ?? ''} correctedQuery={correctedQuery} />}
 
       {enabled && !isLoading && !isError && (
         <SemanticSearchFeedback
@@ -179,25 +202,7 @@ export function SemanticImageSearch() {
         />
       )}
 
-      {!enabled ? (
-        <NoContent
-          message={`Enter a query to search ${videos ? 'videos' : 'images'} by meaning.`}
-        />
-      ) : isLoading ? (
-        <Center p="xl">
-          <Loader />
-        </Center>
-      ) : isError ? (
-        <Alert color="red" title="Search failed">
-          {error.data?.code === 'NOT_FOUND' || error.data?.code === 'TOO_MANY_REQUESTS'
-            ? error.message
-            : 'Search is unavailable right now, try again.'}
-        </Alert>
-      ) : !items.length ? (
-        <NoContent
-          message={`No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`}
-        />
-      ) : (
+      {status ?? (
         <div className="relative">
           <ImagesProvider images={items}>
             <MasonryColumnsVirtual

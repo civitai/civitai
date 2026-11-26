@@ -12,6 +12,7 @@ import {
 import type { SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { backoffDelay } from '~/utils/backoff';
 
 const QUEUE = 'com-face-recheck';
@@ -192,8 +193,8 @@ async function removeComFace(
       });
     return updated > 0;
   });
-  // The notice in the finally: after the level refresh, so a slow notice cannot keep the old level
-  // listed, and even when the refresh throws, as a retry does not re-apply the verdict.
+  // The notice follows the level refresh, as in upsertModel, and is sent even when the refresh
+  // throws: a retry does not re-apply the verdict.
   try {
     if (removed) await finishRemoval(modelId);
   } finally {
@@ -231,11 +232,27 @@ function recordIntent(
   });
 }
 
-/** Drops the cover's safe bits from the model's level, which is what takes it off .com. */
+/** Drops the cover's safe bits from the model's level, which is what takes it off .com. Rethrows
+ *  after queueing the level job, so the re-check retry still runs. */
 async function finishRemoval(modelId: number) {
   // Imported here: the level service pulls in search.
   const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
-  await updateModelNsfwLevels([modelId]);
+  try {
+    await updateModelNsfwLevels([modelId]);
+  } catch (error) {
+    const { enqueueJobs } = await import('~/server/services/job-queue.service');
+    await enqueueJobs([
+      { entityId: modelId, entityType: EntityType.Model, type: JobQueueType.UpdateNsfwLevel },
+    ]).catch(() => null);
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'com face removed; level refresh queued',
+      modelId,
+      error: (error as Error).message,
+    });
+    throw error;
+  }
   // Imported here: model-version.service imports this module.
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache(modelId);

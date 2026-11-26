@@ -152,3 +152,23 @@ describe('isValidKnightsGameSetting', () => {
     expect(isValidKnightsGameSetting('shopDisabled', 'true')).toBe(false);
   });
 });
+
+describe('readKnightsSourcesConfig modTagReview', () => {
+  it('is off when absent, and reads a stored true or false', () => {
+    expect(readKnightsSourcesConfig('{"enabled":true}').config.modTagReview).toBeUndefined();
+    expect(
+      readKnightsSourcesConfig('{"enabled":true,"modTagReview":true}').config.modTagReview
+    ).toBe(true);
+    expect(
+      readKnightsSourcesConfig('{"enabled":true,"modTagReview":false}').config.modTagReview
+    ).toBe(false);
+  });
+
+  it('leaves out a value that is not a boolean, so the source stays off', () => {
+    for (const modTagReview of ['true', 1, null, { on: true }]) {
+      expect(
+        readKnightsSourcesConfig(JSON.stringify({ enabled: true, modTagReview })).config
+      ).not.toHaveProperty('modTagReview');
+    }
+  });
+});

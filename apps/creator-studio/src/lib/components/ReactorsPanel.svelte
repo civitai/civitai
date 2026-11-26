@@ -195,6 +195,13 @@
             {num(data.counts[data.reaction])}
             {EMOJI[data.reaction]}
             {unit} · {data.reactors.length} shown
+            {#if data.hidden}
+              <span
+                title={noun === 'image'
+                  ? 'Reacted before reaction lists launched, or chose not to appear in them'
+                  : 'Chose not to appear in reaction lists'}>· {num(data.hidden)} kept private</span
+              >
+            {/if}
           </span>
           <div class="flex items-center gap-1">
             <Button

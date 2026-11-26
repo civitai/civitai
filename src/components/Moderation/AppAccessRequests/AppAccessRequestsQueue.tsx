@@ -11,6 +11,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useState } from 'react';
+import { reviewedByLabel } from '~/components/Moderation/AppAccessRequests/reviewedByLabel';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
 import { formatDate } from '~/utils/date-helpers';
@@ -64,7 +65,9 @@ export function AppAccessRequestsQueue() {
     <Stack gap="md">
       <Alert color="blue" variant="light" title="Approving grants access">
         Approve lets the person build apps, including the App Assistant, from their next page load.
-        Revoke takes that away again.
+        Revoke takes that away again, whether a moderator approved the request or it was approved
+        automatically. A revoked or declined person is never approved automatically again: their
+        next request waits here.
       </Alert>
       <SegmentedControl
         value={filter}
@@ -104,9 +107,16 @@ export function AppAccessRequestsQueue() {
                     </Text>
                   </Table.Td>
                   <Table.Td maw={480}>
-                    <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {item.whatToBuild}
-                    </Text>
+                    {item.whatToBuild ? (
+                      <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {item.whatToBuild}
+                      </Text>
+                    ) : (
+                      // The answer is optional, so an empty one is normal, not a broken row.
+                      <Text size="sm" c="dimmed" fs="italic">
+                        No answer given
+                      </Text>
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">{formatDate(item.createdAt)}</Text>
@@ -116,8 +126,12 @@ export function AppAccessRequestsQueue() {
                       {item.status}
                     </Badge>
                     {item.reviewedAt && (
-                      <Text size="xs" c="dimmed">
-                        {item.reviewedByUsername ?? 'a moderator'}, {formatDate(item.reviewedAt)}
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        data-testid={`app-access-request-reviewer-${item.id}`}
+                      >
+                        {reviewedByLabel(item)}, {formatDate(item.reviewedAt)}
                       </Text>
                     )}
                   </Table.Td>

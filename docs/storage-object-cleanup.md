@@ -144,15 +144,14 @@ All of these stop touching S3 and rely on the trigger+job instead:
   `queueImageDeletes`, which queues, in the parent's transaction (after it commits for an article's replaced
   cover or banner), the owner's images that nothing else uses
   (no post, no other relation in `IMAGE_USES`, not shop artwork) as pending cleanups.
-  Every delete that has to wait is one `PendingDelete` row: a parent's cleanup (`{ cleanup: true }`, plus
-  `moderatorDelete` for a moderator's, and `ownerId` when the owner asked too), or a member's own delete,
-  through `deleteImages` without a caller condition or `deletePost`, of an image or post in an open
-  child-safety case (`{ ownerId }`), which `deleteImageRows` / `deletePostRows` queue in the statement that
-  leaves the row (their `pending` option). [pending-deletes](../src/server/jobs/pending-deletes.ts) carries each out as its
-  kind says once `imageDeleteBlocked` / `ownPostDeleteBlocked` no longer keeps it: the child-safety case for all;
-  for a cleanup also a held owner, and for an owner's cleanup any open moderation. A row is done (deleted,
-  gone, used again, given away), waits (its `createdAt` moves to when it is next due: an hour for a cleanup,
-  the next run for one the owner asked for), or failed (tried again on the next run).
+  Every delete that has to wait ([pending deletes](features/pending-deletes.md)) is one `PendingDelete` row: a parent's cleanup, or any delete that reaches
+  an image or post in an open child-safety case, whoever asks: `deleteImageRows` / `deletePostRows` leave
+  such a row and queue it in the same statement (`removeBlockedImages`, which retries from its own queue, keeps it there instead). A row the
+  caller's own condition excludes is neither deleted nor queued. An outright ask landing on a cleanup stays on it, so the cleanup goes even
+  if the image is in use again. [pending-deletes](../src/server/jobs/pending-deletes.ts) carries each out
+  once `imageDeleteBlocked` / `postDeleteBlocked` (and, for a post, a hold on its text) no longer keeps it: as the owner's, or as the system's with
+  the purge and keep-files flags it was queued with. A caller's own condition is checked when it deletes,
+  not again.
 - Model files: `deleteModelFileObject(s)` — [model-file.service.ts:172](../src/server/services/model-file.service.ts#L172),
   [:256](../src/server/services/model-file.service.ts#L256),
   [model-version.service.ts:865](../src/server/services/model-version.service.ts#L865),

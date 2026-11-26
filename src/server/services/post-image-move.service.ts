@@ -9,7 +9,7 @@ import { userPostCountCache } from '~/server/redis/caches';
 import type { MoveImagesToPostInput } from '~/server/schema/post.schema';
 import { createImageResources, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
-import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   bustCachesForPosts,
@@ -22,10 +22,14 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import type { Availability } from '~/shared/utils/prisma/enums';
-import { EntityType, ImageIngestionStatus, JobQueueType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  EntityType,
+  ImageIngestionStatus,
+  JobQueueType,
+} from '~/shared/utils/prisma/enums';
 import type { ImageMoveRefusal, MovePostRow } from '~/server/services/post-image-move.rules';
-import { getImageMoveRefusal, IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
+import { getImageMoveRefusal } from '~/server/services/post-image-move.rules';
 
 function throwRefusal(refusal: ImageMoveRefusal): never {
   if (refusal.kind === 'not-found') throw throwNotFoundError(refusal.message);
@@ -41,10 +45,7 @@ export async function moveImagesToPost({
 }: MoveImagesToPostInput & { userId: number }) {
   const imageIds = uniq(inputImageIds);
 
-  await assertAccountNotUnderLegalHold(userId, 'Image move refused').catch(() => {
-    throw throwBadRequestError(IMAGES_NOT_MOVABLE);
-  });
-
+  let leftPrivate = false;
   const { targetPostId, targetModelVersionId } = await dbWrite.$transaction(async (tx) => {
     // A split publishes a new post on the source's version, so it reads the takedown as createPost
     // does. Locked before the posts: a takedown locks the version and then its posts.
@@ -193,6 +194,9 @@ export async function moveImagesToPost({
       tx
     );
 
+    leftPrivate =
+      sourcePost.availability === Availability.Private &&
+      destination.availability !== Availability.Private;
     return { targetPostId: destination.id, targetModelVersionId: target?.modelVersionId ?? null };
   });
 
@@ -218,6 +222,7 @@ export async function moveImagesToPost({
       toPostId: targetPostId,
       errors: failures.map((f) => safeError(f.reason)),
     });
+  if (leftPrivate) void queueLeftPrivateForKnights({ imageIds });
 
   return { postId: targetPostId };
 }

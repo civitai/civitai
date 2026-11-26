@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { civitaiAppUrl } from './civitai-url';
+import { tryCivitaiInternalUrl } from './civitai-url';
+import { mainAppHostFetch } from './main-app-fetch';
 
 /**
  * Refreshes the main app's home blocks showing these images. Call it after the write that hides
@@ -13,8 +14,10 @@ export async function evictHomeBlocks(imageIds: number[]): Promise<void> {
     console.warn('[home-blocks] WEBHOOK_TOKEN not set; skipping the home-block refresh');
     return;
   }
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return;
   try {
-    const res = await fetch(`${civitaiAppUrl()}/api/internal/home-block-evict?token=${token}`, {
+    const res = await mainAppHostFetch(`${base}/api/internal/home-block-evict?token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ imageIds: ids }),

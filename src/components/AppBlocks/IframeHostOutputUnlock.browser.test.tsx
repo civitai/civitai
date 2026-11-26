@@ -16,8 +16,6 @@ const mocks = vi.hoisted(() => ({
   unlock: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 42 }) }));
-
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
   useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
@@ -135,7 +133,8 @@ async function mount() {
       token="tok_abc"
       expiresAt={new Date(Date.now() + 15 * 60_000).toISOString()}
       missingScopes={[]}
-    />
+    />,
+    { user: { id: 42 } }
   );
   await vi.waitFor(() => {
     if (!iframeEl().contentWindow) throw new Error('not mounted yet');

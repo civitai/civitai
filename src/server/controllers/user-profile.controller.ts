@@ -29,6 +29,7 @@ import type {
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
@@ -75,10 +76,12 @@ export const getUserProfileHandler = async ({
   try {
     const user = await getUserWithProfile({
       username: input.username,
-      isModerator: ctx.user?.isModerator,
+      isModerator: actsAsModerator(ctx),
       sessionUserId: ctx.user?.id,
+      sessionUsername: ctx.user?.username,
       eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
+      fromReplica: true,
     });
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -176,6 +179,7 @@ export const updateUserProfileHandler = async ({
       ...input,
       userId,
       isModerator: sessionUser.isModerator,
+      asModerator: actsAsModerator(ctx),
       sessionUserId: sessionUser.id,
       domain: ctx.domain,
       profileRedesign: ctx.features.profileRedesign,

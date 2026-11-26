@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import type { EventViewer } from '~/server/events/event-access';
 import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
-import { kyselyWrite } from '~/server/db/kyselyDb';
+import { getDbWithoutLag, kyselyMatching } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readUserWithProfileAndPictureGateViaKysely,
@@ -39,12 +40,14 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { publicMemorial } from '~/server/services/memorial.service';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
@@ -91,7 +94,7 @@ export const getUserContentOverview = async ({
   }
 
   if (!userId) {
-    const user = await dbWrite.user.findUnique({
+    const user = await dbRead.user.findUnique({
       where: { username },
       select: { id: true },
     });
@@ -126,9 +129,17 @@ export const getUserWithProfile = async ({
   sessionUserId,
   eventViewer = { id: sessionUserId },
   domain,
+  sessionUsername,
+  fromReplica = false,
 }: GetUserProfileSchema & {
   isModerator?: boolean;
   sessionUserId?: number;
+  sessionUsername?: string | null;
+  /**
+   * A visitor's page view, served from the replica (unless high-replication-lag mode is on). The
+   * owner and moderators read the primary, so their own edits show at once.
+   */
+  fromReplica?: boolean;
   /**
    * Who the event preview gate is asked about: the request's `eventViewerOf`. Without one it is the
    * session user as a non-moderator, never `isModerator`, which a scoped token may carry.
@@ -136,21 +147,42 @@ export const getUserWithProfile = async ({
   eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
-  // Use write to get the latest most accurate user here since we'll need to create the profile
-  // if it doesn't exist.
   if (!username && !id) {
     throwBadRequestError('Either username or id must be provided');
   }
   const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
-  const getUser = async () => {
-    // No blockedFor on the Prisma read: the servable-profile-picture extension already gated it.
-    const { user, pictureBlockedFor } = viaKysely
-      ? await readUserWithProfileAndPictureGateViaKysely(kyselyWrite, { id, username })
-      : {
-          user: await readUserWithProfileViaPrisma(dbWrite, { id, username }),
+  const readRow = (db: typeof dbRead | typeof dbWrite) =>
+    viaKysely
+      ? readUserWithProfileAndPictureGateViaKysely(kyselyMatching(db), { id, username })
+      : // No blockedFor on the Prisma read: the servable-profile-picture extension already gated it.
+        readUserWithProfileViaPrisma(db, { id, username }).then((user) => ({
+          user,
           pictureBlockedFor: null,
-        };
+        }));
 
+  const ownView =
+    (id !== undefined && id === sessionUserId) ||
+    (!!username && username.toLowerCase() === sessionUsername?.toLowerCase());
+  const visitorDb = fromReplica && !isModerator && !ownView ? await getDbWithoutLag() : dbWrite;
+  const readVisitorRow = async () => {
+    if (visitorDb === dbWrite) return readRow(dbWrite);
+    let row;
+    try {
+      row = await readRow(visitorDb);
+    } catch (error) {
+      // A signed-in viewer missing from the replica may be the owner just renamed or created.
+      const notFound =
+        error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+      if (notFound && sessionUserId !== undefined) return readRow(dbWrite);
+      throw error;
+    }
+    // A stale session username can hide an own view; a missing profile may only be lagging, and
+    // the primary decides whether to create it.
+    if (row.user.id === sessionUserId || !row.user.profile?.userId) return readRow(dbWrite);
+    return row;
+  };
+
+  const getUser = async ({ user, pictureBlockedFor }: Awaited<ReturnType<typeof readRow>>) => {
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
     const stats = await dbRead.userStat.findFirst({
@@ -178,6 +210,7 @@ export const getUserWithProfile = async ({
         ? isRestrictedImage(coverImage)
         : !servableArticleImage(coverImage);
       if (!sameUser && hidden) return null;
+      if (sameUser && !isModerator && !ownerMediaAllowed(coverImage)) return null;
 
       return {
         ...coverImage,
@@ -237,6 +270,7 @@ export const getUserWithProfile = async ({
         claimKey: sameUser ? c.claimKey : null,
       })),
       meta: undefined,
+      memorial: publicMemorial(userMeta),
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
       creatorShopEnabled,
@@ -277,7 +311,7 @@ export const getUserWithProfile = async ({
     };
   };
 
-  const user = await getUser();
+  const user = await getUser(await readVisitorRow());
 
   if (!user.profile?.userId) {
     // First time visit to this user's profile. Create base profile:
@@ -293,7 +327,7 @@ export const getUserWithProfile = async ({
       select: { userId: true },
     });
 
-    return getUser();
+    return getUser(await readRow(dbWrite));
   }
 
   return user;
@@ -344,12 +378,15 @@ export const assertShowcaseItemsOwned = async ({
   )
     throw throwBadRequestError('A taken-down model cannot be showcased');
 
-  if (isModerator) return;
+  if (isModerator) return assertNotDealFileImages(imageIds, 'used here');
 
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
   const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
     imageIds.length
-      ? dbWrite.image.findMany({ where: { id: { in: imageIds }, userId }, select: { id: true } })
+      ? dbWrite.image.findMany({
+          where: { id: { in: imageIds }, userId },
+          select: { id: true, ingestion: true, blockedFor: true },
+        })
       : [],
     modelIds.length
       ? dbWrite.model.findMany({ where: { id: { in: modelIds }, userId }, select: { id: true } })
@@ -368,6 +405,9 @@ export const assertShowcaseItemsOwned = async ({
     ownedArticles.length !== articleIds.length
   )
     throw throwAuthorizationError('You can only add your own content to your showcase');
+  if (ownedImages.some((image) => !ownerMediaAllowed(image)))
+    throw throwBadRequestError('A blocked image cannot be added to your showcase');
+  await assertNotDealFileImages(imageIds, 'used here');
 };
 
 const toShowcaseItems = (sections: ShowcaseSectionSchema[]): ShowcaseItemSchema[] =>
@@ -519,6 +559,8 @@ export const addToShowcaseSection = async ({
   return { added: true, sections: updated };
 };
 
+type ProfileImageField = 'coverImage' | 'sfwCoverImage' | 'backgroundImage' | 'sfwBackgroundImage';
+
 export const updateUserProfile = async ({
   // profileImage,
   isModerator,
@@ -538,10 +580,13 @@ export const updateUserProfile = async ({
   domain,
   sessionUserId,
   profileRedesign = false,
+  asModerator = false,
   ...profile
 }: UserProfileUpdateSchema & {
   userId: number;
   isModerator?: boolean;
+  /** The moderator view the editor's profile read had (`actsAsModerator`). */
+  asModerator?: boolean;
   domain?: ColorDomain;
   /** Without it a save touching the redesign's page fields is refused, and hidden tabs stay as stored. */
   profileRedesign?: boolean;
@@ -621,7 +666,7 @@ export const updateUserProfile = async ({
     await assertShowcaseItemsOwned({
       userId,
       // A moderator may curate another user's showcase, never fill their own with others' items.
-      isModerator: isModerator && sessionUserId !== userId,
+      isModerator: asModerator && sessionUserId !== userId,
       showcaseItems: profile.showcaseItems,
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });
@@ -658,12 +703,24 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
+  // A stored image the editor's read withheld never reached the form, so the null it sends back
+  // keeps it: for the owner, a cover `ownerMediaAllowed` refuses; for a moderator editing someone
+  // else's profile, a restricted image.
+  const withheld: Partial<Record<ProfileImageField, boolean>> = {};
+  if (!asModerator && (coverImage === null || sfwCoverImage === null)) {
+    const coverBlock = { select: { ingestion: true, blockedFor: true } };
+    // primary: it decides what this save keeps.
+    const stored = await dbWrite.userProfile.findUnique({
+      where: { userId },
+      select: { coverImage: coverBlock, sfwCoverImage: coverBlock },
+    });
+    withheld.coverImage = !!stored?.coverImage && !ownerMediaAllowed(stored.coverImage);
+    withheld.sfwCoverImage = !!stored?.sfwCoverImage && !ownerMediaAllowed(stored.sfwCoverImage);
+  }
   const hiddenFromEditor =
     isModerator && sessionUserId !== userId ? await imagesHiddenFromModerator(userId) : null;
-  const asEdited = (
-    image: UserProfileUpdateSchema['coverImage'],
-    field: keyof NonNullable<typeof hiddenFromEditor>
-  ) => (image === null && hiddenFromEditor?.[field] ? undefined : image);
+  const asEdited = (image: UserProfileUpdateSchema['coverImage'], field: ProfileImageField) =>
+    image === null && (withheld[field] || hiddenFromEditor?.[field]) ? undefined : image;
 
   const buildCoverImageUpdate = (
     image: UserProfileUpdateSchema['coverImage'],

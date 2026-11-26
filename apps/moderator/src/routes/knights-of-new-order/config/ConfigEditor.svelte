@@ -48,7 +48,6 @@
   const errors = $derived({
     sfw: sourcesTouched ? percentError(draft.sources.sfw, true) : null,
     nsfw: sourcesTouched ? percentError(draft.sources.nsfw, true) : null,
-    yesNo: draft.sources.yesNoReset ? null : percentError(draft.sources.yesNo, false),
     maxOpen: maxOpenError(draft.sources.maxOpen),
     ...Object.fromEntries(
       (Object.keys(NUMBER_ROWS) as NumberKey[]).map((key) => [
@@ -71,8 +70,10 @@
         'hiddenCheckSettleDelayMinutes',
         'hiddenCheckRetireMinAnswers',
         'hiddenCheckRetireFailureRate',
+        'skillCheckPoolCap',
+        'inquisitorMaxOpen',
       ],
-      toggles: [],
+      toggles: ['inquisitorQueue', 'skillCheckServeJudged'],
     },
     { id: 'yes-no', title: 'Yes/no questions', numbers: ['yesNoStretch', 'yesNoMaxAgeDays'], toggles: [] },
     { id: 'acolytes', title: 'Acolytes', numbers: [], toggles: ['apprenticeSmites'] },
@@ -266,20 +267,25 @@
       <Separator />
       <SettingRow
         id="cfg-yesno"
-        label="Yes/no share"
-        description="How often yes/no questions are served. 0% turns them off."
-        custom={!draft.sources.yesNoReset && draft.sources.yesNo.trim() !== ''}
+        label="Yes/no questions"
+        description="Knights and above get a few yes/no questions between ratings."
+        custom={draft.sources.yesNo !== 'default'}
         env="KNIGHTS_YESNO_SHARE"
-        error={errors.yesNo}
-        onreset={() => ((draft.sources.yesNo = ''), (draft.sources.yesNoReset = true))}
       >
-        <NumberInput
-          id="cfg-yesno"
-          unit="%"
+        <ToggleGroup
+          type="single"
+          size="sm"
+          variant="outline"
+          aria-labelledby="cfg-yesno-label"
           value={draft.sources.yesNo}
-          invalid={Boolean(errors.yesNo)}
-          oninput={(value) => ((draft.sources.yesNo = value), (draft.sources.yesNoReset = false))}
-        />
+          onValueChange={(value) => {
+            if (value) draft.sources.yesNo = value as ToggleChoice;
+          }}
+        >
+          <ToggleGroupItem value="default" class="min-w-16">Default</ToggleGroupItem>
+          <ToggleGroupItem value="on" class="min-w-16">On</ToggleGroupItem>
+          <ToggleGroupItem value="off" class="min-w-16">Off</ToggleGroupItem>
+        </ToggleGroup>
       </SettingRow>
     </Card.Content>
   </Card.Root>

@@ -3,12 +3,10 @@ package server
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
-	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
@@ -31,22 +29,22 @@ func SyntheticAssociatedRequest(ctx context.Context, req ShadowRequest) (*http.R
 	return syntheticTRPCRequest(ctx, req, ProcedureAssociated)
 }
 
-// associatedRoute is compare's dispatch for the procedure: the request rebuild, the compute and the
-// classification (the superjson envelope of an array of cards, keyed by model id).
+// associatedRoute is compare's dispatch for the procedure: the request rebuild and the compute. How the
+// answers are compared (the superjson envelope of an array of cards, keyed by model id) is
+// CompareSelection's.
 func (s *Server) associatedRoute(endpoint string) (
 	build func(context.Context, ShadowRequest) (*http.Request, error),
 	compute func(context.Context, *http.Request) (*computed, error),
-	classify func(*shadow.Report, []byte, []byte) string,
 	ok bool,
 ) {
 	if endpoint != EndpointAssociated {
-		return nil, nil, nil, false
+		return nil, nil, false
 	}
 	compute = s.computeAssociated
 	if s.computeAssociatedFn != nil {
 		compute = s.computeAssociatedFn
 	}
-	return SyntheticAssociatedRequest, compute, shadow.ClassifyArray, true
+	return SyntheticAssociatedRequest, compute, true
 }
 
 // computeAssociated answers a `model.getAssociatedResourcesCardData` request
@@ -101,7 +99,7 @@ func (s *Server) prepareAssociated(ctx context.Context, r *http.Request) (modelf
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	req := modelfeed.AssocRequest{
 		Input:  in,
 		Banned: user != nil && user.Banned,

@@ -40,7 +40,11 @@ describe('to-ingest rescan action', () => {
 
     const result = await rescan({ imageIds: '11,12' });
 
-    expect(rescanStuckImages).toHaveBeenCalledWith({ imageIds: [11, 12], userId: 7 });
+    expect(rescanStuckImages).toHaveBeenCalledWith({
+      imageIds: [11, 12],
+      userId: 7,
+      viewer: { id: 7 },
+    });
     expect(result).toEqual({ success: true, count: 2 });
   });
 
@@ -49,7 +53,11 @@ describe('to-ingest rescan action', () => {
 
     await rescan({ all: 'true', imageIds: '11' });
 
-    expect(rescanStuckImages).toHaveBeenCalledWith({ imageIds: undefined, userId: 7 });
+    expect(rescanStuckImages).toHaveBeenCalledWith({
+      imageIds: undefined,
+      userId: 7,
+      viewer: { id: 7 },
+    });
   });
 
   it("returns the service's refusal to the moderator as a 400", async () => {

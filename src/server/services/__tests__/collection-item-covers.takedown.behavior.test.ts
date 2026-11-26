@@ -33,6 +33,7 @@ const ARTICLE_RESTRICTED_R = 113;
 const MODEL3D_RESTRICTED_R = 114;
 const ARTICLE_ON_TAKEN_DOWN = 115;
 const ARTICLE_ON_LIVE = 116;
+const ARTICLE_LISTED = 117;
 
 let db: PGlite;
 
@@ -54,6 +55,7 @@ beforeAll(async () => {
       "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
       availability text NOT NULL DEFAULT 'Public'
     );
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
       ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
@@ -111,7 +113,14 @@ beforeAll(async () => {
       (${POST_RESTRICTED_R}, ${STRANGER}, NULL, 34, NULL),
       (${IMAGE_RESTRICTED_PG}, ${STRANGER}, 45, NULL, NULL),
       (${MODEL_RESTRICTED_FIRST}, ${OWNER}, NULL, NULL, 12);
+    -- Article 64's cover, on no post, is listed on a report.
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
+    INSERT INTO "Image" (id, "userId") VALUES (51, ${STRANGER});
+    INSERT INTO "CsamReport" (images) VALUES ('[{"id": 51}]');
+    INSERT INTO "Article" (id, "coverId", cover, status, "publishedAt", availability, ingestion) VALUES
+      (64, 51, 'legacy-listed', 'Published', now() - interval '1 day', 'Public', 'Scanned');
     INSERT INTO "CollectionItem" ("collectionId", "addedById", "articleId", "model3dId") VALUES
+      (${ARTICLE_LISTED}, ${STRANGER}, 64, NULL),
       (${ARTICLE_RESTRICTED_R}, ${STRANGER}, 60, NULL),
       (${MODEL3D_RESTRICTED_R}, ${STRANGER}, NULL, 61),
       (${ARTICLE_ON_TAKEN_DOWN}, ${STRANGER}, 62, NULL),
@@ -152,6 +161,7 @@ describe('collection item covers', () => {
     ['an R image item on a restricted base model', IMAGE_RESTRICTED_R],
     ['an article item whose cover is R on a restricted base model', ARTICLE_RESTRICTED_R],
     ['a 3D model item whose thumbnail is R on a restricted base model', MODEL3D_RESTRICTED_R],
+    ['🔴 an article item whose cover is listed on a report', ARTICLE_LISTED],
   ])('takes no cover from %s', async (_, collectionId) => {
     expect(await coverOf(collectionId)).toEqual([null]);
   });
@@ -163,6 +173,7 @@ describe('collection item covers', () => {
       null,
     ],
     ['keeps the legacy cover string with a cover on a live model', ARTICLE_ON_LIVE, 'legacy-live'],
+    ['🔴 drops the legacy cover string with a cover listed on a report', ARTICLE_LISTED, null],
   ])('%s', async (_, collectionId, src) => {
     const sql = collectionItemCoversSql({
       collectionIds: [collectionId],

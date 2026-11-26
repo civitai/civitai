@@ -76,6 +76,7 @@ export async function searchSemanticBounties({
     items: [] as HydratedBounty[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
@@ -192,6 +193,7 @@ export async function searchSemanticBounties({
     source: candidateSource,
     viewer: { isModerator: !!user?.isModerator },
     text: input.query,
+    spellcheck: input.spellcheck,
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
   });

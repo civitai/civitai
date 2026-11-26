@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page as pageState } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -28,6 +29,7 @@
   import { entityUrl, modelLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
   import { clearPaging, selectionKey } from '$lib/paging';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { ReportActionGrants } from '$lib/report-queue';
 
   let {
@@ -86,6 +88,8 @@
   // Blocked ids accumulate over the batch's pages because the selection spans them.
   const batchKey = $derived(selectionKey(pageState.url));
   const blockedIds = new BlockedIds();
+  // Accumulated like blockedIds: the selection spans the batch's pages.
+  const reviewImageIds = new SvelteSet<string | number>();
   let shownBatch: string | undefined;
   $effect.pre(() => {
     const key = batchKey;
@@ -95,8 +99,10 @@
         shownBatch = key;
         selected.clear();
         blockedIds.clear();
+        reviewImageIds.clear();
       }
       blockedIds.absorb(items);
+      for (const item of items) if (item.isReviewImage) reviewImageIds.add(item.id);
     });
   });
 
@@ -133,7 +139,8 @@
       details.profile?.location?.trim() ||
       details.profile?.coverImage ||
       details.profile?.sfwCoverImage ||
-      identity.profilePictureUrl
+      identity.profilePictureUrl ||
+      identity.profilePictureRestricted
     )
   );
 </script>
@@ -222,7 +229,13 @@
               rel="noreferrer"
               class="block"
             >
-              {#if m.coverUrl}
+              {#if m.coverRestricted}
+                <div
+                  class="flex aspect-[4/5] w-full items-center justify-center p-2 text-center text-xs text-dark-2"
+                >
+                  {RETRACTED_REFUSED}
+                </div>
+              {:else if m.coverUrl}
                 <EdgeMedia
                   src={m.coverUrl}
                   type={m.coverType === 'video' ? 'video' : 'image'}
@@ -283,7 +296,7 @@
       <p class="text-sm text-dark-2">
         <span class="font-semibold text-white">{num(suspect.total)} images</span>
         {#if suspect.blocked > 0}· {num(suspect.blocked)} already blocked{/if}
-        {#if filtersActive}· {num(suspect.matched)} match the filters{/if}
+        {#if filtersActive}· {num(suspect.matched)}{suspect.matchedCapped ? '+' : ''} match the filters{/if}
       </p>
       <Button
         size="sm"
@@ -320,11 +333,12 @@
         <ImageActionBar
           bare
           {selected}
-          selectable={suspect.items.map((i) => i.id)}
+          selectable={suspect.items.filter((i) => !i.restricted).map((i) => i.id)}
           onSubmit={onSubmit.enhance}
           submitting={onSubmit.submitting}
           notify={false}
           strike={can.strike}
+          {reviewImageIds}
           {blockedIds}
           keepOffScreen
         />

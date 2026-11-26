@@ -7,14 +7,14 @@
 // and the write is a `version_conflict`, never a write the hook did not see.
 //
 // A pass is only ever minted by `doc-store-hook.ts`, after the hook allowed the write (or, for a
-// delete or a tally on a document that does not exist, after it found nothing for the hook to
+// delete of a document that does not exist, after it found nothing for the hook to
 // decide). That is pinned by a ledger test on the importers of `mintHookPass`. Passes are held in
 // a module-private WeakSet, so an object literal of the same shape is not a pass, and each pass is
 // spent by the first store write that accepts it.
 //
 // Pure: no I/O, so the store can import it without pulling in the hook client.
 
-export type HookOp = 'create' | 'put' | 'delete' | 'increment' | 'mark' | 'unmark';
+export type HookOp = 'create' | 'put' | 'delete';
 
 /** What one pass allows: one operation on one key, at one document version. */
 export type HookPassScope = {

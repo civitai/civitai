@@ -1,6 +1,7 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import {
   legacyCookieReadEnabled,
+  refusesMemorializedSession,
   rollSlot,
   sessionCookieMode,
   sessionCookieNameForSlot,
@@ -29,6 +30,11 @@ import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics'
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
 import { logAxiomError } from '$lib/server/axiom';
+import { registerEmailSendRecorder } from '$lib/server/email/send-recorder';
+
+// Every send the hub makes (sign-in, verification, invite) is a send row in the main app's
+// emailEvents, through its internal route.
+registerEmailSendRecorder();
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -142,7 +148,8 @@ const handleRequest: Handle = async ({ event, resolve }) => {
     const claims = await verifier.verifyToken(token).catch(() => null);
     const userId = Number(claims?.sub);
     if (claims && Number.isFinite(userId) && (internal || (await acceptHubSession(claims)))) {
-      event.locals.user = (await getOrProduceSessionUser(userId).catch(() => null)) ?? undefined;
+      const user = await getOrProduceSessionUser(userId).catch(() => null);
+      event.locals.user = user && !refusesMemorializedSession(user, claims) ? user : undefined;
       event.locals.session = claims;
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.

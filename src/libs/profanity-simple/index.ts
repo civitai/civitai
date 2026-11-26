@@ -157,9 +157,10 @@ export class SimpleProfanityFilter {
 
     this.nsfwWords = getCachedNsfwWords(this.options.moderatorBlocklist);
 
-    // Initialize dataset with default English dictionary
+    // A managed list is the only source of blocked words. The library's English dataset loads only
+    // with the shipped list (flag off, browser, server fallback).
     this.dataset = new DataSet();
-    this.dataset.addAll(englishDataset);
+    if (this.options.moderatorBlocklist == null) this.dataset.addAll(englishDataset);
 
     // Initialize whitelist mappings
     this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelist);

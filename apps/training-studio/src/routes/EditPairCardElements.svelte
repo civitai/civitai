@@ -1,0 +1,166 @@
+<script lang="ts">
+  import { IconArrowRight, IconRefresh, IconSparkles, IconUpload, IconWand, IconX } from '@tabler/icons-svelte';
+  import '$lib/civitai-elements';
+  import type { CivitaiTextarea } from '@civitai/components/civitai-textarea';
+  import { cn } from '@civitai/ui/utils.js';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
+  import { isFailed, type Img } from './trainingFlow';
+  import { pairProblem, type EditPair } from './editPairs';
+
+  let {
+    pair,
+    sourceLabel,
+    showBefore = true,
+    suggesting = false,
+    suggestPrice = null,
+    onInstruction,
+    onRemove,
+    onUploadAfter,
+    onCreate,
+    onSuggest,
+    onRetry,
+  }: {
+    pair: EditPair;
+    sourceLabel: string;
+    /** Off in the grouped view, where the starting image heads the group instead. */
+    showBefore?: boolean;
+    suggesting?: boolean;
+    suggestPrice?: number | null;
+    onInstruction: (text: string) => void;
+    onRemove: () => void;
+    onUploadAfter: () => void;
+    onCreate: () => void;
+    onSuggest: () => void;
+    onRetry: (side: 'before' | 'after') => void;
+  } = $props();
+
+  const problem = $derived(pairProblem(pair));
+  const canSuggest = $derived(
+    !!pair.after?.blobUrl?.startsWith('http') && !!pair.before.blobUrl?.startsWith('http')
+  );
+  const tile = $derived(showBefore ? 'h-28 w-28' : 'h-20 w-20');
+</script>
+
+{#snippet image(img: Img, side: 'before' | 'after')}
+  <div
+    class={cn(
+      'relative shrink-0 overflow-hidden rounded-lg border bg-dark-7',
+      tile,
+      side === 'after' ? 'border-sky-700' : 'border-dark-4'
+    )}
+  >
+    {#if img.previewUrl}
+      <img src={img.previewUrl} alt="" class="h-full w-full object-cover" />
+    {/if}
+    {#if img.status === 'uploaded'}
+      <RatingBadge level={img.nsfwLevel} class="absolute bottom-1 left-1" />
+    {/if}
+    {#if showBefore}
+      <span
+        class="absolute left-1 top-1 rounded bg-dark-8/90 px-1.5 font-mono text-[10px] uppercase tracking-wider {side ===
+        'after'
+          ? 'text-sky-400'
+          : 'text-dark-2'}"
+      >
+        {side}
+      </span>
+    {/if}
+    {#if img.status === 'uploading'}
+      <div class="absolute inset-x-0 bottom-0 h-1 bg-dark-8">
+        <div class="h-full bg-primary transition-[width]" style="width: {Math.round(img.progress * 100)}%"></div>
+      </div>
+    {:else if isFailed(img)}
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-dark-8/85 p-1 text-center">
+        <span class="text-[11px] leading-tight text-red-300" title={img.message}>
+          {img.status === 'blocked' ? 'Blocked' : 'Upload failed'}
+        </span>
+        {#if img.status === 'error' && img.file}
+          <civitai-button variant="outline" size="sm" onclick={() => onRetry(side)}>
+            <span slot="left"><IconRefresh size={12} stroke={2} /></span>Retry
+          </civitai-button>
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+<article
+  class={cn(
+    'flex gap-3 rounded-xl border bg-dark-6 p-3',
+    problem && problem !== 'uploading' ? 'border-amber-700/60' : 'border-dark-4'
+  )}
+>
+  <div class="flex shrink-0 items-center gap-1.5">
+    {#if showBefore}
+      {@render image(pair.before, 'before')}
+      <IconArrowRight size={16} stroke={2} class="text-dark-2" aria-hidden="true" />
+    {/if}
+    {#if pair.after}
+      {@render image(pair.after, 'after')}
+    {:else}
+      <div
+        class={cn(
+          'flex shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-dark-3 p-1',
+          tile
+        )}
+      >
+        {#if showBefore}<span class="text-[11px] text-dark-2">No after image</span>{/if}
+        <civitai-button variant="outline" size="sm" onclick={onUploadAfter}>
+          <span slot="left"><IconUpload size={12} stroke={2} /></span>Upload
+        </civitai-button>
+        <civitai-button
+          variant="outline"
+          size="sm"
+          onclick={onCreate}
+          disabled={!pair.before.blobUrl?.startsWith('http')}
+          title={pair.before.blobUrl?.startsWith('http') ? undefined : 'Available once the starting image has uploaded'}
+        >
+          <span slot="left"><IconWand size={12} stroke={2} /></span>Create
+        </civitai-button>
+      </div>
+    {/if}
+  </div>
+
+  <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+    <civitai-textarea
+      size="sm"
+      label="Instruction · {pair.before.name}"
+      value={pair.instruction}
+      oninput={(e: Event) => onInstruction((e.currentTarget as CivitaiTextarea).value)}
+      rows={showBefore ? 3 : 2}
+      placeholder="Describe the edit, e.g. Turn the person 90 degrees to their left"
+    ></civitai-textarea>
+    <div class="flex min-h-8 items-center justify-between gap-2">
+      {#if problem === 'no-after'}
+        <span class="text-xs text-amber-400">Needs an after image</span>
+      {:else if problem === 'failed'}
+        <span class="text-xs text-red-300">An image didn't upload</span>
+      {:else if problem === 'no-instruction'}
+        <span class="flex items-center gap-2">
+          <span class="text-xs text-amber-400">Needs an instruction</span>
+          {#if suggesting}
+            <civitai-loader size="sm" label="Suggesting an instruction"></civitai-loader>
+          {:else if canSuggest}
+            <civitai-button
+              variant="subtle"
+              size="sm"
+              onclick={onSuggest}
+              title={suggestPrice != null ? `Costs ${suggestPrice} Buzz` : undefined}
+            >
+              <span slot="left"><IconSparkles size={12} stroke={2} /></span>Suggest{suggestPrice != null
+                ? ` · ⚡${suggestPrice}`
+                : ''}
+            </civitai-button>
+          {/if}
+        </span>
+      {:else}
+        <span class="truncate font-mono text-[11px] text-dark-2" title={pair.before.name}>
+          {sourceLabel} · {pair.before.name}
+        </span>
+      {/if}
+      <studio-icon-button class="shrink-0" label="Remove pair {pair.before.name}" onclick={onRemove}>
+        <IconX size={14} stroke={2} />
+      </studio-icon-button>
+    </div>
+  </div>
+</article>

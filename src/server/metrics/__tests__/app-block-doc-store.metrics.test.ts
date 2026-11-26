@@ -135,13 +135,13 @@ describe('civitai_app_block_doc_store_errors_total', () => {
 
   it('counts a token-middleware refusal written in the storage envelope', async () => {
     const { storageRefusalBody } = await import('~/server/services/apps/doc-store-api');
-    const before = await errorCount('storage_tally', 'insufficient_scope');
+    const before = await errorCount('storage_write', 'insufficient_scope');
     const body = storageRefusalBody(
       { kind: 'insufficient_scope', status: 403, error: 'missing scope' },
-      fakeReq('POST', ['notes', 'k1', 'counters', 'likes'])
+      fakeReq('PUT', ['notes', 'k1'])
     );
     expect(body.code).toBe('insufficient_scope');
-    expect(await errorCount('storage_tally', 'insufficient_scope')).toBe(before + 1);
+    expect(await errorCount('storage_write', 'insufficient_scope')).toBe(before + 1);
   });
 });
 
@@ -261,23 +261,22 @@ describe('seeded series', () => {
 
     const has = (endpoint: string, code: string) =>
       seeded.some((v) => v.labels.endpoint === endpoint && v.labels.code === code);
-    for (const endpoint of ['storage_info', 'storage_read', 'storage_write', 'storage_tally']) {
+    for (const endpoint of ['storage_info', 'storage_read', 'storage_write']) {
       expect(has(endpoint, 'storage_disabled')).toBe(true);
       expect(has(endpoint, 'internal_error')).toBe(true);
     }
-    // Moderation runs only on writes and tallies.
+    // The tally endpoint went with the tally routes (docs/app-storage-generic-core.md, step 5).
+    expect(seeded.some((v) => v.labels.endpoint === 'storage_tally')).toBe(false);
+    // Moderation runs only on writes.
     expect(has('storage_write', 'moderation_unavailable')).toBe(true);
-    expect(has('storage_tally', 'moderation_unavailable')).toBe(true);
     expect(has('storage_read', 'moderation_unavailable')).toBe(false);
     expect(has('storage_info', 'moderation_unavailable')).toBe(false);
     // Consent is checked only when a write publishes.
     expect(has('storage_write', 'consent_unavailable')).toBe(true);
     expect(has('storage_read', 'consent_unavailable')).toBe(false);
     expect(has('storage_info', 'consent_unavailable')).toBe(false);
-    expect(has('storage_tally', 'consent_unavailable')).toBe(false);
-    // The permission hook gates document writes and tallies only.
+    // The permission hook gates document writes only.
     expect(has('storage_write', 'hook_unavailable')).toBe(true);
-    expect(has('storage_tally', 'hook_unavailable')).toBe(true);
     expect(has('storage_read', 'hook_unavailable')).toBe(false);
     expect(has('storage_info', 'hook_unavailable')).toBe(false);
   });
@@ -305,17 +304,15 @@ describe('seeded series', () => {
     expect(calls.every((v) => v.value === 0)).toBe(true);
   });
 
-  it('publishes every (op, route) storage tally series at 0', async () => {
+  it('no longer publishes the removed storage tally series', async () => {
     const { seedAppBlockDocStoreMetrics } = await import(
       '~/server/metrics/app-block-runtime.metrics'
     );
     const reg = new Registry();
     seedAppBlockDocStoreMetrics(reg);
-    const ops = await values('civitai_app_block_doc_store_tally_ops_total', reg);
-    expect(ops.map((v) => `${v.labels.op}|${v.labels.route}`).sort()).toEqual(
-      ['inc|legacy', 'inc|v2', 'mark|legacy', 'mark|v2', 'unmark|legacy', 'unmark|v2'].sort()
-    );
-    expect(ops.every((v) => v.value === 0)).toBe(true);
+    expect(await values('civitai_app_block_doc_store_tally_ops_total', reg)).toEqual([]);
+    // Positive control: the same registry does publish the hook-call series.
+    expect((await values('civitai_app_block_storage_hook_calls_total', reg)).length).toBe(9);
   });
 
   it('seeding does not reset a series that has already counted', async () => {

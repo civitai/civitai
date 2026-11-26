@@ -1,33 +1,29 @@
 import { ActionIcon, Button, Group, Select, Stack, Text, Textarea } from '@mantine/core';
-import { closeAllModals, openModal } from '@mantine/modals';
-import { IconCopy, IconDots, IconFlag, IconTrash } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
+import { IconCopy, IconDots, IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
+import { openDialog } from '~/components/Dialog/openDialog';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { Menu } from '~/components/MantineOverlays';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const ServiceOfferingFormModal = dynamic(() =>
-  import('~/components/CreatorShop/Services/ServiceOfferingFormModal').then(
-    (m) => m.ServiceOfferingFormModal
-  )
-);
-
 function TakedownForm({ id, title }: { id: number; title: string }) {
+  const { onClose } = useDialogContext();
   const utils = trpc.useUtils();
   const [reason, setReason] = useState<string | null>(null);
   const [details, setDetails] = useState('');
   const takedown = trpc.creatorService.takedown.useMutation({
     onSuccess: async () => {
       await utils.creatorService.invalidate();
-      closeAllModals();
+      onClose();
     },
     onError: (error) => showErrorNotification({ title: 'Could not take the service down', error }),
   });
@@ -61,7 +57,7 @@ function TakedownForm({ id, title }: { id: number; title: string }) {
           : 'Kept with the takedown for moderators; the seller sees only the reason.'}
       </Text>
       <Group justify="flex-end">
-        <Button variant="default" onClick={() => closeAllModals()}>
+        <Button variant="default" onClick={() => onClose()}>
           Cancel
         </Button>
         <Button
@@ -84,10 +80,13 @@ export function ServiceOfferingMenu({
   offering,
   isOwner,
   isModerator,
+  placement = 'card',
 }: {
   offering: { id: number; title: string };
   isOwner: boolean;
   isModerator: boolean;
+  /** `card` floats over a cover image; `title` sits in a page's title row. */
+  placement?: 'card' | 'title';
 }) {
   const { remove } = useMutateMyServices();
   const utils = trpc.useUtils();
@@ -103,7 +102,11 @@ export function ServiceOfferingMenu({
         throw new Error('You can list new services once you meet the requirements to sell.');
       const copyOf = items.find((item) => item.id === offering.id);
       if (!copyOf) throw new Error('This service is no longer in your list.');
-      dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
+      openDialog(
+        () => import('~/components/CreatorShop/Services/ServiceOfferingFormModal'),
+        'ServiceOfferingFormModal',
+        { copyOf }
+      );
     } catch (error) {
       showErrorNotification({ title: 'Could not duplicate the service', error: error as Error });
     }
@@ -111,16 +114,22 @@ export function ServiceOfferingMenu({
   return (
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>
-        <ActionIcon
-          variant="filled"
-          color="dark"
-          radius="xl"
-          size="md"
-          aria-label="Service options"
-          className="pointer-events-auto bg-black/60 backdrop-blur-sm"
-        >
-          <IconDots size={16} />
-        </ActionIcon>
+        {placement === 'title' ? (
+          <LegacyActionIcon variant="light" w={32} h={32} aria-label="Service options">
+            <IconDotsVertical size={16} />
+          </LegacyActionIcon>
+        ) : (
+          <ActionIcon
+            variant="filled"
+            color="dark"
+            radius="xl"
+            size="md"
+            aria-label="Service options"
+            className="pointer-events-auto bg-black/60 backdrop-blur-sm"
+          >
+            <IconDots size={16} />
+          </ActionIcon>
+        )}
       </Menu.Target>
       <Menu.Dropdown>
         {!isOwner && (
@@ -162,7 +171,7 @@ export function ServiceOfferingMenu({
             color="red"
             leftSection={<IconTrash size={14} />}
             onClick={() =>
-              openModal({
+              openContentDialog({
                 title: 'Take down service',
                 children: <TakedownForm id={offering.id} title={offering.title} />,
               })

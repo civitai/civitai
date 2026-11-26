@@ -2,8 +2,10 @@ package v1models
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -28,6 +30,12 @@ type ListInput struct {
 	IDs             []int // nil = absent
 	// Tag is the `tag` filter's name ("" = none: the empty string is falsy to `tagname ?? tag`).
 	Tag string
+	// Text is a truthy `query`: the text search (DESIGN.md §16.11); "" = the database path.
+	Text string
+	// TextOffset is the text search's offset, the `cursor` read as a number (0 = none).
+	TextOffset int
+	// SortNamed: the request names `sort` (`'sort' in req.query`), so the text search sorts by it.
+	SortNamed bool
 	// Query is req.query in Object.keys order, for nextPage.
 	Query []feed.QueryParam
 }
@@ -42,7 +50,7 @@ var ported = map[string]bool{
 
 // unported are the schema's other keys (getAllModelsSchema + userPreferencesSchema + the endpoint's
 // own), each its own fallback reason (`v1-models-<key>`), so the reason label is bounded by the schema.
-// `query` is read apart (textQueryAbsent): only its falsy value is ported.
+// `query` is read apart (textQueryAbsent): a truthy one is the text search (ListInput.Text).
 var unported = map[string]bool{
 	"tagname": true, "user": true, "rating": true, "favorites": true,
 	"hidden": true, "checkpointType": true, "needsReview": true, "paidAccess": true, "hidePaid": true,
@@ -55,7 +63,29 @@ var unported = map[string]bool{
 	"excludedImageIds": true,
 }
 
-var digits = regexp.MustCompile(`^[0-9]{1,10}$`)
+// authedOnly are the unported keys a signed-out caller is refused on (authedOnlyOptions: a 401),
+// checked before unported: their own `v1-models-<key>` reason is never reached.
+var authedOnly = map[string]bool{"favorites": true, "hidden": true}
+
+// UnportedFallbackKeys are the keys whose `v1-models-<key>` fallback ParseList can reach: the unported
+// keys less authedOnly, sorted.
+func UnportedFallbackKeys() []string {
+	out := make([]string, 0, len(unported))
+	for k := range unported {
+		if !authedOnly[k] {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+var (
+	digits = regexp.MustCompile(`^[0-9]{1,10}$`)
+	// offsetDigits is a text search cursor read here: decimal digits Number() reads as the same
+	// integer, short enough that the next offset stays an int4.
+	offsetDigits = regexp.MustCompile(`^[0-9]{1,9}$`)
+)
 
 // zod's stringbool defaults, compared case-insensitively (booleanString on a query string).
 var (
@@ -120,7 +150,8 @@ func textQueryAbsent(vals []string) bool {
 }
 
 // ParseList parses a `/api/v1/models` query string for a signed-out caller. Every input Node answers
-// with a 400, 401 or 429, and every schema key not ported, falls back.
+// with a 400, 401 or 429, and every schema key not ported, falls back. A truthy `query` is parsed
+// into Text; whether it is answered is the caller's decision (ServeList).
 func ParseList(raw string) (*ListInput, error) {
 	params, err := feed.ParseSearch(raw)
 	if err != nil {
@@ -129,12 +160,15 @@ func ParseList(raw string) (*ListInput, error) {
 	in := &ListInput{Limit: 100, Sort: SortHighestRated, Period: "AllTime", PeriodMode: "published", Query: params}
 	for _, p := range params {
 		switch {
-		case p.Key == "favorites" || p.Key == "hidden":
+		case authedOnly[p.Key]:
 			// authedOnlyOptions: a signed-out caller naming either is a 401.
 			return nil, fallback.New("v1-models-authed-only")
 		case p.Key == "query" && !textQueryAbsent(p.Values):
-			// A text query is the Meilisearch path: not ported.
-			return nil, fallback.New("v1-models-query")
+			if len(p.Values) != 1 {
+				// A repeated `query` is an array: the schema answers a 400.
+				return nil, fallback.New("v1-models-query")
+			}
+			in.Text = p.Values[0]
 		case unported[p.Key]:
 			return nil, fallback.New("v1-models-" + p.Key)
 		}
@@ -179,6 +213,7 @@ func ParseList(raw string) (*ListInput, error) {
 				return nil, fallback.New("v1-models-sort")
 			}
 			in.Sort = s
+			in.SortNamed = true
 		case "period":
 			s, err := scalar(v)
 			if err != nil {
@@ -271,7 +306,39 @@ func ParseList(raw string) (*ListInput, error) {
 	if usingPaging && in.Page*in.Limit > 1000 {
 		return nil, fallback.New("v1-models-page-limit")
 	}
+	if in.Text != "" {
+		if err := parseTextSearch(in); err != nil {
+			return nil, err
+		}
+	}
 	return in, nil
+}
+
+// parseTextSearch reads what the handler does with a truthy `query`: `query && page` is a 400, and
+// the cursor is the search offset (`cursor && Number.isFinite(Number(cursor)) ? Math.max(0,
+// Number(cursor)) : 0`). Read here: a cursor of decimal digits (an empty one is no offset). Any other
+// cursor Number() reads its own way (a fraction the search refuses, an exponent, a sign, a date the
+// cursor schema turns into a Date) falls back. A `baseModels` holding an empty value falls back: the
+// schema drops a lone empty value where the statement here would not. Each of these is the one text
+// query reason, `v1-models-query`: the request alone decides it, and one reason keeps the
+// request-determined set (RequestFallbackReasons) unchanged by the text search.
+func parseTextSearch(in *ListInput) error {
+	if !utf8.ValidString(in.Text) {
+		return fallback.New("v1-models-query-encoding")
+	}
+	if in.Page > 0 {
+		return fallback.New("v1-models-query")
+	}
+	if in.Cursor != "" {
+		if !offsetDigits.MatchString(in.Cursor) {
+			return fallback.New("v1-models-query")
+		}
+		in.TextOffset, _ = strconv.Atoi(in.Cursor)
+	}
+	if slices.Contains(in.BaseModels, "") {
+		return fallback.New("v1-models-query")
+	}
+	return nil
 }
 
 // ParseID is `/api/v1/models/[id]`'s schema: `z.coerce.number().int().gt(0).lte(INT4_MAX)` over the

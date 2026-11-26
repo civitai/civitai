@@ -2,31 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as LegalHold from '~/server/services/legal-hold.service';
-
-// The real hold predicates have their own suites; here a held image is one listed in "ImageHeld",
-// a held owner one listed in "OwnerHeld".
-const realHold = vi.hoisted(() => ({ on: false }));
-
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => {
-  const actual = await importOriginal<typeof LegalHold>();
-  return {
-    ...actual,
-    // An image on post 777 stands for a predicate that comes back NULL: read that as held.
-    // `realHold.on` swaps in the real predicate, for the tests of what it covers.
-    captureImageHeldSql: (alias: string) => {
-      if (realHold.on) return actual.captureImageHeldSql(alias);
-      const a = Prisma.raw(alias);
-      return Prisma.sql`(CASE WHEN ${a}."postId" = 777 THEN NULL ELSE ${a}.id IN (SELECT "imageId" FROM "ImageHeld") END)`;
-    },
-    // Owner 13 stands for a predicate that comes back NULL: the script must read that as held.
-    ownerHeldSql: (owner: Prisma.Sql) =>
-      Prisma.sql`(CASE WHEN ${owner} = 13 THEN NULL ELSE ${owner} IN (SELECT "userId" FROM "OwnerHeld") END)`,
-  };
-});
-
 import {
   actedOn,
   appendDurable,
@@ -104,8 +81,6 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending','Scanned','Error','Blocked','NotFound','PendingManualAssignment','Rescan');
-    CREATE TABLE "ImageHeld" ("imageId" int);
-    CREATE TABLE "OwnerHeld" ("userId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, "userId" int NOT NULL, "postId" int,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
@@ -122,8 +97,6 @@ beforeAll(async () => {
     CREATE TABLE app_listing_screenshots (image_id int);
     CREATE TABLE "Crucible" ("imageId" int, "heroImageId" int);
     CREATE TABLE "CrucibleEntry" ("imageId" int);
-    CREATE TABLE "CsamReport" (images jsonb NOT NULL DEFAULT '[]');
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int);
   `);
 });
 
@@ -138,7 +111,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "CsamReport", "EvidenceHoldImage", "Report", "ImageReport", "PostReport", "Article", app_listings, app_listing_screenshots;
+    TRUNCATE "Image", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "PostReport", "Article", app_listings, app_listing_screenshots;
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
       (1,'00000001-0000-4000-8000-000000000000',10,100),(2,'00000002-0000-4000-8000-000000000000',10,100),(3,'00000003-0000-4000-8000-000000000000',11,101),
       (900,'f0000900-0000-4000-8000-000000000000',12,102),(901,'f0000901-0000-4000-8000-000000000000',12,102);
@@ -238,9 +211,9 @@ describe('hide-lost-original-images', () => {
 
   it('leaves held, in-review and non-Scanned rows alone and says why', async () => {
     await db.exec(`
-      INSERT INTO "ImageHeld" VALUES (1);
-      INSERT INTO "OwnerHeld" VALUES (11);
+      UPDATE "Image" SET "blockedFor" = 'moderated' WHERE id = 1;
       UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2;
+      UPDATE "Image" SET "tosViolation" = true WHERE id = 3;
     `);
     const { deps } = makeDeps();
     const counts = await run(options(), GONE, deps);
@@ -249,16 +222,16 @@ describe('hide-lost-original-images', () => {
       'Scanned',
       'Scanned',
     ]);
-    expect(counts['skipped:image-hold']).toBe(1);
+    expect(counts['skipped:blocked-for']).toBe(1);
     expect(counts['skipped:needs-review']).toBe(1);
-    expect(counts['skipped:owner-hold']).toBe(1);
+    expect(counts['skipped:tos']).toBe(1);
   });
 
   it('a hold placed after the check still stops the write', async () => {
     const { deps } = makeDeps({
       head: async (url) => {
         if (url === '00000001-0000-4000-8000-000000000000')
-          await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
+          await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
         return url.startsWith('0000000') ? 'missing' : 'present';
       },
     });
@@ -271,7 +244,7 @@ describe('hide-lost-original-images', () => {
     const { deps, logged } = makeDeps({
       head: async (url) => {
         if (url === '00000001-0000-4000-8000-000000000000')
-          await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
+          await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
         return url.startsWith('0000000') ? 'missing' : 'present';
       },
     });
@@ -339,22 +312,6 @@ describe('hide-lost-original-images', () => {
     expect(await ingestion(2)).toBe('Scanned');
     expect(await ingestion(3)).toBe('NotFound');
     expect(counts['skipped:open-post-report']).toBe(2);
-  });
-
-  it('reads an image-hold predicate that comes back NULL as held', async () => {
-    await db.exec(`UPDATE "Image" SET "postId" = 777 WHERE id = 1`);
-    const { deps } = makeDeps();
-    const counts = await run(options(), GONE, deps);
-    expect(await ingestion(1)).toBe('Scanned');
-    expect(counts['skipped:image-hold']).toBe(1);
-  });
-
-  it('reads a hold predicate that comes back NULL as held', async () => {
-    await db.exec(`UPDATE "Image" SET "userId" = 13 WHERE id = 1`);
-    const { deps } = makeDeps();
-    const counts = await run(options(), GONE, deps);
-    expect(await ingestion(1)).toBe('Scanned');
-    expect(counts['skipped:owner-hold']).toBe(1);
   });
 
   it('writes nothing on a dry run', async () => {
@@ -461,7 +418,7 @@ describe('hide-lost-original-images', () => {
   it('undo leaves a row that was held while hidden', async () => {
     const { deps } = makeDeps();
     await run(options(), GONE, deps);
-    await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
     const restored = await undo(
       GONE.map((id) => ({ id, prior: 'Scanned' })),
       options({ undo: true }),
@@ -789,33 +746,6 @@ describe('hide-lost-original-images', () => {
       expect(counts.hidden).toBe(2);
     }
   );
-
-  // The real hold predicate, not the mock: a CsamReport that lists the image holds it. The real
-  // predicate reads no status from the report, so whatever state the report is in, it holds.
-  it.each([
-    ['objects', [{ id: 1 }, { id: 2 }]],
-    ['strings', ['1', '2']],
-    ['numbers', [1, 2]],
-  ])('leaves an image alone that a CsamReport lists as %s', async (_shape, listed) => {
-    // The script builds its hold SQL when it loads, so load a copy with the real predicate.
-    realHold.on = true;
-    vi.resetModules();
-    try {
-      const real = await import('../oneoffs/hide-lost-original-images');
-      await db.query(`INSERT INTO "CsamReport" (images) VALUES ($1::jsonb)`, [
-        JSON.stringify(listed),
-      ]);
-      const { deps } = makeDeps();
-      const counts = await real.run(options(), GONE, deps);
-      expect(await ingestion(1)).toBe('Scanned');
-      expect(await ingestion(2)).toBe('Scanned');
-      expect(await ingestion(3)).toBe('NotFound');
-      expect(counts['skipped:image-hold']).toBe(2);
-    } finally {
-      realHold.on = false;
-      vi.resetModules();
-    }
-  });
 
   it('hides a row only if a second HEAD, after a wait, also reads missing', async () => {
     const seen = new Map<string, number>();

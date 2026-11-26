@@ -4,7 +4,6 @@ import { Registry } from 'prom-client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { ensureMonthPartition } from '../queue/queue.service';
 import { cachedSnapshot, readGaugeSnapshot, registerGauges } from './gauges';
 
 // Far from the real clock, so next month's partition is one only this file creates.
@@ -100,6 +99,8 @@ beforeAll(async () => {
     [2, 'trials', 'active'],
     [3, 'trials', 'retired'],
     [4, 'hiddenCheck', 'active'],
+    [5, 'skillCheck', 'active'],
+    [6, 'skillCheck', 'retired'],
   ]) {
     await pg.query(
       `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status") VALUES ($1,$2,'4','core',$3)`,
@@ -133,13 +134,15 @@ describe('readGaugeSnapshot', () => {
     expect(snapshot.writebackPending).toBe(1);
     expect(snapshot.buzzGrantsStuck).toEqual({ failed: 1, pending: 1 });
     expect(snapshot.shopPurchasesStuck).toBe(1);
-    expect(snapshot.referencePool).toEqual({ trials: 2, hiddenCheck: 1 });
+    expect(snapshot.referencePool).toEqual({ trials: 2, hiddenCheck: 1, skillCheck: 1 });
     expect(snapshot.harvestLastRun).toEqual(new Date(minutesAgo(90)));
     expect(snapshot.nextPartitionReady).toBe(false);
   });
 
   it("sees next month's vote partition once it exists", async () => {
-    await ensureMonthPartition(db, { year: 2030, month: 2 });
+    await pg.exec(
+      `CREATE TABLE "KnightsVote_2030_02" PARTITION OF "KnightsVote" FOR VALUES FROM ('2030-02-01') TO ('2030-03-01')`
+    );
     expect((await readGaugeSnapshot(db, NOW)).nextPartitionReady).toBe(true);
   });
 });
@@ -159,6 +162,7 @@ describe('registerGauges', () => {
     expect(text).toContain('knights_queue_oldest_open_age_seconds{stage="yesno"} 1800');
     expect(text).toContain('knights_buzz_grants_stuck{state="pending"} 1');
     expect(text).toContain('knights_reference_pool_items{pool="hiddenCheck"} 1');
+    expect(text).toContain('knights_reference_pool_items{pool="skillCheck"} 1');
     expect(text).toContain(
       `knights_harvest_last_run_timestamp_seconds ${new Date(minutesAgo(90)).getTime() / 1000}`
     );

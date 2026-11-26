@@ -59,7 +59,6 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
   useViewerBrowsingLevelDebounced: () => 1,
   useBrowsingLevelContext: () => ({ blurLevels: 4 }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: React.ReactElement }) => children,
 }));

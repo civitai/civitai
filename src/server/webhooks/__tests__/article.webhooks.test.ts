@@ -34,8 +34,15 @@ const article = (coverImage: unknown, cover: string | null = 'cover-key') => ({
   tags: [],
 });
 
-async function send(articles: unknown[], ids: number[] = []) {
+async function send(
+  articles: unknown[],
+  ids: number[] = [],
+  listedIds: number[] = [],
+  connections: { entityId: number; image: Record<string, unknown> }[] = []
+) {
   withheld.ids = new Set(ids);
+  // The report-listed lookup: the only raw read here.
+  const $queryRaw = vi.fn(async () => listedIds.map((id) => ({ id })));
   // A cover read without `minor` comes back without it, so a select that drops the flag fails here.
   const findMany = vi.fn(
     async (args: { select?: { coverImage?: { select?: { minor?: boolean } } } }) =>
@@ -48,7 +55,11 @@ async function send(articles: unknown[], ids: number[] = []) {
   );
   const payload = await articleWebhooks['new-article'].getData({
     lastSent: new Date(0),
-    prisma: { article: { findMany } },
+    prisma: {
+      article: { findMany },
+      imageConnection: { findMany: vi.fn(async () => connections) },
+      $queryRaw,
+    },
   } as never);
   return { payload, findMany };
 }
@@ -86,6 +97,12 @@ describe('new-article webhook payload', () => {
     expect(payload[0].cover).toBeNull();
   });
 
+  it('🔴 sends no cover, as image or URL, that is listed on a report', async () => {
+    const { payload } = await send([article(image(10))], [], [10]);
+    expect(payload[0].coverImage).toBeNull();
+    expect(payload[0].cover).toBeNull();
+  });
+
   it('sends a minor-flagged PG-13 cover and an unflagged R cover, without the flag (control)', async () => {
     for (const extra of [
       { minor: true, nsfwLevel: 2 },
@@ -100,5 +117,29 @@ describe('new-article webhook payload', () => {
   it('keeps the cover URL of an article with no cover image', async () => {
     const { payload } = await send([article(null)]);
     expect(payload[0].cover).toEqual(expect.stringContaining('cover-key'));
+  });
+
+  it('🔴 sends the body as a signed-out reader is served it', async () => {
+    const uuids = {
+      listed: '66666666-aaaa-4bbb-8ccc-666666666666',
+      blocked: '88888888-aaaa-4bbb-8ccc-888888888888',
+      shown: '77777777-aaaa-4bbb-8ccc-777777777777',
+    };
+    const src = (uuid: string) => `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid}/w`;
+    const body = Object.values(uuids)
+      .map((uuid) => `<img src="${src(uuid)}">`)
+      .join('');
+    const row = (id: number, url: string, extra: Record<string, unknown> = {}) => ({
+      entityId: 1,
+      image: { ...image(id), url, minor: false, tosViolation: false, ...extra },
+    });
+    const { payload } = await send([{ ...article(null), content: body }], [], [20], [
+      row(20, uuids.listed),
+      row(21, uuids.blocked, { ingestion: 'Blocked' }),
+      row(22, uuids.shown),
+    ] as never);
+    expect(payload[0].content).not.toContain(uuids.listed);
+    expect(payload[0].content).not.toContain(uuids.blocked);
+    expect(payload[0].content).toContain(uuids.shown);
   });
 });

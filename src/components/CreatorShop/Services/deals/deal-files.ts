@@ -2,6 +2,7 @@ import { constants } from '~/server/common/constants';
 import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FINAL_EXTENSIONS,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
@@ -53,6 +54,8 @@ export type DealFileFacts = {
   status: ServiceDealFileStatus;
   scanStatus: ServiceDealFileScanStatus | null;
   canDownload: boolean;
+  /** Downloadable, but not from this domain. */
+  downloadOffDomain?: boolean;
 };
 
 const MB = 1024 * 1024;
@@ -101,6 +104,7 @@ export function uploadRefusal(
   if (kind === 'Attachment' && (finalVideo || isVideoLike(file, extension)))
     return "Videos can't be attached.";
   if (!finalVideo && isVideoLike(file, extension)) return SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM;
+  if (extension === 'pdf') return SERVICE_FINAL_PDF_REFUSAL;
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
     return `.${extension || '(none)'} files can't be ${verb}. Use a .zip for anything else.`;
   if (file.size > SERVICE_FINAL_MAX_BYTES)
@@ -228,7 +232,7 @@ export function buyerFinalsState(
   { owned }: { owned: boolean }
 ): FinalsState | null {
   if (finals.length === 0) return null;
-  if (finals.every((file) => file.canDownload)) return 'available';
+  if (finals.every((file) => file.canDownload || file.downloadOffDomain)) return 'available';
   if (finals.some((file) => file.scanStatus === 'Failed')) return 'failed';
   if (finals.some((file) => file.scanStatus !== 'Passed'))
     return owned ? 'checkingOwned' : 'checking';

@@ -114,6 +114,9 @@ export const TokenScope = {
   // resource may list it.
   AppDataRead: 1n << 32n, // 4294967296
 
+  // A recipe-runner client's token; see `RUNNER_ONLY_SCOPES`.
+  RunnerMint: 1n << 33n, // 8589934592
+
   // All scopes
   //
   // NOTE: `Full` is INTENTIONALLY frozen at (1n << 25n) - 1 = 33554431 — it is the
@@ -129,16 +132,24 @@ export const TokenScope = {
 export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 /**
- * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
- * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect`,
- * `AppStoreCatalogWrite`, `WorkerRegister`, `DownloadLink`, `AppsRead` and `AppDataRead`). Use this
- * as the upper bound when validating a requested/stored scope value in the OAuth flow —
- * bounding against `Full` would reject any value carrying an opt-in bit. Computed
- * from the enum so it can never drift behind a newly-added bit.
+ * Scopes only a recipe runner's token carries. Kept out of `ALL_SCOPES` and inside
+ * `NON_USER_SCOPES`, so every scope parser and grant refuses them; a runner path admits them
+ * explicitly. Never a system-app option, a consentable scope or an exchange resource.
  */
-export const ALL_SCOPES: bigint = Object.entries(TokenScope)
-  .filter(([key]) => key !== 'None' && key !== 'Full')
-  .reduce((acc, [, value]) => acc | value, 0n);
+export const RUNNER_ONLY_SCOPES: bigint = TokenScope.RunnerMint;
+
+/**
+ * Mask of every defined scope bit a scope value may carry, including opt-in scopes that are NOT
+ * part of `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect`,
+ * `AppStoreCatalogWrite`, `WorkerRegister`, `DownloadLink`, `AppsRead` and `AppDataRead`), and
+ * excluding `RUNNER_ONLY_SCOPES`. Use this as the upper bound when validating a requested/stored
+ * scope value in the OAuth flow — bounding against `Full` would reject any value carrying an
+ * opt-in bit. Computed from the enum so it can never drift behind a newly-added bit.
+ */
+export const ALL_SCOPES: bigint =
+  Object.entries(TokenScope)
+    .filter(([key]) => key !== 'None' && key !== 'Full')
+    .reduce((acc, [, value]) => acc | value, 0n) & ~RUNNER_ONLY_SCOPES;
 
 /** Whether every bit of `flag` is set in `instance`. The bigint counterpart of `Flags.hasFlag`. */
 export function hasScope(instance: bigint, flag: bigint): boolean {
@@ -147,7 +158,7 @@ export function hasScope(instance: bigint, flag: bigint): boolean {
 
 /**
  * A scope from an untrusted wire value: a non-negative safe-integer number, a non-negative bigint, or
- * a decimal string. Null for anything else, or for a value above `ALL_SCOPES`.
+ * a decimal string. Null for anything else, or for a value with a bit outside `ALL_SCOPES`.
  */
 export function parseTokenScope(raw: unknown): bigint | null {
   let value: bigint;
@@ -159,7 +170,7 @@ export function parseTokenScope(raw: unknown): bigint | null {
     if (!/^\d{1,16}$/.test(raw)) return null;
     value = BigInt(raw);
   } else return null;
-  if (value < 0n || value > ALL_SCOPES) return null;
+  if (value < 0n || (value & ~ALL_SCOPES) !== 0n) return null;
   return value;
 }
 
@@ -252,7 +263,8 @@ export const CLIENT_CREDENTIALS_MAX_SCOPE: bigint =
 export const WORKER_ONLY_SCOPES: bigint = TokenScope.WorkerRegister;
 
 /** Scopes no grant acting for a user may mint. */
-export const NON_USER_SCOPES: bigint = CLIENT_CREDENTIALS_ONLY_SCOPES | WORKER_ONLY_SCOPES;
+export const NON_USER_SCOPES: bigint =
+  CLIENT_CREDENTIALS_ONLY_SCOPES | WORKER_ONLY_SCOPES | RUNNER_ONLY_SCOPES;
 
 /** The part of a client's `allowedScopes` a user can be asked to consent to. */
 export function consentableScopes(allowedScopes: bigint): bigint {

@@ -1,8 +1,20 @@
+import type * as ClientS3 from '@aws-sdk/client-s3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as HatSync from '~/server/events/points/sync';
+
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
 
 /**
  * BANNING REMOVES AN ACCOUNT FROM USER SEARCH — SO LIFTING A BAN HAS TO PUT IT BACK.
@@ -20,6 +32,7 @@ const {
   mockCacheRefresh,
   mockSettingsBust,
   mockSendModerationEmail,
+  mockRefreshSession,
 } = vi.hoisted(() => ({
   mockQueueUpdate: vi.fn(async () => undefined),
   mockRemoveContent: vi.fn(async () => undefined),
@@ -27,6 +40,7 @@ const {
   mockCacheRefresh: vi.fn(async () => undefined),
   mockSettingsBust: vi.fn(async () => undefined),
   mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
+  mockRefreshSession: vi.fn(async (..._a: unknown[]) => undefined),
 }));
 const v3Tos = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
 vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
@@ -49,6 +63,7 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => {
 });
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
+  refreshSession: mockRefreshSession,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -99,7 +114,7 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
 // Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const real = await importOriginal<typeof ClientS3>();
   const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
   const S3Client = class {
     async send(command: unknown) {
@@ -124,16 +139,19 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   return { ...mocked, default: mocked };
 });
 
-const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
+const { toggleBan, toggleContestBan, AlreadyBannedError } = await import(
+  '~/server/services/user.service'
+);
 const { BanReasonCode } = await import('~/server/common/enums');
+const { toggleBanHandler } = await import('~/server/controllers/user.controller');
 
 const USER_ID = 5501;
 const ACTOR_ID = 5502;
 const ALREADY_BANNED_AT = new Date('2026-01-02T03:04:05.000Z');
 
-// `getUserById` reads the REPLICA; `updateUserById` writes the PRIMARY. Named separately so a
-// write cannot satisfy a read assertion.
-const userFindUnique = dbMock.dbRead.user.findUnique;
+// The direction read and `updateUserById` both use the PRIMARY. Named separately so a write cannot
+// satisfy a read assertion.
+const userFindUnique = dbMock.dbWrite.user.findUnique;
 const userUpdate = dbMock.dbWrite.user.update;
 const userFindFirst = dbMock.dbWrite.user.findFirst;
 // The ban branch fans out to these and chains `.catch` on each; the canonical mock has no
@@ -200,7 +218,7 @@ describe('toggleBan -> user search index', () => {
     });
     mockQueueUpdate.mockRejectedValueOnce(new Error('redis is down'));
 
-    await expect(call()).resolves.toEqual({ id: USER_ID, paddleCustomerId: null });
+    await expect(call()).resolves.toEqual({ id: USER_ID, paddleCustomerId: null, changed: true });
 
     expect(mockSendModerationEmail).toHaveBeenCalledTimes(1);
     expect(mockSendModerationEmail.mock.calls[0]?.[0]).toMatchObject({
@@ -632,7 +650,7 @@ describe('toggleBan onlyBan', () => {
   });
 
   it('bans from the primary even while the replica still shows a lifted ban', async () => {
-    userFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
 
     await banOnly('chargeback:dp_1:banned');
 
@@ -706,5 +724,247 @@ describe('toggleBan -> reviews written from the posts its model unpublish takes 
         expect.objectContaining({ change: 'unpublish', postIds: [9] })
       )
     );
+  });
+});
+
+describe('toggleBan -> version showcases', () => {
+  it("takes a banned author's featured images out of every showcase, and back on an unban", async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
+  });
+});
+
+describe('toggleBan when the replica lags the primary', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const writtenBannedAt = () =>
+    (userUpdate.mock.calls.at(-1)?.[0] as { data: { bannedAt: Date | null } } | undefined)?.data
+      .bannedAt;
+
+  it('bans an account the primary shows unbanned, though the replica still shows it banned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row(null));
+
+    await call();
+
+    expect(writtenBannedAt()).toBeInstanceOf(Date);
+  });
+
+  it('unbans an account the primary shows banned, though the replica shows it unbanned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(row(null));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+
+    await call();
+
+    expect(writtenBannedAt()).toBeNull();
+  });
+});
+
+describe('toggleContestBan when the replica lags the primary', () => {
+  const contestBan = () =>
+    toggleContestBan({ id: USER_ID, userId: ACTOR_ID } as Parameters<typeof toggleContestBan>[0]);
+  const writtenContestBan = () =>
+    (
+      userUpdate.mock.calls.at(-1)?.[0] as
+        | { data: { meta: { contestBanDetails?: { bannedAt: Date } } } }
+        | undefined
+    )?.data.meta.contestBanDetails;
+
+  it('bans an account the primary shows unbanned, though the replica still shows it banned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      meta: { contestBanDetails: { bannedAt: ALREADY_BANNED_AT } },
+    });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: {} });
+
+    await contestBan();
+
+    expect(writtenContestBan()?.bannedAt).toBeInstanceOf(Date);
+  });
+
+  it('unbans an account the primary shows banned, though the replica shows it unbanned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ meta: {} });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      meta: { contestBanDetails: { bannedAt: ALREADY_BANNED_AT } },
+    });
+
+    await contestBan();
+
+    expect(userUpdate).toHaveBeenCalledTimes(1);
+    expect(writtenContestBan()).toBeUndefined();
+  });
+});
+
+describe('toggleBan with an explicit setTo', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const banTo = (setTo?: boolean) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Other,
+      userId: ACTOR_ID,
+      isModerator: true,
+      setTo,
+    } as Parameters<typeof toggleBan>[0]);
+  const writtenBannedAt = () =>
+    (userUpdate.mock.calls.at(-1)?.[0] as { data: { bannedAt: Date | null } } | undefined)?.data
+      .bannedAt;
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID, bannedAt: null });
+  });
+
+  it.each([
+    ['no setTo, unbanned', undefined, null, 'ban'],
+    ['no setTo, banned', undefined, ALREADY_BANNED_AT, 'unban'],
+    ['setTo true, unbanned', true, null, 'ban'],
+    ['setTo false, banned', false, ALREADY_BANNED_AT, 'unban'],
+  ] as const)('%s: %ss', async (_, setTo, bannedAt, direction) => {
+    userFindUnique.mockResolvedValue(row(bannedAt));
+
+    const result = await banTo(setTo);
+
+    expect(result.changed).toBe(true);
+    if (direction === 'ban') expect(writtenBannedAt()).toBeInstanceOf(Date);
+    else expect(writtenBannedAt()).toBeNull();
+  });
+
+  it.each([
+    ['setTo true on a banned account', true, ALREADY_BANNED_AT],
+    ['setTo false on an unbanned account', false, null],
+  ] as const)('%s writes nothing and runs no ban side effect', async (_, setTo, bannedAt) => {
+    // With an address, so a ban or unban that ran would send its email.
+    userFindUnique.mockResolvedValue({ ...row(bannedAt), email: 'someone@example.com' });
+
+    const result = await banTo(setTo);
+
+    expect(result).toMatchObject({ changed: false });
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(mockRemoveContent).not.toHaveBeenCalled();
+    expect(mockQueueUpdate).not.toHaveBeenCalled();
+    expect(mockInvalidateSession).not.toHaveBeenCalled();
+    expect(mockSendModerationEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleContestBan with an explicit setTo', () => {
+  const banned = { meta: { contestBanDetails: { bannedAt: ALREADY_BANNED_AT } } };
+  const contestBanTo = (setTo?: boolean) =>
+    toggleContestBan({ id: USER_ID, userId: ACTOR_ID, setTo } as Parameters<
+      typeof toggleContestBan
+    >[0]);
+  const writtenContestBan = () =>
+    (
+      userUpdate.mock.calls.at(-1)?.[0] as
+        | { data: { meta: { contestBanDetails?: { bannedAt: Date } } } }
+        | undefined
+    )?.data.meta.contestBanDetails;
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID });
+  });
+
+  it.each([
+    ['no setTo, unbanned', undefined, { meta: {} }, 'ban'],
+    ['no setTo, banned', undefined, banned, 'unban'],
+    ['setTo true, unbanned', true, { meta: {} }, 'ban'],
+    ['setTo false, banned', false, banned, 'unban'],
+  ] as const)('%s: %ss', async (_, setTo, current, direction) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(current);
+
+    const result = await contestBanTo(setTo);
+
+    expect(result.changed).toBe(true);
+    expect(userUpdate).toHaveBeenCalledTimes(1);
+    if (direction === 'ban') expect(writtenContestBan()?.bannedAt).toBeInstanceOf(Date);
+    else expect(writtenContestBan()).toBeUndefined();
+  });
+
+  it.each([
+    ['setTo true on a contest-banned account', true, banned],
+    ['setTo false on an account without a contest ban', false, { meta: {} }],
+  ] as const)('%s writes nothing', async (_, setTo, current) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(current);
+
+    const result = await contestBanTo(setTo);
+
+    expect(result).toMatchObject({ changed: false });
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleBanHandler audit', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const handle = (input: { setTo?: boolean; type?: 'contest' }) => {
+    const userActivity = vi.fn(async () => undefined);
+    const ctx = { user: { id: ACTOR_ID, isModerator: true }, track: { userActivity } } as never;
+    const run = toggleBanHandler({
+      input: { id: USER_ID, reasonCode: BanReasonCode.Other, ...input } as never,
+      ctx,
+    });
+    return { run, userActivity };
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID, bannedAt: null });
+  });
+
+  it('records one Banned activity for a ban that lands', async () => {
+    userFindUnique.mockResolvedValue(row(null));
+    userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null, bannedAt: new Date() });
+
+    const { run, userActivity } = handle({ setTo: true });
+    await run;
+
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith({ type: 'Banned', targetUserId: USER_ID });
+  });
+
+  it('records one Unbanned activity for an unban that lands', async () => {
+    userFindUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+    userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null, bannedAt: null });
+
+    const { run, userActivity } = handle({ setTo: false });
+    await run;
+
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith({ type: 'Unbanned', targetUserId: USER_ID });
+  });
+
+  it.each([
+    ['setTo true on a banned account', true, ALREADY_BANNED_AT],
+    ['setTo false on an unbanned account', false, null],
+  ] as const)('%s records no activity', async (_, setTo, bannedAt) => {
+    userFindUnique.mockResolvedValue(row(bannedAt));
+
+    const { run, userActivity } = handle({ setTo });
+    await run;
+
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records no activity for a contest ban', async () => {
+    userFindUnique.mockResolvedValue({ meta: {} });
+
+    const { run, userActivity } = handle({ type: 'contest' });
+    await expect(run).resolves.toMatchObject({ changed: true });
+
+    expect(userActivity).not.toHaveBeenCalled();
   });
 });

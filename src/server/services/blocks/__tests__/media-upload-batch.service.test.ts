@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 /**
  * `media-upload-batch.service` — the server half of `OPEN_MEDIA_UPLOAD_BATCH`: the viewer's daily
@@ -101,10 +102,24 @@ describe('the daily batch quota', () => {
   it('admits the 1,200th file of the day and refuses the 1,201st', async () => {
     await expect(reserveMediaUploadBatchQuota(USER, 1199, 10, NOW)).resolves.toBeTypeOf('function');
     await expect(reserveMediaUploadBatchQuota(USER, 1, 10, NOW)).resolves.toBeTypeOf('function');
-    await expect(reserveMediaUploadBatchQuota(USER, 1, 10, NOW)).rejects.toMatchObject({
+    const refused = await reserveMediaUploadBatchQuota(USER, 1, 10, NOW).catch((e: unknown) => e);
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message:
         "You've reached today's batch upload limit (1,200 files or 10 GB). It resets at midnight UTC.",
+    });
+    // A product allowance: the day's files before this batch, and the reset at UTC midnight
+    // (14 hours after 10:00).
+    expect(rateLimitMetaOf(refused)).toEqual({
+      retryAfterSeconds: 50_400,
+      retryAt: expect.any(String),
+      id: 'apps.media-upload-daily-items',
+      kind: 'product',
+      limit: 1200,
+      used: 1200,
+      remaining: 0,
+      windowSeconds: 86_400,
+      resetAt: '2026-11-12T00:00:00.000Z',
     });
     // The refused charge was handed back: the day still reads exactly 1,200.
     expect(used('items')).toBe(1200);
@@ -120,8 +135,14 @@ describe('the daily batch quota', () => {
     await reserveMediaUploadBatchQuota(USER, 1, 6_442_450_944, NOW);
     await reserveMediaUploadBatchQuota(USER, 1, 4_294_967_295, NOW);
     await reserveMediaUploadBatchQuota(USER, 1, 1, NOW);
-    await expect(reserveMediaUploadBatchQuota(USER, 1, 1, NOW)).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
+    const refused = await reserveMediaUploadBatchQuota(USER, 1, 1, NOW).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      id: 'apps.media-upload-daily-bytes',
+      kind: 'product',
+      limit: 10_737_418_240,
+      used: 10_737_418_240,
+      remaining: 0,
     });
     expect(used('bytes')).toBe(10_737_418_240);
     expect(used('items')).toBe(3);

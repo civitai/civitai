@@ -15,11 +15,14 @@ import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
 // The civitai-sticker-track node pack (our fork of rmatif/comfyui-sticker-track) follows the
 // subject under a sticker and returns a v1 track.
-// Pin every AIR. COMFY_IMAGE and NODE_PACK_LAYER must change together: the layer's AIR embeds
-// the image's and only runs on that image.
-const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.60';
-const NODE_PACK_LAYER =
-  'urn:air:comfy:nodepacklayer:comfyregistry:civitai/civitai-sticker-track@1.2.0+75726e3a6169723a6f63693a696d6167653a676863723a636976697461692f636976697461692d7370696e652d636f6d66794076322e372e3630';
+// Keep COMFY_IMAGE on the image the workers serve: a run pinned to an image they have dropped
+// waits minutes while one is fetched. After changing COMFY_IMAGE or NODE_PACK, submit one run
+// before deploying and check it succeeds: the first run that built the v2.7.65 layer failed its
+// track step with no reason given, and runs passed once the layer existed.
+const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.65';
+const NODE_PACK = 'urn:air:comfy:nodepack:comfyregistry:civitai/civitai-sticker-track@1.3.0';
+const INSTALL_STEP = 'install';
+const TRACK_STEP = 'track';
 const SAM_CHECKPOINT =
   'urn:air:other:checkpoint:huggingface:Comfy-Org/sam3.1@7bb8374780a725b4353ed31f3a9395c9742b5621/checkpoints/sam3.1_multiplex_fp16.safetensors';
 const TAPNEXT_CHECKPOINT =
@@ -73,9 +76,13 @@ export function readStickerAutoTrackWorkflow(
   if (TERMINAL_FAILURES.has(status)) return { status: 'failed', reason: 'run', runStatus: status };
   if (status !== 'succeeded') return { status: 'running' };
 
-  const step = (workflow.steps ?? [])[0] as
-    | { output?: { blobs?: { id?: string; url?: string | null; available?: boolean }[] } }
-    | undefined;
+  const steps = (workflow.steps ?? []) as {
+    name?: string | null;
+    output?: { blobs?: { id?: string; url?: string | null; available?: boolean }[] };
+  }[];
+  // Runs submitted before the install step existed have one unnamed step.
+  const step =
+    steps.find((s) => s.name === TRACK_STEP) ?? (steps.length === 1 ? steps[0] : undefined);
   const blob = step?.output?.blobs?.find((b) => b.id?.endsWith('.json'));
   // A run can report success with its file missing.
   if (!blob?.url || blob.available === false) return { status: 'failed', reason: 'no-file' };
@@ -195,11 +202,22 @@ export function buildStickerAutoTrackWorkflow({
         },
       }
     : {};
-  return {
+  const install = {
+    $type: 'comfyNodepackSnapshot',
+    name: INSTALL_STEP,
+    input: { comfyImage: COMFY_IMAGE, nodepacks: [NODE_PACK] },
+  };
+  const track = {
     $type: 'customComfy',
+    name: TRACK_STEP,
     input: {
       comfyImage: COMFY_IMAGE,
-      resources: [NODE_PACK_LAYER, videoAir, SAM_CHECKPOINT, TAPNEXT_CHECKPOINT],
+      resources: [
+        { $ref: INSTALL_STEP, path: 'output.results[0].layerAir' },
+        videoAir,
+        SAM_CHECKPOINT,
+        TAPNEXT_CHECKPOINT,
+      ],
       workflow: {
         '1': {
           class_type: 'StickerLoadVideo',
@@ -278,7 +296,8 @@ export function buildStickerAutoTrackWorkflow({
         ...fallback,
       },
     },
-  } as unknown as WorkflowStepTemplate;
+  };
+  return [install, track] as unknown as WorkflowStepTemplate[];
 }
 
 /** One counter per placer per UTC day, read back by the account Limits page. */
@@ -364,7 +383,7 @@ export async function startAutoTrack(
     store: RunCounter;
     submit: (job: {
       metadata: AutoTrackMetadata;
-      step: ReturnType<typeof buildStickerAutoTrackWorkflow>;
+      steps: ReturnType<typeof buildStickerAutoTrackWorkflow>;
     }) => Promise<{ id?: string | null; status?: number }>;
     now: () => number;
   },
@@ -415,7 +434,7 @@ export async function startAutoTrack(
     submit: () =>
       deps.submit({
         metadata: { stickerAutoTrack: { userId: user.id, imageId, startMs } },
-        step: buildStickerAutoTrackWorkflow({
+        steps: buildStickerAutoTrackWorkflow({
           videoAir: stickerAutoTrackVideoAir(video.url),
           pose,
           startMs,

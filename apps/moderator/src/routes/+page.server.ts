@@ -93,6 +93,7 @@ export const actions: Actions = {
       success: true,
       changed: result.changed,
       unchanged: result.unchanged,
+      skipped: result.skipped,
       failed: result.failed,
     };
   },

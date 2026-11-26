@@ -46,10 +46,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // The sub-nav's other two inputs. `useCurrentUser` is mocked rather than provided
 // because the real hook throws `missing CivitaiSessionContext` under this scaffold —
 // the same reason `AppsPageLayout`'s own browser tests mock it.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'owner', isModerator: false }),
-}));
 
 // NOTE: this file used to carry its own `vi.mock('next/router', ...)`. It SILENTLY LOST to
 // the scaffold's mock in `test/component-setup.tsx` (a setup-file mock the per-file one does
@@ -107,7 +103,9 @@ beforeEach(() => {
 
 describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
   test('renders BOTH tabs and defaults to the manifest tab', async () => {
-    renderWithProviders(<AppEditPage />);
+    renderWithProviders(<AppEditPage />, {
+      user: { id: 1, username: 'owner', isModerator: false },
+    });
     await expect.element(page.getByTestId('apps-edit-tab-manifest')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-edit-tab-media')).toBeInTheDocument();
     // Default tab = manifest → the manifest form renders.
@@ -118,14 +116,18 @@ describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
 
   test('?tab=media selects the media tab (renders the media editor)', async () => {
     router.query = { appBlockId: 'blk-1', tab: 'media' };
-    renderWithProviders(<AppEditPage />);
+    renderWithProviders(<AppEditPage />, {
+      user: { id: 1, username: 'owner', isModerator: false },
+    });
     await expect.element(page.getByTestId('mock-media-editor')).toBeInTheDocument();
     await expect.element(page.getByText(/media editor for blk-1/i)).toBeInTheDocument();
   });
 
   test('a non-owner (getMyAppManifest errors) settles to NotFound', async () => {
     mocks.manifestQuery.error = { message: 'FORBIDDEN' };
-    renderWithProviders(<AppEditPage />);
+    renderWithProviders(<AppEditPage />, {
+      user: { id: 1, username: 'owner', isModerator: false },
+    });
     await expect.element(page.getByTestId('mock-notfound')).toBeInTheDocument();
   });
 
@@ -140,7 +142,9 @@ describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
    */
   async function renderOnDesktop() {
     await page.viewport(1440, 900);
-    renderWithProviders(<AppEditPage />);
+    renderWithProviders(<AppEditPage />, {
+      user: { id: 1, username: 'owner', isModerator: false },
+    });
   }
 
   test('🔴 the page is on the SHARED apps chrome, not its own bare Container', async () => {

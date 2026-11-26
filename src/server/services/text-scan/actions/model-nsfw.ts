@@ -363,9 +363,8 @@ export async function applyComFaceHeldVerdict(
       AND ${noComFaceSql}`
   );
   if (!flipped) {
-    // Already mature and unrestricted: nothing to flip, but the verdict still stands as the scan's
-    // origin marker, so the owner cannot untick the rating alone (`assertScanRatingKept`), as for
-    // a scan that read an already-mature model with no face (`markScanRating`).
+    // Already mature: the verdict still leaves the scan's marker, so the owner cannot untick the
+    // rating alone.
     await markScanRating(
       db,
       modelId,

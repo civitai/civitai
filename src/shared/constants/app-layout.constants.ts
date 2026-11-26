@@ -105,3 +105,10 @@ export const mobileMenuSheetZIndex = 400;
  * portalled dropdown) passes this, or it can open behind the sheet.
  */
 export const overMobileSheetZIndex = mobileMenuSheetZIndex + 1;
+
+/**
+ * Confirm and content dialogs pass their z-index through this: one opened from a phone sheet must
+ * still land above it.
+ */
+export const atLeastOverMobileSheet = (zIndex: number | undefined) =>
+  Math.max(zIndex ?? 0, overMobileSheetZIndex);

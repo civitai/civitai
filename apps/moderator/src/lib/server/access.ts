@@ -125,8 +125,6 @@ export const NAVIGATION: NavLink[] = [
         countKey: reportCountKey('image'),
         shortcut: true,
       },
-      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
-      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/scan-probe', label: 'Scan Probe' },
@@ -167,6 +165,7 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
       { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
+      { path: '/models/version-showcases', label: 'Featured community images' },
     ],
   },
   {
@@ -443,7 +442,7 @@ export function grantsSnapshot(): Record<string, Role[]> {
   return Object.fromEntries(grants.map((g) => [g.path, [...g.roles]]));
 }
 
-type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
+export type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
 /** The admin check: holds `moderator:admin`, which reaches everything and grants everything. */
 export const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);

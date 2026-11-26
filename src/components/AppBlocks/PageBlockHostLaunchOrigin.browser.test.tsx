@@ -27,7 +27,6 @@ const rpc = await vi.hoisted(async () => {
   return createBridgeRpcMock();
 });
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: rpc.trpc,

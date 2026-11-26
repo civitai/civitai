@@ -84,6 +84,7 @@ import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 const mockSysRedis = redisMock.sysRedis;
 redisMock.redis.set.mockImplementation(async () => undefined);
 redisMock.sysRedis.incrBy.mockImplementation(async () => 1);
@@ -236,8 +237,14 @@ describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
     mockResolveDev.mockResolvedValue(EPHEMERAL_APP);
     mockSysRedis.incrBy.mockResolvedValue(21); // max is 20
     const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
-    await expect(caller.startDevTunnel(ephemeralInput)).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
+    const refused = await caller.startDevTunnel(ephemeralInput).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // The window's remaining TTL (3600 in this harness) and the abuse id, no counts.
+    expect(rateLimitMetaOf(refused)).toEqual({
+      retryAfterSeconds: 3600,
+      retryAt: expect.any(String),
+      id: 'apps.dev-tunnel-starts',
+      kind: 'abuse',
     });
     expect(mockStart).not.toHaveBeenCalled();
   });
@@ -246,8 +253,12 @@ describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
     mockResolveDev.mockResolvedValue(EPHEMERAL_APP);
     mockSysRedis.incrBy.mockRejectedValue(new Error('redis down'));
     const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
-    await expect(caller.startDevTunnel(ephemeralInput)).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
+    const refused = await caller.startDevTunnel(ephemeralInput).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // The store is down, not the window spent: a short retry.
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      retryAfterSeconds: 60,
+      id: 'apps.dev-tunnel-starts',
     });
     expect(mockStart).not.toHaveBeenCalled();
   });

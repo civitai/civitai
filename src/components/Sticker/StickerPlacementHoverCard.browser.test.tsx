@@ -14,7 +14,6 @@ import { HOVER_DELAY_MS } from '~/components/UserAvatar/hover-card.constants';
  * is absent at some instant, because an absence assertion passes for free the
  * day the locator stops matching.
  */
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 
 /**
  * The module spread is load-bearing; the one that used to sit inside it was not.
@@ -77,7 +76,8 @@ const renderCard = async () => {
       >
         sticker
       </button>
-    </StickerPlacementHoverCard>
+    </StickerPlacementHoverCard>,
+    { user: { id: 7 } }
   );
 
   await expect.element(page.getByRole('button', { name: 'sticker' })).toBeInTheDocument();

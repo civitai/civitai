@@ -82,6 +82,8 @@ const storeShowcase = (showcaseItems: ShowcaseItemSchema[]) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a once-queue a case left unread; it must not reach the next case.
+  db.image.findMany.mockReset();
   db.image.findMany.mockImplementation(findOwned('image') as never);
   db.model.findMany.mockImplementation(findOwned('model') as never);
   db.model.count.mockImplementation(countWithMode as never);
@@ -191,6 +193,24 @@ describe('assertShowcaseItemsOwned', () => {
     ).resolves.toBeUndefined();
   });
 
+  it.each([false, true])(
+    "refuses a deal file's scan copy, the caller a moderator: %s",
+    async (isModerator) => {
+      db.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+        [...strings].join('').includes('ServiceDealFile')
+          ? [{ dealFileImage: true }]
+          : []) as never);
+      await expect(
+        assertShowcaseItemsOwned({
+          userId: OWNER_ID,
+          isModerator,
+          showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+          currentShowcaseItems: [],
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
+  );
+
   it('lets a moderator through without a lookup', async () => {
     await expect(
       assertShowcaseItemsOwned({
@@ -202,6 +222,37 @@ describe('assertShowcaseItemsOwned', () => {
     ).resolves.toBeUndefined();
     expect(db.image.findMany).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { ingestion: 'Blocked', blockedFor: 'tos' },
+    { ingestion: 'Blocked', blockedFor: null },
+  ])("refuses the owner's own image that ownerMediaAllowed withholds (%o)", async (block) => {
+    db.image.findMany.mockResolvedValueOnce([{ id: OWN_IMAGE, ...block }] as never);
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+        currentShowcaseItems: [],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A blocked image cannot be added to your showcase',
+    });
+  });
+
+  // OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts) leaves the owner an AiNotVerified image.
+  it("accepts the owner's image blocked only for an unverified AI claim", async () => {
+    db.image.findMany.mockResolvedValueOnce([
+      { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'AiNotVerified' },
+    ] as never);
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+        currentShowcaseItems: [],
+      })
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('updateUserProfile — showcase ownership', () => {
@@ -210,11 +261,31 @@ describe('updateUserProfile — showcase ownership', () => {
       updateUserProfile({
         userId: OWNER_ID,
         isModerator: true,
+        asModerator: true,
         sessionUserId: STRANGER_ID,
         showcaseItems: [{ entityType: 'Image', entityId: STRANGER_IMAGE }],
       })
     ).resolves.toBeDefined();
     expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a moderator on a scoped key to the owner's rules: the owner's blocked image is refused", async () => {
+    db.image.findMany.mockResolvedValueOnce([
+      { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'tos' },
+    ] as never);
+    await expect(
+      updateUserProfile({
+        userId: OWNER_ID,
+        isModerator: true,
+        asModerator: false,
+        sessionUserId: STRANGER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A blocked image cannot be added to your showcase',
+    });
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   it("refuses a moderator putting another user's image on their own profile", async () => {

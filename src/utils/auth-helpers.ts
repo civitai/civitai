@@ -3,6 +3,7 @@
 // /api/auth/login-popup build the hub URL with the server's AUTH_JWT_ISSUER, so there's no client-side hub env
 // var to set (or to silently no-op when missing).
 
+import { deleteFlowDrafts } from '@civitai/shared/training-flow-draft';
 import { safeInternalPath } from '~/utils/url-helpers';
 
 /** Same-origin POPUP login entry — the main server redirects to the hub, landing on /login/popup-done. */
@@ -100,12 +101,13 @@ export function openLoginPopup(callbackUrl: string, reason?: string) {
  * authentication, its own guard (getServerSideProps redirect / requireLogin) sends the user to a public page —
  * so we don't special-case it here. Callers can pass an explicit `callbackUrl` to land somewhere specific.
  */
-export function handleSignOut(options: { callbackUrl?: string } = {}) {
-  if (typeof window === 'undefined') return Promise.resolve();
+export async function handleSignOut(options: { callbackUrl?: string } = {}) {
+  if (typeof window === 'undefined') return;
   const here = window.location.pathname + window.location.search + window.location.hash;
   const callbackUrl = options.callbackUrl ?? here;
   const url = new URL('/api/auth/logout', window.location.origin);
   url.searchParams.set('callbackUrl', callbackUrl);
+  // The embedded Training Studio autosaves an in-progress dataset per user on this origin.
+  await deleteFlowDrafts();
   window.location.href = url.toString();
-  return Promise.resolve();
 }

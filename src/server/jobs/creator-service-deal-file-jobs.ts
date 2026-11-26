@@ -1,6 +1,7 @@
 import { createJob } from './job';
 import { repackFinals } from '~/server/services/creator-service-deal-repack.service';
 import {
+  countDanglingScanCopies,
   deleteEntryScanCopies,
   settleEntryScans,
   settleFinals,
@@ -65,6 +66,7 @@ export const creatorServiceUnpackJob = createJob(
     const finals = await settleFinals();
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
+    const danglingCopies = await countDanglingScanCopies();
     jobContext.checkIfCanceled();
     const retentionExpired = await markExpiredDealFiles();
     jobContext.checkIfCanceled();
@@ -78,6 +80,7 @@ export const creatorServiceUnpackJob = createJob(
       ...scans,
       ...finals,
       copiesDeleted,
+      danglingCopies,
       retentionExpired,
       previewCopiesDropped,
       removedPurged,

@@ -9,6 +9,7 @@ import {
   casePartyViewInput,
   feedbackTriageInput,
   imageModerateInput,
+  imageTagModerateInput,
   relabelBuildBatchInput,
 } from '@civitai/moderation';
 import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
@@ -26,12 +27,16 @@ import { getClickhouse } from '../clickhouse';
 import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
 import { casePartyAction, casePartyView, defaultCasePartyDeps } from '../cases/case-party';
 import { enabledDefinitions, publicDefinition } from '../cases/definitions';
+import { applyGrants } from '../access';
 import { civitaiAppUrl } from '../civitai-url';
 import { dbRead, dbWrite } from '../db';
 import { triageFeedback } from '../feedback.service';
 import { getModeratorDb } from '../moderator-db';
+import { loadPageAccessGrants } from '../page-access';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
 import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
+import { withheldRefusal } from '../retracted-media';
+import { moderateImageTags } from '../image-tags.service';
 import { SYSTEM_USER_ID } from '../users.service';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
@@ -75,11 +80,30 @@ const notRestoredMessage = (notRestored: number[], notFound: number[], restored:
     .filter(Boolean)
     .join(' ');
 
+/** The moderator a trusted caller acts for by id, with the roles a session would carry (the auth hub
+ *  reads them from `UserRole`). A token-authenticated request has no session and loads no page grants,
+ *  so both are read here; the roles from the primary, so a role just revoked no longer counts. */
+async function moderatorById(userId: number) {
+  applyGrants(await loadPageAccessGrants());
+  const rows = await dbWrite
+    .selectFrom('UserRole')
+    .select('role')
+    .where('userId', '=', userId)
+    .execute();
+  return { id: userId, roles: rows.map((r) => r.role) };
+}
+
 // Backs the main app's `image.moderate` (block/unblock over one or more ids). Single-image verdicts loop
 // the spoke services; the moderator UI always sends one id, but the batch shape is preserved.
 const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   schema: imageModerateInput,
   handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
+    // A block only protects, so it is never refused; an unblock of a batch with a withheld image
+    // acts on none of it.
+    if (reviewAction === 'unblock') {
+      const withheld = await withheldRefusal(await moderatorById(userId), ids);
+      if (withheld) throw Object.assign(new Error(withheld), { status: 403 });
+    }
     const held: HeldRemoval[] = [];
     const notRestored: number[] = [];
     const notFound: number[] = [];
@@ -199,6 +223,31 @@ const feedbackTriage: ModAction<z.infer<typeof feedbackTriageInput>> = {
     }),
 };
 
+/**
+ * Backs Knights' write-back of a Paladin consensus on one flagged tag of the tag review queue.
+ *
+ * 🔴 THE STATED EXCEPTION TO THE ACTOR CONVENTION ABOVE: `userId` is not a moderator. It is the player whose vote
+ * completed the consensus, asserted by Knights, and it is granted nothing beyond this one tag write and its
+ * `moderateTagKono` row. The write is the queue's own `moderateImageTags`, in its guarded mode: it changes nothing
+ * unless the tag is still flagged and the image may still be judged by players. Called with the path-scoped
+ * `KNIGHTS_TAG_REVIEW_TOKEN` (`webhook-endpoint.ts`).
+ */
+const imageTagModerate: ModAction<z.infer<typeof imageTagModerateInput>> = {
+  schema: imageTagModerateInput,
+  handler: async ({ imageId, tagId, disable, userId, settledAtMinimum }) => {
+    const { outcome = 'applied', reason } = await moderateImageTags({
+      imageId,
+      tagIds: [tagId],
+      disable,
+      userId,
+      activity: 'moderateTagKono',
+      onlyIfFlagged: true,
+      settledAtMinimum,
+    });
+    return reason ? { outcome, reason } : { outcome };
+  },
+};
+
 /** The open takedown forms, as the public pages draw them: fields only, nothing moderator-side. */
 const caseDefinitions: ModAction<z.infer<typeof caseDefinitionsInput>> = {
   schema: caseDefinitionsInput,
@@ -242,6 +291,7 @@ export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.abuseReport]: abuseReport,
   [MOD_ACTION.relabelBuildBatch]: relabelBuildBatch,
   [MOD_ACTION.feedbackTriage]: feedbackTriage,
+  [MOD_ACTION.imageTagModerate]: imageTagModerate,
   [MOD_ACTION.caseDefinitions]: caseDefinitions,
   [MOD_ACTION.caseIntake]: caseIntakeAction,
   [MOD_ACTION.casePartyView]: casePartyViewAction,
