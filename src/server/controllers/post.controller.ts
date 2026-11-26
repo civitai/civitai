@@ -1,4 +1,5 @@
 import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { rerateSong } from '~/server/services/image-scan-pipeline';
 import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { assertPostVisibleToViewer } from '~/server/services/post-viewer-visibility.service';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
@@ -769,7 +770,10 @@ export const updatePostImageHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    return await updatePostImage({ ...input }, { asModerator: actsAsModerator(ctx) });
+    const result = await updatePostImage({ ...input }, { asModerator: actsAsModerator(ctx) });
+    // A cleared title drops the title's verdict; a song's rating then has one input fewer.
+    if (input.title !== undefined) await rerateSong(input.id).catch(handleLogError);
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
