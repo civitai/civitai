@@ -24,11 +24,12 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 
 import handler from '~/server/api-routes/mod/restore-images';
 
-const row = (id: number, blockedFor: string | null) => ({
+const row = (id: number, blockedFor: string | null, needsReview: string | null = null) => ({
   id,
   userId: 1,
   nsfwLevel: 1,
   blockedFor,
+  needsReview,
   tags: [],
 });
 
@@ -61,6 +62,15 @@ describe('/api/mod/restore-images', () => {
 
     expect(h.unblock.mock.calls.map(([arg]) => arg.ids)).toEqual([[2]]);
     expect(body).toEqual({ images: 1, skipped: [1] });
+  });
+
+  it('skips an image under the CSAM review flag, blocked or not, and restores the others', async () => {
+    found([row(1, 'moderated', 'csam'), row(2, null, 'csam'), row(3, 'moderated', 'minor')]);
+
+    const body = await restore([1, 2, 3]);
+
+    expect(h.unblock.mock.calls.map(([arg]) => arg.ids)).toEqual([[3]]);
+    expect(body).toEqual({ images: 1, skipped: [1, 2] });
   });
 
   it('restores nothing when every image is CSAM-blocked', async () => {

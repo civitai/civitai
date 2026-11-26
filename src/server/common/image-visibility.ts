@@ -465,6 +465,16 @@ END)`;
 export const csamBlockedSql = (alias?: 'i') =>
   Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
 
+/** The review flag only the CSAM review clears. */
+export const CSAM_REVIEW_FLAG = 'csam';
+/** An unblock may lift the image: it has no CSAM block and no CSAM review flag. */
+export const liftableByUnblock = (image: {
+  blockedFor: string | null;
+  needsReview: string | null;
+}) => image.blockedFor !== BlockedReason.CSAM && image.needsReview !== CSAM_REVIEW_FLAG;
+/** `liftableByUnblock` as the unblock statement's own gate. */
+export const liftableByUnblockSql = Prisma.sql`("blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM} AND "needsReview" IS DISTINCT FROM ${CSAM_REVIEW_FLAG})`;
+
 /** An appeal on the image whose id is `imageId` is still Pending. */
 export const pendingImageAppealSql = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "Appeal" a

@@ -85,6 +85,9 @@ import {
   reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
+  liftableByUnblock,
+  liftableByUnblockSql,
+  CSAM_REVIEW_FLAG,
   unblockedMetadataSql,
   scanKeepsRowSql,
 } from '~/server/common/image-visibility';
@@ -1330,23 +1333,21 @@ export async function handleUnblockImages({
       needsReview: true,
     },
   });
-  // A CSAM block is lifted only through the moderator CSAM review. Re-read on the primary, since the
-  // replica can lag a block: the follow-ups below act on every image left here. The UPDATE also
-  // re-checks it per row.
+  // A CSAM block or a CSAM review flag is lifted only through the moderator CSAM review. Re-read on
+  // the primary, since the replica can lag either: the follow-ups below act on every image left here.
+  // The UPDATE also re-checks both per row.
   const csamIds = found.length
     ? new Set(
         (
           await dbWrite.$queryRaw<{ id: number }[]>`
             SELECT id FROM "Image"
             WHERE id IN (${Prisma.join(found.map((image) => image.id))})
-              AND "blockedFor" = ${BlockedReason.CSAM}
+              AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = ${CSAM_REVIEW_FLAG})
           `
         ).map((row) => row.id)
       )
     : new Set<number>();
-  const images = found.filter(
-    (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
-  );
+  const images = found.filter((image) => liftableByUnblock(image) && !csamIds.has(image.id));
   const kept: number[] = [];
   const restoredAll: number[] = [];
   await Limiter().process(images, async (images) => {
@@ -1384,7 +1385,7 @@ export async function handleUnblockImages({
             }
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
-            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+            AND ${liftableByUnblockSql}
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
       ),

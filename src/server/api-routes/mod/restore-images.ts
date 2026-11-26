@@ -5,7 +5,7 @@ import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { handleUnblockImages } from '~/server/services/image.service';
-import { BlockedReason } from '~/server/common/enums';
+import { liftableByUnblock } from '~/server/common/image-visibility';
 import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
@@ -30,6 +30,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         userId: true,
         id: true,
         blockedFor: true,
+        needsReview: true,
         tags: {
           select: {
             tag: {
@@ -42,9 +43,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       },
     });
 
-    // Not restored here: a CSAM block is lifted only through the moderator CSAM review.
-    const skipped = found.filter((x) => x.blockedFor === BlockedReason.CSAM).map((x) => x.id);
-    const candidates = found.filter((x) => x.blockedFor !== BlockedReason.CSAM);
+    // Not restored here: a CSAM block or a CSAM review flag is lifted only through the moderator CSAM review.
+    const skipped = found.filter((x) => !liftableByUnblock(x)).map((x) => x.id);
+    const candidates = found.filter(liftableByUnblock);
     if (candidates.length === 0) {
       return res.status(200).json({ images: 0, skipped });
     }
