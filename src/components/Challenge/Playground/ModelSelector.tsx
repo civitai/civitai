@@ -7,7 +7,7 @@ import { usePlaygroundStore } from './playground.store';
 const MODEL_OPTIONS = [
   { value: 'civitai/qwen3.8', label: 'Qwen 3.8 — pipeline default (Civitai orchestrator)' },
   { value: 'openai/gpt-6-luna', label: 'GPT-6 Luna — pipeline fallback (openai/gpt-6-luna)' },
-  { value: 'xiaomi/mimo-v2.5', label: 'MiMo v2.5 (xiaomi/mimo-v2.5)' },
+  { value: 'xiaomi/mimo-v2.6-flash', label: 'MiMo v2.6 Flash (xiaomi/mimo-v2.6-flash)' },
   { value: 'x-ai/grok-4.3', label: 'Grok 4.3 (x-ai/grok-4.3)' },
   { value: 'openai/gpt-4o', label: 'GPT-4o (openai/gpt-4o)' },
   {
@@ -16,10 +16,7 @@ const MODEL_OPTIONS = [
   },
   { value: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5 (anthropic/claude-haiku-5.5)' },
   { value: 'moonshotai/kimi-k2.5', label: 'Kimi K2.5 — text only (moonshotai/kimi-k2.5)' },
-  {
-    value: 'stepfun/step-3.5-flash',
-    label: 'StepFun 3.5 Flash — text only (stepfun/step-3.5-flash)',
-  },
+  { value: 'stepfun/step-3.7-flash', label: 'StepFun 3.7 Flash (stepfun/step-3.7-flash)' },
 ];
 
 export function ModelSelector() {

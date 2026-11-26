@@ -114,19 +114,26 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
         //   v2 -> v3: gpt-5-nano returned empty content on generateArticle; use gpt-4o-mini
         //   v3 -> v4: Qwen 35B retired from the orchestrator
         //   v4 -> v5: gpt-4o-mini and gpt-5-nano retired from the challenge pipeline
-        //   v5 -> v6: OpenRouter retired claude-sonnet-4 and claude-3-5-haiku (calls 404)
-        // Every retired model lands on the pipeline default.
+        //   v5 -> v6: OpenRouter retired claude-sonnet-4, claude-3-5-haiku, mimo-v2.5 and
+        //             step-3.5-flash (calls 404)
+        // A retired model with a live successor moves to it; every other one lands on the
+        // pipeline default.
         const state = persistedState as Partial<PlaygroundState> | undefined;
         const retired = [
           'x-ai/grok-4.1-fast',
           'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
           'openai/gpt-5-nano',
           'openai/gpt-4o-mini',
-          'anthropic/claude-sonnet-4',
-          'anthropic/claude-3-5-haiku',
         ];
-        if ((version ?? 0) < 6 && state?.aiModel && retired.includes(state.aiModel)) {
-          state.aiModel = 'civitai/qwen3.8';
+        const successors: Record<string, string> = {
+          'anthropic/claude-sonnet-4': 'anthropic/claude-sonnet-5.5',
+          'anthropic/claude-3-5-haiku': 'anthropic/claude-haiku-5.5',
+          'xiaomi/mimo-v2.5': 'xiaomi/mimo-v2.6-flash',
+          'stepfun/step-3.5-flash': 'stepfun/step-3.7-flash',
+        };
+        if ((version ?? 0) < 6 && state?.aiModel) {
+          if (successors[state.aiModel]) state.aiModel = successors[state.aiModel];
+          else if (retired.includes(state.aiModel)) state.aiModel = 'civitai/qwen3.8';
         }
         return state;
       },

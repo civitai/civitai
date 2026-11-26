@@ -18,8 +18,8 @@ export const AI_MODELS = {
   // Primary models for complex tasks
   GPT_4O: 'openai/gpt-4o',
   GPT_4O_MINI: 'openai/gpt-4o-mini',
-  // OpenRouter retires old Anthropic ids outright: a retired id 404s on every call. Every
-  // `anthropic/` entry here must be in LIVE_ANTHROPIC_IDS in __tests__/openrouter-models.test.ts.
+  // OpenRouter retires old ids outright: a retired id 404s on every call. Every id here must be
+  // in LIVE_IDS (or KNOWN_ABSENT) in __tests__/openrouter-models.test.ts.
   CLAUDE_SONNET: 'anthropic/claude-sonnet-5.5',
   CLAUDE_HAIKU: 'anthropic/claude-haiku-5.5',
 
@@ -30,7 +30,7 @@ export const AI_MODELS = {
   GROK_4_3: 'x-ai/grok-4.3',
   GPT_5_NANO: 'openai/gpt-5-nano',
   MIMO: 'xiaomi/mimo-v2.5',
-  STEP_FUN: 'stepfun/step-3.5-flash',
+  STEP_FUN: 'stepfun/step-3.7-flash',
   // Pairwise challenge judging (see challenge-judge-routes.ts). QWEN_FLASH refuses adult pairs
   // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
   QWEN_FLASH: 'qwen/qwen3.7-flash',
