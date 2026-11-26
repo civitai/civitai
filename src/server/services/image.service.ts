@@ -1,5 +1,9 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
-import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
+import {
+  assertMayLoosenImages,
+  loosensImageLevel,
+  loosensImageLevelSql,
+} from '~/server/services/moderator-withheld.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
@@ -6867,7 +6871,7 @@ export async function updateImageNsfwLevel({
   userId: number;
   isModerator?: boolean;
   activity?: ImageModActivity['activity'];
-  /** The moderator's `csamReports` grant: without it, lowering a withheld image is refused. */
+  /** The moderator's `csamReports` grant: without it, loosening a withheld image is refused. */
   csamReview?: boolean;
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
@@ -6880,7 +6884,7 @@ export async function updateImageNsfwLevel({
     });
     if (!image) throw throwNotFoundError('Image not found');
     // A Knights consensus is a vote, not a moderator's decision, and has no grant to check.
-    if (activity !== 'setNsfwLevelKono' && nsfwLevel < image.nsfwLevel)
+    if (activity !== 'setNsfwLevelKono' && loosensImageLevel(image.nsfwLevel, nsfwLevel))
       await assertMayLoosenImages([id], { csamReview });
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
@@ -6961,7 +6965,7 @@ export async function updateImageNsfwLevel({
 
 /**
  * A moderator's rating of several images, all or nothing on what is withheld from them: every item
- * that lowers a rating is checked before the first write, so a refusal writes none of them.
+ * that loosens a rating is checked before the first write, so a refusal writes none of them.
  */
 export async function setImagesNsfwLevel({
   items,
@@ -6974,7 +6978,7 @@ export async function setImagesNsfwLevel({
   csamReview: boolean;
   status?: UpdateImageNsfwLevelOutput['status'];
 }) {
-  // primary: the current level decides which items lower a rating.
+  // primary: the current level decides which items loosen a rating.
   const current = await dbWrite.image.findMany({
     where: { id: { in: items.map((item) => item.imageId) } },
     select: { id: true, nsfwLevel: true },
@@ -6982,7 +6986,7 @@ export async function setImagesNsfwLevel({
   const levels = new Map(current.map((image) => [image.id, image.nsfwLevel]));
   await assertMayLoosenImages(
     items
-      .filter((item) => item.nsfwLevel < (levels.get(item.imageId) ?? 0))
+      .filter((item) => loosensImageLevel(levels.get(item.imageId) ?? 0, item.nsfwLevel))
       .map((item) => item.imageId),
     { csamReview }
   );
@@ -7008,9 +7012,9 @@ export type KnightsNsfwLevelResult =
 /**
  * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
  * hands: it exists, carries no block marker, is unlocked or locked by an earlier Knights vote, and
- * is not withheld from a moderator without the grant when the vote would lower it (a vote holds no
- * grant). The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a
- * read and the write cannot be overwritten. A withheld lowering answers `locked`, which the Knights
+ * is not withheld from a moderator without the grant when the vote would loosen it
+ * (`loosensImageLevel`; a vote holds no grant). The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a
+ * read and the write cannot be overwritten. A withheld loosening answers `locked`, which the Knights
  * app routes to a moderator at the current level.
  */
 export async function setImageNsfwLevelFromKnights({
@@ -7036,7 +7040,7 @@ export async function setImageNsfwLevelFromKnights({
         OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}
       )
       AND NOT (
-        ${nsfwLevel} < i."nsfwLevel"
+        ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
         AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
       )
     RETURNING i."postId"

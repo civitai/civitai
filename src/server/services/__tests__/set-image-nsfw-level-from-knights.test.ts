@@ -221,6 +221,12 @@ describe('setImageNsfwLevelFromKnights', () => {
     expect(refreshThumbnailCache).not.toHaveBeenCalled();
   });
 
+  it('does not give an unrated withheld image its first rating', async () => {
+    await seed({ needsReview: 'csam', nsfwLevel: 0 });
+    expect(await write(4)).toEqual({ applied: false, reason: 'locked', currentLevel: 0 });
+    expect((await stored()).nsfwLevel).toBe(0);
+  });
+
   it('control: raises a withheld image, and lowers a clean one', async () => {
     await seed({ needsReview: 'csam' });
     expect(await write(8)).toEqual({ applied: true });

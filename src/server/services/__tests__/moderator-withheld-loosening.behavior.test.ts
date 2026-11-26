@@ -139,6 +139,50 @@ describe('updateImageNsfwLevel', () => {
     expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(2);
   });
 
+  it('refuses a first rating of an unrated withheld image, and passes it with the grant', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      id: WITHHELD,
+      metadata: {},
+      postId: null,
+      nsfwLevel: 0,
+    } as never);
+    await forbidden(set(WITHHELD, 16));
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+    await settle(set(WITHHELD, 16, true));
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks a withheld image for any moderator, rated or not', async () => {
+    for (const nsfwLevel of [0, 8]) {
+      dbMock.dbWrite.image.findUnique.mockResolvedValue({
+        id: WITHHELD,
+        metadata: {},
+        postId: null,
+        nsfwLevel,
+      } as never);
+      await settle(set(WITHHELD, 32));
+    }
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(2);
+  });
+
+  // A Knights consensus is checked by its caller (new-order), not here; any other activity is.
+  it('lets a Knights consensus through, and refuses the same write as a moderator rating', async () => {
+    current(WITHHELD);
+    const as = (activity: 'setNsfwLevelKono' | 'setNsfwLevel') =>
+      updateImageNsfwLevel({
+        id: WITHHELD,
+        nsfwLevel: 1,
+        userId: 1,
+        isModerator: true,
+        csamReview: false,
+        activity,
+      });
+    await settle(as('setNsfwLevelKono'));
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    await forbidden(as('setNsfwLevel'));
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+  });
+
   it('raises a withheld image for any moderator', async () => {
     current(WITHHELD);
     await settle(set(WITHHELD, 16));

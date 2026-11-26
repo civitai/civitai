@@ -78,7 +78,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
-import { withheldImageIds } from '~/server/services/moderator-withheld.service';
+import { loosensImageLevel, withheldImageIds } from '~/server/services/moderator-withheld.service';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
@@ -641,12 +641,12 @@ async function processImageRating({
       // escalate to Inquisitor (mod) queue if the distance is greater
       const isExcessiveDownRating =
         consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
-      // A vote holds no grant, so it does not lower what is withheld from a moderator without one:
+      // A vote holds no grant, so it does not loosen what is withheld from a moderator without one:
       // the image keeps its level and goes to a moderator like an excessive down-rating.
       const isWithheldDownRating =
         !isExcessiveDownRating &&
         !!consensus &&
-        consensus < image.nsfwLevel &&
+        loosensImageLevel(image.nsfwLevel, consensus) &&
         (await withheldImageIds([imageId], { csamReview: false })).has(imageId);
 
       if (isExcessiveDownRating || isWithheldDownRating) {
