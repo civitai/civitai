@@ -98,7 +98,6 @@ vi.mock('~/components/Sticker/StickerShopTile', () => ({ StickerShopTile: () => 
 vi.mock('~/components/Sticker/use-sticker-drag-out', () => ({
   useStickerDragOut: () => ({ grab: () => undefined, dragging: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 
 // The tray calls two cosmetic queries directly. The scaffold is network-free and
 // provides no tRPC client, so an unmocked `trpc.*` render throws and this file
@@ -122,7 +121,8 @@ const renderTray = async () => {
   renderWithProviders(
     <IsClientProvider>
       <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
-    </IsClientProvider>
+    </IsClientProvider>,
+    { user: { id: 7 } }
   );
   await expect.element(page.getByText(/Tap or drag a sticker onto the image/)).toBeInTheDocument();
 };

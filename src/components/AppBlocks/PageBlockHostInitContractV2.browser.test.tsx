@@ -28,8 +28,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * scaffold): only the ambient tRPC client and useCurrentUser are stubbed.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically

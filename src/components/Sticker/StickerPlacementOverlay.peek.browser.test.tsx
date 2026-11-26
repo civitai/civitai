@@ -25,7 +25,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: (await import('../../../test/trpcProxyStub')).makeTrpcProxy(),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/components/Sticker/StickerPlacementActions', () => ({
   StickerPlacementActions: () => (
     <div>
@@ -75,7 +74,8 @@ describe('a sticker outside its moment', () => {
           }
           hiddenIds={new Set([1])}
         />
-      </div>
+      </div>,
+      { user: { id: 7 } }
     );
 
     const stickerBox = (alt: string) =>
@@ -135,7 +135,7 @@ const stage = (placements: PlacedSticker[], viewerId = OWNER_ID, wearsHat = fals
 );
 
 const renderOverlay = (placements: PlacedSticker[], viewerId = OWNER_ID) =>
-  renderWithProviders(stage(placements, viewerId));
+  renderWithProviders(stage(placements, viewerId), { user: { id: 7 } });
 
 const visibility = async (name: string) =>
   getComputedStyle((await page.getByText(name).element()) as HTMLElement).visibility;
@@ -235,7 +235,8 @@ describe('peeking past the review chrome', () => {
         ],
         OWNER_ID,
         true
-      )
+      ),
+      { user: { id: 7 } }
     );
 
     const toggle = page.getByRole('button', { name: 'Hide controls' });

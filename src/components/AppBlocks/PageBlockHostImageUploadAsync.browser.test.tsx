@@ -25,10 +25,6 @@ import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 const h = vi.hoisted(() => ({ gateMutateAsync: vi.fn() }));
 
-// AppBlockChrome (rendered by the host) calls useCurrentUser; stub it so the
-// provider-less test render doesn't crash with "missing CivitaiSessionContext".
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {

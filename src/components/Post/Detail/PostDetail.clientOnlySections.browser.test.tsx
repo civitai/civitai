@@ -4,6 +4,7 @@ import { renderToString } from 'react-dom/server';
 import type { Root } from 'react-dom/client';
 import { hydrateRoot } from 'react-dom/client';
 import { DEFAULT_THEME, MantineProvider } from '@mantine/core';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
@@ -52,10 +53,6 @@ vi.mock('next/navigation', async (o) => ({
 vi.mock('~/components/BrowserRouter/BrowserRouterProvider', async (o) => ({
   ...(await o<object>()),
   useBrowserRouter: () => ({ query: {} }),
-}));
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
   ...(await o<object>()),
@@ -216,17 +213,19 @@ const hydrationErrors = () => [
 
 function Tree({ client, enabled }: { client: QueryClient; enabled: boolean }) {
   return (
-    <QueryClientProvider client={client}>
-      <MantineProvider theme={{ colors: { accent: DEFAULT_THEME.colors.orange } }}>
-        <div style={{ width: 1280, height: 900 }}>
-          <ContainerProvider containerName="main">
-            <ClientOnlySectionsProvider enabled={enabled}>
-              <PostDetail postId={post.id} />
-            </ClientOnlySectionsProvider>
-          </ContainerProvider>
-        </div>
-      </MantineProvider>
-    </QueryClientProvider>
+    <SignedOutSessionProvider>
+      <QueryClientProvider client={client}>
+        <MantineProvider theme={{ colors: { accent: DEFAULT_THEME.colors.orange } }}>
+          <div style={{ width: 1280, height: 900 }}>
+            <ContainerProvider containerName="main">
+              <ClientOnlySectionsProvider enabled={enabled}>
+                <PostDetail postId={post.id} />
+              </ClientOnlySectionsProvider>
+            </ContainerProvider>
+          </div>
+        </MantineProvider>
+      </QueryClientProvider>
+    </SignedOutSessionProvider>
   );
 }
 

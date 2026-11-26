@@ -12,7 +12,6 @@ import { renderWithProviders } from '../../../../../test/component-setup';
 
 const upsert = vi.hoisted(() => vi.fn());
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7, muted: false }) }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationsModule>()),
@@ -128,7 +127,8 @@ const images = [
 ];
 const open = () =>
   renderWithProviders(
-    <ResourceReviewStepper postId={1} ownerId={7} modelVersionId={5} images={images} />
+    <ResourceReviewStepper postId={1} ownerId={7} modelVersionId={5} images={images} />,
+    { user: { id: 7, muted: false } }
   );
 const button = (name: string) => page.getByRole('button', { name, exact: true });
 

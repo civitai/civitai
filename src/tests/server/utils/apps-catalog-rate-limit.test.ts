@@ -127,9 +127,15 @@ describe('enforceAppsCatalogRateLimit', () => {
     expect(body.code, '429 must carry the `code` discriminator').toBe('TOO_MANY_REQUESTS');
     expect(typeof body.message, '429 `message` must be a string').toBe('string');
     expect(typeof body.error, '429 `error` must be a string (the CLI prefers it)').toBe('string');
-    // The pre-existing informational fields are retained, not replaced.
-    expect(body.limit).toBe(60);
-    expect(body.windowSeconds).toBe(60);
+    // Only the envelope, the top-level `retryAfterSeconds` and the meta: the old top-level
+    // `limit` / `windowSeconds` are gone (`rateLimit` is what clients read).
+    expect(Object.keys(body).sort()).toEqual([
+      'code',
+      'error',
+      'message',
+      'rateLimit',
+      'retryAfterSeconds',
+    ]);
   });
 
   it('the 429 carries the house rateLimit meta: the abuse id and the wait, no counts', async () => {

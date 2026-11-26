@@ -12,10 +12,12 @@
  * data-driven inputs — this scaffold stays network-free.
  */
 import React from 'react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeAll, vi } from 'vitest';
 import { render, cleanup } from 'vitest-browser-react';
 import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type * as SessionModule from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type { AuthedUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 // Raw text, NOT a stylesheet import — see the block below for why that distinction
 // is the whole point.
 import globalsCss from '~/styles/globals.css?raw';
@@ -241,6 +243,13 @@ function Providers({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Loaded after the test file has registered its `vi.mock`s: a setup file's static imports
+// evaluate first, and those mocks would then miss every module this graph pulls in.
+let session: typeof SessionModule;
+beforeAll(async () => {
+  session = await import('~/components/CivitaiWrapped/CivitaiSessionProvider');
+});
+
 /**
  * Render a component under the standard generation-form provider stack.
  *
@@ -252,6 +261,23 @@ function Providers({ children }: { children: React.ReactNode }) {
  * child with "MantineProvider was not found". Passing `wrapper` fixes that for
  * every component test that drives prop changes via `rerender`.
  */
-export function renderWithProviders(ui: React.ReactElement) {
-  return render(ui, { wrapper: Providers });
+export function renderWithProviders(ui: React.ReactElement, options: ViewerOptions = {}) {
+  return render(ui, { wrapper: viewerWrapper(options) });
+}
+
+type ViewerOptions = { user?: Partial<AuthedUser> & { id: number } };
+
+function viewerWrapper({ user }: ViewerOptions) {
+  return function Viewer({ children }: { children: React.ReactNode }) {
+    const { FixedSessionProvider, SignedOutSessionProvider } = session;
+    return (
+      <Providers>
+        {user ? (
+          <FixedSessionProvider user={user}>{children}</FixedSessionProvider>
+        ) : (
+          <SignedOutSessionProvider>{children}</SignedOutSessionProvider>
+        )}
+      </Providers>
+    );
+  };
 }

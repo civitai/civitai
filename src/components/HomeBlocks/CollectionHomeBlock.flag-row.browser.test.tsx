@@ -21,7 +21,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ flagRace: true, articles: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
   return {

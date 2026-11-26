@@ -1,7 +1,7 @@
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
@@ -75,9 +75,6 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   useStorylineContinueTerms: () => null,
   useStorylineGraph: () => ({ data: undefined, isLoading: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 99, username: 'viewer', muted: false, isModerator: false }),
-}));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useFeatureFlags: () => ({ canWrite: true }),
@@ -97,11 +94,18 @@ vi.mock('~/components/Storyline/StorylineContextMenu', () => ({
   StorylineContextMenu: () => null,
 }));
 
+// The editor is a lazy chunk (next/dynamic). Loaded here, so the 1 s wait below covers a render, not
+// a cold import of the editor, which a busy runner can take longer than that to fetch.
+beforeAll(async () => {
+  await import('~/components/RichTextEditor/RichTextEditorComponent');
+}, 30_000);
+
 const renderPage = () =>
   renderWithProviders(
     <ContainerProvider id="main" containerName="main">
       <StorylinePage id={2} />
-    </ContainerProvider>
+    </ContainerProvider>,
+    { user: { id: 99, username: 'viewer', muted: false, isModerator: false } }
   );
 
 describe('the discussion card', () => {

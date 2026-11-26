@@ -39,7 +39,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => mocks.features,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
 
 // eslint-disable-next-line import/first
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
@@ -58,7 +57,8 @@ function renderCreateFlow() {
       <div data-testid="post-dropzone">
         <PostImageDropzone />
       </div>
-    </StorylineCreateGate>
+    </StorylineCreateGate>,
+    { user: { id: 1, muted: false } }
   );
 }
 

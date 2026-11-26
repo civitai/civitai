@@ -17,8 +17,6 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * BlockImagePickerModal.browser.test.tsx.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),

@@ -148,10 +148,6 @@ const session = vi.hoisted(() => ({ userId: 1, otherUserId: 2 }));
 const SESSION_USER_ID = session.userId;
 const OTHER_USER_ID = session.otherUserId;
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: session.userId, username: 'tester', isModerator: false }),
-}));
-
 // The settings modal is a global side-effecting opener — stub it to a spy so we
 // can assert handleOpen fired without booting the real modal stack.
 vi.mock('~/components/Apps/AppSettingsModal', () => ({
@@ -181,7 +177,9 @@ beforeEach(() => {
 
 describe('/apps marketplace body (top controls row)', () => {
   test('search input and sort control render in the same top row', async () => {
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     // Search is a textbox labelled "Search".
     await expect.element(page.getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
     // Sort is a Mantine Select — its input is a textbox labelled "Sort" showing
@@ -194,7 +192,9 @@ describe('/apps marketplace body (top controls row)', () => {
   });
 
   test('category icon-toggle buttons render (one per category + "All") — no category <Select>', async () => {
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     // The icon toggles are exposed (the "All categories" clear is the tell).
     await expect.element(page.getByRole('button', { name: 'All categories' })).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Generation' })).toBeInTheDocument();
@@ -206,7 +206,9 @@ describe('/apps marketplace body (top controls row)', () => {
 
 describe('/apps marketplace body (explore-all CTA clears filters)', () => {
   test('selecting a category shows "Explore all apps"; clicking it clears the category filter', async () => {
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     // Wait for the async render before interacting (vitest-browser-react).
     await expect.element(page.getByRole('button', { name: 'Generation' })).toBeInTheDocument();
     // Pick a category → filter active → the query receives it.
@@ -225,7 +227,9 @@ describe('/apps marketplace body (explore-all CTA clears filters)', () => {
   });
 
   test('a typed search query is cleared by "Explore all apps" (search input emptied)', async () => {
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     await expect.element(page.getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
     const search = page.getByRole('textbox', { name: 'Search' });
     await userEvent.fill(search.element() as HTMLInputElement, 'alpha');
@@ -243,7 +247,9 @@ describe('/apps marketplace body (explore-all CTA clears filters)', () => {
 describe('/apps marketplace body (opening an app records it to recents)', () => {
   test('opening an app writes it to the recents localStorage list and surfaces the section', async () => {
     expect(getRecentlyOpenedApps(SESSION_USER_ID)).toEqual([]);
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
 
     // Each grid card exposes an "Open app" / settings open affordance. The
     // page apps here have no in-context install slot, so the open path is the
@@ -298,7 +304,9 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
     mocks.listAvailableItems = [makePageBlock('p', 'Page App')];
     expect(getRecentlyOpenedApps(SESSION_USER_ID)).toEqual([]);
 
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     await expect.element(page.getByText('Page App')).toBeInTheDocument();
 
     // The route link is the page app's primary open path.
@@ -324,7 +332,9 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
     mocks.listAvailableItems = [makePageBlock('p', 'Page App')];
     expect(getRecentlyOpenedApps(SESSION_USER_ID)).toEqual([]);
 
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     // The card title links to the detail page; it is the open path here.
     const titleLink = page.getByRole('link', { name: /Page App/i }).first();
     await expect.element(titleLink).toBeInTheDocument();
@@ -340,7 +350,9 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
 
 describe('/apps marketplace body — sort default + fallback (M3)', () => {
   test('the listing query uses the visible default sort "popular" on first render', async () => {
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     // The Sort select shows the default "Most popular" (= popular) on first
     // render, and the listing query is invoked with sort:'popular'. The point of
     // the test is the AGREEMENT between the two — a label showing one sort while
@@ -357,7 +369,9 @@ describe('/apps marketplace body — sort default + fallback (M3)', () => {
 
 describe('/apps marketplace body — Explore-all CTA reacts to typing immediately (L1)', () => {
   test('the CTA appears as soon as the search input is non-empty (no 300ms debounce wait)', async () => {
-    renderWithProviders(<MarketplaceBody />);
+    renderWithProviders(<MarketplaceBody />, {
+      user: { id: session.userId, username: 'tester', isModerator: false },
+    });
     const search = page.getByRole('textbox', { name: 'Search' });
     await expect.element(search).toBeInTheDocument();
     // Initially no active filters → no CTA.

@@ -37,8 +37,6 @@ vi.mock('~/components/Post/showCreatePostError', async (orig) => ({
   useShowCreatePostError: () => vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
-
 // eslint-disable-next-line import/first
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 
@@ -60,7 +58,8 @@ async function dropOneFile() {
   renderWithProviders(
     <div data-testid="post-dropzone">
       <PostImageDropzone />
-    </div>
+    </div>,
+    { user: { id: 1, muted: false } }
   );
   await chooseFiles(dropzoneInput(), [
     new File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' }),

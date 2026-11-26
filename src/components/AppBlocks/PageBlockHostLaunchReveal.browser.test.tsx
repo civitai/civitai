@@ -40,10 +40,6 @@ vi.mock('@mantine/hooks', async (importOriginal) => {
   return { ...actual, useReducedMotion: () => mocks.reduceMotion };
 });
 
-// AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate; this
-// suite renders the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge at
 // render, which need the tRPC Context the network-free scaffold doesn't provide.
 // Mirrors PageBlockHost.browser.test.tsx's stub — inert here.

@@ -52,8 +52,6 @@ function setLevel(level: number) {
   mocks.levelSubscribers.forEach((notify) => notify());
 }
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
-
 vi.mock('~/providers/SessionProvider', async (orig) => ({
   ...(await orig<typeof SessionProviderModule>()),
   useSession: () => ({ data: undefined, status: 'authenticated', update: async () => null }),
@@ -174,7 +172,8 @@ function mountApp() {
   renderWithProviders(
     <QueryClientProvider client={queryClient}>
       <DialogProvider />
-    </QueryClientProvider>
+    </QueryClientProvider>,
+    { user: { id: 1 } }
   );
   return queryClient;
 }
@@ -209,7 +208,8 @@ function mountAppWithSettings() {
         <CaptureSettings />
         <DialogProvider />
       </BrowserSettingsProvider>
-    </QueryClientProvider>
+    </QueryClientProvider>,
+    { user: { id: 1 } }
   );
   return settings;
 }

@@ -19,10 +19,6 @@ vi.mock('~/components/Image/Detail/ImageDetailModal', async () => {
       }),
   };
 });
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
-}));
 
 const SOURCE_ID = 146911523;
 const REMIX_ID = 147008115;

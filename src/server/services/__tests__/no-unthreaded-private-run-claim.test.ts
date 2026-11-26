@@ -333,7 +333,8 @@ describe('the private-run claim is threaded to every governed router call site',
     // is not, and there it would never execute for any token that carried both markers.
     // Ordering is the cheapest of the three layers refusing that pair, and the only one
     // a reviewer cannot see by reading either guard alone.
-    const start = source.indexOf('async function reserveBlockBuzzSpendForClaims');
+    // `reserveBlockBuzzSpendForClaims` adds a recipe runner's ledger leg, then calls this.
+    const start = source.indexOf('async function reservePlatformAndConsentLegs');
     expect(start, 'the cap selector must still exist under this name').toBeGreaterThan(0);
     // Bound the region at the next top-level declaration so this reads the function
     // body rather than the rest of the file.
