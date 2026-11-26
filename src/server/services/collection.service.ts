@@ -1554,13 +1554,20 @@ export const upsertCollection = async ({
   input,
   coverViewer,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
+  input: UpsertCollectionInput & {
+    userId: number;
+    isModerator?: boolean;
+    isMember?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
+  };
   /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
   coverViewer?: { id?: number; isModerator?: boolean };
 }) => {
   const {
     userId,
     isModerator,
+    asModerator = false,
     isMember,
     id,
     name,
@@ -1697,6 +1704,8 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
+      if (existingCover && existingCover.id !== currentCollection.image?.id)
+        await assertCoverMediaAllowed(existingCover.id, asModerator, tx);
       if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
         if (image.url !== newCoverUrl)
@@ -2052,6 +2061,26 @@ export const upsertCollection = async ({
   return collection;
 };
 
+/**
+ * Refuses an image as a collection cover when its block refuses its owner the media
+ * (`ownerMediaAllowed`), since the cover serves it; a moderator view (`actsAsModerator`) may set it.
+ * The visibility checks keep an owner's blocked row, so this is the one cover rule.
+ */
+async function assertCoverMediaAllowed(
+  imageId: number,
+  asModerator: boolean,
+  db: Pick<Prisma.TransactionClient, 'image'> = dbWrite
+) {
+  if (asModerator) return;
+  // primary: a block from moments ago must refuse it.
+  const image = await db.image.findUnique({
+    where: { id: imageId },
+    select: { ingestion: true, blockedFor: true },
+  });
+  if (image && !ownerMediaAllowed(image))
+    throw throwBadRequestError('This image is blocked and cannot be used here.');
+}
+
 export const updateCollectionCoverImage = async ({
   input,
 }: {
@@ -2079,17 +2108,7 @@ export const updateCollectionCoverImage = async ({
     isModerator,
     confirmBlockOnPrimary: true,
   });
-  // The check above keeps an owner's blocked row; a block that refuses them the media refuses the
-  // cover too, since the cover serves it.
-  if (!asModerator) {
-    // primary: a block from moments ago must refuse it.
-    const image = await dbWrite.image.findUnique({
-      where: { id: imageId },
-      select: { ingestion: true, blockedFor: true },
-    });
-    if (image && !ownerMediaAllowed(image))
-      throw throwBadRequestError('This image is blocked and cannot be used here.');
-  }
+  await assertCoverMediaAllowed(imageId, asModerator);
   await assertNotDealFileImages([imageId], 'used here');
 
   const updated = await dbWrite.collection.update({

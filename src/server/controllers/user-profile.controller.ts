@@ -160,6 +160,7 @@ export const updateUserProfileHandler = async ({
       ...input,
       userId,
       isModerator: sessionUser.isModerator,
+      asModerator: actsAsModerator(ctx),
       sessionUserId: sessionUser.id,
       domain: ctx.domain,
     });

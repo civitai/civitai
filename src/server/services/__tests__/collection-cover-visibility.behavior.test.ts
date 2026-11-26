@@ -443,12 +443,11 @@ describe('getUserCollectionsWithPermissions', () => {
   );
 });
 
-describe('updateCollectionCoverImage', () => {
-  beforeEach(() => {
-    vi.mocked(dbMock.dbWrite.collection.update).mockReset();
-    vi.mocked(dbMock.dbWrite.collection.update).mockResolvedValue({ id: COLLECTION } as never);
-    // The block check reads the fixture's own row.
-    vi.mocked(dbMock.dbWrite.image.findUnique).mockImplementation(
+/** The cover writes' own Image row reads, answered from the fixture. */
+const imageRowsFromFixture = () =>
+  vi
+    .mocked(dbMock.dbWrite.image.findUnique)
+    .mockImplementation(
       (async (args: { where: { id: number } }) =>
         (
           await holder.db.query(
@@ -457,12 +456,23 @@ describe('updateCollectionCoverImage', () => {
           )
         ).rows[0] ?? null) as never
     );
+
+describe('updateCollectionCoverImage', () => {
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.collection.update).mockReset();
+    vi.mocked(dbMock.dbWrite.collection.update).mockResolvedValue({ id: COLLECTION } as never);
+    imageRowsFromFixture();
   });
   afterEach(() => vi.mocked(dbMock.dbWrite.image.findUnique).mockReset());
 
-  const setCover = (imageId: number, isModerator = false, userId = OWNER) =>
+  const setCover = (
+    imageId: number,
+    isModerator = false,
+    userId = OWNER,
+    asModerator = isModerator
+  ) =>
     updateCollectionCoverImage({
-      input: { id: COLLECTION, imageId, userId, isModerator, asModerator: isModerator },
+      input: { id: COLLECTION, imageId, userId, isModerator, asModerator },
     });
 
   it("refuses the owner's own blocked image, which a moderator may set", async () => {
@@ -470,6 +480,13 @@ describe('updateCollectionCoverImage', () => {
     expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
     await setCover(OWNER_REMOVED, true);
     expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses it to a moderator on a scoped key', async () => {
+    await expect(setCover(OWNER_REMOVED, true, OWNER, false)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
   });
 
   it('sets a cover the owner could see (control)', async () => {
@@ -551,9 +568,11 @@ describe('updateCollectionCoverImage', () => {
 describe('upsertCollection with no cover sent', () => {
   beforeEach(() => {
     replica.stale = true;
+    imageRowsFromFixture();
   });
   afterEach(() => {
     replica.stale = false;
+    vi.mocked(dbMock.dbWrite.image.findUnique).mockReset();
   });
 
   const edit = async (
@@ -587,6 +606,7 @@ describe('upsertCollection with no cover sent', () => {
         write: 'Private',
         userId: OWNER,
         isModerator,
+        asModerator: isModerator,
         isMember: true,
       } as never,
       coverViewer,
@@ -610,6 +630,16 @@ describe('upsertCollection with no cover sent', () => {
   it('lets the editor replace their own blocked cover with a new one', async () => {
     expect(await edit(OWNER_REMOVED, false, undefined, OWNER_UPLOAD)).toEqual({
       connect: { id: OWNER_UPLOAD },
+    });
+  });
+
+  it('refuses their own blocked image as the new cover, which a moderator may set', async () => {
+    await expect(edit(PUBLISHED, false, undefined, OWNER_REMOVED)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+    expect(await edit(PUBLISHED, true, undefined, OWNER_REMOVED)).toEqual({
+      connect: { id: OWNER_REMOVED },
     });
   });
 

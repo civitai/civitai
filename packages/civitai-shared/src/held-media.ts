@@ -51,7 +51,7 @@ export function heldItemImageSql(image: string): string {
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const owner = `${image}."userId"`;
-  // 'AiNotVerified' is the hold its owner clears, as in the main app's OWNER_MEDIA_EXEMPT_BLOCKS.
+  // Same exempt reason as the main app's OWNER_MEDIA_EXEMPT_BLOCKS.
   return `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
