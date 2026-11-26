@@ -129,9 +129,31 @@ const catalog = (): CatalogApp[] => [
       contentRating: sourceRating,
       manifest: sourceManifest(),
     },
-    approved: [],
+    approved: approvedManifests.map((m, i) => ({
+      id: `pr-${i + 1}`,
+      version: `0.${i + 1}.0`,
+      manifest: m,
+      bundleSha256: null,
+      commitSha: null,
+      sourceCommit: null,
+      reviewedAt: new Date(Date.UTC(2026, 9, i + 1)),
+    })),
   },
 ];
+/** The source app's approved manifests, oldest first; the enforced one is `sourceManifest()`. */
+let approvedManifests: unknown[];
+/** An approved manifest whose `journal` declared `t` a number: the enforced string `t` is a new major. */
+const numberTManifest = () => ({
+  ...sourceManifest(),
+  storage: {
+    collections: {
+      journal: {
+        visibility: 'private',
+        schema: { type: 'object', properties: { t: { type: 'number' } } },
+      },
+    },
+  },
+});
 
 /** The poll's sleep: each poll waits for {@link wake}. */
 let wakers: Array<() => void>;
@@ -349,6 +371,7 @@ const upserts = (events: StreamEvent[]) =>
 
 beforeEach(() => {
   sourceRating = 'pg13';
+  approvedManifests = [];
   now = Date.UTC(2026, 10, 19, 12);
   runGateReadable = true;
   revokedInstalls = new Set();
@@ -1043,7 +1066,9 @@ describe('a private record carries its seq, and the stream its head (read-your-w
       await principalOf('owner-own')
     );
     await settle(run);
-    expect(positions(run.events)).toEqual([{ type: 'live', meta: { head: { seq: 97 } } }]);
+    expect(positions(run.events)).toEqual([
+      { type: 'live', meta: { head: { seq: 97 }, currentMajor: 1 } },
+    ]);
 
     // A write to the record: the next poll sends it, then the head it read.
     docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
@@ -1055,7 +1080,9 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const batch = run.events.slice(mark);
     expect(batch.map((e) => e.type)).toEqual(['upsert', 'progress']);
     expect(upsertEntities(batch).map((e) => e.seq)).toEqual([102]);
-    expect(positions(batch)).toEqual([{ type: 'progress', meta: { head: { seq: 102 } } }]);
+    expect(positions(batch)).toEqual([
+      { type: 'progress', meta: { head: { seq: 102 }, currentMajor: 1 } },
+    ]);
     // The progress closes the batch at the upsert's own position.
     expect((batch[1] as { cursor: string }).cursor).toBe((batch[0] as { cursor: string }).cursor);
 
@@ -1067,10 +1094,49 @@ describe('a private record carries its seq, and the stream its head (read-your-w
       {
         type: 'progress',
         cursor: (batch[1] as { cursor: string }).cursor,
-        meta: { head: { seq: 115 } },
+        meta: { head: { seq: 115 }, currentMajor: 1 },
       },
     ]);
     // Nothing moved: nothing sent.
+    const still = run.events.length;
+    await poll(run);
+    expect(run.events.length).toBe(still);
+    run.stop();
+    wake();
+  });
+
+  it('🔴 live and progress name the collection current major: 2 at its second major, then 3 when one is minted, the head unchanged', async () => {
+    approvedManifests = [numberTManifest()];
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    expect(positions(run.events)).toEqual([
+      { type: 'live', meta: { head: { seq: 97 }, currentMajor: 2 } },
+    ]);
+    // A third major minted (an approval between the two that declared `t` a boolean): no write,
+    // so the head is unchanged, and the progress names the new major.
+    approvedManifests = [
+      numberTManifest(),
+      {
+        ...sourceManifest(),
+        storage: {
+          collections: {
+            journal: {
+              visibility: 'private',
+              schema: { type: 'object', properties: { t: { type: 'boolean' } } },
+            },
+          },
+        },
+      },
+    ];
+    const mark = run.events.length;
+    await poll(run);
+    expect(positions(run.events.slice(mark))).toEqual([
+      { type: 'progress', meta: { head: { seq: 97 }, currentMajor: 3 } },
+    ]);
+    // Nothing moved since: nothing sent.
     const still = run.events.length;
     await poll(run);
     expect(run.events.length).toBe(still);
@@ -1104,13 +1170,15 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const sent = run.events.slice(before);
     expect(upsertEntities(sent).map((e) => e.seq)).toEqual([124]);
     // The head it names is the one read before the keyset, never the later write's.
-    expect(positions(sent)).toEqual([{ type: 'progress', meta: { head: { seq: 124 } } }]);
+    expect(positions(sent)).toEqual([
+      { type: 'progress', meta: { head: { seq: 124 }, currentMajor: 1 } },
+    ]);
     // The next poll sees the write and names its head.
     const mark = run.events.length;
     await poll(run);
     expect(upsertEntities(run.events.slice(mark)).map((e) => e.seq)).toEqual([131]);
     expect(positions(run.events.slice(mark))).toEqual([
-      { type: 'progress', meta: { head: { seq: 131 } } },
+      { type: 'progress', meta: { head: { seq: 131 }, currentMajor: 1 } },
     ]);
     run.stop();
     wake();
@@ -1167,8 +1235,10 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const events = await resume();
     expect(events.map((e) => e.type)).toEqual(['live', 'upsert', 'progress']);
     expect(positions(events)).toEqual([
-      { type: 'live', meta: undefined },
-      { type: 'progress', meta: { head: { seq: 97 } } },
+      // A state saved before heads were kept names no head, but the collection's current major
+      // is the first poll's, so `live` names it at once.
+      { type: 'live', meta: { currentMajor: 1 } },
+      { type: 'progress', meta: { head: { seq: 97 }, currentMajor: 1 } },
     ]);
     expect(upsertEntities(events).map((e) => ({ urn: e.urn, key: e.key, seq: e.seq }))).toEqual([
       { urn: OWNER_URN, key: 'entry-1', seq: 41 },
@@ -1282,7 +1352,7 @@ describe('🔴 a namespace head that goes back (seqs restarted) expires the curs
     head = 600;
     await poll(run);
     expect(run.events.flatMap((e) => (e.type === 'progress' ? [e.meta] : []))).toEqual([
-      { head: { seq: 600 } },
+      { head: { seq: 600 }, currentMajor: 1 },
     ]);
     head = 550;
     wake();

@@ -33,7 +33,12 @@ import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audie
 import { parseClientIdList } from '~/server/registry-adapter/auth';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
-import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
+import {
+  createClaimer,
+  currentMajorOf,
+  docRev,
+  familyDigest,
+} from '~/server/registry-adapter/doc-feed';
 import { headMeta } from '~/server/registry-adapter/private-feed';
 import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, StreamEnd, cursorExpired } from '~/server/registry-adapter/protocol';
@@ -297,13 +302,20 @@ export const levelRev = (d: LevelStreamDocument, schemas: readonly string[]) =>
  * consumer can tell a key below the window's floor, which may exist, from a key that does not.
  * The mode is fixed by the level for the stream's whole life (`none` is served only while levels
  * are off, a bit only while they are on; any change ends the stream), so it is derived, never
- * stored.
+ * stored. Beside them the collection's current major, `currentMajor` ({@link currentMajorOf}), as
+ * the latest poll resolved it: app-data-go reads a shared collection that a read names no major of
+ * at it (`apps/app-data-go/internal/api/major.go`). Not stored either: a property of the collection
+ * now, so a state saved before it was named still names it on its next `live`.
  */
-const levelMeta = (state: Pick<LevelState, 'seq' | 'level' | 'appBlockId' | 'truncated'>) => ({
+const levelMeta = (
+  state: Pick<LevelState, 'seq' | 'level' | 'appBlockId' | 'truncated'>,
+  currentMajor: number | undefined
+) => ({
   ...headMeta(state.seq),
   levels: state.level === 'none' ? 'off' : 'on',
   block: state.appBlockId,
   truncated: state.truncated,
+  ...(currentMajor !== undefined ? { currentMajor } : {}),
 });
 
 /** An `end` naming why the stream ended; the reason alone says which mode ended it. */
@@ -427,7 +439,12 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     prev: LevelState | null,
     ctx: AdapterContext,
     audience: Audience
-  ): Promise<{ next: LevelState; entities: Map<string, Entity> }> {
+  ): Promise<{
+    next: LevelState;
+    entities: Map<string, Entity>;
+    /** The collection's current major ({@link currentMajorOf}). */
+    current: number | undefined;
+  }> {
     const s = await opts.resolve(schema);
     if (!s || !audienceAdmits(audience, s.contentRating)) throw end('not_resolved');
     if (level === 'none' && s.levelsOn) throw end('levels_on');
@@ -449,6 +466,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     }
 
     const digest = familyDigest(s.family);
+    const current = currentMajorOf(s.family);
     // A full read: a new stream, other schemas, or another bound.
     const full = !prev || prev.family !== digest || prev.bound !== bound;
     const base = {
@@ -465,7 +483,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     // Same head, same schemas, same bound: nothing moved. (`appBlockId` is the app's id, and an app
     // change is `cursor_expired` above, so the block cannot move within one stream.)
     if (prev && !full && seq === prev.seq) {
-      return { next: prev, entities: new Map() };
+      return { next: prev, entities: new Map(), current };
     }
 
     const claims = claimer(s.family, digest);
@@ -561,6 +579,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
           .sort((a, b) => compareCodeUnits(a[0], b[0])),
       },
       entities,
+      current,
     };
   }
 
@@ -595,8 +614,9 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     let state = loaded;
     let position = cursor;
     let pending: Awaited<ReturnType<typeof advance>> | StreamEnd | null = first;
-    // What `live` carried (the loaded state's), then the last `progress`.
-    let sent = sortedKeyJson(levelMeta(loaded));
+    // What `live` carried (the loaded state's, beside the first poll's current major), then the last
+    // `progress`.
+    let sent = sortedKeyJson(levelMeta(loaded, first.current));
     try {
       while (!ctx.signal.aborted) {
         const before = state;
@@ -615,7 +635,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
           if (!ctx.signal.aborted) yield { end: step.meta };
           return;
         }
-        const { next, entities } = step;
+        const { next, entities, current } = step;
         opts.fill?.set(id, next.level, next.served.length, next.bound);
         if (next !== before) {
           const was = new Map(before.served.map(([key, rev]) => [key, rev]));
@@ -644,7 +664,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
           }
         }
         // After the poll's changes, so a consumer holds all of them when it reads the heads.
-        const meta = levelMeta(state);
+        const meta = levelMeta(state, current);
         const key = sortedKeyJson(meta);
         if (key !== sent) {
           if (ctx.signal.aborted) return;
@@ -690,7 +710,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
       // Rejects before `live` (a StreamEnd included): every history check is a cursor check.
       const first = await guarded(() => advance(schema, level, state, ctx, audience));
       return Object.assign(follow(schema, level, cursor, state, first, ctx, audience), {
-        liveMeta: levelMeta(state) as EventMeta,
+        liveMeta: levelMeta(state, first.current) as EventMeta,
       });
     },
   };

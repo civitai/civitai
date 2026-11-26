@@ -12,6 +12,12 @@ Authorization: Bearer <the app's hub access token for the user>
 → {"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}]}
 ```
 
+A read that names no `major` reads the collection's **current** major, as a write that names none is
+stamped with it: the adapter's private and level streams name it (`currentMajor` in their `meta`), and
+a read is answered only from a stream that names its own major as current. A stream that holds records
+and names none is `503 major_unknown` (REST, with the writes off); it is never read at major 1 by
+default. An explicit `?major=N` reads major N. See `internal/api/major.go`.
+
 A private item's `version` is the document's store version, the number a write's `ifVersion` is
 compared against (an app reads a document, then writes it with `ifVersion: doc.version`). `rev` is
 kept beside it and stays opaque: on the registry path it is a digest, not a version. A registry item

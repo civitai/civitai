@@ -62,6 +62,8 @@ let levelsOn: boolean;
 let reads: string[];
 /** Run once, right after the next `changes` read returns: a write that commits mid-poll. */
 let afterChangesRead: (() => void) | null;
+/** The app's approved manifests, oldest first; the enforced one is `manifest`. */
+let approved: unknown[];
 
 const onStream = (d: Doc, sel: LevelSelector) =>
   !d.hidden && !d.counter && (sel === 'none' || (d.level !== null && (d.level & sel.bit) !== 0));
@@ -179,7 +181,15 @@ const catalog = (): CatalogApp[] => [
       contentRating: 'pg13',
       manifest,
     },
-    approved: [],
+    approved: approved.map((m, i) => ({
+      id: `pr-${i + 1}`,
+      version: `0.${i + 1}.0`,
+      manifest: m,
+      bundleSha256: null,
+      commitSha: null,
+      sourceCommit: null,
+      reviewedAt: new Date(Date.UTC(2026, 9, i + 1)),
+    })),
   },
 ];
 
@@ -322,6 +332,7 @@ beforeEach(() => {
   levelsOn = true;
   reads = [];
   afterChangesRead = null;
+  approved = [];
   wakers = [];
   store = createMemorySnapshotStore();
   fill = createLevelStreamFill();
@@ -458,19 +469,60 @@ describe('the gRPC binding refuses a level subscription', () => {
   });
 });
 
+/** An approved manifest whose `records` declared `t` a number: the enforced string `t` is a new major. */
+const numberT = {
+  ...manifest,
+  storage: {
+    collections: {
+      ...manifest.storage.collections,
+      records: {
+        ...manifest.storage.collections.records,
+        schema: { type: 'object', properties: { t: { type: 'number' } } },
+      },
+    },
+  },
+};
+
+describe('the current major: every level stream names it, and a newly minted one is sent', () => {
+  it('🔴 a collection at its second major names currentMajor 2 on live, the @v1 stream included', async () => {
+    seedBoard();
+    approved = [numberT];
+    const run = await open(2);
+    expect(metaOf(run.events, 'live')).toEqual([
+      { head: { seq: 10 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 2 },
+    ]);
+    await close(run);
+  });
+
+  it('🔴 a major minted while a stream is open is sent in a progress', async () => {
+    seedBoard();
+    const run = await open(2);
+    expect(metaOf(run.events, 'live')).toEqual([
+      { head: { seq: 10 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
+    ]);
+    // The enforced manifest is unchanged; an older approval that differs mints @v2 for it.
+    approved = [numberT];
+    const batch = await poll(run);
+    expect(metaOf(batch, 'progress')).toEqual([
+      { head: { seq: 10 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 2 },
+    ]);
+    await close(run);
+  });
+});
+
 describe('levels mode: every level stream names it, and a stream that cannot be served in it ends', () => {
   it('🔴 every live and progress names levels, the one seq head and the approved block', async () => {
     seedBoard();
     const run = await open(2);
     expect(metaOf(run.events, 'live')).toEqual([
-      { head: { seq: 10 }, levels: 'on', block: APP_ID, truncated: false },
+      { head: { seq: 10 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     // A write on another bit moves the head: the progress names it, and nothing else.
     put('01KC0R', { t: 'r-doc-2' }, 4);
     const batch = await poll(run);
     expect(keysOf(batch)).toEqual([]);
     expect(metaOf(batch, 'progress')).toEqual([
-      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false },
+      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     await close(run);
   });
@@ -498,7 +550,7 @@ describe('levels mode: every level stream names it, and a stream that cannot be 
     ]);
     // The mode is derived from the level: `none` is only ever served with levels off.
     expect(metaOf(run.events, 'live')).toEqual([
-      { head: { seq: 10 }, levels: 'off', block: APP_ID, truncated: false },
+      { head: { seq: 10 }, levels: 'off', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     levelsOn = true;
     const batch = await poll(run);
@@ -548,7 +600,7 @@ describe('changes on a level stream', () => {
     ]);
     expect(after.seq).toBeGreaterThan(before.seq ?? 0);
     expect(metaOf(batch, 'progress')).toEqual([
-      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false },
+      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     await close(run);
   });
@@ -594,13 +646,13 @@ describe('changes on a level stream', () => {
     // What the head names is exactly what was read: seq 11, never the later write.
     expect(keysOf(batch)).toEqual(['01KAXXX']);
     expect(metaOf(batch, 'progress')).toEqual([
-      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false },
+      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     // For every head sent, each write at or below it was sent.
     const next = await poll(run);
     expect(keysOf(next)).toEqual(['01KBXXX']);
     expect(metaOf(next, 'progress')).toEqual([
-      { head: { seq: 12 }, levels: 'on', block: APP_ID, truncated: false },
+      { head: { seq: 12 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     await close(run);
   });
@@ -742,7 +794,7 @@ describe('the bound: a board past it keeps each stream’s newest documents by k
     const run = await open(4);
     // head = BOUND + 1 writes; key(0) lies beyond the window.
     expect(metaOf(run.events, 'live')).toEqual([
-      { head: { seq: BOUND + 1 }, levels: 'on', block: APP_ID, truncated: true },
+      { head: { seq: BOUND + 1 }, levels: 'on', block: APP_ID, truncated: true, currentMajor: 1 },
     ]);
     // Two deletes inside the window: the backfill takes key(0) and reaches the bottom of the board.
     remove(key(BOUND));
@@ -750,7 +802,7 @@ describe('the bound: a board past it keeps each stream’s newest documents by k
     const batch = await poll(run);
     expect(keysOf(batch)).toEqual([key(0)]);
     expect(metaOf(batch, 'progress')).toEqual([
-      { head: { seq: BOUND + 3 }, levels: 'on', block: APP_ID, truncated: false },
+      { head: { seq: BOUND + 3 }, levels: 'on', block: APP_ID, truncated: false, currentMajor: 1 },
     ]);
     await close(run);
   });

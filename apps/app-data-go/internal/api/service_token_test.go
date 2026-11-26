@@ -58,7 +58,7 @@ func (a *adapterStub) SubscribeMeta(_ context.Context, _, _ string, meta json.Ra
 	st := &stubStream{ev: make(chan registry.Event, 4), done: make(chan struct{})}
 	if meta != nil {
 		a.levels++
-		st.ev <- registry.Event{Type: registry.Live, Cursor: "b1.0a1b2c3d4e5f60718293a4b5.l1.x", Meta: json.RawMessage(`{"head":{"seq":1}}`)}
+		st.ev <- registry.Event{Type: registry.Live, Cursor: "b1.0a1b2c3d4e5f60718293a4b5.l1.x", Meta: json.RawMessage(`{"head":{"seq":1},"currentMajor":1}`)}
 		return st, nil
 	}
 	a.views++

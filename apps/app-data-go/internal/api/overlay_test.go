@@ -293,6 +293,7 @@ func TestEveryStreamReasonHasAnAnswer(t *testing.T) {
 		"failed": {503, "failed"}, "closed": {503, "closed"}, "block_spent": {401, "block_token_spent"},
 		"block_cache_full": {503, "block_cache_full"}, "unkeyed": {503, "unkeyed"},
 		"cursor_expired": {503, "cursor_expired"}, "floor_not_met": {503, "floor_not_met"},
+		"major_unknown": {503, "major_unknown"},
 	}
 	for _, r := range metrics.FallbackReasons {
 		if _, ok := want[r]; !ok && r != "empty" {

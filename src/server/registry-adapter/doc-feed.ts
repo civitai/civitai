@@ -49,7 +49,7 @@ import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { compareCodeUnits, sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
-import { registryUrn } from '~/server/registry-adapter/urn';
+import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
 
 export type FeedDocument = {
   key: string;
@@ -175,6 +175,22 @@ export function createClaimer(maxFamilies = 200) {
     const compiled = validators;
     return (data: unknown) => compiled.filter((v) => v.validate(data) === true).map((v) => v.urn);
   };
+}
+
+/**
+ * The collection's CURRENT major: the newest its family holds, the major the site stamps a write
+ * with (`resolveSchemaMajor`, from the same approved manifest history). The private and level
+ * streams name it in their `meta` as `currentMajor`, so app-data-go can read a collection at its
+ * current major when a read names none (`apps/app-data-go/internal/api/major.go`). Undefined for a
+ * family with no collection-schema URN.
+ */
+export function currentMajorOf(family: CollectionStream['family']): number | undefined {
+  let current: number | undefined;
+  for (const { urn } of family) {
+    const major = parseCollectionSchemaUrn(urn)?.major;
+    if (major !== undefined && (current === undefined || major > current)) current = major;
+  }
+  return current;
 }
 
 export function familyDigest(family: CollectionStream['family']): string {

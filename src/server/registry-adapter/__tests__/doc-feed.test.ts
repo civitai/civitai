@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import type { DocFeedOptions } from '~/server/registry-adapter/doc-feed';
-import { EMPTY_CURSOR, PROGRESS_EVERY_MS, createDocFeed } from '~/server/registry-adapter/doc-feed';
+import {
+  EMPTY_CURSOR,
+  PROGRESS_EVERY_MS,
+  createDocFeed,
+  currentMajorOf,
+} from '~/server/registry-adapter/doc-feed';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import {
   createMemorySnapshotStore,
@@ -470,5 +475,16 @@ describe('🔴 progress: the namespace seq moves with no change for this stream'
     expect((await resumed.make().drain(V2, moved.progress)).map(shape)).toEqual([
       ['upsert', urn('n1')],
     ]);
+  });
+});
+
+describe('currentMajorOf: the newest major a family holds', () => {
+  it('is the highest major among its schema URNs, whatever their order; undefined for none', () => {
+    const V5 = 'urn:schema:apps.civitai.com:orbit-notes/notes@v5';
+    expect(currentMajorOf(ONE_MAJOR)).toBe(1);
+    expect(currentMajorOf(TWO_MAJORS)).toBe(2);
+    expect(currentMajorOf([TWO_MAJORS[1], { urn: V5, body: {} }, TWO_MAJORS[0]])).toBe(5);
+    expect(currentMajorOf([])).toBeUndefined();
+    expect(currentMajorOf([{ urn: 'urn:schema:elsewhere:x@v9', body: {} }])).toBeUndefined();
   });
 });
