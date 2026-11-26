@@ -1,9 +1,13 @@
+import { generateHTML, generateJSON } from '@tiptap/html';
+import Link from '@tiptap/extension-link';
+import StarterKit from '@tiptap/starter-kit';
 import { describe, expect, it } from 'vitest';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   restoreWithheldMedia,
   withheldMediaPlaceholders,
 } from '~/server/utils/article-withheld-media';
+import { withWithheldHref } from '~/shared/tiptap/withheld-link';
 
 const HIDDEN = '11111111-aaaa-4bbb-8ccc-111111111111';
 const SHOWN = '22222222-aaaa-4bbb-8ccc-222222222222';
@@ -74,5 +78,57 @@ describe('the edit form body', () => {
   it('leaves a body without placeholders untouched (control)', () => {
     expect(restoreWithheldMedia('<p>new</p>', stored, hidden)).toBe('<p>new</p>');
     expect(withheldMediaPlaceholders(stored, new Set())).toBe(stored);
+  });
+});
+
+describe('a link to a hidden image on the edit form', () => {
+  const href = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${HIDDEN}/original=true`;
+  const linked =
+    `<p>see <a href="${href}" target="_blank" rel="noopener">it</a> and ` +
+    `<a href="https://civitai.com/models/1">a model</a></p>`;
+  const edited = withheldMediaPlaceholders(linked, hidden);
+
+  it('names no hidden image, and keeps the other link', () => {
+    expect(edited).not.toContain(HIDDEN);
+    expect(edited).toContain('<a data-withheld-href="0" target="_blank" rel="noopener">it</a>');
+    expect(edited).toContain('<a href="https://civitai.com/models/1">a model</a>');
+  });
+
+  it('saves back byte for byte when nothing changed', () => {
+    expect(restoreWithheldMedia(edited, linked, hidden)).toBe(linked);
+  });
+
+  it('survives the editor and the save sanitizer', () => {
+    const extensions = [StarterKit.configure({ link: false }), withWithheldHref(Link)];
+    const fromEditor = generateHTML(generateJSON(edited, extensions), extensions);
+    const sanitized = getSanitizedStringSchema().parse(fromEditor);
+    const restored = restoreWithheldMedia(sanitized, linked, hidden);
+    expect(restored).toContain(`href="${href}"`);
+    expect(restored).not.toContain('data-withheld-href');
+    expect(restored.match(/href=/g)).toHaveLength(2);
+  });
+
+  it('loses the ref in an editor without it (control)', () => {
+    const extensions = [StarterKit.configure({ link: false }), Link];
+    expect(generateHTML(generateJSON(edited, extensions), extensions)).not.toContain(
+      'data-withheld-href'
+    );
+  });
+
+  it('🔴 refuses a ref to a link that names no hidden image', () => {
+    const forged = edited.replace(
+      '<a href="https://civitai.com/models/1">',
+      '<a data-withheld-href="1">'
+    );
+    expect(() => restoreWithheldMedia(forged, linked, hidden)).toThrow(
+      'This article body names an image it does not hold'
+    );
+  });
+
+  it('🔴 refuses a ref used twice', () => {
+    const twice = `${edited}<p><a data-withheld-href="0">again</a></p>`;
+    expect(() => restoreWithheldMedia(twice, linked, hidden)).toThrow(
+      'This article body names an image it does not hold'
+    );
   });
 });

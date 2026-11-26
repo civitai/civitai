@@ -29,8 +29,6 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
-// Lives here rather than in the service util that derives it: the util and the client-side card
-// helpers both need it, and services depend on schema, never the reverse.
 /**
  * A challenge or event cover. The edit views send a cover the editor may not see back with only
  * its id (and an empty url); resolveCoverImageId keeps the stored cover for it.
@@ -40,6 +38,8 @@ export const challengeCoverInputSchema = z.union([
   imageReferenceInputSchema.extend({ id: z.number().int().positive(), url: z.literal('') }),
 ]);
 
+// Lives here rather than in the service util that derives it: the util and the client-side card
+// helpers both need it, and services depend on schema, never the reverse.
 export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered' | 'hosting';
 
 // Cover image type for challenges (compatible with ImageGuard2)

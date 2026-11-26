@@ -512,6 +512,29 @@ describe('a save from the edit form with a body image listed on a report', () =>
     });
   });
 
+  it('🔴 keeps a link to the listed image when a moderator without the grant saves unchanged', async () => {
+    const linked = `${body}<p><a href="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${LISTED.url}/original=true" target="_blank">see</a></p>`;
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...storedArticle,
+      content: linked,
+    } as never);
+    // As the editor gives it back: the link mark renders an empty href beside the ref.
+    const fromEditor = `${editForm}<p><a target="_blank" href="" data-withheld-href="0">see</a></p>`;
+    await upsert(fromEditor, {
+      userId: MODERATOR,
+      isModerator: true,
+      reportListedViewer: { seesReportListed: false },
+      editForm: true,
+    });
+    expect(savedContent()).toContain(body);
+    expect(savedContent()).toMatch(
+      new RegExp(
+        `<a [^>]*href="https://image.civitai.com/[^"]*/${LISTED.url}/original=true"[^>]*>see</a>`
+      )
+    );
+    expect(savedContent()).not.toContain('data-withheld-href');
+  });
+
   it('🔴 keeps the listed image when a save from outside the edit form leaves it out', async () => {
     const saved = (await upsert(stripped)) as { content?: string };
     expect(savedContent()).toContain(img(LISTED.url));

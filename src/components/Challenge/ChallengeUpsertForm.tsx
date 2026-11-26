@@ -81,9 +81,6 @@ import {
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
 
-// Form schema - extends server schema with flattened prize fields for UI
-// judgeId is overridden to string|null because Mantine Select uses string values
-// Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
 // The `{ error }` on the object (not just the refine) is what surfaces the message when the
 // field is `undefined`: an undefined object fails the object check before `.refine()` runs. A
 // cover the editor may not see comes with its id and no url; saving keeps it.
@@ -101,6 +98,9 @@ export const challengeCoverImageSchema = z
   )
   .refine((val) => !!val.url || val.id != null, { error: 'Cover image is required' });
 
+// Form schema - extends server schema with flattened prize fields for UI
+// judgeId is overridden to string|null because Mantine Select uses string values
+// Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
 const schema = upsertChallengeBaseSchema
   .omit({ prizes: true, entryPrize: true, judgeId: true, eventId: true, themeElements: true })
   .extend({

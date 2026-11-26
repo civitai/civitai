@@ -660,6 +660,23 @@ describe('the article page body under the report-listed rule', () => {
       );
     });
 
+    it('🔴 keeps a link to a listed image for a moderator without the grant, without its href', async () => {
+      const content = await editReadOf(
+        spelledEveryWay(OWN_BODY),
+        { id: MOD, isModerator: true },
+        SESSION
+      );
+      expect(content).toContain('<a data-withheld-href="0">src</a>');
+    });
+
+    it("leaves the uploader's link to their listed image as stored (control)", async () => {
+      const content = await editReadOf(spelledEveryWay(OWN_BODY), { id: OWNER }, SESSION);
+      expect(content).toContain(
+        `<a href="https://image.civitai.com/abc/${uuid(OWN_BODY)}/original=true">src</a>`
+      );
+      expect(content).not.toContain('data-withheld-href');
+    });
+
     it('gives no placeholder to a reader who cannot edit', async () => {
       const content = await editRead({ id: STRANGER }, SESSION);
       expect(placeholders(content)).toEqual([]);

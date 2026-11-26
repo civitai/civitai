@@ -1,7 +1,10 @@
 import { Parser } from 'htmlparser2';
 import { namesBodyMedia } from '~/server/utils/article-body-media';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { WITHHELD_MEDIA_TYPE } from '~/shared/constants/withheld-media.constants';
+import {
+  WITHHELD_HREF_ATTRIBUTE,
+  WITHHELD_MEDIA_TYPE,
+} from '~/shared/constants/withheld-media.constants';
 
 /**
  * A body image the editor may not see goes to the edit form as a placeholder naming its position
@@ -13,6 +16,39 @@ const placeholder = (ref: number) =>
 
 type Slice = { start: number; end: number };
 type MediaSlice = Slice & { src: string };
+
+type LinkSlice = Slice & { href: string | undefined; ref: string | undefined };
+
+/** Each link's opening tag in document order, with its href and any withheld-href ref. */
+function linkSlices(html: string): LinkSlice[] {
+  const slices: LinkSlice[] = [];
+  const parser = new Parser(
+    {
+      onopentag(name, attribs) {
+        if (name !== 'a') return;
+        slices.push({
+          start: parser.startIndex,
+          end: parser.endIndex + 1,
+          href: attribs.href,
+          ref: attribs[WITHHELD_HREF_ATTRIBUTE],
+        });
+      },
+    },
+    { lowerCaseTags: true, lowerCaseAttributeNames: true }
+  );
+  parser.end(html);
+  return slices;
+}
+
+const attribute = (name: string) =>
+  new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)`, 'gi');
+/** The opening tag with its first `from` attribute swapped in place for `replacement` (raw). */
+function swapAttribute(tag: string, from: string, replacement: string, drop: string) {
+  let swapped = false;
+  return tag
+    .replace(attribute(drop), '')
+    .replace(attribute(from), () => (swapped ? '' : ((swapped = true), ` ${replacement}`)));
+}
 
 /** Each `img` and `edge-media` in document order, with its source. */
 function mediaSlices(html: string): MediaSlice[] {
@@ -74,21 +110,37 @@ function replaceSlices(html: string, replacements: (Slice & { text: string })[])
   return out + html.slice(at);
 }
 
-/** The body with each medium whose uuid is in `hiddenKeys` swapped for a placeholder. */
+/**
+ * The body with each medium whose uuid is in `hiddenKeys` swapped for a placeholder, and each link
+ * whose href names one given its position among the body's links instead of the href.
+ */
 export function withheldMediaPlaceholders(html: string, hiddenKeys: ReadonlySet<string>) {
   const keys = [...hiddenKeys].filter(Boolean).map((key) => key.toLowerCase());
   if (!keys.length) return html;
+  const media = mediaSlices(html)
+    .map((slice, ref) => ({ ...slice, text: placeholder(ref) }))
+    .filter((slice) => namesBodyMedia(slice.src, keys));
+  const links = linkSlices(html)
+    .map((slice, ref) => ({
+      ...slice,
+      text: swapAttribute(
+        html.slice(slice.start, slice.end),
+        'href',
+        `${WITHHELD_HREF_ATTRIBUTE}="${ref}"`,
+        WITHHELD_HREF_ATTRIBUTE
+      ),
+    }))
+    .filter((slice) => namesBodyMedia(slice.href, keys));
   return replaceSlices(
     html,
-    mediaSlices(html)
-      .map((slice, ref) => ({ ...slice, text: placeholder(ref) }))
-      .filter((slice) => namesBodyMedia(slice.src, keys))
+    [...media, ...links].sort((a, b) => a.start - b.start)
   );
 }
 
 /**
- * The saved body with each placeholder replaced by the stored medium it names. A placeholder that
- * names no stored medium in `hiddenKeys`, or names one twice, is refused.
+ * The saved body with each placeholder replaced by the stored medium it names, and each withheld
+ * href by the stored link's. A placeholder or link ref that names no stored medium or link in
+ * `hiddenKeys`, or names one twice, is refused.
  */
 export function restoreWithheldMedia(
   html: string,
@@ -96,20 +148,40 @@ export function restoreWithheldMedia(
   hiddenKeys: ReadonlySet<string>
 ) {
   const placeholders = placeholderSlices(html);
-  if (!placeholders.length) return html;
+  const withheldLinks = linkSlices(html).filter((link) => link.ref !== undefined);
+  if (!placeholders.length && !withheldLinks.length) return html;
   const keys = [...hiddenKeys].filter(Boolean).map((key) => key.toLowerCase());
+  const refuse = () => throwBadRequestError('This article body names an image it does not hold');
+  const indexOf = (ref: string | undefined) =>
+    ref !== undefined && /^\d+$/.test(ref) ? Number(ref) : -1;
   const stored = storedHtml ? mediaSlices(storedHtml) : [];
+  const storedLinks = storedHtml ? linkSlices(storedHtml) : [];
   const used = new Set<number>();
+  const usedLinks = new Set<number>();
+  const media = placeholders.map(({ start, end, ref }) => {
+    const index = indexOf(ref);
+    const medium = stored[index];
+    if (!medium || used.has(index) || !namesBodyMedia(medium.src, keys)) throw refuse();
+    used.add(index);
+    return { start, end, text: storedHtml!.slice(medium.start, medium.end) };
+  });
+  const links = withheldLinks.map(({ start, end, ref }) => {
+    const index = indexOf(ref);
+    const link = storedLinks[index];
+    if (!link || usedLinks.has(index) || !namesBodyMedia(link.href, keys)) throw refuse();
+    usedLinks.add(index);
+    const storedTag = storedHtml!.slice(link.start, link.end);
+    const href = attribute('href').exec(storedTag)?.[0].trim();
+    if (!href) throw refuse();
+    return {
+      start,
+      end,
+      text: swapAttribute(html.slice(start, end), WITHHELD_HREF_ATTRIBUTE, href, 'href'),
+    };
+  });
   return replaceSlices(
     html,
-    placeholders.map(({ start, end, ref }) => {
-      const index = ref !== undefined && /^\d+$/.test(ref) ? Number(ref) : -1;
-      const medium = stored[index];
-      if (!medium || used.has(index) || !namesBodyMedia(medium.src, keys))
-        throw throwBadRequestError('This article body names an image it does not hold');
-      used.add(index);
-      return { start, end, text: storedHtml!.slice(medium.start, medium.end) };
-    })
+    [...media, ...links].sort((a, b) => a.start - b.start)
   );
 }
 

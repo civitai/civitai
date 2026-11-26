@@ -5,7 +5,10 @@ import {
   restoreWithheldMedia,
   withheldMediaPlaceholders,
 } from '~/server/utils/article-withheld-media';
-import { WITHHELD_MEDIA_TYPE } from '~/shared/constants/withheld-media.constants';
+import {
+  WITHHELD_HREF_ATTRIBUTE,
+  WITHHELD_MEDIA_TYPE,
+} from '~/shared/constants/withheld-media.constants';
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
@@ -1180,7 +1183,11 @@ export const upsertArticle = async ({
     // A listed body image the saver may not see goes back in: in place for an edit-form
     // placeholder, which only the edit form may delete, else at the end of the body.
     const sent = data.content;
-    if (sent.includes(WITHHELD_MEDIA_TYPE) || (article?.content && sent !== article.content)) {
+    if (
+      sent.includes(WITHHELD_MEDIA_TYPE) ||
+      sent.includes(WITHHELD_HREF_ATTRIBUTE) ||
+      (article?.content && sent !== article.content)
+    ) {
       const connected = article ? await connectedArticleImages(article.id) : [];
       const hidden = await getReportListedHiddenImageIds(
         connected.map((c) => c.image.id),

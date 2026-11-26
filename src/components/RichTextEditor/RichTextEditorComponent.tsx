@@ -35,6 +35,7 @@ import { EmbedNode } from '~/shared/tiptap/embed.node';
 import { SizedImageEditNode } from './SizedImageEditNode';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { WithheldMediaEditNode } from '~/components/TipTap/WithheldMediaNode';
+import { withWithheldHref } from '~/shared/tiptap/withheld-link';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
@@ -235,7 +236,7 @@ export function RichTextEditor({
     if (addColors) arr.push(TextStyleKit);
     if (addLink) {
       const linkExtension = withLinkValidation ? LinkWithValidation : Link;
-      arr.push(linkExtension);
+      arr.push(withWithheldHref(linkExtension));
     }
     if (addHeading) arr.push(CustomHeading.configure({ levels: headingLevels }));
     if (onSuperEnter)
