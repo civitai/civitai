@@ -750,6 +750,7 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appReviewMessagesAuthored?: AppReviewMessage[];
   appSubListingsAuthored?: AppSubListing[];
   appSubListingsModerated?: AppSubListing[];
   appCollaboratorSeats?: AppCollaborator[];
@@ -2436,6 +2437,7 @@ export interface AppBlockPublishRequest {
   createdAt: Date;
   updatedAt: Date;
   assistantTrace?: AppPublishRequestTrace | null;
+  reviewMessages?: AppReviewMessage[];
 }
 
 export interface AppBlockBuildAttempt {
@@ -2477,6 +2479,20 @@ export interface AppPublishRequestTrace {
   signals: JsonValue;
   signalsVersion: number;
   snapshotError: string | null;
+  createdAt: Date;
+}
+
+export interface AppReviewMessage {
+  id: number;
+  publishRequestId: string | null;
+  publishRequest?: AppBlockPublishRequest | null;
+  listingPublishRequestId: string | null;
+  listingPublishRequest?: AppListingPublishRequest | null;
+  authorUserId: number | null;
+  author?: User | null;
+  authorRole: string;
+  body: string;
+  recipientUserId: number | null;
   createdAt: Date;
 }
 
@@ -2611,6 +2627,7 @@ export interface AppListingPublishRequest {
   changelog: string | null;
   createdAt: Date;
   updatedAt: Date;
+  reviewMessages?: AppReviewMessage[];
 }
 
 export interface AppListingReport {
