@@ -261,6 +261,19 @@ func TestReconcileCmd(t *testing.T) {
 	if code := run([]string{"reconcile", "--min-mismatch-share", "2"}, nil, io.Discard, io.Discard); code != 1 {
 		t.Errorf("a share over 1: exit %d", code)
 	}
+	for _, args := range [][]string{{"--bogus"}, {"extra"}} {
+		if code := run(append([]string{"reconcile"}, args...), nil, io.Discard, io.Discard); code != 1 {
+			t.Errorf("%v: exit %d", args, code)
+		}
+	}
+	// No live run to reconcile: an error, nothing written.
+	empty, emptyInserts := fakeClickHouse(t, "")
+	setCH(t, empty.URL)
+	var errOut bytes.Buffer
+	if code := run([]string{"reconcile"}, nil, io.Discard, &errOut); code != 1 || !strings.Contains(errOut.String(), "no live run to reconcile") ||
+		len(emptyInserts()) != 0 {
+		t.Errorf("no run: exit %d, %q, %d inserts", code, errOut.String(), len(emptyInserts()))
+	}
 	t.Setenv("FEED_EVAL_CLICKHOUSE_URL", "")
 	if code := run([]string{"reconcile"}, nil, io.Discard, io.Discard); code != 1 {
 		t.Errorf("no clickhouse: exit %d", code)

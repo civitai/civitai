@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ import (
 // credential words' (evalcorpus.credentialWords) in the shapes a client sends them; the line-level
 // ones are fields a capture row does not have but a future one could (headers, address, agent).
 const (
-	canaryToken   = "CANARYTOKEN7781"
+	canaryToken   = "CANARYTOKEN7781" //nolint:gosec // G101: a synthetic canary, not a credential
 	canaryAPIKey  = "CANARYAPIKEY7782"
 	canarySession = "CANARYSESSION7783"
 	canaryQueryTk = "CANARYQUERYTOKEN7784"
@@ -124,7 +125,7 @@ func TestBuildTempoCasesStripsSignsAndLimits(t *testing.T) {
 	}
 	// Five signatures: the token rows' (3 cases, K), the member's, the apiKey row's, model-getall's,
 	// v1-models-id's.
-	perSig := []int{}
+	perSig := make([]int, 0, len(sigs))
 	for _, n := range sigs {
 		perSig = append(perSig, n)
 	}
@@ -219,5 +220,61 @@ func TestImportTempoWritesStrippedRows(t *testing.T) {
 	mu.Lock()
 	if code != 0 || len(bodies) != 0 || !strings.Contains(out.String(), "dry run: nothing written") {
 		t.Errorf("dry run: exit %d, %d inserts, %q", code, len(bodies), out.String())
+	}
+}
+
+// TestImportTempoRefusals: every way the command refuses, each exit 1 with its own message, and a
+// file input with blank lines read as stdin is.
+func TestImportTempoRefusals(t *testing.T) {
+	dir := t.TempDir()
+	good := dir + "/rows.jsonl"
+	if err := os.WriteFile(good, []byte("\n"+tempoRows+"\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	junk := dir + "/junk.jsonl"
+	if err := os.WriteFile(junk, []byte("not json\n{\"endpoint\":\"v1-images\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	long := dir + "/long.jsonl"
+	if err := os.WriteFile(long, []byte(`{"input":"`+strings.Repeat("a", maxLine+1)+`"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FEED_EVAL_CLICKHOUSE_URL", "")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--bogus"}, "flag provided but not defined"},
+		{[]string{"extra"}, `unexpected argument "extra"`},
+		{[]string{"--per-signature", "0"}, "--per-signature must be at least 1"},
+		{[]string{"--hosts", "purple=h.example"}, "--hosts"},
+		{[]string{"--in", dir + "/absent.jsonl"}, "no such file"},
+		{[]string{"--in", junk, "--dry-run"}, "no usable row (1 not usable, 1 of an unsupported endpoint)"},
+		{[]string{"--in", long, "--dry-run"}, "token too long"},
+		{[]string{"--in", good}, "FEED_EVAL_CLICKHOUSE_URL, _USER and _PASSWORD are all required"},
+	} {
+		var errOut bytes.Buffer
+		if code := run(append([]string{"import-tempo"}, c.args...), strings.NewReader(""), io.Discard, &errOut); code != 1 ||
+			!strings.Contains(errOut.String(), c.want) {
+			t.Errorf("%v: exit %d, %q; want 1 and %q", c.args, code, errOut.String(), c.want)
+		}
+	}
+	var out bytes.Buffer
+	if code := run([]string{"import-tempo", "--in", good, "--dry-run"}, strings.NewReader(""), &out, io.Discard); code != 0 ||
+		!strings.Contains(out.String(), "as-posts: 9 rows, 5 cases, 2 over K, 1 duplicate, 1 refused") {
+		t.Errorf("file input: exit %d, %q", code, out.String())
+	}
+	// A ClickHouse that refuses the insert fails the import, with the count written before it.
+	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("X-ClickHouse-Exception-Code", "60")
+		http.Error(w, "Code: 60. Unknown table", http.StatusNotFound)
+	}))
+	defer refuse.Close()
+	setCH(t, refuse.URL)
+	var errOut bytes.Buffer
+	if code := run([]string{"import-tempo", "--in", good}, nil, io.Discard, &errOut); code != 1 ||
+		!strings.Contains(errOut.String(), "write refused: http 404, code 60 (0 rows written before it)") {
+		t.Errorf("refused insert: exit %d, %q", code, errOut.String())
 	}
 }

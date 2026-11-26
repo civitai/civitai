@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
+	"github.com/civitai/civitai/apps/feed-go/internal/evalcapture"
 )
 
 // reconcileRun is the live run a reconcile test reads; it started at reconcileRunStart.
@@ -462,5 +463,134 @@ func TestCHExecReportsRefusalWithoutBody(t *testing.T) {
 	_, err = e.Exec(context.Background(), insertCasesSQL, nil, []byte(`{"request":"CANARYROWVALUE"}`))
 	if err == nil || err.Error() != "clickhouse: write refused: http 400, code 27" {
 		t.Errorf("err %v", err)
+	}
+}
+
+// TestInsertCasesBatches: rows go insertBatch at a time, each acknowledged, the written counts
+// summed; the first refusal ends it with what was written before it.
+func TestInsertCasesBatches(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		counts []int
+	)
+	refuseAfter := 2
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Query().Get("query") != insertCasesSQL || r.Method != http.MethodPost {
+			t.Errorf("%s %q", r.Method, r.URL.Query().Get("query"))
+		}
+		if len(counts) == refuseAfter {
+			w.Header().Set("X-ClickHouse-Exception-Code", "not-a-number")
+			http.Error(w, "refused", http.StatusServiceUnavailable)
+			return
+		}
+		n := strings.Count(string(b), "\n")
+		counts = append(counts, n)
+		w.Header().Set("X-ClickHouse-Summary", fmt.Sprintf(`{"written_rows":"%d"}`, n))
+	}))
+	defer srv.Close()
+	e, err := NewCHExec(CHConfig{URL: srv.URL + "/evaldb", Username: "eval-user", Password: "eval-pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := make([]evalcapture.CaseRow, 1001)
+	for i := range rows {
+		rows[i] = evalcapture.CaseRow{CaseID: uint64(i + 1), NodeHeaders: map[string]string{}} //nolint:gosec // G115: i is a small index
+	}
+	mu.Lock()
+	refuseAfter = 99
+	mu.Unlock()
+	n, err := InsertCases(context.Background(), e, rows)
+	if err != nil || n != 1001 || !slices.Equal(counts, []int{500, 500, 1}) {
+		t.Fatalf("written %d, err %v, batches %v; want 1001 in [500 500 1]", n, err, counts)
+	}
+	mu.Lock()
+	counts, refuseAfter = nil, 1
+	mu.Unlock()
+	n, err = InsertCases(context.Background(), e, rows)
+	if err == nil || err.Error() != "clickhouse: write refused: http 503, code ?" || n != 500 {
+		t.Errorf("refused second batch: written %d, err %v", n, err)
+	}
+}
+
+func TestNewCHExecRefusesABadConfig(t *testing.T) {
+	for _, c := range []CHConfig{
+		{URL: "http://h.example/db", Username: "u"},
+		{URL: "ftp://h.example/db", Username: "u", Password: "p"},
+		{URL: "http://h.example/", Username: "u", Password: "p"},
+	} {
+		if _, err := NewCHExec(c); err == nil {
+			t.Errorf("%+v: no error", c)
+		}
+	}
+	// A transport error carries no URL (it holds the query's parameters).
+	e, err := NewCHExec(CHConfig{URL: "http://127.0.0.1:1/evaldb", Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.Exec(context.Background(), insertCasesSQL, []chread.Setting{param("ids", "[424242]")}, nil)
+	if err == nil || strings.Contains(err.Error(), "424242") {
+		t.Errorf("transport error %v", err)
+	}
+}
+
+// failingStore fails at one step; every other step answers what the fixture would, minimally.
+type failingStore struct {
+	failAt string
+	stats  []SigStats
+}
+
+func (s failingStore) fail(step string) error {
+	if s.failAt == step {
+		return fmt.Errorf("%s failed", step)
+	}
+	return nil
+}
+
+func (s failingStore) LatestRun(context.Context, string) (RunFacts, error) {
+	return RunFacts{RunID: reconcileRun, Started: reconcileRunStart}, s.fail("run")
+}
+
+func (s failingStore) SampleStats(context.Context, time.Time, time.Time) ([]SigStats, error) {
+	return s.stats, s.fail("samples")
+}
+
+func (s failingStore) RunResults(context.Context, string) ([]ResultFacts, error) {
+	return []ResultFacts{{CaseID: 7001, Endpoint: "as-posts", Sig: sigBlind, Verdict: VerdictPass}}, s.fail("results")
+}
+
+func (s failingStore) PromotedPasses(context.Context, string, time.Time) ([]ResultFacts, error) {
+	return nil, s.fail("passes")
+}
+
+func (s failingStore) CaseMeta(_ context.Context, _ string, ids []uint64) (map[uint64]CaseMeta, error) {
+	out := map[uint64]CaseMeta{}
+	for _, id := range ids {
+		out[id] = CaseMeta{Sig: sigBlind, Origin: "sample"}
+	}
+	return out, s.fail("meta")
+}
+
+func (s failingStore) Promote(_ context.Context, _ string, ids []uint64, _ time.Time) (uint64, error) {
+	return uint64(len(ids)), s.fail("promote")
+}
+
+func (s failingStore) AddRun(context.Context, RunRow) error { return s.fail("addrun") }
+
+// TestReconcileFailsAtEachStep: a store error at any step fails the reconcile naming the step, and
+// a failure before the summary row writes no summary row.
+func TestReconcileFailsAtEachStep(t *testing.T) {
+	stats := []SigStats{{Endpoint: "as-posts", Sig: sigBlind, Matches: 7, Mismatches: 3, MismatchCases: []uint64{1101}}}
+	for _, step := range []string{"run", "samples", "results", "meta", "passes", "promote", "addrun"} {
+		_, err := Reconcile(context.Background(), reconcileCfg(), failingStore{failAt: step, stats: stats})
+		if err == nil || !strings.Contains(err.Error(), step+" failed") {
+			t.Errorf("%s: err %v", step, err)
+		}
+	}
+	sum, err := Reconcile(context.Background(), reconcileCfg(), failingStore{stats: stats})
+	if err != nil || sum.Counts["promoted"] != 1 || sum.Counts["rows_written"] != 1 {
+		t.Errorf("no failure: %v %v", sum.Counts, err)
 	}
 }
