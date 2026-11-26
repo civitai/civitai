@@ -9,10 +9,11 @@ import {
   IconUser,
 } from '@tabler/icons-react';
 import React from 'react';
-import { imageStore, useImageStore } from '~/store/image.store';
+import { useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import type { ImageContextMenuProps } from '~/components/Image/ContextMenu/ImageMenuItems';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import { needsReviewModeration } from '~/components/Image/ContextMenu/needsReviewModeration';
 
 export function NeedsReviewBadge({ image }: ImageContextMenuProps) {
   const { isModerator } = useImageContext();
@@ -22,7 +23,7 @@ export function NeedsReviewBadge({ image }: ImageContextMenuProps) {
     needsReview: initialNeedsReview,
     ingestion: initialIngestion,
   });
-  const moderateImagesMutation = trpc.image.moderate.useMutation();
+  const moderateImagesMutation = trpc.image.moderate.useMutation(needsReviewModeration(imageId));
   if (!needsReview && ingestion !== 'Blocked') return null;
 
   const handleModerate = (action: 'block' | 'unblock') => {
@@ -31,7 +32,6 @@ export function NeedsReviewBadge({ image }: ImageContextMenuProps) {
       ids: [imageId],
       reviewAction: action,
     });
-    imageStore.setImage(imageId, { needsReview: null, ingestion: 'Scanned' });
   };
 
   const Badge = (

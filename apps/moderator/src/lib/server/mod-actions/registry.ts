@@ -27,12 +27,15 @@ import { getClickhouse } from '../clickhouse';
 import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
 import { casePartyAction, casePartyView, defaultCasePartyDeps } from '../cases/case-party';
 import { enabledDefinitions, publicDefinition } from '../cases/definitions';
+import { applyGrants } from '../access';
 import { civitaiAppUrl } from '../civitai-url';
 import { dbRead, dbWrite } from '../db';
 import { triageFeedback } from '../feedback.service';
 import { getModeratorDb } from '../moderator-db';
+import { loadPageAccessGrants } from '../page-access';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
 import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
+import { withheldRefusal } from '../retracted-media';
 import { moderateImageTags } from '../image-tags.service';
 import { SYSTEM_USER_ID } from '../users.service';
 
@@ -77,11 +80,27 @@ const notRestoredMessage = (notRestored: number[], notFound: number[], restored:
     .filter(Boolean)
     .join(' ');
 
+/** The moderator a trusted caller acts for by id, with the roles a session would carry (the auth hub
+ *  reads them from `UserRole`). A token-authenticated request has no session and loads no page grants,
+ *  so both are read here; the roles from the primary, so a role just revoked no longer counts. */
+async function moderatorById(userId: number) {
+  applyGrants(await loadPageAccessGrants());
+  const rows = await dbWrite
+    .selectFrom('UserRole')
+    .select('role')
+    .where('userId', '=', userId)
+    .execute();
+  return { id: userId, roles: rows.map((r) => r.role) };
+}
+
 // Backs the main app's `image.moderate` (block/unblock over one or more ids). Single-image verdicts loop
 // the spoke services; the moderator UI always sends one id, but the batch shape is preserved.
 const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   schema: imageModerateInput,
   handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
+    // Block and unblock alike: a batch with an image withheld from this moderator acts on none of it.
+    const withheld = await withheldRefusal(await moderatorById(userId), ids);
+    if (withheld) throw Object.assign(new Error(withheld), { status: 403 });
     const held: HeldRemoval[] = [];
     const notRestored: number[] = [];
     const notFound: number[] = [];

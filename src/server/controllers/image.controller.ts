@@ -177,7 +177,8 @@ export const moderateImageHandler = async ({
     // surface it as the matching tRPC code with the spoke's clean message, not a generic 500.
     if (error instanceof ModeratorClientError && error.status && error.status < 500)
       throw new TRPCError({
-        code: error.status === 409 ? 'CONFLICT' : 'BAD_REQUEST',
+        code:
+          error.status === 409 ? 'CONFLICT' : error.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST',
         message: error.message,
         cause: error,
       });

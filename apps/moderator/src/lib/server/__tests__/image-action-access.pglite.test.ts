@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+import { MOD_ACTION } from '@civitai/moderation';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
@@ -104,9 +105,18 @@ vi.mock('../report-queue-load', async (importOriginal) => ({
   loadItemReports: vi.fn(async () => []),
 }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
+// The page grants a token-authenticated action loads, as sysRedis holds them: the CSAM grant's page.
+vi.mock('../redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../redis')>()),
+  getSysRedis: () => ({
+    get: async () => JSON.stringify({ '/images/csam': ['moderator:csam-review'] }),
+    set: async () => 'OK',
+  }),
+}));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { reportModerationActions } = await import('../report-actions');
+const { modActions } = await import('../mod-actions/registry');
 const bulkPage = await import('../../../routes/retool/bulk-image-manager/+page.server');
 const lookupPage = await import('../../../routes/retool/image-lookup/+page.server');
 const queuePage = await import('../../../routes/images/[slug]/+page.server');
@@ -1313,5 +1323,47 @@ describe("the model flag detail panes' images", () => {
     expect(await withheldHashDetail(detail(WITHHELD, CONTROL), WITH_GRANT as never)).toEqual(
       detail(WITHHELD, CONTROL)
     );
+  });
+});
+
+// The main app's image.moderate, delegated with the acting moderator's id: the spoke reads that
+// moderator's roles itself, as the request carries no session.
+describe('delegated image.moderate', () => {
+  const GRANT_HOLDER = 990000003;
+  beforeEach(async () => {
+    await db.exec(`
+      CREATE TABLE "UserRole" ("userId" INTEGER, "role" TEXT);
+      -- Read by the kept-for-deleted-owner check after an accept.
+      CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
+      INSERT INTO "UserRole" ("userId", "role") VALUES (${GRANT_HOLDER}, 'moderator:csam-review');
+    `);
+  });
+
+  const moderate = (userId: number, reviewAction: 'block' | 'unblock', ids: number[]) =>
+    modActions[MOD_ACTION.imageModerate].handler({ ids, reviewAction, userId });
+
+  it.each(['unblock', 'block'] as const)(
+    'refuses %s by a moderator without the grant on a batch with a withheld image, writing nothing',
+    async (reviewAction) => {
+      await expect(
+        moderate(WITHOUT_GRANT.id, reviewAction, [CONTROL, WITHHELD])
+      ).rejects.toMatchObject({ status: 403, message: expect.stringContaining(String(WITHHELD)) });
+      expect(acceptImage).not.toHaveBeenCalled();
+      expect(blockImage).not.toHaveBeenCalled();
+    }
+  );
+
+  it('blocks and unblocks an image nothing withholds, for a moderator without the grant', async () => {
+    await moderate(WITHOUT_GRANT.id, 'unblock', [CONTROL]);
+    await moderate(WITHOUT_GRANT.id, 'block', [504]);
+    expect(acceptImage).toHaveBeenCalledOnce();
+    expect(blockImage).toHaveBeenCalledOnce();
+  });
+
+  it('acts on the withheld image for a moderator whose roles carry the grant', async () => {
+    await moderate(GRANT_HOLDER, 'unblock', [WITHHELD]);
+    await moderate(GRANT_HOLDER, 'block', [WITHHELD]);
+    expect(acceptImage).toHaveBeenCalledOnce();
+    expect(blockImage).toHaveBeenCalledOnce();
   });
 });

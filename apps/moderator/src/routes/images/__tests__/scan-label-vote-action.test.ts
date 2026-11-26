@@ -101,7 +101,7 @@ describe('vote action', () => {
       claimToken: TOKEN,
     });
     expect(applyMajorityBlocks).toHaveBeenCalledExactlyOnceWith(
-      { requester: 7, ip: '1.2.3.4', userAgent: 'ua' },
+      { requester: 7, csamReview: false, ip: '1.2.3.4', userAgent: 'ua' },
       { block: expect.any(Function), isModerationBlocked }
     );
     // The voting majority is the second opinion, so the sweep's block skips the re-removal hold.

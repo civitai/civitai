@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { LEASE_MS } from '$lib/scan-labels';
 import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
+import type { BlockImageArgs } from '../scan-label.service';
 
 /** The withhold rule's tables less those this file makes from the migrations or itself. */
 const WITHHOLD_TABLES = INQUISITOR_IMAGE_SCHEMA.replace(
@@ -38,6 +39,7 @@ vi.mock('../db', () => ({
 }));
 
 const {
+  applyMajorityBlocks,
   claimNext,
   castVote,
   getCounters,
@@ -918,5 +920,62 @@ describe('itemWithheld', () => {
     await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES (99, 'key-1', 'CSAM')`);
     expect(await itemWithheld(item, false)).toBe(true);
     expect(await itemWithheld(item, true)).toBe(false);
+  });
+});
+
+// The sweep runs as the moderator whose vote triggered it, so what it blocks follows their grant.
+describe('majority blocks for an item whose image is withheld from the requester', () => {
+  beforeEach(async () => {
+    await pg.exec(`
+      ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT, ADD COLUMN ingestion TEXT NOT NULL DEFAULT 'Scanned',
+        ADD COLUMN "needsReview" TEXT, ADD COLUMN "blockedFor" TEXT,
+        ADD COLUMN minor BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN "postId" INTEGER;
+      ALTER TABLE "User" ADD COLUMN meta JSONB;
+      ${WITHHOLD_TABLES}
+    `);
+  });
+
+  const sweep = async (csamReview: boolean, limit?: number) => {
+    const block = vi.fn(async (_args: BlockImageArgs) => undefined);
+    const result = await applyMajorityBlocks(
+      { requester: 1, csamReview, limit },
+      { block, isModerationBlocked: async () => false }
+    );
+    return { result, blocked: block.mock.calls.map(([args]) => args.imageId) };
+  };
+  // Withheld after its votes: a copy on its url is blocked as CSAM.
+  const withholdAfterVotes = (imageId: number) =>
+    pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES ($1, $2, 'CSAM')`, [
+      imageId + 9000,
+      `key-${imageId}`,
+    ]);
+
+  it('is left pending by a requester without the grant, and blocked by one with it', async () => {
+    const withheld = await seedItem(1, { votes: 2, blockVotes: 2 });
+    await withholdAfterVotes(1);
+
+    expect((await sweep(false)).blocked).toEqual([]);
+    expect(await item(withheld)).toMatchObject({ actionedAt: null, actionStartedAt: null });
+
+    const granted = await sweep(true);
+    expect(granted.blocked).toEqual([1]);
+    expect(granted.result.blocked).toEqual([withheld]);
+  });
+
+  it('blocks an open majority item for a requester without the grant', async () => {
+    const open = await seedItem(2, { votes: 2, blockVotes: 2 });
+    const { result, blocked } = await sweep(false);
+    expect(blocked).toEqual([2]);
+    expect(result.blocked).toEqual([open]);
+  });
+
+  it('does not let withheld items fill the limit ahead of an open one', async () => {
+    await seedItem(1, { votes: 2, blockVotes: 2 });
+    await withholdAfterVotes(1);
+    await seedItem(2, { votes: 2, blockVotes: 2 });
+    expect((await sweep(false, 1)).blocked).toEqual([2]);
   });
 });
