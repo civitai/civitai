@@ -240,7 +240,7 @@ describe('pollPanelStatus', () => {
       imageUrl: 'panel-key',
       errorMessage: null,
       metadata: null,
-      image,
+      image: { ...cleanImage, ...image },
       chapter: { project: { userId: OWNER } },
     } as never);
     return (await callerFor(UPLOADER).pollPanelStatus({ panelId: 7 })).imageUrl;
