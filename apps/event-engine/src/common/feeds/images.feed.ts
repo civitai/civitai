@@ -171,7 +171,7 @@ async function createDocuments(
         i."height",
         i."hash",
         i."hideMeta",
-        GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
+        image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") as "sortAt",
         i."type",
         i."userId",
         i."needsReview",
