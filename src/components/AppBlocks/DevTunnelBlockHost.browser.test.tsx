@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import router from 'next/router';
 import { renderToString } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
+import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -289,7 +290,9 @@ describe('/apps/dev/[blockId] client', () => {
   test('the dev-tunnel host is not server-rendered — it mounts on the client', async () => {
     const html = renderToString(
       <MantineProvider>
-        <DevTunnelPage {...FRAME} />
+        <FixedSessionProvider user={{ id: 7, username: 'author' }}>
+          <DevTunnelPage {...FRAME} />
+        </FixedSessionProvider>
       </MantineProvider>
     );
     expect(html).not.toContain('data-testid="page-block-host"');

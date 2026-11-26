@@ -160,17 +160,3 @@ export const FeatureFlagsProvider = ({
     </FeatureFlagsCtx.Provider>
   );
 };
-
-/** Fixed flags for harnesses with no session or server (component tests, Ladle). */
-export function FixedFeatureFlagsProvider({
-  flags,
-  children,
-}: {
-  /** Only the flags the components under test read; the rest are absent. */
-  flags: Partial<FeatureAccess>;
-  children: React.ReactNode;
-}) {
-  return (
-    <FeatureFlagsCtx.Provider value={flags as FeatureAccess}>{children}</FeatureFlagsCtx.Provider>
-  );
-}
