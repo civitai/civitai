@@ -901,6 +901,7 @@ describe('a stored context key never leaves a panel response', () => {
 
   it('by duplicatePanel, in its response and in the row it writes', async () => {
     givenContextBlocked();
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(row() as never);
     dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row() as never);
     dbMock.dbWrite.comicPanel.create.mockClear();
     dbMock.dbWrite.comicPanel.create.mockImplementation((async ({ data }: { data: object }) => ({
@@ -942,6 +943,7 @@ describe('a stored context key never leaves a panel response', () => {
 
   it('by getPanelDebugInfo', async () => {
     givenContextBlocked();
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(row() as never);
     dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row() as never);
     const { panel } = await callerFor(UPLOADER).getPanelDebugInfo({ panelId: 7 });
     expect(contextFree(panel.metadata)).toEqual(clean);
@@ -967,5 +969,48 @@ describe('a stored context key never leaves a panel response', () => {
       imageId: 5,
     });
     expect(contextFree(panel.metadata)).toEqual(clean);
+  });
+});
+
+describe('a block that has not reached the replica', () => {
+  // The replica still shows the image clean; the primary has the block.
+  const panelWith = (image: object) => ({
+    id: 7,
+    projectId: 3,
+    chapterPosition: 0,
+    position: 0,
+    status: 'Ready',
+    prompt: 'p',
+    enhancedPrompt: null,
+    imageUrl: 'panel-key',
+    imageId: 1,
+    workflowId: null,
+    errorMessage: null,
+    metadata: { candidateImages: [{ key: 'panel-key' }] },
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    references: [],
+    image,
+    chapter: { project: { userId: OWNER, baseModel: 'Flux1' } },
+  });
+  const givenLag = () => {
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panelWith({ ...cleanImage }) as never);
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(
+      panelWith(blockedImage(BlockedReason.Moderated)) as never
+    );
+    dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+  };
+
+  it('still withholds the image from the debug view', async () => {
+    givenLag();
+    const { panel } = await callerFor(UPLOADER).getPanelDebugInfo({ panelId: 7 });
+    expect(panel.imageUrl).toBeNull();
+  });
+
+  it('still refuses a duplicate', async () => {
+    givenLag();
+    await expect(callerFor(UPLOADER).duplicatePanel({ panelId: 7 } as never)).rejects.toMatchObject(
+      { code: 'BAD_REQUEST' }
+    );
   });
 });
