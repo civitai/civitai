@@ -3,12 +3,11 @@ import { TRPCError } from '@trpc/server';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
+import { NsfwLevel } from '~/server/common/enums';
 import { kyselyWrite } from '~/server/db/kyselyDb';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 export const WITHHELD_LOOSENING_REFUSED = 'Not ruled on here. Ask a lead.';
-
-/** `NsfwLevel.Blocked`: setting it tightens, whatever the current level. */
-const BLOCKED_LEVEL = 32;
 
 /**
  * Whether rating an image `next` over `current` loosens it: a lower level, or a first rating of an
@@ -16,14 +15,16 @@ const BLOCKED_LEVEL = 32;
  * `loosensImageLevelSql` is the same rule in SQL; change the two together.
  */
 export const loosensImageLevel = (current: number, next: number) =>
-  next !== BLOCKED_LEVEL && (current === 0 || next < current);
+  next !== NsfwLevel.Blocked && (current === 0 || next < current);
 
 /** `loosensImageLevel` over a level column, for a guard inside a write. */
 export function loosensImageLevelSql(next: number, currentColumn: string) {
   if (!Number.isInteger(next)) throw new Error(`Bad level: ${next}`);
   if (!/^[a-z_][a-z0-9_]*\."[a-zA-Z]+"$/.test(currentColumn))
     throw new Error(`Bad column: ${currentColumn}`);
-  return next === BLOCKED_LEVEL ? 'false' : `(${currentColumn} = 0 OR ${next} < ${currentColumn})`;
+  return next === NsfwLevel.Blocked
+    ? 'false'
+    : `(${currentColumn} = 0 OR ${next} < ${currentColumn})`;
 }
 
 /**
@@ -44,10 +45,7 @@ export async function withheldImageIds(
   return new Set(rows.map((r) => r.id));
 }
 
-/**
- * Refuses a moderator's loosening write (lower a level, clear a flag, accept, rescan, send to a
- * judge) on any image withheld from them, all or nothing. Tightening writes never call this.
- */
+/** Refuses a moderator's loosening write on any image withheld from them, all or nothing. */
 export async function assertMayLoosenImages(
   imageIds: number[],
   { csamReview }: { csamReview: boolean },
@@ -59,4 +57,15 @@ export async function assertMayLoosenImages(
     code: 'FORBIDDEN',
     message: `${WITHHELD_LOOSENING_REFUSED} Nothing was changed: ${[...withheld].join(', ')}.`,
   });
+}
+
+/** A moderator goes through `assertMayLoosenImages`. Anyone else is refused, without a reason,
+ *  only for an image withheld from a moderator without the grant. */
+export async function assertMayLoosenImagesAs(
+  imageIds: number[],
+  { isModerator, csamReview }: { isModerator?: boolean; csamReview: boolean }
+) {
+  if (isModerator) return assertMayLoosenImages(imageIds, { csamReview });
+  if ((await withheldImageIds(imageIds, { csamReview: false })).size)
+    throw throwAuthorizationError();
 }

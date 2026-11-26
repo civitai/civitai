@@ -329,6 +329,7 @@ export const saveItemHandler = async ({
         ...input,
         userId: user.id,
         isModerator: user.isModerator,
+        csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
       },
     });
@@ -411,6 +412,7 @@ export const bulkSaveItemsHandler = async ({
         ...input,
         userId,
         isModerator,
+        csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
       },
       permissions,
@@ -655,6 +657,7 @@ export const updateCollectionItemsStatusHandler = async ({
       input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -773,6 +776,7 @@ export const addSimpleImagePostHandler = async ({
         imageIds,
         userId,
         isModerator,
+        csamReview: !!ctx.features?.csamReports,
         canAccessUserChallenges: ctx.features.userChallenges,
       },
       permissions,
@@ -923,7 +927,12 @@ export const setCollectionItemNsfwLevelHandler = async ({
     if (!permissions.manage)
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
-    return await setCollectionItemNsfwLevel({ ...input, userId: user.id });
+    return await setCollectionItemNsfwLevel({
+      ...input,
+      userId: user.id,
+      isModerator: user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
