@@ -40,8 +40,7 @@ export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINO
 
 /**
  * What an upgraded app that no longer typechecks most likely hit, told to the assistant with every
- * upgrade: the storage calls @civitai/sdk 0.33.0 removed (civitai.com removed them first: the legacy
- * stores on 2026-11-10, tallies and publish with civitai/civitai#10391), and what replaces each one.
+ * upgrade: the storage calls @civitai/sdk 0.33.0 removed, and what replaces each one.
  */
 export const SDK_REMOVED_APIS =
   "If the typecheck fails after this upgrade because the app calls something @civitai/sdk 0.33 removed, tell the user that Civitai has removed it, and offer to move the app to its replacement. The removed calls and their replacements: " +
