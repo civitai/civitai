@@ -243,6 +243,13 @@ function Providers({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Loaded after the test file has registered its `vi.mock`s: a setup file's static imports
+// evaluate first, and those mocks would then miss every module this graph pulls in.
+let session: typeof SessionModule;
+beforeAll(async () => {
+  session = await import('~/components/CivitaiWrapped/CivitaiSessionProvider');
+});
+
 /**
  * Render a component under the standard generation-form provider stack.
  *
@@ -254,13 +261,6 @@ function Providers({ children }: { children: React.ReactNode }) {
  * child with "MantineProvider was not found". Passing `wrapper` fixes that for
  * every component test that drives prop changes via `rerender`.
  */
-// Loaded after the test file has registered its `vi.mock`s: a setup file's static imports
-// evaluate first, and those mocks would then miss every module this graph pulls in.
-let session: typeof SessionModule;
-beforeAll(async () => {
-  session = await import('~/components/CivitaiWrapped/CivitaiSessionProvider');
-});
-
 export function renderWithProviders(ui: React.ReactElement, options: ViewerOptions = {}) {
   return render(ui, { wrapper: viewerWrapper(options) });
 }
