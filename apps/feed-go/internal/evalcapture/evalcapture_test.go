@@ -431,7 +431,7 @@ func TestOutcomeClass(t *testing.T) {
 	for in, want := range map[string]string{
 		"match": "match", "match_empty": "match", "match_cached": "match", "fields": "mismatch", "order": "mismatch",
 		"membership": "mismatch", "served": "served", "handback": "handback", "unsupported": "handback", "deadline": "handback",
-		"go_error": "error", "bad_request": "error", "error": "error",
+		"go_error": "error", "bad_request": "error", "error": "error", "corpus-only": "corpus-only",
 	} {
 		if got := OutcomeClass(in); got != want {
 			t.Errorf("OutcomeClass(%q) = %q, want %q", in, got, want)

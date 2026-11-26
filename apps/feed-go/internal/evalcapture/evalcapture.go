@@ -58,10 +58,14 @@ const (
 	// SourceServe: a public request sampled at FEED_GO_EVAL_CAPTURE_SERVE_RATE, served here or handed
 	// back; no Node answer.
 	SourceServe = "serve"
+	// SourceCorpusOnly: a Node corpus-only sample (FEED_GO_SHADOW_CORPUS_ONLY_RATE, DESIGN.md §19.6
+	// T4): a credentialed `/api/v1/models/[id]` request with its credential taken out by Node, kept
+	// as its class (evalcorpus.Request.CredentialClass); never compared, no Node answer.
+	SourceCorpusOnly = "corpus-only"
 )
 
 // Sources is every source, in a fixed order.
-var Sources = []string{SourceShadow, SourceServeParity, SourceServe}
+var Sources = []string{SourceShadow, SourceServeParity, SourceServe, SourceCorpusOnly}
 
 // Outcomes of feed_go_eval_capture_total: every Record of a supported endpoint ends in exactly one.
 const (
@@ -74,9 +78,13 @@ const (
 	// OutcomeDropped: a row was not queued (a writer's queue was full or closed), or nothing could be
 	// captured (the viewer could not be resolved, or the request did not build a case).
 	OutcomeDropped = "dropped"
+	// OutcomeRefused: SourceCorpusOnly only, counted by the server before Record: a corpus-only sample
+	// that still carried a credential, a credential class other than header or query, or Node's answer.
+	// Never recorded.
+	OutcomeRefused = "refused"
 )
 
-// Outcomes is every outcome, in a fixed order.
+// Outcomes is every outcome Record returns, in a fixed order (OutcomeRefused is the server's).
 var Outcomes = []string{OutcomeWritten, OutcomeDeduped, OutcomeDropped}
 
 // Production results a capture records besides the comparison results (prod_result).
@@ -87,6 +95,8 @@ const (
 	ResultHandback = "handback"
 	// ResultError: SourceServe, handed back after a compute error (not a fallback).
 	ResultError = "error"
+	// ResultCorpusOnly: SourceCorpusOnly, never compared (its own outcome class).
+	ResultCorpusOnly = "corpus-only"
 )
 
 // Origins of a case row (the `origin` column).
@@ -249,7 +259,7 @@ func Supported(endpoint string) bool {
 }
 
 // OutcomeClass is the class a production result is deduplicated under: match, mismatch, served,
-// handback or error.
+// handback, corpus-only or error.
 func OutcomeClass(prodResult string) string {
 	switch prodResult {
 	case "match", "match_empty", "match_cached":
@@ -260,6 +270,8 @@ func OutcomeClass(prodResult string) string {
 		return "served"
 	case ResultHandback, "unsupported", "deadline":
 		return "handback"
+	case ResultCorpusOnly:
+		return ResultCorpusOnly
 	}
 	return "error"
 }

@@ -2,6 +2,7 @@ package evalcorpus
 
 import (
 	"encoding/json"
+	"errors"
 	"net/url"
 	"reflect"
 	"strings"
@@ -156,4 +157,79 @@ func FuzzStrip(f *testing.F) {
 			}
 		}
 	})
+}
+
+// A corpus-only request (its credential taken out before it got here) with Request.CredentialClass
+// signs exactly as the same request carrying a real credential of that class, stores the same query,
+// and records the class; without the override it signs as a request with none.
+func TestCredentialClassOverrideSignsAsARealCredential(t *testing.T) {
+	const key = "synthetic-key-0042" // gitleaks:allow synthetic test key
+	base := func(query string, headers map[string]string, class string) Request {
+		h := map[string]string{"host": "blue.example.test", "cf-ipcountry": "US"}
+		for k, v := range headers {
+			h[k] = v
+		}
+		return Request{Endpoint: EndpointV1ModelsID, Path: "/api/v1/models/5001", Query: query, Headers: h, CredentialClass: class}
+	}
+	for _, c := range []struct {
+		class             string
+		withKey, stripped Request
+	}{
+		{CredentialHeader, base("limit=1", map[string]string{"Authorization": "Bearer " + key}, ""), base("limit=1", nil, CredentialHeader)},
+		{CredentialQuery, base("token="+key+"&limit=1", nil, ""), base("limit=1", nil, CredentialQuery)},
+	} {
+		withKey, only := capture(t, c.withKey, anon), capture(t, c.stripped, anon)
+		if withKey.Credential != c.class || only.Credential != c.class {
+			t.Errorf("%s: credential real %q override %q", c.class, withKey.Credential, only.Credential)
+		}
+		if withKey.Signature != only.Signature || withKey.Shape != only.Shape {
+			t.Errorf("%s: the override signs differently:\n real %s\n only %s", c.class, withKey.Shape, only.Shape)
+		}
+		if withKey.Query != only.Query || withKey.Path != only.Path {
+			t.Errorf("%s: stored %q %q, override %q %q", c.class, withKey.Query, withKey.Path, only.Query, only.Path)
+		}
+		if capture(t, base("limit=1", nil, ""), anon).Signature == only.Signature {
+			t.Errorf("%s: the override does not move the signature off a request with no credential", c.class)
+		}
+	}
+	// The two classes sign apart from each other too.
+	if capture(t, base("limit=1", nil, CredentialHeader), anon).Signature == capture(t, base("limit=1", nil, CredentialQuery), anon).Signature {
+		t.Error("the header and query overrides sign alike")
+	}
+	// The request's own credential wins over the override.
+	if got := capture(t, base("limit=1", map[string]string{"authorization": "Bearer " + key}, CredentialQuery), anon).Credential; got != CredentialHeader {
+		t.Errorf("a real header with a query override: credential %q, want header", got)
+	}
+	for _, bad := range []string{"session", "header+query", "Header", "none"} {
+		if _, err := Capture(base("limit=1", nil, bad), anon, testEnv, Extra{}); !errors.Is(err, ErrCredentialClass) {
+			t.Errorf("override %q: err %v, want ErrCredentialClass", bad, err)
+		}
+	}
+}
+
+// HasCredential is true for every way a request can still carry a credential Capture reads or strips,
+// and false for a request carrying none.
+func TestHasCredential(t *testing.T) {
+	for _, c := range []struct {
+		headers map[string]string
+		query   string
+		want    bool
+	}{
+		{map[string]string{"host": "blue.example.test", "cookie": "theme=dark"}, "limit=1", false},
+		{nil, "", false},
+		{map[string]string{"Authorization": "Bearer k"}, "", true},
+		{map[string]string{"authorization": ""}, "", true},
+		{map[string]string{"X-Feed-Go-Credential": "key:described"}, "", true},
+		{map[string]string{"cookie": "theme=dark; civitai-token=x"}, "", true},
+		{nil, "token=k", true},
+		{nil, "token=", true},
+		{nil, "Token=k", true},
+		{nil, "%74oken=k", true},
+		{nil, "a=1;token=k", true},
+		{nil, "apiKey=k", true},
+	} {
+		if got := HasCredential(Request{Endpoint: EndpointV1ModelsID, Path: "/api/v1/models/1", Query: c.query, Headers: c.headers}); got != c.want {
+			t.Errorf("%v %q: HasCredential %v, want %v", c.headers, c.query, got, c.want)
+		}
+	}
 }
