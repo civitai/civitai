@@ -1,9 +1,13 @@
 /**
- * The real reads behind {@link CatalogReadDeps}. Read-only: the catalog through the store's own
- * listing service, everything else through the read client.
+ * The real reads behind {@link CatalogReadDeps} and {@link DocStreamReadDeps}. Read-only: the
+ * catalog through the store's own listing service, everything else through the read client.
  */
 import { dbRead } from '~/server/db/client';
-import type { CatalogReadDeps, ListingExtras } from '~/server/registry-adapter/catalog-source';
+import type {
+  CatalogReadDeps,
+  DocStreamReadDeps,
+  ListingExtras,
+} from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import {
   capSubListings,
@@ -41,7 +45,10 @@ import { readListingBetaManyForRender } from '~/server/services/blocks/app-listi
 import type { StoreSubListingRow } from '~/server/services/blocks/app-sub-listing-store.service';
 import { readStoreSubListingsOfParents } from '~/server/services/blocks/app-sub-listing-store.service';
 import { readListingIssueTrackerUrlsForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
-import { readListingSourceRepoUrls } from '~/server/services/blocks/app-listing-source-repo.service';
+import {
+  isMissingColumnError,
+  readListingSourceRepoUrls,
+} from '~/server/services/blocks/app-listing-source-repo.service';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -143,6 +150,75 @@ async function readSubListingsByParent(
   return out;
 }
 
+/** The approved publish requests of the blocks given (`CatalogReadDeps.loadApproved`). */
+async function loadApprovedRequests(appBlockIds: string[]) {
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    where: { appBlockId: { in: appBlockIds }, status: 'approved' },
+    select: {
+      id: true,
+      appBlockId: true,
+      version: true,
+      manifest: true,
+      bundleSha256: true,
+      forgejoCommitSha: true,
+      sourceCommit: true,
+      reviewedAt: true,
+    },
+  });
+  return rows.flatMap(({ appBlockId, forgejoCommitSha, ...r }) =>
+    appBlockId ? [{ ...r, appBlockId, commitSha: forgejoCommitSha }] : []
+  );
+}
+
+/**
+ * The ids of the blocks whose app was deleted (`app_blocks.storage_deleted_at`, a no-type column
+ * read by raw SQL only). Its manual-apply migration absent, no app can have been deleted that way,
+ * so the set is empty; any other failure fails the read, so a deleted app never resolves because
+ * the deletion could not be read.
+ */
+async function readStorageDeletedBlockIds(): Promise<Set<string>> {
+  try {
+    const rows = await dbRead.$queryRaw<{ id: string }[]>`
+      SELECT id FROM app_blocks WHERE storage_deleted_at IS NOT NULL`;
+    return new Set(rows.map((r) => r.id));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Set();
+    throw err;
+  }
+}
+
+/**
+ * The real reads behind {@link DocStreamReadDeps}: every approved, on-site block not deleted,
+ * with its listing's rating, whatever the listing's visibility. Read-only, through the read client.
+ */
+export function liveDocStreamReadDeps(): DocStreamReadDeps {
+  return {
+    async loadResolvableBlocks() {
+      const [rows, deleted] = await Promise.all([
+        dbRead.appBlock.findMany({
+          where: { status: 'approved', externalUrl: null },
+          select: {
+            id: true,
+            blockId: true,
+            version: true,
+            status: true,
+            contentRating: true,
+            manifest: true,
+            appListing: { select: { contentRating: true } },
+          },
+        }),
+        readStorageDeletedBlockIds(),
+      ]);
+      return rows.flatMap(({ appListing, ...block }) =>
+        deleted.has(block.id)
+          ? []
+          : [{ ...block, listingContentRating: appListing?.contentRating ?? null }]
+      );
+    },
+    loadApproved: loadApprovedRequests,
+  };
+}
+
 /**
  * `listings`: the listing stream is on, so the cards keep their store fields and extras are read.
  * `onSubListingsCapped` is told, per catalog read, of each listing whose items were capped and how
@@ -195,24 +271,7 @@ export function liveCatalogReadDeps({
         },
       }),
 
-    async loadApproved(appBlockIds) {
-      const rows = await dbRead.appBlockPublishRequest.findMany({
-        where: { appBlockId: { in: appBlockIds }, status: 'approved' },
-        select: {
-          id: true,
-          appBlockId: true,
-          version: true,
-          manifest: true,
-          bundleSha256: true,
-          forgejoCommitSha: true,
-          sourceCommit: true,
-          reviewedAt: true,
-        },
-      });
-      return rows.flatMap(({ appBlockId, forgejoCommitSha, ...r }) =>
-        appBlockId ? [{ ...r, appBlockId, commitSha: forgejoCommitSha }] : []
-      );
-    },
+    loadApproved: loadApprovedRequests,
 
     loadSourceRepoUrls: (listingIds) => readListingSourceRepoUrls(listingIds, dbRead),
 

@@ -84,12 +84,23 @@ export type CatalogApp = {
 };
 
 /**
+ * What a document stream's resolver reads of an app (`doc-streams.ts`): its block, its approved
+ * releases and its listing's rating. A {@link CatalogApp} is one; so is an app of the
+ * document-stream read (`readDocStreamApps`), which carries no other listing field.
+ */
+export type DocStreamApp = {
+  listing: Pick<CatalogApp['listing'], 'contentRating'>;
+  block: CatalogApp['block'];
+  approved: CatalogApp['approved'];
+};
+
+/**
  * The content rating an app entity publishes: the listing's if known ({@link isKnownRating},
  * `xxx` included, so a listing rated `xxx` is published as `xxx` and never as its block's rating),
  * else the block's if known, else whichever is set (null if neither), which `audienceAdmits`
  * fails closed on. A shared document has none of its own (`doc-streams.ts`).
  */
-export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null => {
+export const appContentRating = (app: Pick<DocStreamApp, 'listing' | 'block'>): string | null => {
   const listing = app.listing.contentRating;
   const block = app.block?.contentRating ?? null;
   if (isKnownRating(listing)) return listing;

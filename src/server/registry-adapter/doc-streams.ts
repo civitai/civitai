@@ -1,9 +1,14 @@
 /**
- * Which collection-major streams are published, decided from the same catalog read as every other
- * entity: the app is listed in the public catalog, its block is approved, its enforced manifest
- * opts the collection in (`registry: "public"`), and the major exists.
+ * Which collection-major streams are served, and from which read:
+ *   - the registry EXPORT (`resolveFromCatalog`), from the same catalog read as every other
+ *     entity: the app is listed in the public catalog, its block is approved, its enforced
+ *     manifest opts the collection in (`registry: "public"`), and the major exists;
+ *   - the private, per-viewer and level streams, from the document-stream read
+ *     (`readDocStreamApps`): every approved on-site app not deleted, whatever its store listing's
+ *     visibility. Those streams decide access themselves (their gates, `decide`, the token's
+ *     claims), so the public listing is not their gate. {@link docStreamResolvers} wires both.
  */
-import type { CatalogApp } from '~/server/registry-adapter/entities';
+import type { CatalogApp, DocStreamApp } from '~/server/registry-adapter/entities';
 import { appContentRating } from '~/server/registry-adapter/entities';
 import {
   HEAD_STEP,
@@ -84,12 +89,13 @@ export function resolveFromCatalog(
 }
 
 /**
- * The private collection a stream schema names (`private-feed.ts`), from the same catalog read:
- * the app's block is approved, its enforced manifest declares the collection `visibility:
- * "private"`, and the major exists. It decides no access; the private feed's gates do.
+ * The private collection a stream schema names (`private-feed.ts`), from the apps `readApps`
+ * gives (the document-stream read, {@link docStreamResolvers}): the app's block is approved, its
+ * enforced manifest declares the collection `visibility: "private"`, and the major exists. It
+ * decides no access; the private feed's gates do.
  */
 export function resolvePrivateFromCatalog(
-  readApps: () => Promise<CatalogApp[]>
+  readApps: () => Promise<readonly DocStreamApp[]>
 ): ResolvePrivateStream {
   return async (schema) => {
     const ref = parseCollectionSchemaUrn(schema);
@@ -107,14 +113,15 @@ export function resolvePrivateFromCatalog(
 }
 
 /**
- * The SHARED collection a level stream's schema names (`level-feed.ts`), from the same catalog
- * read: the app's block is approved, its enforced manifest declares the collection `visibility:
- * "shared"` (exported to the registry or not), and the major exists; with the app's content-levels
- * mode (`docLevelsOn`, which fails closed: an unreadable flag counts as on). It decides no access;
- * the level feed's routing does.
+ * The SHARED collection a level stream's schema names (`level-feed.ts`), from the apps
+ * `readApps` gives (the document-stream read, {@link docStreamResolvers}): the app's block is
+ * approved, its enforced manifest declares the collection `visibility: "shared"` (exported to the
+ * registry or not), and the major exists; with the app's content-levels mode (`docLevelsOn`,
+ * which fails closed: an unreadable flag counts as on). It decides no access; the level feed's
+ * routing does.
  */
 export function resolveSharedLevelFromCatalog(
-  readApps: () => Promise<CatalogApp[]>,
+  readApps: () => Promise<readonly DocStreamApp[]>,
   docLevelsOn: (appBlockId: string) => Promise<boolean>
 ): ResolveLevelStream {
   return async (schema) => {
@@ -142,14 +149,15 @@ export function resolveSharedLevelFromCatalog(
 }
 
 /**
- * The SHARED collection a per-viewer stream's URN names (`viewer-feed.ts`), from the same catalog
- * read and by the same rule as {@link resolveSharedLevelFromCatalog}: the app's block is approved,
- * its enforced manifest declares the collection `visibility: "shared"`, and the major exists; with
+ * The SHARED collection a per-viewer stream's URN names (`viewer-feed.ts`), from the apps
+ * `readApps` gives (the document-stream read) and by the same rule as
+ * {@link resolveSharedLevelFromCatalog}: the app's block is approved, its enforced manifest
+ * declares the collection `visibility: "shared"`, and the major exists; with
  * the app's content-levels mode (`docLevelsOn`, which fails closed). It decides no access; the
  * per-viewer stream's gates do.
  */
 export function resolveViewerFromCatalog(
-  readApps: () => Promise<CatalogApp[]>,
+  readApps: () => Promise<readonly DocStreamApp[]>,
   docLevelsOn: (appBlockId: string) => Promise<boolean>
 ): ResolveViewerStream {
   return async (schema) => {
@@ -175,11 +183,46 @@ export function resolveViewerFromCatalog(
 }
 
 /**
+ * The adapter's four document-stream resolvers, each on the read it must use: the registry export
+ * on the PUBLIC catalog (`readCatalogApps`), so nothing outside it is exported; the private,
+ * per-viewer and level streams on the document-stream read (`readDocStreamApps`), so an approved
+ * app resolves there whatever its store listing's visibility. The export is gated on content
+ * levels (`requireDocLevels`): an app whose levels flag is off exports nothing.
+ */
+export function docStreamResolvers({
+  readCatalogApps,
+  readDocStreamApps,
+  docLevelsOn,
+  features = APP_STORAGE_ENABLED_FEATURES,
+}: {
+  readCatalogApps: () => Promise<CatalogApp[]>;
+  readDocStreamApps: () => Promise<readonly DocStreamApp[]>;
+  docLevelsOn: (appBlockId: string) => Promise<boolean>;
+  /** The export's live switch ({@link resolveFromCatalog}); the platform's unless given. */
+  features?: Readonly<Record<AppStorageFeature, boolean>>;
+}): {
+  exported: ResolveStream;
+  private: ResolvePrivateStream;
+  level: ResolveLevelStream;
+  viewer: ResolveViewerStream;
+} {
+  return {
+    exported: resolveFromCatalog(readCatalogApps, features, {
+      docLevelsOn,
+      requireDocLevels: true,
+    }),
+    private: resolvePrivateFromCatalog(readDocStreamApps),
+    level: resolveSharedLevelFromCatalog(readDocStreamApps, docLevelsOn),
+    viewer: resolveViewerFromCatalog(readDocStreamApps, docLevelsOn),
+  };
+}
+
+/**
  * Every major's schema document of `ref.collection`, `@v1` first, derived from the app's approved
  * releases and its approved head; null when `ref.major` is not minted.
  */
 export function collectionFamily(
-  app: CatalogApp & { block: NonNullable<CatalogApp['block']> },
+  app: DocStreamApp & { block: NonNullable<DocStreamApp['block']> },
   ref: { slug: string; collection: string; major: number }
 ): CollectionStream['family'] | null {
   const derivation = deriveCollectionMajors([
