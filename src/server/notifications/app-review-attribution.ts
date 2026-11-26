@@ -13,6 +13,8 @@
  * Pure and dependency-free: the processors that call it are in the client graph.
  */
 
+import { isDecidedReviewStatus } from '~/shared/utils/app-review-thread';
+
 export const APP_REVIEW_TEAM_NAME = 'Civitai App Review';
 
 /**
@@ -101,14 +103,12 @@ export type DecisionReviewerRow = {
   deletedAt: Date | null;
 } | null;
 
-const DECIDED_STATUSES: ReadonlySet<string> = new Set(['approved', 'rejected']);
-
 /** The reviewer of a decided request; `null` for one nobody has decided (pending, withdrawn). */
 export function decisionReviewer(
   status: string,
   reviewedBy: DecisionReviewerRow | undefined
 ): DecisionReviewer | null {
-  if (!DECIDED_STATUSES.has(status)) return null;
+  if (!isDecidedReviewStatus(status)) return null;
   if (!reviewedBy || reviewedBy.deletedAt || !reviewedBy.username) return { account: null };
   return { account: { username: reviewedBy.username, image: reviewedBy.image } };
 }

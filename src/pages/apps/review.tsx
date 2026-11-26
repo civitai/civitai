@@ -8,6 +8,7 @@ import {
   IconFlag,
   IconLayoutGrid,
   IconMessage2,
+  IconMessageReply,
   IconUserPlus,
   IconX,
 } from '@tabler/icons-react';
@@ -18,6 +19,7 @@ import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
 import { AppDocStoreReportsQueue } from '~/components/Apps/AppDocStoreReportsQueue';
 import { AppFeedbackModQueue } from '~/components/Apps/AppFeedbackModQueue';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
+import { ReviewRepliesQueue } from '~/components/Apps/ReviewRepliesQueue';
 import { SubListingReviewQueue } from '~/components/Apps/SubListingReviewQueue';
 import { AppAccessRequestsQueue } from '~/components/Moderation/AppAccessRequests/AppAccessRequestsQueue';
 // The off-site review MODAL is now PAGE-OWNED (lifted here) so a single instance is
@@ -64,7 +66,7 @@ import { trpc } from '~/utils/trpc';
  * /apps/review — Moderator review queue + history for Apps (on-site App Blocks AND
  * off-site external listings), UNIFIED into one list per tab.
  *
- * Nine tabs:
+ * Nine tabs, and a tenth (Replies) behind a flag:
  *  - Pending  — ONE oldest-first FIFO list interleaving on-site publish requests
  *               (`blocks.listPendingRequests`) + off-site requests
  *               (`appListings.listPendingRequests`). Each row carries a kind badge
@@ -80,6 +82,9 @@ import { trpc } from '~/utils/trpc';
  *  - Access requests — "Request access" submissions from `/apps/build`; approving grants builder
  *               access (`AppAccessRequestsQueue`). Its old home, `/moderator/app-access-requests`,
  *               redirects here.
+ *  - Replies  — developer replies on review threads awaiting a moderator (`ReviewRepliesQueue`).
+ *               Only while `features.appReviewReplies` is on; `?tab=replies` falls back to
+ *               Pending otherwise.
  *
  * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
  * and the off-site `OffsiteReviewModal`. The unified list + the management table
@@ -121,6 +126,7 @@ const TAB_VALUES = [
   'app-feedback',
   'storage-reports',
   'access-requests',
+  'replies',
 ] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
@@ -307,17 +313,40 @@ export function AppAccessRequestsPendingBadge() {
   );
 }
 
+/**
+ * Review-thread replies that went to no one (the reviewer is gone, no longer a moderator, or the
+ * review was automated), shown on the Replies tab label. Hidden at zero; never fetched with the
+ * flag off.
+ */
+export function ReviewRepliesAwaitingBadge() {
+  const features = useFeatureFlags();
+  const { data } = trpc.appListings.countRepliesAwaitingQueue.useQuery(undefined, {
+    enabled: !!features?.appReviewReplies,
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data?.count) return null;
+  return (
+    <Badge size="xs" color="orange" variant="filled" data-testid="review-replies-awaiting-count">
+      {data.count}
+    </Badge>
+  );
+}
+
 export default function ReviewQueuePage() {
   const features = useFeatureFlags();
   const router = useRouter();
+  const replies = !!features?.appReviewReplies;
 
   // Sync active tab with `?tab=` so deep-links land on the right view. Shallow
   // routing so the page query doesn't re-trigger getServerSideProps.
   const tab: TabValue = useMemo(() => {
     const qt = router.query.tab;
+    if (qt === 'replies' && !replies) return 'pending';
     if (typeof qt === 'string' && isTabValue(qt)) return qt;
     return 'pending';
-  }, [router.query.tab]);
+  }, [router.query.tab, replies]);
+  const threadId = typeof router.query.thread === 'string' ? router.query.thread : null;
 
   const setTab = (next: TabValue) => {
     void router.replace(
@@ -474,6 +503,15 @@ export default function ReviewQueuePage() {
             >
               Access requests
             </Tabs.Tab>
+            {replies && (
+              <Tabs.Tab
+                value="replies"
+                leftSection={<IconMessageReply size={14} />}
+                rightSection={<ReviewRepliesAwaitingBadge />}
+              >
+                Replies
+              </Tabs.Tab>
+            )}
             <Divider orientation="vertical" mx="xs" my={6} aria-hidden />
             <Text
               size="xs"
@@ -551,6 +589,12 @@ export default function ReviewQueuePage() {
           <Tabs.Panel value="access-requests" pt="md">
             <AppAccessRequestsQueue />
           </Tabs.Panel>
+
+          {replies && (
+            <Tabs.Panel value="replies" pt="md">
+              <ReviewRepliesQueue threadId={threadId} />
+            </Tabs.Panel>
+          )}
         </Tabs>
       </AppsPageLayout>
 

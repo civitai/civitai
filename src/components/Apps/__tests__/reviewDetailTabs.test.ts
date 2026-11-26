@@ -5,8 +5,10 @@ import {
   resolveReviewDetailTab,
   REVIEW_DETAIL_TAB_LABELS,
   REVIEW_DETAIL_TAB_QUERY_KEY,
+  REVIEW_DETAIL_FLAGGED_TAB_VALUES,
   REVIEW_DETAIL_TAB_VALUES,
   reviewDetailTabQuery,
+  reviewDetailTabsFor,
   type ReviewDetailTab,
 } from '~/components/Apps/reviewDetailTabs';
 
@@ -49,11 +51,12 @@ describe('the tab set', () => {
       preview: 'Preview',
       console: 'Console',
       sessions: 'Build sessions',
+      conversation: 'Conversation',
     });
   });
 
   test('every tab has a label, and no two share one', () => {
-    const labels = REVIEW_DETAIL_TAB_VALUES.map((t) => REVIEW_DETAIL_TAB_LABELS[t]);
+    const labels = reviewDetailTabsFor({ replies: true }).map((t) => REVIEW_DETAIL_TAB_LABELS[t]);
     expect(labels.every((l) => typeof l === 'string' && l.length > 0)).toBe(true);
     expect(new Set(labels).size).toBe(labels.length);
   });
@@ -63,6 +66,41 @@ describe('the tab set', () => {
     for (const junk of ['', 'summary', 'Overview', 0, null, undefined, {}, ['code']]) {
       expect(isReviewDetailTab(junk)).toBe(false);
     }
+  });
+});
+
+describe('the flagged Conversation tab', () => {
+  test('is the one flagged tab, appended after the base set only while replies are on', () => {
+    expect([...REVIEW_DETAIL_FLAGGED_TAB_VALUES]).toEqual(['conversation']);
+    expect([...reviewDetailTabsFor({ replies: false })]).toEqual([...REVIEW_DETAIL_TAB_VALUES]);
+    expect([...reviewDetailTabsFor({ replies: true })]).toEqual([
+      ...REVIEW_DETAIL_TAB_VALUES,
+      'conversation',
+    ]);
+  });
+
+  test('`?tab=conversation` selects it with replies on, and falls back to the default with them off', () => {
+    const on = reviewDetailTabsFor({ replies: true });
+    const off = reviewDetailTabsFor({ replies: false });
+    expect(resolveReviewDetailTab('conversation', { tabs: on })).toBe('conversation');
+    expect(resolveReviewDetailTab('conversation', { tabs: off })).toBe(DEFAULT_REVIEW_DETAIL_TAB);
+    // No `tabs` given: the base set, so an existing caller cannot reach the flagged tab.
+    expect(resolveReviewDetailTab('conversation')).toBe(DEFAULT_REVIEW_DETAIL_TAB);
+    expect(isReviewDetailTab('conversation')).toBe(false);
+    expect(isReviewDetailTab('conversation', on)).toBe(true);
+    // A base tab resolves the same either way.
+    expect(resolveReviewDetailTab('code', { tabs: on })).toBe('code');
+    expect(resolveReviewDetailTab('code', { tabs: off })).toBe('code');
+  });
+
+  test('round trip with replies on: the Conversation tab survives query → resolve', () => {
+    const q = reviewDetailTabQuery('conversation', { publishRequestId: 'pubreq_01ABC' });
+    expect(q).toEqual({ publishRequestId: 'pubreq_01ABC', tab: 'conversation' });
+    expect(
+      resolveReviewDetailTab(q[REVIEW_DETAIL_TAB_QUERY_KEY], {
+        tabs: reviewDetailTabsFor({ replies: true }),
+      })
+    ).toBe('conversation');
   });
 });
 
