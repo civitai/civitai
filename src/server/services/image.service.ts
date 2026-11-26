@@ -87,6 +87,7 @@ import {
   liftKeptBlockedSql,
   unblockedMetadataSql,
   scanKeepsRowSql,
+  ownerMediaSql,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -2633,16 +2634,18 @@ export function feedViewer(input: {
 
 /** A feed item's thumbnail fields for its viewer. */
 export function feedThumbnailFields(
-  thumbnail: { url: string; nsfwLevel: number; blockMarked?: boolean } | undefined,
+  thumbnail:
+    | { url: string; nsfwLevel: number; blockMarked?: boolean; ownerMediaAllowed?: boolean }
+    | undefined,
   imageNsfwLevel: number,
   creatorId: number,
   viewer: { ownerId?: number; isModerator: boolean }
 ) {
+  const ownersOwn = creatorId === viewer.ownerId && thumbnail?.ownerMediaAllowed === true;
   return {
     nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, imageNsfwLevel),
     thumbnailUrl:
-      thumbnail &&
-      (thumbnail.blockMarked === false || creatorId === viewer.ownerId || viewer.isModerator)
+      thumbnail && (thumbnail.blockMarked === false || ownersOwn || viewer.isModerator)
         ? thumbnail.url
         : undefined,
   };
@@ -2972,8 +2975,8 @@ const getAllImagesUncaptured = async (
     AND.push(
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${ownerId})`
     );
-    // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
-    AND.push(...imageBlockedForConditions({ userId: ownerId }));
+    // A block hides the image from everyone; its owner keeps only what `ownerMediaAllowed` allows.
+    AND.push(...imageBlockedForConditions({ userId: ownerId }), ownerMediaSql(ownerId));
   }
 
   if (disablePoi) {
@@ -5194,7 +5197,8 @@ export const getImagesForPosts = async ({
     imageWhere.push(
       userId
         ? Prisma.sql`(i."ingestion" != 'Blocked' OR i."userId" = ${userId})`
-        : Prisma.sql`i."ingestion" != 'Blocked'`
+        : Prisma.sql`i."ingestion" != 'Blocked'`,
+      ownerMediaSql(userId)
     );
   }
   imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
@@ -6100,6 +6104,7 @@ export const getEntityCoverImage = async ({
       ...imageBlockedForConditions({
         userId: signedIn ? viewerId ?? undefined : undefined,
         isModerator,
+        ownerKeepsBlockedRow: true,
       }),
     ],
     ' AND '

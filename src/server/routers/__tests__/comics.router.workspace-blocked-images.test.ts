@@ -4,7 +4,7 @@ import { BlockedReason, NsfwLevel, OnboardingSteps } from '~/server/common/enums
 import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// Blocked-level images stay with their uploader (civitai/civitai#9809).
+// A Blocked rating stays with its uploader (civitai/civitai#9809); a block does not.
 const OWNER = 5;
 const cleanImage = {
   id: 2,
@@ -112,7 +112,7 @@ describe.each([BlockedReason.CSAM, BlockedReason.Moderated, null])(
 );
 
 describe.each([BlockedReason.Moderated, null])(
-  'the uploader keeps their own image rated Blocked (blockedFor %s)',
+  'the uploader keeps the cover of their own image rated Blocked (blockedFor %s)',
   (blockedFor) => {
     it('in getProjectShell', async () => {
       expect(await shell(UPLOADER, blockedFor)).toEqual({
@@ -120,7 +120,12 @@ describe.each([BlockedReason.Moderated, null])(
         heroImage: cleanImage,
       });
     });
+  }
+);
 
+describe.each([null, BlockedReason.AiNotVerified])(
+  'the uploader keeps the panel of their own image rated Blocked (blockedFor %s)',
+  (blockedFor) => {
     it('in getChapter', async () => {
       expect(await chapterPanels(UPLOADER, blockedFor)).toEqual(panels(blockedFor));
     });
@@ -130,3 +135,36 @@ describe.each([BlockedReason.Moderated, null])(
     });
   }
 );
+
+describe.each([BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.TOS, 'zzz'])(
+  'a block refuses the panel to its uploader too (blockedFor %s)',
+  (blockedFor) => {
+    it('in getChapter', async () => {
+      expect(await chapterPanels(UPLOADER, blockedFor)).toEqual([withheldPanel, cleanPanel]);
+    });
+
+    it('in getProjectForReader', async () => {
+      expect(await readerPanels(UPLOADER, blockedFor)).toEqual([withheldPanel, cleanPanel]);
+    });
+  }
+);
+
+it('a Blocked ingestion with no reason refuses the panel to its uploader', async () => {
+  dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({ id: 3, userId: OWNER } as never);
+  dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
+    projectId: 3,
+    position: 0,
+    panels: [
+      { id: 7, imageUrl: 'panel-key', image: { ...cleanImage, id: 1, ingestion: 'Blocked' } },
+      cleanPanel,
+    ],
+  } as never);
+  const { panels: returned } = await callerFor(UPLOADER).getChapter({
+    projectId: 3,
+    chapterPosition: 0,
+  });
+  expect(returned.map(({ id, imageUrl, image }) => ({ id, imageUrl, image }))).toEqual([
+    withheldPanel,
+    cleanPanel,
+  ]);
+});

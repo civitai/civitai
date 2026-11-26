@@ -1,6 +1,7 @@
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   ImageSort,
   NotificationCategory,
@@ -1231,6 +1232,8 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       nsfwLevel: result.nsfwLevel,
       userId: result.user.id,
       postId: result.postId ?? null,
+      ingestion: result.ingestion,
+      blockedFor: result.blockedFor,
     });
     // A failed hold lookup serves the image without media rather than failing the page.
     const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
@@ -1243,7 +1246,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;
-    return servable ? result : withoutMedia({ ...result, eventDecoration: null });
+    if (servable) return result;
+    // A block leaves its owner the notice and the appeal, not the media or its preview.
+    if (!ownerMediaAllowed(result))
+      return withoutMedia({ ...result, hash: null, cosmetic: null, eventDecoration: null });
+    return withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -103,8 +104,17 @@ export type MediaViewer = Pick<Context, 'user' | 'features' | 'req'> &
  */
 export async function viewerCanSeeImageMedia(
   ctx: MediaViewer,
-  image: { nsfwLevel: number; userId: number; postId: number | null }
+  image: {
+    nsfwLevel: number;
+    userId: number;
+    postId: number | null;
+    ingestion: string;
+    blockedFor: string | null;
+  }
 ) {
+  // A block refuses the media to everyone but a moderator, its owner included.
+  const actsAsModerator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+  if (!actsAsModerator && !ownerMediaAllowed(image)) return false;
   const media = { nsfwLevel: image.nsfwLevel, user: { id: image.userId } };
   const canSee =
     canViewImageMedia(ctx, media) ||

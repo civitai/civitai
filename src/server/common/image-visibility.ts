@@ -27,7 +27,7 @@ import {
   minorContentRestrictedSql,
 } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
-import { hasBlockMarker } from '~/server/common/image-block-marker';
+import { OWNER_MEDIA_EXEMPT_BLOCKS, hasBlockMarker } from '~/server/common/image-block-marker';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -89,6 +89,35 @@ export const hasBlockMarkerSql = (alias = 'i') => {
     OR ${t}."blockedFor" IS NOT NULL
   )`;
 };
+
+/** SQL twin of `ownerMediaAllowed`, never NULL. */
+export const ownerMediaAllowedSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(CASE
+    WHEN ${t}."blockedFor" IS NOT NULL
+      THEN ${t}."blockedFor" IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
+    ELSE ${t}."ingestion" <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+  END)`;
+};
+
+/**
+ * For a read that serves media: the viewer's own images only where `ownerMediaAllowed`. Other
+ * images are left to the caller's rules. `TRUE` with no viewer.
+ */
+export const ownerMediaSql = (ownerId?: number | null, alias = 'i') =>
+  ownerId
+    ? Prisma.sql`(${Prisma.raw(`"${alias}"`)}."userId" <> ${ownerId} OR ${ownerMediaAllowedSql(
+        alias
+      )})`
+    : Prisma.sql`TRUE`;
+
+/** `ownerMediaAllowed` as a Prisma `Image` filter. */
+export const ownerMediaAllowedWhere = (): Prisma.ImageWhereInput => ({
+  OR: [
+    { blockedFor: { in: [...OWNER_MEDIA_EXEMPT_BLOCKS] } },
+    { blockedFor: null, ingestion: { not: ImageIngestionStatus.Blocked } },
+  ],
+});
 
 /** `NOT hasBlockMarkerSql` as a Prisma `Image` filter. */
 export const noBlockMarkerWhere = (): Prisma.ImageWhereInput => ({
@@ -628,20 +657,25 @@ export const isImageNotFlagged = (image: {
 }) => !image.acceptableMinor && !isMinorMatureImage(image);
 
 /**
- * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
- * `"Image" i`. Empty for a moderator.
+ * An image with any `blockedFor` reason is hidden from everyone but moderators, as SQL over
+ * `"Image" i`; its owner keeps it only where `ownerMediaAllowed` does. `ownerKeepsBlockedRow` is for
+ * a read that serves the owner the row without its media (the image page) or a cover. Empty for a
+ * moderator.
  */
 export function imageBlockedForConditions({
   userId,
   isModerator,
+  ownerKeepsBlockedRow = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  ownerKeepsBlockedRow?: boolean;
 }): Prisma.Sql[] {
   if (isModerator) return [];
+  if (!userId) return [Prisma.sql`(i."blockedFor" IS NULL)`];
   return [
-    userId
+    ownerKeepsBlockedRow
       ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-      : Prisma.sql`(i."blockedFor" IS NULL)`,
+      : Prisma.sql`(i."blockedFor" IS NULL OR (i."userId" = ${userId} AND ${ownerMediaAllowedSql()}))`,
   ];
 }

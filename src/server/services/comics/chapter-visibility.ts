@@ -1,4 +1,9 @@
-import { isImageServable, type RestrictableImage } from '~/server/common/image-visibility';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import {
+  imageRestrictionSelect,
+  isImageServable,
+  type RestrictableImage,
+} from '~/server/common/image-visibility';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -27,18 +32,30 @@ export const isPanelTainted = ({ image }: ReaderPanel) =>
   !!image.needsReview ||
   image.ingestion !== ImageIngestionStatus.Scanned;
 
+/** What `withholdRestrictedPanelImages` reads from a panel's `Image`. */
+export const panelImageVisibilitySelect = {
+  ...imageRestrictionSelect,
+  ingestion: true,
+  blockedFor: true,
+} as const;
+
+type PanelImage = RestrictableImage & { ingestion: string; blockedFor: string | null };
+
 /**
- * Withholds each panel image `viewerId` may not see. Unlike a tainted panel this keeps the chapter
- * up: the flag is never cleared (only a re-rating below R lifts it), so holding the chapter back would
- * not clear.
+ * Withholds each panel image `viewerId` may not see, and every blocked one (`ownerMediaAllowed`)
+ * from everyone, its owner included. Unlike a tainted panel this keeps the chapter up: the flag is
+ * never cleared (only a re-rating below R lifts it), so holding the chapter back would not clear.
  */
 export function withholdRestrictedPanelImages(
-  chapters: { panels: { imageUrl: string | null; image: RestrictableImage | null }[] }[],
+  chapters: { panels: { imageUrl: string | null; image: PanelImage | null }[] }[],
   viewerId?: number
 ) {
   for (const { panels } of chapters) {
     for (const panel of panels) {
-      if (panel.image && !isImageServable(panel.image, viewerId)) {
+      if (
+        panel.image &&
+        (!isImageServable(panel.image, viewerId) || !ownerMediaAllowed(panel.image))
+      ) {
         panel.imageUrl = null;
         panel.image = null;
       }

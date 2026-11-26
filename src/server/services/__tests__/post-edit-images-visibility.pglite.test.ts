@@ -44,6 +44,12 @@ const UNRATED = 6;
 const OTHER_UNRATED = 7;
 const HELD_UNRATED = 8;
 const OTHERS_HELD = 9;
+const BLOCKED_POST = 2000;
+const BLOCKED_POST_CLEAN = 20;
+const MOD_BLOCKED = 21;
+const SCAN_BLOCKED = 22;
+const METADATA_HOLD = 23;
+const RATED_BLOCKED = 24;
 
 const owner = { id: OWNER } as SessionUser;
 const moderator = { id: 99, isModerator: true } as SessionUser;
@@ -51,9 +57,12 @@ const moderator = { id: 99, isModerator: true } as SessionUser;
 let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
 beforeAll(async () => {
   harness = await startPglitePrisma(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM
+      ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1,
-      "needsReview" text
+      "needsReview" text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "blockedFor" text
     );
   `);
   await harness.pg.exec(`
@@ -67,6 +76,12 @@ beforeAll(async () => {
       (${OTHER_UNRATED}, 11, ${POST}, 0, NULL),
       (${HELD_UNRATED}, ${OWNER}, ${POST}, 0, 'csam'),
       (${OTHERS_HELD}, 11, ${POST}, 1, 'minor');
+    INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "blockedFor") VALUES
+      (${BLOCKED_POST_CLEAN}, ${OWNER}, ${BLOCKED_POST}, 1, 'Scanned', NULL),
+      (${MOD_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Blocked', 'moderated'),
+      (${SCAN_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 1, 'Blocked', NULL),
+      (${METADATA_HOLD}, ${OWNER}, ${BLOCKED_POST}, 1, 'Blocked', 'AiNotVerified'),
+      (${RATED_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Scanned', NULL);
   `);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: object }) =>
     (await harness.prisma.image.findMany({ where: args.where, select: { id: true } })).map(
@@ -152,6 +167,32 @@ describe('getPostEditImages: the request level cap', () => {
       HELD_MINOR,
       OTHER_REVIEW,
       OTHERS_HELD,
+    ]);
+  });
+});
+
+describe('getPostEditImages: blocked images', () => {
+  const blockedPostIds = async (user: SessionUser) =>
+    (
+      await getPostEditImages({
+        id: BLOCKED_POST,
+        user,
+        servableLevels: allBrowsingLevelsFlag,
+        ownerSeesHeld: true,
+      })
+    ).map((i) => i.id);
+
+  it('leaves a blocked image out for its owner, and keeps the metadata hold and a Blocked rating', async () => {
+    expect(await blockedPostIds(owner)).toEqual([BLOCKED_POST_CLEAN, METADATA_HOLD, RATED_BLOCKED]);
+  });
+
+  it('keeps every one for a moderator', async () => {
+    expect(await blockedPostIds(moderator)).toEqual([
+      BLOCKED_POST_CLEAN,
+      MOD_BLOCKED,
+      SCAN_BLOCKED,
+      METADATA_HOLD,
+      RATED_BLOCKED,
     ]);
   });
 });

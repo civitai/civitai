@@ -36,4 +36,13 @@ describe('getAppealDetails', () => {
     );
     expect(selectArg().internalNotes).toBe(true);
   });
+
+  it("reads an appealed image's url for a moderator only", async () => {
+    const imageSelect = () =>
+      (findImage.mock.calls.at(-1)![0] as { select: Record<string, boolean> }).select;
+    await getAppealDetails({ id: 1, userId: OWNER });
+    expect(imageSelect()).toEqual({ id: true, url: false, userId: true });
+    await getAppealDetails({ id: 1, userId: 99, isModerator: true });
+    expect(imageSelect()).toEqual({ id: true, url: true, userId: true });
+  });
 });

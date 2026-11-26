@@ -28,9 +28,12 @@ beforeAll(async () => {
       id int PRIMARY KEY, title text, "publishedAt" timestamp(3), "modelVersionId" int,
       "nsfwLevel" int NOT NULL DEFAULT 1, "userId" int NOT NULL
     );
+    CREATE TYPE "ImageIngestionStatus" AS ENUM
+      ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, url text, type text DEFAULT 'image', index int,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "needsReview" text, "userId" int NOT NULL DEFAULT ${OWNER}
+      "nsfwLevel" int NOT NULL DEFAULT 1, "needsReview" text, "userId" int NOT NULL DEFAULT ${OWNER},
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "blockedFor" text
     );
     CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
     CREATE TABLE "PostTag" ("postId" int, "tagId" int);
@@ -104,5 +107,16 @@ describe('getScheduledPosts cover', () => {
       imageCount: 1,
     });
     expect(await calendar(owner)).toEqual({ cover: 'mature', imageCount: 2 });
+  });
+
+  it('skips a blocked image for the cover and the count, keeping the metadata hold', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "postId", url, index, ingestion, "blockedFor", "nsfwLevel") VALUES
+        (1, ${POST}, 'mod-blocked', 0, 'Blocked', 'moderated', 32),
+        (2, ${POST}, 'scan-blocked', 1, 'Blocked', NULL, 1),
+        (3, ${POST}, 'metadata-hold', 2, 'Blocked', 'AiNotVerified', 1),
+        (4, ${POST}, 'clean', 3, 'Scanned', NULL, 1);
+    `);
+    expect(await calendar(owner)).toEqual({ cover: 'metadata-hold', imageCount: 2 });
   });
 });

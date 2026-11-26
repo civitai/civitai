@@ -724,6 +724,7 @@ export async function getPublicComicForReader({
                   width: true,
                   height: true,
                   ingestion: true,
+                  blockedFor: true,
                   needsReview: true,
                   tosViolation: true,
                 },

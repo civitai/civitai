@@ -12,6 +12,7 @@ import {
   isHeldForReview,
   isServableLevelOrOwnUnrated,
   notHeldForReviewWhere,
+  ownerMediaAllowedWhere,
   servableLevelOrOwnUnratedWhere,
 } from '~/server/common/image-visibility';
 import {
@@ -982,6 +983,8 @@ export const getPostEditImages = async ({
       postId: id,
       AND: [
         user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
+        // A block refuses the media to its owner too.
+        user.isModerator ? {} : ownerMediaAllowedWhere(),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },

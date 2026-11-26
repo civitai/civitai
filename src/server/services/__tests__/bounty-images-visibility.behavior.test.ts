@@ -187,8 +187,16 @@ describe.each(Object.keys(readers) as (keyof typeof readers)[])('%s', (reader) =
     }
   );
 
+  describe('an image with a block reason', () => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('is withheld from the %s', async (who) => {
+      expect(await imagesOf(BLOCKED_FOR, viewers[who])).toEqual([]);
+    });
+    it('is served to a moderator', async () => {
+      expect(await imagesOf(BLOCKED_FOR, viewers.moderator)).toEqual([BLOCKED_FOR]);
+    });
+  });
+
   describe.each([
-    ['an image with a block reason', BLOCKED_FOR],
     ['an unrated image', UNRATED],
     ['a minor-flagged image rated R', MINOR_R],
     ['an image held for review', HELD],

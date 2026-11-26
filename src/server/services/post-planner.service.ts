@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
-import { notHeldForReviewSql, servableLevelSql } from '~/server/common/image-visibility';
+import {
+  notHeldForReviewSql,
+  ownerMediaAllowedSql,
+  servableLevelSql,
+} from '~/server/common/image-visibility';
 import sanitize from 'sanitize-html';
 import {
   addMinutes,
@@ -138,6 +142,7 @@ export async function getScheduledPosts({
       SELECT i.url, i.type, COUNT(*) OVER () AS count FROM "Image" i
       WHERE i."postId" = p.id AND ${servableLevelSql(servableLevels)}
         AND ${notHeldForReviewSql(ownerSeesHeld ? user.id : undefined)}
+        AND ${ownerMediaAllowedSql()}
       ORDER BY i.index ASC NULLS LAST, i.id ASC
       LIMIT 1
     ) cover ON TRUE

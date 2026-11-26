@@ -40,7 +40,11 @@ import {
   ComicReferenceType,
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
-import { withholdRestrictedPanelImages } from '~/server/services/comics/chapter-visibility';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import {
+  panelImageVisibilitySelect,
+  withholdRestrictedPanelImages,
+} from '~/server/services/comics/chapter-visibility';
 import {
   getComicMetricRows,
   getPublicComicForReader,
@@ -1353,7 +1357,7 @@ export const comicsRouter = router({
                   // Pull the underlying Image's nsfwLevel so the reader can
                   // blur and hide mature panels on a domain that doesn't
                   // permit them, instead of bypassing the site's NSFW guard.
-                  image: { select: imageRestrictionSelect },
+                  image: { select: panelImageVisibilitySelect },
                 },
               },
             },
@@ -2858,12 +2862,17 @@ export const comicsRouter = router({
       // Use dbWrite for read-after-write consistency when polling after mutations
       const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
-        include: { chapter: { include: { project: { select: { userId: true } } } } },
+        include: {
+          chapter: { include: { project: { select: { userId: true } } } },
+          image: { select: { ingestion: true, blockedFor: true } },
+        },
       });
 
       if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // The panel's stored image, unless a block has since refused it to its owner.
+      const storedImageUrl = panel.image && !ownerMediaAllowed(panel.image) ? null : panel.imageUrl;
 
       // Only poll if panel is actively generating with a workflow.
       //
@@ -2893,7 +2902,7 @@ export const comicsRouter = router({
         return {
           id: panel.id,
           status: panel.status,
-          imageUrl: panel.imageUrl,
+          imageUrl: storedImageUrl,
           errorMessage: panel.errorMessage,
         };
       }
@@ -2935,7 +2944,7 @@ export const comicsRouter = router({
           return {
             id: panel.id,
             status: panel.status,
-            imageUrl: panel.imageUrl,
+            imageUrl: storedImageUrl,
             errorMessage: panel.errorMessage,
           };
         }
@@ -3099,7 +3108,7 @@ export const comicsRouter = router({
           return {
             id: panel.id,
             status: ComicPanelStatus.AwaitingSelection,
-            imageUrl: panel.imageUrl,
+            imageUrl: storedImageUrl,
             // Per-candidate detail. Each entry corresponds to one orchestrator
             // output slot, in stable order. Locked entries carry the
             // ephemeral blurred URL for the owner's editor session only.
@@ -3335,7 +3344,7 @@ export const comicsRouter = router({
       return {
         id: panel.id,
         status: panel.status,
-        imageUrl: panel.imageUrl,
+        imageUrl: storedImageUrl,
         errorMessage: panel.errorMessage,
       };
     }),
