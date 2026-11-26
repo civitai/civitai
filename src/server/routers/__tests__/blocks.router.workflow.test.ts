@@ -6786,6 +6786,30 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockRefundAppSpend).not.toHaveBeenCalled();
     });
 
+    it('a lost response to the submitting move sends nothing and refunds no leg', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      // The write commits; only its answer is lost.
+      const pg = runnerPg.current!;
+      const query = pg.query.bind(pg);
+      pg.query = (async (sql: string, params?: unknown[]) => {
+        const result = await query(sql, params);
+        if (/SET state = \$1/.test(sql) && params?.[0] === 'submitting') {
+          throw new Error('connection reset');
+        }
+        return result;
+      }) as typeof pg.query;
+      const result = await submit();
+      expect(result).toMatchObject({
+        snapshot: { status: 'failed' },
+        runner: { state: 'submitting' },
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
     it('inline arm: a filled slot passes the binding, a changed fixed input does not', async () => {
       const { blockWorkflowBodySchema } = await import('~/server/schema/blocks/workflow.schema');
       const { runnerBindingHashes } = await import('~/server/services/blocks/runner-binding');

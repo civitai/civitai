@@ -1816,7 +1816,9 @@ async function reserveBlockBuzzSpendForClaims(
 /**
  * A runner submit's answer carries its attempt as the ledger has it, so the runner can tell
  * submitted, refunded (may retry), and unknown (held) apart. A throw after the attempt was
- * reserved is answered the same way; a throw before it means no attempt exists.
+ * reserved is answered the same way; a throw before it means no attempt exists. `runner.state` is
+ * the answer and the snapshot is advisory: a throw after the move to `submitted` (the settle record,
+ * say) still reads `failed` there while the workflow runs and is charged.
  */
 async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit: () => Promise<T>) {
   const attempt = async () => {
