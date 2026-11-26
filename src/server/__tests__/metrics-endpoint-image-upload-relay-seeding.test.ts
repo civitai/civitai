@@ -36,7 +36,7 @@ import { IMAGE_UPLOAD_RELAY_PRODUCERS } from '~/utils/image-upload-relay-produce
  */
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({

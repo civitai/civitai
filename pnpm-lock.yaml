@@ -1389,6 +1389,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      undici:
+        specifier: ^7.30.1
+        version: 7.30.1
       zod:
         specifier: ^4.6.7
         version: 4.6.7
