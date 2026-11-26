@@ -755,7 +755,7 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
-      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
       CREATE TABLE "JobQueue" (
         "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
         data jsonb, UNIQUE ("entityType", "entityId", type)
@@ -770,12 +770,12 @@ describe('releaseAccountDeletionPendingDeletes', () => {
         (10, 'Post', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}');
     `);
     await db.exec(imageUseTablesSql);
-    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+    mockDbWrite.$queryRaw.mockImplementationOnce((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
-      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
     }) as never);
 
     await releaseAccountDeletionPendingDeletes(7);
@@ -797,7 +797,7 @@ describe('releaseAccountDeletionPendingDeletes', () => {
     await db.exec(`
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
-      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
       CREATE TABLE "JobQueue" (
         "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
         data jsonb, UNIQUE ("entityType", "entityId", type)
@@ -812,12 +812,12 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       INSERT INTO "JobQueue" SELECT e.id, e.t::"EntityType", 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'
         FROM (VALUES (1, 'Image'), (2, 'Image'), (10, 'Post'), (11, 'Post')) e(id, t);
     `);
-    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+    mockDbWrite.$queryRaw.mockImplementationOnce((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
-      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
     }) as never);
 
     await releaseAccountDeletionPendingDeletes(7);
@@ -826,10 +826,13 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       `SELECT "entityType"::text AS "entityType", "entityId", data ? 'releasedOnRestore' AS released
        FROM "JobQueue" ORDER BY 1, 2`
     );
-    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes.
+    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes;
+    // the account's others wait with it, to be released together.
     expect(rows).toEqual([
       { entityType: 'Image', entityId: 1, released: true },
+      { entityType: 'Image', entityId: 2, released: true },
       { entityType: 'Post', entityId: 10, released: true },
+      { entityType: 'Post', entityId: 11, released: true },
     ]);
     await db.close();
   });

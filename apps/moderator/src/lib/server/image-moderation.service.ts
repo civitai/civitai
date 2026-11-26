@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { KEPT_HIDE_MARKER } from '@civitai/db-queries/pending-deletes';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import {
@@ -89,8 +90,10 @@ const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "I
  *  only cause on record. */
 const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
 /** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
- *  clears the breadcrumbs an account restore reads. */
-const KEPT_BY_REMOVE = sql<boolean>`(${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL))`;
+ *  clears the breadcrumbs an account restore reads, and so does an image a kept delete hid, whose
+ *  marker the block drops so the delete's release cannot lift it. */
+const KEPT_BY_REMOVE = sql<boolean>`(NOT COALESCE("metadata" ? ${KEPT_HIDE_MARKER}::text, false)
+  AND (${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL)))`;
 
 /** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
  *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
