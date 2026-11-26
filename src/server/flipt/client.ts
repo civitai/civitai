@@ -529,6 +529,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
+  // Staff platform updates: a moderator commits a change to another developer's app on a branch of
+  // its source repo, and the owner's CLI / App Assistant lists and merges it
+  // (`app-platform-update.service.ts`, router `appPlatformUpdates`). Evaluated with no entity (a
+  // global switch). DEFAULT-OFF: off, absent or Flipt unreachable, the moderator procedures refuse
+  // and the owner procedures answer "no updates". Needs migration
+  // `20271205140000_app_platform_updates` applied first.
+  APP_BLOCKS_PLATFORM_UPDATES = 'app-blocks-platform-updates',
   // App Blocks "Request access" (`submitAppAccessRequest`). On for a requester whose account
   // passes `isEligibleForAutoApproval`: the request is written APPROVED, which is the builder
   // grant, instead of waiting in the moderator queue. EVALUATED PER REQUESTER — entityId = the

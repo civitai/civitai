@@ -12,9 +12,11 @@ import (
 )
 
 // Expected strings below are what `superjson.serialize` (2.2.x) produces for the equivalent JS value,
-// written out by hand from its walker (node_modules/superjson/dist/plainer.js): annotations are a flat
-// path map in traversal order, an undefined object member is dropped from `json` but annotated, an
-// undefined array element becomes null and is annotated, and `meta.v` is 1 whenever meta exists.
+// then JSON.stringify: annotations are a flat path map, an undefined (object member, array element or
+// root) is written as null and annotated ["undefined"] (the walker's `undefined` rule maps it to null
+// before JSON.stringify runs), and `meta.v` is 1 whenever meta exists. The undefined cases were
+// captured by running superjson 2.2.6 under node; `meta.referentialEqualities`, which Node adds for a
+// Date instance shared by two paths, is deliberately not written (see the package doc).
 
 func TestSerializePlainHasNoMeta(t *testing.T) {
 	got, err := Serialize(Object{{"a", 1}, {"b", "x"}, {"c", []any{true, nil}}})
@@ -39,7 +41,9 @@ func TestSerializeDatesAndUndefined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"json":{"a":"2024-01-02T03:04:05.006Z","c":[null,1],"d":{"e":"2024-01-02T03:04:05.006Z"}},` +
+	// node: JSON.stringify(superjson.serialize({a: d, b: undefined, c: [undefined, 1], d: {e: d}})),
+	// minus its referentialEqualities ({"a":["d.e"]}: one Date instance at two paths).
+	want := `{"json":{"a":"2024-01-02T03:04:05.006Z","b":null,"c":[null,1],"d":{"e":"2024-01-02T03:04:05.006Z"}},` +
 		`"meta":{"values":{"a":["Date"],"b":["undefined"],"c.0":["undefined"],"d.e":["Date"]},"v":1}}`
 	if string(got) != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
@@ -256,8 +260,93 @@ func TestSerializeRootUndefined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"meta":{"values":["undefined"],"v":1}}`; string(got) != want {
+	// node: JSON.stringify(superjson.serialize(undefined)).
+	if want := `{"json":null,"meta":{"values":["undefined"],"v":1}}`; string(got) != want {
 		t.Fatalf("got %s want %s", got, want)
+	}
+}
+
+// An undefined object member is `"key":null` plus its ["undefined"] annotation, exactly Node's bytes:
+// superjson's walker maps undefined to null before JSON.stringify, so the key is never omitted (the
+// omission is JSON.stringify's, i.e. Plain's). Every want is the output of
+// JSON.stringify(superjson.serialize(<the JS value in the comment>)) under node, superjson 2.2.6.
+func TestSerializeUndefinedMemberIsNodeBytes(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		v    Object
+		want string
+	}{
+		{
+			// {items: [], nextCursor: undefined}: the last page of a feed.
+			"last page", Object{{"items", []any{}}, {"nextCursor", Undefined{}}},
+			`{"json":{"items":[],"nextCursor":null},"meta":{"values":{"nextCursor":["undefined"]},"v":1}}`,
+		},
+		{
+			// {only: undefined}
+			"only member", Object{{"only", Undefined{}}},
+			`{"json":{"only":null},"meta":{"values":{"only":["undefined"]},"v":1}}`,
+		},
+		{
+			// {a: undefined, b: undefined, c: 1}: consecutive undefined members keep their commas.
+			"leading run", Object{{"a", Undefined{}}, {"b", Undefined{}}, {"c", 1}},
+			`{"json":{"a":null,"b":null,"c":1},"meta":{"values":{"a":["undefined"],"b":["undefined"]},"v":1}}`,
+		},
+		{
+			// {x: {y: undefined}}
+			"nested", Object{{"x", Object{{"y", Undefined{}}}}},
+			`{"json":{"x":{"y":null}},"meta":{"values":{"x.y":["undefined"]},"v":1}}`,
+		},
+	} {
+		got, err := Serialize(c.v)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if string(got) != c.want {
+			t.Errorf("%s:\ngot  %s\nwant %s", c.name, got, c.want)
+		}
+		// The pooled path writes the same bytes.
+		b, err := SerializeBuffer(c.v)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if string(b.Bytes()) != c.want {
+			t.Errorf("%s (SerializeBuffer):\ngot  %s\nwant %s", c.name, b.Bytes(), c.want)
+		}
+		b.Release()
+	}
+}
+
+// The same value through both modes: the envelope writes the undefined member as null, Plain (the
+// REST bodies, JSON.stringify) still omits it. Wants: JSON.stringify(superjson.serialize(v)) and
+// JSON.stringify(v) under node for v = {a: 1, b: undefined, c: [undefined], d: {e: undefined, f: 2}}.
+func TestUndefinedMemberEnvelopeVersusPlain(t *testing.T) {
+	v := Object{{"a", 1}, {"b", Undefined{}}, {"c", []any{Undefined{}}}, {"d", Object{{"e", Undefined{}}, {"f", 2}}}}
+	got, err := Serialize(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"json":{"a":1,"b":null,"c":[null],"d":{"e":null,"f":2}},` +
+		`"meta":{"values":{"b":["undefined"],"c.0":["undefined"],"d.e":["undefined"]},"v":1}}`; string(got) != want {
+		t.Errorf("Serialize:\ngot  %s\nwant %s", got, want)
+	}
+	for name, plain := range map[string]func(any) ([]byte, error){
+		"Plain": Plain,
+		"PlainBuffer": func(v any) ([]byte, error) {
+			b, err := PlainBuffer(v)
+			if err != nil {
+				return nil, err
+			}
+			defer b.Release()
+			return bytes.Clone(b.Bytes()), nil
+		},
+	} {
+		got, err := plain(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := `{"a":1,"c":[null],"d":{"f":2}}`; string(got) != want {
+			t.Errorf("%s:\ngot  %s\nwant %s", name, got, want)
+		}
 	}
 }
 
@@ -278,7 +367,10 @@ func TestSerializeDeepPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"json":{"a.b":[{"k\\":{"d":"2024-01-02T03:04:05.006Z"}},null,["2024-01-02T03:04:05.006Z"]],` +
+	// The `x` member is null in json (node writes `{"k\\":{"x":null,"d":…}}`). The annotation order is
+	// this writer's traversal order; node lists `a\\.b.1` first (a JS object enumerates an integer-like
+	// key, here the bare index 1, before string keys). The decoded value is the same either way.
+	want := `{"json":{"a.b":[{"k\\":{"x":null,"d":"2024-01-02T03:04:05.006Z"}},null,["2024-01-02T03:04:05.006Z"]],` +
 		`"z":1,"p":{"q":"2024-01-02T03:04:05.006Z"}},` +
 		`"meta":{"values":{"a\\.b.0.k\\\\.x":["undefined"],"a\\.b.0.k\\\\.d":["Date"],` +
 		`"a\\.b.1":["undefined"],"a\\.b.2.0":["Date"],"p.q":["Date"]},"v":1}}`

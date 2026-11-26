@@ -5325,6 +5325,36 @@ model AppSourceRepo {
   @@map("app_source_repos")
 }
 
+// App Blocks platform updates: a change Civitai staff pushed to someone else's app, as a branch of
+// its source repo. The row is the proof the update is from staff (commit text is forgeable).
+// RAW SQL ONLY (`app-platform-update.service.ts`), so the model is stripped from the generated
+// client; the migration `20271205140000_app_platform_updates` is applied by hand (with its CHECKs
+// and indexes, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppPlatformUpdate {
+  id               String    @id // apu_<ULID>
+  appBlockId       String    @map("app_block_id")
+  slug             String
+  staffUserId      Int       @map("staff_user_id")
+  reason           String
+  branch           String
+  baseCommitSha    String    @map("base_commit_sha")
+  commitSha        String    @map("commit_sha")
+  paths            Json
+  touchesManifest  Boolean   @default(false) @map("touches_manifest")
+  seededSourceRepo Boolean   @default(false) @map("seeded_source_repo")
+  status           String    @default("pending")
+  mergeCommitSha   String?   @map("merge_commit_sha")
+  resolvedByUserId Int?      @map("resolved_by_user_id")
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([appBlockId, status, createdAt(sort: Desc)], map: "app_platform_updates_app_status_idx")
+  @@unique([slug, commitSha], map: "app_platform_updates_slug_commit_idx")
+  @@map("app_platform_updates")
+}
+
 // App hibernate ("Sleeping" apps): one row per sleeping app, per user — the archive of the app's
 // workspace in the archive store, and optionally its `.env*` files, encrypted under a data key
 // that is stored here only wrapped by a civitai-held master key. RAW SQL ONLY
@@ -8884,6 +8914,28 @@ model KnightsPlayer {
   startAtSeen DateTime?
   /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
   recapPopupOptOut Boolean @default(false)
+  /// The yes/no questions switch in Knights settings. Null follows the default saved on the moderator Config page.
+  yesNoQuestions   Boolean?
+  /// Keys of the preset tag groups the player hides in Knights settings.
+  hiddenTagGroups  String[] @default([])
+}
+
+/// One "Not sure" on a yes/no queue item (`itemId`); the run cadence reads it back. Never a vote. `questionKey` and `imageId`
+/// are a snapshot, so counts outlive items. `yesNoReferenceId` is unused: Acolyte practice pairs are graded and offer no
+/// "Not sure".
+model KnightsUnsure {
+  id               BigInt   @id @default(autoincrement())
+  playerId         Int
+  itemId           Int?
+  yesNoReferenceId Int?
+  questionKey      String
+  imageId          Int
+  createdAt        DateTime @default(now())
+
+  @@unique([playerId, itemId])
+  @@unique([playerId, yesNoReferenceId])
+  @@index([itemId])
+  @@index([yesNoReferenceId])
 }
 
 /// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with

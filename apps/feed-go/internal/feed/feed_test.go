@@ -381,7 +381,8 @@ func TestParseGallerySettings(t *testing.T) {
 
 func TestResultValueNextCursor(t *testing.T) {
 	got, _ := superjson.Serialize((&Result{}).Value())
-	if want := `{"json":{"items":[]},"meta":{"values":{"nextCursor":["undefined"]},"v":1}}`; string(got) != want {
+	// node: JSON.stringify(superjson.serialize({nextCursor: undefined, items: []})).
+	if want := `{"json":{"nextCursor":null,"items":[]},"meta":{"values":{"nextCursor":["undefined"]},"v":1}}`; string(got) != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
 	got, _ = superjson.Serialize((&Result{NextCursor: Cursor{N: 12}}).Value())

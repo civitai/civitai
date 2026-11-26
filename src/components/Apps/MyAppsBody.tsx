@@ -56,6 +56,7 @@ import { canOpenListingAuthoringPage } from '~/shared/constants/app-capabilities
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ReviewerByline, type DecisionReviewerView } from '~/components/Apps/ReviewerByline';
 
 /**
  * `/apps/mine` — THE author's single view of every app they can act on.
@@ -93,6 +94,8 @@ export type OrphanedSubmissionRow = {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /** Who decided it; `null` while undecided. */
+  reviewer?: DecisionReviewerView | null;
   canWithdraw?: boolean;
 };
 
@@ -905,6 +908,14 @@ function OrphanedSubmissionsSection({
                   >
                     {r.approvalNotes}
                   </Text>
+                ) : null}
+                {r.reviewer ? (
+                  <div style={{ marginTop: 4 }}>
+                    <ReviewerByline
+                      reviewer={r.reviewer}
+                      testId={`apps-mine-orphaned-reviewer-${r.id}`}
+                    />
+                  </div>
                 ) : null}
               </Paper>
             ))}

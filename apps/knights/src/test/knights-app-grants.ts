@@ -32,6 +32,7 @@ export const KNIGHTS_APP_GRANTS: Readonly<Record<string, readonly Privilege[]>> 
   KnightsReferenceImage: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsShopItem: ['SELECT'],
   KnightsShopPurchase: ['SELECT', 'INSERT', 'UPDATE'],
+  KnightsUnsure: ['SELECT', 'INSERT'],
   KnightsVote: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsYesNoReference: ['SELECT', 'UPDATE'],
   ModActivity: ['SELECT'],
@@ -72,5 +73,6 @@ export const KNIGHTS_APP_SEQUENCES: readonly string[] = [
   'KnightsQueueItem_id_seq',
   'KnightsReferenceImage_id_seq',
   'KnightsShopPurchase_id_seq',
+  'KnightsUnsure_id_seq',
   'NewOrderSmite_id_seq',
 ];

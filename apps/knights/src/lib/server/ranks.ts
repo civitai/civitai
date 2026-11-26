@@ -13,3 +13,9 @@ export const RANK_RULES: Record<Rank, { voteWeight: number; goldMultiplier: numb
 export const rankIndex = (rank: string): number => RANKS.indexOf(rank as Rank);
 
 export const isRank = (value: string): value is Rank => rankIndex(value) !== -1;
+
+/**
+ * Whether the player chooses what Knights serves them (the yes/no switch, hidden tag groups). Acolytes do not: their
+ * practice questions and graded set are part of training.
+ */
+export const tunesServing = (rank: string): boolean => rank !== 'Acolyte';

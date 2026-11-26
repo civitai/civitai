@@ -20,7 +20,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsVote","KnightsUnsure","KnightsQueueItem","NewOrderPlayer","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -80,13 +80,77 @@ describe('servedHistory', () => {
     ]);
   });
 
-  it('reads only the last 11 votes, enough for the longest gap and the item before it', async () => {
+  it('counts a Not sure as a question served, in time order with the votes, so a run ends at its length whatever the answer', async () => {
     await seedPlayer(pg, 1);
-    for (let i = 1; i <= 15; i++)
+    const first = await yesNoItem(50);
+    const second = await yesNoItem(51);
+    await seedSettledVote(pg, { itemId: 9001, playerId: 1, imageId: 10, createdAt: at(1) });
+    await pg.query(
+      `INSERT INTO "KnightsUnsure" ("playerId", "itemId", "questionKey", "imageId", "createdAt") VALUES (1, $1, 'knights.yesno.violence', 50, $2)`,
+      [first, at(2)]
+    );
+    await seedSettledVote(pg, { itemId: second, playerId: 1, imageId: 51, createdAt: at(3) });
+    await pg.query(
+      `INSERT INTO "KnightsUnsure" ("playerId", "itemId", "questionKey", "imageId", "createdAt") VALUES (2, $1, 'knights.yesno.violence', 51, $2)`,
+      [second, at(4)]
+    );
+
+    expect(await servedHistory(db, 1, [{ kind: 'yesno', id: first }])).toEqual([
+      { yesno: false, key: 'r9001' },
+      { yesno: true, key: `y${first}` },
+      { yesno: true, key: `y${second}` },
+    ]);
+  });
+
+  it('reads only the last 21 votes, enough for the longest gap and the item before it', async () => {
+    await seedPlayer(pg, 1);
+    for (let i = 1; i <= 25; i++)
       await seedSettledVote(pg, { itemId: 9000 + i, playerId: 1, imageId: 10, createdAt: at(i) });
     const history = await servedHistory(db, 1);
-    expect(history).toHaveLength(11);
+    expect(history).toHaveLength(21);
     expect(history[0].key).toBe('r9005');
-    expect(history.at(-1)?.key).toBe('r9015');
+    expect(history.at(-1)?.key).toBe('r9025');
+  });
+
+  it('reads only the last 21 of votes and Not sure answers together', async () => {
+    await seedPlayer(pg, 1);
+    const question = await yesNoItem(50);
+    for (let i = 1; i <= 25; i++)
+      await seedSettledVote(pg, { itemId: 9000 + i, playerId: 1, imageId: 10, createdAt: at(i) });
+    await pg.query(
+      `INSERT INTO "KnightsUnsure" ("playerId", "itemId", "questionKey", "imageId", "createdAt") VALUES (1, $1, 'knights.yesno.violence', 50, $2)`,
+      [question, at(26)]
+    );
+    const history = await servedHistory(db, 1);
+    expect(history).toHaveLength(21);
+    expect(history[0].key).toBe('r9006');
+    expect(history.at(-1)).toEqual({ yesno: true, key: `y${question}` });
+  });
+
+  it('keeps serving from the votes alone when the Not sure answers cannot be read', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(pg, { itemId: 9001, playerId: 1, imageId: 10, createdAt: at(1) });
+    await pg.exec(`ALTER TABLE "KnightsUnsure" RENAME TO "KnightsUnsureGone"`);
+    try {
+      expect(await servedHistory(db, 1)).toEqual([{ yesno: false, key: 'r9001' }]);
+    } finally {
+      await pg.exec(`ALTER TABLE "KnightsUnsureGone" RENAME TO "KnightsUnsure"`);
+    }
+  });
+
+  it('counts a question once when it has both a Not sure and a later vote', async () => {
+    await seedPlayer(pg, 1);
+    const question = await yesNoItem(50);
+    await pg.query(
+      `INSERT INTO "KnightsUnsure" ("playerId", "itemId", "questionKey", "imageId", "createdAt") VALUES (1, $1, 'knights.yesno.violence', 50, $2)`,
+      [question, at(1)]
+    );
+    await seedSettledVote(pg, { itemId: 9001, playerId: 1, imageId: 10, createdAt: at(2) });
+    await seedSettledVote(pg, { itemId: question, playerId: 1, imageId: 50, createdAt: at(3) });
+
+    expect(await servedHistory(db, 1)).toEqual([
+      { yesno: false, key: 'r9001' },
+      { yesno: true, key: `y${question}` },
+    ]);
   });
 });

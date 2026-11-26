@@ -138,6 +138,11 @@ export const KNIGHTS_GAME_SETTINGS = {
     range: 'greater than 0',
     valid: (n: number) => n > 0,
   },
+  yesNoPlayerDefault: {
+    kind: 'toggle',
+    env: 'KNIGHTS_YESNO_PLAYER_DEFAULT',
+    label: 'Questions for players who have not chosen',
+  },
   apprenticeSmites: {
     kind: 'toggle',
     env: 'KNIGHTS_APPRENTICE_SMITES',

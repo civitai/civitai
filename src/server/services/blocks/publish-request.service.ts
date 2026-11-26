@@ -238,6 +238,12 @@ export type SubmitVersionParams = {
    * 🔴 A credential: never logged or echoed.
    */
   githubOidcToken?: string;
+  /**
+   * The packages the client reported submitting below the platform minimum with
+   * `--allow-outdated-sdk` (`sdk-floor.ts`). A claim, recorded beside the server's own lockfile
+   * reading under `fileSummary.sdkFloor`; it changes nothing else.
+   */
+  sdkFloorOverride?: { package: string; installed: string; minimum: string }[];
 };
 
 export type SubmitVersionResult = {
@@ -269,9 +275,10 @@ export type SubmitVersionResult = {
    */
   actionsRunSourceRecorded?: boolean;
   /**
-   * Notes that never refuse or delay the submit (`submitAdvisories`): today only `default-theme`,
-   * when the bundle reads as Civitai's stock look. Empty when there is nothing to say, or when they
-   * could not be worked out in time. Part of the submit API's response (both routes).
+   * Notes that never refuse or delay the submit: `default-theme` (`submitAdvisories`), when the
+   * bundle reads as Civitai's stock look, and `sdk-below-floor` (`sdk-floor.ts`), one per package
+   * the bundle's lockfile installs below the platform minimum. Empty when there is nothing to
+   * say, or when they could not be worked out in time. Part of the submit API's response (both routes).
    */
   advisories: Advisory[];
 };
@@ -1145,6 +1152,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     sourceCommit,
     sourceDirty,
     githubOidcToken,
+    sdkFloorOverride,
   } = params;
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
@@ -1524,6 +1532,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     throw new Error(`could not push bundle to review repo: ${(err as Error).message}`);
   }
 
+  // OUTDATED SDK: the server's own lockfile reading (never throws, time-bounded) and the client's
+  // `--allow-outdated-sdk` claim, stored for the moderator under `fileSummary.sdkFloor` (absent
+  // when there is nothing to say). Never refuses. The lockfile read is the one the manifest's
+  // `buildCommand` installs from, chosen as the CLI chooses it. See `sdk-floor.ts`.
+  const { judgeBundleSdkFloor, sdkFloorRecord, sdkFloorAdvisories } = await import('./sdk-floor');
+  const sdkFloor = await judgeBundleSdkFloor(bundleBuffer, manifest.buildCommand);
+  const sdkFloorRecorded = sdkFloorRecord(sdkFloor, sdkFloorOverride);
+
   const publishRequestId = `pubreq_${newUlid()}`;
   try {
     await dbWrite.appBlockPublishRequest.create({
@@ -1537,7 +1553,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         bundleKey: key,
         bundleSha256,
         bundleSizeBytes: BigInt(bundleBuffer.length),
-        fileSummary: fileSummary as object,
+        fileSummary: (sdkFloorRecorded
+          ? { ...fileSummary, sdkFloor: sdkFloorRecorded }
+          : fileSummary) as object,
         manifestDiffSummary: manifestDiffSummary as object,
         status: 'pending',
         // #4059 — the client's UNVERIFIED provenance claim, stored as a claim.
@@ -1717,7 +1735,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
-    advisories,
+    advisories: [...advisories, ...sdkFloorAdvisories(sdkFloor.lockfile, sdkFloor.below)],
   };
 }
 
@@ -5287,10 +5305,12 @@ async function approveRequestUnderClaim(
       type: 'app-block-approved',
       userId: request.submittedByUserId,
       key: `app-block-approved:${params.publishRequestId}`,
+      attribution: { kind: 'moderator', userId: params.reviewerUserId },
       details: {
         slug: request.slug,
         name: typeof manifest.name === 'string' ? manifest.name : null,
         version: request.version,
+        approvalNote: params.approvalNotes?.trim() || null,
         hasPage: manifestDeclaresPage(manifest),
         mature: isMatureContentRating(
           typeof manifest.contentRating === 'string' ? manifest.contentRating : null
@@ -7655,6 +7675,7 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       type: 'app-block-rejected',
       userId: row.submittedByUserId,
       key: `app-block-rejected:${params.publishRequestId}`,
+      attribution: { kind: 'moderator', userId: params.reviewerUserId },
       details: {
         slug: row.slug,
         name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
