@@ -131,6 +131,21 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(told.every((n) => n.type === 'tos-violation')).toBe(true);
   });
 
+  it('actions an open ToS report, Processing included, and leaves one ruled Unactioned', async () => {
+    await pg.exec(`
+      DELETE FROM "Report" WHERE id IN (30, 31);
+      INSERT INTO "Report" (id, "userId", status, reason) VALUES
+        (30, 13, 'Unactioned', 'TOSViolation'), (31, 14, 'Processing', 'TOSViolation');
+      INSERT INTO "CommentV3Report"("reportId", "commentId") VALUES (30, 41), (31, 41);
+    `);
+
+    await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
+
+    expect(await statusOf(30, 31)).toEqual({ 30: 'Unactioned', 31: 'Actioned' });
+    const paid = reward.mock.calls.map(([event]) => (event as { reportId: number }).reportId);
+    expect(paid.sort((a, b) => a - b)).toEqual([1, 31]);
+  });
+
   it('counts a comment already hidden, actions its new reports, and does not tell its author again', async () => {
     await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
     await pg.exec(`UPDATE "Report" SET status = 'Pending' WHERE id = 1`);

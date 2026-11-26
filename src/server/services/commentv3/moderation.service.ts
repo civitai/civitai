@@ -19,6 +19,7 @@ import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { FP_AUTO_HIDE_REPORT_COMMENT } from '@civitai/db-queries/feature-page-comments';
+import { openReportStatusesSql } from '~/server/services/held-review.service';
 
 /**
  * Removes comments as ToS violations: the flag takes them off the page, their ToS reports are
@@ -54,7 +55,7 @@ export async function bulkSetCommentV3TosViolation({
           WHERE c."reportId" = r.id
             AND c."commentId" = ANY(${removed}::int[])
             AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-            AND r.status <> ${ReportStatus.Actioned}::"ReportStatus"
+            AND r.status IN ${openReportStatusesSql}
           RETURNING r.id, r."userId"`
       : [];
     return { flagged, already, reports };
