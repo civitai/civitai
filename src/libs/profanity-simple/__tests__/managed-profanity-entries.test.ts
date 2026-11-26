@@ -59,7 +59,8 @@ it('shipped list edits are checked against the managed list', () => {
   );
 });
 
-// Pins that a managed copy of today's shipped list matches it (#10081).
+// Pins that keeping only usable entries changes nothing a managed copy of the shipped list enforces
+// (#10081). Both sides are managed lists, so neither loads the library dataset.
 describe('a managed copy of the shipped list', () => {
   const managedWords = managedProfanityEntries(blockedWords).usable;
 
@@ -74,7 +75,10 @@ describe('a managed copy of the shipped list', () => {
   });
 
   it('matches the shipped list on every entry', () => {
-    const shipped = createProfanityFilter({ moderatorWhitelist: null, moderatorBlocklist: null });
+    const shipped = createProfanityFilter({
+      moderatorWhitelist: null,
+      moderatorBlocklist: [...blockedWords],
+    });
     const managed = createProfanityFilter({
       moderatorWhitelist: null,
       moderatorBlocklist: managedWords,
