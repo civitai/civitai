@@ -585,7 +585,7 @@ describe("a reference's images", () => {
     dbMock.dbRead.comicReference.findMany.mockResolvedValue([reference()] as never);
     const [ref] = await callerFor(UPLOADER).getUserReferences();
     expect(urls(ref)).toEqual(['ref-clean']);
-    expect(ref.images[0].image).not.toHaveProperty('blockedFor');
+    expect(ref.images[0]?.image).not.toHaveProperty('blockedFor');
   });
 });
 
@@ -868,7 +868,7 @@ describe('a stored context key never leaves a panel response', () => {
     expect(contextFree(copy.metadata)).toEqual(clean);
     const [[{ data }]] = dbMock.dbWrite.comicPanel.create.mock.calls as unknown as [
       [{ data: { metadata: unknown } }]
-    ][];
+    ];
     expect(contextFree(data.metadata)).toEqual(clean);
   });
 

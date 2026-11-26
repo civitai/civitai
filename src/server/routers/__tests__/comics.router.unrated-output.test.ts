@@ -1098,6 +1098,6 @@ describe('selectPanelImage and addReferenceImages return media only as the block
       images: [{ url: '0a1b2c3d-1111-4222-8333-444455556666', width: 64, height: 64 }],
     });
     expect(ref.images.map((i) => i.image.url)).toEqual(['ref-clean']);
-    expect(ref.images[0].image).not.toHaveProperty('blockedFor');
+    expect(ref.images[0]?.image).not.toHaveProperty('blockedFor');
   });
 });
