@@ -651,16 +651,24 @@ describe('a scanned image whose post someone other than its owner unpublished', 
     deleted: 990000414,
     live: 990000415,
     ownPull: 990000416,
+    keptDelete: 990000417,
   };
   const all = Object.values(ids);
   const postOf = (id: number) =>
-    id === ids.live ? 990400415 : id === ids.ownPull ? 990400416 : 990400410;
+    id === ids.live
+      ? 990400415
+      : id === ids.ownPull
+      ? 990400416
+      : id === ids.keptDelete
+      ? 990400417
+      : 990400410;
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "Post" (id, metadata, "modelVersionId", "userId", "publishedAt") VALUES
         (990400410, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100499"}', NULL, ${OWNER}, NULL),
         (990400415, '{}', NULL, ${OWNER}, now()),
-        (990400416, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL);
+        (990400416, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL),
+        (990400417, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100499", "unpublishedReason": "pending-delete"}', NULL, ${OWNER}, NULL);
       INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('key-${ids.shop}', 1, ${OWNER});
       INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
         VALUES (${ids.deleted}, 'key-${ids.deleted}', ${OWNER}, false);
@@ -710,6 +718,30 @@ describe('a scanned image whose post someone other than its owner unpublished', 
         id,
         media: null,
       });
+  });
+
+  const served = async () => {
+    const out: number[] = [];
+    for (const id of all) if (await getModeratorMedia(id, { csamReview: true })) out.push(id);
+    return out;
+  };
+
+  it('serves the grant the pulled image and the held one, not one on a post kept for deletion, with the leg off', async () => {
+    expect(await served()).toEqual([ids.pulled, ids.item]);
+  });
+
+  it('refuses an image on a post kept for deletion, with the leg on', async () => {
+    envMock.env.RETRACTED_MEDIA_CDN_LEG = 'true';
+    try {
+      for (const csamReview of [false, true])
+        expect({
+          csamReview,
+          media: await getModeratorMedia(ids.keptDelete, { csamReview }),
+        }).toEqual({ csamReview, media: null });
+      expect(await getModeratorMedia(ids.pulled, { csamReview: true })).not.toBeNull();
+    } finally {
+      envMock.env.RETRACTED_MEDIA_CDN_LEG = undefined;
+    }
   });
 });
 
