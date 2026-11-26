@@ -1458,11 +1458,10 @@ describe('model-file-scan.service', () => {
         const writtenRating = () => {
           const call = mockDbWrite.$executeRaw.mock.calls.at(-1) as unknown[] | undefined;
           if (!call) return undefined;
-          const sql = (call[0] as string[]).join('?');
           const patch = (call.slice(1) as unknown[]).find(
             (v) => typeof v === 'string' && v.includes('fullyRated')
           ) as string;
-          return { sql, rating: JSON.parse(patch) as { nsfwLevel?: number; fullyRated: boolean } };
+          return { rating: JSON.parse(patch) as { nsfwLevel?: number; fullyRated: boolean } };
         };
         const header = vi.fn();
         beforeEach(() => {

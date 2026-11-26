@@ -535,6 +535,19 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     }
   );
 
+  it('reads a /blocked/ path on another host as content, not the placeholder', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => {
+      const res = blobResponse('png-bytes', 'image/png', 'pg');
+      Object.defineProperty(res, 'url', {
+        value: 'https://cdn.example/v2/consumer/blobs/blocked/token',
+      });
+      return res;
+    });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: true, numImages: 2 });
+  });
+
   it("reads the orchestrator's 'none' block header as not blocked", async () => {
     lockedRow(shared);
     fetchMock.mockImplementation(async () => {

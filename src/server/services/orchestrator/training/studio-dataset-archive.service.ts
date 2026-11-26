@@ -205,8 +205,7 @@ async function fetchBlob({
       key,
       contentType: response.headers.get('content-type'),
       nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
-      // The header as the blob-verdict parser reads it; fetch followed any redirect, so the
-      // placeholder shows as the final url rather than a Location header.
+      // fetch followed any redirect, so the placeholder shows as the final url, not a Location.
       blockedReason:
         blockedReasonOf(parseBlobVerdictHeaders(response.headers, response.status)) ??
         (blockedPlaceholder(response.url, baseUrl) ? 'blocked' : null),
