@@ -590,10 +590,11 @@ Each step names what ends it.
    served read-only (the permanent branch in "Manifest fields"). Submit keeps the step 3 rule (no
    NEW declaration; a collection may keep what its previous approved version declares), so those
    two apps can ship unrelated versions and roll back. Documents still carry `counters: {}`,
-   `marks: {}` and `viewer` until no supported SDK release reads them (SDK 0.30 refuses a document
-   without them). The step 4 tooling went in the same removal ("Final cleanup"). The final cleanup
-   SQL is hand-applied after the code is deployed everywhere, as a separate change; it is not a
-   migration file in the repo.
+   `marks: {}` and `viewer` until no approved app runs an SDK that reads them (SDK 0.14 through
+   0.32 refuses a document without them; 0.33 is the first that does not). An info reply's
+   collections carry no `counters` or `marks`: no SDK release reads them there. The step 4 tooling
+   went in the same removal ("Final cleanup"). The final cleanup SQL is hand-applied after the code
+   is deployed everywhere, as a separate change; it is not a migration file in the repo.
 
 ## Registry and app-data-go impact
 
