@@ -6,7 +6,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { countOpenServableKnightItems, readWithoutJit } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { engage, lockImage } from '../../../test/seed';
+import { engage, hideTagGroups, lockImage, tagImage } from '../../../test/seed';
 import {
   EXCLUSION_TABLES,
   exclusionCases,
@@ -34,7 +34,7 @@ import {
   STAGE_SCAN_MAX_PRIORITIES,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
-import { creditLateJudgment } from './vote-record';
+import { creditLateJudgment, notInHiddenTagGroups } from './vote-record';
 
 const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
@@ -200,7 +200,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayerDay" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayer","TagsOnImageDetails","KnightsPlayerDay" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -3079,6 +3079,71 @@ describe('a player and their own image', () => {
     expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
     expect(await verdicts(mine)).toEqual([]);
     expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
+  });
+});
+
+describe('a preset tag group the player hides in Knights settings', () => {
+  async function taggedItems() {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    return { feet: await item(10), other: await item(11) };
+  }
+
+  it('serves an image carrying a tag of the group to other players only, refuses the vote and gives no late credit', async () => {
+    const { feet, other } = await taggedItems();
+    await tagImage(pg, 10, 137120);
+    await hideTagGroups(pg, 1, ['feet']);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+    expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([feet, other].sort());
+    expect(await vote(1, feet, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await verdicts(feet)).toEqual([]);
+
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      feet,
+      NOW,
+    ]);
+    expect(await creditLateJudgment(db, { userId: 1, itemId: feet, answer: '4', now: NOW })).toBe(
+      false
+    );
+  });
+
+  it('does not hide an image whose tag of the group is disabled, nor one tagged only with another group', async () => {
+    const { feet, other } = await taggedItems();
+    await tagImage(pg, 10, 137120, true);
+    await tagImage(pg, 11, 1282);
+    await hideTagGroups(pg, 1, ['feet']);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([feet, other].sort());
+    expect(await vote(1, feet, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('filters nothing when there are no preset groups at all, whatever the player stored', async () => {
+    await taggedItems();
+    await tagImage(pg, 10, 5311);
+    await hideTagGroups(pg, 1, ['feet']);
+    const ids = async (groups?: []) =>
+      (
+        await db
+          .selectFrom('Image as img')
+          .select('img.id')
+          .where(notInHiddenTagGroups(1, groups ? { groups } : {}))
+          .orderBy('img.id')
+          .execute()
+      ).map((r) => r.id);
+
+    expect(await ids()).toEqual([11]);
+    expect(await ids([])).toEqual([10, 11]);
+  });
+
+  it('changes nothing for a player who hides no group', async () => {
+    const { feet, other } = await taggedItems();
+    await tagImage(pg, 10, 5311);
+    await hideTagGroups(pg, 1, []);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([feet, other].sort());
   });
 });
 

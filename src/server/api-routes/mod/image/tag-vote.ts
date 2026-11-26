@@ -1,5 +1,6 @@
 import * as z from 'zod';
-import { addTagVotes, removeTagVotes } from '~/server/services/tag.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { voteImageTagsAsModerator } from '~/server/services/tag.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { imageId } from '~/server/schema/moderator/image';
 
@@ -31,37 +32,11 @@ export default defineModeratorEndpoint('image.tagVote', {
       .describe('The votes to record.'),
   }),
   async handler(input, ctx) {
-    // Grouped by (imageId, vote) so each group is one service call with an array of tag ids.
-    const removals = new Map<number, number[]>();
-    const additions = new Map<string, { imageId: number; vote: number; tagIds: number[] }>();
-    for (const v of input.votes) {
-      if (v.vote === 0) {
-        const arr = removals.get(v.imageId) ?? [];
-        arr.push(v.tagId);
-        removals.set(v.imageId, arr);
-      } else {
-        const key = `${v.imageId}:${v.vote}`;
-        const cur = additions.get(key) ?? { imageId: v.imageId, vote: v.vote, tagIds: [] };
-        cur.tagIds.push(v.tagId);
-        additions.set(key, cur);
-      }
-    }
-
-    await Promise.all([
-      ...Array.from(removals.entries()).map(([id, tagIds]) =>
-        removeTagVotes({ userId: ctx.actor.id, type: 'image', id, tags: tagIds })
-      ),
-      ...Array.from(additions.values()).map((group) =>
-        addTagVotes({
-          userId: ctx.actor.id,
-          type: 'image',
-          id: group.imageId,
-          tags: group.tagIds,
-          vote: group.vote,
-          isModerator: true,
-        })
-      ),
-    ]);
+    await voteImageTagsAsModerator({
+      votes: input.votes,
+      userId: ctx.actor.id,
+      csamReview: !!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports,
+    });
 
     return {
       applied: input.votes.length,

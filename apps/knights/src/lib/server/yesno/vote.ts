@@ -8,7 +8,7 @@ import {
   ensureMonthPartition,
   lockItemVoters,
   lockPlayerVoting,
-  notHiddenCreator,
+  servedTo,
   pacingGate,
   staffedRanks,
   type QueueDeps,
@@ -65,7 +65,7 @@ export async function castYesNoVote(
       const item = await readWithoutJit(trx, (trx) =>
         playableItems(trx, { tagReview })
           .where('i.id', '=', input.itemId)
-          .where(notHiddenCreator(input.userId))
+          .where(servedTo(input.userId))
           .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt', 'i.meta'])
           .executeTakeFirst()
       );

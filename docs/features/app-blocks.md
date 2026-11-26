@@ -275,10 +275,11 @@ viewer-keyed documents (above); reports go through the report API
   `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
   sort field. No `Deprecation` header is sent any more; the preflight no longer allows PATCH.
 - **SDK compatibility:** every presented document still carries `counters: {}`, `marks: {}` and
-  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` up to 0.30 refuses a
-  document without them (`PresentedDoc` in `doc-store-api.ts`). Info lists every collection's
-  `counters` and `marks` as `[]` and keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
-  0.31 type it as a required number).
+  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` 0.14 through 0.32
+  refuses a document without them (`PresentedDoc` in `doc-store-api.ts`); they stay while any
+  approved app runs 0.32 or older. Info's collections carry no `counters` or `marks` (no SDK
+  release reads them there), and info keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
+  0.32 type it as a required number).
 - **The `report` mark alias:** `PUT /:c/:key/marks/report`, which SDKs older than 0.30 send for
   `mark(key, 'report')`, stays. It files the report through the report API's own code
   (`fileReport`: same gates, budget, row, dedupe and moderator queue) and answers `{marked: true}`;

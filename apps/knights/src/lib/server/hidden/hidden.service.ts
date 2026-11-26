@@ -10,7 +10,7 @@ import { payOutVotes } from '../progression/progression';
 import { BUCKET_LEVELS } from '../queue/feed';
 import { canVote } from '../queue/ranks';
 import {
-  notHiddenCreator,
+  servedTo,
   pacingGate,
   type CastVoteResult,
   type QuestionOption,
@@ -107,7 +107,7 @@ function eligibleReferences(
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
     .where('img.userId', 'is distinct from', userId)
-    .where(notHiddenCreator(userId))
+    .where(servedTo(userId))
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
       eb.or([
@@ -351,7 +351,7 @@ export async function answerHiddenCheck(
           .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
           .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'r.pool', 'q.options'])
           .where('r.id', '=', input.referenceId)
-          .where(notHiddenCreator(input.userId))
+          .where(servedTo(input.userId))
           .executeTakeFirst();
       // The mod-confirmed pool's safety reads fail closed: unreadable, only the other pool is open to an answer.
       return input.skillChecks

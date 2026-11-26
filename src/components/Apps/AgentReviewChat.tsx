@@ -37,7 +37,12 @@ import { trpc } from '~/utils/trpc';
  * stay plain inert text — only the agent's own replies carry markdown.
  */
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string };
+type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+  /** The server stopped this reply before the model finished (it hit the length cap). */
+  truncated?: boolean;
+};
 
 /**
  * Client-side sliding window on the conversation SENT to the agent. The server
@@ -77,14 +82,21 @@ export function AgentReviewChat({
     setInput('');
     // Slide a window over the SENT conversation so we stay under the server's
     // .max(20) cap no matter how long the chat runs (see MAX_CHAT_HISTORY_SENT).
-    const sentMessages = nextMessages.slice(-MAX_CHAT_HISTORY_SENT);
+    // Only role + content go to the server; `truncated` is display state.
+    const sentMessages = nextMessages
+      .slice(-MAX_CHAT_HISTORY_SENT)
+      .map(({ role, content }) => ({ role, content }));
     chatMut.mutate(
       { publishRequestId, messages: sentMessages, reportId },
       {
         onSuccess: (data) => {
           setMessages((prev) => [
             ...prev,
-            { role: 'assistant', content: data.reply || '(the agent returned an empty reply)' },
+            {
+              role: 'assistant',
+              content: data.reply || '(the agent returned an empty reply)',
+              truncated: data.truncated,
+            },
           ]);
         },
         onError: (e) => {
@@ -110,7 +122,7 @@ export function AgentReviewChat({
         </Text>
 
         {messages.length > 0 && (
-          <ScrollArea.Autosize mah={260} type="auto">
+          <ScrollArea.Autosize mah={420} type="auto">
             <Stack gap={6} pr={6}>
               {messages.length > MAX_CHAT_HISTORY_SENT && (
                 <Text size="xs" c="dimmed" ta="center" data-testid="chat-window-trim-note">
@@ -174,6 +186,11 @@ export function AgentReviewChat({
                         >
                           <CustomMarkdown disallowedElements={['img']}>{m.content}</CustomMarkdown>
                         </div>
+                      )}
+                      {!isUser && m.truncated && (
+                        <Text size="xs" c="dimmed" mt={4} data-testid="chat-agent-truncated-note">
+                          This answer was cut off. Ask it to continue.
+                        </Text>
                       )}
                     </Box>
                   </Group>

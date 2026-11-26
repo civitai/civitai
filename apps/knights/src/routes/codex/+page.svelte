@@ -3,14 +3,12 @@
   import Icon from '$lib/Icon.svelte';
   import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
-  import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
-  import { count, formatDate } from '$lib/format';
+  import { count } from '$lib/format';
   import RankLadder from './RankLadder.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   let facts = $derived(data.facts);
-  let restarting = $state(false);
 
   const TABS = [
     { id: 'ranks', label: 'Ranks' },
@@ -19,7 +17,6 @@
     { id: 'gold', label: 'Gold, Buzz & shop' },
     { id: 'fervor', label: 'Fervor & leaderboard' },
     { id: 'rating-guide', label: 'Rating guide' },
-    { id: 'career', label: 'Your career' },
   ] as const;
 
   // The tab for the section being read; the browser handles the jump itself, this only marks where it landed.
@@ -321,27 +318,7 @@
     <div class="question-rules"><QuestionRules /></div>
   </section>
 
-  {#if data.swornIn}
-    <hr class="rule" />
-    <section id="career" class="career" aria-labelledby="career-title">
-      <div>
-        <p class="kicker" id="career-title">Your career</p>
-        <p class="muted">
-          Sworn in on {formatDate(data.swornIn)}. Starting over returns you to Acolyte and cannot be undone.
-          It costs your unconverted and pending gold, your streak, and your older judgments, which are
-          forfeited. Your shields and the gold you already spent or converted are kept.
-        </p>
-      </div>
-      <button type="button" class="restart" onclick={() => (restarting = true)}>
-        <Icon name="rotate-ccw" size={14} />Restart career
-      </button>
-    </section>
-  {/if}
 </div>
-
-{#if restarting}
-  <RestartCareerDialog onclose={() => (restarting = false)} />
-{/if}
 
 <style>
   p {
@@ -535,29 +512,6 @@
     margin-top: 2.5rem;
   }
 
-  .rule {
-    margin: 2.5rem 0 1.5rem;
-    border: 0;
-    border-top: 1px solid var(--io-gold-muted);
-  }
-  .career {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    padding-bottom: 1rem;
-  }
-  .restart {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: 8px;
-    min-height: 40px;
-    border-color: var(--io-crimson);
-    background: transparent;
-    color: var(--io-crimson-text);
-  }
-
   @media (max-width: 64rem) {
     .steps,
     .details {
@@ -571,12 +525,6 @@
     .guide-cols {
       grid-template-columns: minmax(0, 1fr);
       gap: 1.25rem;
-    }
-  }
-  @media (max-width: 40rem) {
-    .career {
-      flex-direction: column;
-      align-items: flex-start;
     }
   }
 </style>

@@ -24,7 +24,6 @@ vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackBufferMod>()),
   enqueueTrackEvent: funnel.enqueue,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // Not under test here, and its modals reach tRPC.
 vi.mock('~/components/Apps/AppListingActionsMenu', () => ({ AppListingActionsMenu: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));

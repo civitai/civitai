@@ -56,9 +56,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 // --- boundary stubs for heavy children --------------------------------------
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, isModerator: false }),
-}));
 vi.mock('~/components/CardTemplates/AspectRatioImageCard', () => ({
   // Only the footer subtree carries ModelCardStats; render header+footer inline.
   AspectRatioImageCard: ({ header, footer }: any) => (
@@ -223,7 +220,7 @@ describe('ModelCard review indicator (batched membership)', () => {
 
   test('renders the reviewed indicator when the model is Recommended by the user', async () => {
     mocks.state.engaged = true;
-    renderWithProviders(<ModelCard data={makeData()} />);
+    renderWithProviders(<ModelCard data={makeData()} />, { user: { id: 1, isModerator: false } });
     expect(await reviewedAttr()).toBe('true');
     // reads membership for THIS model id, never the unbounded endpoint
     expect(mocks.membershipMock).toHaveBeenCalledWith(123);
@@ -232,7 +229,7 @@ describe('ModelCard review indicator (batched membership)', () => {
 
   test('does NOT mark reviewed when the model is not Recommended', async () => {
     mocks.state.engaged = false;
-    renderWithProviders(<ModelCard data={makeData()} />);
+    renderWithProviders(<ModelCard data={makeData()} />, { user: { id: 1, isModerator: false } });
     expect(await reviewedAttr()).toBe('false');
     expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
   });
@@ -306,7 +303,8 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const el = await awaitBadge('access');
     // The icon replaced the word so the badge is narrow enough to sit beside New. Asserting the
@@ -339,7 +337,8 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     await awaitBadge('access');
     // Resolved BY ROLE AND NAME rather than by reading two attributes: `getAttribute('aria-label')`
@@ -367,7 +366,8 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const el = await awaitBadge('access');
     await userEvent.hover(el);
@@ -393,7 +393,8 @@ describe('ModelCard paid-gate badge', () => {
           <ModelCard
             data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }}
           />
-        </WithPalette>
+        </WithPalette>,
+        { user: { id: 1, isModerator: false } }
       );
       const el = await awaitBadge('access');
       // `aria-label` overrides the subtree, so the drawn percentage reaches no screen reader — the
@@ -415,7 +416,8 @@ describe('ModelCard paid-gate badge', () => {
           <ModelCard
             data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }}
           />
-        </WithPalette>
+        </WithPalette>,
+        { user: { id: 1, isModerator: false } }
       );
       const el = await awaitBadge('access');
       // The `Percent` arm alone cannot test this: there the drawn and spoken forms are the same
@@ -433,7 +435,8 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const el = (await awaitBadge('access')) as HTMLElement;
     // A glyph with no text has one explanation, and a pointer-only one leaves keyboard and touch
@@ -475,7 +478,8 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const el = (await awaitBadge('access')) as HTMLElement;
     // `.chip` fixes the height at 26px while Mantine's `circle` sizes the WIDTH from the badge
@@ -494,7 +498,8 @@ describe('ModelCard paid-gate badge', () => {
         <ModelCard
           data={{ ...makeData(), earlyAccessDeadline: deadline, hasActivePaidAccess: false }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const el = await awaitBadge('access');
     expect(el.textContent).toBe('');
@@ -514,7 +519,8 @@ describe('ModelCard paid-gate badge', () => {
         <ModelCard
           data={{ ...makeData(), earlyAccessDeadline: deadline, hasActivePaidAccess: true }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     expect((await awaitBadge('access')).getAttribute('aria-label')).toBe('Early Access');
   });
@@ -526,7 +532,8 @@ describe('ModelCard paid-gate badge', () => {
         <ModelCard
           data={{ ...makeData(), earlyAccessDeadline: past, hasActivePaidAccess: false }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     await cardPainted();
     expect(accessBadge()).toBeNull();
@@ -538,7 +545,8 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const el = (await awaitBadge('access')) as HTMLElement;
     expect(el.style.backgroundColor).toBe('rgb(55, 178, 77)');
@@ -550,7 +558,8 @@ describe('ModelCard paid-gate badge', () => {
         <ModelCard
           data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: false }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     await cardPainted();
     expect(accessBadge()).toBeNull();
@@ -578,7 +587,8 @@ describe('ModelCard New badge coexists with the money badge', () => {
             earlyAccessDeadline: null,
           }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const recency = await awaitBadge('recency');
     const access = await awaitBadge('access');
@@ -601,7 +611,8 @@ describe('ModelCard New badge coexists with the money badge', () => {
             earlyAccessDeadline: new Date(Date.now() + 60 * 60 * 1000),
           }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     expect((await awaitBadge('recency')).textContent).toBe('New');
     const access = await awaitBadge('access');
@@ -624,7 +635,8 @@ describe('ModelCard New badge coexists with the money badge', () => {
             earlyAccessDeadline: null,
           }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     expect((await awaitBadge('recency')).textContent).toBe('New');
     expect(accessBadge()).toBeNull();
@@ -641,7 +653,8 @@ describe('ModelCard New badge coexists with the money badge', () => {
             earlyAccessDeadline: null,
           }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const recency = (await awaitBadge('recency')) as HTMLElement;
     // Distinct from the access chip's green: sharing a colour would let a card that rendered the
@@ -662,7 +675,8 @@ describe('ModelCard New badge coexists with the money badge', () => {
             earlyAccessDeadline: null,
           }}
         />
-      </WithPalette>
+      </WithPalette>,
+      { user: { id: 1, isModerator: false } }
     );
     const recency = (await awaitBadge('recency')) as HTMLElement;
     expect(recency.textContent).toBe('Updated');

@@ -80,7 +80,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
     <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
   ),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to

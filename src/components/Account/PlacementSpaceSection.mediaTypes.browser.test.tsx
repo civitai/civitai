@@ -20,7 +20,6 @@ const { mutate, spaces } = vi.hoisted(() => ({
   spaces: { value: [] as Record<string, unknown>[] },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
@@ -64,7 +63,7 @@ beforeEach(() => {
 
 describe('PlacementSpaceSection — the images/videos chips', () => {
   test('both are on for an account that never set them, and a save sends no key', async () => {
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await expect.element(page.getByRole('checkbox', { name: 'Images' })).toBeChecked();
     await expect.element(page.getByRole('checkbox', { name: 'Videos' })).toBeChecked();
@@ -75,7 +74,7 @@ describe('PlacementSpaceSection — the images/videos chips', () => {
   });
 
   test('unticking Videos saves images only', async () => {
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Videos'));
 
@@ -85,7 +84,7 @@ describe('PlacementSpaceSection — the images/videos chips', () => {
   // The property the file exists for: an unrelated control must carry the choice.
   test('an unrelated save keeps a stored choice', async () => {
     givenSpace({ maxScale: 0.1, mediaTypes: ['image'] });
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await expect.element(page.getByRole('checkbox', { name: 'Videos' })).not.toBeChecked();
     await userEvent.click(page.getByText('Accept all'));
@@ -95,7 +94,7 @@ describe('PlacementSpaceSection — the images/videos chips', () => {
 
   test('ticking Videos back on drops the key rather than storing both', async () => {
     givenSpace({ mediaTypes: ['image'] });
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Videos'));
 
@@ -104,7 +103,7 @@ describe('PlacementSpaceSection — the images/videos chips', () => {
 
   test('the last chip left on cannot be turned off', async () => {
     givenSpace({ mediaTypes: ['video'] });
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await expect.element(page.getByRole('checkbox', { name: 'Videos' })).toBeDisabled();
     await userEvent.click(page.getByText('Videos'), { force: true });
@@ -114,7 +113,7 @@ describe('PlacementSpaceSection — the images/videos chips', () => {
 
   test('the chips are hidden when stickers are off', async () => {
     givenSpace({}, 'off');
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await expect.element(page.getByText('No stickers')).toBeVisible();
     expect(page.getByText('Allow stickers on').elements()).toHaveLength(0);

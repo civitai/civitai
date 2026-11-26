@@ -6,6 +6,8 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { NsfwLevel } from '~/server/common/enums';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { NOTHING_WITHHELD_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 /**
  * A judge's rating in a collection with `judgesApplyBrowsingLevel`, against real rows: it applies
@@ -14,6 +16,13 @@ import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+// The withheld rule reads its own database, where nothing is withheld.
+const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => withheld.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
@@ -35,6 +44,8 @@ let db: PGlite;
 let raw: ReturnType<typeof pgliteRaw>;
 
 beforeAll(async () => {
+  withheld.db = new PGlite();
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM

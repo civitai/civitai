@@ -29,6 +29,13 @@ Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `s
 escalation and settle sweeps never touch it (it has no `expiresAt`; its own stage escalation is below). Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
+"Not sure" answers are stored in `KnightsUnsure` (migration `20271128120100_knights_unsure`, by hand, then SELECT and INSERT for
+Knights' database role plus USAGE on `KnightsUnsure_id_seq`, before deploying): one row per player and question item, with the
+question key and image as a snapshot and no foreign keys, so a count outlives the item. It is never a vote and nothing is paid, graded or decided from it. Count per question with
+`SELECT "itemId", count(*) FROM "KnightsUnsure" GROUP BY 1`. It lives in Postgres rather than ClickHouse because the game reads it
+back (a "Not sure" counts toward ending a run of questions). The `yesNoReferenceId` column is unused: Acolyte practice pairs are
+graded, so they offer no "Not sure".
+
 ## Import
 
 The CSV comes from the question producer (an offline pipeline that proposes the questions); it is not in this repository, and no real file is ever committed. Save it anywhere and pass its path. The header row names the columns; order does not matter and extra columns are ignored.
@@ -91,8 +98,9 @@ votes, never player rows.
 
 ## Serving (`feed.ts`)
 
-- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 5, 8 or 10 ratings, then a burst of 1 to 5 questions, each length
-  rolled anew per player. `burstDue` reads the player's last 11 votes plus the items already handed out ahead (`servedHistory`; a
+- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 15, 18 or 20 ratings, then a burst of 5 to 10 questions, each length
+  rolled anew per player. `burstDue` reads the player's last 21 votes and "Not sure" answers (`KnightsUnsure`, a question
+  served, so a run ends at its length whatever the answer) plus the items already handed out ahead (`servedHistory`; a
   hidden check counts as a rating), and rolls each length from the item that ended the run before it, so a reload or the look-ahead
   never re-rolls. A due burst comes before the hidden-check roll; a hidden check rides only on a rating slot. When no question is
   left, the slot is a rating; with no rating to show, a question is shown whenever there is one. A share of 0 switches questions
@@ -100,6 +108,22 @@ votes, never player rows.
   "Yes/no questions" switch on the moderator app's Knights of New Order Config page (On stores 1, Off 0, Default clears it; read by
   Knights at most every 30 s), else from `KNIGHTS_YESNO_SHARE`.
   The stretch and the max age below work the same way ([game settings](knights-sources.md#game-settings)).
+- Players can turn questions off on `/settings` ("Yes/no questions", labelled beta; `KnightsPlayer.yesNoQuestions`, migration
+  `20271128120000_knights_player_question_settings`, by hand). The switch is read in `pickItem` (`playerPrefs`, on every pick, no
+  cache), the one place a queue yes/no becomes due, so it covers the generated questions, the Paladin tag review source and
+  `GET /play/next` alike. A player who never touched it follows `yesNoPlayerDefault` on the Config page (off unless set), and a
+  failed read serves no question. Items handed out before a change can still be answered. Acolytes get no switch: their practice
+  pairs (`KnightsYesNoReference`) are part of the apprenticeship. While the Config page serves no questions at all (share 0 and tag
+  review off), the Questions section is hidden; the stored choice is kept for when they come back.
+- From Knight up, `/settings` also has "Hide content": one switch per preset tag group (`KNIGHTS_TAG_GROUPS` in
+  `apps/knights/src/lib/server/knights-tag-groups.ts`: furry, male focus, feet, bondage, futanari, gore, picked from the open
+  queue's tags and agreed with Moderation; separate from the main site's browsing categories; stored as keys in
+  `KnightsPlayer.hiddenTagGroups`, where a key no longer in the list hides nothing). The queue reserves nothing per player, so a
+  hidden image stays open for every other player. An image with an enabled tag of a hidden group (`TagsOnImageDetails`) is not served to that
+  player anywhere: rating feed, rating vote, late Watch credit, yes/no pick and vote, hidden checks. `servedTo` in
+  `queue/vote-record.ts` is that one check, next to the hidden-creator one, and reads the groups inside the query, so it cannot fail
+  open. No group is a browsing level, a whole kind of sexual content or an orientation tag alone (unit tests pin it): Knights is where mature content gets rated. A
+  player's own hidden tags on the site never apply, and Acolyte practice is not filtered.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
@@ -189,7 +213,11 @@ and whichever side rules first takes it out of the other's queue. Off unless the
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
+action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. An Acolyte's practice pair has no "Not sure": every
+pair is graded, and abstaining would keep a wrong answer out of the promotion window (`?/apprentice` refuses `unsure` as an answer
+not on offer). A run of questions opens with "Question time" and ends with a "Questions done"
+banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
 
 The rules the questions test are shown as "Question rules" below the rating levels, in the Codex rating guide and in the guide

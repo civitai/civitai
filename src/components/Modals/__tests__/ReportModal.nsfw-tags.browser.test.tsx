@@ -25,7 +25,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('next/router', () => ({
   useRouter: () => ({ query: {}, asPath: '/', push: vi.fn() }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof DialogProviderModule>()),
   useDialogContext: () => ({ opened: true, onClose: mocks.onClose, id: 'report' }),
@@ -77,7 +76,8 @@ beforeEach(() => {
 describe('ReportModal NSFW image report', () => {
   test('files the tags with the report and shows them without a separate tag vote', async () => {
     renderWithProviders(
-      <ReportModal entityType={ReportEntity.Image} entityId={42} reportKey="nsfw-image" />
+      <ReportModal entityType={ReportEntity.Image} entityId={42} reportKey="nsfw-image" />,
+      { user: { id: 7 } }
     );
 
     await userEvent.click(page.getByText('Partial Nudity'));

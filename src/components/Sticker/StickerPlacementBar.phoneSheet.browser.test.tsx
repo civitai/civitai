@@ -62,7 +62,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -81,7 +80,8 @@ const openTrayFrom = async (sheetTransform: string | undefined) => {
       <div style={{ height: PHONE.height, transform: sheetTransform }}>
         <StickerPlacementBar imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
       </div>
-    </IsClientProvider>
+    </IsClientProvider>,
+    { user: { id: 7 } }
   );
   await page.getByRole('button', { name: 'Place a sticker' }).click();
   const instruction = page.getByText(/Tap or drag a sticker onto the image/);

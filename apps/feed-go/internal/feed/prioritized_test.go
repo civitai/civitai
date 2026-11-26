@@ -117,7 +117,7 @@ func TestServeInfinitePendingViews(t *testing.T) {
 // Without a model scope the request takes the feed path, whose query mapper refuses it: the empty page
 // answerWithoutFeed gives a shape the feed cannot express, without a feed call. Likewise `pending`.
 func TestServeInfinitePrioritizedOrPendingOnTheFeedPath(t *testing.T) {
-	const want = `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`
+	const want = `{"items":[],"nextCursor":null,"source":"feed"}|{"nextCursor":["undefined"]}`
 	for name, m := range map[string]map[string]any{
 		"prioritizedUserIds":                  {"prioritizedUserIds": []any{num("5")}, "limit": num("2")},
 		"prioritizedUserIds with a cursor":    {"prioritizedUserIds": []any{num("5")}, "cursor": "feed:1:2"},

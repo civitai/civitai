@@ -26,7 +26,6 @@ vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
   useQueryCreatorShop: () => ({ shop: state.shop, isLoading: false }),
 }));

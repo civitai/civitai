@@ -31,8 +31,6 @@ const placement = {
   data: { cosmeticId: 9, x: 0.5, y: 0.5, scale: 0.25, rotation: 0, flip: false, opacity: 1 },
 };
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
-
 // The store's default is `revealed: false`, which renders no placements at all —
 // so without this the overlay never measures and every assertion below would be
 // asserting an empty card.
@@ -101,7 +99,8 @@ const renderCard = async () => {
         }}
       />
       <CardStickerOverlay imageId={IMAGE_ID} />
-    </div>
+    </div>,
+    { user: { id: 7 } }
   );
 
   // `.element()` does not retry, and the overlay paints its positioned box only

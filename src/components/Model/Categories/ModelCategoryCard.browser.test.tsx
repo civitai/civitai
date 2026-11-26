@@ -46,9 +46,6 @@ vi.mock('~/utils/trpc', () => ({
 }));
 
 // --- context hooks ----------------------------------------------------------
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'me' }),
-}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ imageGeneration: false }),
 }));
@@ -125,7 +122,9 @@ describe('ModelCategoryCard review indicator (batched membership)', () => {
 
   test('fills the review thumb when the model is Recommended by the user', async () => {
     mocks.state.engaged = true;
-    renderWithProviders(<ModelCategoryCard data={makeData()} height={300} />);
+    renderWithProviders(<ModelCategoryCard data={makeData()} height={300} />, {
+      user: { id: 1, username: 'me' },
+    });
     expect(await thumbsFilled()).toBe('true');
     expect(mocks.membershipMock).toHaveBeenCalledWith(321);
     expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
@@ -133,7 +132,9 @@ describe('ModelCategoryCard review indicator (batched membership)', () => {
 
   test('leaves the thumb unfilled when the model is not Recommended', async () => {
     mocks.state.engaged = false;
-    renderWithProviders(<ModelCategoryCard data={makeData()} height={300} />);
+    renderWithProviders(<ModelCategoryCard data={makeData()} height={300} />, {
+      user: { id: 1, username: 'me' },
+    });
     expect(await thumbsFilled()).toBe('false');
     expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
   });

@@ -1,4 +1,5 @@
 import { MantineProvider, Popover } from '@mantine/core';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { describe, expect, test, vi } from 'vitest';
@@ -29,10 +30,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   ...(await importOriginal<typeof UserAvatarModule>()),
   UserAvatar: ({ user }: { user: { username: string } }) => <span>{user.username}</span>,
 }));
-
-// The real hook throws without CivitaiSessionProvider, and the row's actions menu
-// is the only thing in the table that reads it.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 const { ManageItemsTable } = await import('~/components/CreatorShop/Manage/ManageItemsTable');
 
@@ -70,9 +67,11 @@ function renderTable(extra?: React.ReactNode) {
     </>,
     {
       wrapper: ({ children }: { children: React.ReactNode }) => (
-        <QueryClientProvider client={queryClient}>
-          <MantineProvider theme={theme}>{children}</MantineProvider>
-        </QueryClientProvider>
+        <SignedOutSessionProvider>
+          <QueryClientProvider client={queryClient}>
+            <MantineProvider theme={theme}>{children}</MantineProvider>
+          </QueryClientProvider>
+        </SignedOutSessionProvider>
       ),
     }
   );

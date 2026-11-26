@@ -247,6 +247,37 @@ describe('approveRequest — submitter notification (post-commit, best-effort)',
     expect((arg.details as { mature?: unknown }).mature).toBe(false);
   });
 
+  it('names the approving moderator and carries the trimmed approval note', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(pendingApproveRow());
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+
+    await approveRequest({
+      publishRequestId: 'req_appr_1',
+      reviewerUserId: 9,
+      approvalNotes: '  Nice work on the onboarding.  ',
+    });
+
+    const arg = mockNotify.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.attribution).toEqual({ kind: 'moderator', userId: 9 });
+    expect((arg.details as { approvalNote?: unknown }).approvalNote).toBe(
+      'Nice work on the onboarding.'
+    );
+  });
+
+  it('carries no approval note when the moderator left none', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(pendingApproveRow());
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+
+    await approveRequest({
+      publishRequestId: 'req_appr_1',
+      reviewerUserId: 9,
+      approvalNotes: '  ',
+    });
+
+    const arg = mockNotify.mock.calls[0][0] as Record<string, unknown>;
+    expect((arg.details as { approvalNote?: unknown }).approvalNote).toBeNull();
+  });
+
   it('records hasPage and mature from a page app rated mature', async () => {
     const manifest = {
       name: 'Cool App',
@@ -359,6 +390,7 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
       version: '1.2.0',
       reason: 'Uses a disallowed scope',
     });
+    expect(arg.attribution).toEqual({ kind: 'moderator', userId: 9 });
     // The rejection row committed before the notify.
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledWith({
       where: { id: 'req_rej_1' },

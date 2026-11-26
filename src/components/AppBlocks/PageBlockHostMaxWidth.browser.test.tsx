@@ -164,8 +164,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * that before trusting a green run here.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically

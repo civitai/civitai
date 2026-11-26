@@ -44,10 +44,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 42, username: 'viewer' }),
-}));
-
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
@@ -63,7 +59,8 @@ beforeEach(() => {
 /** The modal renders no trigger — the caller owns `opened`. Mount it open. */
 function renderOpenModal() {
   renderWithProviders(
-    <ReportListingModal appListingId="apl_target" opened onClose={() => undefined} />
+    <ReportListingModal appListingId="apl_target" opened onClose={() => undefined} />,
+    { user: { id: 42, username: 'viewer' } }
   );
 }
 

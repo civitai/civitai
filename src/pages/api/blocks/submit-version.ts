@@ -132,6 +132,7 @@ export default AuthedEndpoint(
         // stays absent; the service must not invent a value.
         sourceCommit: parsed.data.sourceCommit,
         sourceDirty: parsed.data.sourceDirty,
+        sdkFloorOverride: parsed.data.sdkFloorOverride,
         // GitHub Actions OIDC token: dropped here unless `app-blocks-oidc-verified-submit` is on
         // for this submitter, so with the flag off it is never verified or stored.
         // (The verifier module is loaded only when a token was sent.)

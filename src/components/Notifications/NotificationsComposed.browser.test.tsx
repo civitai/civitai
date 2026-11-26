@@ -31,14 +31,15 @@ vi.mock('~/components/Notifications/notifications.utils', async (importOriginal)
 vi.mock('~/components/Notifications/useNotificationSettings', () => ({
   useNotificationSettings: () => ({ isLoading: false, hasCategory: {} }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, onboarding: 0 }) }));
 
 import { NotificationsComposed } from './NotificationsComposed';
 
 describe('NotificationsComposed announcements tab', () => {
   test('a navigating announcement button closes the drawer', async () => {
     const onClose = vi.fn();
-    renderWithProviders(<NotificationsComposed onClose={onClose} />);
+    renderWithProviders(<NotificationsComposed onClose={onClose} />, {
+      user: { id: 1, onboarding: 0 },
+    });
 
     await page.getByRole('tab', { name: /announcements/i }).click();
     expect(onClose).not.toHaveBeenCalled();
