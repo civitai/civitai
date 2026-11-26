@@ -54,8 +54,9 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 | Command | Description |
 |---------|-------------|
 | `user <id\|username>` | Look up user info |
-| `ban <id\|username>` | Toggle ban status |
-| `mute <id\|username>` | Toggle mute status |
+| `ban <id\|username> <true\|false>` | Ban (`true`) or unban (`false`). Already in that state: nothing is written and no ban side effect runs; the output says `Changed: No`. There is no bare toggle: a retried or stale toggle flips the account back. |
+| `contest-ban <id\|username> <true\|false>` | Ban from / unban from contests only, the same way |
+| `mute <id\|username> <true\|false>` | Mute (`true`) or unmute (`false`), the same way |
 | `leaderboard <id\|username> <true\|false>` | Set leaderboard eligibility |
 | `remove-content <id\|username>` | Remove all user content (DESTRUCTIVE) |
 | `dm <id\|username>` | Message the user as the shared **Civitai Moderation** account (requires `--message`; needs the `user.message.asCivitai` permission). The user sees only that account and can reply; you are recorded as the sender. Prints an idempotency key first: if the response is lost, rerun with `--key <key>` and it sends at most once. Refused while another moderator holds the thread's claim, or when the user already has several unanswered messages from the account in 24 h. `--as-self` sends from your own account instead (the old behaviour). |
@@ -70,7 +71,8 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 
 ```bash
 node .claude/skills/mod-actions/query.mjs user 3879899
-node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
+node .claude/skills/mod-actions/query.mjs ban 3879899 true --reason Other --message "ToS violation" --dry-run
+node .claude/skills/mod-actions/query.mjs mute 3879899 false
 node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
 node .claude/skills/mod-actions/query.mjs inbox
 node .claude/skills/mod-actions/query.mjs thread 3879899

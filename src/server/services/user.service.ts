@@ -3118,6 +3118,7 @@ export const toggleBan = async ({
   alwaysArchiveProfile,
   onlyBan,
   banActivity,
+  setTo,
 }: ToggleBanUser & {
   userId: number;
   isModerator?: boolean;
@@ -3145,6 +3146,14 @@ export const toggleBan = async ({
   const user = await dbWrite.user.findUnique({ where: { id }, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
+  // Already in the asked-for state: nothing is written and no ban side effect runs.
+  if (setTo === !!user.bannedAt) {
+    const current = await dbWrite.user.findUniqueOrThrow({
+      where: { id },
+      omit: { subscriptionId: true },
+    });
+    return { ...current, changed: false };
+  }
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -3484,7 +3493,7 @@ export const toggleBan = async ({
     }
   }
 
-  return updatedUser;
+  return { ...updatedUser, changed: true };
 };
 
 export const getBanContentPreview = async ({ userId }: { userId: number }) => {
@@ -3505,6 +3514,7 @@ export const getBanContentPreview = async ({ userId }: { userId: number }) => {
 export const toggleContestBan = async ({
   id,
   detailsInternal,
+  setTo,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   // From the primary: the direction, and the whole meta written back, must not come from a stale read.
   const user = await getUserById({ id, select: { meta: true }, db: dbWrite });
@@ -3512,6 +3522,13 @@ export const toggleContestBan = async ({
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = userMeta.contestBanDetails?.bannedAt;
+  if (setTo === !!bannedAt) {
+    const current = await dbWrite.user.findUniqueOrThrow({
+      where: { id },
+      omit: { subscriptionId: true },
+    });
+    return { ...current, changed: false };
+  }
 
   const updatedMeta = bannedAt
     ? {
@@ -3534,7 +3551,7 @@ export const toggleContestBan = async ({
 
   await refreshSession(id, { caller: 'ban' });
 
-  return updatedUser;
+  return { ...updatedUser, changed: true };
 };
 
 export const toggleUserArticleEngagement = async ({

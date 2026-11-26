@@ -5,8 +5,9 @@
  *
  * Commands:
  *   user <id|username>              Look up user info
- *   ban <id|username>               Toggle ban status
- *   mute <id|username>              Toggle mute status
+ *   ban <id|username> <true|false>  Ban (true) or unban (false); a no-op if already so
+ *   contest-ban <id|username> <true|false>  Ban from / unban from contests
+ *   mute <id|username> <true|false> Mute (true) or unmute (false); a no-op if already so
  *   leaderboard <id|username> <bool> Set leaderboard eligibility
  *   remove-content <id|username>    Remove all user content
  *   dm <id|username>                Message a user as Civitai Moderation (--as-self: from your account)
@@ -92,8 +93,9 @@ function showUsage() {
 
 Commands:
   user <id|username>              Look up user info
-  ban <id|username>               Toggle ban status
-  mute <id|username>              Toggle mute status
+  ban <id|username> <true|false>  Ban (true) or unban (false); a no-op if already so
+  contest-ban <id|username> <true|false>  Ban from / unban from contests
+  mute <id|username> <true|false> Mute (true) or unmute (false); a no-op if already so
   leaderboard <id|username> <bool> Set leaderboard eligibility
   remove-content <id|username>    Remove all user content
   dm <id|username>                Message a user as Civitai Moderation; prints an
@@ -126,8 +128,8 @@ Ban Reason Codes:
 Examples:
   node query.mjs user 3879899
   node query.mjs user unfazedanomaly964
-  node query.mjs ban 3879899 --reason Other --message "ToS violation"
-  node query.mjs mute 3879899
+  node query.mjs ban 3879899 true --reason Other --message "ToS violation"
+  node query.mjs mute 3879899 false
   node query.mjs leaderboard 3879899 false
   node query.mjs remove-content 3879899 --dry-run
   node query.mjs dm 3879899 --message "Hello, this is a message from the mod team"
@@ -144,18 +146,24 @@ Configuration:
 
 if (!command) showUsage();
 
-// Toggle ban status
-async function toggleBan(userId, options) {
-  const input = { id: userId };
+// Always an explicit end state: a bare toggle retried, or sent from a stale read, flips it back.
+async function setBan(userId, setTo, options) {
+  const input = { id: userId, setTo };
+  if (options.contest) input.type = 'contest';
   if (options.reasonCode) input.reasonCode = options.reasonCode;
   if (options.message) input.detailsExternal = options.message;
   if (options.internal) input.detailsInternal = options.internal;
   return await trpcCall('user.toggleBan', input, 'POST');
 }
 
-// Toggle mute status
-async function toggleMute(userId) {
-  return await trpcCall('user.toggleMute', { id: userId }, 'POST');
+async function setMute(userId, setTo) {
+  return await trpcCall('user.toggleMute', { id: userId, setTo }, 'POST');
+}
+
+/** `true` / `false` as the explicit end state, or null for anything else. */
+function parseSetTo(value) {
+  const v = value?.toLowerCase();
+  return v === 'true' ? true : v === 'false' ? false : null;
 }
 
 // Set leaderboard eligibility
@@ -215,12 +223,12 @@ function formatResult(action, user, result, options = {}) {
     let output = `[DRY RUN] Would ${action}:\n`;
     output += `User: ${user.username} (ID: ${user.id})\n`;
 
-    if (action === 'ban') {
-      output += `Action: ${user.bannedAt ? 'UNBAN' : 'BAN'}\n`;
+    if (action === 'ban' || action === 'contest-ban') {
+      output += `Action: ${options.setTo ? 'BAN' : 'UNBAN'}${action === 'contest-ban' ? ' from contests' : ''}\n`;
       if (options.reasonCode) output += `Reason: ${options.reasonCode}\n`;
       if (options.message) output += `Message: ${options.message}\n`;
     } else if (action === 'mute') {
-      output += `Action: ${user.muted ? 'UNMUTE' : 'MUTE'}\n`;
+      output += `Action: ${options.setTo ? 'MUTE' : 'UNMUTE'}\n`;
     } else if (action === 'leaderboard') {
       output += `Action: ${options.eligible ? 'INCLUDE' : 'EXCLUDE'} from leaderboards\n`;
     } else if (action === 'remove-content') {
@@ -238,10 +246,18 @@ function formatResult(action, user, result, options = {}) {
   // replica, and then its inverse names the opposite of what the toggle actually did.
   const now = (field, on, off) =>
     result && field in result ? (result[field] ? on : off) : 'Unknown (re-check the user)';
+  // `changed: false` means the account was already in the asked-for state and nothing was written.
+  if (['ban', 'mute', 'contest-ban'].includes(action))
+    output += `Changed: ${result?.changed === false ? 'No (already in that state)' : 'Yes'}\n`;
   if (action === 'ban') {
     output += `Previous: ${user.bannedAt ? 'Banned' : 'Not Banned'}\n`;
     output += `Now: ${now('bannedAt', 'Banned', 'Not Banned')}\n`;
     if (options.reasonCode) output += `Reason: ${options.reasonCode}\n`;
+  } else if (action === 'contest-ban') {
+    const contestBanned = result?.meta ? !!result.meta.contestBanDetails?.bannedAt : null;
+    output += `Now: ${
+      contestBanned === null ? 'Unknown (re-check the user)' : contestBanned ? 'Contest-banned' : 'Not contest-banned'
+    }\n`;
   } else if (action === 'mute') {
     output += `Previous: ${user.muted ? 'Muted' : 'Not Muted'}\n`;
     output += `Now: ${now('muted', 'Muted', 'Not Muted')}\n`;
@@ -273,9 +289,11 @@ async function main() {
       break;
     }
 
-    case 'ban': {
-      if (!targetInput) {
-        console.error('Error: User ID or username required');
+    case 'ban':
+    case 'contest-ban': {
+      const setTo = parseSetTo(arg2);
+      if (!targetInput || setTo === null) {
+        console.error(`Error: User ID or username and true|false required (${command} <user> <true|false>)`);
         showUsage();
       }
       if (reasonCode && !BAN_REASONS.includes(reasonCode)) {
@@ -290,11 +308,12 @@ async function main() {
       }
 
       if (dryRun) {
-        console.log(formatResult('ban', user, null, { dryRun, reasonCode, message: messageText }));
+        console.log(formatResult(command, user, null, { dryRun, setTo, reasonCode, message: messageText }));
         break;
       }
 
-      const result = await toggleBan(user.id, {
+      const result = await setBan(user.id, setTo, {
+        contest: command === 'contest-ban',
         reasonCode,
         message: messageText,
         internal: internalNotes,
@@ -303,14 +322,15 @@ async function main() {
       if (jsonOutput) {
         console.log(JSON.stringify(result, null, 2));
       } else {
-        console.log(formatResult('ban', user, result, { reasonCode }));
+        console.log(formatResult(command, user, result, { reasonCode }));
       }
       break;
     }
 
     case 'mute': {
-      if (!targetInput) {
-        console.error('Error: User ID or username required');
+      const setTo = parseSetTo(arg2);
+      if (!targetInput || setTo === null) {
+        console.error('Error: User ID or username and true|false required (mute <user> <true|false>)');
         showUsage();
       }
 
@@ -321,11 +341,11 @@ async function main() {
       }
 
       if (dryRun) {
-        console.log(formatResult('mute', user, null, { dryRun }));
+        console.log(formatResult('mute', user, null, { dryRun, setTo }));
         break;
       }
 
-      const result = await toggleMute(user.id);
+      const result = await setMute(user.id, setTo);
 
       if (jsonOutput) {
         console.log(JSON.stringify(result, null, 2));
