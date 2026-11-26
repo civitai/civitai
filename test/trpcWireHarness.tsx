@@ -15,6 +15,9 @@ import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { Session } from '~/types/session';
 import { queryClient, trpc } from '~/utils/trpc';
 
+export type WireCall = { path: string; type: 'query' | 'mutation'; input: unknown };
+type Respond = (input: unknown) => unknown;
+
 /**
  * Mounts a component under the app's real tRPC client (`trpc.withTRPC`, the app's own links and
  * transformer) and its real App, Session, FeatureFlags, CivitaiSession, BrowserSettings and Dialog
@@ -30,9 +33,6 @@ import { queryClient, trpc } from '~/utils/trpc';
  * background query cannot pass for an answered one. Batching stays off (its flag is never set
  * here), so each operation is its own request.
  */
-
-export type WireCall = { path: string; type: 'query' | 'mutation'; input: unknown };
-type Respond = (input: unknown) => unknown;
 
 export function installTrpcWire(responses: Record<string, Respond>) {
   const calls: WireCall[] = [];

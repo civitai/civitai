@@ -69,8 +69,8 @@ describe('ServiceRequestModal hold button', () => {
 
     // The purchase itself runs in Stripe or Paddle; what returns to the app is this callback.
     (buyBuzz?.props as { onPurchaseSuccess?: () => void }).onPurchaseSuccess?.();
-    // A purchase refreshes the balance. That refetch starts after the callback, so by the time its
-    // answer has landed a request the callback sent has reached the wire.
+    // A fence, not the app's own refresh: the test refetches the balance after the callback, so a
+    // request the callback started is on the wire before that answer lands.
     const balanceReads = calls.callsTo('buzz.getBuzzAccount').length;
     await queryClient.refetchQueries({ queryKey: [['buzz', 'getBuzzAccount']] });
     expect(calls.callsTo('buzz.getBuzzAccount').length).toBe(balanceReads + 1);
