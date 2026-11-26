@@ -609,6 +609,29 @@ describe('the article page body under the report-listed rule', () => {
       expect(content).not.toContain(uuid(OTHERS_BODY));
     });
 
+    it('🔴 strips every other spelling of a placeholdered image, links included', async () => {
+      const stored = `<p><img src="https://image.civitai.com/abc/${uuid(
+        OTHERS_BODY
+      )}/width=450"></p>`;
+      const linked = `<a href="https://image.civitai.com/abc/${uuid(
+        OTHERS_BODY
+      )}/original=true">src</a>`;
+      dbMock.dbRead.article.findFirst.mockResolvedValue({
+        id: 1,
+        userId: OWNER,
+        nsfwLevel: 1,
+        status: ArticleStatus.Published,
+        ingestion: ArticleIngestionStatus.Scanned,
+        tags: [],
+        content: stored + `<p>${linked}</p>`,
+        metadata: null,
+        coverImage: null,
+        bannerImage: null,
+      } as never);
+      for (const viewer of [{ id: OWNER }, { id: MOD, isModerator: true }])
+        expect(await editRead(viewer, SESSION)).not.toContain(uuid(OTHERS_BODY));
+    });
+
     it('gives no placeholder to a reader who cannot edit', async () => {
       const content = await editRead({ id: STRANGER }, SESSION);
       expect(placeholders(content)).toEqual([]);

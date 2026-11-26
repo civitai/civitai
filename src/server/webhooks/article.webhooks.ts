@@ -10,7 +10,8 @@ import {
 } from '~/server/common/image-visibility';
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
+import { removeBodyMedia } from '~/server/utils/article-body-media';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -43,10 +44,30 @@ export const articleWebhooks = createWebhookProcessor({
       const coverIds = articles
         .map((article) => article.coverImage?.id)
         .filter((id): id is number => !!id);
+      const bodyImages = await prisma.imageConnection.findMany({
+        where: {
+          entityType: 'Article',
+          entityId: { in: articles.map((article) => article.id) },
+          ...connectionImageExists,
+        },
+        select: { entityId: true, image: { select: { id: true, url: true } } },
+      });
       const [withheld, listed] = await Promise.all([
         getModelWithheldImageIds(coverIds, prisma),
-        getReportListedHiddenImageIds(coverIds, SIGNED_OUT_REPORT_LISTED, prisma),
+        getReportListedHiddenImageIds(
+          [...coverIds, ...bodyImages.map((connection) => connection.image.id)],
+          SIGNED_OUT_REPORT_LISTED,
+          prisma
+        ),
       ]);
+      // A listed body image leaves the body, as it does for a signed-out reader.
+      const publicBody = (articleId: number, content: string | null) =>
+        content &&
+        removeBodyMedia(content, {
+          withheld: bodyImages
+            .filter((c) => c.entityId === articleId && listed.has(c.image.id))
+            .map((c) => c.image.url),
+        });
       const publicCover = (image: (typeof articles)[number]['coverImage']) =>
         image &&
         !hasBlockMarker(image) &&
@@ -70,6 +91,7 @@ export const articleWebhooks = createWebhookProcessor({
 
         return {
           ...article,
+          content: publicBody(article.id, article.content),
           coverImage: shownCover && withoutMinorFlag(shownCover),
           type: categories[0] ?? 'article',
           tags,

@@ -989,13 +989,14 @@ export const getArticleById = async ({
         (isModerator ||
           (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
     );
-    // In the edit form a listed image stays in place as a placeholder, so a save keeps it.
+    // In the edit form a listed image stays in place as a placeholder, so a save keeps it. It
+    // stays withheld too: the strip below catches every other spelling of it.
     const listedUrls = bodyImages
       .filter((image) => listedHidden.has(image.id))
       .map((image) => image.url);
     const placeholdered = edit && (isOwner || !!isModerator) ? listedUrls : [];
     const withheld = bodyImages
-      .filter((image) => !keptImages.includes(image) && !placeholdered.includes(image.url))
+      .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
     const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;

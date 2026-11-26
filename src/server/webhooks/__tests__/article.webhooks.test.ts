@@ -34,7 +34,12 @@ const article = (coverImage: unknown, cover: string | null = 'cover-key') => ({
   tags: [],
 });
 
-async function send(articles: unknown[], ids: number[] = [], listedIds: number[] = []) {
+async function send(
+  articles: unknown[],
+  ids: number[] = [],
+  listedIds: number[] = [],
+  connections: { entityId: number; image: { id: number; url: string } }[] = []
+) {
   withheld.ids = new Set(ids);
   // The report-listed lookup: the only raw read here.
   const $queryRaw = vi.fn(async () => listedIds.map((id) => ({ id })));
@@ -50,7 +55,11 @@ async function send(articles: unknown[], ids: number[] = [], listedIds: number[]
   );
   const payload = await articleWebhooks['new-article'].getData({
     lastSent: new Date(0),
-    prisma: { article: { findMany }, $queryRaw },
+    prisma: {
+      article: { findMany },
+      imageConnection: { findMany: vi.fn(async () => connections) },
+      $queryRaw,
+    },
   } as never);
   return { payload, findMany };
 }
@@ -108,5 +117,23 @@ describe('new-article webhook payload', () => {
   it('keeps the cover URL of an article with no cover image', async () => {
     const { payload } = await send([article(null)]);
     expect(payload[0].cover).toEqual(expect.stringContaining('cover-key'));
+  });
+
+  it('🔴 sends no body image listed on a report, and keeps the others', async () => {
+    const listedUuid = '66666666-aaaa-4bbb-8ccc-666666666666';
+    const shownUuid = '77777777-aaaa-4bbb-8ccc-777777777777';
+    const src = (uuid: string) => `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid}/w`;
+    const body = `<p>a</p><img src="${src(listedUuid)}"><img src="${src(shownUuid)}">`;
+    const { payload } = await send(
+      [{ ...article(null), content: body }],
+      [],
+      [20],
+      [
+        { entityId: 1, image: { id: 20, url: listedUuid } },
+        { entityId: 1, image: { id: 21, url: shownUuid } },
+      ]
+    );
+    expect(payload[0].content).not.toContain(listedUuid);
+    expect(payload[0].content).toContain(shownUuid);
   });
 });
