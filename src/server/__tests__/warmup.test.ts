@@ -55,9 +55,6 @@ vi.mock('~/server/prom/client', () => {
   };
 });
 
-// env.NEXTAUTH_URL / env.WEBHOOK_TOKEN / env.PROBE_TOKEN are read by warmup.ts; they come from the
-// defaults in src/__tests__/setup.ts.
-
 // Helper: a deferred promise that never resolves on its own — used to simulate a
 // hung fetch. We expose resolve so a test can release it if needed.
 function neverResolves<T = never>(): { promise: Promise<T>; resolve: (v: T) => void } {
