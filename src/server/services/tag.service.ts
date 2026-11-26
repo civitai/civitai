@@ -771,7 +771,11 @@ export const addTagVotes = async ({
   tags,
   isModerator,
   vote,
-}: TagVotingInput & { vote: number }) => {
+  csamReview = false,
+}: TagVotingInput & { vote: number; csamReview?: boolean }) => {
+  // A moderator's downvote can disable the tag on the image.
+  if (isModerator && type === 'image' && vote < 0)
+    await assertMayLoosenImages([id], { csamReview });
   // Determine vote weight
   let isCreator = false;
   if (type === 'model') {

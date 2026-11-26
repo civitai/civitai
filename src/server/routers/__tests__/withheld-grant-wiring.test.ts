@@ -54,10 +54,12 @@ beforeEach(() => {
 
 const { createCallerFactory } = await import('~/server/trpc');
 const { imageRouter } = await import('~/server/routers/image.router');
+const { tagRouter } = await import('~/server/routers/tag.router');
 const createCaller = createCallerFactory(imageRouter);
+const createTagCaller = createCallerFactory(tagRouter);
 
-const moderator = (csamReports: boolean) =>
-  createCaller({
+const moderatorCtx = (csamReports: boolean) =>
+  ({
     user: {
       id: 1,
       isModerator: true,
@@ -74,6 +76,7 @@ const moderator = (csamReports: boolean) =>
     req: { headers: {} },
     res: undefined,
   } as never);
+const moderator = (csamReports: boolean) => createCaller(moderatorCtx(csamReports));
 
 describe('image.toggleImageFlag, through the router', () => {
   it("refuses clearing a withheld image's flag for a moderator without the grant", async () => {
@@ -93,6 +96,28 @@ describe('image.toggleImageFlag, through the router', () => {
   });
 });
 
+describe('tag.addTagVotes, through the router', () => {
+  const downvote = (csamReports: boolean) =>
+    createTagCaller(moderatorCtx(csamReports)).addTagVotes({
+      type: 'image',
+      id: WITHHELD,
+      tags: [5],
+      vote: -1,
+    });
+
+  it("refuses a moderator's downvote on a withheld image without the grant, as FORBIDDEN", async () => {
+    await expect(downvote(false)).rejects.toSatisfy(
+      (e) => e instanceof TRPCError && e.code === 'FORBIDDEN'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('records it with the grant', async () => {
+    await downvote(true).catch(() => undefined);
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
 /**
  * Every entry point that passes `csamReview` to a loosening writer, with how many times. Each
  * argument derives the grant from its caller, or is `false` where no grant reaches (a token naming
@@ -104,7 +129,7 @@ const ENTRY_POINTS: Record<string, number> = {
   'src/server/routers/challenge.router.ts': 2,
   'src/server/routers/article.router.ts': 3,
   'src/server/controllers/image.controller.ts': 3,
-  'src/server/controllers/tag.controller.ts': 1,
+  'src/server/controllers/tag.controller.ts': 2,
   'src/server/api-routes/mod/set-image-nsfw-level.ts': 1,
   'src/server/api-routes/mod/image/set-nsfw-level.ts': 1,
   'src/server/api-routes/admin/rescan-images.ts': 1,

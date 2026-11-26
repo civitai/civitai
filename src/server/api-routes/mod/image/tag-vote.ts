@@ -1,4 +1,6 @@
 import * as z from 'zod';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
 import { addTagVotes, removeTagVotes } from '~/server/services/tag.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { imageId } from '~/server/schema/moderator/image';
@@ -47,6 +49,13 @@ export default defineModeratorEndpoint('image.tagVote', {
       }
     }
 
+    const csamReview = !!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports;
+    // Refused before any vote is written, so a batch is applied whole or not at all.
+    await assertMayLoosenImages(
+      input.votes.filter((v) => v.vote < 0).map((v) => v.imageId),
+      { csamReview }
+    );
+
     await Promise.all([
       ...Array.from(removals.entries()).map(([id, tagIds]) =>
         removeTagVotes({ userId: ctx.actor.id, type: 'image', id, tags: tagIds })
@@ -59,6 +68,7 @@ export default defineModeratorEndpoint('image.tagVote', {
           tags: group.tagIds,
           vote: group.vote,
           isModerator: true,
+          csamReview,
         })
       ),
     ]);

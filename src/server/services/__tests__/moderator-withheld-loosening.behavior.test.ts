@@ -81,7 +81,7 @@ const { rescanChallenge, playgroundReviewImage } = await import(
   '~/server/services/challenge.service'
 );
 const { rescanArticleImage } = await import('~/server/services/article.service');
-const { disableTags } = await import('~/server/services/tag.service');
+const { addTagVotes, disableTags } = await import('~/server/services/tag.service');
 const { updateCollectionItemsStatus } = await import('~/server/services/collection.service');
 
 const forbidden = (p: Promise<unknown>) =>
@@ -523,5 +523,23 @@ describe('updateCollectionItemsStatus accepting contest entries', () => {
   it('lets the AI review accept the clean entries and leave the withheld one', async () => {
     await accept([CLEAN, WITHHELD], { isSystem: true });
     expect(acceptedItemIds()).toEqual([items[CLEAN]]);
+  });
+});
+
+describe('addTagVotes', () => {
+  const vote = (v: number, who: { isModerator?: boolean; csamReview?: boolean }) =>
+    addTagVotes({ userId: 1, type: 'image', id: WITHHELD, tags: [5], vote: v, ...who });
+
+  it("refuses a moderator's downvote on a withheld image, and records nothing", async () => {
+    await forbidden(vote(-1, { isModerator: true }));
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('records it with the grant, an upvote, and a downvote that carries no moderator weight', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ count: 0 }]);
+    await settle(vote(-1, { isModerator: true, csamReview: true }));
+    await settle(vote(1, { isModerator: true }));
+    await settle(vote(-1, {}));
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(3);
   });
 });
