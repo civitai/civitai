@@ -441,8 +441,8 @@ func TestANoMajorReadWithNoCurrentReadsTheStreamWithTheWritesOff(t *testing.T) {
 }
 
 // A stream read again at the major the first one named, which names yet another major (approved
-// between the two reads): the read is answered at the second stream, never a third stream and never
-// a refusal, and the hint moves to the newest major named, for the next read.
+// between the two reads): the move is made once, so the read is answered at the second stream, not
+// moved again and never refused, and the hint moves to the newest major named, for the next read.
 func TestACurrentMajorThatMovesAgainIsReadOnceAndRemembered(t *testing.T) {
 	a := &majorAdapter{private: true, current: 2, flap: true, recordsAt: notesV2, record: majorRecord(notesV2, "mine-6", "FLAP-CANARY")}
 	s := majorStack(t, a)

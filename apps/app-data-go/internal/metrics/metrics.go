@@ -46,12 +46,7 @@ var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy
 // reopened because this interval's reopen was spent.
 var FloorOutcomes = []string{"met", "still_behind", "spent"}
 
-// ImpliedMajorOutcomes are the `outcome` values of app_data_implied_major_total: how a read that
-// names no major decided its major (api/major.go). `matched`: the stream named the major it opened
-// at; `moved`: it named another, and the read moved there; `unnamed`: it named none (an adapter that
-// does not send `currentMajor`), answered at the major it opened; `hint_dropped`: a hinted major the
-// adapter no longer resolves was dropped. One of the first three per read that reached a stream;
-// `hint_dropped` beside it.
+// ImpliedMajorOutcomes (app_data_implied_major_total, api/major.go): matched, moved, unnamed, hint_dropped.
 var ImpliedMajorOutcomes = []string{"matched", "moved", "unnamed", "hint_dropped"}
 
 // OverlayKinds are the `kind` values of app_data_cache_overlays_total (session.Overlay*).
@@ -166,7 +161,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		}, []string{"op"}),
 		ImpliedMajor: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_implied_major_total",
-			Help: "Reads naming no schema major, by how their major was decided (matched, moved, unnamed: the stream named no current major; hint_dropped).",
+			Help: "Reads naming no schema major, by how their major was decided.",
 		}, []string{"outcome"}),
 		FloorReopens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_floor_reopens_total",

@@ -11,49 +11,23 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
 
-// THE CURRENT MAJOR. A read that names no `major` reads the collection's CURRENT major when the
-// adapter names it, as a write that names none is stamped with the current one (WRITES-DESIGN.md,
-// "Schema versioning"). This service holds no catalog, so the streams say it: the adapter's private
-// and level streams name `currentMajor` in the `meta` of their `live` and `progress`
-// (src/server/registry-adapter/doc-streams.ts collectionFamily), the major the document store stamps
-// a write with, by its own rule (`currentCollectionMajors` over the approved manifest history).
+// THE CURRENT MAJOR. A read that names no `major` reads the collection's current major as the
+// adapter's private and level streams name it (`currentMajor` in their `live`/`progress` meta). The
+// rule lives in the adapter: `currentCollectionMajors`, the major the store stamps a write with.
 //
-// A read with no major opens its stream at a GUESS, the major the streams last named for the
-// collection on this replica (majorHints), else 1, and reads it unfloored:
+//   - The read opens at a GUESS: the major the streams last named for the collection on this replica
+//     (majorHints, bounded), else 1.
+//   - A stream naming another major moves the read there, once; the read is then answered at that
+//     major whatever its stream names. Separately, an empty, unnamed private stream at a hinted major
+//     other than 1 (what the adapter sends for a major it does not resolve) is checked against @v1,
+//     which keeps or drops the hint; level streams drop it on `not_resolved`.
+//   - A stream naming no major is answered at the guess, never refused, so app-data-go and the
+//     adapter ship and roll back independently.
+//   - A write naming no major is acknowledged at the same guess (writes.Forwarder.UseImpliedMajor),
+//     so the read-back's floor finds the acknowledgement on the stream the read opens.
+//   - A read that moves releases only the streams it opened (session.Lease).
 //
-//   - the stream names the guess: the read is answered at it (under its floor, when it has one);
-//   - it names another major: the hint becomes that major and the read is made once more there,
-//     and answered there whatever that stream names (a major approved between the two reads moves
-//     the hint again, for the next read). Never a third stream;
-//   - it names none (an adapter that does not send `currentMajor`, a refused viewer, or two level
-//     streams naming different majors): the read is answered at the guess. Never a refusal: either
-//     service can ship, or roll back, without the other.
-//
-// The hint is never trusted, only tried: a stream that names another major moves the read and the
-// hint. A newly approved major therefore corrects it at the next read of the collection: the
-// adapter re-reads every stream of a collection whose schema family changed and names the new major
-// in a `progress`. A hinted major the adapter no longer resolves drops the hint: level streams end
-// `not_resolved`; a private stream it does not resolve is empty and names nothing, so an empty,
-// unnamed private stream at a hinted major other than 1 asks major 1 (which every collection has):
-// one naming the hinted major keeps the hint (this viewer's stream is just empty), anything else
-// drops it and the read continues from major 1. A viewer the adapter refuses also drops it (both
-// streams name nothing): the next read relearns it. The hints are bounded (majorHintsMax; past it
-// they are all dropped and relearned).
-//
-// A read that moves releases the streams its guess OPENED (their session.Lease, which closes a
-// stream only while no other read has taken it), so a cold hint does not hold two majors' streams
-// against the caps. A stream the read joined (another reader's, or a level stream another viewer
-// opened) is never released by it.
-//
-// Each decision is counted (app_data_implied_major_total, by outcome: metrics.ImpliedMajorOutcomes):
-// `matched` (the stream named the guess), `moved` (it named another major), `unnamed` (it named
-// none: answered at the guess), and `hint_dropped` (a hinted major the adapter no longer resolves).
-//
-// ONE RULE for the major a request that names none uses: a write's acknowledgement is held at the
-// same guess (writes.Forwarder.UseImpliedMajor, set from majorHints.guess by Handler), so the
-// read-back's floor finds it on the stream the read opens.
-//
-// An explicit `?major=N` is read at N, with no meta check.
+// An explicit `?major=N` is read at N, with no meta check. Outcomes are counted: metrics.go.
 
 // majorHintsMax bounds the collections whose current major is remembered.
 const majorHintsMax = 10_000

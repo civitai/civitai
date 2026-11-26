@@ -62,11 +62,9 @@
  * usage row was wiped: an app deleted and restored), and the stream is `cursor_expired`, at resume
  * and mid-stream, as the public feed's is.
  *
- * THE CURRENT MAJOR. Beside the head, a served stream's `meta` names the collection's current
- * major, `currentMajor` (`CollectionStream.currentMajor`): on `live`, as the first poll resolved it, then in
- * a `progress` whenever a poll resolves another (a major approved since). A stream that holds
- * nothing names none. app-data-go reads it to answer a read that names no major at the current one
- * (`apps/app-data-go/internal/api/major.go`).
+ * THE CURRENT MAJOR. Beside the head, a served stream's `meta` names `currentMajor`
+ * (`CollectionStream.currentMajor`): on `live`, as the first poll resolved it, then in a `progress`
+ * whenever a poll resolves another. A stream that holds nothing names none.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -554,9 +552,8 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const state = await guarded(() => load(schema, cursor, ctx.reader, audience));
       const first = await guarded(() => advance(schema, state, ctx.reader, audience));
       // `live` carries the head of the state the cursor names: what the consumer holds once it is
-      // live. The first poll's changes, and its head, follow it. Beside the head, the collection's
-      // current major as the first poll resolved it: a property of the collection now, not of the
-      // state, so a state saved before it was named still names it at once.
+      // live. The first poll's changes, and its head, follow it. Beside the head, `currentMajor` as
+      // the first poll resolved it.
       const liveMeta = privateMeta(state.head, first.current);
       return Object.assign(follow(schema, cursor, state, first, ctx, audience), {
         ...(liveMeta !== undefined ? { liveMeta } : {}),
