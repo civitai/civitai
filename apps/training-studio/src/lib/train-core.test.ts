@@ -1964,9 +1964,11 @@ describe('dataset maturity under the v2 rating', () => {
   it("refuses a blob this caller's HEAD could not read rather than use its stored rating", async () => {
     uploadRatings({ 'theirs-1': null });
     const read = vi.fn(async () => new Map([['theirs-1', { mature: true }]]));
+    const before = submitWorkflow.mock.calls.length;
     await expect(
       submitWith(ratingAt(1, {}, read), { items: items('theirs-1') })
     ).rejects.toBeInstanceOf(DatasetUnreadableError);
+    expect(submitWorkflow.mock.calls.length).toBe(before);
   });
 
   it('keep training counts an unstamped source under the v2 rating', async () => {

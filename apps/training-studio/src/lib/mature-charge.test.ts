@@ -47,7 +47,6 @@ describe('matureSpend', () => {
 });
 
 describe('datasetCharge', () => {
-  // [mature, failed, pricedMature, spendsGreen] → charge: every combination.
   const table: [number, number, boolean, boolean, ReturnType<typeof datasetCharge>][] = [
     [0, 0, false, false, 'not-mature'],
     [0, 0, false, true, 'not-mature'],

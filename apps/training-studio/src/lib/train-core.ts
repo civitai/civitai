@@ -951,7 +951,6 @@ async function buildContinuation(
   triggerWord: string;
   ecosystem: string;
   matureCount: number;
-  /** Source images whose HEAD failed in this count. */
   unreadable: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
