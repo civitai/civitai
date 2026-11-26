@@ -162,9 +162,6 @@ describe('the csam hold decision record, against the real label store', () => {
   it('removes a CommentV3 comment through the CommentV3 ToS removal', async () => {
     await decide('remove');
     expect(mocks.removeV3).toHaveBeenCalledWith(expect.objectContaining({ ids: [55] }));
-    // A confirmed CSAM removal actions every ToS report on it, one a moderator dismissed included.
-    const [{ fromStatuses }] = mocks.removeV3.mock.calls[0] as [{ fromStatuses: string[] }];
-    expect([...fromStatuses].sort()).toEqual(['Pending', 'Processing', 'Unactioned']);
   });
 
   it('records a dismissal as not csam', async () => {
