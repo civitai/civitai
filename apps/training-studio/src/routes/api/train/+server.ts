@@ -74,7 +74,15 @@ async function submit({ locals, request }: Parameters<RequestHandler>[0]) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
     if (err instanceof MatureRepriceError)
       error(409, { message: err.message, matureCount: err.matureCount });
-    if (err instanceof DatasetUnreadableError) error(503, err.message);
+    if (err instanceof DatasetUnreadableError) {
+      void logToAxiom({
+        name: 'training-studio-dataset-unreadable',
+        type: 'warning',
+        userId: locals.user.id,
+        unreadable: err.unreadable,
+      });
+      error(503, err.message);
+    }
     throwTextCheckHttpError(err);
     if (err instanceof FilesProcessingError)
       error(400, { message: err.message, code: FILES_PROCESSING_CODE });

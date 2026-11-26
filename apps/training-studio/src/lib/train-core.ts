@@ -825,7 +825,10 @@ export { DatasetUnreadableError, MatureRepriceError };
 const PROBE_CONCURRENCY = 8;
 const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
-const probeCache = new Map<string, { at: number; count: Promise<number> }>();
+const probeCache = new Map<
+  string,
+  { at: number; count: Promise<{ mature: number; failed: number }> }
+>();
 
 export interface MatureCount {
   images: number;
