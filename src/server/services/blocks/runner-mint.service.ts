@@ -147,7 +147,6 @@ export async function decideRunnerMint(
       runId,
       authorizationId: auth.id,
       appBlock,
-      // Within the headroom and the per-run max, both checked above.
       buzzBudget: request.amount,
     },
   };

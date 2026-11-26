@@ -99,6 +99,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS runner_run_attempts_one_live_per_run
   WHERE state IN ('reserved', 'submitting', 'unknown', 'submitted', 'settled');
 CREATE INDEX IF NOT EXISTS runner_run_attempts_user_client_created_idx
   ON runner_run_attempts (user_id, runner_client_id, created_at);
+-- Runs per period, and the foreign key to the authorization.
+CREATE INDEX IF NOT EXISTS runner_run_attempts_authorization_created_idx
+  ON runner_run_attempts (authorization_id, created_at);
 -- The sweeper and reconciler read attempts by state.
 CREATE INDEX IF NOT EXISTS runner_run_attempts_open_state_idx
   ON runner_run_attempts (state, updated_at)

@@ -249,7 +249,8 @@ export async function declineOffline(userId: number, clientId: string): Promise<
   if (!(await hasOfflineGrant(userId, clientId))) return;
   await offlineDb()
     .updateTable('OauthConsent')
-    .set({ offlineGrantedAt: null })
+    // The runner cap goes with the grant: a later grant must not inherit a cap nobody re-approved.
+    .set({ offlineGrantedAt: null, offlineBuzzLimit: null, offlineBuzzPeriod: null })
     .where('userId', '=', userId)
     .where('clientId', '=', clientId)
     .executeTakeFirst();

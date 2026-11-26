@@ -38,6 +38,9 @@ export function isRunnerMintRequest(body: unknown): boolean {
   return typeof body === 'object' && body !== null && Object.hasOwn(body, 'runner');
 }
 
+// checkFixedWindow, not claimRateLimitAttempt: these buckets key on an address and a client, not the
+// session user, and must not exempt moderators. The session mint beside it does the same.
+
 /** Per (runner client, user): a run needs one mint, so a burst is a bug or a replay. */
 const PER_USER_LIMIT = { max: 10, windowSeconds: 60 };
 /** Per address, before the credential is known. */

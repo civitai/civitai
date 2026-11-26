@@ -14,11 +14,13 @@
 --
 -- Dry run first: the same command with -v dry_run=1 rolls everything back at the end.
 -- Needs migration 20271204120000_recipe_runner_ledger applied. Refuses (and changes nothing) when:
---   - the client is not a runner client (Civitai-owned, confidential, consent screen on, no device flow);
+--   - the client is not a runner client (Civitai-owned, confidential, consent screen on, no device flow,
+--     access mode open);
 --   - the app block is not approved;
 --   - the user has no offline grant for the client;
 --   - max_amount_per_run x max_runs_per_period exceeds the offline cap, or the periods differ.
--- The cap columns are set only while they are still empty, so a cap the user set is never raised.
+--   - the consent already holds a cap other than the one passed.
+-- The cap columns are set only while they are still empty, so a cap already there is never replaced.
 
 \set ON_ERROR_STOP 1
 \if :{?dry_run}
@@ -58,7 +60,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM "OauthClient"
     WHERE id = v_client AND "userId" = -1 AND "isConfidential" AND NOT "skipConsent"
-      AND NOT ('device_code' = ANY(grants))
+      AND NOT ('device_code' = ANY(grants)) AND "accessMode" = 'open'
   ) THEN
     RAISE EXCEPTION 'client % is not a runner client', v_client;
   END IF;
@@ -76,7 +78,7 @@ BEGIN
     RAISE EXCEPTION 'client % is bound elsewhere or suspended', v_client;
   END IF;
 
-  -- Set the cap only while it is empty; a cap already there is the user's and is kept.
+  -- Set the cap only while it is empty; a different cap already there is refused below, never replaced.
   UPDATE "OauthConsent"
   SET "offlineBuzzLimit" = v_cap_limit, "offlineBuzzPeriod" = v_cap_period
   WHERE "userId" = v_user AND "clientId" = v_client
@@ -88,6 +90,10 @@ BEGIN
   FOR UPDATE;
   IF v_limit IS NULL THEN
     RAISE EXCEPTION 'user % has no offline grant (or cap) for client %', v_user, v_client;
+  END IF;
+  IF v_limit <> v_cap_limit OR v_limit_period <> v_cap_period THEN
+    RAISE EXCEPTION 'offline cap is already % per %, not the % per % passed; clear it deliberately first',
+      v_limit, v_limit_period, v_cap_limit, v_cap_period;
   END IF;
   IF v_period <> v_limit_period THEN
     RAISE EXCEPTION 'authorization period % differs from the offline cap period %', v_period, v_limit_period;

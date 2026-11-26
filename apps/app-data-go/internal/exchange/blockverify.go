@@ -249,7 +249,7 @@ func checkClaims(c map[string]any, now int64, anonymous bool) error {
 	if _, present := c["privateRunAudience"]; present || !absentOrFalse(c, "privateRun") {
 		return localRefusal("private run")
 	}
-	// A recipe-runner token only submits a workflow on the site; never exchanged or read with here.
+	// A runner token (mintOrigin) is only valid for a site workflow submit; refuse it here.
 	if _, present := c["mintOrigin"]; present {
 		return localRefusal("runner token")
 	}

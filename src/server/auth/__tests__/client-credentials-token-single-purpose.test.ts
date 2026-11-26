@@ -55,6 +55,8 @@ const { sessionClient } = await import('~/server/auth/session-client');
 const { SYSTEM_CLIENT_OWNER_ID, standingRunId } = await import(
   '~/server/services/blocks/runner-mint.service'
 );
+const { FORCED_SFW_CEILING } = await import('~/server/services/blocks/dev-scoped-mint.service');
+const { CONSENT_SPEND_SCOPE } = await import('~/server/services/blocks/scope-grant.service');
 const { getServerAuthSession } = await import('~/server/auth/get-server-auth-session');
 const { createContext } = await import('~/server/createContext');
 const { oauthClientRouter } = await import('~/server/routers/oauth-client.router');
@@ -274,7 +276,8 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     appBlocksOn: () => true,
     offlineGrantOn: async () => true,
     reads: async () => passingReads(),
-    viewerLevel: async () => 1,
+    // Not the forced ceiling, so a swapped claim shows.
+    viewerLevel: async (userId) => (userId === OWNER ? 1 : 0),
     ...over,
   });
   const mint = async (token: string | null, body: unknown, deps = passingDeps()) => {
@@ -314,6 +317,18 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     expect(r.body.runId).toBe(claims.runId);
     expect((claims.exp as number) - (claims.iat as number)).toBe(180);
     expect(claims.buzzBudget).toBe(10);
+    expect(claims.scopes).toEqual([CONSENT_SPEND_SCOPE]);
+    expect(claims.maxBrowsingLevel).toBe(FORCED_SFW_CEILING);
+    expect(claims.viewerBrowsingLevel).toBe(1);
+    expect(FORCED_SFW_CEILING).not.toBe(1);
+  });
+
+  it('refuses a runner client over its shared per-client limit', async () => {
+    // Per-IP admits; the per-client counter is over 600.
+    redisMock.redis.incrBy.mockResolvedValueOnce(1).mockResolvedValueOnce(601);
+    const r = await mint(RUNNER_TOKEN, body);
+    expect(r.statusCode).toBe(429);
+    expect(r.body).toMatchObject({ rateLimit: { id: 'apps.block-token-runner-mint' } });
   });
 
   it('refuses a caller over the per-user limit, with Retry-After', async () => {
@@ -335,6 +350,10 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   it('refuses a muted user, and a system account', async () => {
     sessionUser({ muted: true });
     expect((await mint(RUNNER_TOKEN, body)).body.reason).toBe('user_restricted');
+    // A banned user is refused one step earlier: the bearer lookup resolves them to no one.
+    sessionUser({ bannedAt: new Date() });
+    const banned = await mint(RUNNER_TOKEN, body);
+    expect([banned.statusCode, banned.body.token]).toEqual([401, undefined]);
     // Its own gate passes a system account with write keys allowed; the mint still refuses it.
     sessionUser({ meta: { systemAccount: true, allowModeratorWriteKeys: true } });
     dbMock.dbWrite.user.findUnique.mockResolvedValue({
