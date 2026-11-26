@@ -44,9 +44,10 @@ vi.mock('@civitai/db/kysely', () => {
   return { sql };
 });
 
+// The module reads through dbRead; these tests pass their own query path, so the real client is never built.
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { readMarketSnapshot, snapshotReader, RETRY_AFTER_MS, TTL_MS } =
+const { marketHandler, readMarketSnapshot, snapshotReader, RETRY_AFTER_MS, TTL_MS } =
   await import('../market-overview');
 const { assertFloor, marketView } = await import('$lib/analytics/market-overview');
 
@@ -254,5 +255,42 @@ describe('market overview snapshot reader', () => {
     });
     await Promise.all([reader(), reader(), reader()]);
     expect(calls).toBe(1);
+  });
+});
+
+describe('market overview endpoint', () => {
+  const call = (handler: ReturnType<typeof marketHandler>) =>
+    handler({
+      locals: { user: { id: 1 } },
+      url: new URL('http://x/analytics/base-models/market'),
+    } as never);
+
+  it('answers 404 when the flag is off for the viewer, before reading anything', async () => {
+    let reads = 0;
+    const handler = marketHandler(
+      async () => false,
+      async () => (reads++, snapshot0())
+    );
+    await expect(call(handler)).rejects.toMatchObject({ status: 404 });
+    expect(reads).toBe(0);
+  });
+
+  it('answers 503 with no snapshot, and the view otherwise', async () => {
+    await expect(
+      call(
+        marketHandler(
+          async () => true,
+          async () => null
+        )
+      )
+    ).rejects.toMatchObject({ status: 503 });
+    const res = (await call(
+      marketHandler(
+        async () => true,
+        async () => snapshot0()
+      )
+    )) as Response;
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect((await res.json()).paid.versions).toBe(22);
   });
 });

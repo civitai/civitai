@@ -113,7 +113,6 @@ function paidAccessToConfig(timeframeDays: number | null, terms: unknown): PaidA
     timeframe: timeframeDays ?? 0,
     permanent: timeframeDays == null,
     accessPrice: accessPrice(t),
-    // A generation-only gate has no separate generation price.
     generationPrice: t.download ? paidGen?.price : undefined,
     freeGeneration: !!gen && 'free' in gen,
     acceptsBlueBuzz: acceptsBlueBuzz(t),

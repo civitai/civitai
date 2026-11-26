@@ -1,3 +1,4 @@
+import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import { sfwBrowsingLevelsFlag } from '@civitai/shared';
 import { baseModelGroups, baseModels } from '@civitai/shared/basemodel.constants';
@@ -16,6 +17,8 @@ import {
   namedEcosystems,
   type FreeCellRow,
   type GatedRow,
+  marketView,
+  parseMarketFilters,
   type MarketSnapshot,
 } from '$lib/analytics/market-overview';
 
@@ -61,8 +64,6 @@ export async function readFreeCells(
     v as (
       select mv."modelId",
         count(*)::int as versions,
-        -- Hash-aggregated, no sort: a model's versions almost always share one ecosystem, and when they don't this
-        -- picks one deterministically rather than the newest.
         max(mv."baseModel") as base,
         bool_or(pa."entityId" is not null) as gated
       from "ModelVersion" mv
@@ -159,3 +160,18 @@ export function snapshotReader(
 }
 
 export const getMarketSnapshot = snapshotReader(() => marketCache.get({}));
+
+/** GET `/analytics/base-models/market`: 404 unless the flag is on for the viewer, 503 with no snapshot yet. */
+export const marketHandler =
+  (
+    enabled: (user: SessionUser) => Promise<boolean>,
+    snapshot: () => Promise<MarketSnapshot | null>
+  ): RequestHandler =>
+  async ({ locals, url }) => {
+    if (!(await enabled(locals.user))) throw error(404, 'Not found');
+    const s = await snapshot();
+    if (!s) throw error(503, 'The market overview is unavailable right now.');
+    return json(marketView(s, parseMarketFilters(url.searchParams)), {
+      headers: { 'cache-control': 'private, no-store' },
+    });
+  };

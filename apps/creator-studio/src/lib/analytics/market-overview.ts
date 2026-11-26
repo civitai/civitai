@@ -11,7 +11,7 @@ export const PRICE_BANDS = [0, 100, 250, 500, 1000, 2500] as const;
 
 export const OTHER_ECOSYSTEM = 'Other';
 
-// Model types with a bucket of their own; every other type is 'Other'. The ungated SQL reads the same list.
+// Model types with a bucket of their own; every other type is 'Other'. The free-side SQL reads the same list.
 export const NAMED_TYPES = ['LORA', 'Checkpoint'] as const;
 
 export type Rating = 'sfw' | 'nsfw';
