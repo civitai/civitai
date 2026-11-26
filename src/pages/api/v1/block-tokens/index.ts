@@ -18,6 +18,10 @@ export const config = {
 import { isSystemAccountMeta } from '@civitai/auth';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
+import {
+  handleRunnerMint,
+  isRunnerMintRequest,
+} from '~/server/services/blocks/runner-mint-handler';
 import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -1134,6 +1138,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // divergence). Removing it lets the per-user gate be authoritative: a mod
   // passes, a non-mod / anon caller is still refused (403) before any DB read.
   // The cheap per-IP rate limit below still runs first to throttle probing.
+
+  // A recipe runner's mint takes its own path, before the per-IP limit: one runner address
+  // serves many users, and it authenticates with its OAuth token, never a session.
+  if (isRunnerMintRequest(req.body)) return handleRunnerMint(req, res);
 
   const parsed = requestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {

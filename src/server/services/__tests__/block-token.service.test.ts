@@ -676,3 +676,58 @@ describe('BlockTokenService.sign — private-run claim production [REG]', () => 
     expect(claims.privateRunAudience).toBeUndefined();
   });
 });
+
+describe('BlockTokenService.sign — runner tokens', () => {
+  const base = {
+    userId: 8802,
+    blockId: 'runner-fixture',
+    appId: 'appblk-runner-fixture',
+    appBlockId: 'apb_runner',
+    blockInstanceId: 'rbi_runner',
+    scopes: ['ai:write:budgeted'],
+    ctx: { entityType: 'none' },
+    buzzBudget: 40,
+  };
+  const claimsOf = (token: string) =>
+    JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as Record<
+      string,
+      unknown
+    >;
+
+  it('stamps the marker and run id, lives 180 seconds, and the verifier admits it only on opt-in', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const { verifyBlockToken } = await import('~/server/middleware/block-scope.middleware');
+    const { token } = await BlockTokenService.sign({ ...base, runner: { runId: 'run_abc' } });
+    const claims = claimsOf(token);
+    expect(claims.mintOrigin).toBe('runner');
+    expect(claims.runId).toBe('run_abc');
+    expect((claims.exp as number) - (claims.iat as number)).toBe(180);
+    expect(await verifyBlockToken(token)).toBeNull();
+    expect((await verifyBlockToken(token, { admitRunner: true }))?.runId).toBe('run_abc');
+  });
+
+  it('CONTROL: an ordinary token carries neither claim', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const claims = claimsOf((await BlockTokenService.sign(base)).token);
+    expect(claims.mintOrigin).toBeUndefined();
+    expect(claims.runId).toBeUndefined();
+  });
+
+  it('refuses to sign a runner token for an anonymous subject or with dev, review or private-run', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const runner = { runId: 'run_abc' };
+    for (const over of [
+      { userId: null },
+      { dev: true },
+      { reviewRunForReal: true },
+      { privateRun: true },
+    ]) {
+      await expect(
+        BlockTokenService.sign({ ...base, ...over, runner } as Parameters<
+          typeof BlockTokenService.sign
+        >[0]),
+        JSON.stringify(over)
+      ).rejects.toThrow(/runner token/);
+    }
+  });
+});

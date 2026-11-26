@@ -9,6 +9,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as KeyGenerator from '~/server/utils/key-generator';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type { RunnerMintReads } from '@civitai/db-queries/recipe-runner';
+import type { RunnerMintDeps } from '~/server/services/blocks/runner-mint-handler';
 
 /**
  * A client-credentials token is single-purpose: it is only accepted on the catalog endpoints.
@@ -49,6 +51,10 @@ vi.mock('~/server/services/orchestrator/civitai', () => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+const { sessionClient } = await import('~/server/auth/session-client');
+const { SYSTEM_CLIENT_OWNER_ID, standingRunId } = await import(
+  '~/server/services/blocks/runner-mint.service'
+);
 const { getServerAuthSession } = await import('~/server/auth/get-server-auth-session');
 const { createContext } = await import('~/server/createContext');
 const { oauthClientRouter } = await import('~/server/routers/oauth-client.router');
@@ -210,6 +216,165 @@ describe('getSessionFromBearerToken and a runner token', () => {
     await AuthedEndpoint(handler)(req(RUNNER_TOKEN) as never, r);
     expect(r.statusCode).toBe(401);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('the runner mint path of /api/v1/block-tokens', () => {
+  // The fixed-window limits fail closed; here they admit, so the refusal under test decides.
+  beforeEach(() => {
+    redisMock.redis.incrBy.mockResolvedValue(1);
+  });
+  const DAY = 86_400_000;
+  const RUNNER_CLIENT = 'recipe-runner';
+  const authorization = () => ({
+    id: 'rra_x',
+    userId: OWNER,
+    runnerClientId: RUNNER_CLIENT,
+    kind: 'standing',
+    runId: null,
+    maxAmountPerRun: 50,
+    maxRunsPerPeriod: 3,
+    period: 'day',
+    createdAt: new Date(Date.now() - 5 * DAY),
+    expiresAt: new Date(Date.now() + 20 * DAY),
+    revokedAt: null,
+  });
+  /** Every read answers the passing case for the runner token's client and owner only. */
+  const passingReads = (): RunnerMintReads => ({
+    client: async (clientId) =>
+      clientId === RUNNER_CLIENT
+        ? {
+            userId: SYSTEM_CLIENT_OWNER_ID,
+            isConfidential: true,
+            skipConsent: false,
+            grants: ['authorization_code', 'refresh_token'],
+          }
+        : null,
+    binding: async (clientId) =>
+      clientId === RUNNER_CLIENT ? { appBlockId: 'apb_runner', status: 'active' } : null,
+    appBlock: async (id) =>
+      id === 'apb_runner'
+        ? { id, appId: 'app_runner', blockId: 'runner-fixture', status: 'approved' }
+        : null,
+    consent: async (userId, clientId) =>
+      userId === OWNER && clientId === RUNNER_CLIENT
+        ? {
+            offlineGrantedAt: new Date(Date.now() - 6 * DAY),
+            offlineBuzzLimit: 200,
+            offlineBuzzPeriod: 'week',
+          }
+        : null,
+    authorization: async (id) => (id === 'rra_x' ? authorization() : null),
+    hasLiveAttempt: async () => false,
+    capUsed: async () => 0,
+    runsSince: async () => 0,
+  });
+  const passingDeps = (over: Partial<RunnerMintDeps> = {}): RunnerMintDeps => ({
+    appBlocksOn: () => true,
+    offlineGrantOn: async () => true,
+    reads: async () => passingReads(),
+    viewerLevel: async () => 1,
+    ...over,
+  });
+  const mint = async (token: string | null, body: unknown, deps = passingDeps()) => {
+    const { handleRunnerMint } = await import('~/server/services/blocks/runner-mint-handler');
+    const r = res();
+    const request = {
+      ...req(token ?? ''),
+      method: 'POST',
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body,
+    };
+    await handleRunnerMint(request as never, r, deps);
+    return r as typeof r & { body: { reason?: string; token?: string; runId?: string } };
+  };
+  const body = { runner: { authorizationId: 'rra_x', runKey: 'trigger-1', amount: 10 } };
+  const claimsOf = (token: string) =>
+    JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as Record<
+      string,
+      unknown
+    >;
+  const sessionUser = (over: Record<string, unknown>) =>
+    vi.mocked(sessionClient.getSessionUserById).mockResolvedValueOnce({
+      id: OWNER,
+      username: 'owner',
+      isModerator: true,
+      bannedAt: null,
+      permissions: [],
+      ...over,
+    } as never);
+
+  it('mints a 180-second runner token for the run, carrying the requested budget', async () => {
+    const r = await mint(RUNNER_TOKEN, body);
+    expect(r.statusCode).toBe(200);
+    const claims = claimsOf(r.body.token!);
+    expect(claims.mintOrigin).toBe('runner');
+    expect(claims.runId).toBe(standingRunId('rra_x', 'trigger-1'));
+    expect(r.body.runId).toBe(claims.runId);
+    expect((claims.exp as number) - (claims.iat as number)).toBe(180);
+    expect(claims.buzzBudget).toBe(10);
+  });
+
+  it('refuses a caller over the per-user limit, with Retry-After', async () => {
+    redisMock.redis.incrBy.mockResolvedValue(11);
+    const r = await mint(RUNNER_TOKEN, body);
+    expect(r.statusCode).toBe(429);
+    expect(r.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+  });
+
+  it('refuses a muted user, and a system account', async () => {
+    sessionUser({ muted: true });
+    expect((await mint(RUNNER_TOKEN, body)).body.reason).toBe('user_restricted');
+    // Its own gate passes a system account with write keys allowed; the mint still refuses it.
+    sessionUser({ meta: { systemAccount: true, allowModeratorWriteKeys: true } });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      meta: { allowModeratorWriteKeys: true },
+      isModerator: false,
+      roles: [],
+    });
+    expect((await mint(RUNNER_TOKEN, body)).body.reason).toBe('system_account');
+  });
+
+  it('refuses while the apps flag or the offline-grant flag is off', async () => {
+    const apps = await mint(RUNNER_TOKEN, body, passingDeps({ appBlocksOn: () => false }));
+    expect([apps.statusCode, apps.body.reason]).toEqual([403, 'apps_flag']);
+    const offline = await mint(
+      RUNNER_TOKEN,
+      body,
+      passingDeps({ offlineGrantOn: async () => false })
+    );
+    expect([offline.statusCode, offline.body.reason]).toEqual([403, 'offline_flag']);
+  });
+
+  it('answers 503 when its reads fail, and 403 with the reason when the decision refuses', async () => {
+    const down = await mint(
+      RUNNER_TOKEN,
+      body,
+      passingDeps({
+        reads: async () => ({ ...passingReads(), consent: () => Promise.reject(new Error('db')) }),
+      })
+    );
+    expect([down.statusCode, down.body.reason]).toEqual([503, 'unavailable']);
+    const refused = await mint(RUNNER_TOKEN, { runner: { ...body.runner, amount: 51 } });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.body.token).toBeUndefined();
+  });
+
+  it('refuses a request with no bearer (a session cookie never reaches it)', async () => {
+    expect((await mint(null, body)).statusCode).toBe(401);
+  });
+
+  it('refuses an ordinary OAuth token, and a client-credentials one', async () => {
+    expect((await mint(ORDINARY_TOKEN, body)).statusCode).toBe(401);
+    expect((await mint(CATALOG_TOKEN, body)).statusCode).toBe(401);
+  });
+
+  it('refuses a malformed runner body before reading the credential', async () => {
+    const bad = { runner: { authorizationId: 'rra_x', runKey: 'has spaces', amount: 10 } };
+    expect((await mint(RUNNER_TOKEN, bad)).statusCode).toBe(400);
+    expect((await mint(RUNNER_TOKEN, { runner: { ...body.runner, amount: 0 } })).statusCode).toBe(
+      400
+    );
   });
 });
 

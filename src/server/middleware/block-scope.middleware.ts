@@ -36,6 +36,7 @@ import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
   DEV_TOKEN_LIFETIME_SECONDS,
+  RUNNER_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import {
@@ -223,6 +224,8 @@ export interface BlockTokenClaims {
    * caller opts in with `admitRunner`, and only `submitWorkflow` does.
    */
   mintOrigin?: 'runner';
+  /** The recipe run a runner token was minted for; present exactly when `mintOrigin` is. */
+  runId?: string;
 }
 
 /**
@@ -973,6 +976,7 @@ const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-d
 // (block-token.service.ts DEV_TOKEN_LIFETIME_SECONDS) so the verify cap can
 // never silently desync from the lifetime the signer actually stamps.
 const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
+const MAX_TOKEN_AGE_RUNNER_SECONDS = RUNNER_TOKEN_LIFETIME_SECONDS;
 const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
 
 export interface VerifyBlockTokenOptions {
@@ -1133,11 +1137,13 @@ export async function verifyBlockToken(
         // (b) Must be a member of the closed set.
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
+      if (claims.runId !== undefined && claims.mintOrigin === undefined) return null;
       if (claims.mintOrigin !== undefined) {
         // Runner tokens carry none of the dev/review/private-run/anonymous markers.
         if (claims.mintOrigin !== 'runner') return null;
         if (options.admitRunner !== true) return null;
         if (claims.sub === ANON_SUBJECT) return null;
+        if (typeof claims.runId !== 'string' || claims.runId === '') return null;
         if (
           claims.dev !== undefined ||
           claims.reviewRunForReal !== undefined ||
@@ -1155,7 +1161,11 @@ export async function verifyBlockToken(
       const nowSeconds = Math.floor(Date.now() / 1000);
       const ageSeconds = nowSeconds - claims.iat;
       const ageCapSeconds =
-        claims.dev === true ? MAX_TOKEN_AGE_DEV_SECONDS : MAX_TOKEN_AGE_DEFAULT_SECONDS;
+        claims.dev === true
+          ? MAX_TOKEN_AGE_DEV_SECONDS
+          : claims.mintOrigin === 'runner'
+          ? MAX_TOKEN_AGE_RUNNER_SECONDS
+          : MAX_TOKEN_AGE_DEFAULT_SECONDS;
       if (ageSeconds > ageCapSeconds + MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS) {
         return null;
       }

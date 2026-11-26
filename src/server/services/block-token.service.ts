@@ -16,6 +16,7 @@ export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';
 // off the SAME constant the signer uses — if these desynced, dev tokens between
 // the two values would silently 401 (fail-closed but confusing).
 export const DEV_TOKEN_LIFETIME_SECONDS = BLOCK_TOKEN_LIFETIMES_SECONDS.dev;
+export const RUNNER_TOKEN_LIFETIME_SECONDS = BLOCK_TOKEN_LIFETIMES_SECONDS.runner;
 const RATE_LIMIT_WINDOW_SECONDS = BLOCK_TOKEN_MINT_RATE_LIMIT.windowSeconds;
 const RATE_LIMIT_MAX = BLOCK_TOKEN_MINT_RATE_LIMIT.max;
 
@@ -279,6 +280,12 @@ export interface SignBlockTokenInput {
    * owner.
    */
   privateRunAudience?: PrivateRunAudience;
+  /**
+   * A recipe-runner token for one run: stamps `mintOrigin: 'runner'` and `runId`, and lives
+   * the `runner` lifetime. Only for a signed-in subject, and never with `dev`,
+   * `reviewRunForReal` or `privateRun` (the verifier refuses those combinations too).
+   */
+  runner?: { runId: string };
 }
 
 export interface SignBlockTokenResult {
@@ -325,7 +332,18 @@ export class BlockTokenService {
         : input.scopes.some(isSettingsScope)
         ? BLOCK_TOKEN_LIFETIMES_SECONDS.settings
         : BLOCK_TOKEN_LIFETIMES_SECONDS.default;
-    const exp = iat + lifetime;
+    if (
+      input.runner &&
+      (input.userId == null ||
+        input.dev === true ||
+        input.reviewRunForReal === true ||
+        input.privateRun === true)
+    ) {
+      throw new Error(
+        'block token: a runner token needs a user subject and no dev/review/private-run claim'
+      );
+    }
+    const exp = iat + (input.runner ? BLOCK_TOKEN_LIFETIMES_SECONDS.runner : lifetime);
     // Built through the shared encoder rather than open-coded. This template used to be
     // written here AND in `block-revocation.service` (whose docblock claimed to be "THE
     // ONE PLACE this format is written on the WRITE side" while this line existed), and
@@ -364,6 +382,10 @@ export class BlockTokenService {
     // true so a non-dev token never carries the claim (absent → 15min cap).
     if (input.dev === true) {
       claims.dev = true;
+    }
+    if (input.runner) {
+      claims.mintOrigin = 'runner';
+      claims.runId = input.runner.runId;
     }
     // RUN-FOR-REAL marker — stamped ONLY for a mod's consent-gated review
     // run-for-real token. Read (after signature validation) by the runtime spend

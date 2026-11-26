@@ -249,6 +249,10 @@ func checkClaims(c map[string]any, now int64, anonymous bool) error {
 	if _, present := c["privateRunAudience"]; present || !absentOrFalse(c, "privateRun") {
 		return localRefusal("private run")
 	}
+	// A recipe-runner token only submits a workflow on the site; never exchanged or read with here.
+	if _, present := c["mintOrigin"]; present {
+		return localRefusal("runner token")
+	}
 	if float64(now)-iat > blockMaxAge+blockClockSkew {
 		return localRefusal("too old")
 	}

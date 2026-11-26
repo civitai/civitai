@@ -26,7 +26,7 @@ import {
 export type BearerTokenOptions = {
   /** Accept a client-credentials token; only the catalog endpoints pass this. */
   allowClientCredentialsOnly?: boolean;
-  /** Accept a recipe-runner token. Only a runner mint path may pass this; a ledger test lists callers. */
+  /** Accept a recipe-runner token. Only the runner mint passes this (guard `no-runner-mint-bearer-outside-mint`). */
   allowRunnerMint?: boolean;
 };
 
