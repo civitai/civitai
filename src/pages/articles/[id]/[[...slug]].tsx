@@ -28,6 +28,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
 import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
@@ -216,6 +217,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isOwner = isActualOwner || isModerator;
 
   const disableArticles = !features.articles && !article?.user.isModerator;
+
+  const { status: scanStatus } = useArticleScanStatus({
+    articleId: id,
+    enabled: isOwner && article?.ingestion === ArticleIngestionStatus.Error,
+  });
 
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
@@ -597,7 +603,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           >
             {article.ingestion === ArticleIngestionStatus.Blocked
               ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-              : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+              : `This article is hidden from the public because its safety scan could not finish${
+                  scanStatus?.errorReason ? `: ${scanStatus.errorReason}` : ''
+                }. We retry automatically; you can also rescan the affected images, or replace them.`}
           </AlertWithIcon>
         ) : null
       }

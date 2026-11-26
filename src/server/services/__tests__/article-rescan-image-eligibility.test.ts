@@ -299,7 +299,7 @@ describe('rescanArticleImage', () => {
   );
 });
 
-describe('retryArticleErrorImages, the reconcile job\'s retry round', () => {
+describe("retryArticleErrorImages, the reconcile job's retry round", () => {
   const FAILED = image(30, { ingestion: 'Error' });
   const MISSING = image(31, { ingestion: 'NotFound' });
   const retry = (over: Partial<Parameters<typeof retryArticleErrorImages>[0]> = {}) =>

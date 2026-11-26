@@ -1,4 +1,6 @@
-import { dbRead } from '~/server/db/client';
+import { sql } from 'kysely';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
 import { createJob } from '~/server/jobs/job';
 import {
   TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
@@ -11,8 +13,15 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 import {
   articleHasText,
   articleTextVerdictMatch,
+  retryArticleErrorImages,
   updateArticleImageScanStatus,
 } from '~/server/services/article.service';
+import {
+  ingestionErrorStep,
+  readIngestionErrorState,
+  textCheckSpentRetries,
+  type ArticleIngestionErrorState,
+} from '~/server/services/article-ingestion.helpers';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -33,6 +42,12 @@ const FORCED_RESUBMITS_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const FETCH_LIMIT = 500;
 const RECONCILE_CONCURRENCY = 5;
+
+// Error articles are few, and most ticks act on none of them; the caps keep a mass failure (919
+// images in five minutes on 2026-10-29) from coming back to the scanner in one tick.
+const ERROR_FETCH_LIMIT = 2000;
+const ERROR_ARTICLES_PER_TICK = 25;
+const ERROR_IMAGES_PER_TICK = 200;
 
 type StuckArticleRow = { id: number };
 
@@ -96,8 +111,17 @@ export const articleIngestionReconcile = createJob(
       LIMIT ${FETCH_LIMIT}
     `;
 
+    const errorRetries = await retryErrorArticles(now).catch((e) => {
+      logToAxiom({
+        name: 'article-ingestion-reconcile',
+        type: 'error',
+        message: `error retries failed: ${(e as Error).message}`,
+      });
+      return null;
+    });
+
     if (!candidates.length) {
-      return { candidates: 0, advanced: 0, resubmitted: 0, stillStuck: 0, errors: 0 };
+      return { candidates: 0, advanced: 0, resubmitted: 0, stillStuck: 0, errors: 0, errorRetries };
     }
 
     let advanced = 0;
@@ -258,6 +282,175 @@ export const articleIngestionReconcile = createJob(
       skippedResubmits,
       stillStuck,
       errors,
+      errorRetries,
     };
   }
 );
+
+/** Writes the episode only while it is still the one that was read: a recompute may have ended it. */
+async function writeErrorState(
+  id: number,
+  state: ArticleIngestionErrorState,
+  expected: number | null
+) {
+  await kyselyWrite
+    .withoutPlugins()
+    .updateTable('Article')
+    .set({
+      metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${JSON.stringify(
+        state
+      )}::jsonb)`,
+    })
+    .where('id', '=', id)
+    .where(
+      expected === null
+        ? sql<boolean>`metadata->'ingestionError' IS NULL AND ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"`
+        : sql<boolean>`(metadata->'ingestionError'->>'enteredAt')::bigint = ${expected}`
+    )
+    .execute();
+}
+
+/**
+ * Published and Processing articles at ingestion Error: nothing else ever takes them out of it.
+ * Each episode gets a few retry rounds, spread over days (`INGESTION_ERROR_ROUND_DAYS`), then one
+ * `article-ingestion-error-exhausted` log for the moderators' monitor.
+ */
+async function retryErrorArticles(now: Date) {
+  const rows = await dbRead.article.findMany({
+    where: {
+      status: { in: [ArticleStatus.Published, ArticleStatus.Processing] },
+      ingestion: ArticleIngestionStatus.Error,
+    },
+    select: { id: true, metadata: true },
+    orderBy: { id: 'asc' },
+    take: ERROR_FETCH_LIMIT,
+  });
+  const due = rows
+    .map(({ id, metadata }) => {
+      const state = readIngestionErrorState(metadata);
+      return { id, state, step: ingestionErrorStep(state, now.getTime()) };
+    })
+    .filter(({ step }) => step !== 'wait' && step !== 'done')
+    .slice(0, ERROR_ARTICLES_PER_TICK);
+
+  const counts = {
+    candidates: due.length,
+    left: 0,
+    rounds: 0,
+    images: 0,
+    texts: 0,
+    deferred: 0,
+    exhausted: 0,
+    errors: 0,
+  };
+  let imageBudget = ERROR_IMAGES_PER_TICK;
+
+  for (const { id, state, step } of due) {
+    try {
+      if (step === 'exhaust' && state) {
+        await writeErrorState(id, { ...state, exhaustedAt: now.getTime() }, state.enteredAt);
+        counts.exhausted++;
+        logToAxiom({
+          name: 'article-ingestion-error-exhausted',
+          type: 'warning',
+          articleId: id,
+        });
+        continue;
+      }
+
+      // An input that recovered on its own (or a recompute that never ran) needs no retry.
+      await updateArticleImageScanStatus([id]);
+      // primary: read-after-write of the recompute above.
+      const article = await dbWrite.article.findUnique({
+        where: { id },
+        select: {
+          ingestion: true,
+          userId: true,
+          coverId: true,
+          bannerId: true,
+          title: true,
+          content: true,
+        },
+      });
+      if (!article || article.ingestion !== ArticleIngestionStatus.Error) {
+        counts.left++;
+        continue;
+      }
+
+      if (step === 'start') {
+        await writeErrorState(id, { enteredAt: now.getTime(), rounds: 0 }, null);
+        continue;
+      }
+      if (!state || imageBudget <= 0) continue;
+
+      const images = await retryArticleErrorImages({
+        article: {
+          id,
+          userId: article.userId,
+          coverId: article.coverId,
+          bannerId: article.bannerId,
+        },
+        // A missing blob rarely comes back: one try, in the first round.
+        includeNotFound: state.rounds === 0,
+        budget: imageBudget,
+        fullBudget: imageBudget === ERROR_IMAGES_PER_TICK,
+      });
+      if (images.deferred) {
+        counts.deferred++;
+        continue;
+      }
+      imageBudget -= images.sent;
+      counts.images += images.sent;
+
+      const moderation = articleHasText(article.title, article.content)
+        ? await dbRead.entityModeration.findUnique({
+            where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+            select: { status: true, retryCount: true },
+          })
+        : null;
+      if (textCheckSpentRetries(moderation)) {
+        await submitTextModerationOrScan({
+          entityType: 'Article',
+          entityId: id,
+          force: true,
+          xguard: () =>
+            submitTextModeration({
+              entityType: 'Article',
+              entityId: id,
+              content: articleModerationText(article.title, article.content),
+              labels: ['nsfw'],
+              priority: 'low',
+              forceRescan: true,
+              rearmRetries: true,
+            }),
+        });
+        counts.texts++;
+      }
+
+      await writeErrorState(
+        id,
+        { ...state, rounds: state.rounds + 1, lastRoundAt: now.getTime() },
+        state.enteredAt
+      );
+      counts.rounds++;
+      logToAxiom({
+        name: 'article-ingestion-reconcile',
+        type: 'info',
+        articleId: id,
+        action: 'error-retry-round',
+        message: `round ${state.rounds + 1}: ${images.sent} image(s)${
+          textCheckSpentRetries(moderation) ? ', text check' : ''
+        } sent again`,
+      });
+    } catch (e) {
+      counts.errors++;
+      logToAxiom({
+        name: 'article-ingestion-reconcile',
+        type: 'error',
+        message: `error retry failed: ${(e as Error).message}`,
+        articleId: id,
+      });
+    }
+  }
+  return counts;
+}

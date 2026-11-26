@@ -1,4 +1,8 @@
-import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
+import {
+  TEXT_MODERATION_RETRY_LIMIT,
+  TEXT_MODERATION_RETRY_STATUSES,
+} from '~/server/jobs/text-moderation-retry.constants';
+import { ArticleIngestionStatus, type EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { removeTags } from '~/utils/string-helpers';
 
 export type ArticleIngestionInputs = {
@@ -114,8 +118,23 @@ export function ingestionErrorStep(
   now: number
 ): 'start' | 'wait' | 'round' | 'exhaust' | 'done' {
   if (!state) return 'start';
-  if (state.rounds >= INGESTION_ERROR_ROUND_DAYS.length) return state.exhaustedAt ? 'done' : 'exhaust';
+  if (state.rounds >= INGESTION_ERROR_ROUND_DAYS.length)
+    return state.exhaustedAt ? 'done' : 'exhaust';
   return now >= state.enteredAt + INGESTION_ERROR_ROUND_DAYS[state.rounds] * DAY_MS
     ? 'round'
     : 'wait';
+}
+
+/**
+ * Whether a retry round sends the article's text check again: only one that failed and spent the
+ * retry job's attempts. A check that succeeded is never sent again.
+ */
+export function textCheckSpentRetries(
+  moderation: { status: EntityModerationStatus; retryCount: number } | null
+) {
+  return (
+    !!moderation &&
+    TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status) &&
+    moderation.retryCount >= TEXT_MODERATION_RETRY_LIMIT
+  );
 }

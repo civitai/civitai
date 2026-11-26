@@ -138,7 +138,10 @@ describe('an Error episode starting', () => {
   });
 
   it('says nothing to the owner while another image awaits review', async () => {
-    await seed({ cover: { ingestion: 'Scanned', needsReview: 'minor' }, content: { ingestion: 'Error' } });
+    await seed({
+      cover: { ingestion: 'Scanned', needsReview: 'minor' },
+      content: { ingestion: 'Error' },
+    });
 
     const after = await recompute();
 

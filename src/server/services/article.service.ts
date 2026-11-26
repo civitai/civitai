@@ -2675,6 +2675,8 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
   };
   textModeration: ArticleTextModerationStatus;
+  /** Why the scan could not finish, in the owner's words; null when nothing failed. */
+  errorReason: string | null;
 }> {
   const [connections, article, moderation] = await Promise.all([
     dbRead.imageConnection.findMany({
@@ -2802,6 +2804,13 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       retryCount: moderation?.retryCount ?? 0,
       updatedAt: moderation?.updatedAt ?? null,
     },
+    errorReason: articleIngestionErrorReason({
+      errorImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.Error).length,
+      missingImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.NotFound)
+        .length,
+      textError:
+        required && !!moderation && TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status),
+    }),
   };
 }
 
@@ -3285,8 +3294,12 @@ export async function recomputeArticleIngestionInTx(
 export async function dispatchArticleIngestionPostCommit(
   result: RecomputeIngestionResult
 ): Promise<void> {
-  const { articleId, publishedNotificationUserId, problemsNotification, ingestionErrorNotification } =
-    result;
+  const {
+    articleId,
+    publishedNotificationUserId,
+    problemsNotification,
+    ingestionErrorNotification,
+  } = result;
 
   // Sync search index — the index filters on ingestion = 'Scanned', so any
   // ingestion state change must be reflected (add when Scanned, remove otherwise).
@@ -3477,7 +3490,11 @@ async function articleRescanCandidates(article: {
   bannerId: number | null;
 }) {
   const connections = await dbWrite.imageConnection.findMany({
-    where: { entityId: article.id, entityType: ImageConnectionType.Article, ...connectionImageExists },
+    where: {
+      entityId: article.id,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
     include: { image: { select: rescanImageSelect } },
   });
   // Cover and banner live on `Article`, not in `ImageConnection`.
