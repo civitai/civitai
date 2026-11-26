@@ -26,6 +26,9 @@ export type ContentLinkHold = {
   reportedAt: Date | null;
 };
 
+/** A deferral older than this goes to moderators, or, for a still-absent upload, links as before. */
+export const CONTENT_LINK_DEFERRAL_BACKSTOP_MS = 24 * 60 * 60 * 1000;
+
 /** Each issuer lookup takes a bounded number of keys; an article can hold more images than that. */
 const URLS_PER_LOOKUP = 16;
 
@@ -114,7 +117,10 @@ export async function classifyUnlinkedContentUrls({
 }
 
 const UPLOAD_PROBE_CONCURRENCY = 4;
-/** Bounds a link's probes: the settle job re-links each held article every run. The rest link unprobed. */
+/**
+ * Bounds a link's probes: the settle job re-links each held article every run. The rest are not
+ * probed: new urls link as before, deferred ones stay deferred.
+ */
 export const MAX_UPLOAD_PROBES = 32;
 /** No probe starts past this, so a slow store costs a save at most this plus one probe deadline. */
 export const UPLOAD_PROBE_BUDGET_MS = 4000;

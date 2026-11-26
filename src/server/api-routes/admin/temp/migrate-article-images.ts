@@ -447,7 +447,7 @@ async function processBatch(
       const msg = error instanceof Error ? error.message : 'Unknown error';
       log(`  ⚠️  article ${article.id}: hold write for absent uploads failed: ${msg}`);
       stats.errors++;
-      // Recomputed without its hold, it could go public over a url with no row.
+      // Not recomputed here; a later scan of its other images still recomputes it without a hold.
       unheld.add(article.id);
     }
   }

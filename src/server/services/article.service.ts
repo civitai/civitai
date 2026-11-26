@@ -133,9 +133,11 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
+import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
 import {
   assertContentLinkHoldWritable,
   classifyUnlinkedContentUrls,
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
   contentLinkHoldCounter,
   type ContentLinkHold,
   getContentLinkHold,
@@ -2442,27 +2444,34 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
-      // Probed first, and a url this hold deferred is classified only once its upload is proved
-      // present: from UNRECORDED_KEYS_ACCEPTED_UNTIL a held unrecorded key is refused, and a url
-      // deferred for a missing upload must not be refused because the store did not answer.
+      // A held unrecorded key is refused from UNRECORDED_KEYS_ACCEPTED_UNTIL, so a url deferred for
+      // a missing upload stays out of classification until the store answers for it.
       const wasRefused = new Set(previousHold?.refused ?? []);
       const wasDeferred = new Set(previousHold?.deferred ?? []);
       const probeable = unlinked.filter(
-        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url)
+        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
       );
       const { absent, present } = await probeContentUploads([
         ...probeable.filter((url) => wasDeferred.has(url)),
         ...probeable.filter((url) => !wasDeferred.has(url)),
       ]);
+      // Past the backstop a still-absent url links as on main, and its scan fails for good.
+      const pastBackstop =
+        !!previousHold?.deferredSince &&
+        now.getTime() - previousHold.deferredSince.getTime() >= CONTENT_LINK_DEFERRAL_BACKSTOP_MS;
+      const released = new Set(
+        pastBackstop ? [...absent].filter((url) => wasDeferred.has(url)) : []
+      );
       const stillDeferred = probeable.filter(
-        (url) => absent.has(url) || (wasDeferred.has(url) && !present.has(url))
+        (url) =>
+          !released.has(url) && (absent.has(url) || (wasDeferred.has(url) && !present.has(url)))
       );
       const unsettled = new Set(stillDeferred);
       const classified = await classifyUnlinkedContentUrls({
         urls: unlinked.filter((url) => !unsettled.has(url)),
         ownerId,
         editorId: userId,
-        wasHeld: new Set([...wasDeferred, ...wasRefused]),
+        wasHeld: new Set([...wasDeferred, ...wasRefused].filter((url) => !released.has(url))),
         now,
       });
       hold = nextContentLinkHold(

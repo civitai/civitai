@@ -4,6 +4,7 @@ import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { linkArticleContentImages } from '~/server/services/article.service';
 import {
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
   contentLinkHoldCounter,
   getContentLinkHold,
 } from '~/server/services/article-content-link-hold';
@@ -11,8 +12,6 @@ import { createReport } from '~/server/services/report.service';
 import { ArticleStatus, ReportReason } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
-/** A deferral older than this goes to moderators rather than waiting on in silence. */
-export const CONTENT_LINK_DEFERRAL_BACKSTOP_MS = 24 * 60 * 60 * 1000;
 export const CONTENT_LINK_DEFERRAL_REPORT_COMMENT =
   'automated: image could not be verified after 24h';
 const BATCH = 200;

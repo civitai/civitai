@@ -56,15 +56,14 @@ const {
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
 const {
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
   deferContentUrls,
   MAX_UPLOAD_PROBES,
   nextContentLinkHold,
   probeContentUploads,
   writeContentLinkHold,
 } = await import('~/server/services/article-content-link-hold');
-const { settleContentLinkHolds, CONTENT_LINK_DEFERRAL_BACKSTOP_MS } = await import(
-  '~/server/jobs/article-content-link-hold'
-);
+const { settleContentLinkHolds } = await import('~/server/jobs/article-content-link-hold');
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -885,5 +884,61 @@ describe('probing a slow store', () => {
     } finally {
       s3Send.mockImplementation(answer as never);
     }
+  });
+});
+
+describe('a url still absent past the deferral backstop', () => {
+  const content = `<p>${img(KEY2)}</p>`;
+  const PAST = CONTENT_LINK_DEFERRAL_BACKSTOP_MS + MINUTE;
+  beforeEach(async () => {
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+  });
+
+  it('leaves the hold and links as before, filing no report', async () => {
+    await settleContentLinkHolds(at(PAST));
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
+    expect(createReport).not.toHaveBeenCalled();
+  });
+
+  it('control: stays deferred within the backstop', async () => {
+    await settleContentLinkHolds(at(CONTENT_LINK_DEFERRAL_BACKSTOP_MS - MINUTE));
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+  });
+});
+
+describe('control: a hold deferred for another reason past the backstop', () => {
+  it('keeps that url and still reports, while the absent one is released', async () => {
+    const content = `<p>${img(KEY)}${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    store.absent.add(KEY2);
+    // KEY has no issue record and the request log is down, so it is deferred for that.
+    state.clickhouseDown = true;
+    await link({ content });
+    expect((await hold())?.deferred.sort()).toEqual([KEY, KEY2].sort());
+    await settleContentLinkHolds(at(CONTENT_LINK_DEFERRAL_BACKSTOP_MS + MINUTE));
+    expect(await rows()).toEqual([KEY2]);
+    expect((await hold())?.deferred).toEqual([KEY]);
+    expect(createReport).toHaveBeenCalledOnce();
+  });
+});
+
+describe('a deferred url that is not a bare upload key', () => {
+  it('is classified again once the lookups are back', async () => {
+    const url = `https://image.civitai.com/x/${KEY}/original=true/a.jpeg`;
+    const content = `<edge-media url="${url}" type="image"></edge-media>`;
+    await givenArticle({ content });
+    lookupsDown();
+    await link({ content });
+    expect((await hold())?.deferred).toEqual([url]);
+    lookupsUp();
+    await recordUploadKeyOwner(KEY, AUTHOR);
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([url]);
+    expect(await hold()).toBeNull();
   });
 });
