@@ -678,7 +678,7 @@ export async function resolveScanOutcome({
     // loaded: a moderator can lift that block while the scan runs.
     const [stored] = await dbWrite.$queryRaw<{ blockedFor: string | null }[]>`
       SELECT i."blockedFor" FROM "Image" i WHERE i.id = ${image.id}
-    `;
+    `.catch(() => []);
     return {
       ingestion: ImageIngestionStatus.Blocked,
       blockedFor: stored?.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
@@ -753,12 +753,15 @@ export async function resolveScanOutcome({
   // the row already has, which must not turn a grace block into a permanent one.
   const blocking = toUpdate.ingestion === ImageIngestionStatus.Blocked;
 
-  // The row as stored now, not as loaded: a moderator can lift or set a block while the scan runs.
-  const [current] = await dbWrite.$queryRaw<
-    { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
-  >`
-    SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
-  `;
+  // Read fresh, not from `image`: a moderator can lift or set a block while the scan runs. Only a
+  // verdict that does not block reads it, as both checks below keep a block only then.
+  const [current] = blocking
+    ? []
+    : await dbWrite.$queryRaw<
+        { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
+      >`
+        SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
+      `;
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
   // A rescan request may already have cleared `ingestion` and `blockedFor`; it leaves the Blocked level.

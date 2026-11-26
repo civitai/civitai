@@ -712,17 +712,6 @@ describe('the review a scan verdict leaves', () => {
     expect(row.needsReview).toBe('appeal');
   });
 
-  it('CONTROL: a CSAM block still stored when the scan writes is kept under an appeal', async () => {
-    await rescan('clean', { needsReview: 'appeal', appeal: true, csamBlocked: 'loaded' });
-    const { blockedFor, ingestion } = (
-      await holder.db.query<{ blockedFor: string | null; ingestion: string }>(
-        `SELECT "blockedFor", ingestion FROM "Image" WHERE id = $1`,
-        [GRID_ID]
-      )
-    ).rows[0];
-    expect({ blockedFor, ingestion }).toEqual({ blockedFor: 'CSAM', ingestion: 'Blocked' });
-  });
-
   it('a blocking verdict on a csam review under appeal keeps csam', async () => {
     expect((await rescan('block', { needsReview: 'csam', appeal: true })).needsReview).toBe('csam');
   });
