@@ -15,8 +15,10 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  * article page, which is exactly why a server-side gap here stayed invisible.
  */
 
-const { mockGetArticleScanStatus } = vi.hoisted(() => ({
+const { mockGetArticleScanStatus, mockGetArticleById, mockGetArticles } = vi.hoisted(() => ({
   mockGetArticleScanStatus: vi.fn(),
+  mockGetArticleById: vi.fn(async () => ({ id: 1 })),
+  mockGetArticles: vi.fn(async () => ({ items: [], nextCursor: undefined })),
 }));
 
 // `isOwnerOrModerator` resolves the article's owner itself; this is the row it reads. It uses
@@ -26,6 +28,8 @@ const mockFindUnique = dbMock.dbRead.article.findUnique;
 vi.mock('~/server/services/article.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ArticleService>()),
   getArticleScanStatus: mockGetArticleScanStatus,
+  getArticleById: mockGetArticleById,
+  getArticles: mockGetArticles,
 }));
 
 // The procedure sits behind `isFlagProtected('articleImageScanning')`. Left off, every
@@ -123,5 +127,38 @@ describe('article.getScanStatus authorization', () => {
       id: ARTICLE_ID,
       viewerIsModerator: true,
     });
+  });
+});
+
+// A moderator on a scoped key reads articles as anyone else does: blocked covers, banners and body
+// media stay withheld, as on the scan status above.
+describe.each([
+  ['a session', { apiKeyId: null, tokenScope: TokenScope.Full }, true],
+  [
+    'a scoped key',
+    {
+      apiKeyId: 9,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: TokenScope.ArticlesRead,
+    },
+    false,
+  ],
+])('article reads for a moderator on %s', (_label, credential, asModerator) => {
+  const caller = () =>
+    articleRouter.createCaller({ ...fakeCtx(moderator), ...credential } as never);
+
+  it(`getById reads them as a moderator: ${asModerator}`, async () => {
+    await caller().getById({ id: ARTICLE_ID });
+
+    expect(mockGetArticleById).toHaveBeenCalledWith(
+      expect.objectContaining({ isModerator: asModerator })
+    );
+  });
+
+  it(`getInfinite reads them as a moderator: ${asModerator}`, async () => {
+    await caller().getInfinite({ limit: 10 } as never);
+
+    expect(mockGetArticles).toHaveBeenCalledWith(expect.objectContaining({ asModerator }));
   });
 });

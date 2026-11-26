@@ -320,9 +320,12 @@ export const getArticles = async ({
   forceHidePrivate,
   eventDecorationViewer,
   reportListedViewer = { seesReportListed: false },
+  asModerator = !!sessionUser?.isModerator,
 }: GetInfiniteArticlesSchema & {
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
+  /** `actsAsModerator(ctx)`: a moderator on a scoped key gets no blocked cover. */
+  asModerator?: boolean;
   include?: Array<'cosmetics'>;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
   // routes whose response is never cached for another viewer.
@@ -707,9 +710,7 @@ export const getArticles = async ({
           : undefined;
         // Nor does its author get a cover whose block refuses them the media (`ownerMediaAllowed`).
         const coverImage =
-          viewable && !sessionUser?.isModerator && !ownerMediaAllowed(viewable)
-            ? undefined
-            : viewable;
+          viewable && !asModerator && !ownerMediaAllowed(viewable) ? undefined : viewable;
         const match = articleStats[article.id];
 
         return {
@@ -1365,6 +1366,7 @@ export const upsertArticle = async ({
             .map((image) => image.id),
         ]);
         if (!isModerator)
+          // primary: it decides what this save keeps, beside the holds read above.
           for (const image of await dbWrite.image.findMany({
             where: { id: { in: stored } },
             select: { id: true, ingestion: true, blockedFor: true },

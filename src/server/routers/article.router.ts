@@ -104,6 +104,7 @@ export const articleRouter = router({
       getArticles({
         ...input,
         sessionUser: ctx?.user,
+        asModerator: credentialViews(ctx).asModerator,
         reportListedViewer: reportListedViewerOf(ctx),
         include: ['cosmetics'],
         // Uncached per viewer, so a flagged viewer may see decorations before launch.
@@ -127,7 +128,8 @@ export const articleRouter = router({
         getArticleById({
           ...input,
           userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
+          // A moderator on a session or a full-access key, as the media rule reads one.
+          isModerator: credentialViews(ctx).asModerator,
           reportListedViewer: reportListedViewerOf(ctx),
         }),
         // The hat the cover wears. A signed-out response is edge-cached for every signed-out

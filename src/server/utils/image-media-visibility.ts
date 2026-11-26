@@ -83,7 +83,6 @@ export function withoutMedia<T extends { url: string | null; metadata?: unknown 
 export function ownerBlockedNotice<
   T extends { url: string | null; hash?: string | null; metadata?: unknown; meta?: unknown }
 >(image: T): Omit<T, 'url' | 'hash'> & { url: null; hash: null } {
-  // `withoutMediaReferences` keeps the shape of what it is given.
   const meta = (
     image.meta && typeof image.meta === 'object' ? withoutMediaReferences(image.meta) : image.meta
   ) as T['meta'];

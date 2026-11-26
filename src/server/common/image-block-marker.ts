@@ -29,7 +29,6 @@ export const OWNER_MEDIA_EXEMPT_BLOCKS: readonly string[] = [BlockedReason.AiNot
  * Whether an image's owner may be served its media: it carries no block, or only an exempt one.
  * For the owner a Blocked level alone is a rating, not a block (`hasBlockMarker` counts it for
  * everyone else).
- * `ownerMediaAllowedSql` is its SQL twin.
  */
 export function ownerMediaAllowed(image: {
   ingestion: ImageIngestionStatus | string;

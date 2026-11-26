@@ -1930,7 +1930,11 @@ async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
     );
 }
 
-export const updatePostImage = async (image: UpdatePostImageInput) => {
+/** `asModerator`: `actsAsModerator(ctx)`. */
+export const updatePostImage = async (
+  image: UpdatePostImageInput,
+  { asModerator = false }: { asModerator?: boolean } = {}
+) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
     select: {
@@ -1948,6 +1952,10 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
   // caller never touched, so the write below is skipped entirely unless the key was sent.
   const metaProvided = image.meta !== undefined;
+  // The editor gives its owner this image's meta without media references (`ownerBlockedNotice`),
+  // so a save from it would overwrite the stored record moderation reviews.
+  if (metaProvided && !asModerator && !ownerMediaAllowed(currentImage))
+    throw throwBadRequestError("You can't edit this image's details while it is under moderation.");
 
   // This edit replaces meta wholesale from client input, so provenance has to be
   // re-derived from the row rather than accepted: otherwise editing an image you

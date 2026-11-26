@@ -875,7 +875,8 @@ function EditDetail() {
                       </div>
                     ))}
                   </div>
-                  {!isBlocked && !('engine' in (image.meta ?? {})) && (
+                  {/* A url-null row is under a moderation block: its meta is not editable. */}
+                  {!isBlocked && image.url !== null && !('engine' in (image.meta ?? {})) && (
                     <div>
                       <Button
                         variant="light"
@@ -932,7 +933,7 @@ function EditDetail() {
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
                   Prompt
                 </h3>
-                {!isBlocked && (
+                {!isBlocked && image.url !== null && (
                   <div className="flex gap-1">
                     <Button
                       variant="light"
