@@ -55,19 +55,36 @@ import { SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
 const BUCKETS = ['scan-locks', 'profanity-locks'] as const;
 export type Bucket = (typeof BUCKETS)[number];
 
-export const backfillSchema = z.object({
-  bucket: z.enum(BUCKETS),
-  action: z.enum(['unlock', 'revert']).default('unlock'),
-  dryRun: z.boolean().default(true),
-  limit: z.number().int().min(1).max(500).default(300),
-  afterId: z.number().int().min(0).default(0),
-  /**
-   * profanity-locks only. An unlock takes one set per run: `attributed` (the default: the filter's
-   * marker, or an unmarked lock the entity-change log attributes to it) or `unattributed` (an
-   * unmarked lock with no such record). A revert with a selector reverts only that set's unlocks.
-   */
-  selector: z.enum(['attributed', 'unattributed']).optional(),
-});
+export const backfillSchema = z
+  .object({
+    bucket: z.enum(BUCKETS),
+    action: z.enum(['unlock', 'revert']).default('unlock'),
+    dryRun: z.boolean().default(true),
+    limit: z.number().int().min(1).max(500).default(300),
+    afterId: z.number().int().min(0).default(0),
+    /**
+     * profanity-locks only. An unlock takes one set per run: `attributed` (the default: the filter's
+     * marker, or an unmarked lock the entity-change log attributes to it) or `unattributed` (an
+     * unmarked lock with no such record). A revert must name its scope, `all` included, so leaving
+     * the field out can never put back every unlock.
+     */
+    selector: z.enum(['attributed', 'unattributed', 'all']).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.bucket !== 'profanity-locks') return;
+    if (input.action === 'revert' && !input.selector)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['selector'],
+        message: 'a profanity-locks revert must name its scope: attributed, unattributed or all',
+      });
+    if (input.action === 'unlock' && input.selector === 'all')
+      ctx.addIssue({
+        code: 'custom',
+        path: ['selector'],
+        message: 'an unlock takes one set: attributed or unattributed',
+      });
+  });
 export type Selector = 'attributed' | 'unattributed';
 
 /** The marker sources each bucket's locks carry, and the name its dry run counts them under. */
@@ -640,9 +657,17 @@ export async function runBackfill(
   const profanity = bucket === 'profanity-locks';
   const limit = profanity ? Math.min(input.limit, PROFANITY_BATCH_LIMIT) : input.limit;
   // An unlock takes the attributed set unless told otherwise; a revert with no selector takes both.
-  const selector: Selector | undefined = profanity
-    ? input.selector ?? (action === 'unlock' ? 'attributed' : undefined)
-    : undefined;
+  // Checked again here, past the schema, so no caller reverts every unlock by leaving it out.
+  if (profanity && action === 'revert' && !input.selector)
+    throw new Error(
+      'a profanity-locks revert must name its scope: attributed, unattributed or all'
+    );
+  if (profanity && action === 'unlock' && input.selector === 'all')
+    throw new Error('an unlock takes one set: attributed or unattributed');
+  const selector: Selector | undefined =
+    !profanity || input.selector === 'all'
+      ? undefined
+      : input.selector ?? (action === 'unlock' ? 'attributed' : undefined);
   // Read once per call, and used by both the batch query and the UPDATE's own re-check.
   const attribution =
     profanity && action === 'unlock' ? await effects.readProfanityAttribution() : NO_ATTRIBUTION;
@@ -733,7 +758,7 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
     'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again at its prior rating (scans.relocked; scans.ratingRestored where an owner change was undone). Benign skips (not-public, too-short) relock on every pass.',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
-    'profanity-locks selector: "attributed" (the default for an unlock) or "unattributed" (unmarked locks the entity-change log does not record, with every other exclusion still applied; counts.attributed is the set it leaves to the other selector). The record names its selector; a revert with a selector reverts only that set, without one both. The response echoes the selector.',
+    'profanity-locks selector: "attributed" (the default for an unlock) or "unattributed" (unmarked locks the entity-change log does not record, with every other exclusion still applied; counts.attributed is the set it leaves to the other selector). The record names its selector; a revert must name its scope (attributed, unattributed or all) and is refused without one. The response echoes the selector.',
     'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); an unmarked lock is taken only where the entity-change log records the filter setting it and nothing changing the lock or rating since (counts.unattributed, counts.attributionSuperseded, counts.attributionRecords), and skips one a moderator marked (counts.moderatorSignal: an actioned report, a decline or review flag, an unpublish by someone else); counts.eligibleByProfanityMatches is what is left of them; it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable). If ClickHouse cannot be read, the call fails and writes nothing.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },

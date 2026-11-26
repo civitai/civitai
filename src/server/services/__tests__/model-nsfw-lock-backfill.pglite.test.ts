@@ -736,7 +736,12 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([]);
 
       const result = await runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false }),
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          action: 'revert',
+          selector: 'all',
+          dryRun: false,
+        }),
         effects
       );
       expect(result).toMatchObject({ changed: [ELIGIBLE], skippedRatingChanged: { count: 0 } });
@@ -757,7 +762,12 @@ describe('model nsfw lock backfill: profanity locks', () => {
       await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
       const before = await row(ELIGIBLE);
       const result = await runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false }),
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          action: 'revert',
+          selector: 'all',
+          dryRun: false,
+        }),
         effects
       );
       expect(result).toMatchObject({
@@ -767,7 +777,13 @@ describe('model nsfw lock backfill: profanity locks', () => {
       // Nothing changed, so no cache is busted; a later page of the pass skips the bucket-wide count.
       expect(effects.bustPublicModelResponseCache).not.toHaveBeenCalled();
       const later = await runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false, afterId: 1 }),
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          action: 'revert',
+          selector: 'all',
+          dryRun: false,
+          afterId: 1,
+        }),
         effects
       );
       expect(later.skippedRatingChanged).toBeUndefined();
@@ -1115,7 +1131,22 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(metaWithoutRecord(after.meta)).toEqual(before.meta);
     });
 
-    it('a revert with a selector puts back only that set; without one, both', async () => {
+    it('refuses a profanity revert that names no scope, and an unlock of "all"; nothing is written', async () => {
+      await unlockLocks(PROFANITY, [UNATTRIBUTED], ATTR, 'unattributed');
+      const before = await row(UNATTRIBUTED);
+      const bare = { bucket: PROFANITY, action: 'revert', dryRun: false } as const;
+      expect(backfillSchema.safeParse(bare).success).toBe(false);
+      expect(backfillSchema.safeParse({ bucket: PROFANITY, selector: 'all' }).success).toBe(false);
+      // Past the schema too: a caller handing runBackfill an unchecked input.
+      await expect(
+        runBackfill({ ...bare, limit: 200, afterId: 0 } as never, effects)
+      ).rejects.toThrow('must name its scope');
+      expect(await row(UNATTRIBUTED)).toEqual(before);
+      // The scan bucket has no sets, and needs none.
+      expect(backfillSchema.safeParse({ bucket: SCAN, action: 'revert' }).success).toBe(true);
+    });
+
+    it('a revert with a selector puts back only that set; with "all", both', async () => {
       await unlockLocks(PROFANITY, [UNMARKED], ATTR);
       await unlockLocks(PROFANITY, [UNATTRIBUTED], ATTR, 'unattributed');
       expect(await nextRevertBatch(PROFANITY, 0, 100, 'unattributed')).toEqual([UNATTRIBUTED]);
