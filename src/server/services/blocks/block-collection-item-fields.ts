@@ -19,7 +19,9 @@ export type CollectionItemExtraFields = {
 };
 
 /** `CollectionItem.createdAt` → ISO 8601, or `null` when absent or unparseable. */
-export function toCollectionItemAddedAt(createdAt: Date | string | null | undefined): string | null {
+export function toCollectionItemAddedAt(
+  createdAt: Date | string | null | undefined
+): string | null {
   if (createdAt == null) return null;
   const date = createdAt instanceof Date ? createdAt : new Date(createdAt);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
