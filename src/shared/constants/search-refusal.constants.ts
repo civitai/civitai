@@ -15,6 +15,13 @@ export const SEARCH_REFUSED_BY = [
 ] as const;
 export type SearchRefusedBy = (typeof SEARCH_REFUSED_BY)[number];
 
+/** The label each word check is named by, for the browser's and the server's verdicts alike. */
+export const WORD_CHECK_LABEL = {
+  minor: 'minor',
+  poi: 'real people',
+  blocked: 'blocked words',
+} as const satisfies Record<string, SearchRefusedBy>;
+
 /**
  * A semantic search page's refusal mark. `refused` is on every page; `refusedBy` only on a
  * moderator's refused page, so a non-moderator's refused page is a no-match page plus `refused`.
