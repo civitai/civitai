@@ -92,6 +92,7 @@ beforeAll(async () => {
     ).map((row) => ({
       ...row,
       url: `media-${row.id}`,
+      hash: 'blur-hash',
       meta: { prompt: 'p', image: `https://image.example/source-${row.id}.png` },
       metadata: null,
       index: row.id,
@@ -191,9 +192,10 @@ describe('getPostEditImages: blocked images', () => {
         servableLevels: allBrowsingLevelsFlag,
         ownerSeesHeld: true,
       })
-    ).map(({ id, url, thumbnailUrl, blockedFor, ingestion, meta }) => ({
+    ).map(({ id, url, hash, thumbnailUrl, blockedFor, ingestion, meta }) => ({
       id,
       url,
+      hash,
       thumbnailUrl,
       blockedFor,
       ingestion,
@@ -203,10 +205,15 @@ describe('getPostEditImages: blocked images', () => {
   // civitai/civitai#10505: the owner keeps the row and its block notice, not the media.
   it('keeps a blocked image for its owner as a notice row with no media', async () => {
     expect(await blockedPostRows(owner)).toEqual([
-      expect.objectContaining({ id: BLOCKED_POST_CLEAN, url: `media-${BLOCKED_POST_CLEAN}` }),
+      expect.objectContaining({
+        id: BLOCKED_POST_CLEAN,
+        url: `media-${BLOCKED_POST_CLEAN}`,
+        hash: 'blur-hash',
+      }),
       {
         id: MOD_BLOCKED,
         url: null,
+        hash: null,
         thumbnailUrl: null,
         blockedFor: 'moderated',
         ingestion: 'Blocked',
@@ -215,6 +222,7 @@ describe('getPostEditImages: blocked images', () => {
       {
         id: SCAN_BLOCKED,
         url: null,
+        hash: null,
         thumbnailUrl: null,
         blockedFor: null,
         ingestion: 'Blocked',

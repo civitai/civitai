@@ -107,7 +107,11 @@ describe('article.getScanStatus authorization', () => {
     const caller = articleRouter.createCaller(fakeCtx(owner) as never);
 
     await expect(caller.getScanStatus({ id: ARTICLE_ID })).resolves.toEqual(scanStatus);
-    expect(mockGetArticleScanStatus).toHaveBeenCalledWith({ id: ARTICLE_ID });
+    // Not as a moderator: a blocked image's url is withheld from its author.
+    expect(mockGetArticleScanStatus).toHaveBeenCalledWith({
+      id: ARTICLE_ID,
+      viewerIsModerator: false,
+    });
   });
 
   it('lets a moderator through without an ownership lookup', async () => {
@@ -115,5 +119,9 @@ describe('article.getScanStatus authorization', () => {
 
     await expect(caller.getScanStatus({ id: ARTICLE_ID })).resolves.toEqual(scanStatus);
     expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockGetArticleScanStatus).toHaveBeenCalledWith({
+      id: ARTICLE_ID,
+      viewerIsModerator: true,
+    });
   });
 });

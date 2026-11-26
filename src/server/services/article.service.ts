@@ -1,4 +1,5 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
@@ -2655,7 +2656,14 @@ function extractScanFailure(scanJobs: Prisma.JsonValue): {
   };
 }
 
-export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
+/**
+ * `viewerIsModerator`: a moderator on a session or a full-access key. Anyone else, the author
+ * included, gets no url for an image whose block refuses its owner the media (`ownerMediaAllowed`).
+ */
+export async function getArticleScanStatus({
+  id,
+  viewerIsModerator = false,
+}: GetByIdInput & { viewerIsModerator?: boolean }): Promise<{
   total: number;
   scanned: number;
   blocked: number;
@@ -2665,14 +2673,14 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   images: {
     blocked: Array<{
       id: number;
-      url: string;
+      url: string | null;
       ingestion: ImageIngestionStatus;
       blockedFor: string | null;
       nsfwLevelLocked: boolean;
     }>;
     error: Array<{
       id: number;
-      url: string;
+      url: string | null;
       ingestion: ImageIngestionStatus;
       nsfwLevelLocked: boolean;
       failureClass: string | null;
@@ -2742,6 +2750,9 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
 
   const images = connections.map((c) => c.image);
   for (const own of ownImages) if (!images.some((image) => image.id === own.id)) images.push(own);
+  // A scan error keeps the block reason, so the error list is held to the same rule.
+  const mediaUrl = (image: (typeof images)[number]) =>
+    viewerIsModerator || ownerMediaAllowed(image) ? image.url : null;
 
   const total = images.length;
   const scannedImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Scanned);
@@ -2781,7 +2792,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     images: {
       blocked: blockedImages.map((i) => ({
         id: i.id,
-        url: i.url,
+        url: mediaUrl(i),
         ingestion: i.ingestion,
         blockedFor: i.blockedFor,
         nsfwLevelLocked: i.nsfwLevelLocked,
@@ -2790,7 +2801,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
         const { failureClass, reason } = extractScanFailure(i.scanJobs);
         return {
           id: i.id,
-          url: i.url,
+          url: mediaUrl(i),
           ingestion: i.ingestion,
           nsfwLevelLocked: i.nsfwLevelLocked,
           failureClass,

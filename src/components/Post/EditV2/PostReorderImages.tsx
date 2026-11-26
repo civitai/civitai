@@ -11,7 +11,7 @@ import { useRef } from 'react';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { WithheldMedia } from '~/components/Post/EditV2/PostImageCards/WithheldMedia';
+import { WithheldMedia } from '~/components/EdgeMedia/WithheldMedia';
 import { useImageStore } from '~/store/image.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

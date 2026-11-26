@@ -962,9 +962,11 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
         }).thumbnailUrl ?? null) as string | null,
       };
       if (user.isModerator || ownerMediaAllowed(image)) return row;
-      // The owner keeps a blocked row and its notice (`blockedFor`, `ingestion`), not its media.
+      // The owner keeps a blocked row and its notice (`blockedFor`, `ingestion`), not its media
+      // or blur hash, as on the image page.
       return {
         ...withoutMedia(row),
+        hash: null,
         thumbnailUrl: null,
         meta: row.meta ? withoutMediaReferences(row.meta) : row.meta,
       };

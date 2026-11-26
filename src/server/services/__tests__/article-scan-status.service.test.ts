@@ -119,3 +119,69 @@ describe('getArticleScanStatus text requirement', () => {
     );
   });
 });
+
+// civitai/civitai#10505: a block refuses its owner the media, so the author gets the status and
+// reason of a blocked image, not its url. The metadata hold is the author's to clear.
+describe('getArticleScanStatus image urls', () => {
+  const image = (id: number, ingestion: ImageIngestionStatus, blockedFor: string | null) => ({
+    id,
+    url: `key-${id}`,
+    ingestion,
+    blockedFor,
+    nsfwLevelLocked: false,
+    scanJobs: null,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    givenArticle({ status: ArticleStatus.Draft, scheduledAt: null });
+    mockDbRead.article.findUnique.mockResolvedValue({
+      title: 't',
+      content: '<p>x</p>',
+      coverId: null,
+      bannerId: null,
+      status: ArticleStatus.Draft,
+      scheduledAt: null,
+    } as never);
+    mockDbRead.imageConnection.findMany.mockResolvedValue([
+      { image: image(1, ImageIngestionStatus.Blocked, 'moderated') },
+      { image: image(2, ImageIngestionStatus.Blocked, null) },
+      { image: image(3, ImageIngestionStatus.Blocked, 'AiNotVerified') },
+      { image: image(4, ImageIngestionStatus.Error, 'moderated') },
+      { image: image(5, ImageIngestionStatus.Error, null) },
+    ] as never);
+  });
+
+  const urls = (status: Awaited<ReturnType<typeof getArticleScanStatus>>) => ({
+    blocked: status.images.blocked.map((i) => [i.id, i.url, i.blockedFor]),
+    error: status.images.error.map((i) => [i.id, i.url]),
+  });
+
+  it("withholds a blocked image's url from the author, keeping its reason", async () => {
+    expect(urls(await getArticleScanStatus({ id: ARTICLE_ID }))).toEqual({
+      blocked: [
+        [1, null, 'moderated'],
+        [2, null, null],
+        [3, 'key-3', 'AiNotVerified'],
+      ],
+      error: [
+        [4, null],
+        [5, 'key-5'],
+      ],
+    });
+  });
+
+  it('gives a moderator every url', async () => {
+    expect(urls(await getArticleScanStatus({ id: ARTICLE_ID, viewerIsModerator: true }))).toEqual({
+      blocked: [
+        [1, 'key-1', 'moderated'],
+        [2, 'key-2', null],
+        [3, 'key-3', 'AiNotVerified'],
+      ],
+      error: [
+        [4, 'key-4'],
+        [5, 'key-5'],
+      ],
+    });
+  });
+});

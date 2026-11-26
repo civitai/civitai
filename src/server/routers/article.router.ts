@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
 import {
   router,
@@ -260,7 +261,9 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
-    .query(({ input }) => getArticleScanStatus(input)),
+    .query(({ input, ctx }) =>
+      getArticleScanStatus({ ...input, viewerIsModerator: credentialViews(ctx).asModerator })
+    ),
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
     .use(isFlagProtected('articleImageScanning'))
