@@ -35,6 +35,12 @@ vi.mock('~/server/flipt/client', () => ({
       : flag === 'app-block-refuse-external-sources'
       ? holder.refuseExternalApp
       : null,
+  readFliptBoolean: async (flag: string) =>
+    flag === 'app-block-source-scanned-rows'
+      ? holder.scannedRows
+      : flag === 'app-block-refuse-external-sources'
+      ? holder.refuseExternalApp
+      : null,
   ensureFliptInitialized: async () => undefined,
 }));
 

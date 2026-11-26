@@ -201,7 +201,6 @@ const SYS_KEY_LEDGER = [
   'system:upload-prompt-scan-retry',
   'system:user-score-multipliers',
   'training:status',
-  'training:studio-dataset-rating-sent',
   'urllists',
   'webhooks:image-scan:job-reason',
   'webhooks:model-file-scan:processed',
@@ -251,7 +250,7 @@ describe('REDIS_SYS_KEYS ledger', () => {
   });
 
   // The ledger's size, written out: a change to it is a change to this number too.
-  it('holds 195 keys', () => {
-    expect(SYS_KEY_LEDGER.length).toBe(195);
+  it('holds 194 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(194);
   });
 });

@@ -66,6 +66,13 @@ describe('parseScopeRequest', () => {
     expect(parseScopeRequest('toString')).toBeNull();
   });
 
+  it('refuses RunnerMint by name and as a bitmask, and does not advertise it', () => {
+    expect(parseScopeRequest('RunnerMint')).toBeNull();
+    expect(parseScopeRequest('UserRead RunnerMint')).toBeNull();
+    expect(parseScopeRequest(String(TokenScope.RunnerMint | TokenScope.UserRead))).toBeNull();
+    expect(SUPPORTED_SCOPE_NAMES).not.toContain('RunnerMint');
+  });
+
   it('accepts every name it advertises', () => {
     for (const name of SUPPORTED_SCOPE_NAMES) expect(parseScopeRequest(name)).not.toBeNull();
   });

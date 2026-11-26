@@ -180,7 +180,7 @@ const APP_ID = 'app_618';
 /** The in-memory Redis the marker is written into and read back out of. */
 const store = new Map<string, string>();
 
-const userFindUnique = dbMock.dbRead.user.findUnique;
+const userFindUnique = dbMock.dbWrite.user.findUnique;
 const userUpdate = dbMock.dbWrite.user.update;
 const userFindFirst = dbMock.dbWrite.user.findFirst;
 const subscriptionFindMany = dbMock.dbWrite.blockUserSubscription.findMany;
@@ -979,7 +979,7 @@ describe('a ban revokes the publisher’s App Assistant direct previews', () => 
     expect(Math.max(...markerWrites.map((w) => w.order))).toBeLessThan(revokeOrder);
   });
 
-  it('an unban sends nothing, and clears a "*" still queued for that user', async () => {
+  it('an unban sends no revoke and clears a "*" still queued; it sends the hold release instead', async () => {
     fetchMock.mockResolvedValue(new Response('', { status: 503 }));
     await revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID });
     expect(Object.keys(lua.hash(QUEUE) ?? {})).toEqual([`${PUBLISHER_ID}:*`]);
@@ -993,6 +993,11 @@ describe('a ban revokes the publisher’s App Assistant direct previews', () => 
     });
     await banPublisher(); // `bannedAt` set ⇒ the UNBAN branch
     expect(revokesSent()).toEqual([]);
-    expect(lua.hash(QUEUE) ?? {}).toEqual({});
+    // The ban's queued "*" is gone; the unban's hold release (HOLD_RELEASE_PATH) took a 503 and is
+    // the only thing queued now.
+    expect(
+      fetchMock.mock.calls.filter((c) => String(c[0]).endsWith('/internal/v1/holds/release'))
+    ).toHaveLength(1);
+    expect(Object.keys(lua.hash(QUEUE) ?? {})).toEqual([`${PUBLISHER_ID}:release`]);
   });
 });

@@ -13,6 +13,7 @@ export type JudgeDraft = {
   reviewPrompt?: string | null;
   reviewTemplate?: string | null;
   winnerSelectionPrompt?: string | null;
+  collectionPrompt?: string | null;
   userSelectable?: boolean;
   judgingEngine?: JudgingEngineKey;
 };
@@ -106,7 +107,7 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
     })),
     {
       name: 'judge-playground',
-      version: 5,
+      version: 6,
       migrate: (persistedState, version) => {
         // Migration history:
         //   v0 -> v1: x-ai/grok-4.1-fast deprecated 2026-05-15
@@ -114,7 +115,10 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
         //   v2 -> v3: gpt-5-nano returned empty content on generateArticle; use gpt-4o-mini
         //   v3 -> v4: Qwen 35B retired from the orchestrator
         //   v4 -> v5: gpt-4o-mini and gpt-5-nano retired from the challenge pipeline
-        // Every retired model lands on the pipeline default.
+        //   v5 -> v6: OpenRouter retired claude-sonnet-4, claude-3-5-haiku, mimo-v2.5 and
+        //             step-3.5-flash (calls 404)
+        // A retired model with a live successor moves to it; every other one lands on the
+        // pipeline default.
         const state = persistedState as Partial<PlaygroundState> | undefined;
         const retired = [
           'x-ai/grok-4.1-fast',
@@ -122,8 +126,15 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
           'openai/gpt-5-nano',
           'openai/gpt-4o-mini',
         ];
-        if ((version ?? 0) < 5 && state?.aiModel && retired.includes(state.aiModel)) {
-          state.aiModel = 'civitai/qwen3.8';
+        const successors: Record<string, string> = {
+          'anthropic/claude-sonnet-4': 'anthropic/claude-sonnet-5.5',
+          'anthropic/claude-3-5-haiku': 'anthropic/claude-haiku-5.5',
+          'xiaomi/mimo-v2.5': 'xiaomi/mimo-v2.6-flash',
+          'stepfun/step-3.5-flash': 'stepfun/step-3.7-flash',
+        };
+        if ((version ?? 0) < 6 && state?.aiModel) {
+          if (successors[state.aiModel]) state.aiModel = successors[state.aiModel];
+          else if (retired.includes(state.aiModel)) state.aiModel = 'civitai/qwen3.8';
         }
         return state;
       },

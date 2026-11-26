@@ -16,6 +16,7 @@
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import Pagination from '$lib/components/Pagination.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import MarketOverview from './MarketOverview.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -240,6 +241,10 @@
       </div>
     {/if}
   </div>
+{/if}
+
+{#if data.marketEnabled}
+  <MarketOverview />
 {/if}
 
 {#if data.baseModels && data.baseModels.length > 0}

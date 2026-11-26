@@ -9,3 +9,14 @@ import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 export const seesReportListed = (
   ctx: Pick<Context, 'user' | 'features' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>
 ) => isSessionOrFullUserKey(ctx) && !!ctx.user?.isModerator && !!ctx.features?.csamReports;
+
+/**
+ * `seesReportListed`, and the uploader's own report-listed images on a session or a full-access
+ * key only.
+ */
+export const reportListedViewerOf = (
+  ctx: Pick<Context, 'user' | 'features' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>
+) => ({
+  seesReportListed: seesReportListed(ctx),
+  ownerSeesReportListed: isSessionOrFullUserKey(ctx),
+});

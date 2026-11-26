@@ -169,6 +169,8 @@ export type GuardRead = {
   rules: string[];
   mode: string;
   version: string | null;
+  /** Set only when the service refused the text (it served no hits for it). */
+  refused?: true;
 };
 
 export const GUARD_NONE: GuardRead = { outcome: 'none', rules: [], mode: '', version: null };
@@ -184,6 +186,7 @@ export function readGuard(raw: unknown): GuardRead {
     rules: Array.isArray(g.rules) ? g.rules.filter((r): r is string => typeof r === 'string') : [],
     mode: typeof g.mode === 'string' ? g.mode : '',
     version: typeof g.version === 'string' ? g.version : null,
+    ...(g.refused === true ? { refused: true as const } : {}),
   };
 }
 

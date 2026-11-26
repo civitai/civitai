@@ -5,6 +5,10 @@ import {
   minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
+import {
+  reportListedImageSql,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -165,6 +169,7 @@ export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLev
       WHERE i.id = COALESCE(a."coverId", a."bannerId")
         AND ${servableImageSql}
         AND ${withinItsModelSql}
+        AND ${reportListedImageSql(SIGNED_OUT_REPORT_LISTED)}
         AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
         AND (i."nsfwLevel" & ~${imageLevels}::int) = 0
     )
@@ -261,6 +266,7 @@ export function collectionItemCoversSql({
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
           AND ${withinItsModelSql}
+          AND ${reportListedImageSql(SIGNED_OUT_REPORT_LISTED)}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
         -- A legacy cover string carries no rating of its own, and its readers show it to every

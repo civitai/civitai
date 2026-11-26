@@ -10,6 +10,7 @@ import {
   type FpPushRecord,
   type FpReconcileAction,
   fpMirrorTableExists,
+  hasOpenPersonFpReport,
   leaseFpMirrorRow,
   leaseFpMirrorRows,
   markFpAuthorErased,
@@ -28,6 +29,7 @@ import {
   recordFpScanAttempt,
   releaseFpLeases,
 } from '@civitai/db-queries/feature-page-comments';
+import { constants } from '~/server/common/constants';
 import { dbKV } from '~/server/db/db-helpers';
 import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
@@ -216,6 +218,25 @@ type HeldOutcome =
   | { kind: 'not-held' }
   | { kind: 'retry'; status: number | 'unreachable' };
 
+/**
+ * Whether a comment the platform holds hidden is hidden there by a moderator: the platform keeps one
+ * moderator source, so only that hide would a lift from here clear. A pipeline or site hide is not.
+ */
+async function moderatorHidThere(
+  held: HeldOutcome
+): Promise<boolean | { retry: number | 'unreachable' }> {
+  if (held.kind !== 'held' || held.state !== 'hidden') return false;
+  let read: Awaited<ReturnType<typeof readDecidingVerdict>>;
+  try {
+    read = await readDecidingVerdict(held.urn);
+  } catch (e) {
+    if (e instanceof SignerUnavailableError) return { retry: 'unreachable' };
+    throw e;
+  }
+  if ('failed' in read) return { retry: read.status };
+  return read.verdict?.source === 'moderator' && read.verdict.verdict === 'hidden';
+}
+
 /** What the platform holds for a comment, by its sourceId: never its text. */
 async function readBySource(sourceId: number): Promise<HeldOutcome> {
   let reply: SignerReply;
@@ -323,8 +344,6 @@ const textKey = (row: FpMirrorFactsRow, body: Record<string, unknown>) =>
 const retractAt = (row: FpMirrorFactsRow) =>
   (row.goneAt ?? row.contentAt ?? row.createdAt ?? new Date(0)).toISOString();
 
-const authorInStanding = (row: FpMirrorFactsRow) => !row.bannedAt && !row.muted;
-
 /** The platform refuses an all-digit or empty authorName. */
 const sendableName = (username: string | null) => !!username && !/^\d+$/.test(username);
 
@@ -334,7 +353,7 @@ const retractAuthorName = (username: string | null) =>
 /**
  * Pushes what one row should hold now and records the outcome. Never inside a transaction: each
  * call is HTTP, and each record is its own statement. A due row always sends its state, whatever
- * was pushed before; nothing ever sends a moderator's visible.
+ * was pushed before; it never sends a moderator's visible (only the reconcile does, for a lift).
  */
 async function pushRow(e: Evaluated): Promise<PushResult> {
   const { row, state, postDigest } = e;
@@ -442,16 +461,16 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'pushed';
   }
 
-  // Nothing is shown until a finished scan of its current text found nothing, and only while its
-  // author is in standing.
+  // Nothing is shown until a finished scan of its current text found nothing, or a moderator lifted
+  // the scan's hide of that text, and only while its author is in standing.
   if (state === 'visible') {
     if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
       return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
     const scan = await currentTextScan(row.commentId);
-    if (scan === 'not clean')
+    if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
       return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
-    if (scan !== 'clean') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
-    if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
+    if (scan === 'pending') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
+    if (!row.authorInStanding) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
   const sendText = async () => {
@@ -468,12 +487,26 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       authorName: retractAuthorName(row.username),
       at: retractAt(row),
     });
+  let sentAt = '';
+  // Hidden there by a moderator when this mirror first hides it: another's hide, never lifted here.
+  // Kept while the hide stands; only the read before a first hide decides it again.
+  let foreign = row.pushedState === 'mod-hidden' && row.modHideOrigin === 'foreign';
+  const modHide = () => ({
+    modHide: {
+      at: new Date(sentAt),
+      origin: foreign
+        ? ('foreign' as const)
+        : row.scanHide
+        ? ('scan' as const)
+        : ('moderator' as const),
+    },
+  });
   /** A verdict at now, on any token: a stale one is resent on the token the platform names. */
   const verdict = async (path: string, value: string) => {
     const body = (digest: string | null) => ({
       target: { urn, digest },
       verdict: value,
-      at: new Date().toISOString(),
+      at: (sentAt = new Date().toISOString()),
     });
     let r = await send(path, body(platformDigest));
     if (r.kind === 'stale' && r.digest) {
@@ -608,6 +641,11 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       if (held.kind === 'retry') return fail(held.status, 'by-source');
       if (held.kind === 'held') {
         if (held.state === 'erased') return erased();
+        if (state === 'mod-hidden' && row.pushedState !== 'mod-hidden') {
+          const there = await moderatorHidThere(held);
+          if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
+          foreign = there;
+        }
         urn = held.urn;
         platformDigest = held.digest;
         steps.push('by-source');
@@ -616,24 +654,36 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
         const r = await send(PLATFORM_MOD_VERDICT_PATH, {
           target: { sourceId: row.commentId },
           verdict: 'hidden',
-          at: new Date().toISOString(),
+          at: (sentAt = new Date().toISOString()),
         });
         if (r.kind === 'removed') return removed('mod-hidden-ahead');
         if (r.kind === 'erased') return erased();
         if (r.kind !== 'ok') return failed(r, 'mod-hidden-ahead');
-        await done();
+        await done(modHide());
         log('info', 'pushed', { commentId: row.commentId, state, steps: ['mod-hidden-ahead'] });
         return 'pushed';
       }
     }
   }
 
+  let hidAt = {};
   if (state === 'mod-hidden') {
+    // The platform keeps one moderator source, newest wins, so a later lift of ours would clear a
+    // hide someone else made before ours. Read once, before this mirror's first hide of it: a hide
+    // that lands between this read and the send is not seen here.
+    if (row.pushedState !== 'mod-hidden' && !steps.includes('by-source')) {
+      const held = await readBySource(row.commentId);
+      if (held.kind === 'retry') return fail(held.status, 'by-source');
+      const there = await moderatorHidThere(held);
+      if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
+      foreign = there;
+    }
     const r = await verdict(PLATFORM_MOD_VERDICT_PATH, 'hidden');
     if (r.kind === 'removed') return removed('mod-hidden');
     if (r.kind === 'erased') return erased();
     if (r.kind !== 'ok') return failed(r, 'mod-hidden');
     steps.push('mod-hidden');
+    hidAt = modHide();
   } else if (state === 'mod-removed') {
     if (!row.removeWantedAt) await markFpRemoveWanted(kyselyWrite, row.commentId);
     const r = await verdict(PLATFORM_MOD_VERDICT_PATH, 'removed');
@@ -652,7 +702,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     platformDigest = parsed.data.digest;
     steps.push('retract');
   }
-  await done(state === 'mod-removed' ? { removeWanted: true } : {});
+  await done(state === 'mod-removed' ? { removeWanted: true } : hidAt);
   log('info', 'pushed', { commentId: row.commentId, state, prior: row.pushedState, steps });
   return 'pushed';
 }
@@ -839,7 +889,14 @@ const FINAL_STATES: readonly FpCommentState[] = ['mod-removed', 'retracted', 'er
 export function reconcileAction(
   e: Evaluated,
   item: PlatformCommentItem
-): FpReconcileAction | 'counted' | 'pipeline-hidden' | 'moderator-hidden' | 'lift' | null {
+):
+  | FpReconcileAction
+  | 'counted'
+  | 'pipeline-hidden'
+  | 'moderator-hidden'
+  | 'lift'
+  | 'moderator-lift'
+  | null {
   const seen = observed(item);
   const textHeld = seen !== 'retracted' && seen !== 'removed';
   if (e.state === 'refused') return null;
@@ -851,6 +908,17 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
+  // Hidden there by the moderator hide sent here for the scan, which a moderator here has since
+  // lifted for this text: matched on its `at`, so a platform moderator's own hide never is.
+  if (
+    seen === 'hidden' &&
+    item.verdict?.source === 'moderator' &&
+    e.row.liftGranted &&
+    e.row.authorInStanding &&
+    !!e.row.modHideSentAt &&
+    Date.parse(item.verdict.at ?? '') === e.row.modHideSentAt.getTime()
+  )
+    return 'moderator-lift';
   if (seen === 'hidden' && item.verdict?.source === 'pipeline') return 'pipeline-hidden';
   // Visible: a takedown's tombstone or another post moved the token, so the text goes again.
   if (item.digest && item.digest !== e.row.platformDigest) return 'repost';
@@ -882,6 +950,105 @@ const takeLift = (commentId: number, by?: number) =>
     { by }
   );
 
+/**
+ * The key just before `key` in the platform's key order, so the page after it starts at `key`. A
+ * comment key is 32 lowercase hex (HMAC-SHA256 of its sourceId, truncated): one less, at the same
+ * width, has no key between it and `key`; the all-zero key pages from the start. Any other shape
+ * falls back to `key` short of its last character, which another key can sort between, and then the
+ * read names that one and confirms nothing.
+ */
+export function keyBefore(key: string) {
+  if (/^0+$/.test(key)) return '';
+  if (!/^[0-9a-f]+$/.test(key)) return key.slice(0, -1);
+  const digits = key.split('');
+  let i = digits.length - 1;
+  while (digits[i] === '0') digits[i--] = 'f';
+  digits[i] = (parseInt(digits[i], 16) - 1).toString(16);
+  return digits.join('');
+}
+
+/** The comments page that holds exactly the comment `urn`. */
+export function singleCommentQuery(urn: string) {
+  return new URLSearchParams({
+    app: PLATFORM_FEATURE_PAGES_APP,
+    limit: '1',
+    cursor: keyBefore(urn.slice(urn.lastIndexOf('/') + 1)),
+  });
+}
+
+/** The platform's deciding verdict on one comment: a one-item page from keyBefore(its key). */
+async function readDecidingVerdict(
+  urn: string
+): Promise<{ verdict: PlatformCommentItem['verdict'] } | { failed: string; status: number }> {
+  const reply = await callSigner(PLATFORM_COMMENTS_READ_PATH, {
+    method: 'GET',
+    query: singleCommentQuery(urn),
+  });
+  const page = commentsPageSchema.safeParse(reply.body);
+  if (reply.status !== 200 || !page.success)
+    return { failed: `read failed: ${reply.status}`, status: reply.status };
+  const [item] = page.data.items;
+  if (item?.urn !== urn)
+    return { failed: item ? 'another comment read' : 'nothing read', status: reply.status };
+  return { verdict: item.verdict };
+}
+
+/**
+ * Why the platform's deciding verdict for this row is not confirmed as the moderator hide sent from
+ * here, or null when it is.
+ */
+async function unconfirmedLift(row: FpMirrorFactsRow) {
+  if (!row.urn || !row.modHideSentAt) return 'no hide sent';
+  const read = await readDecidingVerdict(row.urn);
+  if ('failed' in read) return read.failed;
+  const v = read.verdict;
+  if (v?.source !== 'moderator' || v.verdict !== 'hidden') return 'not a moderator hide';
+  if (Date.parse(v.at ?? '') !== row.modHideSentAt.getTime()) return 'not the hide sent from here';
+  return null;
+}
+
+/**
+ * The platform's moderator visible for a lift, by sourceId: it lifts the moderator hide and decides
+ * for no version, so the site and the pipeline decide after it, a pipeline hide included. Sent under
+ * the row's lease, from facts read under it, so a hide made since the page was read goes first.
+ * 'held': someone has reported it since the lift, so it stays hidden there until that is handled.
+ */
+async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
+  if (!(await leaseFpMirrorRow(kyselyWrite, commentId))) return 'skipped' as const;
+  try {
+    const [row] = await readFpMirrorFacts(kyselyWrite, [commentId]);
+    if (!row || row.nextPushAt || reconcileAction(evaluate(row), item) !== 'moderator-lift')
+      return 'skipped' as const;
+    if (
+      await hasOpenPersonFpReport(kyselyWrite, {
+        commentId,
+        systemUserId: constants.system.user.id,
+      })
+    )
+      return 'held' as const;
+    // Confirmed again just before the send, as the page may be minutes old: only while the platform's
+    // deciding verdict is still the moderator hide sent from here. Anything else sends nothing.
+    const unconfirmed = await unconfirmedLift(row);
+    if (unconfirmed) {
+      log('warning', 'moderator lift unconfirmed', { commentId, reason: unconfirmed });
+      return 'unconfirmed' as const;
+    }
+    const r = await send(PLATFORM_MOD_VERDICT_PATH, {
+      target: { sourceId: commentId },
+      verdict: 'visible',
+      at: new Date().toISOString(),
+    });
+    if (r.kind !== 'ok') {
+      log('error', 'moderator lift failed', { commentId, kind: r.kind });
+      return 'skipped' as const;
+    }
+    await markFpReconciled(kyselyWrite, commentId, 'due');
+    return 'sent' as const;
+  } finally {
+    await releaseFpLeases(kyselyWrite, [commentId]);
+  }
+}
+
 /** The daily reconcile: compares what each urn should hold with the platform, by reconcileAction. */
 export async function runFpReconcile() {
   if (!(await fpMirrorTableExists(kyselyWrite))) return notMigrated('reconcile');
@@ -893,6 +1060,9 @@ export async function runFpReconcile() {
   let pipelineHidden = 0;
   let moderatorHidden = 0;
   let liftsLost = 0;
+  let moderatorLifts = 0;
+  let liftsHeld = 0;
+  let liftsUnconfirmed = 0;
   do {
     const query = new URLSearchParams({
       app: PLATFORM_FEATURE_PAGES_APP,
@@ -903,7 +1073,18 @@ export async function runFpReconcile() {
     const page = commentsPageSchema.safeParse(reply.body);
     if (reply.status !== 200 || !page.success) {
       log('error', 'reconcile read failed', { status: reply.status, checked });
-      return { on, checked, mismatched, pipelineHidden, moderatorHidden, liftsLost, failed: true };
+      return {
+        on,
+        checked,
+        mismatched,
+        pipelineHidden,
+        moderatorHidden,
+        liftsLost,
+        moderatorLifts,
+        liftsHeld,
+        liftsUnconfirmed,
+        failed: true,
+      };
     }
     const byUrn = await readFpMirrorByUrns(
       kyselyWrite,
@@ -942,6 +1123,13 @@ export async function runFpReconcile() {
         action,
       });
       if (!on || action === 'counted') continue;
+      if (action === 'moderator-lift') {
+        const lifted = await sendModeratorLift(row.commentId, item);
+        if (lifted === 'sent') moderatorLifts += 1;
+        else if (lifted === 'held') liftsHeld += 1;
+        else if (lifted === 'unconfirmed') liftsUnconfirmed += 1;
+        continue;
+      }
       if (action !== 'lift') {
         await markFpReconciled(kyselyWrite, row.commentId, action);
         continue;
@@ -965,7 +1153,17 @@ export async function runFpReconcile() {
     }
     cursor = page.data.next;
   } while (cursor);
-  const counts = { on, checked, mismatched, pipelineHidden, moderatorHidden, liftsLost };
+  const counts = {
+    on,
+    checked,
+    mismatched,
+    pipelineHidden,
+    moderatorHidden,
+    liftsLost,
+    moderatorLifts,
+    liftsHeld,
+    liftsUnconfirmed,
+  };
   log('info', 'heartbeat', { job: 'reconcile', ...counts });
   return counts;
 }

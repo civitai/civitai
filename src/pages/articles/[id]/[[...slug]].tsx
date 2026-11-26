@@ -28,6 +28,8 @@ import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
+import { ingestionErrorNotice } from '~/shared/utils/article-ingestion-error';
 import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
@@ -217,6 +219,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const disableArticles = !features.articles && !article?.user.isModerator;
 
+  const { status: scanStatus } = useArticleScanStatus({
+    articleId: id,
+    enabled: isOwner && article?.ingestion === ArticleIngestionStatus.Error,
+  });
+
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
 
@@ -236,7 +243,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     if (!article || article.status === ArticleStatus.Published) return;
 
     upsertArticleMutation.mutate(
-      { ...article, status: ArticleStatus.Published },
+      // No body: the page's read may withhold images the save must keep.
+      { ...article, content: undefined, status: ArticleStatus.Published },
       {
         async onSuccess() {
           await queryUtils.article.getById.invalidate({ id });
@@ -597,7 +605,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           >
             {article.ingestion === ArticleIngestionStatus.Blocked
               ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-              : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+              : ingestionErrorNotice({
+                  reason: scanStatus ? scanStatus.errorReason : undefined,
+                  retrying:
+                    (article.status === ArticleStatus.Published ||
+                      article.status === ArticleStatus.Processing) &&
+                    !article.metadata?.ingestionError?.exhaustedAt,
+                })}
           </AlertWithIcon>
         ) : null
       }

@@ -3358,6 +3358,14 @@ export type FeaturePageCommentMirror = {
   contentAt: Generated<Timestamp>;
   removeWantedAt: Timestamp | null;
   restrictedAt: Timestamp | null;
+  scanHiddenAt: Timestamp | null;
+  scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
+  modHideSentAt: Timestamp | null;
+  modHideOrigin: string | null;
+  liftGrantedAt: Timestamp | null;
+  liftGrantedBy: number | null;
+  liftGrantedVersion: number | null;
   nextPushAt: Timestamp | null;
   leaseUntil: Timestamp | null;
   createdAt: Generated<Timestamp>;
@@ -5996,6 +6004,10 @@ export type ServiceDealFileEntry = {
   scanStatus: Generated<ServiceDealFileScanStatus>;
   failReason: string | null;
   createdAt: Generated<Timestamp>;
+  /**
+   * Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+   */
+  copyDeleteStartedAt: Timestamp | null;
 };
 export type ServiceDealFilePurge = {
   id: Generated<number>;

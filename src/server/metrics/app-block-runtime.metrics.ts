@@ -744,6 +744,7 @@ type Bundle = {
   mediaServingDegradedTotal: Counter<string>;
   mediaInputRefusedTotal: Counter<string>;
   unlockChargedNotReleasedTotal: Counter<string>;
+  unlockOutcomeUnknownTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -1163,6 +1164,15 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_unlock_charged_not_released_total',
     'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the read-back after the lift succeeded and the output was not released | failed = the read-back itself failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
     ['read_back']
+  );
+
+  // Beside the `app-block-unlock-outcome-unknown` WARN: an unlock whose orchestrator write got no
+  // answer or a 5xx, so whether it charged is unknown. Unlabeled, so it is exported at 0 once registered.
+  const unlockOutcomeUnknownTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_unlock_outcome_unknown_total',
+    'App Block output unlocks whose orchestrator write got no response or a 5xx, so whether the viewer was charged is unknown; one per unlock. Each has an app-block-unlock-outcome-unknown WARN naming the user, workflow and price. Exported at 0 from registration, so a missing series means the code is not deployed.',
+    []
   );
 
   const outputTruncatedTotal = getOrCreateCounter(
@@ -1654,6 +1664,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     mediaServingDegradedTotal,
     mediaInputRefusedTotal,
     unlockChargedNotReleasedTotal,
+    unlockOutcomeUnknownTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -2008,6 +2019,15 @@ export function seedAppBlockMediaMetrics(reg: Registry = client.register): void 
       unlockChargedNotReleasedTotal.inc({ read_back }, 0);
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
+  }
+}
+
+/** Fail-soft emit of one unlock whose charge outcome is unknown (see the counter). */
+export function recordBlockUnlockOutcomeUnknown(): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().unlockOutcomeUnknownTotal.inc();
+  } catch {
+    /* instrument-only */
   }
 }
 

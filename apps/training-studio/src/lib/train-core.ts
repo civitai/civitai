@@ -81,7 +81,7 @@ import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/file
 import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
 import { MAX_RUNS } from '$lib/submit-limits';
-import { MatureRepriceError } from '$lib/mature-charge';
+import { datasetCharge, DatasetUnreadableError, MatureRepriceError } from '$lib/mature-charge';
 import { isMatureNsfwLevel } from '$lib/nsfw-rating';
 import type { TrainingTextCheck } from '$lib/training-text';
 
@@ -683,9 +683,9 @@ async function assertCustomModelTrainable(
 }
 
 /** Whether each run's dataset is mature, which keeps its charge out of Green. The client's own count is not
- *  trusted: a run it priced as not mature (no positive `meta.matureCount`) that would spend Green is refused,
- *  charging nothing, so the user sees the Yellow price first. Every run of a sweep shares its dataset, so it
- *  is rated once. */
+ *  trusted: a run it priced as not mature (no positive `meta.matureCount`) that would spend Green is refused
+ *  when the server counts mature images or can't read some (datasetCharge), before anything in the batch is
+ *  charged. Every run of a sweep shares its dataset, so it is rated once. */
 async function rateRuns(
   client: OrchestratorClient,
   runs: TrainingRunInput[],
@@ -705,11 +705,15 @@ async function rateRuns(
         })
       );
     const { mature: count, failed } = await counts.get(key)!;
-    const pricedMature = typeof run.meta.matureCount === 'number' && run.meta.matureCount > 0;
-    if (count > 0 && !pricedMature && runCurrencies(run.currencies).includes('green'))
-      throw new MatureRepriceError(count);
-    // A count with a failed lookup can't clear what the client priced as mature.
-    mature.push(count > 0 || (pricedMature && failed > 0));
+    const charge = datasetCharge({
+      mature: count,
+      failed,
+      pricedMature: typeof run.meta.matureCount === 'number' && run.meta.matureCount > 0,
+      spendsGreen: runCurrencies(run.currencies).includes('green'),
+    });
+    if (charge === 'reprice') throw new MatureRepriceError(count);
+    if (charge === 'unreadable') throw new DatasetUnreadableError(failed);
+    mature.push(charge === 'mature');
   }
   return mature;
 }
@@ -816,12 +820,15 @@ export interface ContinueOpts {
   quotedMatureCount?: number;
 }
 
-export { MatureRepriceError };
+export { DatasetUnreadableError, MatureRepriceError };
 
 const PROBE_CONCURRENCY = 8;
 const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
-const probeCache = new Map<string, { at: number; count: Promise<number> }>();
+const probeCache = new Map<
+  string,
+  { at: number; count: Promise<{ mature: number; failed: number }> }
+>();
 
 export interface MatureCount {
   images: number;
@@ -832,6 +839,11 @@ export interface MatureCount {
   rated: number;
   /** Blob ids the caller can read that have no stored v2 rating yet (always empty without a rating). */
   unratedKeys: string[];
+  /** The stored v2 verdict by the id the caller sent, only for blobs its HEAD could read. */
+  verdicts: Record<string, boolean>;
+  /** Of the `rated` images: v2 not mature where the upload rating was mature, and the reverse. */
+  v2NotMatureUploadMature: number;
+  v2MatureUploadNotMature: number;
 }
 
 /** How many of a dataset's blobs are mature. Each blob's X-NSFW-Level header counts R and above;
@@ -848,25 +860,41 @@ async function countMatureBlobs(
   let mature = 0;
   let failed = 0;
   let rated = 0;
+  let v2NotMatureUploadMature = 0;
+  let v2MatureUploadNotMature = 0;
   const unratedKeys: string[] = [];
+  const verdicts: Record<string, boolean> = {};
   await forEachPooled(airs, PROBE_CONCURRENCY, async (air) => {
     try {
       const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
       if (!response?.ok) failed++;
+      const uploadMature = isMatureNsfwLevel(response?.headers.get('x-nsfw-level'));
       // Only for a blob this caller's HEAD could read: the cache is shared across users.
       const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
       if (v2) {
         rated++;
+        verdicts[air] = v2.mature;
         if (v2.mature) mature++;
+        if (v2.mature && !uploadMature) v2MatureUploadNotMature++;
+        if (!v2.mature && uploadMature) v2NotMatureUploadMature++;
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-      if (isMatureNsfwLevel(response?.headers.get('x-nsfw-level'))) mature++;
+      if (uploadMature) mature++;
     } catch {
       failed++;
     }
   });
-  return { images: airs.length, mature, failed, rated, unratedKeys };
+  return {
+    images: airs.length,
+    mature,
+    failed,
+    rated,
+    unratedKeys,
+    verdicts,
+    v2NotMatureUploadMature,
+    v2MatureUploadNotMature,
+  };
 }
 
 /** A dataset's mature count for Review, the same count the submit makes. */
@@ -888,7 +916,7 @@ function sourceMatureCount(
   airs: string[],
   rating?: DatasetRating,
   onMatureCount?: (count: MatureCount) => void
-): Promise<number> {
+): Promise<{ mature: number; failed: number }> {
   const now = Date.now();
   const key = rating ? `${workflowId}\nv2:${rating.matureLevel}` : workflowId;
   const hit = probeCache.get(key);
@@ -899,7 +927,7 @@ function sourceMatureCount(
     const { mature, failed, unratedKeys } = counted;
     if ((failed > 0 || unratedKeys.length > 0) && probeCache.get(key)?.count === count)
       probeCache.delete(key);
-    return mature;
+    return { mature, failed };
   });
   probeCache.set(key, { at: now, count });
   return count;
@@ -923,6 +951,7 @@ async function buildContinuation(
   triggerWord: string;
   ecosystem: string;
   matureCount: number;
+  unreadable: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
   const { data: wf, error: getError } = await readWorkflow(client, opts.workflowId);
@@ -987,9 +1016,9 @@ async function buildContinuation(
     ),
   ];
   // A stamped positive count is trusted (it can only keep the charge out of Green); 0 or none is re-checked.
-  const matureCount =
+  const { mature: matureCount, failed: unreadable } =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
-      ? srcMeta.matureCount
+      ? { mature: srcMeta.matureCount, failed: 0 }
       : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
   // Publish state belongs to the source's model; carried over, the new run shows as published and can't be published.
@@ -1088,6 +1117,7 @@ async function buildContinuation(
     triggerWord: String(input.engine === 'kohya' ? srcMeta.trigger ?? '' : input.triggerWord ?? ''),
     ecosystem,
     matureCount,
+    unreadable,
   };
 }
 
@@ -1121,14 +1151,19 @@ export async function continueTraining(
   opts: ContinueOpts,
   submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body, triggerWord, ecosystem, matureCount } = await buildContinuation(
+  const { body, triggerWord, ecosystem, matureCount, unreadable } = await buildContinuation(
     client,
     opts,
     submitOpts
   );
-  const quotedMature = typeof opts.quotedMatureCount === 'number' && opts.quotedMatureCount > 0;
-  if (matureCount > 0 && !quotedMature && runCurrencies(opts.currencies).includes('green'))
-    throw new MatureRepriceError(matureCount);
+  const charge = datasetCharge({
+    mature: matureCount,
+    failed: unreadable,
+    pricedMature: typeof opts.quotedMatureCount === 'number' && opts.quotedMatureCount > 0,
+    spendsGreen: runCurrencies(opts.currencies).includes('green'),
+  });
+  if (charge === 'reprice') throw new MatureRepriceError(matureCount);
+  if (charge === 'unreadable') throw new DatasetUnreadableError(unreadable);
   // The source run may predate the check, so its trigger word is checked again before it trains again.
   await submitOpts.checkText({ triggerWord });
   if (getTrainingLicenseTerms(ecosystem))

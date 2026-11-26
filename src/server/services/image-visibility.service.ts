@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { imageBlockedForConditions } from '~/server/common/image-visibility';
+import { reportListedImageSql } from '~/server/services/report-listed-visibility';
 
 export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
@@ -65,14 +65,21 @@ export const countableImageSql = () =>
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
  * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
  * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
- * the owner's alone.
+ * the owner's alone. Images listed on a CsamReport are the uploader's (`ownerSeesReportListed`) and
+ * `seesReportListed` viewers' alone, moderators included.
  */
 export function entityImageVisibilityConditions({
   userId,
   isModerator,
+  seesReportListed,
+  ownerSeesReportListed = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /** The held-media viewer (`seesReportListed(ctx)`); false for a read with no viewer. */
+  seesReportListed: boolean;
+  /** The request carries the owner's view (a session or a full-access key). */
+  ownerSeesReportListed?: boolean;
 }): Prisma.Sql[] {
   const AND: Prisma.Sql[] = [];
   if (!isModerator) {
@@ -100,17 +107,11 @@ export function entityImageVisibilityConditions({
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
   AND.push(imageNotRestrictedSql({ viewerId: userId }));
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  AND.push(reportListedImageSql({ userId, seesReportListed, ownerSeesReportListed }));
   return AND;
 }
 
-/**
- * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
- * viewer without the held-media grant. Its uploader still sees it.
- */
-export const notReportListedSql = (userId?: number) =>
-  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
-    userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
-  })`;
+export { reportListedImageSql };
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on

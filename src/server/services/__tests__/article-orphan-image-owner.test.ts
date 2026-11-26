@@ -1,4 +1,5 @@
 import type * as ContentDeletion from '@civitai/db-queries/content-deletion';
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -53,6 +54,7 @@ import {
   upsertArticle,
 } from '~/server/services/article.service';
 import { articlesSearchIndex } from '~/server/search-index';
+import { expandBlurbs } from '~/server/services/blurb-materialize.service';
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -89,8 +91,12 @@ const storedArticle = {
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+  // Each row answers both reads: the orphan check's imageId and the save's connected image.
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
-    UNLINKED.map((imageId) => ({ imageId })) as never
+    UNLINKED.map((imageId) => ({
+      imageId,
+      image: { id: imageId, url: `uuid-${imageId}` },
+    })) as never
   );
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.article.findUnique.mockResolvedValue(storedArticle as never);
@@ -260,12 +266,14 @@ describe('the article cover and banner on save', () => {
 
   const save = (
     images: { coverImage?: number | null; bannerImage?: number | null },
-    userId = AUTHOR
+    userId = AUTHOR,
+    reportListedViewer?: { seesReportListed: boolean; ownerSeesReportListed?: boolean }
   ) =>
     upsertArticle({
       id: ARTICLE_ID,
       userId,
       isModerator: userId === MODERATOR,
+      reportListedViewer,
       title: 'A title',
       content: '<p>had images</p>',
       status: 'Draft',
@@ -367,5 +375,228 @@ describe('the article cover and banner on save', () => {
     it("clears the owner's own withheld cover, which their form showed", async () => {
       expect(await saveWithoutCover(OLD_COVER, true)).toBeNull();
     });
+  });
+
+  // The edit form never had a banner the report-listed rule hides (getArticleById), so a save
+  // without it keeps it, a moderator's included (#10489).
+  describe('a save without a banner the report-listed rule hides from the editor', () => {
+    const saveWithoutBanner = async (
+      listed: boolean,
+      reportListedViewer?: { seesReportListed: boolean }
+    ) => {
+      // Answers the report-listed lookup, whose CsamReport term arrives as a nested Prisma.Sql.
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        _strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        listed && values.some((v) => (v as { sql?: string })?.sql?.includes('"CsamReport"'))
+          ? [{ id: OLD_BANNER }]
+          : []) as never);
+      await save({ coverImage: OLD_COVER, bannerImage: null }, MODERATOR, reportListedViewer);
+      const [{ data }] = dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: any }];
+      return data.bannerId;
+    };
+
+    it('🔴 keeps a listed banner on the save of a moderator without the grant', async () => {
+      expect(await saveWithoutBanner(true)).toBeUndefined();
+    });
+
+    it('clears it for a viewer who sees report-listed images, whose form showed it', async () => {
+      expect(await saveWithoutBanner(true, { seesReportListed: true })).toBeNull();
+    });
+
+    it('clears a banner that is not listed', async () => {
+      expect(await saveWithoutBanner(false)).toBeNull();
+    });
+  });
+});
+
+describe('a save from the edit form with a body image listed on a report', () => {
+  const LISTED = { id: 40, url: '44444444-aaaa-4bbb-8ccc-444444444444' };
+  const SHOWN = { id: 41, url: '55555555-aaaa-4bbb-8ccc-555555555555' };
+  const img = (url: string) =>
+    // As the save sanitizer writes it, which is how a stored body holds it.
+    `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${url}/w" />`;
+  const body = `<p>a</p>${img(SHOWN.url)}<p>b ${img(LISTED.url)}</p>`;
+  // As the edit form read sends it to an editor who may not see the listed image.
+  const editForm = `<p>a</p>${img(
+    SHOWN.url
+  )}<p>b <span data-type="withheldMedia" data-id="1"></span></p>`;
+
+  beforeEach(() => {
+    queueImageDeletes.mockResolvedValue(undefined);
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...storedArticle,
+      content: body,
+    } as never);
+    dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) =>
+      args.select?.image
+        ? [{ image: LISTED }, { image: SHOWN }]
+        : [LISTED, SHOWN]
+            .filter((image) => !args.where.imageId?.notIn?.includes(image.id))
+            .map((image) => ({ imageId: image.id }))) as never);
+    // The report-listed lookup names the listed image; every other raw read finds nothing.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: LISTED.id }]
+        : []) as never);
+  });
+
+  const upsert = (content: string | undefined, extra: Record<string, unknown> = {}) =>
+    upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      reportListedViewer: { seesReportListed: false, ownerSeesReportListed: true },
+      title: 'A title',
+      content,
+      status: 'Draft',
+      ...extra,
+    } as never);
+  // The body as the article page's plain read gives it to an editor who may not see the image.
+  const stripped = `<p>a</p>${img(SHOWN.url)}<p>b </p>`;
+  const savedContent = () =>
+    (dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: { content?: string } }])[0].data
+      .content;
+
+  it('🔴 saves the stored body back unchanged when nothing was edited', async () => {
+    await upsert(editForm);
+    expect(savedContent()).toBe(body);
+  });
+
+  it('🔴 answers the save with the body as the form sent it, without the hidden image', async () => {
+    dbMock.dbWrite.article.update.mockImplementation((async ({ data }: any) => ({
+      ...storedArticle,
+      ...data,
+    })) as never);
+    const saved = (await upsert(editForm)) as { content?: string };
+    expect(saved.content).toBe(editForm);
+    expect(JSON.stringify(saved)).not.toContain(LISTED.url);
+  });
+
+  it('🔴 refuses a placeholder that names an image the editor may see', async () => {
+    const forged = `<p>a</p><span data-type="withheldMedia" data-id="0"></span>`;
+    await expect(upsert(forged)).rejects.toThrow();
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 keeps the stored body when a moderator without the grant publishes with no body', async () => {
+    await upsert(undefined, { userId: MODERATOR, isModerator: true, status: 'Published' });
+    expect(savedContent()).toBe(body);
+  });
+
+  describe('answering a save that sent no body', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.article.update.mockImplementation((async ({ data }: any) => ({
+        ...storedArticle,
+        ...data,
+      })) as never);
+    });
+
+    it.each([
+      [
+        'a moderator without the grant',
+        { userId: MODERATOR, isModerator: true, reportListedViewer: { seesReportListed: false } },
+      ],
+      [
+        "the owner, for someone else's listed upload",
+        { reportListedViewer: { seesReportListed: false, ownerSeesReportListed: true } },
+      ],
+      ['the owner on a scoped key', { reportListedViewer: { seesReportListed: false } }],
+    ])('🔴 gives %s no body back', async (_, extra) => {
+      const saved = (await upsert(undefined, { ...extra, status: 'Published' })) as object;
+      expect(savedContent()).toBe(body);
+      expect(saved).not.toHaveProperty('content');
+      expect(JSON.stringify(saved)).not.toContain(LISTED.url);
+    });
+  });
+
+  it('🔴 keeps a link to the listed image when a moderator without the grant saves unchanged', async () => {
+    const linked = `${body}<p><a href="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${LISTED.url}/original=true" target="_blank">see</a></p>`;
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...storedArticle,
+      content: linked,
+    } as never);
+    // As the editor gives it back: the link mark renders an empty href beside the ref.
+    const fromEditor = `${editForm}<p><a target="_blank" href="" data-withheld-href="0">see</a></p>`;
+    await upsert(fromEditor, {
+      userId: MODERATOR,
+      isModerator: true,
+      reportListedViewer: { seesReportListed: false },
+      editForm: true,
+    });
+    expect(savedContent()).toContain(body);
+    expect(savedContent()).toMatch(
+      new RegExp(
+        `<a [^>]*href="https://image.civitai.com/[^"]*/${LISTED.url}/original=true"[^>]*>see</a>`
+      )
+    );
+    expect(savedContent()).not.toContain('data-withheld-href');
+    // The restored link went through the save sanitizer.
+    expect(savedContent()).toMatch(/<a [^>]*rel="ugc"[^>]*>see<\/a>/);
+  });
+
+  it('🔴 refuses a link ref that names no stored link, and writes nothing', async () => {
+    const dangling = `${editForm}<p><a data-withheld-href="9">see</a></p>`;
+    await expect(upsert(dangling, { editForm: true })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 keeps the listed image when a save from outside the edit form leaves it out', async () => {
+    const saved = (await upsert(stripped)) as { content?: string };
+    expect(savedContent()).toContain(img(LISTED.url));
+    expect(saved.content).toBe(stripped);
+  });
+
+  it('removes it when an edit-form save deletes its placeholder (control)', async () => {
+    await upsert(stripped, { editForm: true });
+    expect(savedContent()).toBe(stripped);
+  });
+
+  describe('when its placeholder is deleted', () => {
+    const unlink = () =>
+      linkArticleContentImages({
+        articleId: ARTICLE_ID,
+        content: '',
+        userId: AUTHOR,
+        ownerId: AUTHOR,
+        cleanupOnly: true,
+      });
+    const deletedConnections = () =>
+      dbMock.dbWrite.imageConnection.deleteMany.mock.calls.flatMap(
+        ([args]: any) => args.where.imageId.in
+      );
+
+    it('🔴 unlinks the listed image but never queues it for cleanup', async () => {
+      await unlink();
+      expect(deletedConnections()).toEqual([LISTED.id, SHOWN.id]);
+      expect(queuedIds()).toEqual([SHOWN.id]);
+    });
+  });
+});
+
+describe('a new article', () => {
+  it('🔴 stores the body the server expanded, which is the one it checked', async () => {
+    vi.mocked(expandBlurbs).mockResolvedValueOnce({
+      evaluated: true,
+      html: '<p>expanded</p>',
+      uses: [],
+    } as never);
+    dbMock.dbWrite.article.create.mockResolvedValue({ ...storedArticle, id: 99 } as never);
+    await upsertArticle({
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>as sent</p>',
+      status: 'Draft',
+    } as never).catch(() => undefined);
+    expect(dbMock.dbWrite.article.create).toHaveBeenCalled();
+    const [{ data }] = dbMock.dbWrite.article.create.mock.calls[0] as [
+      { data: { content: string } }
+    ];
+    expect(data.content).toBe('<p>expanded</p>');
   });
 });

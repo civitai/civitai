@@ -52,6 +52,9 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
   loading: () => <div style={{ height: 150, width: 150 }} />,
 });
 
+const CBBTC_UNSUPPORTED = 'cbBTC (wrapped Bitcoin) is not supported.';
+const CBBTC_NETWORKS = ['base', 'eth'];
+
 export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
   const currentUser = useCurrentUser();
   const clipboard = useClipboard({ timeout: 2000 });
@@ -339,10 +342,19 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                       Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text>{' '}
                       only.
                       Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
-                      other networks. cbBTC (wrapped Bitcoin) is not supported.
+                      other networks. {CBBTC_UNSUPPORTED}
                     </Text>
                   </Group>
                 )}
+                {chain === 'evm' &&
+                  CBBTC_NETWORKS.includes(currencyState.selectedNetwork?.network?.toLowerCase() ?? '') && (
+                    <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
+                      <Text size="xs" c="dimmed">
+                        {CBBTC_UNSUPPORTED}
+                      </Text>
+                    </Group>
+                  )}
                 {chain === 'ltc' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />

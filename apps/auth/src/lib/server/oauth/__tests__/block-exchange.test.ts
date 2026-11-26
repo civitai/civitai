@@ -760,6 +760,16 @@ describe('block token exchange — the block token', () => {
     expect(issued()).toEqual([]);
   });
 
+  it('refuses a token carrying any mintOrigin', async () => {
+    for (const mintOrigin of ['runner', 'live']) {
+      const res = await exchange(await blockToken({ mintOrigin }));
+      expect(res.status, mintOrigin).toBe(400);
+      expect(res.body.error).toBe('invalid_grant');
+      expect(lastReason()).toBe('block token runner token');
+    }
+    expect(issued()).toEqual([]);
+  });
+
   it('refuses a block token older than 15 minutes even if its exp is later', async () => {
     const res = await exchange(await blockToken({ iat: NOW - 931, exp: NOW + 600 }));
     expect(res.status).toBe(400);

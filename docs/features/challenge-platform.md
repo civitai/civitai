@@ -166,9 +166,11 @@ Participation prize: users with ≥ `entryPrizeRequirement` (10) valid entries g
 ### Judges (`ChallengeJudge`)
 AI judge personas with custom prompts/bios. When `Challenge.judgeId` is set, the judge's profile is shown as the "creator" in feed + detail (**display-layer only** — `createdById` is unchanged, so owner checks must never use the displayed `createdBy.id`, which is `judgeUserId ?? createdById`). Judges offered to users are the `userSelectable` rows, falling back to the `USER_SELECTABLE_JUDGE_NAMES` whitelist.
 
-**Holiday judges (December 2026).** *Jolly CivBot* (CivBot after a festive firmware update: tinsel antenna, string
-lights for eyes, strong views on load-bearing gingerbread) and *Frost CivChan* (CivChan hosting the winter festival,
-scarf on, cocoa in hand, verdicts delivered like a weather report) alternate on the December dailies. Each is a
+**Holiday judges (December 2026).** Each rubric set has its own holiday persona of CivBot or CivChan, and a
+scheduled day is judged by the persona of its set (`HOLIDAY_JUDGE_BY_SET`, `daily-schedule.ts`): CivBot is Jolly
+(story), Reindeer (cute), Solstice (epic), Cracker (clever), Sleigh Racer (action) and Gala (glam); CivChan is the Frost
+Queen (craft, named *Frost CivChan*), Elf (comedy), Krampus (spooky), Cocoa (cozy) and Lantern (mood). A name with no
+judge row falls back to the default judge. Each is a
 Duplicate of CivBot / CivChan in the moderator judge panel with a persona block prepended to the system and content
 prompts: the voice changes, the scoring does not. Same user account as the source judge, not user-selectable. The
 Duplicate action does not copy `collectionPrompt`; copy it by hand. To change one mid-month, edit the copy in place

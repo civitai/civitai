@@ -22,6 +22,11 @@ import {
   addSamplePrompt,
   asDatasetFilter,
   matchesRatingFilter,
+  matchesVerdictFilter,
+  imgRatingLabel,
+  isImgMature,
+  setVerdicts,
+  applyRatingAnswer,
   ratingChoices,
   buildTrainingRuns,
   stampMature,
@@ -1277,6 +1282,79 @@ describe('rating filters', () => {
     expect(matchesRatingFilter(img('X'), 'rating:x')).toBe(true);
     expect(matchesRatingFilter(img('x', 'blocked'), 'rating:x')).toBe(false);
     expect(matchesRatingFilter(img('pg'), 'all')).toBeUndefined();
+  });
+});
+
+describe('v2 verdicts on tiles', () => {
+  const img = (blobId: string, nsfwLevel: string | undefined, status: Img['status'] = 'uploaded') =>
+    ({
+      id: nextImgId(),
+      name: `${blobId}.png`,
+      previewUrl: '',
+      mediaType: 'image',
+      status,
+      progress: 1,
+      blobId,
+      nsfwLevel,
+      tags: [],
+      caption: '',
+    } as unknown as Img);
+
+  const rated = (image: Img, verdicts: Record<string, boolean>) => {
+    setVerdicts([image], verdicts);
+    return image;
+  };
+
+  // A restricted verdict reaches the Studio as mature (the main app folds it in), so mature it shows.
+  it('a mature verdict shows Mature and counts mature, whatever the upload rating said', () => {
+    const shown = rated(img('a', 'pg'), { a: true });
+    expect(imgRatingLabel(shown)).toBe('Mature');
+    expect(isImgMature(shown)).toBe(true);
+    expect(matchesVerdictFilter(shown, 'not-mature')).toBe(false);
+  });
+
+  it('a not-mature verdict replaces a mature upload rating', () => {
+    const shown = rated(img('a', 'r'), { a: false });
+    expect(imgRatingLabel(shown)).toBe('Not mature');
+    expect(isImgMature(shown)).toBe(false);
+    expect(matchesVerdictFilter(shown, 'not-mature')).toBe(true);
+  });
+
+  it('an image with no verdict keeps its upload rating and shows as not rated yet', () => {
+    const [a, b] = [img('a', 'r'), img('b', 'pg')];
+    setVerdicts([a, b], { b: false });
+    expect(imgRatingLabel(a)).toBe('R');
+    expect(isImgMature(a)).toBe(true);
+    expect(matchesVerdictFilter(a, 'not-rated')).toBe(true);
+    expect(matchesVerdictFilter(b, 'not-rated')).toBe(false);
+  });
+
+  it('a blocked image never counts, and an unchanged dataset reports no change', () => {
+    const blocked = rated(img('a', 'pg', 'blocked'), { a: true });
+    expect(isImgMature(blocked)).toBe(false);
+    expect(matchesVerdictFilter(blocked, 'not-rated')).toBe(false);
+    expect(setVerdicts([blocked], { a: true })).toBe(false);
+    expect(setVerdicts([img('a', 'pg')], { other: true })).toBe(false);
+  });
+
+  // An auto-label pass holds the tile it started on and writes its result there when it lands.
+  it('sets verdicts on the tiles themselves, so a label pass holding a tile still sees it', () => {
+    const tile = img('a', 'r');
+    const images = [tile];
+    applyRatingAnswer(images, { matureCount: 0, verdicts: { a: false } });
+    expect(images[0]).toBe(tile);
+    expect(tile.v2Mature).toBe(false);
+  });
+
+  it("an answer with no usable count keeps Review's own, and still shows the verdicts", () => {
+    const tile = img('a', 'r');
+    expect(
+      applyRatingAnswer([tile], { matureCount: null, verdicts: { a: false } })
+    ).toBeUndefined();
+    expect(imgRatingLabel(tile)).toBe('Not mature');
+    expect(applyRatingAnswer([], { matureCount: 0, verdicts: {} })).toBe(0);
+    // An answer from a server without verdicts changes nothing, rather than throwing.
+    expect(applyRatingAnswer([tile], { matureCount: 1 })).toBe(1);
   });
 });
 

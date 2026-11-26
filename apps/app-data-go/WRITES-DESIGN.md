@@ -51,11 +51,12 @@ one wins. What it makes of migration step 1:
 | Shared reads: the union of the level streams in the viewer's mask and the per-viewer stream; `@me` gets; `keyPrefix`, `author=me`, key-sorted pages | here | #10393 |
 | Signed-out reads from the level streams | here | #10393 |
 | No REST fallback (the step-1 table) | here | #10393: with `APP_DATA_WRITES` on, every read |
-| Region forwarding on the per-viewer subscription | here | not built: until it is, the adapter holds every signed-in viewer behind this service to SFW |
+| Region forwarding on the per-viewer and private subscriptions | here | built, behind `APP_DATA_FORWARD_REGION` (default off): while off, the adapter holds every signed-in viewer behind this service to SFW |
 | Second replica, header-hash sticky routing | deployment | not built |
 | Internal route, store `seq`/`recordId`, `app_storage_requests_total{via}` | site | built, #10128, #10142 |
 | The internal route's delete answer names its key (an `@me` delete's derived key) | site | #10392 |
 | `Entity.seq`, `k2`, the private head | adapter | built, #10128 |
+| `Entity.version` on private entities, `k3`; a private item's `version` | adapter, here | built, #10507 |
 | Level streams of plain documents, the shared-level allowlist | adapter | built, dark, #10302, #10343 |
 | `meta.truncated` on level streams | adapter | #10392 |
 | The per-viewer stream | adapter | #10392 |
@@ -372,8 +373,9 @@ would refuse every user (its predicate admits the app's rating against the held 
 `private-feed.ts:312-322`). **Chosen: forward the edge's region.** app-data-go copies the region
 values the edge set on the viewer's request (the edge sets them and strips any a client sent; this
 service never reads a client's) onto the subscription it opens for that viewer, as the adapter's
-region headers. **Precondition:** app-data-go is reachable only through the edge, which strips
-client-sent region headers; otherwise region forwarding is off and the SFW hold applies. A viewer's
+region headers, behind `APP_DATA_FORWARD_REGION` (off: the SFW hold applies). **Decided
+(2026-11-25):** the flag is turned on with this release, trusting the edge's region headers on the
+same terms as the site's own region handling. A viewer's
 streams are keyed by token and region, so a viewer whose region changes opens new ones. The exact mask is
 ANDed with the region hold. Level streams are read as a service, which has no region; the region hold reaches a
 viewer through the mask the per-viewer stream names.
@@ -441,8 +443,10 @@ no fallback to read it elsewhere; the fix is raising the bound.
 **Decided by the operator:** app-data-go reads the level streams under its own service identity, as an
 anonymous viewer, and serves signed-out viewers from them. Registry-only.
 
-- **How app-data-go authenticates to the adapter:** a hub service token for its own client
-  (client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
+- **How app-data-go authenticates to the adapter:** a hub service token for its own service client
+  (`APP_DATA_SERVICE_CLIENT_ID`, a client separate from the relay client: the hub mints a service
+  token only for a client whose grants are exactly the service grant, and refuses a client that is
+  both a relay and a service; client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
   the app index's is (`auth.jwt.ts:15-25`, `:197-212`; `REGISTRY_ADAPTER_SERVICE_CLIENTS`,
   `auth.live.ts:47-57`), and on the shared-level allowlist above. A service subscription otherwise
   reads every rating (`SERVICE_AUDIENCE`, `audience.ts`), so it names one level bit and the adapter
@@ -476,7 +480,9 @@ writing token's caches at once.
 **Why `rev` and `version` cannot order writes.** A private entity's `rev` is a digest (`privateRev`,
 `private-feed.ts:184-192`); `doc.version` restarts at 1 when a key is re-created (`SQL_INSERT_DOC`,
 `SQL_DELETE_DOC`, around `doc-store.ts:834-862`), and a re-created key is a new row with a new
-`record_id` and URN. **Documents are ordered by `doc.seq`, per key.**
+`record_id` and URN. **Documents are ordered by `doc.seq`, per key.** (`version` is still what a
+read answers beside each private item, for the next write's `ifVersion`: format `k3` sends it, and a
+record overlay carries the one its write answered.)
 
 **Marks get their own sequence, and leave `doc.seq` alone.** Giving a mark a `doc.seq` would take
 `usage_app` (lock 2) inside a transaction that today takes none, and would move the revision that

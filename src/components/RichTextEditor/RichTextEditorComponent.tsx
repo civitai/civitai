@@ -34,6 +34,8 @@ import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { EmbedNode } from '~/shared/tiptap/embed.node';
 import { SizedImageEditNode } from './SizedImageEditNode';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
+import { WithheldMediaEditNode } from '~/components/TipTap/WithheldMediaNode';
+import { withWithheldHref } from '~/shared/tiptap/withheld-link';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
@@ -234,7 +236,7 @@ export function RichTextEditor({
     if (addColors) arr.push(TextStyleKit);
     if (addLink) {
       const linkExtension = withLinkValidation ? LinkWithValidation : Link;
-      arr.push(linkExtension);
+      arr.push(withWithheldHref(linkExtension));
     }
     if (addHeading) arr.push(CustomHeading.configure({ levels: headingLevels }));
     if (onSuperEnter)
@@ -279,7 +281,7 @@ export function RichTextEditor({
     if (addPolls) arr.push(StrawPollNode);
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
-    arr.push(TimestampEditNode);
+    arr.push(TimestampEditNode, WithheldMediaEditNode);
     // Comment editors only. Verified rather than assumed: the four surfaces
     // passing `includeControls: ['sticker']` are exactly the four comment
     // editors, and nothing else loads comment content — so no editor that could

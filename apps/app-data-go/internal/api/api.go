@@ -9,7 +9,12 @@
 // name the source by slug and leave the basis to the server (the adapter on the registry path, the
 // site on REST). The answer is
 //
-//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
+//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}]}
+//
+// `version` is the document's store version, the number a write's `ifVersion` is compared against;
+// `rev` is kept beside it, opaque. A registry item carries `version` when the adapter's private feed
+// sent it (format k3 on); an item without one omits the field (the SDK then reads version 0, which
+// no stored document has, so a write built from it is refused `version_conflict`, never applied).
 //
 // `keyPrefix` keeps only the records whose storage key starts with it, on both paths (the
 // document store's own `keyPrefix` on REST). A registry item carries its key beside its URN, as the
@@ -33,7 +38,7 @@
 // unfloored). Also the keyed get,
 //
 //	GET /v1/apps/{slug}/collections/{collection}/records/{key}[?major=N][&minSeq=S]
-//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"data":{…}}}
+//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}}
 //
 // answered from the stream (base plus overlay) only: a key the stream does not hold, or a stream
 // that holds nothing, is `404 not_found`, and a stream that cannot answer is `401` or `503` with
@@ -71,6 +76,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
@@ -159,18 +165,27 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
-	return withClientIP(mux)
+	return withEdge(mux)
 }
 
-// withClientIP puts the viewer's address, as the edge named it (exchange.ClientIPHeader), in each
-// request's context: the user exchange charges a token it has not seen exchanged to it
-// (exchange.Guard) and forwards it to the hub. A request without the header carries none.
-func withClientIP(h http.Handler) http.Handler {
+// withEdge puts what the edge named about the viewer in each request's context:
+//   - their address (exchange.ClientIPHeader): the user exchange charges a token it has not seen
+//     exchanged to it (exchange.Guard) and forwards it to the hub. A request without the header
+//     carries none;
+//   - their region (sign.ReadRegion): a stream a read opens for them carries it to the adapter
+//     (session.WithRegion) when its manager forwards regions (session.Options.Region, on with
+//     APP_DATA_FORWARD_REGION); otherwise it is read and never sent. A request with none, or with a
+//     malformed one, carries none, and the adapter holds it to SFW, as before.
+func withEdge(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		if ip := exchange.ClientIPFrom(r.Header); ip != "" {
-			r = r.WithContext(exchange.WithClientIP(r.Context(), ip))
+			ctx = exchange.WithClientIP(ctx, ip)
 		}
-		h.ServeHTTP(w, r)
+		if region, bad := sign.ReadRegion(r.Header); bad == "" {
+			ctx = session.WithRegion(ctx, region)
+		}
+		h.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -191,10 +206,17 @@ func preflight(w http.ResponseWriter, _ *http.Request) {
 }
 
 type item struct {
-	URN  string          `json:"urn,omitempty"`
-	Key  string          `json:"key,omitempty"`
-	Rev  string          `json:"rev"`
-	Data json.RawMessage `json:"data"`
+	URN string `json:"urn,omitempty"`
+	Key string `json:"key,omitempty"`
+	Rev string `json:"rev"`
+	// Version is the document's store version (see the package comment); omitted when unknown (0).
+	Version int64           `json:"version,omitempty"`
+	Data    json.RawMessage `json:"data"`
+}
+
+// entityItem is a private stream record as a read answers it.
+func entityItem(e registry.Entity) item {
+	return item{URN: e.URN, Key: e.Key, Rev: e.Rev, Version: e.Version, Data: e.Body}
 }
 
 type answer struct {
@@ -314,7 +336,7 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 		s.write(w, start, http.StatusNotFound, errBody("not_found", "document not found"), "registry", "not_found")
 		return
 	}
-	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: item{URN: found.URN, Key: found.Key, Rev: found.Rev, Data: found.Body}}, "registry", "ok")
+	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: entityItem(*found)}, "registry", "ok")
 }
 
 // refusedReasons are the stream reasons the keyed get answers 401 (WRITES-DESIGN.md, the
@@ -443,7 +465,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	}
 	out := answer{Source: "rest", Items: make([]item, 0, len(docs))}
 	for _, d := range docs {
-		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
+		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Version: d.Version, Data: d.Data})
 	}
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
 }
@@ -453,7 +475,7 @@ func registryAnswer(ents []registry.Entity, keyPrefix string) answer {
 	out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
 	for _, e := range ents {
 		if strings.HasPrefix(e.Key, keyPrefix) {
-			out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
+			out.Items = append(out.Items, entityItem(e))
 		}
 	}
 	return out

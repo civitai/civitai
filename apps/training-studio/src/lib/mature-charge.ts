@@ -43,3 +43,36 @@ export class MatureRepriceError extends Error {
     this.matureCount = matureCount;
   }
 }
+
+/** Some of the dataset's images could not be read at submit, on a charge that would spend Green, so it
+ *  can't be priced. Nothing was charged; a retry once they read gets the right price. */
+export class DatasetUnreadableError extends Error {
+  readonly unreadable: number;
+  constructor(unreadable: number) {
+    super(
+      `${unreadable} image${
+        unreadable === 1 ? '' : 's'
+      } in this dataset couldn't be read. Nothing was charged; try again in a moment.`
+    );
+    this.unreadable = unreadable;
+  }
+}
+
+/** How a submit charges a dataset, from the server's count at submit and what the user was quoted.
+ *  `reprice`: the server counted mature images the quote didn't, on a Green charge (MatureRepriceError).
+ *  `unreadable`: images couldn't be read, on a Green charge quoted as not mature (DatasetUnreadableError).
+ *  Otherwise `mature` (kept out of Green) or `not-mature`: a full read that finds none clears a mature
+ *  quote, since a v2 rating can rate a dataset below its upload rating. Keep training refuses on the
+ *  same rule but keeps a mature quote's Yellow (chargeFields in train-core). */
+export function datasetCharge(args: {
+  mature: number;
+  failed: number;
+  pricedMature: boolean;
+  spendsGreen: boolean;
+}): 'mature' | 'not-mature' | 'reprice' | 'unreadable' {
+  const { mature, failed, pricedMature, spendsGreen } = args;
+  if (mature > 0) return pricedMature || !spendsGreen ? 'mature' : 'reprice';
+  if (failed === 0) return 'not-mature';
+  if (pricedMature) return 'mature';
+  return spendsGreen ? 'unreadable' : 'not-mature';
+}

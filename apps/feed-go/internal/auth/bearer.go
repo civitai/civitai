@@ -56,6 +56,8 @@ const (
 	ScopeReadOnly int64 = 1<<0 | 1<<2 | 1<<5 | 1<<8 | 1<<11 | 1<<16 | 1<<17 | 1<<14 | 1<<21 | 1<<23
 	// ScopeClientCredentialsOnly is CLIENT_CREDENTIALS_ONLY_SCOPES: AppStoreCatalogWrite | DownloadLink.
 	ScopeClientCredentialsOnly int64 = 1<<28 | 1<<30
+	// ScopeRunnerOnly is RUNNER_ONLY_SCOPES: RunnerMint.
+	ScopeRunnerOnly int64 = 1 << 33
 )
 
 // ApiKeyType values (packages/civitai-db-schema/src/enums.ts) this service tells apart.
@@ -307,8 +309,8 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 	if err != nil {
 		return nil, err
 	}
-	// A client-credentials token resolves to no session (no caller here opts in).
-	if apiKey.scope&ScopeClientCredentialsOnly != 0 {
+	// Unlike the Node app, nothing here opts in to a client-credentials or runner token.
+	if apiKey.scope&(ScopeClientCredentialsOnly|ScopeRunnerOnly) != 0 {
 		return nil, nil
 	}
 	u, err := r.user(ctx, apiKey.userID)
@@ -414,7 +416,7 @@ func (k *APIKeys) readPrincipal(ctx context.Context, hash string, now time.Time)
 		return nil, fallback.New("bearer-key-cache-shape")
 	}
 	out := &cachedAPIKey{userID: userID, scope: scope, typ: typ}
-	if scope&ScopeClientCredentialsOnly != 0 {
+	if scope&(ScopeClientCredentialsOnly|ScopeRunnerOnly) != 0 {
 		return out, nil // refused before the lastUsedAt write
 	}
 	// claimLastUsedWrite: no write while the cached lastUsedAt is within the hour; otherwise the app

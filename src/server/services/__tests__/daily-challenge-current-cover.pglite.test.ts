@@ -38,6 +38,7 @@ beforeAll(async () => {
       status "ChallengeStatus" NOT NULL DEFAULT 'Active', ingestion text, "scannedAt" timestamp(3),
       "entryFee" int, "maxParticipants" int, "judgingCategories" jsonb, "eventId" int, metadata jsonb NOT NULL DEFAULT '{}'
     );
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     INSERT INTO "Post" (id, "publishedAt", availability) VALUES
       (1, '${PAST}', 'Public'), (2, NULL, 'Public'), (3, '${FUTURE}', 'Public'), (4, '${PAST}', 'Private');
   `);
@@ -56,7 +57,7 @@ const CLEAN = {
 };
 let nextId = 1;
 
-async function currentCoverUrl(cover: Partial<typeof CLEAN>) {
+async function currentCoverUrl(cover: Partial<typeof CLEAN>, { listed = false } = {}) {
   const row = { ...CLEAN, ...cover };
   const id = nextId++;
   await db.query(
@@ -73,6 +74,7 @@ async function currentCoverUrl(cover: Partial<typeof CLEAN>) {
       row.acceptableMinor,
     ]
   );
+  if (listed) await db.query(`INSERT INTO "CsamReport" (images) VALUES ($1)`, [`[{"id": ${id}}]`]);
   await db.query('DELETE FROM "Challenge"');
   await db.query(`INSERT INTO "Challenge" (id, "coverImageId", "collectionId") VALUES (1, $1, 9)`, [
     id,
@@ -108,6 +110,11 @@ describe('dailyChallenge.getCurrent — the cover url', () => {
     ['in a Private post', { postId: 4 }],
   ])('is withheld for a cover %s', async (_, cover) => {
     const { returned } = await currentCoverUrl(cover);
+    expect(returned).toBe('');
+  });
+
+  it('🔴 is withheld for a cover listed on a report', async () => {
+    const { returned } = await currentCoverUrl({}, { listed: true });
     expect(returned).toBe('');
   });
 });

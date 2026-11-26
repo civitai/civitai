@@ -14,6 +14,7 @@ import type {
 } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 // The author to show on a card/detail. User challenges credit the real creator; System/Mod
 // challenges present the judge persona (e.g. CivBot) — System already stores the judge as its
@@ -104,7 +105,16 @@ export function useQueryChallenges(
 
   const { isLoading, ...restWithoutLoading } = rest;
 
-  return { challenges: items, isLoading: isLoading || loadingPreferences, ...restWithoutLoading };
+  return {
+    challenges: items,
+    isLoading: isLoading || loadingPreferences,
+    // The plain and semantic pages are different types; both may carry `refused`.
+    serverRefusal: pageRefusal(
+      data?.pages[0] as Parameters<typeof pageRefusal>[0],
+      rest.isPlaceholderData
+    ),
+    ...restWithoutLoading,
+  };
 }
 
 // Hook to get a single challenge by ID

@@ -42,6 +42,10 @@ import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { assertNotMemorialized, metaWithoutMemorialSql } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
+import {
+  disableOauthForBannedUser,
+  revokeAppAccessForBannedUser,
+} from '~/server/services/ban-access-cleanup.service';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -62,7 +66,12 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { clickhouseDownloads } from '~/server/clickhouse/downloads-client';
 import { readsDedicatedDownloadsClickhouse } from '~/server/services/downloads-clickhouse';
 import { listModelEngagements } from '@civitai/db-queries/model';
-import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import {
+  deletePostRows,
+  splitLifted,
+  type DeleteActor,
+  type LiftedRow,
+} from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -150,6 +159,7 @@ import { bustModelSaleCacheForModels } from '~/server/services/paid-access.servi
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  lockAccountDeletionPendingDeletes,
   releaseAccountDeletionPendingDeletes,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
@@ -158,6 +168,7 @@ import {
   afterCsamImageBlock,
   CSAM_IMAGE_BLOCK,
   deleteImages,
+  refreshLiftedKeptHides,
 } from '~/server/services/image.service';
 import {
   refreshHasReceivedReviews,
@@ -1813,18 +1824,20 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         ),
       ]
     : [];
-  const [, , , reclaimed] = await dbWrite
+  const [, , , lifted, reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      lockAccountDeletionPendingDeletes(id),
       releaseAccountDeletionPendingDeletes(id),
       ...reclaim,
     ])
     .catch(refuseIfBannedMeanwhile);
   const modelsRestored = (reclaimed as Prisma.BatchPayload | undefined)?.count ?? 0;
+  await refreshLiftedKeptHides(splitLifted(lifted as LiftedRow[]));
   await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
@@ -3097,6 +3110,15 @@ async function deleteBannedUserLinks({
   );
 }
 
+async function unchangedUser(id: number) {
+  // primary: the caller decided "no change" from the primary, so the returned row must too.
+  const current = await dbWrite.user.findUniqueOrThrow({
+    where: { id },
+    omit: { subscriptionId: true },
+  });
+  return { ...current, changed: false as const };
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3114,6 +3136,7 @@ export const toggleBan = async ({
   alwaysArchiveProfile,
   onlyBan,
   banActivity,
+  setTo,
 }: ToggleBanUser & {
   userId: number;
   isModerator?: boolean;
@@ -3127,9 +3150,8 @@ export const toggleBan = async ({
   /** Server-only: archive the profile and links even when the user is not named on a CSAM report. */
   alwaysArchiveProfile?: boolean;
   /**
-   * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
-   * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
-   * already banned rather than unbanning it, or replacing a ban that lands before the write.
+   * Server-only: never lifts a ban. Throws on an account that is already banned rather than
+   * unbanning it, or replacing a ban that lands before the write.
    */
   onlyBan?: boolean;
   /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
@@ -3137,11 +3159,12 @@ export const toggleBan = async ({
 }) => {
   // Get user with username for search index deletion
   const select = { bannedAt: true, meta: true, username: true, email: true } as const;
-  const user = onlyBan
-    ? await dbWrite.user.findUnique({ where: { id }, select })
-    : await getUserById({ id, select });
+  // The primary decides the direction: a replica behind the last ban or unban would reverse it, or
+  // ban twice and run the ban's side effects again.
+  const user = await dbWrite.user.findUnique({ where: { id }, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
+  if (setTo === !!user.bannedAt) return unchangedUser(id);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -3278,6 +3301,31 @@ export const toggleBan = async ({
             message: (error as Error).message,
           })
         ),
+
+      // Their OAuth apps and app access: see ban-access-cleanup.service.ts.
+      disableOauthForBannedUser(id)
+        .then(({ disabled, flagged, consents }) =>
+          logToAxiom({
+            type: 'info',
+            name: 'ban-user-disable-oauth',
+            message: `disabled ${disabled.length} self-only oauth client(s), flagged ${flagged.length} for review and deleted ${consents} consent(s) for banned user ${id}`,
+          })
+        )
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-disable-oauth',
+            message: (error as Error).message,
+          })
+        ),
+
+      revokeAppAccessForBannedUser({ userId: id, actorId: userId }).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-revoke-app-access',
+          message: (error as Error).message,
+        })
+      ),
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
@@ -3456,7 +3504,7 @@ export const toggleBan = async ({
     }
   }
 
-  return updatedUser;
+  return { ...updatedUser, changed: true };
 };
 
 export const getBanContentPreview = async ({ userId }: { userId: number }) => {
@@ -3477,12 +3525,15 @@ export const getBanContentPreview = async ({ userId }: { userId: number }) => {
 export const toggleContestBan = async ({
   id,
   detailsInternal,
+  setTo,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
-  const user = await getUserById({ id, select: { meta: true } });
+  // From the primary: the direction, and the whole meta written back, must not come from a stale read.
+  const user = await getUserById({ id, select: { meta: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = userMeta.contestBanDetails?.bannedAt;
+  if (setTo === !!bannedAt) return unchangedUser(id);
 
   const updatedMeta = bannedAt
     ? {
@@ -3505,7 +3556,7 @@ export const toggleContestBan = async ({
 
   await refreshSession(id, { caller: 'ban' });
 
-  return updatedUser;
+  return { ...updatedUser, changed: true };
 };
 
 export const toggleUserArticleEngagement = async ({

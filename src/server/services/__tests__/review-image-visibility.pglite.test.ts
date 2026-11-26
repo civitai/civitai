@@ -1,4 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -58,6 +60,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, username text, image text,
       "profilePictureId" int, muted boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}'
     );
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
@@ -67,13 +71,16 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false,
       -- The rest of what the image page reads.
       name text, url text, height int, width int, index int, hash text, "hideMeta" boolean DEFAULT false,
-      "createdAt" timestamp DEFAULT now(), "mimeType" text, "scannedAt" timestamp, type text, meta jsonb
+      "createdAt" timestamp DEFAULT now(), "mimeType" text, "scannedAt" timestamp, type text, meta jsonb,
+      "firstVisibleAt" timestamp
     );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
-      availability "Availability" DEFAULT 'Public', "collectionId" int, "modelVersionId" int
+      availability "Availability" DEFAULT 'Public', "collectionId" int, "modelVersionId" int,
+      "model3dId" int
     );
+    CREATE TABLE "Model3D" (id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp);
     CREATE TABLE "Model" (
       id int PRIMARY KEY, mode text, minor boolean, "sfwOnly" boolean, "gallerySettings" jsonb
     );
@@ -105,6 +112,14 @@ beforeAll(async () => {
     );
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE);
   `);
+  const triggers = readFileSync(
+    path.resolve(
+      __dirname,
+      '../../../../packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+    ),
+    'utf8'
+  );
+  await db.exec(triggers.match(/CREATE OR REPLACE FUNCTION image_sort_at\([\s\S]*?\$\$;/)![0]);
   const raw = pgliteRaw(db);
   const answer = async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
     Array.isArray(first)
@@ -442,6 +457,23 @@ describe('the image page behind a block', () => {
     expect(await page(STRANGER)).toBe(IMAGE);
     blocks = [block];
     expect(await page(STRANGER)).toBe('NOT_FOUND');
+  });
+
+  it("dates a held image released after publish at its release, as the feed's sortAt does", async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (1, ${BUYER}, '2026-01-01');
+      UPDATE "Image" SET "postId" = 1, "createdAt" = '2026-01-01', "scannedAt" = '2026-01-02'
+        WHERE id IN (${IMAGE}, ${UNRELATED});
+      UPDATE "Image" SET "firstVisibleAt" = '2026-01-04' WHERE id = ${IMAGE};
+    `);
+    const { getImage } = await import('~/server/services/image.service');
+    const publishedAt = (id: number) =>
+      getImage({ id, ...MOD, shownReviewImageLevels: allBrowsingLevelsFlag }).then((image) =>
+        new Date(image.publishedAt as Date).toISOString()
+      );
+    expect(await publishedAt(IMAGE)).toBe('2026-01-04T00:00:00.000Z');
+    // No firstVisibleAt: GREATEST(publishedAt, scannedAt, createdAt).
+    expect(await publishedAt(UNRELATED)).toBe('2026-01-02T00:00:00.000Z');
   });
 
   it('still serves its buyer and a moderator through a block', async () => {

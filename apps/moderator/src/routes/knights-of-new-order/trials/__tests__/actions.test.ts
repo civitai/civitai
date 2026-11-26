@@ -10,10 +10,12 @@ const svc = vi.hoisted(() => ({
   retireReference: vi.fn(),
   spotCheckItem: vi.fn(),
   updateCoreItem: vi.fn(),
+  referenceImageIds: vi.fn(async () => []),
 }));
 
 vi.mock('$lib/server/knights/coreset.service', () => svc);
-vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn() }));
+// Acting as a moderator with the media grant: withheld.pglite.test.ts covers the refusal itself.
+vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn(), canAccess: () => true }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions } from '../+page.server';

@@ -23,9 +23,10 @@ describe('tokenScopeKeyByBit', () => {
   it('returns undefined for an unknown / non-single bit', () => {
     expect(tokenScopeKeyByBit(0n)).toBeUndefined(); // None sentinel
     expect(tokenScopeKeyByBit(TokenScope.Full)).toBeUndefined(); // aggregate, not a single bit
-    expect(tokenScopeKeyByBit(2n ** 33n)).toBeUndefined(); // undefined bit
+    expect(tokenScopeKeyByBit(2n ** 34n)).toBeUndefined(); // undefined bit
     expect(tokenScopeKeyByBit(2n ** 31n)).toBe('AppsRead');
     expect(tokenScopeKeyByBit(2n ** 32n)).toBe('AppDataRead');
+    expect(tokenScopeKeyByBit(2n ** 33n)).toBe('RunnerMint');
     expect(tokenScopeKeyByBit(TokenScope.UserRead | TokenScope.ModelsRead)).toBeUndefined(); // multi-bit
   });
 });

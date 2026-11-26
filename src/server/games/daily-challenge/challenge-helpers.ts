@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { challengeCoverSql, imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeOperationSpentBuzz,
@@ -152,6 +156,8 @@ type ChallengeDbRow = Omit<
   judgeId: number | null;
 };
 
+const challengeCoverImageSql = Prisma.sql`${imageNotRestrictedSql()} AND ${challengeCoverSql()}`;
+
 // Shared column list for both the single-row and batched challenge lookups — keeps the two
 // queries (and their cover-image subquery hydration) from drifting apart.
 const challengeSelectFragment = Prisma.sql`
@@ -164,10 +170,10 @@ const challengeSelectFragment = Prisma.sql`
   c.theme,
   c.invitation,
   c."coverImageId",
-  (SELECT url FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverUrl",
-  (SELECT hash FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverImageHash",
-  (SELECT width FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverImageWidth",
-  (SELECT height FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverImageHeight",
+  (SELECT url FROM "Image" i WHERE i.id = c."coverImageId" AND ${challengeCoverImageSql}) as "coverUrl",
+  (SELECT hash FROM "Image" i WHERE i.id = c."coverImageId" AND ${challengeCoverImageSql}) as "coverImageHash",
+  (SELECT width FROM "Image" i WHERE i.id = c."coverImageId" AND ${challengeCoverImageSql}) as "coverImageWidth",
+  (SELECT height FROM "Image" i WHERE i.id = c."coverImageId" AND ${challengeCoverImageSql}) as "coverImageHeight",
   c."nsfwLevel",
   c."allowedNsfwLevel",
   c."modelVersionIds",
@@ -239,7 +245,23 @@ export async function getChallengesByIds(challengeIds: number[]): Promise<Challe
     WHERE c.id = ANY(${challengeIds}::int[])
   `;
 
-  return rows.map(hydrateChallengeRow);
+  const listed = await getReportListedHiddenImageIds(
+    rows.map((row) => row.coverImageId).filter((id): id is number => id != null),
+    SIGNED_OUT_REPORT_LISTED
+  );
+  return rows.map((row) =>
+    hydrateChallengeRow(
+      row.coverImageId != null && listed.has(row.coverImageId)
+        ? {
+            ...row,
+            coverUrl: null,
+            coverImageHash: null,
+            coverImageWidth: null,
+            coverImageHeight: null,
+          }
+        : row
+    )
+  );
 }
 
 export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {

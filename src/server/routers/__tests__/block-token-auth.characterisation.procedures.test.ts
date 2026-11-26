@@ -138,8 +138,7 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
     },
   };
 });
-// The scanned-rows flag reads as off, as an unconfigured Flipt answered before that flag failed
-// closed: these cells characterise the token gate, not the flag.
+// Scanned rows reads off: these cells characterise the token gate, not the flag.
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClientModule>();
   return {
@@ -151,6 +150,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
             flag,
             ...rest
           )) as typeof actual.isFliptSync,
+    readFliptBoolean: (async (flag: string, ...rest: unknown[]) =>
+      flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+        ? false
+        : (actual.readFliptBoolean as (...a: unknown[]) => Promise<boolean | null>)(
+            flag,
+            ...rest
+          )) as typeof actual.readFliptBoolean,
   };
 });
 vi.mock('~/server/db/appsDb', () => ({

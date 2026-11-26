@@ -211,6 +211,16 @@ beforeEach(() => {
       clientId: 'civitai-link-desktop',
       expiresAt: EXPIRES_AT,
     },
+    // A recipe-runner token: the runner bit lives only in the wide column.
+    {
+      key: generateSecretHash('civitai_runner'),
+      type: 'Access',
+      userId: 77,
+      tokenScope: TokenScope.UserRead,
+      tokenScopeWide: TokenScope.UserRead | TokenScope.RunnerMint,
+      clientId: 'recipe-runner',
+      expiresAt: EXPIRES_AT,
+    },
     // A client-credentials catalog token: single-purpose, so it reads as inactive here.
     {
       key: generateSecretHash('civitai_catalog'),
@@ -314,6 +324,7 @@ describe('introspect — inactive tokens all answer 200 {active:false}', () => {
     ['a refresh token (wrong type)', 'civitai_refresh'],
     ['an unknown token', 'civitai_nope'],
     ['a client-credentials token (single-purpose)', 'civitai_catalog'],
+    ['a recipe-runner token (single-purpose)', 'civitai_runner'],
     ['a missing token parameter', ''],
   ])('%s', async (_label, token) => {
     const res = await post({ token, client_id: CALLER, client_secret: CALLER_SECRET });

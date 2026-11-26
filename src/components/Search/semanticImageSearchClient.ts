@@ -4,6 +4,7 @@ import { baseModels } from '~/shared/constants/basemodel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { trpcVanilla } from '~/utils/trpc';
+import { throwIfRefused } from '~/components/Search/search-refusal';
 
 /**
  * Image search answers from the semantic search (the cluster search service over Qdrant), not
@@ -168,7 +169,9 @@ export function createOffsetPager() {
     // A deep link to page N whose earlier pages were never fetched: approximate the offset.
     const offset = page === 0 ? undefined : cursor ?? page * hitsPerPage;
 
-    const result = await search({ ...filters, query, limit: hitsPerPage, cursor: offset });
+    const result = throwIfRefused(
+      await search({ ...filters, query, limit: hitsPerPage, cursor: offset })
+    );
     if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
     const earlier = new Set(
       Array.from({ length: page }, (_, i) => pageIds.get(`${key}:${i}`) ?? []).flat()

@@ -24,10 +24,21 @@ function userinfo() {
   } as never);
 }
 
-function token(tokenScope: bigint, user: { bannedAt?: Date | null; deletedAt?: Date | null } = {}) {
+function token(
+  tokenScope: bigint,
+  user: { bannedAt?: Date | null; deletedAt?: Date | null } = {},
+  tokenScopeWide: bigint | null = null
+) {
   h.tables.User = [{ id: 1, deletedAt: null, bannedAt: null, ...user }];
   h.tables.ApiKey = [
-    { key: 'hash:civitai_x', type: 'Access', userId: 1, tokenScope, expiresAt: null },
+    {
+      key: 'hash:civitai_x',
+      type: 'Access',
+      userId: 1,
+      tokenScope,
+      tokenScopeWide,
+      expiresAt: null,
+    },
   ];
 }
 
@@ -38,6 +49,13 @@ beforeEach(() => {
 describe('oauth/userinfo', () => {
   it('refuses a client-credentials token', async () => {
     token(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite);
+    const res = await userinfo();
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
+  });
+
+  it('refuses a recipe-runner token (the runner bit lives in the wide column)', async () => {
+    token(TokenScope.UserRead, {}, TokenScope.UserRead | TokenScope.RunnerMint);
     const res = await userinfo();
     expect(res.status).toBe(401);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_token');

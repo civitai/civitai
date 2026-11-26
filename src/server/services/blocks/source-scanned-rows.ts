@@ -1,4 +1,4 @@
-import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import {
   type AppBlockSourceFlag,
   appBlockSourceFlagUnknownCounter,
@@ -40,13 +40,7 @@ export async function readAppBlockSourceFlag(
   flag: AppBlockSourceFlag,
   entityId?: string
 ): Promise<boolean> {
-  try {
-    await ensureFliptInitialized();
-  } catch {
-    // An unstarted client answers null below.
-  }
-  const key = appBlockSourceFlagKey(flag);
-  const on = entityId === undefined ? isFliptSync(key) : isFliptSync(key, entityId);
+  const on = await readFliptBoolean(appBlockSourceFlagKey(flag), entityId);
   if (on !== null) return on;
   try {
     appBlockSourceFlagUnknownCounter.inc({ flag });

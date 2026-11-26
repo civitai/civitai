@@ -1287,7 +1287,8 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	case EndpointV1Images:
 		// The public route's compute, with the headers it writes (v1ImagesCompute; computeV1Fn in tests).
 		build, computeFn = SyntheticV1Request, s.v1ImagesCompute(false)
-		compareFn, classify = shadow.CompareJSON, shadow.ClassifyJSON
+		// `modelVersionIds` compared as a multiset (shadow.CompareV1Images).
+		compareFn, classify = shadow.CompareV1Images, shadow.ClassifyJSON
 	case EndpointInfinite:
 		// The superjson envelope, as for the gallery; classified by image id (a flat page).
 		build, computeFn = SyntheticInfiniteRequest, s.computeInfinite

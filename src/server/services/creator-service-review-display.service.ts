@@ -26,8 +26,10 @@ export async function serviceReviewViewer({
 }) {
   return {
     levels: (browsingLevel ?? servable) & servable,
-    // Drops buyers this viewer hid as well as a block either way. The image page drops a review
-    // image for a block with its buyer or its seller only, and hides nothing for a hidden user.
+    // A list of other users' posts, so it takes the feed rule, as the offering feed does: buyers
+    // this viewer hid, and a block either way. A block with the seller 404s the offering for anyone
+    // but a moderator, so it never reaches here. isReviewImageBlockedForViewer is the narrower rule
+    // for opening one review image by id: blocks only, and moderators pass.
     excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
   };
 }

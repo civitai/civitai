@@ -3,11 +3,12 @@ import { readTableSort } from '$lib/server/table-sort';
 import { getBaseModelPerformance } from '$lib/server/models-earnings';
 import { getBaseModelTrends } from '$lib/server/base-model-trends';
 import { readAnalyticsPeriod } from '$lib/server/analytics-period';
+import { marketOverviewEnabled } from '$lib/server/market-overview';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
   const { range, compare: baseline } = readAnalyticsPeriod(cookies);
   const compare = baseline.range;
-  const [baseModels, platformTrends] = await Promise.all([
+  const [baseModels, platformTrends, marketEnabled] = await Promise.all([
     getBaseModelPerformance({
       userId: locals.user.id,
       ...range,
@@ -15,6 +16,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
       compareTo: compare.to,
     }).catch(() => null),
     getBaseModelTrends(range).catch(() => null),
+    marketOverviewEnabled(locals.user).catch(() => false),
   ]);
   // The comparison month must cover exactly the primary's base models so each line has a matching overlay.
   const names = platformTrends?.map((t) => t.baseModel) ?? [];
@@ -31,6 +33,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
     platformTrends,
     platformTrendsCompare,
     ownBaseModels,
+    marketEnabled,
     range,
     tableSort: readTableSort(cookies, 'base-models'),
   };

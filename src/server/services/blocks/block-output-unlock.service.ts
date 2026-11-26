@@ -271,6 +271,22 @@ export type OutputUnlockDeps = {
    * path; the reply already reports the charge.
    */
   warnChargedNotReleased: (entry: ChargedNotReleased) => void;
+  /**
+   * A WARN for support: the write got no response or a 5xx, so whether the viewer was charged is
+   * unknown, and the reply says nothing was charged. Never an error path.
+   */
+  warnOutcomeUnknown: (entry: OutcomeUnknown) => void;
+};
+
+/** One unlock whose charge is unknown, as `warnOutcomeUnknown` records it. */
+export type OutcomeUnknown = {
+  userId: number;
+  workflowId: string;
+  position: number;
+  /** The price the orchestrator may have taken. */
+  unlockBuzz: number;
+  /** The output's browsing level when the unlock was planned. */
+  plannedLevel: number | null;
 };
 
 /** One charged-but-not-released unlock, as `warnChargedNotReleased` records it. */
@@ -393,6 +409,17 @@ export async function unlockBlockOutput(
     const lifted = await deps.liftRestriction();
     if (lifted.outcome === 'no-response') {
       keepLock = true;
+      try {
+        deps.warnOutcomeUnknown({
+          userId: request.viewerUserId,
+          workflowId: request.workflowId,
+          position: request.position,
+          unlockBuzz: total,
+          plannedLevel: levelAt(fresh, request.position),
+        });
+      } catch {
+        // A record for support; it must not change the viewer's reply.
+      }
       return {
         outcome: 'unavailable',
         snapshot: plan.snapshot,

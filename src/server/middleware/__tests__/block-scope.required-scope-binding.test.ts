@@ -355,3 +355,46 @@ describe('#5063 STRUCTURAL — what the narrowing shifted onto a static gate', (
   // above is structural, and a correct version of the walk would be a
   // meaningfully larger piece of machinery than the seam warrants.
 });
+
+describe('a recipe-runner token is refused on block REST routes', () => {
+  async function signRunner(extra: Record<string, unknown>): Promise<string> {
+    const { decodeProtectedHeader, importPKCS8, SignJWT } = await import('jose');
+    const { env } = await import('~/env/server');
+    const kid = decodeProtectedHeader(await mintToken({ userId: 42, scopes: [BUZZ_READ] })).kid;
+    const now = Math.floor(Date.now() / 1000);
+    return new SignJWT({
+      blockId: 'blk_5063',
+      appId: 'app_5063',
+      appBlockId: 'apb_5063',
+      blockInstanceId: 'bki_5063',
+      scopes: [BUZZ_READ],
+      ctx: {},
+      maxBrowsingLevel: 3,
+      ...extra,
+    })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: kid as string })
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:42')
+      .setJti('jti-runner-rest')
+      .setIssuedAt(now)
+      .setExpirationTime(now + 180)
+      .sign(await importPKCS8(env.BLOCK_TOKEN_PRIVATE_KEY as string, 'RS256'));
+  }
+
+  it('answers 401 and never runs the handler', async () => {
+    const { handler, wrapped } = route(BUZZ_READ);
+    const res = makeRes();
+    await wrapped(makeReq(await signRunner({ mintOrigin: 'runner' })) as never, res as never);
+    expect(res.statusCode).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same token without the marker reaches the handler', async () => {
+    const { handler, wrapped } = route(BUZZ_READ);
+    const res = makeRes();
+    await wrapped(makeReq(await signRunner({})) as never, res as never);
+    expect(res.statusCode).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});

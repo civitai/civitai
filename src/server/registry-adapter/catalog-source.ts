@@ -10,7 +10,7 @@ import type {
   ListingMediaItem,
   ListingSubListingItem,
 } from '~/server/registry-adapter/catalog-media';
-import type { CatalogApp } from '~/server/registry-adapter/entities';
+import type { CatalogApp, DocStreamApp } from '~/server/registry-adapter/entities';
 import { compareCodeUnits } from '~/server/registry-adapter/release';
 import type {
   ListingActionsRunSource,
@@ -233,16 +233,7 @@ export async function readCatalog(
     ? await Promise.all([deps.loadBlocks(blockIds), deps.loadApproved(blockIds)])
     : [[], []];
   const blockById = new Map(blocks.map((b) => [b.id, b]));
-  const approvedByBlock = new Map<string, CatalogApprovedRequest[]>();
-  for (const r of approved) {
-    const list = approvedByBlock.get(r.appBlockId) ?? [];
-    list.push(r);
-    approvedByBlock.set(r.appBlockId, list);
-  }
-  const reviewOrder = (a: CatalogApprovedRequest, b: CatalogApprovedRequest) => {
-    const at = (a.reviewedAt?.getTime() ?? 0) - (b.reviewedAt?.getTime() ?? 0);
-    return at !== 0 ? at : compareCodeUnits(a.id, b.id);
-  };
+  const approvedByBlock = approvedInReviewOrder(approved);
 
   const blockOf = (l: CatalogListing) =>
     l.kind === 'onsite' && l.appBlockId ? blockById.get(l.appBlockId) ?? null : null;
@@ -307,12 +298,68 @@ export async function readCatalog(
         ...(listingStream ? { store: storeOf(l) } : {}),
       },
       block,
-      approved: block
-        ? (approvedByBlock.get(block.id) ?? [])
-            .sort(reviewOrder)
-            .map(({ appBlockId: _appBlockId, ...r }) => r)
-        : [],
+      approved: block ? approvedByBlock.get(block.id) ?? [] : [],
     });
   }
   return apps;
+}
+
+/** Each block's approved publish requests, in review order (oldest review first, then id). */
+function approvedInReviewOrder(
+  approved: readonly CatalogApprovedRequest[]
+): Map<string, CatalogApp['approved']> {
+  const byBlock = new Map<string, CatalogApprovedRequest[]>();
+  for (const r of approved) {
+    const list = byBlock.get(r.appBlockId) ?? [];
+    list.push(r);
+    byBlock.set(r.appBlockId, list);
+  }
+  const reviewOrder = (a: CatalogApprovedRequest, b: CatalogApprovedRequest) => {
+    const at = (a.reviewedAt?.getTime() ?? 0) - (b.reviewedAt?.getTime() ?? 0);
+    return at !== 0 ? at : compareCodeUnits(a.id, b.id);
+  };
+  return new Map(
+    [...byBlock].map(([id, list]) => [
+      id,
+      list.sort(reviewOrder).map(({ appBlockId: _appBlockId, ...r }) => r),
+    ])
+  );
+}
+
+/** A block the document streams may resolve, with its store listing's rating (null: none). */
+export type DocStreamBlock = CatalogBlock & { listingContentRating: string | null };
+
+export type DocStreamReadDeps = {
+  /**
+   * Every approved, on-site block whose owner is not banned or deleted, whatever its store
+   * listing's visibility or whether it has one. Never an off-site (external) block.
+   */
+  loadResolvableBlocks: () => Promise<DocStreamBlock[]>;
+  loadApproved: CatalogReadDeps['loadApproved'];
+};
+
+/**
+ * One read of the apps the private, per-viewer and level document streams resolve from
+ * (`doc-streams.ts`). Unlike {@link readCatalog} it is NOT the public catalog: those streams make
+ * their own access decisions, so the block's status is the gate. Nothing read here is published
+ * as an entity, and the registry export (`resolveFromCatalog`) stays on the public catalog.
+ *
+ * Differences from the public catalog, each deliberate:
+ *   - the listing's visibility (moderators, private, cohort) is not a gate;
+ *   - the listing's status (draft, pending, rejected, removed) is not a gate, and an app with no
+ *     listing resolves;
+ *   - a block that has never deployed resolves;
+ *   - the public-catalog kill switch does not stop these streams.
+ * What still applies: the block is approved and on-site, and its owner is not banned or deleted
+ * (the store's owner rule).
+ */
+export async function readDocStreamApps(deps: DocStreamReadDeps): Promise<DocStreamApp[]> {
+  const blocks = await deps.loadResolvableBlocks();
+  const approved = blocks.length ? await deps.loadApproved(blocks.map((b) => b.id)) : [];
+  const approvedByBlock = approvedInReviewOrder(approved);
+  return blocks.map(({ listingContentRating, ...block }) => ({
+    listing: { contentRating: listingContentRating },
+    block,
+    approved: approvedByBlock.get(block.id) ?? [],
+  }));
 }

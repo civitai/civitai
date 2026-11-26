@@ -11,6 +11,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { isImageOwner } from '~/server/services/util.service';
 import {
   getEnabledRemixApps,
@@ -359,6 +360,7 @@ export async function loadSource(
 export async function loadReference(imageId: number, caller: RemixAppCaller) {
   if (!(await isImageOwner({ userId: caller.user.id, imageId, allowMods: false })))
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Pick one of your own images' });
+  await assertNotDealFileImages([imageId], 'used here');
   const image = await loadSource(imageId, caller, true);
   if (image.type !== 'image')
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Pick an image, not a video' });
