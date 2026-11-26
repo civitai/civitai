@@ -82,8 +82,22 @@ CREATE TABLE "Image" (
   poi                 boolean NOT NULL DEFAULT false,
   "acceptableMinor"   boolean NOT NULL DEFAULT false,
   "modelRestricted"   boolean NOT NULL DEFAULT false,
-  "tosViolation"      boolean NOT NULL DEFAULT false
+  "tosViolation"      boolean NOT NULL DEFAULT false,
+  "firstVisibleAt"    timestamp(3)
 );
+
+-- source: packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql (the sortAt the
+-- Image trigger writes; the image query computes it the same way).
+CREATE FUNCTION image_sort_at(
+  published_at timestamp, scanned_at timestamp, created_at timestamp, first_visible_at timestamp
+) RETURNS timestamp
+  LANGUAGE sql IMMUTABLE AS
+$$
+SELECT GREATEST(
+  published_at, scanned_at, created_at,
+  CASE WHEN first_visible_at <= published_at + interval '7 days' THEN first_visible_at END
+)
+$$;
 
 CREATE TABLE "ImageResourceNew" (
   "imageId"        integer NOT NULL,

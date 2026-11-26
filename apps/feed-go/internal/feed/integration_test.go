@@ -786,3 +786,27 @@ func TestIntegrationAddonSource(t *testing.T) {
 		}
 	}
 }
+
+// sortAt is image_sort_at, as the Image trigger writes it: an image held from upload and released
+// later sorts at its first-visible time, and a row without one keeps GREATEST(publishedAt,
+// scannedAt, createdAt).
+func TestIntegrationSortAtFirstVisible(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integtest.Exec(t, pool, `
+		DELETE FROM "Image" WHERE id BETWEEN 2109000 AND 2109999;
+		DELETE FROM "Post" WHERE id BETWEEN 2109000 AND 2109999;
+		INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2109501, 2109901, '2021-01-01 00:00:00');
+		INSERT INTO "Image" (id, url, "userId", "postId", "nsfwLevel", ingestion, "createdAt", "scannedAt", "firstVisibleAt") VALUES
+		  (2109001, 'integ-url', 2109901, 2109501, 1, 'Scanned', '2021-01-01 00:00:00', '2021-01-01 00:00:00', '2021-01-04 00:00:00'),
+		  (2109002, 'integ-url', 2109901, 2109501, 1, 'Scanned', '2020-12-31 00:00:00', '2021-01-02 00:00:00', NULL);`)
+
+	rows := integRun(t, pool, ImagesQuery{IDs: []int{2109001, 2109002}, Limit: 5, IsModerator: true, BrowsingLevel: browsing.AllLevels})
+	got := map[int]string{}
+	for _, r := range rows {
+		got[r.ID] = r.SortAt.UTC().Format(time.RFC3339)
+	}
+	want := map[int]string{2109001: "2021-01-04T00:00:00Z", 2109002: "2021-01-02T00:00:00Z"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sortAt = %v, want %v", got, want)
+	}
+}
