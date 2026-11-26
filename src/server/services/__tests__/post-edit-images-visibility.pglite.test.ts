@@ -107,7 +107,16 @@ const editorIds = async (
   user: SessionUser,
   servableLevels = allBrowsingLevelsFlag,
   ownerSeesHeld = true
-) => (await getPostEditImages({ id: POST, user, servableLevels, ownerSeesHeld })).map((i) => i.id);
+) =>
+  (
+    await getPostEditImages({
+      id: POST,
+      user,
+      servableLevels,
+      ownerSeesHeld,
+      asModerator: !!user.isModerator,
+    })
+  ).map((i) => i.id);
 
 describe('getPostEditImages: images held for review', () => {
   it('shows the owner their own held images, and leaves out a held image of another user', async () => {
@@ -184,13 +193,15 @@ describe('getPostEditImages: the request level cap', () => {
 });
 
 describe('getPostEditImages: blocked images', () => {
-  const blockedPostRows = async (user: SessionUser) =>
+  // `asModerator` is `actsAsModerator(ctx)`: a session or a full-access key.
+  const blockedPostRows = async (user: SessionUser, asModerator = !!user.isModerator) =>
     (
       await getPostEditImages({
         id: BLOCKED_POST,
         user,
         servableLevels: allBrowsingLevelsFlag,
         ownerSeesHeld: true,
+        asModerator,
       })
     ).map(({ id, url, hash, thumbnailUrl, blockedFor, ingestion, meta }) => ({
       id,
@@ -240,5 +251,15 @@ describe('getPostEditImages: blocked images', () => {
         `media-${id}`,
       ])
     );
+  });
+
+  it('gives a moderator on a scoped key no media of a blocked image', async () => {
+    expect((await blockedPostRows(moderator, false)).map(({ id, url }) => [id, url])).toEqual([
+      [BLOCKED_POST_CLEAN, `media-${BLOCKED_POST_CLEAN}`],
+      [MOD_BLOCKED, null],
+      [SCAN_BLOCKED, null],
+      [METADATA_HOLD, `media-${METADATA_HOLD}`],
+      [RATED_BLOCKED, `media-${RATED_BLOCKED}`],
+    ]);
   });
 });

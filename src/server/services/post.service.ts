@@ -825,6 +825,8 @@ type PostEditInput = GetByIdInput & {
   servableLevels: number;
   /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
   ownerSeesHeld?: boolean;
+  /** `actsAsModerator(ctx)`: a moderator on a scoped key gets the owner's view of blocked media. */
+  asModerator?: boolean;
 };
 
 export const getPostEditDetail = async ({
@@ -832,11 +834,12 @@ export const getPostEditDetail = async ({
   user,
   servableLevels,
   ownerSeesHeld,
+  asModerator,
 }: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld, asModerator }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -941,7 +944,11 @@ async function getPostUnpublishContext({
   );
 }
 
-async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+async function combinePostEditImageData(
+  images: PostImageEditSelect[],
+  user: SessionUser,
+  asModerator: boolean
+) {
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
@@ -958,10 +965,10 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
         // The editor's viewer is the post's owner or a moderator; a blocked thumbnail follows the feed's rule.
         thumbnailUrl: (feedThumbnailFields(thumbnails[image.id], image.nsfwLevel, user.id, {
           ownerId: user.id,
-          isModerator: user.isModerator ?? false,
+          isModerator: asModerator,
         }).thumbnailUrl ?? null) as string | null,
       };
-      if (user.isModerator || ownerMediaAllowed(image)) return row;
+      if (asModerator || ownerMediaAllowed(image)) return row;
       // The owner keeps a blocked row and its notice (`blockedFor`, `ingestion`), not its media
       // or blur hash, as on the image page.
       return {
@@ -993,19 +1000,20 @@ export const getPostEditImages = async ({
   user,
   servableLevels,
   ownerSeesHeld = false,
+  asModerator = false,
 }: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
+        asModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
     select: editPostImageSelect,
   });
-  return combinePostEditImageData(images, user);
+  return combinePostEditImageData(images, user, asModerator);
 };
 
 export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
@@ -1662,6 +1670,7 @@ export const addPostImage = async ({
   externalDetailsUrl,
   assertPostOwnedBy,
   serverMintedUrl,
+  asModerator = false,
   ...props
 }: ImageSchema & {
   user: SessionUser;
@@ -1671,6 +1680,8 @@ export const addPostImage = async ({
   assertPostOwnedBy?: AssertPostOwnedBy;
   /** `url` is a key the server minted and stored itself, not one from the client. */
   serverMintedUrl?: boolean;
+  /** `actsAsModerator(ctx)`, as on `getPostEditImages`. */
+  asModerator?: boolean;
 }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
@@ -1741,7 +1752,7 @@ export const addPostImage = async ({
         select: editPostImageSelect,
       });
       if (existingResult) {
-        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        const [existingImage] = await combinePostEditImageData([existingResult], user, asModerator);
         return existingImage;
       }
     }
@@ -1788,7 +1799,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!result) throw throwDbError(`Image not found`);
-  const [image] = await combinePostEditImageData([result], user);
+  const [image] = await combinePostEditImageData([result], user, asModerator);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting — parallelize independent operations

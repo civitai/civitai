@@ -1,4 +1,5 @@
 import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { dbWrite } from '~/server/db/client';
 import { middleware, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { requestServableLevels } from '~/server/utils/browsing-level';
@@ -138,6 +139,7 @@ export const postRouter = router({
         user: ctx.user,
         servableLevels: requestServableLevels(ctx),
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        asModerator: actsAsModerator(ctx),
       })
     ),
   getImageIds: protectedProcedure
@@ -180,7 +182,9 @@ export const postRouter = router({
   addImage: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postAddImageInput)
-    .mutation(({ ctx, input }) => addPostImage({ ...input, user: ctx.user })),
+    .mutation(({ ctx, input }) =>
+      addPostImage({ ...input, user: ctx.user, asModerator: actsAsModerator(ctx) })
+    ),
   updateImage: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updatePostImageSchema)
@@ -263,6 +267,7 @@ export const postRouter = router({
         user: ctx.user,
         servableLevels: requestServableLevels(ctx),
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        asModerator: actsAsModerator(ctx),
       })
     ),
   reschedule: verifiedProcedure
