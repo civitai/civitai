@@ -6679,6 +6679,53 @@ export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?
 }
 
 /**
+ * The model of each named version. `modelOf` maps versions whose model the caller already has; the
+ * rest are looked up. A version not found is absent.
+ */
+export async function getModelIdsOfVersions(
+  modelVersionIds: number[],
+  modelOf: ReadonlyMap<number, number> = new Map()
+) {
+  const models = new Map<number, number>();
+  const unknown: number[] = [];
+  for (const id of uniq(modelVersionIds)) {
+    const modelId = modelOf.get(id);
+    if (modelId === undefined) unknown.push(id);
+    else models.set(id, modelId);
+  }
+  if (unknown.length) {
+    const versions = await versionModelCache().fetch(unknown);
+    for (const version of Object.values(versions)) models.set(version.id, version.modelId);
+  }
+  return models;
+}
+
+/**
+ * Of the named versions, those whose model is deleted. `modelOf` maps versions whose model the caller
+ * already has; the rest are looked up. A version not found is not returned.
+ */
+export async function getDeletedModelVersionIds(
+  modelVersionIds: number[],
+  modelOf: ReadonlyMap<number, number> = new Map()
+) {
+  const deleted = new Set<number>();
+  if (!modelVersionIds.length) return deleted;
+  const models = await getModelIdsOfVersions(modelVersionIds, modelOf);
+  const modelIds = uniq([...models.values()]);
+  if (!modelIds.length) return deleted;
+  const deletedModels = await dbRead.model.findMany({
+    where: { id: { in: modelIds }, status: ModelStatus.Deleted },
+    select: { id: true },
+  });
+  const deletedModelIds = new Set(deletedModels.map((model) => model.id));
+  for (const id of modelVersionIds) {
+    const modelId = models.get(id);
+    if (modelId !== undefined && deletedModelIds.has(modelId)) deleted.add(id);
+  }
+  return deleted;
+}
+
+/**
  * For each post on a minor or SFW-only model, the level its images may be served at and the model's
  * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
  */

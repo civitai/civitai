@@ -147,13 +147,16 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
+import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
 import {
   assertContentLinkHoldWritable,
   classifyUnlinkedContentUrls,
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
   contentLinkHoldCounter,
   type ContentLinkHold,
   getContentLinkHold,
   nextContentLinkHold,
+  probeContentUploads,
   sameContentLinkHold,
   writeContentLinkHold,
 } from '~/server/services/article-content-link-hold';
@@ -165,6 +168,8 @@ import {
   imageUrlUnavailableError,
   isUnfinishedUploadUrl,
   keyIssuers,
+  MAX_KEYS,
+  recordedKeys,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -2573,14 +2578,57 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
+      // A deferral for a missing upload never ends in a refusal. A deferred bare key is probed
+      // whatever its issue record says and stays deferred until it is proved present, or, past the
+      // backstop, proved absent: then it is classified as never held unless its key is recorded.
+      // A deferred url with no answer this run (store unreadable, past the cap) stays deferred.
+      const wasRefused = new Set(previousHold?.refused ?? []);
+      const wasDeferred = new Set(previousHold?.deferred ?? []);
+      const candidates = unlinked.filter(
+        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
+      );
+      const deferredCandidates = candidates.filter((url) => wasDeferred.has(url));
+      // A new key is probed only when the current upload path issued it to the owner or editor;
+      // any other key links as before. Past one lookup's worth, the rest link as before too.
+      const { recorded } = await recordedKeys(
+        [...deferredCandidates, ...candidates.filter((url) => !wasDeferred.has(url))].slice(
+          0,
+          MAX_KEYS
+        ),
+        { issuedTo: [ownerId, userId], now }
+      );
+      const probeable = [
+        ...deferredCandidates,
+        ...candidates.filter((url) => !wasDeferred.has(url) && recorded.has(url)),
+      ];
+      const { absent, present } = await probeContentUploads(probeable);
+      // Past the backstop a still-absent url is classified and linked as on main.
+      const pastBackstop =
+        !!previousHold?.deferredSince &&
+        now.getTime() - previousHold.deferredSince.getTime() >= CONTENT_LINK_DEFERRAL_BACKSTOP_MS;
+      const released = new Set(
+        pastBackstop ? [...absent].filter((url) => wasDeferred.has(url)) : []
+      );
+      const stillDeferred = probeable.filter(
+        (url) =>
+          !released.has(url) && (absent.has(url) || (wasDeferred.has(url) && !present.has(url)))
+      );
+      const unsettled = new Set(stillDeferred);
       const classified = await classifyUnlinkedContentUrls({
-        urls: unlinked,
+        urls: unlinked.filter((url) => !unsettled.has(url)),
         ownerId,
         editorId: userId,
-        wasHeld: new Set([...(previousHold?.deferred ?? []), ...(previousHold?.refused ?? [])]),
+        // Held, an unrecorded key is refused; a released one with no record is not.
+        wasHeld: new Set(
+          [...wasDeferred, ...wasRefused].filter((url) => !released.has(url) || recorded.has(url))
+        ),
         now,
       });
-      hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId }, now);
+      hold = nextContentLinkHold(
+        previousHold,
+        { ...classified, deferred: [...classified.deferred, ...stillDeferred], editorId: userId },
+        now
+      );
     }
   }
   const held = new Set([...(hold?.deferred ?? []), ...(hold?.refused ?? [])]);
