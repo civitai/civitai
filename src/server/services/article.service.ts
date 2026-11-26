@@ -167,6 +167,7 @@ import {
   imageUrlUnavailableError,
   isUnfinishedUploadUrl,
   keyIssuers,
+  recordedKeys,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -2532,9 +2533,15 @@ export async function linkArticleContentImages({
       // a missing upload stays out of classification until the store answers for it.
       const wasRefused = new Set(previousHold?.refused ?? []);
       const wasDeferred = new Set(previousHold?.deferred ?? []);
-      const probeable = unlinked.filter(
-        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
+      // Only a key minted by the current upload path is known to live in the store the probe asks;
+      // any other key links as before.
+      const recorded = await recordedKeys(
+        unlinked.filter(
+          (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
+        ),
+        now
       );
+      const probeable = unlinked.filter((url) => recorded.has(url));
       const { absent, present } = await probeContentUploads([
         ...probeable.filter((url) => wasDeferred.has(url)),
         ...probeable.filter((url) => !wasDeferred.has(url)),

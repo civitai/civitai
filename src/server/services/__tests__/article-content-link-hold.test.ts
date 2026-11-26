@@ -793,15 +793,34 @@ describe('a url whose upload is not in the image store', () => {
     expect(await rows()).toHaveLength(1);
   });
 
-  it('stays deferred, not refused, across settles when its key has no issue record', async () => {
+  it('is not probed when the issue record cannot be read, and is handled as on main', async () => {
+    await recordUploadKeyOwner(KEY2, AUTHOR);
     const content = `<p>${img(KEY2)}</p>`;
     await givenArticle({ content });
     store.absent.add(KEY2);
+    lookupsDown();
+    s3Send.mockClear();
     await link({ content });
+    expect(s3Send).not.toHaveBeenCalled();
+    // As on main with the lookups down: classification defers it for that, not for its upload.
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+    lookupsUp();
+    store.absent.clear();
     await settleContentLinkHolds(at(10 * MINUTE));
-    await settleContentLinkHolds(at(20 * MINUTE));
-    expect(await hold()).toMatchObject({ deferred: [KEY2], refused: [] });
-    expect(await ingestion()).toBe('Pending');
+    expect(await rows()).toEqual([KEY2]);
+  });
+
+  it('links as before, not deferred, when its key has no issue record', async () => {
+    // Such a key may predate the store the probe asks, so its absence there proves nothing.
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
   });
 
   it('stops probing at the first unreadable answer, linking the rest as before', async () => {
@@ -821,8 +840,9 @@ describe('a url whose upload is not in the image store', () => {
     expect(await rows()).toHaveLength(keys.length);
   });
 
-  it('stays deferred, not refused, when a later settle gets no answer from the store', async () => {
+  it('stays deferred when a later settle gets no answer from the store', async () => {
     const content = `<p>${img(KEY2)}</p>`;
+    await recordUploadKeyOwner(KEY2, AUTHOR);
     await givenArticle({ content });
     store.absent.add(KEY2);
     await link({ content });
@@ -897,14 +917,15 @@ describe('a url still absent past the deferral backstop', () => {
     await link({ content });
   });
 
-  it('leaves the hold and links as before, filing no report', async () => {
+  it('leaves the hold and links as before, not refused after the cutoff, filing no report', async () => {
+    expect(at(PAST) >= UNRECORDED_KEYS_ACCEPTED_UNTIL).toBe(true);
     await settleContentLinkHolds(at(PAST));
     expect(await rows()).toEqual([KEY2]);
     expect(await hold()).toBeNull();
     expect(createReport).not.toHaveBeenCalled();
   });
 
-  it('is refused, not linked, when its key has no issue record', async () => {
+  it('is refused, as any held unrecorded key, if its issue record is gone by then', async () => {
     redis.clear();
     await settleContentLinkHolds(at(PAST));
     expect(await rows()).toEqual([]);

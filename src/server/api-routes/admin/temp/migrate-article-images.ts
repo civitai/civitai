@@ -16,6 +16,7 @@ import {
   recomputeArticleIngestion,
 } from '~/server/services/article.service';
 import { deferContentUrls, probeContentUploads } from '~/server/services/article-content-link-hold';
+import { recordedKeys } from '~/server/services/image-url-ownership';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -332,7 +333,9 @@ async function processBatch(
   );
   // A one-off pass, not re-run every settle, so neither the count cap nor the time budget applies.
   // An unreadable store still stops it: the urls it never answered for are counted, and linked.
-  const newUrls = [...allUrls].filter((url) => !existingUrls.has(url));
+  // Only keys minted by the current upload path are known to live in the store the probe asks.
+  const recorded = await recordedKeys([...allUrls].filter((url) => !existingUrls.has(url)));
+  const newUrls = [...recorded];
   const { absent, present } = await probeContentUploads(newUrls, {
     max: Infinity,
     budgetMs: Infinity,

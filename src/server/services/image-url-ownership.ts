@@ -483,6 +483,17 @@ type KeyIssuerArgs = {
 };
 
 /**
+ * The keys among `keys` with an issue record or a logged upload request, i.e. minted by the current
+ * upload path. A store that cannot be read records nothing, so its keys are left out.
+ */
+export async function recordedKeys(keys: string[], now = new Date()) {
+  if (!keys.length) return new Set<string>();
+  const { owners } = await ownersFromRedis(keys, now);
+  const logged = await ownersFromClickhouse(keys.filter((k) => !owners.has(k)));
+  return new Set([...owners.keys(), ...logged.owners.keys()]);
+}
+
+/**
  * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`,
  * and those with no issue record and no `Image` row of theirs.
  */
