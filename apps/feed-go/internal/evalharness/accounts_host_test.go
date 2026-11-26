@@ -20,8 +20,8 @@ import (
 )
 
 // hostAccounts writes an accounts file whose member-mature account has a default token (unless
-// def is "") and one token per host in perHost; every other member role gets a default token. It
-// returns the file's path.
+// def is "") and one token per host in perHost, and owns the API key; every other member role gets a
+// default token. It returns the file's path.
 func hostAccounts(t *testing.T, def string, perHost map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -53,6 +53,7 @@ func hostAccounts(t *testing.T, def string, perHost map[string]string) string {
 		}
 		f.Accounts = append(f.Accounts, spec)
 	}
+	f.APIKey = &APIKeySpec{KeyFile: write("api.key", testAPIKey), Role: RoleMature}
 	b, err := json.Marshal(f)
 	if err != nil {
 		t.Fatal(err)
@@ -94,13 +95,25 @@ func TestResolvePicksTheSessionForTheCaseHost(t *testing.T) {
 			t.Errorf("host %q: cookie for %q (why %q), want the token for %q", host, tokenName(c.Cookie, def, red, eu), why, tokenName("eval-session="+want, def, red, eu))
 		}
 	}
-	// The API key's own cookie follows the case host too.
-	b, err := LoadAccounts(hostAccounts(t, def, map[string]string{"red.example": red}), testNow, &bytes.Buffer{})
+	// The API key's owner's cookie, sent with the key, follows the case host too.
+	key := Mapping{APIKey: true, Header: true, Cookie: true}
+	for host, want := range map[string]string{"red.example": red, "site.example": def} {
+		c, why := a.Resolve(key, host)
+		if why != "" || c.ViewerUsed != "apikey:"+RoleMature || c.Bearer != testAPIKey || c.Cookie != "eval-session="+want {
+			t.Errorf("api key on %q: viewer %q bearer set %v cookie %q (why %q)", host, c.ViewerUsed, c.Bearer == testAPIKey,
+				tokenName(c.Cookie, def, red, eu), why)
+		}
+	}
+	// The longest key wins when it also sorts LAST (a first-match would pick the shorter one).
+	www := fakeJWTSub(t, "d3d3", farExpiry)
+	b, err := LoadAccounts(hostAccounts(t, def, map[string]string{"red.example": red, "www.red.example": www}), testNow, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c, why := b.Resolve(Mapping{Role: RoleMature, Cookie: true}, "red.example"); why != "" || c.Cookie != "eval-session="+red {
-		t.Errorf("second file: %q %q", tokenName(c.Cookie, def, red, eu), why)
+	for host, want := range map[string]string{"a.www.red.example": www, "www.red.example": www, "b.red.example": red} {
+		if c, why := b.Resolve(m, host); why != "" || c.Cookie != "eval-session="+want {
+			t.Errorf("host %q: got %q (why %q)", host, tokenName(c.Cookie, def, red, www), why)
+		}
 	}
 }
 
@@ -275,7 +288,7 @@ func TestIndexShowsEachNotesHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var hosts []string
+	hosts := make([]string, 0, len(rep.Index.Accounts))
 	for _, r := range rep.Index.Accounts {
 		hosts = append(hosts, r.Host)
 	}

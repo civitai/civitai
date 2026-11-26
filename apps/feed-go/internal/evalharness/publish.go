@@ -96,7 +96,8 @@ type ReasonRow struct {
 	TrafficPct float64
 }
 
-// AccountRow is one account needing attention: its role, its token's exp, and the state.
+// AccountRow is one account token needing attention: its role, the host the token is for ("-": the
+// default token), its exp, and the state.
 type AccountRow struct {
 	Role    string
 	Host    string
