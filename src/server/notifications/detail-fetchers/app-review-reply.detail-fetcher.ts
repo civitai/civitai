@@ -25,7 +25,11 @@ export const appReviewReplyDetailFetcher = createDetailFetcher({
 
     for (const n of notifications) {
       const user = users.find((u) => u.id === n.details.authorUserId);
-      if (user) n.details.actor = user;
+      // The byline and avatar need the name and picture only; the account id stays server-side.
+      if (user) {
+        const { id, ...actor } = user;
+        n.details.actor = actor;
+      }
     }
   },
 });

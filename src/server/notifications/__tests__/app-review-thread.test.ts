@@ -321,6 +321,7 @@ describe('appReviewReplyDetailFetcher', () => {
     const where = (findMany.mock.calls[0]![0] as { where: unknown }).where;
     expect(where).toEqual({ id: { in: [31, 44] }, deletedAt: null });
     expect(live.details).toMatchObject({ actor: { username: 'reviewer_ada' } });
+    expect((live.details as Record<string, unknown>).actor).not.toHaveProperty('id');
     expect(gone.details).not.toHaveProperty('actor');
     expect(getNotificationMessage(live)?.byline).toBe('From @reviewer_ada, Civitai App Review');
     expect(getNotificationMessage(gone)?.byline).toBe('From Civitai App Review');
