@@ -1444,6 +1444,27 @@ describe('releasePendingDeletes', () => {
     }
   });
 
+  it('never lifts a hide written while the marker trigger was missing, once it is applied', async () => {
+    await pg.exec(`DROP TRIGGER trg_image_kept_hide_drop_marker ON "Image"`);
+    try {
+      await hideFor();
+    } finally {
+      await pg.exec(KEPT_HIDE_TRIGGER_SQL);
+    }
+    const hidden = await imageState();
+    const { rows } = await pg.query<{ marker: string | null; prior: unknown }>(
+      `SELECT i.metadata->>'keptHide' AS marker, q.data->'prior' AS prior
+       FROM "Image" i JOIN "JobQueue" q ON q."entityId" = i.id WHERE i.id = ${IMAGE}`
+    );
+    expect(rows).toEqual([{ marker: null, prior: null }]);
+    expect(hidden).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([]);
+    expect(await imageState()).toEqual(hidden);
+  });
+
   // One connection, so "committed while the release waited for its lock" is a change run right after
   // the lock statement returns, inside the release's transaction.
   it.each([

@@ -8,7 +8,9 @@
 -- Postgres fires an UPDATE OF trigger when a listed column is in the SET list, even if its value
 -- does not change. The WHEN clause limits the function to the few rows that carry a marker.
 --
--- The lift checks that this trigger exists and is enabled, and lifts nothing without it.
+-- Apply this migration before the code deploys. The code does not depend on that order: the hide
+-- writes its marker only while this trigger exists and is enabled, and the lift checks it too, so a
+-- row hidden without it is never lifted.
 --
 -- Additive and idempotent: no data changes. Hand-applied. CREATE TRIGGER takes a brief SHARE ROW
 -- EXCLUSIVE lock on "Image": apply off-peak, and retry if the lock timeout is hit.

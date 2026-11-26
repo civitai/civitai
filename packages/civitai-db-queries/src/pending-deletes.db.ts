@@ -39,7 +39,8 @@ export const KEPT_HIDE_MARKER = 'keptHide';
 /** The "Image" trigger that drops `KEPT_HIDE_MARKER`. Without it enabled, nothing is lifted. */
 export const KEPT_HIDE_TRIGGER = 'trg_image_kept_hide_drop_marker';
 
-const keptHideTriggerOn = sql<boolean>`EXISTS (SELECT 1 FROM pg_trigger
+/** `KEPT_HIDE_TRIGGER` exists and is enabled. */
+export const keptHideTriggerOn = sql<boolean>`EXISTS (SELECT 1 FROM pg_trigger
   WHERE tgrelid = '"Image"'::regclass AND tgname = ${KEPT_HIDE_TRIGGER} AND tgenabled IN ('O', 'A'))`;
 
 /**
@@ -100,7 +101,8 @@ export const PENDING_DELETE_UPSERT = sql`
       || jsonb_strip_nulls(jsonb_build_object(
         'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'),
         'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy')))) END
-      -- The first hide's record stays: a later ask finds the row already blocked.
+      -- The first hide's record stays: a later ask finds the row already blocked. Only a moderator's
+      -- delete hides it again, with a new marker the record no longer matches, and its ask never lifts.
       || jsonb_strip_nulls(jsonb_build_object(${KEPT_HIDE_PRIOR}::text, COALESCE(
         "JobQueue"."data"->${KEPT_HIDE_PRIOR}::text, EXCLUDED."data"->${KEPT_HIDE_PRIOR}::text))),
       "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")

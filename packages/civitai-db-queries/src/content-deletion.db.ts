@@ -16,6 +16,7 @@ import {
   KEPT_HIDE_PRIOR,
   keptHidePrior,
   keptHideStands,
+  keptHideTriggerOn,
   moderatorActedSince,
   notModeratorAsk,
   ownerInGoodStanding,
@@ -132,11 +133,13 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   // The id this hide marks its images with, so a lift can tell its block from a later one.
   const hideId = randomUUID();
   // What the hide below is about to overwrite, recorded on the queued row so a release can put it
-  // back (`liftKeptHides`). Read from the locked row, before the hide in the same statement.
+  // back (`liftKeptHides`). Read from the locked row, before the hide in the same statement. Without
+  // the marker trigger there is no record and no marker: nothing would drop the marker from a later
+  // block, so the hide is never lifted.
   const queued = hides
     ? sql`pending || CASE WHEN ${
         skipBlocked ? sql`ingestion IS DISTINCT FROM 'Blocked'` : sql`true`
-      } THEN jsonb_build_object(${KEPT_HIDE_PRIOR}::text, jsonb_build_object(
+      } AND ${keptHideTriggerOn} THEN jsonb_build_object(${KEPT_HIDE_PRIOR}::text, jsonb_build_object(
           'ingestion', ingestion, 'nsfwLevel', "nsfwLevel", 'blockedFor', "blockedFor",
           'needsReview', "needsReview", 'at', now(), 'hide', ${hideId}::text))
         ELSE '{}'::jsonb END`
@@ -156,6 +159,13 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
       }
     )`);
   // Grace markers are dropped so a restore cannot lift this block.
+  const withoutGrace = sql`metadata - ${sql.join(
+    GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+    sql` - `
+  )} - 'ruleId' - 'ruleReason'`;
+  // As the record above: no marker without the trigger.
+  const marker = sql`CASE WHEN ${keptHideTriggerOn}
+    THEN jsonb_build_object(${KEPT_HIDE_MARKER}::text, ${hideId}::text) END`;
   if (hides)
     ctes.push(sql`hidden AS (
       UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
@@ -166,12 +176,8 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           WHEN "blockedFor" IS DISTINCT FROM 'CSAM' AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
             AND a."entityId" = "Image".id AND a.status = 'Pending') THEN 'appeal' END,
         metadata = CASE WHEN jsonb_typeof(metadata) = 'object'
-          THEN metadata - ${sql.join(
-            GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
-            sql` - `
-          )} - 'ruleId' - 'ruleReason'
-            || jsonb_build_object(${KEPT_HIDE_MARKER}::text, ${hideId}::text)
-          WHEN metadata IS NULL THEN jsonb_build_object(${KEPT_HIDE_MARKER}::text, ${hideId}::text)
+            THEN ${withoutGrace} || COALESCE(${marker}, '{}'::jsonb)
+          WHEN metadata IS NULL THEN ${marker}
           ELSE metadata END,
         "updatedAt" = now()
       WHERE id IN (SELECT id FROM doomed WHERE blocked)
