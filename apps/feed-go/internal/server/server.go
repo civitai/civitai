@@ -1353,7 +1353,6 @@ func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, 
 
 func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest) {
 	build, computeFn := SyntheticRequest, s.compute
-	compareFn, classify := shadow.Compare, shadow.Classify
 	if s.computeFn != nil {
 		computeFn = s.computeFn
 	}
@@ -1361,32 +1360,29 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	case EndpointV1Images:
 		// The public route's compute, with the headers it writes (v1ImagesCompute; computeV1Fn in tests).
 		build, computeFn = SyntheticV1Request, s.v1ImagesCompute(false)
-		// `modelVersionIds` compared as a multiset (shadow.CompareV1Images).
-		compareFn, classify = shadow.CompareV1Images, shadow.ClassifyJSON
 	case EndpointInfinite:
-		// The superjson envelope, as for the gallery; classified by image id (a flat page).
 		build, computeFn = SyntheticInfiniteRequest, s.computeInfinite
-		classify = trpcClassify(endpoint)
 		if s.computeInfiniteFn != nil {
 			computeFn = s.computeInfiniteFn
 		}
 	case EndpointModelGetAll:
-		// The superjson envelope, as for the gallery; classified by model id (a flat page).
 		build, computeFn = SyntheticModelGetAllRequest, s.computeModelGetAll
-		classify = trpcClassify(endpoint)
 		if s.computeModelsFn != nil {
 			computeFn = s.computeModelsFn
 		}
 	}
-	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
-		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	if b, c, ok := s.v1ModelsRoute(endpoint); ok {
+		build, computeFn = b, c
 	}
-	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
-		build, computeFn, classify = b, c, cl
+	if b, c, ok := s.associatedRoute(endpoint); ok {
+		build, computeFn = b, c
 	}
-	if b, c, cl, ok := s.searchRoute(endpoint); ok {
-		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	if b, c, ok := s.searchRoute(endpoint); ok {
+		build, computeFn = b, c
 	}
+	// How the two answers are compared: the one selection the parity replay and the eval harness make
+	// too (CompareSelection).
+	sel := CompareSelection(endpoint)
 	span := trace.SpanFromContext(ctx)
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
 	// the marker off this context (auth.WithRedactedCredentials).
@@ -1448,7 +1444,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	sink := compareSink{source: SourceShadow, results: s.Metrics.ShadowResults, diffs: s.Metrics.ShadowDiffs, response: s.Metrics.ShadowResponse}
 	// The phase ends once compared, before the result is counted (a reader of the result then sees
 	// the phase).
-	out := s.compareAnswer(ctx, endpoint, sink, c, req.Node, req.ResponseHeaders, req.ResponseHeaderSet, compareFn, classify,
+	out := s.compareAnswer(ctx, sel, sink, c, req.Node, req.ResponseHeaders, req.ResponseHeaderSet,
 		func(ok bool) {
 			outcome := "ok"
 			if !ok {
@@ -1475,25 +1471,17 @@ type compareSink struct {
 	results, diffs, response *prometheus.CounterVec
 }
 
-// trpcClassify is the classifier of a tRPC endpoint's superjson envelope: the gallery's posts
-// (shadow.Classify), or a flat page classified by item id (image.getInfinite, model.getAll).
-func trpcClassify(endpoint string) func(*shadow.Report, []byte, []byte) string {
-	switch endpoint {
-	case EndpointInfinite, EndpointModelGetAll:
-		return shadow.ClassifyFlat
-	}
-	return shadow.Classify
-}
-
-// compareAnswer compares Go's answer c with Node's (node; nodeHeaders, nil = not sent) and counts the
-// result, the differing categories and the header comparison into sink, and returns them. It is the
-// one comparison both the shadow sample and the serve-side parity replay run. The two bodies that
-// cannot be compared are result bad_request. compared (nil = none) runs once the comparison is done
-// (ok false: bad_request), before the result is counted.
-func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compareSink, c *computed, node []byte, nodeHeaders map[string]string, headerSet string,
-	compareFn func([]byte, []byte) (*shadow.Report, error), classify func(*shadow.Report, []byte, []byte) string, compared func(ok bool)) compareOutcome {
+// compareAnswer compares Go's answer c with Node's (node; nodeHeaders, nil = not sent) by sel
+// (CompareSelection of the endpoint) and counts the result, the differing categories and the header
+// comparison into sink, and returns them. It is the one comparison both the shadow sample and the
+// serve-side parity replay run. The two bodies that cannot be compared are result bad_request.
+// compared (nil = none) runs once the comparison is done (ok false: bad_request), before the result
+// is counted.
+func (s *Server) compareAnswer(ctx context.Context, sel Selection, sink compareSink, c *computed, node []byte, nodeHeaders map[string]string, headerSet string,
+	compared func(ok bool)) compareOutcome {
+	endpoint := sel.Endpoint
 	span := trace.SpanFromContext(ctx)
-	report, err := compareFn(c.payload, node)
+	report, err := sel.Compare(c.payload, node)
 	if err != nil {
 		if compared != nil {
 			compared(false)
@@ -1501,7 +1489,7 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 		sink.results.WithLabelValues(endpoint, "bad_request").Inc()
 		return compareOutcome{result: "bad_request"}
 	}
-	result := classify(report, c.payload, node)
+	result := sel.Classify(report, c.payload, node)
 	if c.trivial && result == "match" {
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
@@ -1520,18 +1508,12 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 		// JSON.stringify text (v1ImagesCompute): nothing to compare.
 		sink.response.WithLabelValues(endpoint, "uncompared").Inc()
 	default:
-		goHeaders, names := trpc.ResultHeaders(c.ttl), shadow.ComparedHeaders
-		if isRESTEndpoint(endpoint) {
+		goHeaders := trpc.ResultHeaders(c.ttl)
+		if sel.REST {
 			// The REST routes: the headers the public route writes (v1models_serve.go, v1images_serve.go).
 			goHeaders = v1models.HeaderMap(c.headers)
-			if headerSet == ResponseHeaderSetREST {
-				names = shadow.RESTComparedHeaders
-				if endpoint == EndpointSearch {
-					names = SearchComparedHeaders
-				}
-			}
 		}
-		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, names)
+		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, sel.HeaderNames(headerSet))
 		respResult = "match"
 		if len(respDiffs) > 0 {
 			respResult = "mismatch"

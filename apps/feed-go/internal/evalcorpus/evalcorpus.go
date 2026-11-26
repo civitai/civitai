@@ -8,8 +8,8 @@
 // is actually called, not its traffic (DESIGN.md §19).
 //
 // It is pure: no I/O, no clock unless the caller leaves Env.Now zero, nothing global but the
-// embedded input schemas. Its callers are the capture (internal/evalcapture, DESIGN.md §19.6) and,
-// later, the replay harness.
+// embedded input schemas. Its callers are the capture (internal/evalcapture, DESIGN.md §19.6) and the
+// replay harness (internal/evalharness, §19.8).
 //
 // Privacy, by construction rather than by review:
 //   - Headers are an allow-list (keptHeaders): cookies, Authorization, the sampler's credential

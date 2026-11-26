@@ -99,11 +99,11 @@ func TestClassifyV1ModelID(t *testing.T) {
 
 func TestV1ModelsRoute(t *testing.T) {
 	s := &Server{}
-	if _, _, _, ok := s.v1ModelsRoute(EndpointV1Images); ok {
+	if _, _, ok := s.v1ModelsRoute(EndpointV1Images); ok {
 		t.Fatal("the images endpoint is not a model route")
 	}
 	for _, e := range []string{EndpointV1Models, EndpointV1ModelsID} {
-		if b, c, cl, ok := s.v1ModelsRoute(e); !ok || b == nil || c == nil || cl == nil {
+		if b, c, ok := s.v1ModelsRoute(e); !ok || b == nil || c == nil {
 			t.Fatalf("%s: no route", e)
 		}
 	}
