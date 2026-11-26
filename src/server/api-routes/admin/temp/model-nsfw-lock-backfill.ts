@@ -30,7 +30,8 @@
  * review, a minor or poi model, one with a real-person or minor detection still pending, one already
  * reverted, and any model whose owner, now or before, has a CSAM report, an evidence hold, an account
  * hold or a SexualMinor ban. A profanity lock is also kept where a moderator ever acted on the model,
- * on anything (an unmarked lock has no time to read "since" from), or where it holds any lock but nsfw.
+ * on anything (an unmarked lock has no time to read "since" from), where it holds any lock but nsfw,
+ * or where its marker's time cannot be read.
  */
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
@@ -140,8 +141,8 @@ export const exclusions = {
 /**
  * The profanity bucket's own exclusions. Most of its locks carry no marker, so no lock time to read
  * a moderator's ruling "since": any activity by a moderator on the model, ever and of any kind, keeps
- * the lock instead. So does any lock beside nsfw, and a model not rated mature, which the re-scan
- * after the unlock would rate.
+ * the lock instead. So does any lock beside nsfw, a marker whose time cannot be read (a malformed
+ * row), and a model not rated mature, which the re-scan after the unlock would rate.
  */
 const profanityExclusions = {
   moderatorActed: Prisma.sql`EXISTS (
@@ -151,6 +152,10 @@ const profanityExclusions = {
   )`,
   otherLocks: Prisma.sql`EXISTS (
     SELECT 1 FROM unnest(m."lockedProperties") p WHERE p IS DISTINCT FROM 'nsfw'
+  )`,
+  markerUnreadable: Prisma.sql`(
+    (m.meta ? 'systemNsfwLock')
+    AND COALESCE(m.meta->'systemNsfwLock'->>'at', '') !~ '^\\d{4}-\\d{2}-\\d{2}T'
   )`,
   notMature: Prisma.sql`NOT m.nsfw`,
 } as const;
@@ -580,7 +585,7 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
     'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again at its prior rating (scans.relocked; scans.ratingRestored where an owner change was undone). Benign skips (not-public, too-short) relock on every pass.',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
-    'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); it skips any model a moderator ever acted on (counts.moderatorActed) or holding another lock (counts.otherLocks).',
+    'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable).',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
   input: backfillSchema,

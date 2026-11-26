@@ -474,19 +474,17 @@ const unmarkedOutside: [string, number, ModelFields][] = [
 
 /**
  * The profanity bucket's own exclusions for the shared fixtures: a moderator's activity counts over
- * all time (`moderatorActed`), so the model ruled on before its lock is excluded too, and a marker
- * with no readable time no longer is.
+ * all time (`moderatorActed`), so the model ruled on before its lock is excluded too; a marker with
+ * no readable time is a malformed row, kept by its own reason (`markerUnreadable`).
  */
 const MARKER_NO_TIME = 12;
 const profanityExcluded: [string, number, ModelFields, string][] = [
-  ...excluded
-    .filter(([, id]) => id !== MARKER_NO_TIME)
-    .map(([reason, id, f, leg]): [string, number, ModelFields, string] => [
-      reason,
-      id,
-      f,
-      leg === 'moderatorRuled' ? 'moderatorActed' : leg,
-    ]),
+  ...excluded.map(([reason, id, f, leg]): [string, number, ModelFields, string] => [
+    reason,
+    id,
+    f,
+    id === MARKER_NO_TIME ? 'markerUnreadable' : leg === 'moderatorRuled' ? 'moderatorActed' : leg,
+  ]),
   ['a moderator ruled on its nsfw before the lock', ELIGIBLE_RULED_BEFORE, {}, 'moderatorActed'],
 ];
 
@@ -494,7 +492,6 @@ const PROFANITY_ELIGIBLE = [
   ELIGIBLE,
   ELIGIBLE_SYSTEM_RULED,
   ELIGIBLE_TRANSFERRED,
-  MARKER_NO_TIME,
   UNMARKED,
   UNMARKED_SYSTEM_ACTED,
 ];
@@ -589,6 +586,7 @@ describe('model nsfw lock backfill: profanity locks', () => {
       // Models 10 and 11, ELIGIBLE_RULED_BEFORE and the unmarked one a moderator acted on.
       moderatorActed: 4,
       otherLocks: 1,
+      markerUnreadable: 1,
       pendingDetection: 4,
       ownerCsamReport: 4,
       byMarker: ALL_ELIGIBLE.length + excluded.length,
