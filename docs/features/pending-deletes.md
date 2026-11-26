@@ -38,8 +38,9 @@ passes, runs one statement that:
    restore. Blocking queues the image for `remove-blocked-images` (`trg_blocked_image_delete_queue`); unless a
    moderator's delete did the blocking, a second statement drops that queue row, so the queued delete,
    not the purge's retention clock, decides when it goes. The queued row records what the block
-   overwrote (`data.prior`: `ingestion`, `nsfwLevel`, `blockedFor`, `needsReview`, and when), from the
-   locked row in the same statement; a later ask keeps the first record;
+   overwrote (`data.prior`: `ingestion`, `nsfwLevel`, `blockedFor`, `needsReview`, when, and the id
+   the block marks the image with, `metadata.keptHide`), from the locked row in the same statement; a
+   later ask keeps the first record;
 4. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
 5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it
@@ -70,7 +71,9 @@ A row dropped without carrying out its delete (`releasePendingDeletes`, and the 
 undoes the block that delete wrote (`liftKeptHides`): an image gets back its recorded columns, and a
 post loses its `pending-delete` stamp and stays unpublished, for its owner or a moderator to publish.
 The job does this for every row it is done with whose item is still there (released, in use again,
-given away). Only while the item is as the block left it, its case is closed with nothing found,
+given away). Only while the image still carries its mark (the `trg_image_kept_hide_drop_marker`
+trigger drops it from any later write naming a block column, and nothing is lifted while that
+trigger is missing or disabled), the item is as the block left it, its case is closed with nothing found,
 no later moderation decision or scan has touched it, and its owner is in good standing; never for a
 moderator's delete. `refreshLiftedKeptHides` busts what the lift made stale.
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other

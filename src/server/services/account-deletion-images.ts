@@ -96,8 +96,8 @@ export function lockAccountDeletionPendingDeletes(userId: number) {
  * keeps theirs. One whose case is still open, or closed with a finding the delete has not yet acted
  * on, stays, marked `releasedOnRestore`, so the restore cannot
  * make it publishable; `pending-deletes` releases it once the case closes with no finding, and
- * deletes it otherwise. While any of the account's is in an open case, every one is marked, so they
- * are released together once the last closes (`restoreCaseOpen`).
+ * deletes it otherwise. While any of the account's is in an open case, every one only the drain
+ * asked for is marked, so they are released together once the last closes (`restoreCaseOpen`).
  * A row released outright gets back what the drain's kept-delete hide took (`liftKeptHides`); the
  * result names what was lifted, for `refreshLiftedKeptHides` once the transaction commits.
  * A `PrismaPromise`, for the same transaction as the `deletedAt` clear.

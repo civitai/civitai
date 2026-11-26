@@ -112,8 +112,8 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   const caseOpen = table === 'Image' ? childSafetyImageCase() : childSafetyPostCase();
   const blocked =
     'id' in actor ? sql<boolean>`(${caseOpen} OR ${ownerReportHold(table, actor.id)})` : caseOpen;
-  // A caller that keeps a row in a queue of its own re-checks it there, so nothing is pending to
-  // hide it for: its row stays as it was.
+  // queueKept: false keeps the row in the caller's own queue, so there is no pending delete to hide
+  // it for.
   const queues = options.queueKept !== false;
   const hides = table === 'Image' && queues;
   // Only a moderator's delete that queues what it keeps rewrites an already-blocked image, so a
@@ -129,17 +129,16 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
       WHERE id IN (SELECT id FROM listed) ${on} ORDER BY id FOR UPDATE
     )`,
   ];
-  // What the hide below is about to overwrite, recorded on the queued row so a release can put it
-  // back (`liftKeptHides`). Read from the locked row, before the hide in the same statement.
   // The id this hide marks its images with, so a lift can tell its block from a later one.
   const hideId = randomUUID();
+  // What the hide below is about to overwrite, recorded on the queued row so a release can put it
+  // back (`liftKeptHides`). Read from the locked row, before the hide in the same statement.
   const queued = hides
     ? sql`pending || CASE WHEN ${
         skipBlocked ? sql`ingestion IS DISTINCT FROM 'Blocked'` : sql`true`
       } THEN jsonb_build_object(${KEPT_HIDE_PRIOR}::text, jsonb_build_object(
           'ingestion', ingestion, 'nsfwLevel', "nsfwLevel", 'blockedFor', "blockedFor",
-          'needsReview', "needsReview", 'at', now(), 'hide', ${hideId}::text,
-          'stamp', (now()::timestamp(3))::text))
+          'needsReview', "needsReview", 'at', now(), 'hide', ${hideId}::text))
         ELSE '{}'::jsonb END`
     : sql`pending`;
   // The job's own delete leaves a row already in the queue as it is (the upsert would add a system ask

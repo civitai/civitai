@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
@@ -138,6 +139,12 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(BASE_SCHEMA);
   await holder.db.exec(imageUseTablesSql);
+  await holder.db.exec(
+    readFileSync(
+      `${__dirname}/../../../../packages/civitai-db-schema/prisma/migrations/20271203120000_image_kept_hide_marker_drop/migration.sql`,
+      'utf8'
+    )
+  );
 });
 
 const reset = () =>
@@ -850,9 +857,17 @@ describe('an owner deleting their own content in a child-safety case', () => {
       const hidden = await imageRow(imageOf(PLAIN));
       // Reads as removed already (image-removal-confirmation), so the takedown goes through.
       expect(hidden).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+      const marker = async () =>
+        (
+          await holder.db.query<{ marker: string | null }>(
+            `SELECT metadata->>'keptHide' AS marker FROM "Image" WHERE id = ${imageOf(PLAIN)}`
+          )
+        ).rows[0].marker;
+      expect(await marker()).not.toBeNull();
       passAllSql = true;
       await writeModeratorBlock([imageOf(PLAIN)], deferFor);
       passAllSql = false;
+      expect(await marker()).toBeNull();
       // The account is restored, so a no-finding close lets the drain's delete go.
       expect(await lockAccountDeletionPendingDeletes(PLAIN)).toEqual([{ locked: 1 }]);
       await releaseAccountDeletionPendingDeletes(PLAIN);

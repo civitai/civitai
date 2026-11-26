@@ -34,6 +34,11 @@ const SOMEONE_ELSE = 8;
 const PLAIN = 1;
 const IMAGE = 2;
 
+const KEPT_HIDE_TRIGGER_SQL = readFileSync(
+  `${__dirname}/../../../../packages/civitai-db-schema/prisma/migrations/20271203120000_image_kept_hide_marker_drop/migration.sql`,
+  'utf8'
+);
+
 let pg: PGlite;
 const db = pgliteKysely(() => pg);
 
@@ -53,6 +58,8 @@ beforeAll(async () => {
   await pg.exec(imageUseTablesSql);
   // Returned by the deletes.
   await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`);
+  await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS index int`);
+  await pg.exec(KEPT_HIDE_TRIGGER_SQL);
   await pg.exec(
     `CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 0,
       "publishedAt" timestamp, metadata jsonb)`
@@ -1308,10 +1315,14 @@ describe('releasePendingDeletes', () => {
     await addImage({ ingestion: 'Pending', nsfwLevel: 4, needsReview: recorded });
     await report(1);
     await pg.exec(`INSERT INTO "ImageReport" VALUES (${IMAGE}, 1)`);
+    // The hide keeps the appeal flag only for a pending appeal.
+    if (afterHide === 'appeal')
+      await pg.exec(
+        `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${IMAGE}, 'Pending')`
+      );
     await deleteImageRows(db, { ids: [IMAGE], actor: drain });
+    expect((await imageState()).needsReview).toBe(afterHide);
     await closeCase();
-    await pg.exec(`UPDATE "Image" SET "needsReview" = ${afterHide ? `'${afterHide}'` : 'NULL'}
-      WHERE id = ${IMAGE}`);
 
     await release();
 
@@ -1370,22 +1381,24 @@ describe('releasePendingDeletes', () => {
       `UPDATE "JobQueue" SET data = jsonb_set(data, '{deletedBy}', '"moderator:99"')
         WHERE "entityId" = ${IMAGE}`,
     ],
-    // A block written since with the hide's own columns, which logs no moderator activity.
+    // A block written since with the hide's own columns, which logs no moderator activity: the
+    // table drops the marker.
     [
-      'written since the hide, its marker kept',
-      `UPDATE "Image" SET "updatedAt" = "updatedAt" + interval '1 millisecond' WHERE id = ${IMAGE}`,
+      'blocked again since, by a write that names the block columns',
+      `UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = 32, "blockedFor" = 'moderated'
+        WHERE id = ${IMAGE}`,
     ],
     [
-      'whose marker a later block dropped, at the same instant',
+      'whose review a write named since, unchanged',
+      `UPDATE "Image" SET "needsReview" = "needsReview" WHERE id = ${IMAGE}`,
+    ],
+    [
+      'whose marker a write dropped',
       `UPDATE "Image" SET metadata = metadata - 'keptHide' WHERE id = ${IMAGE}`,
     ],
     [
       "marked by another hide's id",
       `UPDATE "Image" SET metadata = jsonb_set(metadata, '{keptHide}', '"other"') WHERE id = ${IMAGE}`,
-    ],
-    [
-      'whose record has no stamp',
-      `UPDATE "JobQueue" SET data = data #- '{prior,stamp}' WHERE "entityId" = ${IMAGE}`,
     ],
   ])('leaves hidden an image %s', async (_, change) => {
     await hideFor();
@@ -1396,6 +1409,39 @@ describe('releasePendingDeletes', () => {
 
     expect(lifted.images).toEqual([]);
     expect(await imageState()).toEqual(hidden);
+  });
+
+  it('lifts an image a write since the hide left the block columns out of, as a post reorder', async () => {
+    const before = await hideFor();
+    await pg.exec(`UPDATE "Image" SET index = 3, "updatedAt" = now() + interval '1 second'
+      WHERE id = ${IMAGE}`);
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
+    expect(await imageState()).toEqual(before);
+    const { rows } = await pg.query<{ marker: string | null }>(
+      `SELECT metadata->>'keptHide' AS marker FROM "Image" WHERE id = ${IMAGE}`
+    );
+    expect(rows).toEqual([{ marker: null }]);
+  });
+
+  it.each([
+    ['dropped', `DROP TRIGGER trg_image_kept_hide_drop_marker ON "Image"`],
+    ['disabled', `ALTER TABLE "Image" DISABLE TRIGGER trg_image_kept_hide_drop_marker`],
+  ])('lifts nothing while the marker trigger is %s', async (_, change) => {
+    await hideFor();
+    const hidden = await imageState();
+    await pg.exec(change);
+    try {
+      const lifted = await release();
+
+      expect(lifted.images).toEqual([]);
+      expect(await imageState()).toEqual(hidden);
+    } finally {
+      await pg.exec(KEPT_HIDE_TRIGGER_SQL);
+      await pg.exec(`ALTER TABLE "Image" ENABLE TRIGGER trg_image_kept_hide_drop_marker`);
+    }
   });
 
   // One connection, so "committed while the release waited for its lock" is a change run right after
