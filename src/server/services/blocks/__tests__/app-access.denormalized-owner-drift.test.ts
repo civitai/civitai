@@ -297,16 +297,19 @@ describe('🔴 POSITIVE CONTROL: the fixture really is drifted', () => {
 });
 
 describe('offsite-listing::loadOwnedEditableListing (via updateListing)', () => {
+  // The probe edit is the content rating: an on-site listing's name / tagline / description /
+  // category come from the app, so an admitted caller's edit of those is refused AFTER this gate,
+  // and a probe using them could not tell "admitted" from "refused".
   it('ADMITS the real owner', async () => {
     await expect(
-      updateListing({ listingId: LIVE, patch: { name: 'Renamed' }, userId: REAL_OWNER })
+      updateListing({ listingId: LIVE, patch: { contentRating: 'pg13' }, userId: REAL_OWNER })
     ).resolves.toMatchObject({ listingId: LIVE, status: 'draft', requiresReview: false });
     expect(mockWrite.appListing.update).toHaveBeenCalledOnce();
   });
 
   it('REFUSES the stale name the column still carries', async () => {
     await expect(
-      updateListing({ listingId: LIVE, patch: { name: 'Renamed' }, userId: STALE_NAME })
+      updateListing({ listingId: LIVE, patch: { contentRating: 'pg13' }, userId: STALE_NAME })
     ).rejects.toMatchObject({
       code: 'NOT_OWNED',
       message: 'you can only edit your own listings',
@@ -317,10 +320,10 @@ describe('offsite-listing::loadOwnedEditableListing (via updateListing)', () => 
   it('still admits an ACCEPTED editor, and still refuses a stranger', async () => {
     seatFor(EDITOR);
     await expect(
-      updateListing({ listingId: LIVE, patch: { name: 'Renamed' }, userId: EDITOR })
+      updateListing({ listingId: LIVE, patch: { contentRating: 'pg13' }, userId: EDITOR })
     ).resolves.toMatchObject({ listingId: LIVE });
     await expect(
-      updateListing({ listingId: LIVE, patch: { name: 'Renamed' }, userId: STRANGER })
+      updateListing({ listingId: LIVE, patch: { contentRating: 'pg13' }, userId: STRANGER })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
 });
@@ -335,7 +338,7 @@ describe('🔴 D1 (resolved): offsite-listing admits a moderator, and audits the
     await expect(
       updateListing({
         listingId: LIVE,
-        patch: { name: 'Renamed' },
+        patch: { contentRating: 'pg13' },
         userId: STRANGER,
         isModerator: true,
       })
@@ -359,7 +362,7 @@ describe('🔴 D1 (resolved): offsite-listing admits a moderator, and audits the
     await expect(
       updateListing({
         listingId: LIVE,
-        patch: { name: 'Renamed' },
+        patch: { contentRating: 'pg13' },
         userId: STRANGER,
         isModerator: false,
       })
@@ -375,7 +378,7 @@ describe('🔴 D1 (resolved): offsite-listing admits a moderator, and audits the
     await expect(
       updateListing({
         listingId: LIVE,
-        patch: { name: 'Renamed' },
+        patch: { contentRating: 'pg13' },
         userId: REAL_OWNER,
         isModerator: true,
       })

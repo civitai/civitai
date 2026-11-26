@@ -317,3 +317,47 @@ func TestMasks(t *testing.T) {
 		}
 	}
 }
+
+// TestMayNameViewer: true for every request whose input holds a key Capture tests against the
+// viewer, whatever its value; and (the relationship the import relies on) true for every request in
+// which Capture, given a viewer it matches, finds the viewer. False only where no such key is.
+func TestMayNameViewer(t *testing.T) {
+	rest := func(q string) Request {
+		return Request{Endpoint: EndpointV1ModelsID, Path: "/api/v1/models/5001", Query: q, Headers: map[string]string{"host": "site.example.test"}}
+	}
+	cases := []struct {
+		name string
+		req  Request
+		want bool
+	}{
+		{"userId", trpc(EndpointInfinite, `{"json":{"userId":987654321,"limit":5}}`), true},
+		{"another user's id", trpc(EndpointInfinite, `{"json":{"userId":1001}}`), true},
+		{"username", trpc(EndpointInfinite, `{"json":{"username":"Viewer_Name"}}`), true},
+		{"user", trpc(EndpointModelGetAll, `{"json":{"user":"viewer_name","sort":"Newest"}}`), true},
+		{"collectionId", trpc(EndpointInfinite, `{"json":{"collectionId":88}}`), true},
+		{"a *UserIds list", trpc(EndpointAsPosts, `{"json":{"prioritizedUserIds":[1001],"modelVersionId":6001}}`), true},
+		{"excludedUserIds with the viewer", trpc(EndpointInfinite, `{"json":{"excludedUserIds":[1001,987654321]}}`), true},
+		{"a null userId", trpc(EndpointInfinite, `{"json":{"userId":null}}`), true},
+		{"an undefined-annotated userId", trpc(EndpointInfinite, `{"json":{"userId":987654321},"meta":{"values":{"userId":["undefined"]}}}`), true},
+		{"REST username", rest("username=viewer_name&x=1"), true},
+		{"REST userId", rest("userId=987654321"), true},
+		{"no identity key", trpc(EndpointAsPosts, `{"json":{"limit":20,"modelVersionId":6001,"authed":true}}`), false},
+		{"a nested userId (Capture reads top-level keys only)", trpc(EndpointInfinite, `{"json":{"filter":{"userId":987654321}}}`), false},
+		{"an id key not about users", trpc(EndpointInfinite, `{"json":{"modelId":5001,"postId":7}}`), false},
+		{"no input", trpc(EndpointInfinite, ``), false},
+		{"an input that does not decode", trpc(EndpointInfinite, `{"json":`), false},
+		{"REST, no identity pair", rest("nsfw=true&limit=5"), false},
+		{"an unsupported endpoint", trpc("v1-images", `{"json":{"userId":1}}`), false},
+	}
+	for _, c := range cases {
+		if got := MayNameViewer(c.req); got != c.want {
+			t.Errorf("%s: MayNameViewer %v, want %v", c.name, got, c.want)
+		}
+		if c.req.Endpoint == "v1-images" {
+			continue
+		}
+		if cs := capture(t, c.req, selfViewer); cs.Viewer.Self && !MayNameViewer(c.req) {
+			t.Errorf("%s: Capture found the viewer, MayNameViewer says no key could name them", c.name)
+		}
+	}
+}

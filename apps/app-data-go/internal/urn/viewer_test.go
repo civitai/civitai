@@ -7,7 +7,6 @@ import (
 
 // A viewer's stream of a shared collection major is the collection's schema URN with `.viewer` before
 // the major (WRITES-DESIGN.md, "Feed routing"); every input the collection schema refuses, it refuses.
-// Fails on origin/main: there is no ViewerSchema (the test does not compile).
 func TestViewerSchema(t *testing.T) {
 	got, err := ViewerSchema("model-benchmarking", "records", 3)
 	if err != nil || got != "urn:schema:apps.civitai.com:model-benchmarking/records.viewer@v3" {

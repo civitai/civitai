@@ -8,8 +8,7 @@ import (
 )
 
 // TokenExpiring answers the token and its expiry: the hub's expires_in from when it was fetched, so a
-// stream opened with it can close before it runs out; a failure answers no token. Fails on the
-// app-index-go original: there is no TokenExpiring (the test does not compile).
+// stream opened with it can close before it runs out; a failure answers no token.
 func TestTokenExpiringAnswersTheExpiry(t *testing.T) {
 	h := newHub(t)
 	s, now := source(h, Config{})

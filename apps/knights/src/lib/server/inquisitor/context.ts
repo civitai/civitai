@@ -9,7 +9,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { civitaiSiteUrl } from '../site-url';
-import { servableReviews, type ReviewOffer } from './review.service';
+import { countServableReviews, type ReviewOffer } from './review.service';
 import { failClosed } from '../skill-check/eligible';
 
 export type ReviewSidebar = {
@@ -93,6 +93,7 @@ export type ModeratorStats = {
 
 const WEEK_MS = 7 * 86_400_000;
 export const WAITING_CAP = 1000;
+const WAITING_TIMEOUT_MS = 5_000;
 
 export async function moderatorStats(
   db: Kysely<DB>,
@@ -110,17 +111,10 @@ export async function moderatorStats(
       db,
       'review-stats',
       () =>
-        readWithoutJit(db, (q) =>
-          q
-            .selectFrom(
-              servableReviews(q, moderatorId, now)
-                .select('r.id')
-                .limit(WAITING_CAP + 1)
-                .as('w')
-            )
-            .select(sql<number>`count(*)::int`.as('n'))
-            .executeTakeFirstOrThrow()
-        ),
+        readWithoutJit(db, async (q) => {
+          await sql.raw(`SET LOCAL statement_timeout = ${WAITING_TIMEOUT_MS}`).execute(q);
+          return countServableReviews(q, moderatorId, now, WAITING_CAP + 1);
+        }),
       null
     ),
     db

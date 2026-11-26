@@ -45,10 +45,9 @@ const columns = [
 // EXISTS rather than Retool's LEFT JOINs: an image with two ImageConnection rows came back twice
 // there, doubling it in the grid.
 const extras = [
-  // `aiNsfwLevel` exists in production — the image-scan webhook writes it — but is absent from
-  // schema.full.prisma, so it cannot be selected as a typed column. It is the scanner's own rating,
-  // and disagreement with `nsfwLevel` is the strongest signal a row needs a human.
-  sql<number | null>`i."aiNsfwLevel"`.as('aiNsfwLevel'),
+  // `aiNsfwLevel` is no longer written (new images keep its default 0), so 0 is no AI rating, not
+  // "PG". Untyped: the column is absent from schema.full.prisma.
+  sql<number | null>`NULLIF(i."aiNsfwLevel", 0)`.as('aiNsfwLevel'),
   sql<string | null>`i."meta" ->> 'prompt'`.as('prompt'),
   sql<string | null>`i."meta" ->> 'negativePrompt'`.as('negativePrompt'),
   // Names, not just ids: a moderator cannot agree or disagree with a tag they cannot read, and voting

@@ -414,7 +414,6 @@ func TestNextReadsAPrivateDocumentsKey(t *testing.T) {
 // The adapter's private feed sends each record's `seq` beside its key, and a head in the `meta` of
 // `live` and `progress` (src/server/registry-adapter/private-feed.ts); both are read, and everything
 // else in those events is read as before. An event with no `meta` has none; an upsert's is never read.
-// Fails on origin/main: Entity has no Seq and Event no Meta there (the test does not compile).
 func TestNextReadsSeqAndHeadMeta(t *testing.T) {
 	s := streamOf("" +
 		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\",\"seq\":41},\"cursor\":\"\",\"meta\":{\"head\":{\"seq\":5}}}\n\n" +
@@ -444,8 +443,7 @@ func TestNextReadsSeqAndHeadMeta(t *testing.T) {
 }
 
 // A level subscription names its level in the request's `meta`, sent as its compact JSON text; a
-// meta that is not one JSON object is refused before anything is sent. Fails on origin/main:
-// Request has no Meta there (the test does not compile).
+// meta that is not one JSON object is refused before anything is sent.
 func TestSubscribeSendsMeta(t *testing.T) {
 	var got *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -482,7 +480,7 @@ func TestSubscribeSendsMeta(t *testing.T) {
 
 // An end names why the origin ended the stream in its `meta` (the level streams'
 // `{"reason":"levels_on"}`); an end whose data cannot be read, or whose meta is not an object, is an
-// end without one. Fails on origin/main: ParseEvent drops an end's data there.
+// end without one.
 func TestEndReadsItsMeta(t *testing.T) {
 	for data, want := range map[string]string{
 		`{"meta":{"reason":"levels_on"}}`: `{"reason":"levels_on"}`,
@@ -499,7 +497,7 @@ func TestEndReadsItsMeta(t *testing.T) {
 }
 
 // A level stream's entity carries the shared document's version and timestamps beside its key and
-// seq (level-feed.ts). Fails on origin/main: Entity has no Version, CreatedAt or UpdatedAt there.
+// seq (level-feed.ts).
 func TestNextReadsASharedDocumentsVersionAndTimes(t *testing.T) {
 	ev, err := streamOf("event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/records/k1\",\"schemas\":[\"s\"],\"rev\":\"r\"," +
 		"\"body\":{\"a\":1},\"key\":\"k1\",\"seq\":12,\"version\":3,\"createdAt\":\"2026-11-20T10:00:00.000Z\",\"updatedAt\":\"2026-11-21T11:00:00.000Z\"},\"cursor\":\"\"}\n\n").Next()

@@ -14,6 +14,7 @@ import {
   SERVICE_ZIP_MODEL_EXTENSIONS,
   SERVICE_ZIP_RATIO_FLOOR_BYTES,
   SERVICE_ZIP_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_VIDEO_IN_ZIP,
 } from '~/shared/constants/creator-services.constants';
 import type { getS3Client } from '~/utils/s3-utils';
@@ -163,6 +164,7 @@ export function entryRefusal(
     return 'Model files cannot be inside a .zip. Deliver each as its own file.';
   if (isIn(SERVICE_ZIP_VIDEO_EXTENSIONS, extension)) return VIDEO_REFUSAL;
   if (isIn(UNSCANNABLE_IMAGE_EXTENSIONS, extension)) return IMAGE_FORMAT_REFUSAL;
+  if (extension === 'pdf') return SERVICE_FINAL_PDF_REFUSAL;
 
   const cap = isIn(SERVICE_ZIP_IMAGE_EXTENSIONS, extension)
     ? SERVICE_ZIP_MAX_IMAGE_BYTES
@@ -201,6 +203,12 @@ function isMpegTs(head: Buffer, anywhere: boolean) {
 /** Leading ID3v2 tags read past; a file with more is refused, since what follows is unread. */
 export const MAX_ID3_TAGS = 8;
 
+const PDF_HEADER = Buffer.from('%PDF-');
+/** How far into a file a PDF reader looks for its header. */
+export const PDF_HEADER_WINDOW = 1024;
+export const holdsPdfHeader = (bytes: Buffer) =>
+  bytes.subarray(0, PDF_HEADER_WINDOW).includes(PDF_HEADER);
+
 /**
  * The length of the ID3v2 tag `head` opens with (header, body and footer), or 0 if it opens with
  * none. A player skips the tag and plays whatever follows it, whatever that is.
@@ -214,8 +222,13 @@ export function id3TagLength(head: Buffer) {
   return 10 + body + (head[5] & 0x10 ? 10 : 0);
 }
 
-/** Collects a stream's first `SNIFF_BYTES` past its leading ID3v2 tags, as a player would read it. */
+/**
+ * Collects a stream's first `SNIFF_BYTES` past its leading ID3v2 tags, as a player would read it,
+ * and its first bytes as stored, tags and all.
+ */
 class SniffedHead {
+  private raw: Buffer[] = [];
+  private rawLength = 0;
   private parts: Buffer[] = [];
   private length = 0;
   private skip = 0;
@@ -225,6 +238,11 @@ class SniffedHead {
 
   /** Whether enough has been read to judge. */
   push(chunk: Buffer) {
+    if (this.rawLength < PDF_HEADER_WINDOW) {
+      const kept = chunk.subarray(0, PDF_HEADER_WINDOW - this.rawLength);
+      this.raw.push(kept);
+      this.rawLength += kept.length;
+    }
     while (chunk.length) {
       if (this.skip) {
         const skipped = Math.min(this.skip, chunk.length);
@@ -253,6 +271,11 @@ class SniffedHead {
 
   bytes() {
     return Buffer.concat(this.parts);
+  }
+
+  /** Whether the bytes as stored hold a PDF header, even inside a tag a player skips. */
+  holdsPdfHeader() {
+    return holdsPdfHeader(Buffer.concat(this.raw));
   }
 }
 
@@ -286,18 +309,20 @@ function isOggAudio(head: Buffer) {
   return streams > 0;
 }
 
-/** What the first bytes of an entry are, whatever its name says. */
 /**
- * `tsAnywhere: false` looks for a transport stream only where a file of one starts (byte 0, or 4
- * with a timecode), for bytes that are not a file of their own, such as a checkpoint's tensors.
+ * What the first bytes of an entry are, whatever its name says. `tsAnywhere: false` looks for a
+ * transport stream only where a file of one starts (byte 0, or 4 with a timecode), for bytes that
+ * are not a file of their own, such as a checkpoint's tensors.
  */
 export function sniffEntry(
   head: Buffer,
   { tsAnywhere = true } = {}
-): EntryKind | 'video' | 'archive' | 'unscannable' {
+): EntryKind | 'video' | 'archive' | 'unscannable' | 'pdf' {
   const at = (offset: number, text: string) =>
     head.subarray(offset, offset + text.length).toString('latin1') === text;
   const bytes = (...values: number[]) => values.every((value, i) => head[i] === value);
+  // Ahead of the rest: a reader finds the header anywhere in the first 1 KB.
+  if (holdsPdfHeader(head)) return 'pdf';
   // Ahead of the image signatures: a player finds the stream behind any header.
   if (isMpegTs(head, tsAnywhere) || id3TagLength(head)) return 'video';
   if (
@@ -570,6 +595,7 @@ export async function everyEntryHead(
           inflate?.destroy();
         }
         if (inflate && inflate.bytesWritten !== entry.compressedSize) throw mismatch();
+        if (head.holdsPdfHeader()) throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
         if (!accept(entry.fileName, head.bytes())) throw new EntryNotAccepted();
         return span;
       }).catch((error) => {
@@ -683,10 +709,12 @@ export async function readEntry(
 
   /** The entry's kind from its first bytes, refusing what must not be in a final. */
   const decide = (): EntryKind => {
+    if (sniffed.holdsPdfHeader()) throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     const found = sniffEntry(sniffed.bytes());
     if (found === 'video') throw new ZipRejectedError(VIDEO_REFUSAL);
     if (found === 'archive') throw new ZipRejectedError(NESTED_REFUSAL);
     if (found === 'unscannable') throw new ZipRejectedError(IMAGE_FORMAT_REFUSAL);
+    if (found === 'pdf') throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     // A file named like an image that is not one is refused rather than judged by its name. An
     // image behind a tag is not one either: what is scanned must be the bytes as delivered.
     if ((declaredImage && found !== 'image') || (found === 'image' && sniffed.tags))

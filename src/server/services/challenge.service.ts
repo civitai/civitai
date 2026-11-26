@@ -227,6 +227,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { AIModel } from '~/server/services/ai/openrouter';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
+import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
 
 /**
  * Get judging config efficiently using cached default judge when possible.
@@ -2155,9 +2156,11 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
 export async function rescanChallenge({
   id,
   moderatorId,
+  csamReview,
 }: {
   id: number;
   moderatorId: number;
+  csamReview: boolean;
 }): Promise<void> {
   // Primary, not the replica: a mod who edits then immediately rescans would otherwise submit the
   // pre-edit text and cache a verdict against content that no longer exists.
@@ -2177,6 +2180,7 @@ export async function rescanChallenge({
 
   let coverRequeued = false;
   if (challenge.coverImageId) {
+    await assertMayLoosenImages([challenge.coverImageId], { csamReview });
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
       select: { id: true, url: true, type: true, ingestion: true },
@@ -3903,7 +3907,9 @@ export async function playgroundGenerateContent(input: PlaygroundGenerateContent
 /**
  * Playground: Review an image with a judge.
  */
-export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
+export async function playgroundReviewImage(
+  input: PlaygroundReviewImageInput & { csamReview: boolean }
+) {
   const config = await getChallengeConfig();
   const judgeId = input.judgeId ?? config.defaultJudgeId ?? 1;
   let judgingConfig = await getJudgingConfig(judgeId);
@@ -3921,6 +3927,7 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
     select: { url: true, user: { select: { username: true } } },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+  await assertMayLoosenImages([input.imageId], { csamReview: input.csamReview });
 
   const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image', optimized: true });
 
@@ -4180,7 +4187,7 @@ export async function getCompletedChallengesWithWinners(
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
-  // Cursor-based pagination: "endsAt:id"
+  // The "endsAt:id" cursor points to the first challenge on the next page.
   if (cursor) {
     const lastColon = cursor.lastIndexOf(':');
     if (lastColon !== -1) {
@@ -4190,7 +4197,7 @@ export async function getCompletedChallengesWithWinners(
       const endsAt = new Date(endsAtStr);
       if (!isNaN(id) && !isNaN(endsAt.getTime())) {
         conditions.push(
-          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id < ${id}))`
+          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id <= ${id}))`
         );
       }
     }
