@@ -224,21 +224,20 @@ export async function mediaForToken(
 
 const MAX_CLAIM_ATTEMPTS = 20;
 
-/** The three sources partition the open items; a new source must keep that. */
+/** Open items flagged only by 'xguard-prompt' are in neither source: the mix never serves them. */
 function inSource(source: QueueSource) {
   return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) => {
     // A literal, so the planner can use the control lane's partial index.
     if (source === 'control') return sql<boolean>`i.lane = 'control'`;
-    const uploadScanned = eb.exists(
-      eb
-        .selectFrom('ScanLabelFlag as f')
-        .select(sql`1`.as('one'))
-        .whereRef('f.itemId', '=', 'i.id')
-        .where('f.source', '=', 'orchestrator-scan')
-    );
     return eb.and([
       sql<boolean>`i.lane <> 'control'`,
-      source === 'upload' ? uploadScanned : eb.not(uploadScanned),
+      eb.exists(
+        eb
+          .selectFrom('ScanLabelFlag as f')
+          .select(sql`1`.as('one'))
+          .whereRef('f.itemId', '=', 'i.id')
+          .where('f.source', '=', 'orchestrator-scan')
+      ),
     ]);
   };
 }

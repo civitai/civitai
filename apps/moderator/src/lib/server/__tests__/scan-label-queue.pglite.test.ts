@@ -329,12 +329,13 @@ describe('claimNext source mix', { timeout: 60_000 }, () => {
   }
 
   it('serves exactly the mix over every hundred draws', async () => {
-    const sourceOf = await seedMany({ upload: 20, prompt: 20, control: 5 });
-    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({
-      upload: 45,
-      prompt: 45,
-      control: 10,
-    });
+    const sourceOf = await seedMany({ upload: 30, control: 5 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ upload: 90, control: 10 });
+  });
+
+  it('never serves an item only the prompt scan flagged', async () => {
+    const sourceOf = await seedMany({ upload: 1, prompt: 5, control: 1 });
+    expect(await pull(sourceOf, 10, everyHundredth())).toEqual({ upload: 3, control: 3, none: 4 });
   });
 
   it('the seeded draw converges on the mix', () => {
@@ -344,59 +345,47 @@ describe('claimNext source mix', { timeout: 60_000 }, () => {
       const [first] = sourceOrder(rng);
       drawn[first] = (drawn[first] ?? 0) + 1;
     }
-    expect(drawn).toEqual({ upload: 44_987, prompt: 44_972, control: 10_041 });
+    expect(drawn).toEqual({ upload: 89_959, control: 10_041 });
   });
 
   it('serves the drawn source on every claim of a seeded run', async () => {
-    const sourceOf = await seedMany({ upload: 60, prompt: 60, control: 20 });
+    const sourceOf = await seedMany({ upload: 100, control: 20 });
     const replay = seeded(7);
     const expected: Record<string, number> = {};
     for (let n = 0; n < 300; n++) {
       const [first] = sourceOrder(replay);
       expected[first] = (expected[first] ?? 0) + 1;
     }
-    expect(expected).toEqual({ upload: 122, prompt: 141, control: 37 });
+    expect(expected).toEqual({ upload: 263, control: 37 });
     expect(await pull(sourceOf, 300, seeded(7))).toEqual(expected);
   });
 
-  it('passes an empty source’s draws to the heaviest source left', async () => {
-    const sourceOf = await seedMany({ upload: 20, prompt: 20 });
-    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ upload: 55, prompt: 45 });
-  });
-
-  it('never passes an empty scan source’s draws to the control lane while the other has items', async () => {
-    const sourceOf = await seedMany({ prompt: 30, control: 5 });
-    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ prompt: 90, control: 10 });
-  });
-
-  it('serves whatever is left when only one source has items', async () => {
-    const sourceOf = await seedMany({ prompt: 10 });
-    expect(await pull(sourceOf, 30, everyHundredth())).toEqual({ prompt: 30 });
+  it('passes an empty source’s draws to the source left', async () => {
+    const sourceOf = await seedMany({ upload: 34 });
+    expect(await pull(sourceOf, 100, everyHundredth())).toEqual({ upload: 100 });
   });
 
   it('falls back when the drawn source holds only items the voter already voted on', async () => {
     const voted = await seedItem(1, { ...UPLOAD, votes: 1 });
-    const prompt = await seedItem(2, PROMPT);
+    const control = await seedItem(2, CONTROL);
     const card = await claimNext(granted(900), {}, NOW, () => 0);
-    expect(card!.itemId).toBe(prompt);
+    expect(card!.itemId).toBe(control);
     expect(card!.itemId).not.toBe(voted);
   });
 
   it('files an item with both scan flags under upload, and a control item under control only', async () => {
-    const prompt = await seedItem(1, { ...PROMPT, flaggedAt: '2026-10-13T07:00:00Z' });
-    const both = await seedItem(2, {
+    const both = await seedItem(1, {
       sources: ['xguard-prompt', 'orchestrator-scan'],
       flaggedAt: '2026-10-13T08:00:00Z',
     });
     // A scanner can flag an image after it was sampled; the item stays in the control lane.
-    const control = await seedItem(3, {
+    const control = await seedItem(2, {
       sources: ['control-sample', 'orchestrator-scan'],
       flaggedAt: '2026-10-13T09:00:00Z',
     });
-    // 0.1, 0.5 and 0.95 fall in the upload, prompt and control bands of QUEUE_MIX.
+    // 0.1 and 0.95 fall in the upload and control bands of QUEUE_MIX.
     expect((await claimNext(granted(1), {}, NOW, () => 0.1))!.itemId).toBe(both);
-    expect((await claimNext(granted(2), {}, NOW, () => 0.5))!.itemId).toBe(prompt);
-    expect((await claimNext(granted(3), {}, NOW, () => 0.95))!.itemId).toBe(control);
+    expect((await claimNext(granted(2), {}, NOW, () => 0.95))!.itemId).toBe(control);
   });
 
   it('serves a filtered view in queue order, without drawing', async () => {
@@ -413,7 +402,7 @@ describe('claimNext source mix', { timeout: 60_000 }, () => {
   });
 
   it('draws once per new claim, not when handing back a held lease', async () => {
-    await seedMany({ upload: 2, prompt: 2 });
+    await seedMany({ upload: 2 });
     let draws = 0;
     const counted = () => (draws++, 0.1);
     await claimNext(granted(1), {}, NOW, counted);

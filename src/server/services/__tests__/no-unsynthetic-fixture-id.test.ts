@@ -73,11 +73,7 @@ const BASELINE: Record<string, string[]> = {
   'apps/moderator/src/lib/server/__tests__/model-lookup-resolve.test.ts': ['12341234'],
   'apps/moderator/src/lib/server/__tests__/relabel-batch-build.pglite.test.ts': ['57014'],
   'apps/moderator/src/lib/server/__tests__/reports.sql.test.ts': ['42601'],
-  'apps/moderator/src/lib/server/__tests__/scan-label-queue.pglite.test.ts': [
-    '10041',
-    '44972',
-    '44987',
-  ],
+  'apps/moderator/src/lib/server/__tests__/scan-label-queue.pglite.test.ts': ['10041', '89959'],
   'apps/moderator/src/lib/server/__tests__/shop-refund.pglite.test.ts': ['1229455361'],
   'apps/moderator/src/lib/server/__tests__/text-relabel-snapshot.pglite.test.ts': ['23514'],
   'apps/moderator/src/lib/server/__tests__/text-scan-harness-client.test.ts': ['600001'],

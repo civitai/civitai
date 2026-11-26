@@ -6,7 +6,7 @@ export const VOTES_PER_ITEM = 3;
 export const BLOCK_MAJORITY = 2;
 export const LEASE_MS = 2 * 60_000;
 /** Relative share of claims served from each source; an empty source passes its turn on. */
-export const QUEUE_MIX = { upload: 45, prompt: 45, control: 10 } as const;
+export const QUEUE_MIX = { upload: 90, control: 10 } as const;
 export type QueueSource = keyof typeof QUEUE_MIX;
 /** Mirrors the `ScanLabelQuota."dailyVotes"` default and floor in the migration. */
 export const DEFAULT_DAILY_QUOTA = 50;

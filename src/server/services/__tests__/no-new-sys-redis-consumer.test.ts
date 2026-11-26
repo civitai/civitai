@@ -168,7 +168,6 @@ const BASELINE: string[] = [
   'src/server/services/text-scan/mode.ts',
   'src/server/services/text-scan/prompt.ts',
   'src/server/services/training.service.ts',
-  'src/server/services/upload-prompt-retry.service.ts',
   'src/server/utils/apps-catalog-rate-limit.ts',
   'src/server/utils/block-gen-idempotency.ts',
   'src/server/utils/block-goods-rate-limit.ts',

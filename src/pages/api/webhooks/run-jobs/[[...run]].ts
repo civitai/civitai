@@ -198,7 +198,6 @@ import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
 import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
 import { pendingDeletes } from '~/server/jobs/pending-deletes';
-import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
@@ -251,7 +250,6 @@ export const jobs: Job[] = [
   purgeFeedbackCaptures,
   imageStorageDeletes,
   pendingDeletes,
-  retryUploadPromptScansJob,
   processScheduledPublishing,
   knightsPublishSampling,
   // refreshImageGenerationCoverage,
