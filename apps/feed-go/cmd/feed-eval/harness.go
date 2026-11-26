@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -188,4 +189,45 @@ func hqToken() (string, error) {
 		return "", errors.New("HQ_TOKEN_FILE is empty")
 	}
 	return t, nil
+}
+
+// reconcileCmd is `feed-eval reconcile`: hold the newest live run against the last day's production
+// samples, promote the blind spots' cases and write the summary row (evalharness.Reconcile).
+func reconcileCmd(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
+	var flagOut strings.Builder
+	fs.SetOutput(&flagOut)
+	window := fs.Duration("window", evalharness.DefaultReconcileWindow, "how far back production samples are read")
+	minMismatches := fs.Int("min-mismatches", evalharness.DefaultMinMismatches, "a blind spot's production mismatches, at least")
+	minShare := fs.Float64("min-mismatch-share", evalharness.DefaultMinMismatchShare,
+		"a blind spot's share of mismatches among its compared samples, at least (both thresholds must hold)")
+	perSig := fs.Int("promote-per-signature", evalharness.DefaultPromotePerSignature, "promoted cases per blind spot, at most")
+	maxPromotions := fs.Int("max-promotions", evalharness.DefaultMaxPromotions, "new promotions per reconcile, at most")
+	dryRun := fs.Bool("dry-run", false, "print the summary; promote nothing, write nothing")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w\n%s", err, flagOut.String())
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if *minShare > 1 {
+		return errors.New("--min-mismatch-share is a fraction: at most 1")
+	}
+	store, err := evalharness.NewCHReconcileStore(chConfig())
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	sum, err := evalharness.Reconcile(ctx, evalharness.ReconcileConfig{Window: *window, MinMismatches: *minMismatches,
+		MinMismatchShare: *minShare, PromotePerSignature: *perSig, MaxPromotions: *maxPromotions, DryRun: *dryRun, Log: stderr}, store)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(sum)
+	}
+	return nil
 }

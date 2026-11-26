@@ -134,13 +134,17 @@ func NewCHStore(cfg CHConfig) (*CHStore, error) {
 	return s, nil
 }
 
-// selectCasesSQL picks, per signature of one endpoint, the case whose cityHash64(case_id, day) is
-// least (ties by case_id): the exemplar rotates nightly and is the same for every run of one day.
-// Every value is a query parameter, never text in the query.
+// selectCasesSQL picks, per signature of one endpoint, a promoted case (origin prod-mismatch,
+// pinned: what reconcile promotes for a blind spot, DESIGN.md §19.9) when the signature has one,
+// and among those (or among all, when it has none) the case whose cityHash64(case_id, day) is least
+// (ties by case_id): the exemplar rotates nightly and is the same for every run of one day, and a
+// blind spot's next run replays a case production mismatched on. Every value is a query parameter,
+// never text in the query.
 const selectCasesSQL = `SELECT toString(tupleElement(c.pick, 1)) AS case_id, tupleElement(c.pick, 2) AS request,
   tupleElement(c.pick, 3) AS sig_text, toString(c.sig) AS sig, ifNull(s.w, 0) AS weight
 FROM (
-  SELECT sig, argMin((case_id, request, sig_text), (cityHash64(case_id, {day:String}), case_id)) AS pick
+  SELECT sig, argMin((case_id, request, sig_text),
+    (if(origin = {promoted:String} AND pinned = 1, 0, 1), cityHash64(case_id, {day:String}), case_id)) AS pick
   FROM cases FINAL
   WHERE endpoint = {endpoint:String}
   GROUP BY sig
@@ -162,7 +166,7 @@ func param(name, value string) chread.Setting {
 // SelectCases implements Store.
 func (s *CHStore) SelectCases(ctx context.Context, endpoint string, from, to time.Time, day string, limit int) ([]Case, error) {
 	rows, err := s.read.Query(ctx, selectCasesSQL, []chread.Setting{
-		param("day", day), param("endpoint", endpoint),
+		param("day", day), param("endpoint", endpoint), param("promoted", evalcapture.OriginMismatch),
 		param("from", from.UTC().Format(CHTimeFormat)), param("to", to.UTC().Format(CHTimeFormat)),
 		param("limit", strconv.Itoa(limit)),
 	})

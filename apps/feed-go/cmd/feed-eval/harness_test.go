@@ -234,3 +234,35 @@ func TestRunCmdFailsOnLostRows(t *testing.T) {
 		t.Errorf("stderr %q", stderr.String())
 	}
 }
+
+// TestReconcileCmd: the command end to end over a ClickHouse holding one live run and nothing else:
+// one summary row written, none in a dry run (which prints the summary), and bad flags refused.
+func TestReconcileCmd(t *testing.T) {
+	ch, inserts := fakeClickHouse(t, publishRows)
+	setCH(t, ch.URL)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"reconcile"}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if got := inserts(); len(got) != 1 || got[0] != "INSERT INTO runs FORMAT JSONEachRow" {
+		t.Fatalf("inserts %v", got)
+	}
+	if !strings.Contains(stderr.String(), "feed-eval reconcile of live-20261126T030000Z-aa11bb: 0 blind spots") {
+		t.Errorf("log %q", stderr.String())
+	}
+	stdout.Reset()
+	if code := run([]string{"reconcile", "--dry-run"}, nil, &stdout, io.Discard); code != 0 {
+		t.Fatalf("dry run: exit %d", code)
+	}
+	if len(inserts()) != 1 || !strings.Contains(stdout.String(), `"reconciled_run": "live-20261126T030000Z-aa11bb"`) ||
+		!strings.Contains(stdout.String(), `"dry_run": true`) {
+		t.Errorf("dry run: %d inserts, stdout %q", len(inserts()), stdout.String())
+	}
+	if code := run([]string{"reconcile", "--min-mismatch-share", "2"}, nil, io.Discard, io.Discard); code != 1 {
+		t.Errorf("a share over 1: exit %d", code)
+	}
+	t.Setenv("FEED_EVAL_CLICKHOUSE_URL", "")
+	if code := run([]string{"reconcile"}, nil, io.Discard, io.Discard); code != 1 {
+		t.Errorf("no clickhouse: exit %d", code)
+	}
+}

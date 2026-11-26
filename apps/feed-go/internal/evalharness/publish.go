@@ -64,6 +64,16 @@ type Facts struct {
 	Counts  map[string]map[string]map[string]int // run -> endpoint -> verdict -> n
 	Latest  []ResultFacts
 	Weights map[string]map[uint64]float64 // endpoint -> sig -> weight
+	// Reconcile is the newest reconcile's summary row (nil: none).
+	Reconcile *ReconcileFacts
+}
+
+// ReconcileFacts is what publish reads of the newest reconcile: its run id, when, and its summary
+// (counts, endpoints, signatures and case ids: Aggregate re-checks each as it builds the rows).
+type ReconcileFacts struct {
+	RunID   string
+	Started time.Time
+	Summary ReconcileSummary
 }
 
 // VerdictTotal is one verdict's count and traffic-weighted share.
@@ -115,6 +125,30 @@ type TrendRow struct {
 	Counts  []int // in Verdicts order
 }
 
+// DisagreementRow is one prod/eval disagreement (DESIGN.md §19.9): its class, the signature, what
+// production and the eval said of it, and opaque case ids.
+type DisagreementRow struct {
+	Class       string
+	Sig         string
+	Compared    int
+	Mismatches  int
+	EvalResults int
+	CaseIDs     []string
+}
+
+// ReconcileHeader is the newest reconcile, as the index shows it.
+type ReconcileHeader struct {
+	RunID           string
+	ReconciledRun   string
+	Started         string
+	BlindSpots      int
+	Promoted        int
+	CannotReproduce int
+	Reverse         int
+	// Stale: the reconcile read another run than the one published.
+	Stale bool
+}
+
 // EndpointPage is one endpoint's page.
 type EndpointPage struct {
 	ID        string
@@ -133,6 +167,8 @@ type EndpointPage struct {
 	Unstable      []UnstableRow
 	Trend         []TrendRow
 	Verdicts      []string
+	// Disagreement is the newest reconcile's findings on this endpoint (nil: none, or no reconcile).
+	Disagreement []DisagreementRow
 }
 
 // IndexPage is the index: one line per endpoint, and the accounts needing attention.
@@ -144,6 +180,8 @@ type IndexPage struct {
 	Endpoints []EndpointPage
 	Verdicts  []string
 	Accounts  []AccountRow
+	// Reconcile is the newest reconcile (nil: none yet).
+	Reconcile *ReconcileHeader
 }
 
 // Report is everything published.
@@ -182,6 +220,12 @@ func Aggregate(f Facts, endpoints []string, prefix string) (Report, error) {
 	}
 	if !PageIDRE.MatchString(idx.ID) {
 		return Report{}, fmt.Errorf("page id %q: want [a-z][a-z0-9-]{0,39}", idx.ID)
+	}
+	if rc := f.Reconcile; rc != nil {
+		c := rc.Summary.Counts
+		idx.Reconcile = &ReconcileHeader{RunID: safeToken(rc.RunID), ReconciledRun: safeToken(rc.Summary.ReconciledRun),
+			Started: fmtTime(rc.Started), BlindSpots: c[ClassBlindSpot], Promoted: c["promoted"],
+			CannotReproduce: c[ClassCannotReproduce], Reverse: c[ClassReverse], Stale: rc.Summary.ReconciledRun != latest.RunID}
 	}
 	rep := Report{}
 	byEndpoint := map[string][]ResultFacts{}
@@ -331,6 +375,9 @@ func Aggregate(f Facts, endpoints []string, prefix string) (Report, error) {
 			}
 			return p.Unstable[i].Path < p.Unstable[j].Path
 		})
+		if f.Reconcile != nil {
+			p.Disagreement = disagreementRows(f.Reconcile.Summary, e)
+		}
 		// Oldest first.
 		for i := len(f.Runs) - 1; i >= 0; i-- {
 			run := f.Runs[i]
@@ -345,6 +392,44 @@ func Aggregate(f Facts, endpoints []string, prefix string) (Report, error) {
 	idx.Endpoints = rep.Endpoints
 	rep.Index = idx
 	return rep, nil
+}
+
+// hexIDRE is a signature or case id as a summary writes it (HexID).
+var hexIDRE = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// hexOrRedacted is s when it is a 16-hex-digit id, else Redacted.
+func hexOrRedacted(s string) string {
+	if hexIDRE.MatchString(s) {
+		return s
+	}
+	return Redacted
+}
+
+// disagreementRows is endpoint's findings of a reconcile summary, classes in a fixed order: only a
+// finding naming exactly endpoint, its ids re-checked (hexOrRedacted), at most maxExamples case ids
+// a row. The summary is read back from a table, so nothing in it is trusted to be shaped as written.
+func disagreementRows(s ReconcileSummary, endpoint string) []DisagreementRow {
+	out := make([]DisagreementRow, 0, len(s.BlindSpots)+len(s.CannotReproduce)+len(s.Reverse))
+	for _, cl := range []struct {
+		class string
+		list  []Finding
+	}{{ClassBlindSpot, s.BlindSpots}, {ClassCannotReproduce, s.CannotReproduce}, {ClassReverse, s.Reverse}} {
+		for _, f := range cl.list {
+			if f.Endpoint != endpoint {
+				continue
+			}
+			row := DisagreementRow{Class: cl.class, Sig: hexOrRedacted(f.Sig), Compared: f.Compared, Mismatches: f.Mismatches,
+				EvalResults: f.EvalResults, CaseIDs: []string{}}
+			for _, id := range f.CaseIDs {
+				if len(row.CaseIDs) == maxExamples {
+					break
+				}
+				row.CaseIDs = append(row.CaseIDs, hexOrRedacted(id))
+			}
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func fmtTime(t time.Time) string {
@@ -387,6 +472,11 @@ var endpointTmpl = template.Must(template.New("endpoint").Funcs(pageFuncs).Parse
 {{if .Unstable}}<table><tr><th>path</th><th>cases</th></tr>
 {{range .Unstable}}<tr><td><code>{{.Path}}</code></td><td class="n">{{.N}}</td></tr>
 {{end}}</table>{{else}}<p class="muted">none</p>{{end}}
+<h2>Prod/eval disagreement</h2>
+<p class="muted">From the newest reconcile: blind-spot (production mismatched, the eval passed; its cases promoted), cannot-reproduce (a promoted case that still passes), reverse (the eval found a bug, production matched).</p>
+{{if .Disagreement}}<table><tr><th>class</th><th>signature</th><th>prod compared</th><th>prod mismatches</th><th>eval results</th><th>case ids</th></tr>
+{{range .Disagreement}}<tr><td>{{.Class}}</td><td><code>{{.Sig}}</code></td><td class="n">{{.Compared}}</td><td class="n">{{.Mismatches}}</td><td class="n">{{.EvalResults}}</td><td><code>{{join .CaseIDs}}</code></td></tr>
+{{end}}</table>{{else}}<p class="muted">none</p>{{end}}
 <h2>Trend</h2>
 <table><tr><th>run</th><th>started</th>{{range .Verdicts}}<th>{{.}}</th>{{end}}</tr>
 {{range .Trend}}<tr><td><code>{{.RunID}}</code></td><td>{{.Started}}</td>{{range .Counts}}<td class="n">{{.}}</td>{{end}}</tr>
@@ -401,6 +491,10 @@ var indexTmpl = template.Must(template.New("index").Funcs(pageFuncs).Parse(`<!do
 <table><tr><th>endpoint</th><th>page</th><th>cases</th><th>coverage</th>{{range .Verdicts}}<th>{{.}}</th>{{end}}</tr>
 {{range .Endpoints}}<tr><td>{{.Endpoint}}</td><td><code>{{.ID}}</code></td><td class="n">{{.Cases}}</td><td class="n">{{pct .CoveragePct}}</td>{{range .Totals}}<td class="n">{{.N}}</td>{{end}}</tr>
 {{end}}</table>
+<h2>Prod/eval disagreement</h2>
+{{with .Reconcile}}<p class="muted">reconcile <code>{{.RunID}}</code> of run <code>{{.ReconciledRun}}</code>, {{.Started}}{{if .Stale}} (not the run shown above){{end}}.</p>
+<table><tr><th>blind spots</th><th>cases promoted</th><th>cannot reproduce</th><th>reverse</th></tr>
+<tr><td class="n">{{.BlindSpots}}</td><td class="n">{{.Promoted}}</td><td class="n">{{.CannotReproduce}}</td><td class="n">{{.Reverse}}</td></tr></table>{{else}}<p class="muted">no reconcile yet</p>{{end}}
 <h2>Eval accounts needing attention</h2>
 {{if .Accounts}}<table><tr><th>role</th><th>session expires</th><th>state</th></tr>
 {{range .Accounts}}<tr><td>{{.Role}}</td><td>{{.Expires}}</td><td>{{.State}}</td></tr>
@@ -599,6 +693,19 @@ func ReadFacts(ctx context.Context, read *chread.Client, phase string, n int) (F
 	}
 	if len(f.Runs) == 0 {
 		return f, fmt.Errorf("no %s run to publish", phase)
+	}
+	rows, err = read.Query(ctx, runsSQL, []chread.Setting{param("phase", PhaseReconcile), param("n", "1")})
+	if err != nil {
+		return f, fmt.Errorf("read reconcile: %w", err)
+	}
+	for _, r := range rows {
+		id := str(r["run_id"])
+		var s ReconcileSummary
+		if !runIDRE.MatchString(id) || !strings.HasPrefix(id, PhaseReconcile+"-") || json.Unmarshal([]byte(str(r["settings"])), &s) != nil {
+			continue
+		}
+		f.Reconcile = &ReconcileFacts{RunID: id, Started: msTime(r["started_ms"]), Summary: s}
+		break
 	}
 	ids := make([]string, 0, len(f.Runs))
 	for _, r := range f.Runs {

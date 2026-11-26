@@ -38,7 +38,28 @@ const (
 )
 
 var canaries = []string{canaryInput, canaryBody, canarySearch, canaryUsername, "CANARY REASON", "CANARY CATEGORY", "CANARY PATH",
-	canaryClass, "CANARYROLE1179", "CANARYSETTING1"}
+	canaryClass, "CANARYROLE1179", "CANARYSETTING1", canarySig, canaryCaseID, canaryEndpoint, "CANARYRECONCILE7"}
+
+// Reconcile canaries: a summary row is read back from a table, so a token-shaped value where an id
+// belongs, a finding of an endpoint no page has, and a field the summary type does not have must
+// never reach a page.
+const (
+	canarySig      = "CANARYSIG0000a1b"
+	canaryCaseID   = "CANARYCASE00c0de"
+	canaryEndpoint = "CANARYENDPOINT3"
+	runReconcile   = "reconcile-20261126T090000Z-ee33ff"
+)
+
+// reconcileSettings is the newest reconcile's settings: one finding of each class on as-posts (one
+// blind spot's sig and one case id are canaries), and one of an endpoint no page has.
+var reconcileSettings = `{"reconciled_run":"` + runNew + `","input":"CANARYRECONCILE7","counts":{"blind-spot":2,"promoted":3,` +
+	`"cannot-reproduce":1,"reverse":1},` +
+	`"blind_spots":[{"endpoint":"as-posts","sig":"00000000000000a1","compared":100,"mismatches":3,"eval_results":1,` +
+	`"case_ids":["000000000000044d","` + canaryCaseID + `"],"promoted":2,"request":"` + canaryInput + `"},` +
+	`{"endpoint":"as-posts","sig":"` + canarySig + `","compared":7,"mismatches":2,"eval_results":1,"case_ids":[]},` +
+	`{"endpoint":"` + canaryEndpoint + `","sig":"00000000000000b2","compared":9,"mismatches":9,"eval_results":1,"case_ids":["00000000000000b3"]}],` +
+	`"cannot_reproduce":[{"endpoint":"as-posts","sig":"00000000000000a8","compared":10,"mismatches":2,"eval_results":2,"case_ids":["0000000000000709"]}],` +
+	`"reverse":[{"endpoint":"as-posts","sig":"00000000000000a6","compared":50,"mismatches":0,"eval_results":1,"case_ids":["0000000000000641"]}]}`
 
 // Token-shaped values in the shown columns: a reason, a diff category and a mask path ARE shown, by
 // design. They are not request inputs: a reason is a fallback reason or the harness's own, a category
@@ -70,6 +91,8 @@ func publishFakeCH(t *testing.T) (*fakeCH, *chread.Client) {
 		text := q.Get("query")
 		var rows []map[string]any
 		switch {
+		case strings.Contains(text, "FROM runs") && q.Get("param_phase") == PhaseReconcile:
+			rows = []map[string]any{{"run_id": runReconcile, "started_ms": 1764147600000, "from_ms": 1, "to_ms": 2, "settings": reconcileSettings}}
 		case strings.Contains(text, "FROM runs"):
 			rows = []map[string]any{
 				{"run_id": runNew, "started_ms": 1764126000000, "from_ms": 1761534000000, "to_ms": 1764126000000,
@@ -155,6 +178,9 @@ func TestPublishNeverShowsAnInputValue(t *testing.T) {
 		"20.0%",                     // the model-getall-off gap's traffic
 		"viewer:moderator", "10.0%", // not_replayable by reason, and its traffic
 		tokCategory, tokPath, // shown by design (see tokReason)
+		// The disagreement section: each class, its signature, counts and case ids.
+		"blind-spot", "00000000000000a1", "000000000000044d", "cannot-reproduce", "00000000000000a8", "0000000000000709",
+		"reverse", "00000000000000a6", "0000000000000641",
 	} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("the as-posts page lacks %q", want)
@@ -168,6 +194,24 @@ func TestPublishNeverShowsAnInputValue(t *testing.T) {
 	for _, want := range []string{"member-mature", "2026-11-29 05:00 UTC", "expiring", Redacted} {
 		if !strings.Contains(string(index), want) {
 			t.Errorf("the index lacks %q (account notes)", want)
+		}
+	}
+	// The index's reconcile line: its run, the run it read, and the class counts in order.
+	if !strings.Contains(string(index), runReconcile) ||
+		!strings.Contains(string(index), `<td class="n">2</td><td class="n">3</td><td class="n">1</td><td class="n">1</td>`) {
+		t.Error("the index lacks the reconcile summary")
+	}
+	if strings.Contains(string(index), "not the run shown above") {
+		t.Error("a reconcile of the newest run is marked stale")
+	}
+	// The finding of an endpoint no page has, and the canary-signature row's id, are never shown; the
+	// redacted signature row is.
+	if strings.Count(string(page), "<td>blind-spot</td>") != 2 {
+		t.Errorf("as-posts blind-spot rows: %d, want 2 (one redacted)", strings.Count(string(page), "<td>blind-spot</td>"))
+	}
+	for _, other := range []string{"00000000000000b2", "00000000000000b3"} {
+		if strings.Contains(out, other) {
+			t.Errorf("a page shows %q, a finding of an endpoint no page has", other)
 		}
 	}
 	// Every read carried its values as parameters.
@@ -205,24 +249,31 @@ func paramOf(gets []url.Values, name string) string {
 // is reviewed and listed.
 func TestReportTypesHoldNoValueField(t *testing.T) {
 	want := map[string][]string{
-		"EndpointPage": {"ID", "Endpoint", "RunID", "Started", "EndReason", "Cases", "CoveragePct", "Totals", "NotReplayable", "Gaps", "Bugs", "Unstable", "Trend", "Verdicts"},
-		"IndexPage":    {"ID", "RunID", "Started", "EndReason", "Endpoints", "Verdicts", "Accounts"},
-		"ReasonRow":    {"Reason", "N", "TrafficPct"},
-		"AccountRow":   {"Role", "Expires", "State"},
-		"AccountNote":  {"Role", "Expires", "State"},
-		"VerdictTotal": {"Verdict", "N", "WeightedPct"},
-		"GapRow":       {"Reason", "N", "TrafficPct", "Examples"},
-		"BugRow":       {"Category", "N", "Examples"},
-		"UnstableRow":  {"Path", "N"},
-		"TrendRow":     {"RunID", "Started", "Counts"},
-		"ResultFacts":  {"CaseID", "Endpoint", "Sig", "Verdict", "Reason", "ResultClass", "DiffCategories", "UnstablePaths"},
-		"RunFacts":     {"RunID", "Started", "CorpusFrom", "CorpusTo", "EndReason", "Accounts"},
+		"EndpointPage":    {"ID", "Endpoint", "RunID", "Started", "EndReason", "Cases", "CoveragePct", "Totals", "NotReplayable", "Gaps", "Bugs", "Unstable", "Trend", "Verdicts", "Disagreement"},
+		"IndexPage":       {"ID", "RunID", "Started", "EndReason", "Endpoints", "Verdicts", "Accounts", "Reconcile"},
+		"ReasonRow":       {"Reason", "N", "TrafficPct"},
+		"AccountRow":      {"Role", "Expires", "State"},
+		"AccountNote":     {"Role", "Expires", "State"},
+		"VerdictTotal":    {"Verdict", "N", "WeightedPct"},
+		"GapRow":          {"Reason", "N", "TrafficPct", "Examples"},
+		"BugRow":          {"Category", "N", "Examples"},
+		"UnstableRow":     {"Path", "N"},
+		"TrendRow":        {"RunID", "Started", "Counts"},
+		"ResultFacts":     {"CaseID", "Endpoint", "Sig", "Verdict", "Reason", "ResultClass", "DiffCategories", "UnstablePaths"},
+		"DisagreementRow": {"Class", "Sig", "Compared", "Mismatches", "EvalResults", "CaseIDs"},
+		"ReconcileHeader": {"RunID", "ReconciledRun", "Started", "BlindSpots", "Promoted", "CannotReproduce", "Reverse", "Stale"},
+		"Finding":         {"Endpoint", "Sig", "Compared", "Mismatches", "EvalResults", "CaseIDs", "Promoted"},
+		"RunFacts":        {"RunID", "Started", "CorpusFrom", "CorpusTo", "EndReason", "Accounts"},
 	}
 	got := map[string][]string{
 		"EndpointPage": fieldNames(EndpointPage{}), "IndexPage": fieldNames(IndexPage{}), "VerdictTotal": fieldNames(VerdictTotal{}),
 		"GapRow": fieldNames(GapRow{}), "BugRow": fieldNames(BugRow{}), "UnstableRow": fieldNames(UnstableRow{}),
 		"TrendRow": fieldNames(TrendRow{}), "ResultFacts": fieldNames(ResultFacts{}), "RunFacts": fieldNames(RunFacts{}),
 		"ReasonRow": fieldNames(ReasonRow{}), "AccountRow": fieldNames(AccountRow{}), "AccountNote": fieldNames(AccountNote{}),
+		"DisagreementRow": fieldNames(DisagreementRow{}), "ReconcileHeader": fieldNames(ReconcileHeader{}), "Finding": fieldNames(Finding{}),
+	}
+	if len(got) != len(want) {
+		t.Errorf("%d types checked, %d listed", len(got), len(want))
 	}
 	for k, w := range want {
 		if !slices.Equal(got[k], w) {
