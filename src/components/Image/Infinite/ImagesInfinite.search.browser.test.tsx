@@ -90,7 +90,6 @@ vi.mock('@trpc/react-query', async (importOriginal) => ({
 vi.mock('~/components/Search/useSearchRefusal', () => ({
   useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => state.features,

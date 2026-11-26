@@ -40,10 +40,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => mocks.flags,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, muted: false }),
-}));
-
 // Boundary stub for the tip cases only: the real button needs a ContainerProvider this
 // harness has no reason to mount, and throws the whole tree away without one. Spread
 // rather than replaced, so `useBuzzTippingStore` -- which supplies the session-local
@@ -76,7 +72,8 @@ const placeholder = () => document.querySelector('[aria-label="Reaction counts u
 // Scoped to the row, NOT `document.body`: Mantine injects a <style> block whose
 // media queries ("max-width: 35.99375em") put digits in body.textContent, so a
 // digit assertion read against the body reports the stylesheet, not the badges.
-const renderRow = (ui: ReactElement) => renderWithProviders(<div data-testid="row">{ui}</div>);
+const renderRow = (ui: ReactElement) =>
+  renderWithProviders(<div data-testid="row">{ui}</div>, { user: { id: 1, muted: false } });
 const rowText = () => document.querySelector('[data-testid="row"]')?.textContent ?? '';
 
 beforeEach(() => {

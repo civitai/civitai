@@ -95,10 +95,6 @@ vi.mock('~/components/HatTurf/detail/HatTurfDetailControls', async (importOrigin
   HatTurfDetailControls: () => null,
   HatTurfDetailBadge: () => null,
 }));
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
-}));
 vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
   ...(await o<object>()),
   useFeatureFlags: () => ({}),

@@ -26,9 +26,6 @@ const mocks = vi.hoisted(() => ({
   setRedMedia: vi.fn(async (input: { slot: string }) => ({ status: 'cleared', slot: input.slot })),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 7, isModerator: mocks.isModerator }),
-}));
 vi.mock('~/hooks/useCFImageUpload', () => ({
   useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn() }),
 }));
@@ -125,7 +122,9 @@ beforeEach(() => {
 
 describe('ListingMediaEditor — rating visibility', () => {
   test('a live listing raised to R by one screenshot: the badge and the callout both render', async () => {
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     const callout = page.getByTestId('apps-listing-rating-callout');
     await expect.element(callout).toBeInTheDocument();
     await expect
@@ -142,7 +141,9 @@ describe('ListingMediaEditor — rating visibility', () => {
 
   test('the levels are read for the EDIT TARGET — the shadow once one exists, not the live parent', async () => {
     mocks.listing = listing({ shadowId: 'apl_shadow', editTargetId: 'apl_shadow' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
     expect(mocks.assetsInputs.at(-1)).toEqual({
       input: { listingId: 'apl_shadow' },
@@ -152,14 +153,18 @@ describe('ListingMediaEditor — rating visibility', () => {
 
   test('the DECLARED rating decides: the same imagery under a declared R raises nothing', async () => {
     mocks.listing = listing({ declaredContentRating: 'r' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-asset-rating-screenshot-0')).toBeInTheDocument();
     expect(page.getByTestId('apps-listing-rating-callout').elements()).toHaveLength(0);
   });
 
   test('an owner’s edit of a LIVE listing is a revision: an unapplied raise will be sent back', async () => {
     mocks.listing = listing({ contentRating: 'g' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-rating-callout'))
       .toHaveTextContent('a moderator will send back a change that includes this image');
@@ -168,7 +173,9 @@ describe('ListingMediaEditor — rating visibility', () => {
   test('a moderator editing the live listing directly has no review to wait for', async () => {
     mocks.isModerator = true;
     mocks.listing = listing({ contentRating: 'g' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-rating-callout'))
       .toHaveTextContent('This listing is live and still rated G, below this image.');
@@ -181,7 +188,9 @@ describe('ListingMediaEditor — rating visibility', () => {
       shadowId: 'apl_shadow',
       editTargetId: 'apl_shadow',
     });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-rating-callout'))
       .toHaveTextContent('a moderator will send back a change that includes this image');
@@ -189,7 +198,9 @@ describe('ListingMediaEditor — rating visibility', () => {
 
   test('an unpublished listing is edited in place: approval will rate it, not send it back', async () => {
     mocks.listing = listing({ status: 'removed', contentRating: 'g' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-rating-callout'))
       .toHaveTextContent('When this listing goes live it will be rated R');
@@ -198,7 +209,9 @@ describe('ListingMediaEditor — rating visibility', () => {
   test('a moderator on an unpublished listing is not told it is live', async () => {
     mocks.isModerator = true;
     mocks.listing = listing({ status: 'removed', contentRating: 'g' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-rating-callout'))
       .toHaveTextContent('When this listing goes live it will be rated R');
@@ -208,7 +221,9 @@ describe('ListingMediaEditor — rating visibility', () => {
     'a %s listing that was live keeps its rating: replacing the image alone does not lower it',
     async (status) => {
       mocks.listing = listing({ status });
-      renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+      renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+        user: { id: 7, isModerator: mocks.isModerator },
+      });
       await expect
         .element(page.getByTestId('apps-listing-rating-callout'))
         .toHaveTextContent(
@@ -219,7 +234,9 @@ describe('ListingMediaEditor — rating visibility', () => {
 
   test('a draft that has never been live is re-rated on approve: replacing the image avoids it', async () => {
     mocks.listing = listing({ status: 'draft' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-rating-callout'))
       .toHaveTextContent('once it is live. Replacing that image avoids this.');
@@ -227,7 +244,9 @@ describe('ListingMediaEditor — rating visibility', () => {
 
   test('a listing whose editing is blocked never asks for asset levels', async () => {
     mocks.listing = listing({ editBlockedReason: 'A moderator removed this listing.' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-media-begin-error')).toBeInTheDocument();
     expect(mocks.assetsInputs.length).toBeGreaterThan(0);
     expect(mocks.assetsInputs.every((c) => c.enabled === false)).toBe(true);
@@ -235,14 +254,18 @@ describe('ListingMediaEditor — rating visibility', () => {
 
   test('while the listing itself is loading there is no edit target to read levels for', async () => {
     mocks.listing = undefined;
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await vi.waitFor(() => expect(mocks.assetsInputs.length).toBeGreaterThan(0));
     expect(mocks.assetsInputs.every((c) => c.enabled === false)).toBe(true);
   });
 
   test('a failed level read is said out loud instead of silently dropping the badges', async () => {
     mocks.assetsError = true;
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-media-ratings-unavailable'))
       .toBeInTheDocument();
@@ -252,14 +275,18 @@ describe('ListingMediaEditor — rating visibility', () => {
 
 describe('ListingMediaEditor — the levels are re-read when they can have changed', () => {
   test('nothing is invalidated on mount', async () => {
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
     expect(mocks.invalidateAssets).not.toHaveBeenCalled();
   });
 
   test('an asset mutation re-reads the edit target’s levels and the listing', async () => {
     mocks.listing = listing({ shadowId: 'apl_shadow', editTargetId: 'apl_shadow' });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
     stepProps().onAssetMutated?.();
     expect(mocks.invalidateAssets).toHaveBeenCalledTimes(1);
@@ -268,7 +295,9 @@ describe('ListingMediaEditor — the levels are re-read when they can have chang
   });
 
   test('a landed scan re-reads the levels at once, without re-reading the listing', async () => {
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
     stepProps().onScanSettled?.();
     expect(mocks.invalidateAssets).toHaveBeenCalledTimes(1);
@@ -278,7 +307,9 @@ describe('ListingMediaEditor — the levels are re-read when they can have chang
 
   test('a scan poll started before the shadow existed still refreshes the SHADOW', async () => {
     // The step's poll keeps the callback from the render the upload started in.
-    const { rerender } = await renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    const { rerender } = await renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
     const settledAtUploadStart = stepProps().onScanSettled;
     mocks.listing = listing({ shadowId: 'apl_shadow', editTargetId: 'apl_shadow' });
@@ -294,7 +325,9 @@ describe('ListingMediaEditor — the levels are re-read when they can have chang
   describe('the delayed second re-read', () => {
     // Fake timers go in only once the editor has rendered, so locator polling is not starved.
     const settleWithFakeTimers = async () => {
-      const view = await renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+      const view = await renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+        user: { id: 7, isModerator: mocks.isModerator },
+      });
       await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
       vi.useFakeTimers();
       return view;
@@ -345,7 +378,9 @@ describe('ListingMediaEditor — civitai.red icon / cover overrides', () => {
   test('🔴 the edit target’s overrides from the listing read reach the step, with the split', async () => {
     mocks.listing = listing({ redMedia });
     mocks.assets = { ...assets, mediaSplitApproved: true };
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-listing-red-media')).toBeInTheDocument();
     expect(stepProps().redMedia).toEqual(redMedia);
     expect(stepProps().rating?.mediaSplit).toBe(true);
@@ -353,7 +388,9 @@ describe('ListingMediaEditor — civitai.red icon / cover overrides', () => {
 
   test('🔴 an owner clears the live listing’s red cover: setRedMedia on the edit target, then the listing is re-read (the revision it opened)', async () => {
     mocks.listing = listing({ redMedia });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await page.getByTestId('apps-offsite-remove-red-cover').click();
     await vi.waitFor(() =>
       expect(mocks.setRedMedia).toHaveBeenCalledWith({
@@ -369,13 +406,17 @@ describe('ListingMediaEditor — civitai.red icon / cover overrides', () => {
 
   test('🔴 an accepted collaborator gets the same picker (the server applies the icon / cover rules)', async () => {
     mocks.listing = listing({ role: 'editor', redMedia });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect.element(page.getByTestId('apps-offsite-remove-red-cover')).toBeInTheDocument();
   });
 
   test('🔴 slots unavailable: the editor shows the note, no picker', async () => {
     mocks.listing = listing({ redMedia: { ...redMedia, available: false } });
-    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />, {
+      user: { id: 7, isModerator: mocks.isModerator },
+    });
     await expect
       .element(page.getByTestId('apps-listing-red-media-unavailable'))
       .toBeInTheDocument();

@@ -70,10 +70,6 @@ const mocks = vi.hoisted(() => ({
   storageInvalidate: vi.fn(),
 }));
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Partial mock: keep the REAL origin allowlist + filename sanitizer + request
 // parser (the security-critical pure logic), stub ONLY the top-frame blob
 // download so the SAVE_IMAGE tests never hit the network.

@@ -33,7 +33,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     },
   }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ isModerator: false }) }));
 vi.mock('~/components/UserSettings/hooks', () => ({
   useCurrentUserSettings: () => ({}),
   useMutateUserSettings: () => ({ mutate: vi.fn() }),
@@ -52,7 +51,8 @@ function renderCard(chain: string, ticker: string) {
       onRetry={vi.fn()}
       chain={chain}
       onCurrencySelect={vi.fn()}
-    />
+    />,
+    { user: { isModerator: false } }
   );
 }
 

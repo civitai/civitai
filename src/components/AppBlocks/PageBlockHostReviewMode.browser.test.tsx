@@ -45,10 +45,6 @@ const mocks = vi.hoisted(() => ({
   wildcard: vi.fn(async () => ({ sizeBytes: 10 ** 9, signedUrl: 'x', meta: {}, maturity: {} })),
 }));
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Spy on the toast so the reviewMode consent-feedback path is assertable without
 // mounting the full Notifications provider. Preserve the module's other exports.
 const showNotificationSpy = vi.fn();

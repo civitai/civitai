@@ -86,7 +86,6 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   useIsMobile: () => false,
   isMobileDevice: () => false,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
 // It replaces the module outright, so a named import in the file's module graph that
 // the factory omits makes the whole file fail to IMPORT — reported as

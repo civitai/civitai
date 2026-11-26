@@ -15,7 +15,6 @@ const state = vi.hoisted(() => ({
   canSell: true,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof DialogProviderModule>()),
   useDialogContext: () => ({ opened: true, onClose: vi.fn() }),
@@ -91,7 +90,8 @@ beforeEach(() => {
 describe("the owner's service card", () => {
   test('Manage goes straight to editing that service', async () => {
     renderWithProviders(
-      <ServiceOfferingCard offering={offering} sellerId={1} sellerUsername="mei" />
+      <ServiceOfferingCard offering={offering} sellerId={1} sellerUsername="mei" />,
+      { user: { id: 1 } }
     );
     await expect
       .element(page.getByRole('link', { name: 'Manage' }))
@@ -100,12 +100,13 @@ describe("the owner's service card", () => {
 
   test("Preview as buyer shows the buyer's card and description, with nothing that acts", async () => {
     renderWithProviders(
-      <ServiceOfferingCard offering={offering} sellerId={1} sellerUsername="mei" />
+      <ServiceOfferingCard offering={offering} sellerId={1} sellerUsername="mei" />,
+      { user: { id: 1 } }
     );
     await page.getByRole('button', { name: 'Preview as buyer' }).click();
     expect(state.trigger).toHaveBeenCalledTimes(1);
     const { component: Preview, props } = state.trigger.mock.calls[0][0];
-    renderWithProviders(<Preview {...props} />);
+    renderWithProviders(<Preview {...props} />, { user: { id: 1 } });
 
     const dialog = page.getByRole('dialog', { name: 'Preview as a buyer' });
     await expect
@@ -121,7 +122,7 @@ describe("the owner's service card", () => {
 describe('the manage page opened from a card', () => {
   test('opens the form for that offering and drops ?edit', async () => {
     managePage({ username: 'mei', tab: 'services', edit: '3' });
-    renderWithProviders(<ManageServicesPanel />);
+    renderWithProviders(<ManageServicesPanel />, { user: { id: 1 } });
     await vi.waitFor(() =>
       expect(state.trigger).toHaveBeenCalledWith({
         component: ServiceOfferingFormModal,
@@ -141,14 +142,14 @@ describe('the manage page opened from a card', () => {
   test('opens no form for a seller who cannot sell, and still drops ?edit', async () => {
     managePage({ username: 'mei', tab: 'services', edit: '3' });
     state.canSell = false;
-    renderWithProviders(<ManageServicesPanel />);
+    renderWithProviders(<ManageServicesPanel />, { user: { id: 1 } });
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expect(state.trigger).not.toHaveBeenCalled();
   });
 
   test("opens no form for an id that isn't one of the seller's, and still drops ?edit", async () => {
     managePage({ username: 'mei', tab: 'services', edit: '999' });
-    renderWithProviders(<ManageServicesPanel />);
+    renderWithProviders(<ManageServicesPanel />, { user: { id: 1 } });
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expect(state.trigger).not.toHaveBeenCalled();
   });

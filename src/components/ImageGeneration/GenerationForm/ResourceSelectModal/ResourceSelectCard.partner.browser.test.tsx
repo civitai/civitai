@@ -26,8 +26,6 @@ vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', ()
   }),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 const { ResourceSelectCard } = await import('./ResourceSelectCard');
 
 const version = (id: number, name: string, extra: object) => ({

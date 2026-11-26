@@ -34,8 +34,6 @@ const rpc = await vi.hoisted(async () => {
   });
 });
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Replaces the module, so it names every export this file's graph imports — omitting one
 // fails the FILE to import, which reports as "no tests" rather than as a failure.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({

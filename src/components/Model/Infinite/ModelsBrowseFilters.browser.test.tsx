@@ -31,7 +31,6 @@ const mocks = vi.hoisted(() => ({
   versionRedirect: [] as (boolean | undefined)[],
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof UseIsMobile>()),
   useIsMobile: () => false,

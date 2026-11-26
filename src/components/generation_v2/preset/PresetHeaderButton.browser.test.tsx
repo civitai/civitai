@@ -12,7 +12,6 @@ vi.mock('~/hooks/useMobileGenerator', async (importOriginal) => ({
   useMobileGenerator: () => true,
   useGeneratorLayout: () => 'mobile',
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy({
@@ -29,7 +28,7 @@ import { PresetHeaderButton } from '~/components/generation_v2/preset/PresetHead
 
 describe('PresetHeaderButton in the mobile generator', () => {
   test('opens its actions as a sheet, and an action closes the sheet and opens its dialog', async () => {
-    renderWithProviders(<PresetHeaderButton />);
+    renderWithProviders(<PresetHeaderButton />, { user: { id: 1 } });
     await page.getByRole('button', { name: 'Presets' }).click();
 
     const sheet = page.getByRole('dialog', { name: 'Presets' });

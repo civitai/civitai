@@ -24,10 +24,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   },
 }));
 
-// The real hook throws without CivitaiSessionProvider; a non-moderator is the
-// case that matters here (a moderator also sees Delete).
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 const { ManageItemsTable } = await import('~/components/CreatorShop/Manage/ManageItemsTable');
 
 const noopMutation = { mutate: vi.fn(), isPending: false } as never;

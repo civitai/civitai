@@ -56,7 +56,6 @@ vi.mock('~/components/ContainerProvider/useContainerSmallerThan', () => ({
 vi.mock('~/components/Tours/ToursProvider', () => ({
   useTourContext: () => ({ running: false, helpers: undefined }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   const ImageGuard2 = ({ children }: any) => <>{children(true)}</>;

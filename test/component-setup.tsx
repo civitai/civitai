@@ -16,6 +16,13 @@ import { afterEach, vi } from 'vitest';
 import { render, cleanup } from 'vitest-browser-react';
 import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { AuthedUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import {
+  FixedSessionProvider,
+  SignedOutSessionProvider,
+} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { FixedFeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 // Raw text, NOT a stylesheet import — see the block below for why that distinction
 // is the whole point.
 import globalsCss from '~/styles/globals.css?raw';
@@ -252,6 +259,24 @@ function Providers({ children }: { children: React.ReactNode }) {
  * child with "MantineProvider was not found". Passing `wrapper` fixes that for
  * every component test that drives prop changes via `rerender`.
  */
-export function renderWithProviders(ui: React.ReactElement) {
-  return render(ui, { wrapper: Providers });
+export function renderWithProviders(ui: React.ReactElement, options: ViewerOptions = {}) {
+  return render(ui, { wrapper: viewerWrapper(options) });
+}
+
+type ViewerOptions = {
+  user?: Partial<AuthedUser> & { id: number };
+  flags?: Partial<FeatureAccess>;
+};
+
+function viewerWrapper({ user, flags }: ViewerOptions) {
+  return function Viewer({ children }: { children: React.ReactNode }) {
+    let tree = children;
+    if (flags) tree = <FixedFeatureFlagsProvider flags={flags}>{tree}</FixedFeatureFlagsProvider>;
+    tree = user ? (
+      <FixedSessionProvider user={user}>{tree}</FixedSessionProvider>
+    ) : (
+      <SignedOutSessionProvider>{tree}</SignedOutSessionProvider>
+    );
+    return <Providers>{tree}</Providers>;
+  };
 }

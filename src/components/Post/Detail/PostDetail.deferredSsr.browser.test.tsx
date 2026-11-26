@@ -64,10 +64,6 @@ vi.mock('~/components/BrowserRouter/BrowserRouterProvider', async (o) => ({
   ...(await o<object>()),
   useBrowserRouter: () => ({ query: {} }),
 }));
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
-}));
 vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
   ...(await o<object>()),
   useFeatureFlags: () => ({}),

@@ -46,7 +46,6 @@ vi.mock('~/providers/SessionProvider', () => ({
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/components/Login/requireLogin', async (importOriginal) => ({
   ...(await importOriginal<typeof RequireLoginMod>()),
   requireLogin: mocks.requireLogin,

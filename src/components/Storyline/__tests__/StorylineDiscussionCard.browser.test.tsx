@@ -75,9 +75,6 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   useStorylineContinueTerms: () => null,
   useStorylineGraph: () => ({ data: undefined, isLoading: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 99, username: 'viewer', muted: false, isModerator: false }),
-}));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useFeatureFlags: () => ({ canWrite: true }),
@@ -101,7 +98,8 @@ const renderPage = () =>
   renderWithProviders(
     <ContainerProvider id="main" containerName="main">
       <StorylinePage id={2} />
-    </ContainerProvider>
+    </ContainerProvider>,
+    { user: { id: 99, username: 'viewer', muted: false, isModerator: false } }
   );
 
 describe('the discussion card', () => {

@@ -100,7 +100,14 @@ const SCOPE_ITEMS = [
     statusCode: 200,
     // Non-ModelVersion entity — the view names only ModelVersions, so this must
     // render a safe generic subject, never a crash or an empty "on ".
-    detail: { action: 'tip', amount: 250, toUserId: 7, entityType: 'Image', entityId: 42, outcome: 'ok' },
+    detail: {
+      action: 'tip',
+      amount: 250,
+      toUserId: 7,
+      entityType: 'Image',
+      entityId: 42,
+      outcome: 'ok',
+    },
   },
   // ── Bounded-endpoint rows (the shape the writers emit today). The endpoint is
   // the aggregation TEMPLATE, so the Detail column must come off `detail`.
@@ -164,7 +171,6 @@ const SCOPE_ITEMS = [
 // ('missing IsClientContext'). `renderWithProviders` supplies Mantine + a QueryClient
 // only, so the hook is stubbed here rather than the whole app shell being mounted.
 // `true` is the post-mount value, which is the state every assertion below is about.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
@@ -221,9 +227,7 @@ describe('AppActivityPanel — W13 action detail', () => {
 
   test('(b) passive read row shows a friendly scope label', async () => {
     renderWithProviders(<AppActivityPanel />);
-    await expect
-      .element(page.getByText('Read your Buzz balance/history'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Read your Buzz balance/history')).toBeInTheDocument();
   });
 
   test('(c) null-detail mutation row falls back to the historical humanise path', async () => {
@@ -231,9 +235,7 @@ describe('AppActivityPanel — W13 action detail', () => {
     // scope ai:write:budgeted + workflow:submit endpoint → legacy "Generated an image".
     // `exact` because getByText is substring-matching by default and the rich
     // workflow rows below render "Generated an image (spent N Buzz)".
-    await expect
-      .element(page.getByText('Generated an image', { exact: true }))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Generated an image', { exact: true })).toBeInTheDocument();
   });
 
   test('(d) unknown action code renders a safe generic line', async () => {
@@ -264,12 +266,8 @@ describe('AppActivityPanel — Detail column off a BOUNDED endpoint', () => {
     // Rows 7 and 8 both carry endpoint 'workflow:submit' — that constant must
     // never leak into the Detail cell, and each row keeps its own Action
     // sentence off its own detail.
-    await expect
-      .element(page.getByText('Generated an image (spent 120 Buzz)'))
-      .toBeInTheDocument();
-    await expect
-      .element(page.getByText('Generated an image (spent 7 Buzz)'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Generated an image (spent 120 Buzz)')).toBeInTheDocument();
+    await expect.element(page.getByText('Generated an image (spent 7 Buzz)')).toBeInTheDocument();
     expect(page.getByText('workflow:submit', { exact: true }).elements()).toHaveLength(0);
   });
 

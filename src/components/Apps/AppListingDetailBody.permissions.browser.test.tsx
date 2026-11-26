@@ -55,10 +55,6 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 
 const WIDE: [number, number] = [1440, 900];
 
-// Anonymous viewer — the `⋮` menu and its modals never mount; none of them are
-// what this file is about, and each is a portal beside the content under test.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
 // no-wholesale-module-mock): a hand-written factory silently breaks every importer
 // the day the real module grows an export it omits — and in this project that

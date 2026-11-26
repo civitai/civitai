@@ -30,10 +30,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   UserAvatar: ({ user }: { user: { username: string } }) => <span>{user.username}</span>,
 }));
 
-// The real hook throws without CivitaiSessionProvider, and the row's actions menu
-// is the only thing in the table that reads it.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 const { ManageItemsTable } = await import('~/components/CreatorShop/Manage/ManageItemsTable');
 
 const SCROLL_CONTAINER = '.mantine-ScrollArea-root';
