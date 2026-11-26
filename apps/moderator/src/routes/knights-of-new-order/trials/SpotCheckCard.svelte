@@ -24,7 +24,6 @@
   <TrialMedia {item} width={320} alt="Image to rate" class="max-h-80 shrink-0 self-start rounded-md" />
   <div class="flex min-w-0 flex-1 flex-col gap-3">
     {#if rate.error}<ErrorAlert message={rate.error} />{/if}
-    <!-- A rating is a judgement of the image, so one this moderator cannot see is not offered. -->
     {#if !item.restricted}
       <form method="POST" action="?/spotCheck" use:enhance={rate.enhance} class="flex flex-wrap items-center gap-2">
         <input type="hidden" name="id" value={item.id} />

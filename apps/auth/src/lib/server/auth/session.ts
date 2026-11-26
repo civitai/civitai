@@ -327,14 +327,13 @@ export async function establishSession(
   const priorPrincipal = confirmedPrior
     ? confirmedPrior.impersonatedBy ?? Number(confirmedPrior.sub)
     : undefined;
-  const link = (id: string, proof?: string) =>
-    linkAccount(
-      id,
-      user.id,
-      priorPrincipal,
-      family ? { family, proofFamily: proof } : undefined
-    ).catch(() => 'none' as const);
-  if ((await link(getOrCreateDeviceId(cookies), proofFamily)) === 'rotate') {
+  // A hand-off mints no family, but the browser stays signed in to the prior session's: a list it creates gets a
+  // record holding that family, so a sign-out from it still forgets the list. Without a hand-off, `family` is
+  // the prior session's family whenever there is one (the sign-in joins it), so the proof adds no other family.
+  const families = family || proofFamily ? { family, proofFamily } : undefined;
+  const link = (id: string) =>
+    linkAccount(id, user.id, priorPrincipal, families).catch(() => 'none' as const);
+  if ((await link(getOrCreateDeviceId(cookies))) === 'rotate') {
     await link(rotateDeviceId(cookies));
   }
 }

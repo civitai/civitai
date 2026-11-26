@@ -218,6 +218,25 @@ type HeldOutcome =
   | { kind: 'not-held' }
   | { kind: 'retry'; status: number | 'unreachable' };
 
+/**
+ * Whether a comment the platform holds hidden is hidden there by a moderator: the platform keeps one
+ * moderator source, so only that hide would a lift from here clear. A pipeline or site hide is not.
+ */
+async function moderatorHidThere(
+  held: HeldOutcome
+): Promise<boolean | { retry: number | 'unreachable' }> {
+  if (held.kind !== 'held' || held.state !== 'hidden') return false;
+  let read: Awaited<ReturnType<typeof readDecidingVerdict>>;
+  try {
+    read = await readDecidingVerdict(held.urn);
+  } catch (e) {
+    if (e instanceof SignerUnavailableError) return { retry: 'unreachable' };
+    throw e;
+  }
+  if ('failed' in read) return { retry: read.status };
+  return read.verdict?.source === 'moderator' && read.verdict.verdict === 'hidden';
+}
+
 /** What the platform holds for a comment, by its sourceId: never its text. */
 async function readBySource(sourceId: number): Promise<HeldOutcome> {
   let reply: SignerReply;
@@ -324,9 +343,6 @@ const textKey = (row: FpMirrorFactsRow, body: Record<string, unknown>) =>
 
 const retractAt = (row: FpMirrorFactsRow) =>
   (row.goneAt ?? row.contentAt ?? row.createdAt ?? new Date(0)).toISOString();
-
-// A deleted author needs no check here: fpCommentState makes the comment 'erased' first.
-const authorInStanding = (row: FpMirrorFactsRow) => !row.bannedAt && !row.muted;
 
 /** The platform refuses an all-digit or empty authorName. */
 const sendableName = (username: string | null) => !!username && !/^\d+$/.test(username);
@@ -454,7 +470,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
       return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
     if (scan === 'pending') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
-    if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
+    if (!row.authorInStanding) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
   const sendText = async () => {
@@ -472,7 +488,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       at: retractAt(row),
     });
   let sentAt = '';
-  // Already hidden there when this mirror first hides it: another's hide, never lifted from here.
+  // Hidden there by a moderator when this mirror first hides it: another's hide, never lifted here.
   // Kept while the hide stands; only the read before a first hide decides it again.
   let foreign = row.pushedState === 'mod-hidden' && row.modHideOrigin === 'foreign';
   const modHide = () => ({
@@ -625,8 +641,11 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       if (held.kind === 'retry') return fail(held.status, 'by-source');
       if (held.kind === 'held') {
         if (held.state === 'erased') return erased();
-        if (state === 'mod-hidden' && row.pushedState !== 'mod-hidden')
-          foreign = held.state === 'hidden';
+        if (state === 'mod-hidden' && row.pushedState !== 'mod-hidden') {
+          const there = await moderatorHidThere(held);
+          if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
+          foreign = there;
+        }
         urn = held.urn;
         platformDigest = held.digest;
         steps.push('by-source');
@@ -655,7 +674,9 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     if (row.pushedState !== 'mod-hidden' && !steps.includes('by-source')) {
       const held = await readBySource(row.commentId);
       if (held.kind === 'retry') return fail(held.status, 'by-source');
-      foreign = held.kind === 'held' && held.state === 'hidden';
+      const there = await moderatorHidThere(held);
+      if (typeof there !== 'boolean') return fail(there.retry, 'verdict-source');
+      foreign = there;
     }
     const r = await verdict(PLATFORM_MOD_VERDICT_PATH, 'hidden');
     if (r.kind === 'removed') return removed('mod-hidden');
@@ -893,7 +914,7 @@ export function reconcileAction(
     seen === 'hidden' &&
     item.verdict?.source === 'moderator' &&
     e.row.liftGranted &&
-    authorInStanding(e.row) &&
+    e.row.authorInStanding &&
     !!e.row.modHideSentAt &&
     Date.parse(item.verdict.at ?? '') === e.row.modHideSentAt.getTime()
   )
@@ -955,21 +976,32 @@ export function singleCommentQuery(urn: string) {
   });
 }
 
+/** The platform's deciding verdict on one comment: a one-item page from keyBefore(its key). */
+async function readDecidingVerdict(
+  urn: string
+): Promise<{ verdict: PlatformCommentItem['verdict'] } | { failed: string; status: number }> {
+  const reply = await callSigner(PLATFORM_COMMENTS_READ_PATH, {
+    method: 'GET',
+    query: singleCommentQuery(urn),
+  });
+  const page = commentsPageSchema.safeParse(reply.body);
+  if (reply.status !== 200 || !page.success)
+    return { failed: `read failed: ${reply.status}`, status: reply.status };
+  const [item] = page.data.items;
+  if (item?.urn !== urn)
+    return { failed: item ? 'another comment read' : 'nothing read', status: reply.status };
+  return { verdict: item.verdict };
+}
+
 /**
  * Why the platform's deciding verdict for this row is not confirmed as the moderator hide sent from
- * here, or null when it is. A one-item page from keyBefore(its key) is exactly this comment.
+ * here, or null when it is.
  */
 async function unconfirmedLift(row: FpMirrorFactsRow) {
   if (!row.urn || !row.modHideSentAt) return 'no hide sent';
-  const reply = await callSigner(PLATFORM_COMMENTS_READ_PATH, {
-    method: 'GET',
-    query: singleCommentQuery(row.urn),
-  });
-  const page = commentsPageSchema.safeParse(reply.body);
-  if (reply.status !== 200 || !page.success) return `read failed: ${reply.status}`;
-  const [item] = page.data.items;
-  if (item?.urn !== row.urn) return item ? 'another comment read' : 'nothing read';
-  const v = item.verdict;
+  const read = await readDecidingVerdict(row.urn);
+  if ('failed' in read) return read.failed;
+  const v = read.verdict;
   if (v?.source !== 'moderator' || v.verdict !== 'hidden') return 'not a moderator hide';
   if (Date.parse(v.at ?? '') !== row.modHideSentAt.getTime()) return 'not the hide sent from here';
   return null;

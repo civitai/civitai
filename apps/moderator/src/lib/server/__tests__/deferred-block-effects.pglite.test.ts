@@ -64,9 +64,13 @@ vi.mock('../redis', () => ({ getSysRedis: () => ({ del: vi.fn(), sRem: vi.fn() }
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined), logToAxiom }));
 
-const { acceptImage, blockImage, dismissFromCsamQueue, dismissUserFromCsamQueue } = await import(
-  '../image-moderation.service'
-);
+const {
+  acceptImage,
+  blockImage,
+  dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
+  ImageNotRestoredError,
+} = await import('../image-moderation.service');
 const { clearUserCsamFlags } = await import('../csam-flag-clear');
 const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 
@@ -540,8 +544,14 @@ describe('a re-block of an image already removed under the flag', () => {
 });
 
 describe('an unblock of it', () => {
-  it('drops its deferred effects unfired', async () => {
+  it('is refused while the flag is on, and once the flag is cleared drops its deferred effects unfired', async () => {
     await block(FLAGGED);
+    await expect(
+      acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(ImageNotRestoredError);
+    expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED}`);
     await acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true });
 
     expect(await deferredRows()).toEqual([]);

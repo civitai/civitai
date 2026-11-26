@@ -354,10 +354,11 @@ export const ensureModel3DFromWorkflow = async ({
     const previewStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'model3DPreview') as
       | { output?: { images?: ImageBlob[] } }
       | undefined;
-    const { coverOverride: thumbnailOverride, ratedUrls } = model3DPostImages(
-      previewStep?.output?.images ?? [],
-      polyGenStep.output.thumbnail
-    );
+    const {
+      coverOverride: thumbnailOverride,
+      cover,
+      ratedUrls,
+    } = model3DPostImages(previewStep?.output?.images ?? [], polyGenStep.output.thumbnail);
 
     // The mesh blob is never rated by the orchestrator, so the effective rating
     // comes from the preview renders / auto-thumbnail.
@@ -374,6 +375,7 @@ export const ensureModel3DFromWorkflow = async ({
       req: ctx.req,
       // A result with no preview render (FBX-only Tripo quad) is rated on the auto-thumbnail it shows.
       previewUrls: ratedUrls,
+      coverUrl: cover?.url ?? undefined,
       workflowId: input.workflowId,
     });
     if (postBlock) throw throwBadRequestError(postBlock);

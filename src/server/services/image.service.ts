@@ -85,6 +85,9 @@ import {
   reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
+  liftableByUnblock,
+  liftableByUnblockSql,
+  CSAM_REVIEW_FLAG,
   unblockedMetadataSql,
   scanKeepsRowSql,
 } from '~/server/common/image-visibility';
@@ -376,14 +379,19 @@ import {
   queuePostNsfwLevelUpdates,
   type DeleteActor,
   type DeleteOutcome,
+  type LiftedKeptHides,
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
   dealFileImageSql,
 } from '@civitai/db-queries/content-deletion';
 import {
   imagesPendingDeletion as readImagesPendingDeletion,
+  keptHidePrior,
+  keptHideStands,
+  notModeratorAsk,
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
+import { childSafetyImageFinding } from '@civitai/db-queries/child-safety-case';
 import { sql, type RawBuilder } from 'kysely';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -903,6 +911,45 @@ export function attachTagsToImages<TImage extends { id: number }, TTag extends {
 
 type KeptImage = { imageId: number; userId: number; postId: number | null };
 
+/**
+ * After `liftKeptHides`: each image is unblocked again and each post unstamped, so what the hide
+ * busted is stale the other way. A failure is logged: the lift has committed.
+ */
+export async function refreshLiftedKeptHides({ images, postIds }: LiftedKeptHides) {
+  if (!images.length && !postIds.length) return;
+  const ids = images.map((x) => x.id);
+  const posts = uniq([...postIds, ...images.map((x) => x.postId).filter(isDefined)]);
+  const results = await Promise.allSettled([
+    ...(ids.length
+      ? [
+          queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+          invalidateManyImageExistence(ids),
+          imageMetaCache.refresh(ids),
+          imageMetadataCache.refresh(ids),
+          refreshImageLevelCaches(ids),
+          userImageVideoCountCaches.bust(uniq(images.map((x) => x.userId))),
+        ]
+      : []),
+    ...(posts.length
+      ? [
+          queuePostNsfwLevelUpdates(kyselyOver(dbWrite), posts),
+          bustCachesForPosts(posts),
+          postMetrics.queueUpdate(posts),
+        ]
+      : []),
+  ]);
+  const errors = results.flatMap((r) => (r.status === 'rejected' ? [safeError(r.reason)] : []));
+  if (errors.length)
+    logToAxiom({
+      type: 'error',
+      name: 'lift-kept-hide-refresh-failed',
+      message: 'a lifted image or post may still be cached as hidden',
+      imageIds: ids,
+      payload: { postIds },
+      errors,
+    });
+}
+
 /** A hidden image is now blocked, so the caches a delete busts are stale too. */
 async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
   const ids = kept.map((x) => x.imageId);
@@ -1011,15 +1058,35 @@ type ImageDeleteOptions = {
  * takedown or moderator delete always removes it, since a non-persisted CDN deny lapses and the
  * bytes would be served again. Scanned and unreported, so a delete cannot outrun a verdict. Read
  * against the deleted row (`gone` in `deleteImageRows`).
+ *
+ * An image its owner's earlier delete kept for a child-safety case was blocked by that delete, not by
+ * a verdict: it is read as the delete recorded it, while that block still stands and the case found
+ * nothing.
  */
-const plainOwnerDeleteSql = (deletedById: number, reported: number[]) =>
-  fromPrismaSql<boolean>(Prisma.sql`(
+const plainOwnerDeleteSql = (deletedById: number, reported: number[]) => {
+  const plain = (state: RawBuilder<unknown> | null) =>
+    state
+      ? sql<boolean>`(${keptHidePrior(state, 'ingestion')} = ${ImageIngestionStatus.Scanned}
+          AND ${keptHidePrior(state, 'needsReview')} IS NULL
+          AND ${keptHidePrior(state, 'blockedFor')} IS NULL
+          AND ${keptHidePrior(state, 'nsfwLevel')} <> ${String(NsfwLevel.Blocked)})`
+      : sql<boolean>`(ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+          AND "needsReview" IS NULL
+          AND NOT ${fromPrismaSql<boolean>(hasBlockMarkerSql('gone'))})`;
+  return sql<boolean>`(
     "userId" = ${deletedById}
-    AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-    AND "needsReview" IS NULL
     AND NOT (id = ANY(${reported}::int[]))
-    AND NOT ${hasBlockMarkerSql('gone')}
-  )`);
+    AND (${plain(null)} OR EXISTS (
+      SELECT 1 FROM "JobQueue" own_q
+      WHERE own_q.type = 'PendingDelete' AND own_q."entityType" = 'Image' AND own_q."entityId" = gone.id
+        AND own_q.data->'ownerId' = to_jsonb(${deletedById}::int)
+        AND ${notModeratorAsk(sql.ref('own_q.data'))}
+        AND ${keptHideStands('gone', sql.ref('own_q.data'))}
+        AND ${plain(sql.ref('own_q.data'))}
+        AND (${childSafetyImageFinding('gone')}) IS FALSE
+    ))
+  )`;
+};
 
 /**
  * 🔴 A NAMED options object. What `retractPublicBlobs` turns on deletes an image's public copies, so
@@ -1330,25 +1397,24 @@ export async function handleUnblockImages({
       needsReview: true,
     },
   });
-  // A CSAM block is lifted only through the moderator CSAM review. Re-read on the primary, since the
-  // replica can lag a block: the follow-ups below act on every image left here. The UPDATE also
-  // re-checks it per row.
+  // A CSAM block or a CSAM review flag is lifted only through the moderator CSAM review. Re-read on
+  // the primary, since the replica can lag either: the follow-ups below act on every image left here.
+  // The UPDATE also re-checks both per row.
   const csamIds = found.length
     ? new Set(
         (
           await dbWrite.$queryRaw<{ id: number }[]>`
             SELECT id FROM "Image"
             WHERE id IN (${Prisma.join(found.map((image) => image.id))})
-              AND "blockedFor" = ${BlockedReason.CSAM}
+              AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = ${CSAM_REVIEW_FLAG})
           `
         ).map((row) => row.id)
       )
     : new Set<number>();
-  const images = found.filter(
-    (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
-  );
+  const images = found.filter((image) => liftableByUnblock(image) && !csamIds.has(image.id));
   const kept: number[] = [];
   const restoredAll: number[] = [];
+  const liftedAll: typeof images = [];
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
@@ -1359,10 +1425,8 @@ export async function handleUnblockImages({
     }, {});
 
     const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
-    const [, ...written] = await Promise.all([
-      // Drops its blocks' deferred effects unfired.
-      dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
-      ...Object.entries(grouped).map(
+    const written = await Promise.all(
+      Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
             "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
@@ -1384,28 +1448,36 @@ export async function handleUnblockImages({
             }
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
-            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+            AND ${liftableByUnblockSql}
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
-      ),
-      upsertTagsOnImageNew(
-        imageTagsForReview.map(({ imageId, tagId }) => ({
-          imageId,
-          tagId,
-          disabled: true,
-          needsReview: false,
-        }))
-      ),
-    ]);
+      )
+    );
 
-    // From the UPDATE's RETURNING, so a row it skipped (a CSAM block racing in) is neither.
-    const rows = written
-      .flat()
-      .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row);
+    // Every follow-up acts on the rows the UPDATE wrote, from its RETURNING: a row it skipped (a CSAM
+    // block or review flag racing in) keeps its deferred effects, review tags and blocklist entry.
+    const rows = written.flat();
     const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
     const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
-    const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
+    const writtenIds = new Set(rows.map((row) => row.id));
+    const lifted = images.filter((image) => writtenIds.has(image.id));
+    const liftedIds = lifted.map((image) => image.id);
+    liftedAll.push(...lifted);
+    const postIds = uniq(lifted.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
+      // Drops its blocks' deferred effects unfired.
+      liftedIds.length &&
+        dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${liftedIds}::int[])`,
+      upsertTagsOnImageNew(
+        imageTagsForReview
+          .filter(({ imageId }) => writtenIds.has(imageId))
+          .map(({ imageId, tagId }) => ({
+            imageId,
+            tagId,
+            disabled: true,
+            needsReview: false,
+          }))
+      ),
       resetBlockedNsfwLevel(restoredIds),
       dropBlockedImageDeleteQueue(restoredIds),
       restartBlockedImageDeleteClock([...keptIds]),
@@ -1419,18 +1491,18 @@ export async function handleUnblockImages({
           action: SearchIndexUpdateQueueAction.Delete,
         }),
       // The unblock SQL above can rewrite "minor", which no trigger watches.
-      queueDocumentsForImageMinorChanges({ minorImageIds: ids }),
-      deleteImagTagsForReviewByImageIds(ids),
-      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined), {
+      queueDocumentsForImageMinorChanges({ minorImageIds: liftedIds }),
+      deleteImagTagsForReviewByImageIds(liftedIds),
+      bulkRemoveBlockedImages(lifted.map(({ pHash }) => pHash).filter(isDefined), {
         step: 'unblock',
-        imageIds: ids,
+        imageIds: liftedIds,
         actorUserId: moderatorId,
       }),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
       // `tosViolation`. Unblock flips those, but `processImageScanWorkflow`
       // (where the standard re-queue lives) isn't on this code path —
       // re-queue here so the search index re-evaluates visibility.
-      queueComicsForPanelImages(ids),
+      queueComicsForPanelImages(liftedIds),
     ]);
     // Bust after the writes above land so a concurrent reader can't refill the cache from pre-update rows.
     if (postIds.length) await bustCachesForPosts(postIds);
@@ -1455,7 +1527,9 @@ export async function handleUnblockImages({
   });
 
   // Resolve any pending appeals for images that were in appeal review
-  const appealImageIds = images.filter((img) => img.needsReview === 'appeal').map((img) => img.id);
+  const appealImageIds = liftedAll
+    .filter((img) => img.needsReview === 'appeal')
+    .map((img) => img.id);
 
   if (appealImageIds.length > 0) {
     await resolveEntityAppeal({
@@ -1467,7 +1541,7 @@ export async function handleUnblockImages({
   }
 
   // Prevent remix-source audit job from re-flagging accepted images
-  await markRemixSourceReviewed(images);
+  await markRemixSourceReviewed(liftedAll);
 
   // Kept apart: a row kept blocked while its owner is deleted was not restored.
   const keptSet = new Set(kept);

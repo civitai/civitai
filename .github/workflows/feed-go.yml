@@ -512,6 +512,7 @@ jobs:
         internal/auth:FuzzVerify:95000
         internal/devalue:FuzzRoundTrip:200000
         internal/devalue:FuzzString:600000
+        internal/evalcorpus:FuzzStrip:100000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000

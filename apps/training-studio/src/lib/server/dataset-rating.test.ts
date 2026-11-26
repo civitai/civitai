@@ -11,10 +11,14 @@ const scan = vi.hoisted(() => vi.fn());
 // One map behind both fakes; the two key tables give every key a prefix naming its store.
 vi.mock('@civitai/redis', () => ({
   REDIS_KEYS: {
-    TRAINING: { STUDIO_DATASET_RATING: 'rating', STUDIO_DATASET_RATING_DAILY: 'daily' },
+    TRAINING: {
+      STUDIO_DATASET_RATING: 'rating',
+      STUDIO_DATASET_RATING_DAILY: 'daily',
+      STUDIO_DATASET_RATING_SENT: 'sent',
+    },
   },
   REDIS_SYS_KEYS: {
-    TRAINING: { STUDIO_DATASET_RATING: 'sysrating', STUDIO_DATASET_RATING_SENT: 'sent' },
+    TRAINING: { STUDIO_DATASET_RATING: 'sysrating' },
   },
 }));
 vi.mock('./redis', () => {
@@ -23,12 +27,19 @@ vi.mock('./redis', () => {
     store.set(k, v);
     return v;
   };
-  // The cache cluster: ratings and the daily allowances.
+  // The cache cluster: ratings, the sent markers and the daily allowances.
   const cache = {
     packed: {
       mGet: async (keys: string[]) => keys.map((k) => store.get(k) ?? null),
       set: async (k: string, v: unknown) => void store.set(k, v),
     },
+    set: async (k: string, v: unknown, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(k)) return null;
+      store.set(k, v);
+      return 'OK';
+    },
+    del: async (k: string) => Number(store.delete(k)),
+    mGet: async (keys: string[]) => keys.map((k) => (store.get(k) as string | undefined) ?? null),
     multi: () => {
       const queued: (() => unknown)[] = [];
       const chain = {
@@ -53,16 +64,10 @@ vi.mock('./redis', () => {
     },
     incrBy: async (k: string, n: number) => add(k, n),
   };
-  // System Redis: the sent markers, and ratings written before they moved (the read fallback).
+  // System Redis: only ratings written before they moved (the read fallback). It has no plain
+  // set/mGet/del, so a sent marker written or read there throws, which claims and sends nothing.
   const sys = {
     packed: { mGet: async (keys: string[]) => keys.map((k) => store.get(k) ?? null) },
-    set: async (k: string, v: unknown, opts?: { NX?: boolean }) => {
-      if (opts?.NX && store.has(k)) return null;
-      store.set(k, v);
-      return 'OK';
-    },
-    del: async (k: string) => Number(store.delete(k)),
-    mGet: async (keys: string[]) => keys.map((k) => (store.get(k) as string | undefined) ?? null),
   };
   return { getCacheRedis: () => cache, getSysRedis: () => sys };
 });
@@ -173,6 +178,13 @@ describe('ratings written before the move to the cache cluster', () => {
     await runRatingJob(client, ['a.png'], rate);
     expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false });
     expect(store.has('sysrating:radio-alpha:m1:a.png')).toBe(false);
+  });
+
+  it('🔴 a send is marked on the cache cluster', async () => {
+    const rate = vi.fn(async () => ({ rating: null }));
+    await runRatingJob(client, ['a.png'], rate);
+    expect(rate).toHaveBeenCalledTimes(1);
+    expect(store.get('sent:radio-alpha:m1:a.png')).toBe('1');
   });
 });
 

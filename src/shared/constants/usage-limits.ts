@@ -306,6 +306,23 @@ export const usageLimitDefs = [
     base: 200,
   },
   {
+    // One per four-angle render the post gate asks for on the system token.
+    id: 'model3d-preview.submit',
+    area: 'generation',
+    kind: 'abuse',
+    label: '3D preview renders before posting, per minute',
+    window: rolling(60),
+    base: 5,
+  },
+  {
+    id: 'model3d-preview.daily',
+    area: 'generation',
+    kind: 'abuse',
+    label: '3D preview renders before posting, per day',
+    window: rolling(DAY),
+    base: 40,
+  },
+  {
     // Claims of the creator's gift links, counted by the gift claim itself (a calendar window), not
     // by rateLimit(). It is the creator's limit: whoever claims is never limited.
     id: 'gifts.monthly',

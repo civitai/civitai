@@ -149,7 +149,7 @@ describe('restoring an account', () => {
     dbMock.dbWrite.user.findFirst
       .mockResolvedValueOnce({ id: USER, deletedAt: new Date(), meta: {} } as never)
       .mockResolvedValueOnce(null as never);
-    dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
+    dbMock.dbWrite.$transaction.mockResolvedValue([{}, 0, 0, []] as never);
     await restoreUser({ id: USER, username: 'someone', email: 'someone@example.test' } as never);
     expect(forgetGenerationToken).toHaveBeenCalledWith(USER);
   });

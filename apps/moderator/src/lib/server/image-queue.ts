@@ -20,6 +20,7 @@ import {
   getReviewQueueTags,
 } from '$lib/server/image-review.service';
 import {
+  acceptCsamReviewedImage,
   acceptImage,
   blockImage,
   closedAppellants,
@@ -338,8 +339,15 @@ function shownFlags(value: FormDataEntryValue | null): Map<number, string | null
   }
 }
 
+/** The CSAM queue's own view clears the CSAM review flag for a moderator who holds that review; every
+ *  other queue, and `/reports/image` (no `slug`), leaves the flag on. */
+const acceptFrom = (params: { slug?: string } | undefined, user: App.Locals['user']) =>
+  params?.slug === FLAG_KEPT_THROUGH_BLOCK && holdsCsamReview(user)
+    ? acceptCsamReviewedImage
+    : acceptImage;
+
 export const imageQueueActions = {
-  accept: async ({ request, locals }) => {
+  accept: async ({ request, locals, params }) => {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
@@ -351,7 +359,10 @@ export const imageQueueActions = {
       return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
 
     try {
-      await acceptImage({
+      await acceptFrom(
+        params,
+        locals.user
+      )({
         imageId,
         removeMinorFlag,
         userId: locals.user.id,
@@ -600,7 +611,7 @@ export const imageQueueActions = {
   },
 
   // reportIds couples the report status (accept → Unactioned, block → Actioned).
-  bulkAccept: async ({ request, locals }) => {
+  bulkAccept: async ({ request, locals, params }) => {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const withheldBulk = await withheldRefusal(locals.user, imageIds);
@@ -615,9 +626,10 @@ export const imageQueueActions = {
     const underCsamReview: number[] = [];
     const unpaidImages = new Set<number>();
     // Emails only the appeals this request closed, once per appellant instead of per image.
+    const accept = acceptFrom(params, locals.user);
     const closed = await Promise.all(
       imageIds.map((imageId) =>
-        acceptImage({
+        accept({
           imageId,
           removeMinorFlag,
           userId: locals.user.id,

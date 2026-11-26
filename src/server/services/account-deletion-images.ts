@@ -4,6 +4,13 @@ import {
   childSafetyPostCase,
   childSafetyPostFinding,
 } from '@civitai/db-queries/child-safety-case';
+import {
+  liftKeptHides,
+  lockForLift,
+  selectLifted,
+  type LiftedRow,
+} from '@civitai/db-queries/content-deletion';
+import { sql } from 'kysely';
 import { uniq } from 'lodash-es';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -69,16 +76,34 @@ export function disarmAccountDeletionImagePurge(userId: number) {
 }
 
 /**
+ * Locks this account's items the drain queued, for `releaseAccountDeletionPendingDeletes` to read in a
+ * later statement of the same transaction (`lockForLift`). A `PrismaPromise`.
+ */
+export function lockAccountDeletionPendingDeletes(userId: number) {
+  const queued = (entityType: 'Image' | 'Post') => sql`SELECT q."entityId" FROM "JobQueue" q
+    WHERE q.type = 'PendingDelete' AND q."entityType" = ${entityType}::"EntityType"
+      AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
+      AND q."entityId" IN (SELECT id FROM ${sql.table(entityType)} WHERE "userId" = ${userId})`;
+  return dbWrite.$executeRaw`
+    WITH images AS (${toPrismaSql(lockForLift('Image', queued('Image')))}),
+      posts AS (${toPrismaSql(lockForLift('Post', queued('Post')))})
+    SELECT (SELECT count(*) FROM images) + (SELECT count(*) FROM posts) AS locked`;
+}
+
+/**
  * Takes the drain's ask off this account's pending deletes, which `pending-deletes` carries out
  * without looking at the account: a row only it asked for goes, and one someone else also asked for
  * keeps theirs. One whose case is still open, or closed with a finding the delete has not yet acted
  * on, stays, marked `releasedOnRestore`, so the restore cannot
  * make it publishable; `pending-deletes` releases it once the case closes with no finding, and
- * deletes it otherwise.
+ * deletes it otherwise. While any of the account's is in an open case, every one only the drain
+ * asked for is marked, so they are released together once the last closes (`restoreCaseOpen`).
+ * A row released outright gets back what the drain's kept-delete hide took (`liftKeptHides`); the
+ * result names what was lifted, for `refreshLiftedKeptHides` once the transaction commits.
  * A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
  */
 export function releaseAccountDeletionPendingDeletes(userId: number) {
-  return dbWrite.$executeRaw`
+  return dbWrite.$queryRaw<LiftedRow[]>`
     WITH drained AS (
       SELECT q."entityType", q."entityId", q.data ?| array['ownerId', 'cleanup'] AS "askedElse",
         CASE WHEN q."entityType" = 'Image'
@@ -88,7 +113,15 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
           ELSE EXISTS (SELECT 1 FROM "Post" WHERE "Post".id = q."entityId" AND (${toPrismaSql(
             childSafetyPostCase()
           )} OR ${toPrismaSql(childSafetyPostFinding())} IS NOT FALSE))
-        END AS "inCase"
+        END AS "inCase",
+        CASE WHEN q."entityType" = 'Image'
+          THEN EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = q."entityId" AND ${toPrismaSql(
+            childSafetyImageCase()
+          )})
+          ELSE EXISTS (SELECT 1 FROM "Post" WHERE "Post".id = q."entityId" AND ${toPrismaSql(
+            childSafetyPostCase()
+          )})
+        END AS "openCase"
       FROM "JobQueue" q
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
         AND (
@@ -96,21 +129,29 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
           OR (q."entityType" = 'Post' AND q."entityId" IN (SELECT id FROM "Post" WHERE "userId" = ${userId}))
         )
     ),
+    -- While any of them is in an open case, none is released: they all wait for the last to close.
+    waits AS (SELECT EXISTS (SELECT 1 FROM drained WHERE "openCase") AS "all"),
     stripped AS (
       UPDATE "JobQueue" q SET data = q.data - 'deletedBy' FROM drained d
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
         AND q."entityId" = d."entityId" AND d."askedElse"
     ),
-    -- Kept, hidden, while its case is open or has a finding: pending-deletes decides it, releasing it
-    -- only on a no-finding close when no other ask has replaced the drain's.
+    -- Kept, hidden, while its case is open or has a finding, or another of them waits: pending-deletes
+    -- decides it, releasing it only on a no-finding close when no other ask has replaced the drain's.
     marked AS (
-      UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d
+      UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d, waits w
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
-        AND q."entityId" = d."entityId" AND NOT d."askedElse" AND d."inCase"
-    )
-    DELETE FROM "JobQueue" q USING drained d
-    WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
-      AND q."entityId" = d."entityId" AND NOT d."askedElse" AND NOT d."inCase"
+        AND q."entityId" = d."entityId" AND NOT d."askedElse" AND (d."inCase" OR w."all")
+    ),
+    released AS (
+      DELETE FROM "JobQueue" q USING drained d, waits w
+      WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
+        AND q."entityId" = d."entityId" AND NOT d."askedElse" AND NOT d."inCase" AND NOT w."all"
+      RETURNING q."entityType", q."entityId", q.data
+    ),
+    -- What the drain's hide took goes back with its ask (refreshLiftedKeptHides after the commit).
+    ${toPrismaSql(liftKeptHides('released'))}
+    ${toPrismaSql(selectLifted)}
   `;
 }
 

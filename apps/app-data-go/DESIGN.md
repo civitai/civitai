@@ -493,7 +493,11 @@ carry no key. The HTTP binding sends it (an SSE upsert is the whole entity); the
 body format (`k1`), so a cursor saved before keys were carried resumes as a change: each record is
 sent again, with its key, and no cursor is expired.
 
-This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"data":…}`.
+This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"version"?:…,"data":…}`.
+The adapter's body format `k3` adds the document's store `version` beside the key and seq
+(`Entity.version`), and a read answers it as the item's `version`, the number a write's `ifVersion`
+is compared against; a REST item carries the store's `version` too (and, as before, the same number
+as its `rev`). An item from a stream before `k3` omits `version`.
 `?keyPrefix=P` (a key's grammar, at most 128 characters) keeps the records whose key starts with `P`
 on the registry path and is sent on as the store's own `keyPrefix` on REST. A stream whose records
 carry no key cannot be filtered: a `keyPrefix` read of it goes to REST (`unkeyed`). A prefix that
