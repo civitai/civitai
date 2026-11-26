@@ -26,6 +26,11 @@ moderators and `music` flag holders. feed-go reads the
   by the orchestrator's `lyricsAlignment` recipe (`alignTrackLyrics`, not awaited), which sets
   `source: aligned`. Labels stay untimed; a song it can't align (204), or whose lyrics changed
   while it ran, keeps them untimed. The text is unchanged, so its scan stands.
+  A song with no lyrics of its own (Sonilo, a post without a generation workflow, a failed save)
+  takes the song scan's transcript once its audio is clean: one line per sentence, `source:
+  transcribed`. Those lyrics go through the lyrics scan, so the song stays Pending until they have
+  a verdict, and are then aligned the same way. A later rescan that reports no audio for that song
+  fails it as it does any song with lyrics (`songVerdict`).
 - **Visibility:** a song shows only once it is reviewed (`songReviewedSql` / `imageReviewedSql` in
   `src/server/common/image-visibility.ts`), which for a song includes the verdict on its lyrics text.
 

@@ -1,11 +1,14 @@
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { alignTrackLyrics } from '~/server/services/audio-scan/lyrics-alignment';
 import { songVerdict } from '~/server/services/audio-scan/song-scan';
 import {
   readLyricsVerdict,
+  saveTranscribedTrackLyrics,
   sendTrackLyricsScan,
   type LyricsVerdict,
 } from '~/server/services/audio-scan/track-lyrics';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import {
   applyIngestionSideEffects,
@@ -103,6 +106,22 @@ async function awaitLyrics({
   }
 }
 
+/**
+ * Gives a song without lyrics the scan's transcript as its lyrics, then times them. A failure leaves
+ * the song without lyrics, decided on its audio alone.
+ */
+async function promoteTranscript(imageId: number, transcript: string) {
+  try {
+    if (!(await saveTranscribedTrackLyrics({ imageId, transcript }))) return;
+  } catch (error) {
+    handleLogError(error as Error);
+    return;
+  }
+  // primary: the song row this callback is deciding
+  const image = await dbWrite.image.findUnique({ where: { id: imageId }, select: { url: true } });
+  if (image) alignTrackLyrics({ imageId, url: image.url }).catch(handleLogError);
+}
+
 type SongDecision = {
   imageId: number;
   workflowId: string;
@@ -120,8 +139,13 @@ const UNDECIDED: string[] = [ImageIngestionStatus.Pending, ImageIngestionStatus.
  */
 async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: SongDecision) {
   const image = await loadImageForScan(imageId);
-  const lyrics = await readLyricsVerdict(imageId);
+  let lyrics = await readLyricsVerdict(imageId);
   if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return;
+  // A clean song without lyrics takes the scan's transcript, which then waits on its own scan.
+  if (!fromLyrics && lyrics.state === 'none' && audio.ok && audio.hasAudio && !audio.flagged) {
+    await promoteTranscript(imageId, audio.result.lyrics);
+    lyrics = await readLyricsVerdict(imageId);
+  }
   const verdict = songVerdict(audio, lyrics.state !== 'none');
 
   if (verdict.action === 'retry') {
