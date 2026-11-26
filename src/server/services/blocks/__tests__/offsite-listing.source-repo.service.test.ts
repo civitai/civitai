@@ -1118,6 +1118,28 @@ const ONSITE_COPY_REFUSAL =
   '`description` keys in block.manifest.json. Set them there and submit a new version; the ' +
   'listing takes them when that version is approved.';
 
+/**
+ * A seatless moderator's save also runs the moderator-edit checks and writes an audit row
+ * (`assertModeratorMayUseShadow` / `recordModeratorListingEdit`), which read the listing on the
+ * PRIMARY. Answer those two reads with a plain, non-shadow row; every other primary read keeps
+ * whatever the test armed before.
+ */
+function armModeratorAuditRead() {
+  const prior = mockWrite.appListing.findUnique.getMockImplementation();
+  mockWrite.appListing.findUnique.mockImplementation(
+    async (args: { where: { id: string }; select?: Record<string, unknown> }) => {
+      const select = args?.select ?? {};
+      if (
+        'revisionOf' in select ||
+        ('revisionOfId' in select && Object.keys(select).length === 1)
+      ) {
+        return { id: args.where.id, slug: 'cool-app', revisionOf: null, revisionOfId: null };
+      }
+      return prior ? prior(args) : null;
+    }
+  );
+}
+
 /** Written out, not imported, for the reason `REFUSAL_MESSAGE` gives. */
 const ONSITE_CATEGORY_REFUSAL =
   "An on-site app's category comes from the `category` key in block.manifest.json while the " +
@@ -1158,6 +1180,7 @@ describe('🔴 an ON-SITE listing refuses an edit of its category', () => {
 
   it('a MODERATOR may still set it on the listing itself (curation reaches the live row)', async () => {
     armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    armModeratorAuditRead();
     await updateListing({
       listingId: 'apl_parent',
       patch: { category: 'games' },
@@ -1176,6 +1199,7 @@ describe('🔴 an ON-SITE listing refuses an edit of its category', () => {
       approvedParent({ kind: 'onsite', externalUrl: null })
     );
     armShadowOpen();
+    armModeratorAuditRead();
     const res = await updateListing({
       listingId: 'apl_parent',
       patch: { category: 'games', contentRating: 'pg13' },
