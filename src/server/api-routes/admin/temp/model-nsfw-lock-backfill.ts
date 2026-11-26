@@ -194,11 +194,8 @@ export async function readProfanityAttribution(): Promise<Attribution> {
 }
 
 /**
- * The profanity bucket's own exclusions. An unmarked lock is kept unless the log attributes it to
- * the filter (`Attribution`). An unmarked lock has no lock time to read a moderator's ruling "since"
- * from, so any moderator activity on the model, ever and of any kind, keeps the lock instead. So does
- * any lock beside nsfw, a marker whose time cannot be read (a malformed row), and a model not rated
- * mature, which the re-scan after the unlock would rate.
+ * The profanity bucket's own exclusions. `moderatorActed` reads all time because an unmarked lock
+ * has no lock time to read "since" from; `notMature` because the re-scan after the unlock would rate.
  */
 const profanityExclusionsOf = ({ attributed, superseded }: Attribution) => ({
   unattributed: Prisma.sql`(${unmarkedProfanitySql}
@@ -493,18 +490,18 @@ export async function recordScans(outcomes: { id: number; status: string }[]) {
   `;
 }
 
-/**
- * Locks again, in the same call, a profanity unlock whose forced scan was not submitted: nothing else
- * holds its rating (`assertScanRatingKept` needs the lock or a scan marker). The prior locks, the
- * filter's marker (or no marker, where it had none) and the prior rating come back (an owner may
- * have unticked mature since the unlock, and a lock must not hold that). The record's `scan` says `failed-relocked`, or
- * `relocked-nsfw-restored` where the rating had to come back, with the reason. A later
- * run from `afterId: 0` picks the model up again; a revert never does, since it is locked.
- */
 /** The rating the unlock recorded, or the current one where the record holds none readable. */
 const priorNsfwSql = Prisma.sql`CASE WHEN jsonb_typeof(m.meta->'nsfwLockBackfill'->'priorNsfw') = 'boolean'
   THEN (m.meta->'nsfwLockBackfill'->>'priorNsfw')::boolean ELSE m.nsfw END`;
 
+/**
+ * Locks again, in the same call, a profanity unlock whose forced scan was not submitted: nothing else
+ * holds its rating (`assertScanRatingKept` needs the lock or a scan marker). The prior locks, the
+ * filter's marker (or no marker, where it had none) and the prior rating come back (an owner may
+ * have unticked mature since the unlock, and a lock must not hold that). The record's `scan` says
+ * `failed-relocked`, or `relocked-nsfw-restored` where the rating had to come back, with the reason.
+ * A later run from `afterId: 0` picks the model up again; a revert never does, since it is locked.
+ */
 export async function relockUnscanned(outcomes: { id: number; status: string }[]) {
   if (!outcomes.length) return [];
   const rows = await dbWrite.$queryRaw<{ id: number; ratingRestored: boolean }[]>`

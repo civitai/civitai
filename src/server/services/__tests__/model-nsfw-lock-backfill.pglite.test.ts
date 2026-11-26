@@ -2,6 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
+
+/** ClickHouse at its boundary: what the attribution read gets back. */
+const clickhouseQuery = vi.hoisted(() => vi.fn());
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: clickhouseQuery } }));
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Attribution } from '~/server/api-routes/admin/temp/model-nsfw-lock-backfill';
 
@@ -30,6 +34,7 @@ const {
   countLocks,
   exclusionsFor,
   NO_ATTRIBUTION,
+  readProfanityAttribution: readAttributionFromClickhouse,
   PROFANITY_ATTRIBUTION_QUERY,
   nextRevertBatch,
   nextUnlockBatch,
@@ -982,6 +987,26 @@ describe('model nsfw lock backfill: profanity locks', () => {
     });
     it('interpolates nothing', () => {
       expect(PROFANITY_ATTRIBUTION_QUERY).not.toContain('${');
+    });
+    it('maps rows to attributed and superseded ids, dropping any id that is not a positive integer', async () => {
+      clickhouseQuery.mockResolvedValueOnce([
+        { id: '5', superseded: 1 },
+        { id: 6, superseded: 0 },
+        { id: 7, superseded: false },
+        { id: '8', superseded: true },
+        { id: -1, superseded: 0 },
+        { id: 'x', superseded: 0 },
+        { id: 2.5, superseded: 0 },
+      ]);
+      expect(await readAttributionFromClickhouse()).toEqual({
+        attributed: [6, 7],
+        superseded: [5, 8],
+      });
+      expect(clickhouseQuery).toHaveBeenCalledWith(PROFANITY_ATTRIBUTION_QUERY);
+    });
+    it('throws when ClickHouse fails, so the call writes nothing', async () => {
+      clickhouseQuery.mockRejectedValueOnce(new Error('timeout'));
+      await expect(readAttributionFromClickhouse()).rejects.toThrow('timeout');
     });
   });
 
