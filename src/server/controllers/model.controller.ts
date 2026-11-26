@@ -1,9 +1,7 @@
 import type { SessionUser } from '~/types/session';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
-import {
-  credentialViews,
-  isSessionOrFullUserKey,
-} from '~/server/services/oauth/enforce-token-scope';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { readCollectionForViewer } from '~/server/services/collection-viewer';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
@@ -2153,7 +2151,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ? await getArticles({
             ...articleInput,
             sessionUser: user,
-            asModerator: credentialViews(ctx).asModerator,
+            asModerator: actsAsModerator(ctx),
           })
         : { items: [] };
 

@@ -1403,8 +1403,8 @@ function PostImage() {
             src={url}
             width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
             type={type}
-            // 🔴 PostImageCards renders every image in the post with no virtualisation, and EdgeImage
-            // sets no `loading`, so without this a 16-image post (p90) fetches all of them eagerly.
+            // PostImageCards renders every image unvirtualised and EdgeImage sets no default
+            // loading; keep lazy.
             loading="lazy"
             className={showPreview ? 'rounded-none' : 'rounded-lg'}
             anim={type === 'video'}

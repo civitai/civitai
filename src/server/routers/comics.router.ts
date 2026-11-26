@@ -730,11 +730,8 @@ function storedImageKeys(metadata: unknown) {
   return [...keys, panelSourceImageUrl(metadata)].filter((k): k is string => !!k);
 }
 
-/** The panel media of every comics response goes through here or `panelForViewer`; the
- *  `comics.router.viewer-serializers` guard holds each procedure to it. Metadata is always the
- *  `viewerPanelMetadata` allowlist, so a stored key it does not list never leaves. A panel whose
- *  image `blockLeavesMedia` refuses the viewer gives no image, candidate key or source; any other
- *  panel loses each candidate key and source that backs an Image the viewer may not be served. */
+/** Every comics response serves panel media through here or `panelForViewer`; the
+ *  `comics.router.viewer-serializers` guard fails a procedure that skips it. */
 async function panelsForViewer<P extends PanelMediaRow & { image?: PanelImageRow | null }>(
   panels: P[],
   ctx: ViewerCtx,
