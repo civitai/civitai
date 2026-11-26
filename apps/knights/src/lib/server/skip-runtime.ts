@@ -1,4 +1,4 @@
-import { getSysRedis } from './redis';
+import { getCacheRedis } from './redis';
 import { redisSkipStore } from './skips';
 
-export const skipStore = redisSkipStore(getSysRedis);
+export const skipStore = redisSkipStore(getCacheRedis);
