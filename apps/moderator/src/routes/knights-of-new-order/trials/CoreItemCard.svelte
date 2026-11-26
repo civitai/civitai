@@ -64,7 +64,9 @@
       {#if mode === 'core' && !retired && !item.explanation}<Badge variant="outline">No explanation</Badge>{/if}
     </div>
 
-    {#if mode === 'core'}
+    {#if item.restricted}
+      <p class="text-sm text-dark-2">Withheld from you, so its answer is not editable here.</p>
+    {:else if mode === 'core'}
       {#if retired}
         <p class="text-sm text-dark-2">
           {item.explanation ?? 'No explanation.'} Add the image again to reinstate it.

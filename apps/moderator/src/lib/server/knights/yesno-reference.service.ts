@@ -158,6 +158,16 @@ export async function addYesNoReference(input: {
       };
 }
 
+/** The image a yes/no pair shows; none when the pair is gone. */
+export async function yesNoReferenceImageIds(id: number): Promise<number[]> {
+  const row = await dbWrite
+    .selectFrom('KnightsYesNoReference')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? [row.imageId] : [];
+}
+
 export async function setYesNoReferenceActive(id: number, active: boolean): Promise<Outcome> {
   if (active) {
     const pair = await dbWrite
