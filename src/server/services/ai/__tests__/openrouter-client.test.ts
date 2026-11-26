@@ -98,3 +98,29 @@ describe('getJsonCompletionWithUsage provider', () => {
     expect(send.mock.calls[0][0].provider).toEqual({ allowFallbacks: true });
   });
 });
+
+describe('getTextCompletion', () => {
+  const messages = [{ role: 'user' as const, content: 'x' }];
+
+  it('returns the reason the generation stopped, so a reply cut at maxTokens can be told apart', async () => {
+    send.mockResolvedValueOnce({
+      choices: [{ message: { content: 'half an answer' }, finishReason: 'length' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const res = await openrouter!.getTextCompletion({ messages });
+    expect(res.content).toBe('half an answer');
+    expect(res.finishReason).toBe('length');
+  });
+
+  it('never returns the model reasoning as the answer when content is null', async () => {
+    send.mockResolvedValueOnce({
+      choices: [
+        { message: { content: null, reasoning: 'REASONING_TEXT so far' }, finishReason: 'length' },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const res = await openrouter!.getTextCompletion({ messages });
+    expect(res.content).toBe('');
+    expect(res.finishReason).toBe('length');
+  });
+});
