@@ -17,6 +17,7 @@
 --   - the client is not a runner client (Civitai-owned, confidential, consent screen on, no device flow,
 --     access mode open);
 --   - the client is already bound to another app block, or its binding is suspended;
+--   - expires_at is more than 30 days out;
 --   - the app block is not approved;
 --   - the user has no offline grant for the client;
 --   - max_amount_per_run x max_runs_per_period exceeds the offline cap, or the periods differ.
@@ -64,6 +65,9 @@ BEGIN
       AND NOT ('device_code' = ANY(grants)) AND "accessMode" = 'open'
   ) THEN
     RAISE EXCEPTION 'client % is not a runner client', v_client;
+  END IF;
+  IF current_setting('runner.expires_at')::timestamptz > now() + interval '30 days' THEN
+    RAISE EXCEPTION 'expires_at % is more than 30 days out', current_setting('runner.expires_at');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM app_blocks WHERE id = v_block AND status = 'approved') THEN
     RAISE EXCEPTION 'app block % is not approved', v_block;
