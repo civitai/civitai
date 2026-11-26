@@ -46,9 +46,6 @@ const { queryState, mutate, capturedMutationInput } = vi.hoisted(() => ({
   capturedMutationInput: { value: undefined as unknown },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'owner' }),
-}));
 vi.mock('~/utils/notifications', () => ({
   showWarningNotification: vi.fn(),
   showErrorNotification: vi.fn(),
@@ -239,7 +236,9 @@ beforeEach(() => {
 });
 
 const renderModal = () =>
-  renderWithProviders(<AssociateModels fromId={5} type="Suggested" ownerId={1} />);
+  renderWithProviders(<AssociateModels fromId={5} type="Suggested" ownerId={1} />, {
+    user: { id: 1, username: 'owner' },
+  });
 
 describe('AssociateModels — nothing is editable unless the list is the saved list', () => {
   test('no search dropdown at all while the first load is in flight', async () => {

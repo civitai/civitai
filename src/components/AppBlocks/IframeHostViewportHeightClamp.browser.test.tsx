@@ -96,7 +96,6 @@ import type * as TrpcMod from '~/utils/trpc';
  * scaffold): the two tRPC queries IframeHost drives at render must report
  * `isLoading: false` so the init handshake is allowed to start.
  */
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // 🔴 `useOptionalFeatureFlags` IS LISTED TOO, AND OMITTING IT BREAKS THE WHOLE FILE.
 // This factory REPLACES the module, so it must name every export anything in this

@@ -30,10 +30,6 @@ import { renderWithProviders } from '../../../test/component-setup';
  * tests) so nothing reaches for a session provider the scaffold doesn't have.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => null,
-}));
-
 const { ReportTabs } = await import('./ReportTabs');
 
 // The dedicated review PAGE route enables deep-linking (`/apps/review/<id>`).

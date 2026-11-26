@@ -29,7 +29,6 @@ const { mutate, spaces, sent, waiting, notificationSettings, toggleSetting } = v
   waiting: { value: 0 },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
@@ -107,7 +106,7 @@ beforeEach(() => {
 describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
   test('an unrelated save leaves a NULL count untouched', async () => {
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Accept all'));
 
@@ -126,7 +125,7 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
     // its on-screen value would pass here by coincidence — the value happens to
     // match — so this pins that the key is absent rather than that it is right.
     givenSpace(3);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Accept all'));
 
@@ -137,7 +136,7 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
   // noun, so this page shipped "Free free stickers you'll accept".
   test('names the control once, not twice', async () => {
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     // Found loosely, then asserted exactly, and both halves are deliberate.
     // `name` matches as a case-insensitive SUBSTRING, so locating by the whole
@@ -169,7 +168,7 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
   // assertion above and the creator could never change the number at all.
   test('moving the control sends the number', async () => {
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     const slider = page.getByRole('slider', { name: /free stickers/i });
     await expect.element(slider).toBeInTheDocument();
@@ -205,7 +204,7 @@ describe('PlacementSpaceSection — the count on the placed-stickers button', ()
     // coincidentally the right one. The list is also not empty, which the zero
     // case below cannot distinguish on its own.
     sent.value = [{ status: 'pending' }, { status: 'approved' }, { status: 'pending' }];
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     const link = placedButton();
     await expect.element(link).toBeInTheDocument();
@@ -221,7 +220,7 @@ describe('PlacementSpaceSection — the count on the placed-stickers button', ()
     // Not the empty list — approved-only. The badge is hidden because the COUNT
     // is zero, and only a non-empty list proves the filter is what zeroed it.
     sent.value = [{ status: 'approved' }];
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     const link = placedButton();
     await expect.element(link).toBeInTheDocument();
@@ -241,14 +240,14 @@ describe('PlacementSpaceSection — the count on the placed-stickers button', ()
 describe('PlacementSpaceSection — the received count', () => {
   test('shows the shared count, not a page-sized floor', async () => {
     waiting.value = 96;
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await expect.element(page.getByText('96')).toBeInTheDocument();
   });
 
   test('renders no badge at all when nothing is waiting', async () => {
     waiting.value = 0;
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     // The button stays; only the count disappears. A "0" badge reads as broken.
     // Scoped to the button's own text rather than a page-wide search for "0" —
@@ -294,7 +293,7 @@ describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
 
   test('offers it to a creator with no row', async () => {
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Accept all'));
 
@@ -308,7 +307,7 @@ describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
     // population is the same dead end reversed.
     notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Accept all'));
 
@@ -323,7 +322,7 @@ describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
     // than assumed.
     notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Accept all'));
     await userEvent.click(notifyButton());
@@ -343,7 +342,7 @@ describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
     // the gate -- which would tell a creator who reviews each sticker by hand
     // that stickers are accepted without asking them.
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     // The awaited positive first: an absence read before the render commits
     // asserts nothing at all.
@@ -357,7 +356,7 @@ describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
     // "Notify me" to a creator who already subscribed, until the query lands.
     notificationSettings.value = undefined;
     givenSpace(null);
-    renderWithProviders(<PlacementSpaceSection />);
+    renderWithProviders(<PlacementSpaceSection />, { user: { id: 7 } });
 
     await userEvent.click(page.getByText('Accept all'));
 

@@ -115,14 +115,6 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showWarningNotification: (...a: unknown[]) => showWarning(...a),
 }));
 
-// The AgentReviewChat sub-panel reads `useCurrentUser()` (→ CivitaiSessionContext)
-// for its markdown link-rewrite. The network-free scaffold has no session provider,
-// so boundary-stub the hook (the standard pattern in the sibling AgentReviewChat
-// test). Null user is fine — the consumers only use `user?.id` (optional-chained).
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => null,
-}));
-
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>

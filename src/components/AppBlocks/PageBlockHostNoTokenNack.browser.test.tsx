@@ -45,8 +45,6 @@ const mocks = vi.hoisted(() => ({
   sharedAppend: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   // Spread the REAL module and override only `trpc` — FeatureFlagsProvider (in
   // PageBlockHost's real render graph) statically imports `setTrpcBatchingEnabled`

@@ -68,9 +68,6 @@ function resolveDetail(detail: PublicAppDetail) {
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 42, username: 'viewer' }),
-}));
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppDetailsModal } = await import('./AppDetailsModal');
@@ -137,7 +134,8 @@ describe('AppDetailsModal', () => {
       <>
         <div data-testid="render-barrier" />
         <AppDetailsModal opened={false} onClose={onClose} block={makeBlock()} />
-      </>
+      </>,
+      { user: { id: 42, username: 'viewer' } }
     );
     await expect.element(page.getByTestId('render-barrier')).toBeInTheDocument();
     // Mantine Modal renders no content when closed.
@@ -149,7 +147,9 @@ describe('AppDetailsModal', () => {
     // The listing row (`AvailableBlock`) carries no owner, so there is no
     // attribution until `getAppDetail` resolves. Deliberate: a blank beats the
     // old `by {appName}`, which rendered the APP's OWN TITLE as its author.
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
     // Title appears (Mantine Modal title). Use a tolerant matcher — title may
     // appear in the modal header region.
@@ -167,7 +167,9 @@ describe('AppDetailsModal', () => {
     // The prod bug: every approved block's OauthClient.name equals the app's own
     // title, so `by {appName}` showed "by My App" — the app crediting itself.
     resolveDetail(makeDetail());
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
     const author = page.getByTestId('app-detail-author');
     await expect.element(author).toBeInTheDocument();
@@ -179,7 +181,9 @@ describe('AppDetailsModal', () => {
 
   test('open + detail resolved with NO owner → no attribution line at all (not a fallback)', async () => {
     resolveDetail(makeDetail({ owner: null }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
     // Positive barrier first, then the absence check.
     await expect.element(page.getByText('Does a thing.', { exact: false })).toBeInTheDocument();
@@ -189,14 +193,18 @@ describe('AppDetailsModal', () => {
 
   test('open → renders each approved scope as its plain title + description, without its id', async () => {
     resolveDetail(makeDetail({ scopes: ['user:read:self', 'ai:write:budgeted'] }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
     // The section heading.
     await expect.element(page.getByText(/this app can/i)).toBeInTheDocument();
-    await expect.element(page.getByText('See your username and account status')).toBeInTheDocument();
-    await expect.element(
-      page.getByText("Read the viewer's username and account status", { exact: false })
-    ).toBeInTheDocument();
+    await expect
+      .element(page.getByText('See your username and account status'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText("Read the viewer's username and account status", { exact: false }))
+      .toBeInTheDocument();
     await expect.element(page.getByText('Run AI work with your Buzz')).toBeInTheDocument();
     const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
     expect(text).not.toContain('user:read:self');
@@ -222,7 +230,9 @@ describe('AppDetailsModal', () => {
       [unknown]: 'Zz not a real scope',
     };
     resolveDetail(makeDetail({ scopes: input }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
     await expect.element(page.getByText(/this app can/i)).toBeInTheDocument();
 
     const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
@@ -247,21 +257,25 @@ describe('AppDetailsModal', () => {
 
   test('open + no scopes (RESOLVED empty) → graceful "does not request any permissions"', async () => {
     resolveDetail(makeDetail({ scopes: [] }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
-    await expect.element(
-      page.getByText(/does not request any permissions/i)
-    ).toBeInTheDocument();
+    await expect.element(page.getByText(/does not request any permissions/i)).toBeInTheDocument();
   });
 
   test('open + screenshots present → renders the gallery images', async () => {
-    resolveDetail(makeDetail({
-      screenshots: [
-        { index: 0, url: '/api/blocks/screenshot/app-1/0.png', contentType: 'image/png' },
-        { index: 1, url: '/api/blocks/screenshot/app-1/1.webp', contentType: 'image/webp' },
-      ],
-    }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    resolveDetail(
+      makeDetail({
+        screenshots: [
+          { index: 0, url: '/api/blocks/screenshot/app-1/0.png', contentType: 'image/png' },
+          { index: 1, url: '/api/blocks/screenshot/app-1/1.webp', contentType: 'image/webp' },
+        ],
+      })
+    );
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
     await expect.element(page.getByText(/screenshots/i)).toBeInTheDocument();
     // Both screenshot <img>s render with their public gated-route URLs.
@@ -273,7 +287,9 @@ describe('AppDetailsModal', () => {
 
   test('open + NO screenshots → screenshots section gracefully absent (no heading, no imgs)', async () => {
     resolveDetail(makeDetail({ screenshots: [] }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
     // POSITIVE BARRIER: the scopes section still renders, so the modal really
     // mounted and the screenshot absence below is a fact about the gallery, not
@@ -287,16 +303,22 @@ describe('AppDetailsModal', () => {
   });
 
   test('detail-provided title/description override the listing block when loaded', async () => {
-    resolveDetail(makeDetail({
-      // `appName` is deliberately set to something author-shaped: it must NOT
-      // reach the author slot no matter how plausible it looks.
-      appName: 'Detail Author',
-      owner: { id: 42, username: 'real-owner', image: null },
-      manifest: { name: 'Detail Name', description: 'Detail description.' },
-    }));
-    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    resolveDetail(
+      makeDetail({
+        // `appName` is deliberately set to something author-shaped: it must NOT
+        // reach the author slot no matter how plausible it looks.
+        appName: 'Detail Author',
+        owner: { id: 42, username: 'real-owner', image: null },
+        manifest: { name: 'Detail Name', description: 'Detail description.' },
+      })
+    );
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+      user: { id: 42, username: 'viewer' },
+    });
 
-    await expect.element(page.getByText('Detail description.', { exact: false })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Detail description.', { exact: false }))
+      .toBeInTheDocument();
     await expect.element(page.getByText('by real-owner', { exact: false })).toBeInTheDocument();
     expect(page.getByText('by Detail Author', { exact: false }).elements()).toHaveLength(0);
   });
@@ -310,17 +332,23 @@ describe('AppDetailsModal', () => {
     test('query ERROR → explicit error state, and NOT the "no permissions" copy', async () => {
       mocks.status = 'error';
       mocks.detail = undefined;
-      renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+      renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+        user: { id: 42, username: 'viewer' },
+      });
 
       // The "This app can…" heading is still present, but the body is the error
       // state — NOT the definitive "no permissions" disclosure.
-      await expect.element(page.getByText(/couldn.?t load full details/i).first()).toBeInTheDocument();
+      await expect
+        .element(page.getByText(/couldn.?t load full details/i).first())
+        .toBeInTheDocument();
       expect(page.getByText(/does not request any permissions/i).query()).toBeNull();
     });
 
     test('query LOADING → loading state, NOT the empty/error copy', async () => {
       // default state is 'loading'
-      renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+      renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+        user: { id: 42, username: 'viewer' },
+      });
 
       // While loading we say NEITHER "no permissions" NOR the error copy — the
       // scopes verdict is simply not yet known.
@@ -331,7 +359,9 @@ describe('AppDetailsModal', () => {
 
     test('query RESOLVED with empty scopes → the legit "no permissions" copy', async () => {
       resolveDetail(makeDetail({ scopes: [] }));
-      renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+      renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />, {
+        user: { id: 42, username: 'viewer' },
+      });
 
       await expect.element(page.getByText(/does not request any permissions/i)).toBeInTheDocument();
       // And NOT the error copy.

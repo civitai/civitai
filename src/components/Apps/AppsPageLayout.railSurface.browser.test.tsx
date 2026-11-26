@@ -60,10 +60,6 @@ import { SUBNAV_STICKY_GAP } from '~/hooks/useSubnavBottom';
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
-}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } } },
@@ -100,7 +96,8 @@ async function renderRail(collapsed: boolean) {
           body
         </div>
       </AppsPageLayout>
-    </AppsRailProvider>
+    </AppsRailProvider>,
+    { user: { id: 1, username: 'author', isModerator: false } }
   );
   await expect.element(page.getByTestId('body')).toBeInTheDocument();
   // Two frames so layout + the injected stylesheet have both settled, and so

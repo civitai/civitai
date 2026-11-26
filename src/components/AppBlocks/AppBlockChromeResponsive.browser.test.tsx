@@ -43,11 +43,6 @@ import '@mantine/core/styles.css';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
-// The chrome calls `useCurrentUser()` (moderator gate on the platform-nav "Review"
-// item) and there is no `CivitaiSessionProvider` here — same stub the sibling
-// chrome suite uses, for the same reason.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first

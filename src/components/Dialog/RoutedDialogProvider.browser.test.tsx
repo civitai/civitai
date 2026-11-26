@@ -10,7 +10,6 @@ vi.mock('~/components/BrowserRouter/BrowserRouterProvider', () => ({
   setUsingNextRouter: vi.fn(),
 }));
 vi.mock('~/components/Dialog/routed-dialog/registry', () => ({ dialogs: {} }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // The scaffold's shared router mock (test/component-setup.tsx). Next hands every pop to the one
 // callback registered through beforePopState; this reads the one the provider registered.

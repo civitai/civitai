@@ -23,7 +23,6 @@ const h = vi.hoisted(() => ({
   allowance: 1,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
 vi.mock('~/providers/AppProvider', async (orig) => ({
   ...(await orig<object>()),
   useAppContext: () => ({ domain: 'blue' }),
@@ -192,7 +191,8 @@ async function finishedRun() {
     outputs: [{ url: 'https://example.com/out.png' }],
   });
   const screen = await renderWithProviders(
-    <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+    <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+    { user: { id: 9 } }
   );
   await runButton().click();
   // Run closed it to the tray; from here it plays as the modal reopened from there.
@@ -209,7 +209,8 @@ describe('RemixAppModal', () => {
   test('Run is held while the price loads, then starts the run capped at the price shown', async () => {
     h.price = undefined;
     const screen = await renderWithProviders(
-      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
     );
     await expect.element(runButton()).toBeDisabled();
     (runButton().element() as HTMLElement).click();
@@ -236,7 +237,7 @@ describe('RemixAppModal', () => {
         </>
       );
     }
-    await renderWithProviders(<ModalOverTray />);
+    await renderWithProviders(<ModalOverTray />, { user: { id: 9 } });
     // POSITIVE CONTROL: before Run, the modal is up and the tray has nothing to show.
     await expect.element(closeToTray()).toBeVisible();
     expect(document.querySelector('[data-testid="remix-tray-in-progress"]')).toBeNull();
@@ -252,7 +253,8 @@ describe('RemixAppModal', () => {
   test('a team remix is held while it is quoting, and its run sends no team, capped at the price shown', async () => {
     h.price = undefined;
     const screen = await renderWithProviders(
-      <RemixAppModalContent app={team} imageId={5} onClose={onClose} />
+      <RemixAppModalContent app={team} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
     );
     await expect.element(runButton()).toBeDisabled();
     (runButton().element() as HTMLElement).click();
@@ -287,7 +289,10 @@ describe('RemixAppModal', () => {
     // POSITIVE CONTROL: the seeded list is live, so a refetch mark can only come from the run.
     expect(invalidated()).toBe(false);
 
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(invalidated()).toBe(true));
   });
@@ -299,7 +304,10 @@ describe('RemixAppModal', () => {
       workflowId: 'wf-0',
       outputs: [{ url: 'https://example.com/out.png' }],
     });
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
     // Still running: nothing is asked yet.
@@ -318,7 +326,10 @@ describe('RemixAppModal', () => {
       workflowId: 'wf-0',
       reason: 'This step failed.',
     });
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await setStatus('wf-0', 'failed');
     await expect.element(page.getByText('This step failed.')).toBeVisible();
@@ -334,7 +345,10 @@ describe('RemixAppModal', () => {
 
   test('a retry after a failed Run repeats the same tap, so it can only make one run', async () => {
     h.start.mockRejectedValueOnce(new Error('network'));
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     // POSITIVE CONTROL: the failure left the offer on screen, ready to retry.
@@ -355,7 +369,10 @@ describe('RemixAppModal', () => {
       h.items = [workflow('wf-0', 'processing')];
       return { status: 'running', runId: RUN, workflowId: 'wf-0' };
     });
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     (runButton().element() as HTMLElement).click();
@@ -366,13 +383,17 @@ describe('RemixAppModal', () => {
 
   test('each opening of the modal is a new tap', async () => {
     const first = await renderWithProviders(
-      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
     );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     await first.unmount();
 
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(2));
     const [a, b] = h.start.mock.calls.map(([input]) => input.nonce);
@@ -401,7 +422,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
 
     await page.getByRole('button', { name: 'Cool' }).click();
@@ -431,7 +453,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
 
     await expect.element(page.getByRole('button', { name: 'Pick image 3' })).toBeVisible();
@@ -465,7 +488,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
 
     const upscale = page.getByRole('button', { name: /^Upscale 2×/ });
@@ -508,7 +532,10 @@ describe('RemixAppModal', () => {
         prices: { watercolor: 25, 'ukiyo-e': 25 },
       })
       .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-0' });
-    await renderWithProviders(<RemixAppModalContent app={restyle} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={restyle} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
 
     await runButton().click();
     await page.getByRole('button', { name: 'Skip' }).click();
@@ -535,7 +562,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     await page.getByRole('button', { name: 'More' }).click();
     await page.getByRole('menuitem', { name: 'Dismiss' }).click();
@@ -555,7 +583,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     // POSITIVE CONTROL: the run is live, so its ⋯ menu is on screen.
     await expect.element(page.getByRole('button', { name: 'More' })).toBeVisible();

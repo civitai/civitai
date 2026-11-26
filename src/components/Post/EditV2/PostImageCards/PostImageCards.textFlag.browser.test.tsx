@@ -35,7 +35,6 @@ vi.mock('~/components/Post/EditV2/PostImageCards/AddedImage', () => ({
 vi.mock('~/components/Storyline/editor/StorylineTextCard', () => ({
   StorylineTextCard: () => <div>text card</div>,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/components/Storyline/editor/usePostStorylineMode', () => ({
   usePostStorylineMode: () => ({ inStoryline: true }),
 }));
@@ -47,20 +46,20 @@ import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImag
 describe('PostImageCards and the storylineText flag', () => {
   test('flag off: images only, no text card', async () => {
     flags.storylineText = false;
-    renderWithProviders(<PostImageCards />);
+    renderWithProviders(<PostImageCards />, { user: { id: 7 } });
     await expect.element(page.getByText('image card')).toBeVisible();
     await expect.element(page.getByText('text card')).not.toBeInTheDocument();
   });
 
   test('flag on: the text card shows', async () => {
     flags.storylineText = true;
-    renderWithProviders(<PostImageCards />);
+    renderWithProviders(<PostImageCards />, { user: { id: 7 } });
     await expect.element(page.getByText('text card')).toBeVisible();
   });
 
   test('Add text opens a draft card in place of its button; nothing is created yet', async () => {
     flags.storylineText = true;
-    renderWithProviders(<PostImageCards />);
+    renderWithProviders(<PostImageCards />, { user: { id: 7 } });
     const buttons = page.getByRole('button', { name: 'Add text' });
     await expect.element(buttons.first()).toBeVisible();
     const before = buttons.elements().length;

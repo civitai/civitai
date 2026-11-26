@@ -69,10 +69,6 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
   },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'mod' }),
-}));
-
 // The review surface reads the run route's OWN predicate — `appBlocks &&
 // appBlocksPages` — to decide whether the app-chrome may offer
 // `/apps/run/<blockId>` shortcuts. The real hook THROWS without a
@@ -177,7 +173,8 @@ function mount() {
       publishRequestId="pubreq_X"
       slug="my-app"
       iframeSrc="https://my-app.example/?mr=entry"
-    />
+    />,
+    { user: { id: 1, username: 'mod' } }
   );
 }
 
@@ -344,7 +341,8 @@ describe('ReviewBlockPreviewHost — the review page console', () => {
           slug="my-app"
           iframeSrc="https://my-app.example/?mr=entry"
         />
-      </ReviewConsoleProvider>
+      </ReviewConsoleProvider>,
+      { user: { id: 1, username: 'mod' } }
     );
     await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
     hostProps.onBlockReady?.({ height: 0, sdkName: 'sdk', sdkVersion: '0.29.0' });

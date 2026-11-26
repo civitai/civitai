@@ -76,8 +76,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => ({}),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, username: 'judge' }) }));
-
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelModule>()),
   useBrowsingLevelDebounced: () => 1,
@@ -123,7 +121,9 @@ describe('crucible judge page', () => {
   // only the id prop changes. Without a remount, the caught-up state of the crucible just finished
   // carried into the next one.
   test('moving from a finished crucible to another shows the new pair, not the done state', async () => {
-    const screen = await renderWithProviders(<CrucibleJudgePage id={EMPTY_CRUCIBLE_ID} />);
+    const screen = await renderWithProviders(<CrucibleJudgePage id={EMPTY_CRUCIBLE_ID} />, {
+      user: { id: 1, username: 'judge' },
+    });
     await expect.element(page.getByTestId('done-state')).toBeVisible();
 
     await screen.rerender(<CrucibleJudgePage id={2} />);
@@ -136,7 +136,7 @@ describe('crucible judge page', () => {
   test("Don't show again dismisses the pair on screen, then loads the next one", async () => {
     mocks.dismiss.mockClear();
     mocks.refetchPair.mockClear();
-    await renderWithProviders(<CrucibleJudgePage id={2} />);
+    await renderWithProviders(<CrucibleJudgePage id={2} />, { user: { id: 1, username: 'judge' } });
     await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
 
     // A DOM click: the first-visit briefing covers the arena, and this pins the page's handler.
@@ -158,7 +158,7 @@ describe('crucible judge page', () => {
   test("Don't show again on the last pair shows the done state", async () => {
     mocks.refetchPair.mockClear();
     mocks.refetchPair.mockResolvedValueOnce({ data: null });
-    await renderWithProviders(<CrucibleJudgePage id={2} />);
+    await renderWithProviders(<CrucibleJudgePage id={2} />, { user: { id: 1, username: 'judge' } });
     await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
 
     document.querySelector<HTMLButtonElement>('[data-testid="stub-dismiss"]')?.click();
@@ -168,7 +168,7 @@ describe('crucible judge page', () => {
 
   test("a double click on Don't show again dismisses once", async () => {
     mocks.dismiss.mockClear();
-    await renderWithProviders(<CrucibleJudgePage id={2} />);
+    await renderWithProviders(<CrucibleJudgePage id={2} />, { user: { id: 1, username: 'judge' } });
     await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
 
     const button = document.querySelector<HTMLButtonElement>('[data-testid="stub-dismiss"]')!;

@@ -107,10 +107,6 @@ vi.mock('~/components/Apps/useAppsNavSections', () => ({
   useAppsNavSections: () => [],
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 10, username: 'owner' }),
-}));
-
 vi.mock('~/components/AppLayout/NotFound', () => ({
   NotFound: () => <div data-testid="not-found">Not found</div>,
 }));
@@ -284,7 +280,7 @@ describe('the authoring-context fake honours its input (positive control)', () =
    */
   test('the payload reaches the page and different payloads render differently', async () => {
     state.context = contextFor({ kind: 'onsite', connectClientId: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
     await expect
       .element(page.getByTestId('apps-collaborators-invite-disclosure'))
       .toHaveTextContent(/Push code/i);
@@ -292,7 +288,7 @@ describe('the authoring-context fake honours its input (positive control)', () =
 
   test('…and the off-site payload renders the other way (same assertion, other shape)', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
     const disclosure = page.getByTestId('apps-collaborators-invite-disclosure');
     await expect.element(disclosure).toBeInTheDocument();
     await expect.element(disclosure).not.toHaveTextContent(/Push code/i);
@@ -312,7 +308,7 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
    */
   test('the refusal is on screen before the owner picks anyone, with the server’s reason', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     const blocked = page.getByTestId('apps-transfer-blocked');
     await expect.element(blocked).toBeInTheDocument();
@@ -343,7 +339,7 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
    */
   test('the recipient control is DISABLED, and the real picker is not mounted at all', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     // Positive control FIRST: the section is present, so the absence below is a real
     // absence and not an un-awaited render. (`elements()` is synchronous.)
@@ -366,7 +362,7 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
    */
   test('the section itself still renders — the refusal explains a control, not a void', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-transfer-owner-section')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-transfer-owner-disclosure')).toBeInTheDocument();
@@ -380,7 +376,7 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
    */
   test('the one-offer-at-a-time expiry copy is suppressed', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     const section = page.getByTestId('apps-transfer-owner-section');
     await expect.element(section).toBeInTheDocument();
@@ -394,7 +390,7 @@ describe('🔴 an OFF-SITE listing WITH a connect client — refused UP FRONT', 
    */
   test('no mutation error panel, and initiateTransfer is never called', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-transfer-blocked')).toBeInTheDocument();
     expect(page.getByTestId('apps-transfer-owner-error').elements()).toHaveLength(0);
@@ -425,7 +421,7 @@ describe('🔴 a LIVE OFFER on a connect-linked listing — dead on accept, and 
   test('the refusal, a dead-offer notice, and a still-usable Cancel all render together', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: 'oc_linked' });
     state.pendingTransfer = { id: 'aot_live', toUserId: 42, expiresAt: new Date() };
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     // The verdict still applies while an offer is open…
     await expect.element(page.getByTestId('apps-transfer-blocked')).toBeInTheDocument();
@@ -445,7 +441,7 @@ describe('🔴 a LIVE OFFER on a connect-linked listing — dead on accept, and 
   test('CONTROL — an offer on a listing with no client shows no dead-offer notice', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: null });
     state.pendingTransfer = { id: 'aot_live', toUserId: 42, expiresAt: new Date() };
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-transfer-pending')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-transfer-cancel')).toBeEnabled();
@@ -468,7 +464,7 @@ describe('🔴 THE CONTROL ARM — an OFF-SITE listing with NO connect client', 
    */
   test('the transfer picker is ENABLED and no refusal is shown', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     const picker = page.getByTestId('stub-transfer-picker');
     await expect.element(picker).toBeInTheDocument();
@@ -493,7 +489,7 @@ describe('🔴 THE CONTROL ARM — an OFF-SITE listing with NO connect client', 
    */
   test('…and the transfer helper copy DOES render on a listing that can transfer', async () => {
     state.context = contextFor({ kind: 'offsite', connectClientId: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     const section = page.getByTestId('apps-transfer-owner-section');
     await expect.element(section).toBeInTheDocument();
@@ -515,7 +511,7 @@ describe('🔴 an ON-SITE listing — transfer stays available', () => {
    */
   test('the transfer picker is ENABLED and no refusal is shown', async () => {
     state.context = contextFor({ kind: 'onsite', connectClientId: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     const picker = page.getByTestId('stub-transfer-picker');
     await expect.element(picker).toBeInTheDocument();
@@ -536,7 +532,7 @@ describe('🔴 an ON-SITE listing — transfer stays available', () => {
    */
   test('a (hypothetical) on-site row carrying a client id is still transferable', async () => {
     state.context = contextFor({ kind: 'onsite', connectClientId: 'oc_onsite' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('stub-transfer-picker')).toBeEnabled();
     expect(page.getByTestId('apps-transfer-blocked').elements()).toHaveLength(0);
