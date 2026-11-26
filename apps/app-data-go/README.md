@@ -65,6 +65,12 @@ that went back (the adapter's `cursor_expired`) reopens the stream with no coold
 off none of this runs: no seq or head is read, and `cursor_expired` is a stream error, as before. Shared
 collections, marks and the mark floor are not served yet (WRITES-DESIGN.md, "Read-your-writes").
 
+**Refusals, with the flag on.** No read has a REST fallback then, so a read the streams cannot answer
+is its `401`/`503`. A shared or signed-out read's refusal is counted by reason in
+`app_data_shared_refusals_total{reason}` (a fixed set, `metrics.SharedRefusalReasons`; WRITES-DESIGN.md,
+"Metrics"), and a block token the hub did not exchange is logged with `read=refused` (`read=rest` with
+the flag off, where the read falls back to REST).
+
 ## Layout
 
 | Package             | What                                                                                      |
