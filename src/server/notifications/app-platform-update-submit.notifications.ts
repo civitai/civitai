@@ -1,4 +1,9 @@
 import { NotificationCategory } from '~/server/common/enums';
+import {
+  approvedAppUrl,
+  type AppBlockModerationNotificationDetails,
+} from '~/server/notifications/app-block.notifications';
+import { appReviewByline, withApprovalNote } from '~/server/notifications/app-review-attribution';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 
@@ -27,7 +32,68 @@ export type AppPlatformUpdateSubmittedNotificationDetails = {
   reason: string;
 };
 
+/**
+ * The REVIEW OUTCOME of a staff on-behalf submit, sent to the app's OWNER (`approveRequest` /
+ * `rejectRequest`, beside the submitter's own `app-block-approved` / `app-block-rejected`, which
+ * goes to the moderator who filed it). The request names its submitter as the moderator, so
+ * without these the owner would never hear what happened to a new version of their own app.
+ */
+export type AppPlatformUpdateReviewedNotificationDetails = AppBlockModerationNotificationDetails & {
+  /** `apu_<ULID>`. */
+  updateId: string;
+  /** The staff member who submitted it, as recorded at submit time. */
+  byUsername: string;
+};
+
+/** `"Name"` when the manifest had one, else the slug in quotes. */
+function quotedApp(details: AppPlatformUpdateReviewedNotificationDetails): string {
+  const name = details.name?.trim();
+  return `"${name || details.slug}"`;
+}
+
+/** The shared head: whose submission this was, and that it is the owner's app. */
+function onBehalfHead(details: AppPlatformUpdateReviewedNotificationDetails): string {
+  const version = details.version ? `Version ${details.version}` : 'The version';
+  return (
+    `${version} of your app ${quotedApp(details)}, which ${details.byUsername} ` +
+    `(verified Civitai staff) submitted on your behalf as a platform update,`
+  );
+}
+
 export const appPlatformUpdateSubmitNotifications = createNotificationProcessor({
+  'app-platform-update-approved': {
+    displayName: 'A staff platform update to your app was approved',
+    category: NotificationCategory.System,
+    // A new version of the recipient's own app goes live: they must always be told.
+    toggleable: false,
+    defaultEmail: true,
+    prepareMessage: (notification) => {
+      const details = notification.details as AppPlatformUpdateReviewedNotificationDetails;
+      return {
+        message: withApprovalNote(
+          `${onBehalfHead(details)} was approved and will be live in a few minutes.`,
+          details.approvalNote
+        ),
+        url: approvedAppUrl(details),
+        byline: appReviewByline(details),
+      };
+    },
+  },
+  'app-platform-update-rejected': {
+    displayName: 'A staff platform update to your app was not approved',
+    category: NotificationCategory.System,
+    toggleable: false,
+    defaultEmail: true,
+    prepareMessage: (notification) => {
+      const details = notification.details as AppPlatformUpdateReviewedNotificationDetails;
+      const reason = details.reason?.trim();
+      return {
+        message: `${onBehalfHead(details)} was not approved${reason ? `: ${reason}` : '.'}`,
+        url: OWNER_SUBMISSIONS_URL,
+        byline: appReviewByline(details),
+      };
+    },
+  },
   'app-platform-update-submitted': {
     displayName: 'Civitai staff submitted an update to your app for review',
     category: NotificationCategory.System,

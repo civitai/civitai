@@ -30,6 +30,8 @@ describe('email notification types', () => {
         'app-listing-reset-to-pending',
         'app-access-request-approved',
         'app-access-request-declined',
+        'app-platform-update-approved',
+        'app-platform-update-rejected',
       ])
     );
   });

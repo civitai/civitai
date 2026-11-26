@@ -205,6 +205,30 @@ describe('the stream', () => {
     expect(page.getByTestId('apps-history-reviewer-rev_none').query()).toBeNull();
   });
 
+  test('a staff submission on the owner’s behalf is labelled, and only that entry', async () => {
+    renderWithProviders(
+      <ListingHistoryPanelView
+        entries={[
+          entry({
+            id: 'staff_1',
+            status: 'pending',
+            version: '1.0.1',
+            canWithdraw: false,
+            staffSubmission: {
+              staffUsername: 'mod-ana',
+              platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+            },
+          }),
+          entry({ id: 'own_1', status: 'approved', version: '1.0.0' }),
+        ]}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-history-staff-submission-staff_1'))
+      .toHaveTextContent('Staff submission by mod-ana (platform update)');
+    expect(page.getByTestId('apps-history-staff-submission-own_1').query()).toBeNull();
+  });
+
   test('an app with no history says so rather than rendering an empty box', async () => {
     renderWithProviders(<ListingHistoryPanelView entries={[]} />);
     await expect.element(page.getByTestId('apps-history-empty')).toBeInTheDocument();

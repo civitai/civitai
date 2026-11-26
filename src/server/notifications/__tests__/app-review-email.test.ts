@@ -47,6 +47,9 @@ const APP_REVIEW_TYPES = [
   'app-listing-reset-to-pending',
   'app-access-request-approved',
   'app-access-request-declined',
+  // The owner's copy of a staff on-behalf submit's outcome.
+  'app-platform-update-approved',
+  'app-platform-update-rejected',
 ];
 
 // Who gets mailed is decided in SQL (the opt-out NOT EXISTS), so the opt-out case runs against an

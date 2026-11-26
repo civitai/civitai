@@ -18,6 +18,10 @@ import { historyStatusColor } from '~/components/Apps/myAppsView';
 import { currentlyPublishedVersionId } from '~/components/Apps/submissionsTable';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
+import {
+  staffSubmissionLabel,
+  type StaffSubmission,
+} from '~/shared/utils/publish-request-on-behalf';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -109,6 +113,11 @@ export type ListingHistoryEntry = {
    * need not spell it; treated as `false` when absent, which is the safe direction.
    */
   canWithdraw?: boolean;
+  /**
+   * Civitai staff submitted this version on the owner's behalf (a platform update). Optional:
+   * the moderator projection never carries it, and absent reads as an ordinary submission.
+   */
+  staffSubmission?: StaffSubmission | null;
 };
 
 function formatWhen(value: string | Date | null | undefined): string {
@@ -334,6 +343,16 @@ export function ListingHistoryEntryRow({
       <Text size="xs" c="dimmed">
         {formatWhen(e.submittedAt)}
       </Text>
+      {e.staffSubmission ? (
+        <Badge
+          size="sm"
+          variant="light"
+          color="cyan"
+          data-testid={`apps-history-staff-submission-${e.id}`}
+        >
+          {staffSubmissionLabel(e.staffSubmission)}
+        </Badge>
+      ) : null}
       {deployStatus !== undefined ? (
         deployStatus
       ) : e.deployState ? (

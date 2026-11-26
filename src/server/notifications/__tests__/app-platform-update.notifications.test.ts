@@ -5,6 +5,7 @@ import {
 } from '~/server/notifications/app-platform-update.notifications';
 import {
   appPlatformUpdateSubmitNotifications,
+  type AppPlatformUpdateReviewedNotificationDetails,
   type AppPlatformUpdateSubmittedNotificationDetails,
 } from '~/server/notifications/app-platform-update-submit.notifications';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
@@ -97,5 +98,75 @@ describe('app-platform-update-submitted', () => {
         'Assistant.',
       url: OWNER_SUBMISSIONS_URL,
     });
+  });
+});
+
+/**
+ * The OWNER's copy of a staff on-behalf submit's review outcome. The submitter (the moderator)
+ * gets the ordinary `app-block-*`; these say whose submission it was. Pinned as whole strings.
+ */
+describe('app-platform-update-approved / -rejected (the owner’s review outcome)', () => {
+  type ReviewedDef = (typeof appPlatformUpdateSubmitNotifications)['app-platform-update-approved'];
+  const defs = appPlatformUpdateSubmitNotifications as Record<string, ReviewedDef>;
+  const prepare = (type: string, details: AppPlatformUpdateReviewedNotificationDetails) =>
+    defs[type]!.prepareMessage({ details } as unknown as Parameters<
+      ReviewedDef['prepareMessage']
+    >[0]);
+  const BASE: AppPlatformUpdateReviewedNotificationDetails = {
+    slug: 'pixel-garden',
+    name: 'Pixel Garden',
+    version: '1.2.1',
+    updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+    byUsername: 'mod-ana',
+    reviewerUserId: 31,
+    actor: { username: 'reviewer_ada', deletedAt: null },
+  };
+
+  it('both are registered, not toggleable, and emailed', () => {
+    for (const type of ['app-platform-update-approved', 'app-platform-update-rejected']) {
+      expect(notificationProcessors[type as keyof typeof notificationProcessors]).toBe(defs[type]);
+      expect(defs[type]!.toggleable).toBe(false);
+      expect(defs[type]!.defaultEmail).toBe(true);
+    }
+  });
+
+  it('approved: names the staff member and the version, links the run page when it can', () => {
+    expect(
+      prepare('app-platform-update-approved', {
+        ...BASE,
+        approvalNote: 'Thanks for the bump.',
+        hasPage: true,
+        canOpenRunPage: true,
+      })
+    ).toEqual({
+      message:
+        'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'submitted on your behalf as a platform update, was approved and will be live in a few ' +
+        'minutes. Note from the reviewer: Thanks for the bump.',
+      url: '/apps/run/pixel-garden',
+      byline: 'Reviewed by @reviewer_ada, Civitai App Review',
+    });
+    // No page: the owner's apps view, as the submitter's own copy falls back to.
+    expect(prepare('app-platform-update-approved', BASE).url).toBe(OWNER_SUBMISSIONS_URL);
+  });
+
+  it('rejected: carries the reason, and falls back to the slug when the name is missing', () => {
+    expect(
+      prepare('app-platform-update-rejected', {
+        ...BASE,
+        name: null,
+        reason: '  Breaks the gallery layout  ',
+      })
+    ).toEqual({
+      message:
+        'Version 1.2.1 of your app "pixel-garden", which mod-ana (verified Civitai staff) ' +
+        'submitted on your behalf as a platform update, was not approved: Breaks the gallery layout',
+      url: OWNER_SUBMISSIONS_URL,
+      byline: 'Reviewed by @reviewer_ada, Civitai App Review',
+    });
+    expect(prepare('app-platform-update-rejected', BASE).message).toBe(
+      'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'submitted on your behalf as a platform update, was not approved.'
+    );
   });
 });

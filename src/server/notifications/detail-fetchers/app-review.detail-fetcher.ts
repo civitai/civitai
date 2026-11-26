@@ -7,6 +7,9 @@ export const APP_REVIEW_ATTRIBUTED_TYPES = [
   'app-block-rejected',
   'app-listing-approved',
   'app-listing-rejected',
+  // The owner's copy of a staff on-behalf submit's outcome (`app-platform-update-submit.notifications`).
+  'app-platform-update-approved',
+  'app-platform-update-rejected',
   // NOT `app-listing-hidden`: a takedown names the team only, so its reviewer is never resolved.
 ] as const;
 

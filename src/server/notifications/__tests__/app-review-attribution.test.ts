@@ -29,6 +29,8 @@ const NAMED_TYPES = [
   'app-block-rejected',
   'app-listing-approved',
   'app-listing-rejected',
+  'app-platform-update-approved',
+  'app-platform-update-rejected',
 ] as const;
 const ALL_DECISION_TYPES = [...NAMED_TYPES, 'app-listing-hidden'] as const;
 

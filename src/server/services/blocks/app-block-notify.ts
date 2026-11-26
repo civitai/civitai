@@ -24,7 +24,19 @@ import {
  * this helper throw can never fail or roll back a moderator approve/reject.
  */
 
-export type AppBlockSubmitterNotificationType = 'app-block-approved' | 'app-block-rejected';
+export type AppBlockSubmitterNotificationType =
+  | 'app-block-approved'
+  | 'app-block-rejected'
+  // The OWNER's copy of a staff on-behalf submit's outcome; same details plus the update and the
+  // staff member (`app-platform-update-submit.notifications.ts`).
+  | 'app-platform-update-approved'
+  | 'app-platform-update-rejected';
+
+/** The approved types: they record whether the recipient can open run pages. */
+const APPROVED_TYPES: ReadonlySet<AppBlockSubmitterNotificationType> = new Set([
+  'app-block-approved',
+  'app-platform-update-approved',
+]);
 
 /**
  * An APPROVED notification also records whether the submitter can open run pages
@@ -38,7 +50,7 @@ export async function notifyAppBlockSubmitter(
     userId: number;
     /** Idempotency key — dedups repeat emissions of the same event to the same user. */
     key: string;
-    details: AppBlockModerationNotificationDetails;
+    details: AppBlockModerationNotificationDetails & { updateId?: string; byUsername?: string };
     /** Who decided; becomes the notification's "Reviewed by" line. */
     attribution: AppReviewAttribution;
   },
@@ -53,14 +65,13 @@ export async function notifyAppBlockSubmitter(
     ...opts.details,
     ...appReviewAttributionDetails(opts.attribution),
   };
-  const details: AppBlockModerationNotificationDetails =
-    opts.type === 'app-block-approved'
-      ? {
-          ...attributed,
-          // A failed read must not cost the notification: it then links the submissions view.
-          canOpenRunPage: await canOpenRunPages(opts.userId).catch(() => false),
-        }
-      : attributed;
+  const details: AppBlockModerationNotificationDetails = APPROVED_TYPES.has(opts.type)
+    ? {
+        ...attributed,
+        // A failed read must not cost the notification: it then links the submissions view.
+        canOpenRunPage: await canOpenRunPages(opts.userId).catch(() => false),
+      }
+    : attributed;
   await createNotification({
     userId: opts.userId,
     category: NotificationCategory.System,

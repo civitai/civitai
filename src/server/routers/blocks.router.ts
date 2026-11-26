@@ -496,6 +496,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
+import { readOnBehalf, staffSubmissionOf } from '~/shared/utils/publish-request-on-behalf';
 import {
   checkRunnerBinding,
   runnerSlotsSchema,
@@ -3889,44 +3890,77 @@ export const blocksRouter = router({
 
   /**
    * Developer-facing list: every publish request submitted by the current
-   * viewer, newest first. The /apps/my-submissions page renders this.
+   * viewer, plus every staff submit made on their behalf for an app they own
+   * (labelled by `staffSubmission`), newest first. The /apps/my-submissions page renders this.
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
   listMyPublishRequests: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     if (!ctx.user) return [];
-    const rows = await dbRead.appBlockPublishRequest.findMany({
-      where: { submittedByUserId: ctx.user.id },
-      orderBy: { submittedAt: 'desc' },
-      take: 100,
-      select: {
-        id: true,
-        appBlockId: true,
-        slug: true,
-        version: true,
-        status: true,
-        submittedAt: true,
-        reviewedAt: true,
-        rejectionReason: true,
-        approvalNotes: true,
-        // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
-        deployState: true,
-        deployDetail: true,
-        deployUpdatedAt: true,
-        fileSummary: true,
-        manifestDiffSummary: true,
-        appBlock: {
-          select: {
-            id: true,
-            // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
-            // declare a launchable page). PUBLIC subset only — never the raw manifest.
-            manifest: true,
-            contentRating: true,
-            _count: { select: { userSubscriptions: true } },
-          },
+    const viewerId = ctx.user.id;
+    const select = {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      rejectionReason: true,
+      approvalNotes: true,
+      // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      appBlock: {
+        select: {
+          id: true,
+          // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+          // declare a launchable page). PUBLIC subset only — never the raw manifest.
+          manifest: true,
+          contentRating: true,
+          _count: { select: { userSubscriptions: true } },
         },
       },
-    });
+    } as const;
+    const [submitted, onBehalfOfViewer] = await Promise.all([
+      dbRead.appBlockPublishRequest.findMany({
+        where: { submittedByUserId: viewerId },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      }),
+      // A STAFF SUBMIT ON THE VIEWER'S BEHALF (`fileSummary.onBehalf`): its submitter is the
+      // moderator, but the version is the viewer's app's, so it is listed for them too.
+      // 🔴 Gated on BOTH the app's current owner (the block's OAuth client) and the owner the
+      // request recorded, in the query and again below, so no other app's request can reach
+      // this list. The viewer's own submissions are excluded here and de-duplicated anyway.
+      dbRead.appBlockPublishRequest.findMany({
+        where: {
+          submittedByUserId: { not: viewerId },
+          appBlock: { app: { userId: viewerId } },
+          fileSummary: { path: ['onBehalf', 'ownerUserId'], equals: viewerId },
+        },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select,
+      }),
+    ]);
+    const seen = new Set(submitted.map((r: { id: string }) => r.id));
+    const rows = [
+      ...submitted,
+      ...onBehalfOfViewer.filter(
+        (r: { id: string; fileSummary: unknown }) =>
+          !seen.has(r.id) && readOnBehalf(r.fileSummary)?.ownerUserId === viewerId
+      ),
+    ]
+      .sort(
+        (a: { submittedAt: Date }, b: { submittedAt: Date }) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      )
+      .slice(0, 100);
     // Flatten _count onto each row so the UI doesn't have to dig through
     // the relation. Pending-first-version + withdrawn-first-version rows
     // have no appBlock (FK is set on approve) — surface null so the UI
@@ -4141,6 +4175,8 @@ export const blocksRouter = router({
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
         // subset only.
         hasPage: !!toPublicBlockManifest(manifest).hasPage,
+        // A staff submit on the owner's behalf: who filed it, for the "Staff submission" label.
+        staffSubmission: staffSubmissionOf(rest.fileSummary),
       };
     });
   }),

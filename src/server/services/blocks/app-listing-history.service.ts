@@ -10,6 +10,7 @@ import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.select
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
+import { staffSubmissionOf, type StaffSubmission } from '~/shared/utils/publish-request-on-behalf';
 import {
   canonicalOwnerWhereBranches,
   listingEditorRole,
@@ -122,6 +123,11 @@ export type ListingHistoryEntry = {
    * authorization boundary: the procs are still the gate and are unchanged.
    */
   canWithdraw: boolean;
+  /**
+   * A `version` entry Civitai staff submitted on the owner's behalf (a platform update): who
+   * filed it, for the "Staff submission" label. `null` for every other entry.
+   */
+  staffSubmission: StaffSubmission | null;
 };
 
 /** Hard cap. An app with more history than this is pathological, not paginated. */
@@ -310,6 +316,8 @@ export async function listListingHistory(opts: {
             deployState: true,
             deployDetail: true,
             deployUpdatedAt: true,
+            // Read for `fileSummary.onBehalf` only (the staff-submission label); never projected.
+            fileSummary: true,
             reviewedBy: { select: reviewUserChipSelect },
           },
         })
@@ -354,6 +362,7 @@ export async function listListingHistory(opts: {
         buildSignals: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        staffSubmission: null,
       })
     ),
     ...blockRequests.map(
@@ -369,6 +378,7 @@ export async function listListingHistory(opts: {
         deployState: string | null;
         deployDetail: string | null;
         deployUpdatedAt: Date | null;
+        fileSummary?: unknown;
         reviewedBy: ReviewerRow;
       }) => ({
         id: r.id,
@@ -386,6 +396,7 @@ export async function listListingHistory(opts: {
         buildSignals: isAuthorFailure(r) ? signalsById.get(r.id) ?? null : null,
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
+        staffSubmission: staffSubmissionOf(r.fileSummary),
       })
     ),
   ];

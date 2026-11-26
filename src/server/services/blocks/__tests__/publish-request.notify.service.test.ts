@@ -442,3 +442,168 @@ describe('rejectRequest — submitter notification (post-commit, best-effort)', 
     expect(mockNotify).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A STAFF SUBMIT ON THE OWNER'S BEHALF (`fileSummary.onBehalf`): the request's submitter is the
+ * moderator, so the outcome also goes to the app's OWNER, under its own type naming the staff
+ * member. The moderator still gets the ordinary submitter notification.
+ */
+describe('approve / reject of a staff on-behalf submit — the owner is notified too', () => {
+  const MODERATOR = 8001;
+  const OWNER = 7101;
+  const ON_BEHALF_SUMMARY = {
+    files: [],
+    added: [],
+    removed: [],
+    changed: [],
+    onBehalf: {
+      platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      staffUserId: MODERATOR,
+      staffUsername: 'mod-ana',
+      ownerUserId: OWNER,
+      ownerUsername: 'owner-olga',
+    },
+  };
+  const ORDINARY_SUMMARY = { files: [], added: [], removed: [], changed: [] };
+  const calls = () => mockNotify.mock.calls.map((c) => c[0] as Record<string, unknown>);
+
+  function rejectRow(fileSummary: unknown, submittedByUserId = MODERATOR) {
+    return {
+      id: 'req_rej_1',
+      status: 'pending',
+      deployState: null,
+      slug: 'cool-app',
+      version: '1.2.0',
+      manifest: { name: 'Cool App' },
+      submittedByUserId,
+      fileSummary,
+    };
+  }
+
+  it('approve: the moderator gets app-block-approved, the owner app-platform-update-approved', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      submittedByUserId: MODERATOR,
+      fileSummary: ON_BEHALF_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+
+    expect(calls()).toEqual([
+      expect.objectContaining({
+        type: 'app-block-approved',
+        userId: MODERATOR,
+        key: 'app-block-approved:req_appr_1',
+      }),
+      {
+        type: 'app-platform-update-approved',
+        userId: OWNER,
+        key: 'app-platform-update-approved:req_appr_1',
+        attribution: { kind: 'moderator', userId: 9 },
+        details: {
+          slug: 'cool-app',
+          name: 'Cool App',
+          version: '1.2.0',
+          approvalNote: null,
+          hasPage: false,
+          mature: false,
+          updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+          byUsername: 'mod-ana',
+        },
+      },
+    ]);
+  });
+
+  it('reject: the moderator gets app-block-rejected, the owner app-platform-update-rejected with the reason', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: '  Breaks the gallery layout  ',
+    });
+
+    expect(calls()).toEqual([
+      expect.objectContaining({
+        type: 'app-block-rejected',
+        userId: MODERATOR,
+        key: 'app-block-rejected:req_rej_1',
+      }),
+      {
+        type: 'app-platform-update-rejected',
+        userId: OWNER,
+        key: 'app-platform-update-rejected:req_rej_1',
+        attribution: { kind: 'moderator', userId: 9 },
+        details: {
+          slug: 'cool-app',
+          name: 'Cool App',
+          version: '1.2.0',
+          reason: 'Breaks the gallery layout',
+          updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+          byUsername: 'mod-ana',
+        },
+      },
+    ]);
+    // The reject read selects what the owner branch reads.
+    expect(
+      (db.read.appBlockPublishRequest.findUnique.mock.calls[0]![0] as { select: object }).select
+    ).toMatchObject({ fileSummary: true });
+  });
+
+  it('the owner is told even when the submitter’s notification fails', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(rejectRow(ON_BEHALF_SUMMARY));
+    mockNotify.mockRejectedValueOnce(new Error('notifications down'));
+
+    await expect(
+      rejectRequest({
+        publishRequestId: 'req_rej_1',
+        reviewerUserId: 9,
+        rejectionReason: 'Breaks the gallery layout',
+      })
+    ).resolves.toBeUndefined();
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([
+      ['app-block-rejected', MODERATOR],
+      ['app-platform-update-rejected', OWNER],
+    ]);
+  });
+
+  it('CONTROL: an ordinary request notifies ONLY its submitter (approve and reject)', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      ...pendingApproveRow(),
+      fileSummary: ORDINARY_SUMMARY,
+    });
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-approved', SUBMITTER]]);
+
+    mockNotify.mockClear();
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
+      rejectRow(ORDINARY_SUMMARY, SUBMITTER)
+    );
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', SUBMITTER]]);
+  });
+
+  it('an on-behalf record naming the submitter themselves sends no second copy', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(
+      rejectRow(
+        {
+          ...ON_BEHALF_SUMMARY,
+          onBehalf: { ...ON_BEHALF_SUMMARY.onBehalf, ownerUserId: MODERATOR },
+        },
+        MODERATOR
+      )
+    );
+    await rejectRequest({
+      publishRequestId: 'req_rej_1',
+      reviewerUserId: 9,
+      rejectionReason: 'Breaks the gallery layout',
+    });
+    expect(calls().map((c) => [c.type, c.userId])).toEqual([['app-block-rejected', MODERATOR]]);
+  });
+});

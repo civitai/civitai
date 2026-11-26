@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
@@ -66,6 +66,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
 });
 
 const { submitVersion } = await import('~/server/services/blocks/publish-request.service');
+const terms = await import('~/server/services/blocks/app-developer-terms.service');
 const { ManifestValidationRefusal } = await import(
   '~/server/services/blocks/manifest-submit-validation'
 );
@@ -588,6 +589,101 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
       })
     ).rejects.toThrow('only a moderator can submit on behalf of an app owner');
     expect(db.createPublishRequest).not.toHaveBeenCalled();
+  });
+
+  describe('the App Developer Terms: the OWNER’s acceptance, never the moderator’s', () => {
+    const MODERATOR = 8001;
+    const OWNER_REFUSAL = "The app's owner has not accepted the current App Developer Terms yet.";
+    const SUBMITTER_REFUSAL = 'Accept the App Developer Terms';
+    const accepted = (ids: number[]) => {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async (id) =>
+        ids.includes(id)
+      );
+      vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockImplementation(async (id) => {
+        if (!ids.includes(id)) throw new Error(`${SUBMITTER_REFUSAL} (user ${id})`);
+      });
+    };
+    afterEach(() => {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+      vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockImplementation(async () => undefined);
+    });
+
+    it('files when the owner accepted and the moderator never did', async () => {
+      existingApp();
+      accepted([ON_BEHALF.ownerUserId]);
+      await submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: MODERATOR,
+        submitterIsModerator: true,
+        onBehalf: ON_BEHALF,
+      });
+      expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+      expect(terms.assertAcceptedAppDeveloperTerms).not.toHaveBeenCalled();
+      expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(ON_BEHALF.ownerUserId);
+      expect(terms.hasAcceptedAppDeveloperTerms).not.toHaveBeenCalledWith(MODERATOR);
+      await settleFollowUps();
+    });
+
+    it('refuses, naming the owner, when the owner has not accepted (even though the moderator has)', async () => {
+      existingApp();
+      accepted([MODERATOR]);
+      const err = await submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: MODERATOR,
+        submitterIsModerator: true,
+        onBehalf: ON_BEHALF,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(terms.AppDeveloperTermsNotAcceptedError);
+      expect((err as Error).message.startsWith(OWNER_REFUSAL)).toBe(true);
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('a moderator who OWNS the app still needs their acceptance as owner on an on-behalf submit', async () => {
+      existingApp();
+      accepted([]);
+      const err = await submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: ON_BEHALF.ownerUserId,
+        submitterIsModerator: true,
+        onBehalf: ON_BEHALF,
+      }).catch((e: unknown) => e);
+      expect((err as Error).message.startsWith(OWNER_REFUSAL)).toBe(true);
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('refuses an on-behalf submit whose recorded owner is not the app’s owner', async () => {
+      db.appBlockFindFirst.mockResolvedValue({
+        id: 'apb_1',
+        appId: 'app_1',
+        trustTier: 'unverified',
+        app: { userId: 7202, allowedOrigins: ['https://my-app.civit.ai'] },
+      });
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+          submittedByUserId: MODERATOR,
+          submitterIsModerator: true,
+          onBehalf: ON_BEHALF,
+        })
+      ).rejects.toThrow(
+        "the app's owner is not the owner this update was submitted for; reload and retry"
+      );
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: an ordinary moderator submit still needs the moderator’s own acceptance', async () => {
+      existingApp();
+      accepted([ON_BEHALF.ownerUserId]);
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+          submittedByUserId: MODERATOR,
+          submitterIsModerator: true,
+        })
+      ).rejects.toThrow(`${SUBMITTER_REFUSAL} (user ${MODERATOR})`);
+      expect(terms.assertAcceptedAppDeveloperTerms).toHaveBeenCalledWith(MODERATOR);
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
   });
 
   it('CONTROL: an ordinary submit records no on-behalf line', async () => {

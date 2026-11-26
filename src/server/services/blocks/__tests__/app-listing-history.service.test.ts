@@ -910,3 +910,60 @@ describe('the latest build attempt’s step + class ride along with the failure 
     warn.mockRestore();
   });
 });
+
+/**
+ * A STAFF SUBMIT ON THE OWNER'S BEHALF carries the app's block id, so the app-keyed read
+ * already lists it for the owner; the entry says it was staff's, from `fileSummary.onBehalf`.
+ */
+describe('a staff submission on the owner’s behalf is labelled', () => {
+  const ON_BEHALF = {
+    files: [],
+    added: [],
+    removed: [],
+    changed: [],
+    onBehalf: {
+      platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      staffUserId: 8001,
+      staffUsername: 'mod-ana',
+      ownerUserId: OWNER,
+      ownerUsername: 'owner',
+    },
+  };
+
+  it('labels the staff entry, and nothing else, and offers the owner no withdraw', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'pubreq_staff',
+        version: '1.0.1',
+        status: 'pending',
+        submittedByUserId: 8001,
+        submittedAt: new Date('2026-06-10T00:00:00Z'),
+        fileSummary: ON_BEHALF,
+      }),
+      blockReq({
+        id: 'pubreq_own',
+        fileSummary: { files: [], added: [], removed: [], changed: [] },
+      }),
+    ]);
+
+    const entries = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+
+    expect(entries.map((e) => [e.id, e.staffSubmission, e.canWithdraw])).toEqual([
+      [
+        'pubreq_staff',
+        { staffUsername: 'mod-ana', platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0' },
+        false,
+      ],
+      ['pubreq_own', null, false],
+    ]);
+    const select = (
+      mockDb.appBlockPublishRequest.findMany.mock.calls[0]![0] as {
+        select: Record<string, unknown>;
+      }
+    ).select;
+    expect(select.fileSummary).toBe(true);
+    // The raw summary is read for the label only, never projected.
+    expect(entries[0]).not.toHaveProperty('fileSummary');
+  });
+});

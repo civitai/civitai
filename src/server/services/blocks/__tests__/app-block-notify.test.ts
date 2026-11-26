@@ -121,3 +121,42 @@ describe('notifyAppBlockSubmitter', () => {
     expect(sentDetails().canOpenRunPage).toBe(false);
   });
 });
+
+describe('notifyAppBlockSubmitter — the owner’s copy of a staff on-behalf outcome', () => {
+  it('an owner approval asks whether the OWNER can open run pages; an owner rejection never asks', async () => {
+    const canOpen = vi.fn(async (userId: number) => userId === 7101);
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-platform-update-approved',
+        userId: 7101,
+        key: 'app-platform-update-approved:req_1',
+        details: { slug: 'g', updateId: 'apu_1', byUsername: 'mod-ana' },
+        attribution: { kind: 'moderator', userId: 31 },
+      },
+      canOpen
+    );
+    expect(canOpen.mock.calls).toEqual([[7101]]);
+    expect(sentDetails()).toEqual({
+      slug: 'g',
+      updateId: 'apu_1',
+      byUsername: 'mod-ana',
+      reviewerUserId: 31,
+      canOpenRunPage: true,
+    });
+
+    mockCreateNotification.mockClear();
+    canOpen.mockClear();
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-platform-update-rejected',
+        userId: 7101,
+        key: 'app-platform-update-rejected:req_1',
+        details: { slug: 'g', reason: 'nope', updateId: 'apu_1', byUsername: 'mod-ana' },
+        attribution: { kind: 'moderator', userId: 31 },
+      },
+      canOpen
+    );
+    expect(canOpen).not.toHaveBeenCalled();
+    expect(sentDetails()).not.toHaveProperty('canOpenRunPage');
+  });
+});
