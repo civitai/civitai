@@ -98,9 +98,12 @@ async function moderatorById(userId: number) {
 const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   schema: imageModerateInput,
   handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
-    // Block and unblock alike: a batch with an image withheld from this moderator acts on none of it.
-    const withheld = await withheldRefusal(await moderatorById(userId), ids);
-    if (withheld) throw Object.assign(new Error(withheld), { status: 403 });
+    // An unblock of a batch with an image withheld from this moderator acts on none of it. A block
+    // only protects, so any moderator may block, as the main app's own block does.
+    if (reviewAction === 'unblock') {
+      const withheld = await withheldRefusal(await moderatorById(userId), ids);
+      if (withheld) throw Object.assign(new Error(withheld), { status: 403 });
+    }
     const held: HeldRemoval[] = [];
     const notRestored: number[] = [];
     const notFound: number[] = [];

@@ -583,16 +583,14 @@ const claimableAt = (now: Date) => (eb: ExpressionBuilder<DB, 'ScanLabelItem'>) 
   ]);
 
 /** Reads stored state, not the triggering vote, so a failed or interrupted block is retried by the
- *  next sweep. An item whose image is withheld from the requester (`csamReview` is their grant) is
- *  left pending, for the sweep of a moderator with the grant. */
+ *  next sweep. */
 export async function applyMajorityBlocks(
   {
     requester,
-    csamReview,
     ip,
     userAgent,
     limit = 10,
-  }: { requester?: number; csamReview: boolean; ip?: string; userAgent?: string; limit?: number },
+  }: { requester?: number; ip?: string; userAgent?: string; limit?: number },
   { block, isModerationBlocked }: BlockDeps,
   clock: () => Date = () => new Date()
 ): Promise<SweepResult> {
@@ -603,19 +601,6 @@ export async function applyMajorityBlocks(
     .where('status', '!=', 'void')
     .where('actionedAt', 'is', null)
     .where(claimableAt(clock()))
-    // In the query, so withheld items cannot fill the limit. A missing image is left to 'image-missing'.
-    .where(({ not, exists, selectFrom }) =>
-      not(
-        exists(
-          selectFrom('Image as wi')
-            .select(sql`1`.as('one'))
-            .whereRef('wi.id', '=', 'ScanLabelItem.imageId')
-            .where(
-              sql<boolean>`(${sql.raw(moderatorWithheldSql('wi', { csamReview }))}) IS NOT FALSE`
-            )
-        )
-      )
-    )
     // Items that keep failing go last, so they cannot starve newer majorities.
     .orderBy(sql`"actionError" IS NOT NULL`)
     .orderBy('id')

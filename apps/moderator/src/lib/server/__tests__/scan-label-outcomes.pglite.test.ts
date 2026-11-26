@@ -47,8 +47,6 @@ const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as con
 const MINOR_SEXUAL = { block: true, reason: 'minor-sexual', reasonComment: null } as const;
 const CSAM = { block: true, reason: 'csam-realistic', reasonComment: null } as const;
 const KEEP = { block: false } as const;
-/** A sweep for a moderator with the CSAM review grant, so nothing is withheld from it (scan-label-queue tests the rest). */
-const GRANTED = { csamReview: true };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const migration = (name: string) =>
@@ -135,7 +133,7 @@ describe('applyMajorityBlocks', () => {
     const it1 = await seedItem(1);
     const block = vi.fn(async () => undefined);
     await vote(it1, 11, true, '2026-10-13T10:00:00Z');
-    expect(await applyMajorityBlocks(GRANTED, deps(block))).toEqual({
+    expect(await applyMajorityBlocks({}, deps(block))).toEqual({
       blocked: [],
       skipped: [],
       failed: [],
@@ -143,9 +141,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 12, false, '2026-10-13T10:01:00Z');
     await vote(it1, 13, true, '2026-10-13T10:02:00Z');
 
-    expect(
-      await applyMajorityBlocks({ ...GRANTED, requester: 13, ip: '1.2.3.4' }, deps(block))
-    ).toEqual({
+    expect(await applyMajorityBlocks({ requester: 13, ip: '1.2.3.4' }, deps(block))).toEqual({
       blocked: [it1],
       skipped: [],
       failed: [],
@@ -169,7 +165,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    expect(await applyMajorityBlocks(GRANTED, deps(block))).toEqual({
+    expect(await applyMajorityBlocks({}, deps(block))).toEqual({
       blocked: [],
       skipped: [{ itemId: it1, result: 'already-blocked' }],
       failed: [],
@@ -193,7 +189,7 @@ describe('applyMajorityBlocks', () => {
       await vote(it, 12, true);
     }
     const block = noop();
-    expect((await applyMajorityBlocks(GRANTED, deps(block))).blocked).toEqual([
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([
       graceBlocked,
       otherReason,
     ]);
@@ -211,9 +207,9 @@ describe('applyMajorityBlocks', () => {
       );
       throw new Error('mod activity insert failed');
     });
-    expect((await applyMajorityBlocks(GRANTED, deps(halfway))).failed).toHaveLength(1);
+    expect((await applyMajorityBlocks({}, deps(halfway))).failed).toHaveLength(1);
     const block = noop();
-    expect((await applyMajorityBlocks(GRANTED, deps(block))).blocked).toEqual([it1]);
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
     expect(block).toHaveBeenCalledTimes(1);
     expect(await item(it1)).toMatchObject({ actionResult: 'blocked' });
   });
@@ -229,13 +225,13 @@ describe('applyMajorityBlocks', () => {
     ]);
     const block = vi.fn(async () => undefined);
     await applyMajorityBlocks(
-      GRANTED,
+      {},
       deps(block),
       () => new Date(crashedAt.getTime() + ACTION_CLAIM_MS - 1)
     );
     expect(block).not.toHaveBeenCalled();
     await applyMajorityBlocks(
-      GRANTED,
+      {},
       deps(block),
       () => new Date(crashedAt.getTime() + ACTION_CLAIM_MS + 1)
     );
@@ -248,7 +244,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 12, true);
     await pg.query(`UPDATE "ScanLabelItem" SET status = 'void' WHERE id = $1`, [it1]);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks(GRANTED, deps(block));
+    await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
   });
 
@@ -257,9 +253,9 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks(GRANTED, deps(block));
+    await applyMajorityBlocks({}, deps(block));
     await vote(it1, 13, true);
-    await applyMajorityBlocks(GRANTED, deps(block));
+    await applyMajorityBlocks({}, deps(block));
     expect(block).toHaveBeenCalledTimes(1);
   });
 
@@ -268,10 +264,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    await Promise.all([
-      applyMajorityBlocks(GRANTED, deps(block)),
-      applyMajorityBlocks(GRANTED, deps(block)),
-    ]);
+    await Promise.all([applyMajorityBlocks({}, deps(block)), applyMajorityBlocks({}, deps(block))]);
     expect(block).toHaveBeenCalledTimes(1);
   });
 
@@ -281,7 +274,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 12, false);
     await vote(it1, 13, false);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks(GRANTED, deps(block));
+    await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
   });
 
@@ -292,7 +285,7 @@ describe('applyMajorityBlocks', () => {
     const failing = vi.fn(async () => {
       throw new Error('notifications down');
     });
-    expect(await applyMajorityBlocks(GRANTED, deps(failing))).toEqual({
+    expect(await applyMajorityBlocks({}, deps(failing))).toEqual({
       blocked: [],
       skipped: [],
       failed: [{ itemId: it1, error: 'notifications down' }],
@@ -304,7 +297,7 @@ describe('applyMajorityBlocks', () => {
     });
 
     const block = vi.fn(async () => undefined);
-    expect((await applyMajorityBlocks(GRANTED, deps(block))).blocked).toEqual([it1]);
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
     expect(await item(it1)).toMatchObject({ actionError: null });
   });
 
@@ -313,10 +306,7 @@ describe('applyMajorityBlocks', () => {
     await vote(it1, 11, true);
     await vote(it1, 12, true);
     const block = vi.fn(async () => undefined);
-    await applyMajorityBlocks(
-      { ...GRANTED, requester: 99, ip: '9.9.9.9', userAgent: 'x' },
-      deps(block)
-    );
+    await applyMajorityBlocks({ requester: 99, ip: '9.9.9.9', userAgent: 'x' }, deps(block));
     expect(block).toHaveBeenCalledExactlyOnceWith({
       imageId: 1,
       userId: 12,
@@ -348,7 +338,7 @@ describe('csam-realistic votes', () => {
     const { hold, deps: holding } = holdDeps();
     expect(await applyCsamHolds({}, holding)).toEqual({ held: [it1], failed: [] });
     expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, 11);
-    await applyMajorityBlocks(GRANTED, deps(block));
+    await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
     expect(await item(it1)).toMatchObject({ actionResult: 'csam-held', actionError: null });
     expect((await item(it1)).actionedAt).not.toBeNull();
@@ -365,7 +355,7 @@ describe('csam-realistic votes', () => {
     const { hold, deps: holding } = holdDeps();
     expect((await applyCsamHolds({}, holding)).held).toEqual([]);
     const block = noop();
-    expect((await applyMajorityBlocks(GRANTED, deps(block))).blocked).toEqual([it1]);
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
     expect(hold).not.toHaveBeenCalled();
     expect(await item(it1)).toMatchObject({ status: 'open', actionResult: 'blocked' });
   });
@@ -376,7 +366,7 @@ describe('csam-realistic votes', () => {
     await castAs(it1, 12, CSAM);
     expect((await item(it1)).blockVotes).toBe(2);
     const block = noop();
-    await applyMajorityBlocks(GRANTED, deps(block));
+    await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
     const { hold, deps: holding } = holdDeps();
     expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
@@ -387,7 +377,7 @@ describe('csam-realistic votes', () => {
     const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, MINOR_SEXUAL);
     await castAs(it1, 12, MINOR_SEXUAL);
-    await applyMajorityBlocks(GRANTED, deps(noop()));
+    await applyMajorityBlocks({}, deps(noop()));
     expect(await item(it1)).toMatchObject({ actionResult: 'blocked' });
 
     await castAs(it1, 13, CSAM);
@@ -441,7 +431,7 @@ describe('csam-realistic votes', () => {
       return new Date();
     };
     const block = noop();
-    expect((await applyMajorityBlocks(GRANTED, deps(block), clock)).blocked).toEqual([]);
+    expect((await applyMajorityBlocks({}, deps(block), clock)).blocked).toEqual([]);
     await voided;
     expect(block).not.toHaveBeenCalled();
   });
@@ -459,7 +449,7 @@ describe('csam-realistic votes', () => {
       return false;
     });
     const block = noop();
-    await applyMajorityBlocks(GRANTED, { block, isModerationBlocked: voidingCheck });
+    await applyMajorityBlocks({}, { block, isModerationBlocked: voidingCheck });
     expect(voidingCheck).toHaveBeenCalledOnce();
     expect(block).not.toHaveBeenCalled();
     expect(await item(it1)).toMatchObject({ actionResult: 'csam-held', actionedAt: null });
@@ -475,7 +465,7 @@ describe('csam-realistic votes', () => {
         [it1]
       );
     });
-    await applyMajorityBlocks(GRANTED, deps(voidingBlock));
+    await applyMajorityBlocks({}, deps(voidingBlock));
     expect(voidingBlock).toHaveBeenCalledOnce();
     expect(await item(it1)).toMatchObject({ actionResult: 'csam-held' });
   });
@@ -492,7 +482,7 @@ describe('csam-realistic votes', () => {
       );
       throw new Error('block failed');
     });
-    await applyMajorityBlocks(GRANTED, deps(voidingFailure));
+    await applyMajorityBlocks({}, deps(voidingFailure));
     expect(await item(it1)).toMatchObject({ actionStartedAt: heldAt, actionError: null });
   });
 

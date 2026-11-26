@@ -135,11 +135,7 @@ export const actions: Actions = {
     // Retry pending majority blocks so a failed one is not stranded. Must not fail the vote, which
     // has already landed.
     await applyMajorityBlocks(
-      {
-        requester: locals.user.id,
-        csamReview: holdsCsamReview(locals.user),
-        ...getActorMeta(event),
-      },
+      { requester: locals.user.id, ...getActorMeta(event) },
       {
         // A majority of voting moderators already agreed, which is the second opinion a re-removal
         // of an image approved on appeal is held for.

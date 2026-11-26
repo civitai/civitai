@@ -105,7 +105,7 @@ vi.mock('../report-queue-load', async (importOriginal) => ({
   loadItemReports: vi.fn(async () => []),
 }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
-// The page grants a token-authenticated action loads, as sysRedis holds them: the CSAM grant's page.
+// A delegated action has no session, so it loads page grants from sysRedis: serve the CSAM grant.
 vi.mock('../redis', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../redis')>()),
   getSysRedis: () => ({
@@ -1326,7 +1326,7 @@ describe("the model flag detail panes' images", () => {
   });
 });
 
-// The main app's image.moderate, delegated with the acting moderator's id: the spoke reads that
+// civitai/civitai#10555. The main app's image.moderate, delegated with the acting moderator's id: the spoke reads that
 // moderator's roles itself, as the request carries no session.
 describe('delegated image.moderate', () => {
   const GRANT_HOLDER = 990000003;
@@ -1342,16 +1342,19 @@ describe('delegated image.moderate', () => {
   const moderate = (userId: number, reviewAction: 'block' | 'unblock', ids: number[]) =>
     modActions[MOD_ACTION.imageModerate].handler({ ids, reviewAction, userId });
 
-  it.each(['unblock', 'block'] as const)(
-    'refuses %s by a moderator without the grant on a batch with a withheld image, writing nothing',
-    async (reviewAction) => {
-      await expect(
-        moderate(WITHOUT_GRANT.id, reviewAction, [CONTROL, WITHHELD])
-      ).rejects.toMatchObject({ status: 403, message: expect.stringContaining(String(WITHHELD)) });
-      expect(acceptImage).not.toHaveBeenCalled();
-      expect(blockImage).not.toHaveBeenCalled();
-    }
-  );
+  it('refuses an unblock by a moderator without the grant on a batch with a withheld image, writing nothing', async () => {
+    await expect(moderate(WITHOUT_GRANT.id, 'unblock', [CONTROL, WITHHELD])).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining(String(WITHHELD)),
+    });
+    expect(acceptImage).not.toHaveBeenCalled();
+  });
+
+  // A block only protects the image, so it is never refused.
+  it('blocks a withheld image for a moderator without the grant', async () => {
+    await moderate(WITHOUT_GRANT.id, 'block', [WITHHELD]);
+    expect(blockImage).toHaveBeenCalledOnce();
+  });
 
   it('blocks and unblocks an image nothing withholds, for a moderator without the grant', async () => {
     await moderate(WITHOUT_GRANT.id, 'unblock', [CONTROL]);
