@@ -8890,8 +8890,9 @@ model KnightsPlayer {
   hiddenTagGroups  String[] @default([])
 }
 
-/// One "Not sure" on a yes/no question: a queue item (`itemId`) or an Acolyte practice pair (`yesNoReferenceId`), exactly
-/// one of them (CHECK in the migration). Never a vote. `questionKey` and `imageId` are a snapshot, so counts outlive items.
+/// One "Not sure" on a yes/no queue item (`itemId`); the run cadence reads it back. Never a vote. `questionKey` and `imageId`
+/// are a snapshot, so counts outlive items. `yesNoReferenceId` is unused: Acolyte practice pairs are graded and offer no
+/// "Not sure".
 model KnightsUnsure {
   id               BigInt   @id @default(autoincrement())
   playerId         Int
