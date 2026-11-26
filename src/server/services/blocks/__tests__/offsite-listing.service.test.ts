@@ -915,7 +915,13 @@ describe('approveExternalRequest', () => {
       expect.objectContaining({
         type: 'app-listing-approved',
         userId: CALLER,
-        details: expect.objectContaining({ slug: 'cool-app', listingId: 'apl_1' }),
+        // The approving moderator and their note, for the "Reviewed by" line.
+        attribution: { kind: 'moderator', userId: MOD },
+        details: expect.objectContaining({
+          slug: 'cool-app',
+          listingId: 'apl_1',
+          approvalNote: 'looks good',
+        }),
       })
     );
   });
@@ -1429,6 +1435,7 @@ describe('rejectExternalRequest', () => {
       expect.objectContaining({
         type: 'app-listing-rejected',
         userId: CALLER,
+        attribution: { kind: 'moderator', userId: MOD },
         details: expect.objectContaining({ slug: 'cool-app', reason: REASON }),
       })
     );

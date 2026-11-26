@@ -104,6 +104,8 @@ type NotificationMessage = {
   target?: '_blank' | '_self';
   /** The email button's label for this `url`. Without it the button reads "View on Civitai". */
   emailButtonLabel?: string;
+  /** Who it is from, as a line under the message, e.g. "Reviewed by @name, Civitai App Review". */
+  byline?: string;
 };
 export type NotificationProcessorRunInput = {
   lastSent: string;

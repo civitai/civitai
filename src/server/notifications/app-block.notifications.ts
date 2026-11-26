@@ -1,5 +1,10 @@
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { NotificationCategory } from '~/server/common/enums';
+import {
+  appReviewByline,
+  withApprovalNote,
+  type AppReviewAttributionDetails,
+} from '~/server/notifications/app-review-attribution';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 /**
@@ -43,7 +48,9 @@ export type AppBlockModerationNotificationDetails = {
    * viewer outside its two flags (`canOpenAppRunPages`), and the submitter may be outside them.
    */
   canOpenRunPage?: boolean;
-};
+  /** Approve only: the moderator's approval note, when they left one. */
+  approvalNote?: string | null;
+} & AppReviewAttributionDetails;
 
 /**
  * The rejected notification (and an approved one that cannot link to its run page; see
@@ -93,10 +100,14 @@ export const appBlockNotifications = createNotificationProcessor({
       const details = notification.details as AppBlockModerationNotificationDetails;
       const url = approvedAppUrl(details);
       return {
-        message: `${appLabel(details)} was approved and will be live in a few minutes.`,
+        message: withApprovalNote(
+          `${appLabel(details)} was approved and will be live in a few minutes.`,
+          details.approvalNote
+        ),
         url,
         // Only the run page is "your app"; the submissions-view fallback keeps the default label.
         emailButtonLabel: url === SUBMITTER_SUBMISSIONS_URL ? undefined : 'Open your app',
+        byline: appReviewByline(details),
       };
     },
   },
@@ -110,6 +121,7 @@ export const appBlockNotifications = createNotificationProcessor({
       return {
         message: withReason(`${appLabel(details)} was not approved`, details.reason),
         url: SUBMITTER_SUBMISSIONS_URL,
+        byline: appReviewByline(details),
       };
     },
   },

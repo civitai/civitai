@@ -1,5 +1,6 @@
 import { dbRead } from '~/server/db/client';
 import type { BareNotification } from '~/server/notifications/base.notifications';
+import { appReviewDetailFetcher } from '~/server/notifications/detail-fetchers/app-review.detail-fetcher';
 import { articleDetailFetcher } from '~/server/notifications/detail-fetchers/article.detail-fetcher';
 import { buzzDetailFetcher } from '~/server/notifications/detail-fetchers/buzz.detail-fetcher';
 import { commentDetailFetcher } from '~/server/notifications/detail-fetchers/comment.detail-fetcher';
@@ -18,6 +19,7 @@ const detailFetchers = [
   reviewDetailFetcher,
   placementDetailFetcher,
   modelFaceDetailFetcher,
+  appReviewDetailFetcher,
 ];
 
 /**

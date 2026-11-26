@@ -21,6 +21,7 @@ import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.con
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ReviewerByline, type DecisionReviewerView } from '~/components/Apps/ReviewerByline';
 
 /**
  * The authoring page's **History** tab — one listing's full publish-request stream.
@@ -81,6 +82,11 @@ export type ListingHistoryEntry = {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /**
+   * Who decided it, on the app team's own read only. Optional because the moderator projection
+   * never carries it (that surface shows its own reviewer chip through `children`).
+   */
+  reviewer?: DecisionReviewerView | null;
   changelog: string | null;
   deployState: string | null;
   /** Last lifecycle transition — the clock for elapsed time and the stalled check. */
@@ -344,6 +350,7 @@ export function ListingHistoryEntryRow({
           {e.approvalNotes}
         </Text>
       ) : null}
+      <ReviewerByline reviewer={e.reviewer} testId={`apps-history-reviewer-${e.id}`} />
       {/*
         🔴 THREE CONDITIONS, and each one removes a button that could only fail.
         `canWithdraw` is the server restating its own submitter-scoped refusal;
