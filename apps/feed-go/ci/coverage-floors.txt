@@ -13,6 +13,7 @@ internal/apipolicy 88
 internal/auth 94
 internal/browsing 98
 internal/chread 93
+internal/chwrite 96
 internal/config 78
 internal/dbpool 95
 internal/devalue 91
