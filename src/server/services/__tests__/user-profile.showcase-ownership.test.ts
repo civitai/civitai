@@ -313,6 +313,54 @@ describe('updateUserProfile — custom placement rows without sections', () => {
   });
 });
 
+describe('updateUserProfile — section widths', () => {
+  const storeSections = (profileSectionsSettings: unknown[]) =>
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      id: OWNER_ID,
+      meta: {},
+      settings: {},
+      publicSettings: {},
+      cosmetics: [],
+      profile: {
+        userId: OWNER_ID,
+        message: null,
+        coverImage: null,
+        showcaseItems: [],
+        profileSectionsSettings,
+      },
+    } as never);
+  const savedSections = () =>
+    (tx.userProfile.update.mock.calls[0][0] as { data: { profileSectionsSettings: unknown } }).data
+      .profileSectionsSettings;
+
+  it('keeps the stored widths when saved without the redesign', async () => {
+    storeSections([{ key: 'showcase', enabled: true, width: 'half' }]);
+    await updateUserProfile({
+      userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
+      profileSectionsSettings: [
+        { key: 'showcase', enabled: true, width: 'full' },
+        { key: 'popularModels', enabled: true, width: 'half' },
+      ],
+    });
+    expect(savedSections()).toEqual([
+      { key: 'showcase', enabled: true, width: 'half' },
+      { key: 'popularModels', enabled: true },
+    ]);
+  });
+
+  it('saves the widths sent with the redesign', async () => {
+    storeSections([{ key: 'showcase', enabled: true, width: 'half' }]);
+    await updateUserProfile({
+      userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
+      profileRedesign: true,
+      profileSectionsSettings: [{ key: 'showcase', enabled: true, width: 'full' }],
+    });
+    expect(savedSections()).toEqual([{ key: 'showcase', enabled: true, width: 'full' }]);
+  });
+});
+
 describe('addEntityToShowcaseHandler — ownership', () => {
   const ctxFor = (isModerator: boolean) =>
     ({ user: { id: OWNER_ID, isModerator }, domain: 'red' } as never);

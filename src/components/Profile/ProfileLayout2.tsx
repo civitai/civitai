@@ -203,7 +203,11 @@ export function ProfileLayout2({
         subNav={blockedByThem ? null : <SubnavProfileNavigation username={username} />}
         announcements={false}
       >
-        <div className="isolate min-h-full px-3" data-profile-content>
+        <div
+          // Redesign only, keyed on its tab bar: its own stacking context, at least a screen tall.
+          className="px-3 [&:has([data-profile-bar])]:isolate [&:has([data-profile-bar])]:min-h-full"
+          data-profile-content
+        >
           {blockedByThem && user ? (
             <BlockedByThemPanel user={user} />
           ) : isBlocked ? (

@@ -1,6 +1,7 @@
 -- Profile redesign: page background, card colours (pageTheme), About text and pinned items, sidebar cosmetic.
--- Apply ALL of it before the code that reads these columns deploys: a missing column breaks
--- every profile read, flag or not. Part 1 runs in a transaction; parts 2 and 3 run on their own.
+-- Apply ALL of it before the code that uses these columns deploys. Without them, flag or not,
+-- every profile save, moderator clear and archive, CSAM hold removal, profile scam scan and
+-- personal-data export fails. Part 1 runs in a transaction; parts 2 and 3 run on their own.
 
 -- Part 1
 SET lock_timeout = '5s';

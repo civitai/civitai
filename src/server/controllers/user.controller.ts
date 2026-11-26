@@ -751,8 +751,10 @@ export const updateUserHandler = async ({
         unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
       );
 
-    if (sidebarBackgroundId) payloadCosmeticIds.push(sidebarBackgroundId);
-    else if (sidebarBackgroundId === null)
+    // Only the redesigned profile draws a sidebar background, so only its customizer sets one.
+    const sidebarId = ctx.features?.profileRedesign ? sidebarBackgroundId : undefined;
+    if (sidebarId) payloadCosmeticIds.push(sidebarId);
+    else if (sidebarId === null)
       unequipPromises.push(
         unequipCosmeticByType({ userId: id, type: CosmeticType.SidebarBackground })
       );

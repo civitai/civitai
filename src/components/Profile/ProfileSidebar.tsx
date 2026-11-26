@@ -138,7 +138,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     user?.id ?? 0,
     redesign && hasPublicShop && !!features.creatorServices
   );
-  const { shop } = useQueryCreatorShop(services.length > 0 ? user?.id : undefined);
+  const { shop } = useQueryCreatorShop(redesign && services.length > 0 ? user?.id : undefined);
   const showServicesBtn = storefrontShowsServices(shop, services.length, features);
 
   const badges = useMemo(

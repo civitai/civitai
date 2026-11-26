@@ -593,6 +593,20 @@ export const updateUserProfile = async ({
   // A `custom:<id>` row only places a section that exists. A user who never had the flag has
   // none, so none of their rows survive.
   if (profile.profileSectionsSettings) {
+    // Section widths are the redesign's: without the flag each section keeps the width it has.
+    if (!profileRedesign) {
+      const storedWidths = new Map(
+        ((current.profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[]).map(
+          (section) => [section.key, section.width]
+        )
+      );
+      profile.profileSectionsSettings = profile.profileSectionsSettings.map(
+        ({ width: _width, ...section }) => {
+          const width = storedWidths.get(section.key);
+          return width ? { ...section, width } : section;
+        }
+      );
+    }
     const sectionKeys = new Set(
       ((current.profile?.showcaseSections ?? []) as ShowcaseSectionSchema[]).map((s) =>
         customShowcaseKey(s.id)
