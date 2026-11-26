@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic';
 import { Stack, Tabs, Text } from '@mantine/core';
 import {
   IconCode,
@@ -33,7 +34,6 @@ import {
 import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
 import { ReviewListingMediaLive } from '~/components/Apps/ReviewListingMediaLive';
 import { ReviewOverviewPanel } from '~/components/Apps/ReviewOverviewPanel';
-import { ReviewThread } from '~/components/Apps/ReviewThread';
 import {
   isReviewDetailTab,
   resolveReviewDetailTab,
@@ -45,6 +45,12 @@ import {
 } from '~/components/Apps/reviewDetailTabs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { appDisplayName } from '~/shared/utils/app-display-name';
+
+// Loaded when the Conversation tab first opens: the thread (and the user-avatar graph it renders)
+// stays out of the review page's initial bundle, and the feature is dark behind its flag.
+const ReviewThread = dynamic(() =>
+  import('~/components/Apps/ReviewThread').then((m) => m.ReviewThread)
+);
 
 /**
  * The per-submission review PAGE's body, as SEVEN TABS with the OVERVIEW FIRST (see
