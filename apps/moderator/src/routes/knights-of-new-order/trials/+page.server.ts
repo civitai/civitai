@@ -37,6 +37,7 @@ import {
   retireYesNoQuestion,
   rewordYesNoQuestion,
   unretireYesNoQuestion,
+  yesNoQuestionImageIds,
   YESNO_QUESTION_STATUSES,
   type YesNoQuestionItem,
   type YesNoQuestionQuery,
@@ -277,11 +278,19 @@ export const actions: Actions = {
       retireYesNoQuestion({ ...input, by: event.locals.user!.id })
     ),
   unretireQuestion: (event) =>
-    run(event, forms.unretireQuestion, 'restore the question', ({ id }) =>
-      unretireYesNoQuestion({ id, by: event.locals.user!.id })
+    run(
+      event,
+      forms.unretireQuestion,
+      'restore the question',
+      ({ id }) => unretireYesNoQuestion({ id, by: event.locals.user!.id }),
+      ({ id }) => yesNoQuestionImageIds(id)
     ),
   rewordQuestion: (event) =>
-    run(event, forms.rewordQuestion, 'reword the question', (input) =>
-      rewordYesNoQuestion({ ...input, by: event.locals.user!.id })
+    run(
+      event,
+      forms.rewordQuestion,
+      'reword the question',
+      (input) => rewordYesNoQuestion({ ...input, by: event.locals.user!.id }),
+      ({ id }) => yesNoQuestionImageIds(id)
     ),
 };

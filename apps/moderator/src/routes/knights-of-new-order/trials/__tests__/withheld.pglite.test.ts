@@ -216,6 +216,14 @@ const referenceId = async (imageId: number, source: string, status: string) => {
   return rows[0].id;
 };
 
+const questionId = async (imageId: number) => {
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT id FROM "KnightsQueueItem" WHERE "imageId" = $1`,
+    [imageId]
+  );
+  return rows[0].id;
+};
+
 const pairId = async (imageId: number) => {
   const { rows } = await db.query<{ id: number }>(
     `SELECT id FROM "KnightsYesNoReference" WHERE "imageId" = $1`,
@@ -231,6 +239,8 @@ const rowsFor = async (imageId: number) =>
         `SELECT 'ref' AS t, id, answer, source, status, explanation FROM "KnightsReferenceImage" WHERE "imageId" = $1
          UNION ALL
          SELECT 'pair', id, answer::text, "questionKey", active::text, explanation FROM "KnightsYesNoReference" WHERE "imageId" = $1
+         UNION ALL
+         SELECT 'question', id, prompt, "questionKey", status, reason FROM "KnightsQueueItem" WHERE "imageId" = $1
          ORDER BY 1, 2`,
         [imageId]
       )
@@ -291,6 +301,27 @@ const gradingActions: {
       const id = await pairId(image);
       await db.query(`UPDATE "KnightsYesNoReference" SET active = false WHERE id = $1`, [id]);
       return { id: String(id), active: 'true' };
+    },
+    servesImage: true,
+  },
+  {
+    action: 'rewordQuestion',
+    fields: async (image) => ({
+      id: String(await questionId(image)),
+      prompt: 'Is there a weapon?',
+      note: 'clearer',
+    }),
+    servesImage: true,
+  },
+  {
+    action: 'unretireQuestion',
+    fields: async (image) => {
+      const id = await questionId(image);
+      await db.query(
+        `UPDATE "KnightsQueueItem" SET status = 'Closed', reason = 'moderator-retired', "resolvedAt" = now() WHERE id = $1`,
+        [id]
+      );
+      return { id: String(id) };
     },
     servesImage: true,
   },
