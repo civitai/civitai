@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   agentReport: null as unknown,
   // agentReviewChat mutation control.
   chatReply: 'Because scope buzz:read is used in wallet.js:10.',
+  chatTruncated: false,
   chatError: undefined as { message: string } | undefined,
   chatPending: false,
   chatMutate: vi.fn(),
@@ -79,7 +80,7 @@ vi.mock('~/utils/trpc', () => {
             mutate: (
               vars: unknown,
               opts?: {
-                onSuccess?: (d: { reply: string }) => void;
+                onSuccess?: (d: { reply: string; truncated: boolean }) => void;
                 onError?: (e: { message: string }) => void;
               }
             ) => {
@@ -100,7 +101,7 @@ vi.mock('~/utils/trpc', () => {
                 });
                 return;
               }
-              opts?.onSuccess?.({ reply: mocks.chatReply });
+              opts?.onSuccess?.({ reply: mocks.chatReply, truncated: mocks.chatTruncated });
             },
             isPending: mocks.chatPending,
           }),
@@ -126,6 +127,7 @@ const COMPLETE_REPORT = {
 beforeEach(() => {
   mocks.agentReport = null;
   mocks.chatReply = 'Because scope buzz:read is used in wallet.js:10.';
+  mocks.chatTruncated = false;
   mocks.chatError = undefined;
   mocks.chatPending = false;
   mocks.chatMutate.mockClear();
@@ -217,6 +219,50 @@ describe('AgentReviewChat — send', () => {
     await expect
       .element(page.getByRole('textbox', { name: 'Ask the review agent' }))
       .toBeDisabled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUT-OFF REPLY (the server flags a reply that hit the length cap)
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewChat — cut-off reply', () => {
+  test('a truncated reply shows a cut-off notice under that message', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    mocks.chatReply = 'The first finding is in wallet.js:10, and the second';
+    mocks.chatTruncated = true;
+    renderPanel();
+
+    await sendTurn('walk me through every finding');
+
+    const note = page.getByTestId('chat-agent-truncated-note');
+    await expect.element(note).toBeInTheDocument();
+    await expect.element(note).toHaveTextContent('This answer was cut off. Ask it to continue.');
+    // The notice sits inside the reply it describes.
+    const bubble = document.querySelector('[data-testid="chat-agent-msg"]') as HTMLElement;
+    expect(bubble.querySelector('[data-testid="chat-agent-truncated-note"]')).not.toBeNull();
+  });
+
+  test('a complete reply shows no notice, and the flag is never sent back as history', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    mocks.chatTruncated = true;
+    renderPanel();
+    await sendTurn('q1');
+    await expect.element(page.getByTestId('chat-agent-truncated-note')).toBeInTheDocument();
+
+    mocks.chatTruncated = false;
+    await sendTurn('continue');
+    await expect.element(page.getByText('continue', { exact: true })).toBeInTheDocument();
+    await expect.poll(() => page.getByTestId('chat-agent-msg').elements().length).toBe(2);
+    // Only the first reply carries the notice.
+    expect(page.getByTestId('chat-agent-truncated-note').elements()).toHaveLength(1);
+    // The second request re-sent the first reply as plain role + content.
+    const second = mocks.chatMutate.mock.calls[1][0] as { messages: unknown[] };
+    expect(second.messages).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'Because scope buzz:read is used in wallet.js:10.' },
+      { role: 'user', content: 'continue' },
+    ]);
   });
 });
 
