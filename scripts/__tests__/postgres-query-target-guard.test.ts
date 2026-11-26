@@ -1,5 +1,8 @@
-import { spawnSync } from 'child_process';
+import { PGlite } from '@electric-sql/pglite';
+import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
+import { spawn, spawnSync } from 'child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import type { AddressInfo } from 'net';
 import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -15,15 +18,18 @@ const LOCAL_URL = 'postgres://app:app@127.0.0.1:1/civitai';
 let scratch: string;
 let skillDir: string;
 
-const run = (...args: string[]) => {
+const envWithoutDatabases = () => {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/DATABASE|_DB_/.test(key)) delete env[key];
-  return spawnSync(process.execPath, [join(skillDir, 'query.mjs'), ...args, 'SELECT 1'], {
-    env,
+  return env;
+};
+
+const run = (...args: string[]) =>
+  spawnSync(process.execPath, [join(skillDir, 'query.mjs'), ...args, 'SELECT 1'], {
+    env: envWithoutDatabases(),
     encoding: 'utf-8',
     timeout: 20_000,
   });
-};
 
 beforeEach(() => {
   scratch = join(repoRoot, 'node_modules/.cache/postgres-query-guard', String(process.pid));
@@ -57,4 +63,57 @@ describe('postgres-query target guard', () => {
     expect(result.stderr).toContain('Target: PROD');
     expect(result.stderr).not.toContain('was read from');
   });
+});
+
+// Async spawn: PGlite answers on this process's event loop, which spawnSync would block.
+const runOnPglite = async (...args: string[]) => {
+  const db = await PGlite.create();
+  const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: 0 });
+  await server.start();
+  const { port } = (server as unknown as { server: { address(): AddressInfo } }).server.address();
+  writeFileSync(
+    join(skillDir, '.env'),
+    `DEV_DATABASE_URL=postgres://postgres@127.0.0.1:${port}/postgres?sslmode=disable\n`
+  );
+
+  const started = Date.now();
+  const child = spawn(process.execPath, [join(skillDir, 'query.mjs'), '--dev', ...args], {
+    env: envWithoutDatabases(),
+  });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => (stdout += chunk));
+  const status = await new Promise((done) => child.on('exit', done));
+  const elapsed = Date.now() - started;
+  await server.stop();
+  await db.close();
+  return { status, stdout, elapsed };
+};
+
+describe('postgres-query --explain', () => {
+  it('shows the plan without running the query', async () => {
+    const { status, stdout, elapsed } = await runOnPglite('--explain', 'SELECT pg_sleep(10)');
+
+    expect(status).toBe(0);
+    expect(stdout).toContain('Result');
+    expect(stdout).not.toContain('actual time');
+    expect(elapsed).toBeLessThan(8000);
+  }, 30_000);
+
+  it('--explain-analyze runs the query and reports actual timings', async () => {
+    const { status, stdout } = await runOnPglite('--explain-analyze', 'SELECT pg_sleep(0)');
+
+    expect(status).toBe(0);
+    expect(stdout).toContain('actual time');
+  }, 30_000);
+});
+
+// PGlite ignores the statement_timeout startup option, as a transaction pooler may, so only the
+// SET LOCAL inside the read transaction can set it here.
+describe('postgres-query --timeout', () => {
+  it('sets statement_timeout inside the read transaction', async () => {
+    const { status, stdout } = await runOnPglite('--timeout', '7', 'SHOW statement_timeout');
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("statement_timeout: '7s'");
+  }, 30_000);
 });

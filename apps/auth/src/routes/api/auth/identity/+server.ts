@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { refusesMemorializedSession } from '@civitai/auth';
+import { createLogWindowCap } from '@civitai/shared/log-window-cap';
 import { verifier } from '$lib/server/auth/verifier';
 import {
   getOrProduceSessionUser,
@@ -60,6 +61,18 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
 
 type PostBody = { userId?: unknown; refresh?: unknown; scope?: unknown };
 
+// A flood of refused calls must not become a flood of records: past the cap, one count per window.
+const refusedCap = createLogWindowCap({
+  limit: 20,
+  windowMs: 60_000,
+  onSummary: (summary) =>
+    logToAxiom({
+      name: 'identity-invalidate-audit',
+      type: 'info',
+      payload: { internal: false, summary: true, ...summary },
+    }),
+});
+
 // WRITE side — service-authed cache invalidation (createSessionClient). Targets an ARBITRARY userId
 // (a mod banning user X, a subscription webhook), so it's authed by the shared `AUTH_INTERNAL_TOKEN`, NOT a
 // user session token. Body: { userId, refresh? } per-user; or { scope: 'all', asOf? } mass. Default busts
@@ -79,8 +92,15 @@ export const POST: RequestHandler = async ({ request, platform }) => {
     status = res.status;
     return res;
   } finally {
-    // Every mass invalidation and every refused call; per-user busts are too frequent to record.
-    if (body.scope === 'all' || !internal) {
+    // Every mass invalidation and every refused call (past the cap, counted); per-user busts are
+    // too frequent to record.
+    const clientIp = getClientIp(request);
+    // Counted by the socket peer: the proxy headers behind clientIp are the caller's to choose.
+    if (
+      internal
+        ? body.scope === 'all'
+        : refusedCap.admit({ key: 'post', clientIp: socketAddress(platform) })
+    ) {
       logToAxiom({
         name: 'identity-invalidate-audit',
         type: 'info',
@@ -92,7 +112,7 @@ export const POST: RequestHandler = async ({ request, platform }) => {
           userId: typeof body.userId === 'number' ? body.userId : undefined,
           refresh: body.refresh === true,
           // The proxy headers are caller-supplied; the socket peer is not.
-          clientIp: getClientIp(request),
+          clientIp,
           socketIp: socketAddress(platform),
           userAgent: request.headers.get('user-agent')?.slice(0, 512),
         },
