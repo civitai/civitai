@@ -73,7 +73,11 @@ function setUser(
   }: {
     pictureNulled?: boolean;
     pictureNsfwLevel?: number;
-    coverFields?: { nsfwLevel?: number; modelRestricted?: boolean | null };
+    coverFields?: {
+      nsfwLevel?: number;
+      modelRestricted?: boolean | null;
+      blockedFor?: string | null;
+    };
   } = {}
 ) {
   const row = {
@@ -260,6 +264,32 @@ describe('getUserWithProfile — model-restricted cover', () => {
 
     expect(await coverFor(visitor)).toBe('cover-Scanned');
     expect(await coverFor(moderator)).toBe('cover-Scanned');
+  });
+});
+
+describe('getUserWithProfile — blocked cover, for its owner', () => {
+  const owner = { sessionUserId: OWNER };
+  const moderator = { sessionUserId: VISITOR, isModerator: true };
+  const coverFor = async (viewer: { sessionUserId: number; isModerator?: boolean }) =>
+    (await getUserWithProfile({ id: OWNER, ...viewer })).profile.coverImage?.url ?? null;
+
+  it.each(['tos', 'moderated'])('gives the owner no cover blocked for %s', async (blockedFor) => {
+    setUser('Blocked', { coverFields: { blockedFor } });
+
+    expect(await coverFor(owner)).toBeNull();
+    expect(await coverFor(moderator)).toBe('cover-Blocked');
+  });
+
+  it('gives the owner no cover with a Blocked ingestion and no reason', async () => {
+    setUser('Blocked');
+
+    expect(await coverFor(owner)).toBeNull();
+  });
+
+  it('keeps the cover for its owner under a metadata hold only', async () => {
+    setUser('Blocked', { coverFields: { blockedFor: 'AiNotVerified' } });
+
+    expect(await coverFor(owner)).toBe('cover-Blocked');
   });
 });
 

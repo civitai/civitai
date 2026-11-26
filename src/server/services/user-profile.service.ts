@@ -38,6 +38,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
@@ -173,6 +174,8 @@ export const getUserWithProfile = async ({
         ? isRestrictedImage(coverImage)
         : !servableArticleImage(coverImage);
       if (!sameUser && hidden) return null;
+      // Its owner gets no cover whose block refuses them the media.
+      if (sameUser && !isModerator && !ownerMediaAllowed(coverImage)) return null;
 
       return {
         ...coverImage,

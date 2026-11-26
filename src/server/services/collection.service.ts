@@ -112,6 +112,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
@@ -2054,9 +2055,14 @@ export const upsertCollection = async ({
 export const updateCollectionCoverImage = async ({
   input,
 }: {
-  input: UpdateCollectionCoverImageInput & { userId: number; isModerator?: boolean };
+  input: UpdateCollectionCoverImageInput & {
+    userId: number;
+    isModerator?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
+  };
 }) => {
-  const { id, imageId, userId, isModerator } = input;
+  const { id, imageId, userId, isModerator, asModerator = false } = input;
   const permission = await getUserCollectionPermissionsById({
     id,
     userId,
@@ -2073,6 +2079,17 @@ export const updateCollectionCoverImage = async ({
     isModerator,
     confirmBlockOnPrimary: true,
   });
+  // The check above keeps an owner's blocked row; a block that refuses them the media refuses the
+  // cover too, since the cover serves it.
+  if (!asModerator) {
+    // primary: a block from moments ago must refuse it.
+    const image = await dbWrite.image.findUnique({
+      where: { id: imageId },
+      select: { ingestion: true, blockedFor: true },
+    });
+    if (image && !ownerMediaAllowed(image))
+      throw throwBadRequestError('This image is blocked and cannot be used here.');
+  }
   await assertNotDealFileImages([imageId], 'used here');
 
   const updated = await dbWrite.collection.update({

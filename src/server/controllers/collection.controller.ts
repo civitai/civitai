@@ -98,6 +98,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { dbRead } from '../db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
@@ -494,7 +495,12 @@ export const updateCollectionCoverImageHandler = async ({
 
   try {
     const collection = await updateCollectionCoverImage({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        asModerator: actsAsModerator(ctx),
+      },
     });
 
     return collection;
