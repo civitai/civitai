@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -19,18 +19,22 @@ import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { FP_AUTO_HIDE_REPORT_COMMENT } from '@civitai/db-queries/feature-page-comments';
+import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 
 /**
  * Removes comments as ToS violations: the flag takes them off the page, their ToS reports are
  * actioned and the reporters rewarded, and each author is told. Counts the live comments it was
  * given: one already hidden still has its reports actioned, but its author is not told again.
+ * Only ToS reports in `fromStatuses` (default: the open ones) are actioned.
  */
 export async function bulkSetCommentV3TosViolation({
   ids,
   actor,
+  fromStatuses = OPEN_REPORT_STATUSES,
 }: {
   ids: number[];
   actor: { id: number; ip?: string };
+  fromStatuses?: readonly ReportStatus[];
 }) {
   // Under the rows' lock (setCommentFlags takes it): a clear waits for this commit, so it sees
   // the reports actioned here.
@@ -54,7 +58,9 @@ export async function bulkSetCommentV3TosViolation({
           WHERE c."reportId" = r.id
             AND c."commentId" = ANY(${removed}::int[])
             AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-            AND r.status <> ${ReportStatus.Actioned}::"ReportStatus"
+            AND r.status IN (${Prisma.join(
+              fromStatuses.map((s) => Prisma.sql`${s}::"ReportStatus"`)
+            )})
           RETURNING r.id, r."userId"`
       : [];
     return { flagged, already, reports };
