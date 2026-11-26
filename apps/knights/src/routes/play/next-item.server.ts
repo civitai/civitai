@@ -37,8 +37,7 @@ export async function pickItem(
   const secret = feedSecret();
 
   const yesNo = await yesNoConfig();
-  // The tag review source is served on the same cadence when it is switched on, whatever the yes/no share. The player's
-  // switch in Knights settings covers both: every queue yes/no reaches the player through this one check.
+  // The tag review source is served on the same cadence when it is switched on, whatever the yes/no share.
   const due =
     (yesNo.share > 0 || yesNo.tagReview) &&
     (yesNoOn ?? (await playerPrefs(db, userId, yesNo.playerDefault)).yesNo) &&

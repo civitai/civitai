@@ -24,7 +24,6 @@ export async function requireMemberRank(db: Kysely<DB>, userId: number): Promise
   return player.rankType;
 }
 
-/** A status read for a user, or the redirect to the home page when they have no player row. */
 export function memberOrRedirect(status: PlayerStatus | null): PlayerStatus {
   if (!status) redirect(303, '/home');
   return status;

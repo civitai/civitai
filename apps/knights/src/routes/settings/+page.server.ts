@@ -23,7 +23,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       .where('userId', '=', locals.user.id)
       .executeTakeFirst(),
   ]);
-  // Every player can start over, Acolytes included; the restart itself is `RestartCareerDialog` (GET/POST /career).
+  // Acolytes restart too, so career is returned on every path.
   const career = { swornIn: player?.startAt.toISOString() ?? null };
   if (!tunesServing(status.rank))
     return {

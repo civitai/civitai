@@ -1033,7 +1033,7 @@
           <input type="hidden" name="item" value={shown.item.id} />
           <button type="submit" name="settled" value="1" hidden tabindex="-1" aria-label="Continue" bind:this={settledSubmit}></button>
           {#if yesNo}
-            <!-- Same action as Skip (no pay, no smite), named for what it means on a question; Space still sends it. -->
+            <!-- Posts the skip action: on a question that is the Not sure answer. -->
             <AnswerPill
               option={{ value: 'unsure', label: 'Not sure' }}
               index={0}
