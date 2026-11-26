@@ -131,6 +131,7 @@ const EPISODE = {
   ingestionError: { enteredAt: 1_700_000_000_000, rounds: 1, notifiedAt: 1_700_000_000_000 },
 };
 
+// Notification policy agreed with the Moderation Lead and the Site Maintenance Lead (#10522).
 describe('an Error episode starting', () => {
   it('records the episode and tells the owner what could not be scanned', async () => {
     await seed({ content: { ingestion: 'Error' } });

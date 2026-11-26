@@ -17,6 +17,7 @@ import {
   updateArticleImageScanStatus,
 } from '~/server/services/article.service';
 import {
+  ingestionErrorPatch,
   ingestionErrorStep,
   readIngestionErrorState,
   silentIngestionErrorState,
@@ -344,7 +345,6 @@ async function runErrorRetries(now: Date) {
  */
 async function retryErrorArticles(now: Date) {
   // Least recently checked first, so a backlog of exhausted episodes cannot starve newer ones.
-  // Beside the stuck-article query above, in the same form, which this job's tests already serve.
   const rows = await dbRead.$queryRaw<{ id: number; ingestionError: unknown }[]>`
     SELECT a.id, a.metadata->'ingestionError' AS "ingestionError"
     FROM "Article" a
@@ -403,13 +403,13 @@ async function retryErrorArticles(now: Date) {
       const step = ingestionErrorStep(state, checkedAt);
 
       if (step === 'exhaust') {
-        await updateErrorState(id, state.enteredAt, { exhaustedAt: checkedAt, checkedAt });
+        await updateErrorState(id, state.enteredAt, ingestionErrorPatch(step, state, checkedAt));
         counts.exhausted++;
         logToAxiom({ name: 'article-ingestion-error-exhausted', type: 'warning', articleId: id });
         continue;
       }
       if (step !== 'round' || imageBudget <= 0) {
-        await updateErrorState(id, state.enteredAt, { checkedAt });
+        await updateErrorState(id, state.enteredAt, ingestionErrorPatch('check', state, checkedAt));
         continue;
       }
 
@@ -455,11 +455,7 @@ async function retryErrorArticles(now: Date) {
         counts.texts++;
       }
 
-      await updateErrorState(id, state.enteredAt, {
-        rounds: state.rounds + 1,
-        lastRoundAt: checkedAt,
-        checkedAt,
-      });
+      await updateErrorState(id, state.enteredAt, ingestionErrorPatch(step, state, checkedAt));
       counts.rounds++;
       logToAxiom({
         name: 'article-ingestion-reconcile',

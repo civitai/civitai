@@ -125,9 +125,9 @@ export const silentIngestionErrorState = (now: number): ArticleIngestionErrorSta
 
 /**
  * What the reconcile job does with an article still at Error: `start` one with no episode (its
- * recompute records one),
- * `round` when the next retry is due, `exhaust` a day after the last one (once its scans are back),
- * and otherwise `check` it once a day, since a moderator clearing a held image recomputes nothing.
+ * recompute records one), `round` when the next retry is due, `exhaust` a day after the last one,
+ * giving that round's scans time to return, and otherwise `check` it once a day, since a moderator
+ * clearing a held image recomputes nothing.
  */
 export function ingestionErrorStep(
   state: ArticleIngestionErrorState | null,
@@ -139,6 +139,17 @@ export function ingestionErrorStep(
   if (due === undefined && !state.exhaustedAt && now >= (state.lastRoundAt ?? 0) + DAY_MS)
     return 'exhaust';
   return now >= (state.checkedAt ?? state.enteredAt) + DAY_MS ? 'check' : 'wait';
+}
+
+/** The fields the reconcile job merges into the episode after acting on `step`. */
+export function ingestionErrorPatch(
+  step: 'round' | 'exhaust' | 'check',
+  state: ArticleIngestionErrorState,
+  now: number
+): Partial<ArticleIngestionErrorState> {
+  if (step === 'round') return { rounds: state.rounds + 1, lastRoundAt: now, checkedAt: now };
+  if (step === 'exhaust') return { exhaustedAt: now, checkedAt: now };
+  return { checkedAt: now };
 }
 
 /**

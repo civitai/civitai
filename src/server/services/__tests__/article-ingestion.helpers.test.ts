@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { ArticleIngestionInputs } from '~/server/services/article-ingestion.helpers';
 import {
   deriveArticleIngestionState,
+  ingestionErrorPatch,
   ingestionErrorStep,
   savedArticleMetadata,
+  type ArticleIngestionErrorState,
   textCheckSpentRetries,
 } from '~/server/services/article-ingestion.helpers';
 import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
@@ -156,6 +158,33 @@ describe('ingestionErrorStep, the Error retry schedule', () => {
     expect(ingestionErrorStep(exhausted, at(8.5))).toBe('wait');
     expect(ingestionErrorStep(exhausted, at(9))).toBe('check');
     expect(ingestionErrorStep({ enteredAt, rounds: 1, checkedAt: at(1) }, at(2))).toBe('check');
+  });
+});
+
+describe('an Error episode run through the reconcile job, tick by tick', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const TICK = 10 * 60 * 1000;
+  const enteredAt = Date.UTC(2026, 10, 1);
+
+  // What the job does to an episode that stays at Error for two weeks.
+  const simulate = () => {
+    let state: ArticleIngestionErrorState = { enteredAt, rounds: 0 };
+    const acted: { step: string; day: number }[] = [];
+    for (let now = enteredAt; now <= enteredAt + 14 * DAY; now += TICK) {
+      const step = ingestionErrorStep(state, now);
+      if (step === 'wait' || step === 'start') continue;
+      state = { ...state, ...ingestionErrorPatch(step, state, now) };
+      acted.push({ step, day: Math.floor((now - enteredAt) / DAY) });
+    }
+    return acted;
+  };
+
+  it('runs a round on days 1, 3 and 7, exhausts once on day 8, and checks daily after', () => {
+    const acted = simulate();
+    expect(acted.filter(({ step }) => step === 'round').map(({ day }) => day)).toEqual([1, 3, 7]);
+    expect(acted.filter(({ step }) => step === 'exhaust').map(({ day }) => day)).toEqual([8]);
+    const checks = acted.filter(({ step }) => step === 'check').map(({ day }) => day);
+    expect(checks).toEqual([2, 4, 5, 6, 9, 10, 11, 12, 13, 14]);
   });
 });
 
