@@ -2530,9 +2530,10 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
-      // A deferral for a missing upload never ends in a refusal: a url this hold deferred is probed
-      // whatever its issue record says, stays out of classification until its upload is proved
-      // present, and past the backstop is classified as never held unless its key is recorded.
+      // A deferral for a missing upload never ends in a refusal. A deferred bare key is probed
+      // whatever its issue record says and stays deferred until it is proved present, or, past the
+      // backstop, proved absent: then it is classified as never held unless its key is recorded.
+      // A deferred url with no answer this run (store unreadable, past the cap) stays deferred.
       const wasRefused = new Set(previousHold?.refused ?? []);
       const wasDeferred = new Set(previousHold?.deferred ?? []);
       const candidates = unlinked.filter(

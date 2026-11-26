@@ -438,7 +438,7 @@ async function processBatch(
     });
   }
 
-  // Before the recompute, so it keeps these articles off public until the settle job links them.
+  // Before the recompute, so it keeps these articles off public while their uploads are missing.
   const now = new Date();
   const unheld = new Set<number>();
   for (const article of articles) {
@@ -458,7 +458,7 @@ async function processBatch(
       const msg = error instanceof Error ? error.message : 'Unknown error';
       log(`  ⚠️  article ${article.id}: hold write for absent uploads failed: ${msg}`);
       stats.errors++;
-      // Not recomputed here; a later scan of its other images still recomputes it without a hold.
+      // Its absent urls now have neither a row nor a hold; counted in errors, linked on its next edit.
       unheld.add(article.id);
     }
   }
