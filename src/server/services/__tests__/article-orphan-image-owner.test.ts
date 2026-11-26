@@ -327,6 +327,47 @@ describe('the article cover and banner on save', () => {
     expect(saved.bannerId).toBeNull();
   });
 
+  // getArticleById withholds a cover or banner whose block refuses the author the media, so the
+  // author's form sends null for it.
+  describe('a cover and banner blocked by a moderation action', () => {
+    beforeEach(() => {
+      const base = dbMock.dbWrite.image.findMany.getMockImplementation();
+      dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+        args.select?.blockedFor
+          ? args.where.id.in.map((id: number) => ({
+              id,
+              ingestion: 'Blocked',
+              blockedFor: id === OLD_COVER ? 'tos' : 'moderated',
+            }))
+          : base?.(args)) as never);
+    });
+
+    it('keeps both when the author saves without them', async () => {
+      await save({ coverImage: null, bannerImage: null });
+
+      expect(saved).toEqual({ coverId: OLD_COVER, bannerId: OLD_BANNER });
+      expect(queuedIds()).toEqual([]);
+    });
+
+    it('replaces the cover when the author saves a new image of theirs', async () => {
+      await save({ coverImage: NEW_IMAGE, bannerImage: null });
+
+      expect(saved).toEqual({ coverId: NEW_IMAGE, bannerId: OLD_BANNER });
+    });
+
+    it('still refuses an image the author does not own as the replacement', async () => {
+      await expect(save({ coverImage: FOREIGN, bannerImage: null })).rejects.toThrow(
+        'Invalid cover image'
+      );
+    });
+
+    it("clears them on a moderator's save, whose form carried them", async () => {
+      await save({ coverImage: null, bannerImage: null }, MODERATOR);
+
+      expect(saved).toEqual({ coverId: null, bannerId: null });
+    });
+  });
+
   it('still applies the content change when queueing the replaced images fails', async () => {
     queueImageDeletes.mockRejectedValueOnce(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

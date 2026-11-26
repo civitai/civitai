@@ -91,11 +91,18 @@ const read = async (
 describe.each(['tos', 'moderated'])(
   'getArticleById for the author of a %s-blocked image',
   (blockedFor) => {
-    it('serves the cover and banner as notice rows with no url or blur hash', async () => {
+    it('withholds the cover and banner, telling the edit form they are kept', async () => {
       const article = await read(blockedFor, { userId: OWNER });
-      for (const row of [article.coverImage, article.bannerImage])
-        expect(row).toMatchObject({ url: null, hash: null, blockedFor, ingestion: 'Blocked' });
-      expect(article.cover).toBeNull();
+      expect(article).toMatchObject({
+        coverImage: undefined,
+        bannerImage: undefined,
+        coverImageWithheld: true,
+        bannerImageWithheld: true,
+        cover: null,
+      });
+      // No key of a blocked image anywhere in the answer, its blur hash included.
+      const answer = JSON.stringify(article);
+      for (const key of ['key-10', 'key-11', 'key-12']) expect(answer).not.toContain(key);
     });
 
     it('leaves the blocked body image out of the content and its image list', async () => {

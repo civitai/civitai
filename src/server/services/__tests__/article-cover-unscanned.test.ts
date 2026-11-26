@@ -183,10 +183,10 @@ describe('article card covers blocked by a moderation action', () => {
   };
 
   it.each(['tos', 'moderated'])(
-    'the feed carries a %s-blocked cover to its author with no url or blur hash',
+    'the feed carries no %s-blocked cover to its author',
     async (blockedFor) => {
       dbMock.dbRead.image.findMany.mockResolvedValue(blocked(blockedFor) as never);
-      expect(await authorCovers({ id: AUTHOR })).toEqual(STATES.map(() => [null, null]));
+      expect(await authorCovers({ id: AUTHOR })).toEqual(STATES.map(() => null));
     }
   );
 

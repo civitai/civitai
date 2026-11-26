@@ -1,6 +1,5 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
-import { ownerBlockedNotice } from '~/server/utils/image-media-visibility';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import {
@@ -706,10 +705,10 @@ export const getArticles = async ({
         )
           ? cover
           : undefined;
-        // The author keeps a cover whose block refuses them the media as a notice row.
+        // Nor does its author get a cover whose block refuses them the media (`ownerMediaAllowed`).
         const coverImage =
           viewable && !sessionUser?.isModerator && !ownerMediaAllowed(viewable)
-            ? ownerBlockedNotice(viewable)
+            ? undefined
             : viewable;
         const match = articleStats[article.id];
 
@@ -718,7 +717,7 @@ export const getArticles = async ({
           // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
-            coverImage?.url === null ||
+            (!!viewable && !coverImage) ||
             (!!cover &&
               !coverImage &&
               (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
@@ -974,23 +973,19 @@ export const getArticleById = async ({
       !!image &&
       (listedHidden.has(image.id) ||
         modelHidesArticleImage(image, withheldByModel, userId, article.userId));
-    const coverHidden = hiddenByModel(article.coverImage);
-    const bannerHidden = hiddenByModel(article.bannerImage);
+    // A cover or banner whose block refuses its owner the media (`ownerMediaAllowed`) is withheld
+    // from them as one its model holds is; the block notice is `getArticleScanStatus`'s.
+    const ownerRefused = (image: Parameters<typeof ownerMediaAllowed>[0] | null) =>
+      !!image && !isModerator && !ownerMediaAllowed(image);
+    const coverHidden = hiddenByModel(article.coverImage) || ownerRefused(article.coverImage);
+    const bannerHidden = hiddenByModel(article.bannerImage) || ownerRefused(article.bannerImage);
     const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
-    // The owner keeps a cover or banner whose block refuses them the media as a notice row.
-    const ownerView = <T extends Parameters<typeof ownerMediaAllowed>[0] & { url: string }>(
-      image: T | undefined
-    ) => (!image || isModerator || ownerMediaAllowed(image) ? image : ownerBlockedNotice(image));
-    const coverImage = ownerView(
-      viewableArticleImage(coverWithheld ? null : article.coverImage, viewer)
-    );
-    const bannerImage = ownerView(
-      viewableArticleImage(
-        bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
-          ? null
-          : article.bannerImage,
-        viewer
-      )
+    const coverImage = viewableArticleImage(coverWithheld ? null : article.coverImage, viewer);
+    const bannerImage = viewableArticleImage(
+      bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
+        ? null
+        : article.bannerImage,
+      viewer
     );
     // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
     const isOwner = userId !== undefined && userId === article.userId;
@@ -1046,7 +1041,6 @@ export const getArticleById = async ({
       ...article,
       // The legacy `cover` is the same image's key.
       ...((coverWithheld ||
-        coverImage?.url === null ||
         (!!article.coverImage &&
           !coverImage &&
           (isRestrictedImage(article.coverImage) ||
@@ -1337,8 +1331,9 @@ export const upsertArticle = async ({
       });
     }
 
-    // A save that leaves out a cover or banner its model or the report-listed rule hides from this
-    // editor keeps it: the edit form never had it to send back (getArticleById).
+    // A save that leaves out a cover or banner its model, the report-listed rule or its block
+    // (`ownerMediaAllowed`) hides from this editor keeps it: the edit form never had it to send back
+    // (getArticleById).
     if (article) {
       const stored = [
         coverId === null ? article.coverId : null,
@@ -1363,6 +1358,12 @@ export const upsertArticle = async ({
             .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
             .map((image) => image.id),
         ]);
+        if (!isModerator)
+          for (const image of await dbWrite.image.findMany({
+            where: { id: { in: stored } },
+            select: { id: true, ingestion: true, blockedFor: true },
+          }))
+            if (!ownerMediaAllowed(image)) hiddenIds.add(image.id);
         if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
           coverId = undefined;
         if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
