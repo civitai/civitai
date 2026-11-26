@@ -3,19 +3,17 @@ import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
-import {
-  imageNotRestrictedWhere,
-  imageRestrictionSelect,
-  withServableImage,
-} from '~/server/common/image-visibility';
+import { imageNotRestrictedWhere, imageRestrictionSelect } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { parseComicProjectMeta } from '~/server/schema/comics.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
+  coverBlockSelect,
   isComicProjectHidden,
   isPanelTainted,
   readerPanelsWhere,
   withholdRestrictedPanelImages,
+  withServableCover,
 } from '~/server/services/comics/chapter-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
@@ -454,6 +452,7 @@ export async function getPublicComicProjects({
           id: true,
           url: true,
           ...imageRestrictionSelect,
+          ...coverBlockSelect,
           type: true,
           metadata: true,
           width: true,
@@ -467,6 +466,7 @@ export async function getPublicComicProjects({
           id: true,
           url: true,
           ...imageRestrictionSelect,
+          ...coverBlockSelect,
           type: true,
           metadata: true,
           width: true,
@@ -577,8 +577,14 @@ export async function getPublicComicProjects({
   const items = projects.map((p) => {
     const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
     const chapterCount = p.chapters.length;
-    const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user?.id);
-    const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user?.id);
+    const moderator = ctx.user?.isModerator === true;
+    const { coverImage: servableCover } = withServableCover(
+      p,
+      'coverImage',
+      ctx.user?.id,
+      moderator
+    );
+    const { heroImage: servableHero } = withServableCover(p, 'heroImage', ctx.user?.id, moderator);
     const rawThumbnailUrl =
       servableCover?.url ??
       p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
@@ -672,8 +678,12 @@ export async function getPublicComicForReader({
       name: true,
       description: true,
       userId: true,
-      coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
-      heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+      coverImage: {
+        select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+      },
+      heroImage: {
+        select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+      },
       heroImagePosition: true,
       meta: true,
       genre: true,
@@ -827,7 +837,7 @@ export async function getPublicComicForReader({
     };
   });
 
-  withholdRestrictedPanelImages(chapters, ctx.user?.id);
+  withholdRestrictedPanelImages(chapters, ctx.user?.id, ctx.user?.isModerator === true);
   // On green, strip imageUrl from NSFW panels so they appear blocked.
   if (ctx.features.isGreen) {
     stripNsfwPanelImages(chapters, !!ctx.user);
@@ -836,8 +846,8 @@ export async function getPublicComicForReader({
   // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
   const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
   const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
-  const { coverImage } = withServableImage(project, 'coverImage', ctx.user?.id);
-  const { heroImage } = withServableImage(project, 'heroImage', ctx.user?.id);
+  const { coverImage } = withServableCover(project, 'coverImage', ctx.user?.id, isModerator);
+  const { heroImage } = withServableCover(project, 'heroImage', ctx.user?.id, isModerator);
 
   return {
     id: project.id,

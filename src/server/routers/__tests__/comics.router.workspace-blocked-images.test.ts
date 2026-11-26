@@ -48,6 +48,12 @@ const panels = (blockedFor: string | null) => [
 ];
 const cleanPanel = { id: 8, imageUrl: 'clean-key', image: cleanImage };
 const withheldPanel = { id: 7, imageUrl: null, image: null };
+/** A block withholds the media and leaves the image row, so the owner still sees why. */
+const blockedPanel = (blockedFor: string | null) => ({
+  id: 7,
+  imageUrl: null,
+  image: blockedImage(blockedFor),
+});
 
 const shell = async (viewer: typeof MODERATOR, blockedFor: string | null) => {
   dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
@@ -111,12 +117,24 @@ describe.each([BlockedReason.CSAM, BlockedReason.Moderated, null])(
   }
 );
 
-describe.each([BlockedReason.Moderated, null])(
+describe.each([null, BlockedReason.AiNotVerified])(
   'the uploader keeps the cover of their own image rated Blocked (blockedFor %s)',
   (blockedFor) => {
     it('in getProjectShell', async () => {
       expect(await shell(UPLOADER, blockedFor)).toEqual({
         coverImage: blockedImage(blockedFor),
+        heroImage: cleanImage,
+      });
+    });
+  }
+);
+
+describe.each([BlockedReason.Moderated, BlockedReason.CSAM, 'zzz'])(
+  'a block refuses the cover to its uploader too (blockedFor %s)',
+  (blockedFor) => {
+    it('in getProjectShell', async () => {
+      expect(await shell(UPLOADER, blockedFor)).toEqual({
+        coverImage: null,
         heroImage: cleanImage,
       });
     });
@@ -140,14 +158,91 @@ describe.each([BlockedReason.Moderated, BlockedReason.CSAM, BlockedReason.TOS, '
   'a block refuses the panel to its uploader too (blockedFor %s)',
   (blockedFor) => {
     it('in getChapter', async () => {
-      expect(await chapterPanels(UPLOADER, blockedFor)).toEqual([withheldPanel, cleanPanel]);
+      expect(await chapterPanels(UPLOADER, blockedFor)).toEqual([
+        blockedPanel(blockedFor),
+        cleanPanel,
+      ]);
     });
 
     it('in getProjectForReader', async () => {
-      expect(await readerPanels(UPLOADER, blockedFor)).toEqual([withheldPanel, cleanPanel]);
+      expect(await readerPanels(UPLOADER, blockedFor)).toEqual([
+        blockedPanel(blockedFor),
+        cleanPanel,
+      ]);
     });
   }
 );
+
+describe('a moderator keeps the media of a blocked image not rated Blocked', () => {
+  const blockedPg = { ...blockedImage(BlockedReason.Moderated), nsfwLevel: NsfwLevel.PG };
+  // Fresh rows per read: the withholding writes to the panels it is given.
+  const blockedPanels = () => [
+    { id: 7, imageUrl: 'panel-key', image: { ...blockedPg } },
+    { ...cleanPanel, image: { ...cleanImage } },
+  ];
+
+  it('in getChapter, and the uploader gets the row without it', async () => {
+    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({ id: 3, userId: OWNER } as never);
+    const chapter = (viewer: typeof MODERATOR) => {
+      dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
+        projectId: 3,
+        position: 0,
+        panels: blockedPanels(),
+      } as never);
+      return callerFor(viewer)
+        .getChapter({ projectId: 3, chapterPosition: 0 })
+        .then((c) => c.panels.map(({ id, imageUrl, image }) => ({ id, imageUrl, image })));
+    };
+    expect(await chapter(MODERATOR)).toEqual([
+      { id: 7, imageUrl: 'panel-key', image: blockedPg },
+      cleanPanel,
+    ]);
+    expect(await chapter(UPLOADER)).toEqual([
+      { id: 7, imageUrl: null, image: blockedPg },
+      cleanPanel,
+    ]);
+  });
+
+  it('in getProjectShell, and the uploader gets no cover', async () => {
+    const cover = async (viewer: typeof MODERATOR) => {
+      dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
+        id: 3,
+        userId: OWNER,
+        tosViolation: false,
+        coverImage: blockedPg,
+        heroImage: cleanImage,
+        chapters: [],
+      } as never);
+      dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+      return (await callerFor(viewer).getProjectShell({ id: 3 })).coverImage;
+    };
+    expect(await cover(MODERATOR)).toEqual(blockedPg);
+    expect(await cover(UPLOADER)).toBeNull();
+  });
+});
+
+describe('pollPanelStatus', () => {
+  const poll = async (image: { ingestion: string; blockedFor: string | null }) => {
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue({
+      id: 7,
+      status: 'Ready',
+      workflowId: null,
+      imageUrl: 'panel-key',
+      errorMessage: null,
+      metadata: null,
+      image,
+      chapter: { project: { userId: OWNER } },
+    } as never);
+    return (await callerFor(UPLOADER).pollPanelStatus({ panelId: 7 })).imageUrl;
+  };
+
+  it('withholds a blocked panel image from its owner, and keeps the metadata hold', async () => {
+    expect(await poll({ ingestion: 'Blocked', blockedFor: BlockedReason.Moderated })).toBeNull();
+    expect(await poll({ ingestion: 'Blocked', blockedFor: BlockedReason.AiNotVerified })).toBe(
+      'panel-key'
+    );
+  });
+});
 
 it('a Blocked ingestion with no reason refuses the panel to its uploader', async () => {
   dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({ id: 3, userId: OWNER } as never);
@@ -164,7 +259,7 @@ it('a Blocked ingestion with no reason refuses the panel to its uploader', async
     chapterPosition: 0,
   });
   expect(returned.map(({ id, imageUrl, image }) => ({ id, imageUrl, image }))).toEqual([
-    withheldPanel,
+    { id: 7, imageUrl: null, image: { ...cleanImage, id: 1, ingestion: 'Blocked' } },
     cleanPanel,
   ]);
 });

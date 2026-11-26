@@ -41,9 +41,12 @@ import {
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import {
+  coverBlockSelect,
   panelImageVisibilitySelect,
   withholdRestrictedPanelImages,
+  withServableCover,
 } from '~/server/services/comics/chapter-visibility';
 import {
   getComicMetricRows,
@@ -56,7 +59,6 @@ import {
   imageNotRestrictedWhere,
   imageRestrictionSelect,
   isImageServable,
-  withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comics/panel-metadata';
@@ -1017,8 +1019,12 @@ export const comicsRouter = router({
           status: ComicProjectStatus.Active,
         },
         include: {
-          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
-          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          coverImage: {
+            select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+          },
+          heroImage: {
+            select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+          },
           chapters: {
             include: {
               _count: { select: { panels: true } },
@@ -1048,8 +1054,19 @@ export const comicsRouter = router({
         // On green, strip NSFW cover/hero/thumbnail images so the card is still
         // visible and navigable but doesn't display mature imagery. This route is
         // protected so the viewer is always logged in — allow PG + PG13.
-        const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user.id);
-        const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user.id);
+        const moderator = actsAsModerator(ctx);
+        const { coverImage: servableCover } = withServableCover(
+          p,
+          'coverImage',
+          ctx.user.id,
+          moderator
+        );
+        const { heroImage: servableHero } = withServableCover(
+          p,
+          'heroImage',
+          ctx.user.id,
+          moderator
+        );
         const coverImage =
           ctx.features.isGreen && servableCover && !hasSafeBrowsingLevel(servableCover.nsfwLevel)
             ? null
@@ -1089,8 +1106,12 @@ export const comicsRouter = router({
       const project = await dbWrite.comicProject.findUnique({
         where: { id: input.id },
         include: {
-          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
-          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          coverImage: {
+            select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+          },
+          heroImage: {
+            select: { id: true, url: true, ...imageRestrictionSelect, ...coverBlockSelect },
+          },
           chapters: {
             orderBy: { position: 'asc' },
             include: {
@@ -1213,10 +1234,11 @@ export const comicsRouter = router({
 
       const { chapters: _chapters, ...projectRest } = project;
       return {
-        ...withServableImage(
-          withServableImage(projectRest, 'coverImage', ctx.user.id),
+        ...withServableCover(
+          withServableCover(projectRest, 'coverImage', ctx.user.id, actsAsModerator(ctx)),
           'heroImage',
-          ctx.user.id
+          ctx.user.id,
+          actsAsModerator(ctx)
         ),
         chapters,
         references,
@@ -1286,7 +1308,7 @@ export const comicsRouter = router({
       });
 
       if (!chapter) throw throwNotFoundError();
-      withholdRestrictedPanelImages([chapter], ctx.user.id);
+      withholdRestrictedPanelImages([chapter], ctx.user.id, actsAsModerator(ctx));
 
       // Same green-domain mature-content stripping as `getProject`.
       if (ctx.features.isGreen) {
@@ -1368,7 +1390,7 @@ export const comicsRouter = router({
       if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
         throw throwAuthorizationError();
       }
-      withholdRestrictedPanelImages(project.chapters, ctx.user.id);
+      withholdRestrictedPanelImages(project.chapters, ctx.user.id, actsAsModerator(ctx));
 
       // Server-side gate: on green, strip mature panels' `imageUrl` so the
       // raw CDN URL never reaches the client. Client-side blur on its own
@@ -2872,7 +2894,10 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
       // The panel's stored image, unless a block has since refused it to its owner.
-      const storedImageUrl = panel.image && !ownerMediaAllowed(panel.image) ? null : panel.imageUrl;
+      const storedImageUrl =
+        panel.image && !actsAsModerator(ctx) && !ownerMediaAllowed(panel.image)
+          ? null
+          : panel.imageUrl;
 
       // Only poll if panel is actively generating with a workflow.
       //

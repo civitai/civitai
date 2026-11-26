@@ -28,6 +28,10 @@ type Credential = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenSc
 
 export type MediaCredentialViewer = Pick<Context, 'user' | 'features' | 'req'> & Credential;
 
+/** A moderator on a session or a full-access key: the one viewer a block leaves the media to. */
+export const actsAsModerator = (ctx: Pick<Context, 'user'> & Credential) =>
+  !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+
 /**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
  * rating, always allowed for the owner and moderators on a session or a full-access key
@@ -113,8 +117,7 @@ export async function viewerCanSeeImageMedia(
   }
 ) {
   // A block refuses the media to everyone but a moderator, its owner included.
-  const actsAsModerator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
-  if (!actsAsModerator && !ownerMediaAllowed(image)) return false;
+  if (!actsAsModerator(ctx) && !ownerMediaAllowed(image)) return false;
   const media = { nsfwLevel: image.nsfwLevel, user: { id: image.userId } };
   const canSee =
     canViewImageMedia(ctx, media) ||
