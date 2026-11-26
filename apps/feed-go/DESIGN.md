@@ -4114,7 +4114,8 @@ only (`evalcapture.MatchResults` / `MismatchResults`, the lists `OutcomeClass` r
   **and** at least `--min-mismatch-share` (0.01) of them mismatch (both must hold: a lone mismatch
   on a rare shape is 100 % of it), and the run has results for the signature, all `pass`. Its
   mismatching samples' admitted cases (`case_id` ≠ 0, at most 64 read) are **promoted**: up to
-  `--promote-per-signature` (3, earlier promotions counted), at most `--max-promotions` (500) per
+  `--promote-per-signature` (3; every promoted case of the signature counts, any night's: a case id
+  carries its capture day, so a lasting blind spot's candidates are new ids each night), at most `--max-promotions` (500) per
   reconcile. A promotion is one server-side `INSERT … SELECT … FROM cases FINAL` per endpoint and
   500 ids: the case's own columns byte for byte (request and Node answer never leave ClickHouse),
   `origin = 'prod-mismatch'`, `pinned = 1` (never expires), its `first_seen`, and `last_seen` the
@@ -4136,7 +4137,8 @@ and no table. Its summary is one `runs` row with `phase = 'reconcile'` (run id
 `reconcile-<UTC>-<6 hex>`; `corpus_from`/`corpus_to` the sample window; images and snapshot empty),
 whose `settings` is `evalharness.ReconcileSummary`: the thresholds, the reconciled run id, the
 counts (one per class, `promoted`, `rows_written`, `already_promoted`, `candidate_missing`,
-`promotion_capped`, `mismatch_not_run`) and up to 200 findings per class, each an endpoint, a
+`promotion_capped`, `mismatch_not_run`; a zero `--min-mismatch-share` or `--max-promotions` means
+the default, so `--dry-run` is how to promote nothing) and up to 200 findings per class, each an endpoint, a
 16-hex signature, production's compared and mismatching sample counts, the run's result count and
 16-hex case ids: no input value, no answer. `run` and `publish` select `phase = 'live'` only, so the
 row is invisible to them as a run. Every write is a POST acknowledged before the next

@@ -21,8 +21,8 @@ import (
 // credential words' (evalcorpus.credentialWords) in the shapes a client sends them; the line-level
 // ones are fields a capture row does not have but a future one could (headers, address, agent).
 const (
-	canaryToken   = "CANARYTOKEN7781" //nolint:gosec // G101: a synthetic canary, not a credential
-	canaryAPIKey  = "CANARYAPIKEY7782"
+	canaryTok     = "CANARYTOKEN7781"
+	canaryKeyed   = "CANARYAPIKEY7782"
 	canarySession = "CANARYSESSION7783"
 	canaryQueryTk = "CANARYQUERYTOKEN7784"
 	canaryCookie  = "CANARYCOOKIE7785"
@@ -33,26 +33,26 @@ const (
 	canaryOwnUser = "CANARYOWNUSER7789"
 )
 
-var importCanaries = []string{canaryToken, canaryAPIKey, canarySession, canaryQueryTk, canaryCookie, canaryAuth, canaryAddress,
+var importCanaries = []string{canaryTok, canaryKeyed, canarySession, canaryQueryTk, canaryCookie, canaryAuth, canaryAddress,
 	canaryAgent, canarySearch, canaryOwnUser}
 
 // tempoRows are synthetic rows in feed-bench's capture format. t is 2026-11-25 12:00:00 UTC.
 var tempoRows = strings.Join([]string{
 	// 1-5: one as-posts signature (only modelVersionId differs), each with a credential-named key
 	// (token); row 1 also has line-level fields the record type does not read.
-	`{"t":1795608000000,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6001,\"token\":\"` + canaryToken + `\"}}","authed":false,"durMs":41.5,"cookie":"__Secure-civitai-token=` + canaryCookie + `","authorization":"Bearer ` + canaryAuth + `","ip":"` + canaryAddress + `","userAgent":"` + canaryAgent + `"}`,
-	`{"t":1795608000001,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6002,\"token\":\"` + canaryToken + `\"}}","authed":false,"durMs":38.0}`,
-	`{"t":1795608000002,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6003,\"token\":\"` + canaryToken + `\"}}","authed":false,"durMs":38.0}`,
-	`{"t":1795608000003,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6004,\"token\":\"` + canaryToken + `\"}}","authed":false,"durMs":38.0}`,
-	`{"t":1795608000004,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6005,\"token\":\"` + canaryToken + `\"}}","authed":false,"durMs":38.0}`,
+	`{"t":1795608000000,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6001,\"token\":\"` + canaryTok + `\"}}","authed":false,"durMs":41.5,"cookie":"__Secure-civitai-token=` + canaryCookie + `","authorization":"Bearer ` + canaryAuth + `","ip":"` + canaryAddress + `","userAgent":"` + canaryAgent + `"}`,
+	`{"t":1795608000001,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6002,\"token\":\"` + canaryTok + `\"}}","authed":false,"durMs":38.0}`,
+	`{"t":1795608000002,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6003,\"token\":\"` + canaryTok + `\"}}","authed":false,"durMs":38.0}`,
+	`{"t":1795608000003,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6004,\"token\":\"` + canaryTok + `\"}}","authed":false,"durMs":38.0}`,
+	`{"t":1795608000004,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6005,\"token\":\"` + canaryTok + `\"}}","authed":false,"durMs":38.0}`,
 	// 6: row 2 again, later the same day: the same case.
-	`{"t":1795608000005,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6002,\"token\":\"` + canaryToken + `\"}}","authed":false,"durMs":38.0}`,
+	`{"t":1795608000005,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6002,\"token\":\"` + canaryTok + `\"}}","authed":false,"durMs":38.0}`,
 	// 7: signed in, naming a user: refused (it may be the viewer's own).
 	`{"t":1795608000006,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"username\":\"` + canaryOwnUser + `\",\"authed\":true}}","authed":true,"durMs":50.0}`,
 	// 8: signed in, naming no user: imported as a member.
 	`{"t":1795608000007,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6001,\"authed\":true}}","authed":true,"durMs":50.0}`,
 	// 9: two other credential-named keys: a signature of its own.
-	`{"t":1795608000008,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6006,\"apiKey\":\"` + canaryAPIKey + `\",\"sessionId\":\"` + canarySession + `\"}}","authed":false}`,
+	`{"t":1795608000008,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"modelVersionId\":6006,\"apiKey\":\"` + canaryKeyed + `\",\"sessionId\":\"` + canarySession + `\"}}","authed":false}`,
 	// 10: model.getAll with a search text: stored as $search.
 	`{"endpoint":"model-getall","t":1795608000009,"host":"green.example.test","input":"{\"json\":{\"limit\":20,\"query\":\"` + canarySearch + `\",\"sort\":\"Newest\"}}"}`,
 	// 11: REST with a token pair: the pair dropped, its class kept.

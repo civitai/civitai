@@ -114,7 +114,7 @@ type Finding struct {
 	Mismatches int `json:"mismatches"`
 	// EvalResults is the signature's results in the reconciled run.
 	EvalResults int `json:"eval_results"`
-	// CaseIDs (16 hex digits): a blind spot's promoted cases (this reconcile's and earlier ones'), a
+	// CaseIDs (16 hex digits): a blind spot's candidates that are promoted (now or earlier), a
 	// cannot-reproduce finding's case, a reverse finding's bug cases.
 	CaseIDs []string `json:"case_ids"`
 	// Promoted is how many of CaseIDs this reconcile promoted (blind spots).
@@ -169,6 +169,9 @@ type ReconcileStore interface {
 	// PromotedPasses are the run's passing results whose case is promoted (origin prod-mismatch,
 	// pinned) with a last_seen before `before` (promoted before the run started).
 	PromotedPasses(ctx context.Context, runID string, before time.Time) ([]ResultFacts, error)
+	// PromotedPerSig is, per signature of endpoint among sigs, how many of its cases are promoted
+	// (origin prod-mismatch, pinned): every night's, not only this window's candidates.
+	PromotedPerSig(ctx context.Context, endpoint string, sigs []uint64) (map[uint64]int, error)
 	// CaseMeta is endpoint's cases among ids (absent: not in `cases`).
 	CaseMeta(ctx context.Context, endpoint string, ids []uint64) (map[uint64]CaseMeta, error)
 	// Promote re-inserts endpoint's cases among ids that are not promoted yet, as promoted, under the
@@ -281,7 +284,9 @@ func Reconcile(ctx context.Context, cfg ReconcileConfig, store ReconcileStore) (
 	sort.Slice(blinds, func(i, j int) bool { return findingLess(blinds[i].f, blinds[j].f) })
 
 	// Promotion: per blind spot, its mismatching cases not promoted yet, up to PromotePerSignature
-	// with the already promoted counted, and MaxPromotions in all.
+	// with every case of the signature already promoted counted (any night's: a case id carries its
+	// capture day, so a lasting blind spot's candidates are new ids each night), and MaxPromotions
+	// in all.
 	byEndpoint := map[string][]*blind{}
 	for _, b := range blinds {
 		byEndpoint[b.f.Endpoint] = append(byEndpoint[b.f.Endpoint], b)
@@ -292,6 +297,20 @@ func Reconcile(ctx context.Context, cfg ReconcileConfig, store ReconcileStore) (
 		ids := make([]uint64, 0, maxMismatchCases*len(byEndpoint[e]))
 		for _, b := range byEndpoint[e] {
 			ids = append(ids, b.candidates...)
+		}
+		sigs := make([]uint64, 0, len(byEndpoint[e]))
+		for _, b := range byEndpoint[e] {
+			sigs = append(sigs, b.sig)
+		}
+		promoted := map[uint64]int{}
+		for _, chunk := range chunks(sigs, idChunk) {
+			m, err := store.PromotedPerSig(ctx, e, chunk)
+			if err != nil {
+				return sum, fmt.Errorf("read promoted cases: %w", err)
+			}
+			for sig, n := range m {
+				promoted[sig] += n
+			}
 		}
 		meta := map[uint64]CaseMeta{}
 		for _, chunk := range chunks(ids, idChunk) {
@@ -319,7 +338,7 @@ func Reconcile(ctx context.Context, cfg ReconcileConfig, store ReconcileStore) (
 				}
 			}
 			sum.Counts["already_promoted"] += already
-			take := max(0, cfg.PromotePerSignature-already)
+			take := max(0, cfg.PromotePerSignature-max(already, promoted[b.sig]))
 			take = min(take, len(fresh))
 			if take > budget {
 				sum.Counts["promotion_capped"] += take - budget
@@ -461,6 +480,10 @@ WHERE ts >= fromUnixTimestamp64Milli({from_ms:Int64}) AND ts < fromUnixTimestamp
   AND source IN {sources:Array(String)}
 GROUP BY endpoint, sig
 HAVING matches + mismatches > 0`
+	promotedPerSigSQL = `SELECT toString(sig) AS sig, count() AS n
+FROM cases FINAL
+WHERE endpoint = {endpoint:String} AND sig IN {sigs:Array(UInt64)} AND pinned = 1 AND origin = {origin:String}
+GROUP BY sig`
 	caseMetaSQL = `SELECT toString(case_id) AS case_id, toString(sig) AS sig, origin, pinned
 FROM cases FINAL
 WHERE endpoint = {endpoint:String} AND case_id IN {ids:Array(UInt64)}`
@@ -580,6 +603,25 @@ func (s *CHReconcileStore) PromotedPasses(ctx context.Context, runID string, bef
 			continue
 		}
 		out = append(out, ResultFacts{CaseID: id, Endpoint: str(r["endpoint"]), Sig: sig, Verdict: VerdictPass})
+	}
+	return out, nil
+}
+
+// PromotedPerSig implements ReconcileStore.
+func (s *CHReconcileStore) PromotedPerSig(ctx context.Context, endpoint string, sigs []uint64) (map[uint64]int, error) {
+	out := map[uint64]int{}
+	if len(sigs) == 0 {
+		return out, nil
+	}
+	rows, err := s.read.Query(ctx, promotedPerSigSQL, []chread.Setting{param("endpoint", endpoint), param("sigs", chIDs(sigs)),
+		param("origin", evalcapture.OriginMismatch)})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if sig, err := strconv.ParseUint(str(r["sig"]), 10, 64); err == nil {
+			out[sig] = int(num(r["n"]))
+		}
 	}
 	return out, nil
 }

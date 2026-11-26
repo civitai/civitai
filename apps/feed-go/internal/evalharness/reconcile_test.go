@@ -133,6 +133,17 @@ func (f *stateFakeCH) serve(t *testing.T) *httptest.Server {
 			}
 		case strings.Contains(text, "FROM results"):
 			rows = f.results
+		case strings.Contains(text, "count() AS n"):
+			sigs := parseIDs(t, q.Get("param_sigs"))
+			n := map[uint64]int{}
+			for _, c := range f.cases[q.Get("param_endpoint")] {
+				if c.pinned && c.origin == q.Get("param_origin") && slices.Contains(sigs, c.sig) {
+					n[c.sig]++
+				}
+			}
+			for sig, k := range n {
+				rows = append(rows, map[string]any{"sig": strconv.FormatUint(sig, 10), "n": k})
+			}
 		case strings.Contains(text, "FROM cases FINAL"):
 			for _, id := range parseIDs(t, q.Get("param_ids")) {
 				if c := f.cases[q.Get("param_endpoint")][id]; c != nil {
@@ -565,6 +576,10 @@ func (s failingStore) PromotedPasses(context.Context, string, time.Time) ([]Resu
 	return nil, s.fail("passes")
 }
 
+func (s failingStore) PromotedPerSig(context.Context, string, []uint64) (map[uint64]int, error) {
+	return map[uint64]int{}, s.fail("promotedcount")
+}
+
 func (s failingStore) CaseMeta(_ context.Context, _ string, ids []uint64) (map[uint64]CaseMeta, error) {
 	out := map[uint64]CaseMeta{}
 	for _, id := range ids {
@@ -583,7 +598,7 @@ func (s failingStore) AddRun(context.Context, RunRow) error { return s.fail("add
 // a failure before the summary row writes no summary row.
 func TestReconcileFailsAtEachStep(t *testing.T) {
 	stats := []SigStats{{Endpoint: "as-posts", Sig: sigBlind, Matches: 7, Mismatches: 3, MismatchCases: []uint64{1101}}}
-	for _, step := range []string{"run", "samples", "results", "meta", "passes", "promote", "addrun"} {
+	for _, step := range []string{"run", "samples", "results", "promotedcount", "meta", "passes", "promote", "addrun"} {
 		_, err := Reconcile(context.Background(), reconcileCfg(), failingStore{failAt: step, stats: stats})
 		if err == nil || !strings.Contains(err.Error(), step+" failed") {
 			t.Errorf("%s: err %v", step, err)
@@ -592,5 +607,35 @@ func TestReconcileFailsAtEachStep(t *testing.T) {
 	sum, err := Reconcile(context.Background(), reconcileCfg(), failingStore{stats: stats})
 	if err != nil || sum.Counts["promoted"] != 1 || sum.Counts["rows_written"] != 1 {
 		t.Errorf("no failure: %v %v", sum.Counts, err)
+	}
+}
+
+// TestReconcileCountsEarlierNightsPromotions: a signature that already has PromotePerSignature
+// promoted cases from earlier nights (ids its window's candidates do not hold: a case id carries
+// its capture day) gets no new promotion, so a lasting blind spot does not pin 3 more cases a night.
+func TestReconcileCountsEarlierNightsPromotions(t *testing.T) {
+	for _, c := range []struct {
+		earlier int
+		want    string // the promotion insert's ids ("" none)
+	}{
+		{0, "[1101,1102,1103]"},
+		{2, "[1101]"},
+		{3, ""},
+	} {
+		f := reconcileFixture()
+		for i := range c.earlier {
+			f.cases["as-posts"][uint64(9900+i)] = caseRow(sigBlind, "prod-mismatch", true, reconcileRunStart.Add(-48*time.Hour)) //nolint:gosec // G115: a small index
+		}
+		sum, err := Reconcile(context.Background(), reconcileCfg(), reconcileStore(t, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ""
+		if len(f.promotes) > 0 {
+			got = f.promotes[0].Get("param_ids")
+		}
+		if got != c.want || len(f.promotes) > 1 {
+			t.Errorf("%d earlier promotions: inserts %d, ids %q, want %q (counts %v)", c.earlier, len(f.promotes), got, c.want, sum.Counts)
+		}
 	}
 }
