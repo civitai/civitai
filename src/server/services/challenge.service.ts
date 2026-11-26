@@ -4180,7 +4180,7 @@ export async function getCompletedChallengesWithWinners(
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
-  // Cursor-based pagination: "endsAt:id"
+  // The "endsAt:id" cursor points to the first challenge on the next page.
   if (cursor) {
     const lastColon = cursor.lastIndexOf(':');
     if (lastColon !== -1) {
@@ -4190,7 +4190,7 @@ export async function getCompletedChallengesWithWinners(
       const endsAt = new Date(endsAtStr);
       if (!isNaN(id) && !isNaN(endsAt.getTime())) {
         conditions.push(
-          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id < ${id}))`
+          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id <= ${id}))`
         );
       }
     }
