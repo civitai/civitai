@@ -5325,6 +5325,36 @@ model AppSourceRepo {
   @@map("app_source_repos")
 }
 
+// App Blocks platform updates: a change Civitai staff pushed to someone else's app, as a branch of
+// its source repo. The row is the proof the update is from staff (commit text is forgeable).
+// RAW SQL ONLY (`app-platform-update.service.ts`), so the model is stripped from the generated
+// client; the migration `20271205140000_app_platform_updates` is applied by hand (with its CHECKs
+// and indexes, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppPlatformUpdate {
+  id               String    @id // apu_<ULID>
+  appBlockId       String    @map("app_block_id")
+  slug             String
+  staffUserId      Int       @map("staff_user_id")
+  reason           String
+  branch           String
+  baseCommitSha    String    @map("base_commit_sha")
+  commitSha        String    @map("commit_sha")
+  paths            Json
+  touchesManifest  Boolean   @default(false) @map("touches_manifest")
+  seededSourceRepo Boolean   @default(false) @map("seeded_source_repo")
+  status           String    @default("pending")
+  mergeCommitSha   String?   @map("merge_commit_sha")
+  resolvedByUserId Int?      @map("resolved_by_user_id")
+  resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([appBlockId, status, createdAt(sort: Desc)], map: "app_platform_updates_app_status_idx")
+  @@unique([slug, commitSha], map: "app_platform_updates_slug_commit_idx")
+  @@map("app_platform_updates")
+}
+
 // App hibernate ("Sleeping" apps): one row per sleeping app, per user — the archive of the app's
 // workspace in the archive store, and optionally its `.env*` files, encrypted under a data key
 // that is stored here only wrapped by a civitai-held master key. RAW SQL ONLY
