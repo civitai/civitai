@@ -251,7 +251,6 @@ export function plannable(outcomes: [NotifyKind, PromiseSettledResult<number[]>]
   };
 }
 
-/** What a run left undone, so the job reports it as failed. */
 export const runIncomplete = (result: NotifyResult) =>
   result.failed + result.unconfirmed + result.confirmFailed > 0 ||
   result.unplanned.length > 0 ||
