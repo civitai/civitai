@@ -1,4 +1,5 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
+import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
@@ -6860,10 +6861,13 @@ export async function updateImageNsfwLevel({
   isModerator,
   activity,
   reason,
+  csamReview = false,
 }: UpdateImageNsfwLevelOutput & {
   userId: number;
   isModerator?: boolean;
   activity?: ImageModActivity['activity'];
+  /** The moderator's `csamReports` grant: without it, lowering a withheld image is refused. */
+  csamReview?: boolean;
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
@@ -6874,6 +6878,9 @@ export async function updateImageNsfwLevel({
       select: { metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
+    // A Knights consensus is a vote, not a moderator's decision, and has no grant to check.
+    if (activity !== 'setNsfwLevelKono' && nsfwLevel < image.nsfwLevel)
+      await assertMayLoosenImages([id], { csamReview });
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
@@ -7122,11 +7129,15 @@ export async function resolveIngestionError({
   id,
   nsfwLevel,
   userId,
+  csamReview,
 }: {
   id: number;
   nsfwLevel: NsfwLevel;
   userId: number;
+  /** The moderator's `csamReports` grant: without it, a withheld image is refused. */
+  csamReview: boolean;
 }) {
+  await assertMayLoosenImages([id], { csamReview });
   const image = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -8081,7 +8092,9 @@ export async function setVideoThumbnail({
 export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
-}: UpdateImageAcceptableMinorInput) {
+  csamReview,
+}: UpdateImageAcceptableMinorInput & { csamReview: boolean }) {
+  if (acceptableMinor) await assertMayLoosenImages([id], { csamReview });
   // primary: whether this write changes the flag decides whether shared caches are purged.
   const before = await dbWrite.image.findUnique({
     where: { id },
@@ -8567,13 +8580,19 @@ export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
 
-export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
-  const image = await dbRead.image.findUnique({
+export const toggleImageFlag = async ({
+  id,
+  flag,
+  csamReview,
+}: ToggleImageFlagInput & { csamReview: boolean }) => {
+  // primary: the current value decides whether this toggle clears the flag.
+  const image = await dbWrite.image.findUnique({
     where: { id },
     select: { [flag]: true },
   });
 
   if (!image) throw throwNotFoundError();
+  if (image[flag]) await assertMayLoosenImages([id], { csamReview });
 
   await dbWrite.image.update({
     where: { id },

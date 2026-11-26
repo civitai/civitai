@@ -255,7 +255,13 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
-    .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
+    .mutation(({ input, ctx }) =>
+      rescanArticle({
+        ...input,
+        isModerator: ctx.user.isModerator,
+        csamReview: !!ctx.features?.csamReports,
+      })
+    ),
   // Author-facing scan detail: per-image URLs, `blockedFor` moderation labels, scan failure
   // reasons and the article's text-moderation verdict, for any id including an unpublished
   // draft. Same guard as its `rescan` sibling, which takes the same input — every caller is
@@ -271,7 +277,13 @@ export const articleRouter = router({
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
     .use(isFlagProtected('articleImageScanning'))
-    .mutation(({ input, ctx }) => resolveArticleImageScan({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      resolveArticleImageScan({
+        ...input,
+        userId: ctx.user.id,
+        csamReview: !!ctx.features?.csamReports,
+      })
+    ),
   rescanImage: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(rescanArticleImageSchema)
@@ -281,6 +293,7 @@ export const articleRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        csamReview: !!ctx.features?.csamReports,
       })
     ),
   reframeQuote: protectedProcedure

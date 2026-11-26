@@ -1434,7 +1434,10 @@ export async function updateImageAcceptableMinorHandler({
         throw throwAuthorizationError();
     }
 
-    const image = await updateImageAcceptableMinor(input);
+    const image = await updateImageAcceptableMinor({
+      ...input,
+      csamReview: !!ctx.features?.csamReports,
+    });
     return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1455,7 +1458,12 @@ export async function handleUpdateImageNsfwLevel({
     const applied =
       !isModerator &&
       (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
-    const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
+    const updatedNsfwLevel = await updateImageNsfwLevel({
+      ...input,
+      userId,
+      isModerator,
+      csamReview: !!ctx.features?.csamReports,
+    });
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
   } catch (error) {

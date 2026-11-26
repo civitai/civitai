@@ -11,7 +11,10 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const { imageIds } = schema.parse(req.query);
 
-  const results = await Promise.allSettled(imageIds.map((id) => rescanImageById({ id })));
+  // A system caller holding the webhook token, not a moderator: nothing is withheld from it.
+  const results = await Promise.allSettled(
+    imageIds.map((id) => rescanImageById({ id, csamReview: true }))
+  );
 
   const submitted: number[] = [];
   const notFound: number[] = [];

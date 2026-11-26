@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { updateImageNsfwLevel } from '~/server/services/image.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { imageId, nsfwLevel } from '~/server/schema/moderator/image';
@@ -27,6 +28,7 @@ export default defineModeratorEndpoint('image.setNsfwLevel', {
       ),
   }),
   async handler(input, ctx) {
+    const csamReview = !!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports;
     const imageIds: number[] = [];
     for (const item of input.items) {
       await updateImageNsfwLevel({
@@ -34,6 +36,7 @@ export default defineModeratorEndpoint('image.setNsfwLevel', {
         nsfwLevel: item.nsfwLevel,
         userId: ctx.actor.id,
         isModerator: true,
+        csamReview,
         ...(input.status && { status: input.status }),
       });
       imageIds.push(item.imageId);

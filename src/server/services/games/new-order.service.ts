@@ -409,7 +409,13 @@ export async function addImageRating({
   damnedReason,
   chTracker,
   isModerator,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  csamReview = false,
+}: AddImageRatingInput & {
+  playerId: number;
+  chTracker?: Tracker;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   // Warm the rated set outside the per-image lock: a cold rebuild reads ClickHouse and must not
@@ -439,6 +445,7 @@ export async function addImageRating({
           damnedReason,
           chTracker,
           isModerator,
+          csamReview,
         });
       }
     )
@@ -459,7 +466,13 @@ async function processImageRating({
   damnedReason,
   chTracker,
   isModerator,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  csamReview = false,
+}: AddImageRatingInput & {
+  playerId: number;
+  chTracker?: Tracker;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) {
   // Validate player and image existence before consuming rate limit budget
   const player = await getPlayerById({ playerId });
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
@@ -558,6 +571,7 @@ async function processImageRating({
       nsfwLevel: rating,
       userId: playerId,
       isModerator,
+      csamReview,
       status: 'Actioned',
     });
     await updatePendingImageRatings({ imageId, rating });

@@ -179,7 +179,7 @@ describe('rescanArticle', () => {
   it("re-queues only the author's settled, unblocked images", async () => {
     storeImages({ connected: [CLEAN, ...SKIPPED.map(([, img]) => img)] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
     // Refused on the read, so the write never sees them.
@@ -193,7 +193,7 @@ describe('rescanArticle', () => {
     storeArticle(cover.id);
     storeImages({ connected: [CLEAN], byId: [cover] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect((await requeued()).sort()).toEqual([CLEAN.id, cover.id]);
   });
@@ -204,7 +204,7 @@ describe('rescanArticle', () => {
     storeArticle(cover.id, banner.id);
     storeImages({ connected: [CLEAN], byId: [cover, banner] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect((await requeued()).sort()).toEqual([CLEAN.id, cover.id, banner.id]);
   });
@@ -213,7 +213,7 @@ describe('rescanArticle', () => {
     storeArticle(BLOCKED.id);
     storeImages({ connected: [CLEAN], byId: [BLOCKED] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
   });
@@ -222,7 +222,7 @@ describe('rescanArticle', () => {
     const elsewhere = image(20);
     storeImages({ connected: [CLEAN], byId: [elsewhere] });
 
-    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+    await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
   });
@@ -234,7 +234,7 @@ describe('rescanArticle', () => {
       landedAfterRead[changing.id] = change;
       storeImages({ connected: [CLEAN, changing] });
 
-      await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+      await rescanArticle({ csamReview: true, id: ARTICLE_ID, isModerator: true });
 
       expect(await requeued()).toEqual([CLEAN.id]);
     }
@@ -243,7 +243,13 @@ describe('rescanArticle', () => {
 
 describe('rescanArticleImage', () => {
   const rescan = (img: Img, userId = AUTHOR) =>
-    rescanArticleImage({ articleId: ARTICLE_ID, imageId: img.id, userId, isModerator: true });
+    rescanArticleImage({
+      csamReview: true,
+      articleId: ARTICLE_ID,
+      imageId: img.id,
+      userId,
+      isModerator: true,
+    });
 
   it.each(SKIPPED.filter(([, img]) => img !== PENDING))(
     'refuses %s, so the caller is not told it was sent',

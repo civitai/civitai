@@ -112,6 +112,10 @@ import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { shopArtworkUrls } from '~/server/services/image-url-ownership';
 import { enqueueImageIngestion, resolveIngestionError } from '~/server/services/image.service';
 import {
+  assertMayLoosenImages,
+  withheldImageIds,
+} from '~/server/services/moderator-withheld.service';
+import {
   enqueueCollectionRebuild,
   getCollectionIdsForArticle,
 } from '~/server/services/collection-media-index';
@@ -3616,11 +3620,13 @@ export async function resolveArticleImageScan({
   imageId,
   nsfwLevel,
   userId,
+  csamReview,
 }: {
   articleId: number;
   imageId: number;
   nsfwLevel: NsfwLevel;
   userId: number;
+  csamReview: boolean;
 }): Promise<void> {
   // Guard against a mistyped/cross-article imageId silently overriding an
   // unrelated image: the image must be this article's cover or one of its
@@ -3639,7 +3645,7 @@ export async function resolveArticleImageScan({
   if (!articleOwnImageIds(article).includes(imageId) && !connection)
     throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
 
-  await resolveIngestionError({ id: imageId, nsfwLevel, userId });
+  await resolveIngestionError({ id: imageId, nsfwLevel, userId, csamReview });
   await recomputeArticleIngestion(articleId);
   await articlesSearchIndex.queueUpdate(
     [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
@@ -3822,7 +3828,8 @@ export async function retryArticleErrorImages({
 export async function rescanArticle({
   id,
   isModerator,
-}: GetByIdInput & { isModerator?: boolean }): Promise<void> {
+  csamReview = false,
+}: GetByIdInput & { isModerator?: boolean; csamReview?: boolean }): Promise<void> {
   // --- Rate limit (owners only, mods bypass) ---
   const cacheKey = `${REDIS_KEYS.ARTICLE.RESCAN}:${id}` as const;
   if (!isModerator) {
@@ -3887,7 +3894,15 @@ export async function rescanArticle({
   }
 
   // --- Re-queue already-processed images for rescan ---
-  const candidates = await articleRescanCandidates(article);
+  let candidates = await articleRescanCandidates(article);
+  // A moderator's rescan skips what is withheld from them.
+  if (isModerator) {
+    const withheld = await withheldImageIds(
+      candidates.map((image) => image.id),
+      { csamReview }
+    );
+    candidates = candidates.filter((image) => !withheld.has(image.id));
+  }
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
   await rearmArticleImages(candidates, article.userId, 'article-rescan-image');
@@ -3967,11 +3982,13 @@ export async function rescanArticleImage({
   imageId,
   userId,
   isModerator,
+  csamReview = false,
 }: {
   articleId: number;
   imageId: number;
   userId: number;
   isModerator?: boolean;
+  csamReview?: boolean;
 }): Promise<void> {
   const db = await getDbWithoutLag('article', articleId);
   const article = await db.article.findUnique({
@@ -3991,6 +4008,7 @@ export async function rescanArticleImage({
     }));
   if (!belongs)
     throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
+  if (isModerator) await assertMayLoosenImages([imageId], { csamReview });
 
   // --- Rate limit (owners only, mods bypass) ---
   const cacheKey = `${REDIS_KEYS.ARTICLE.RESCAN}:image:${imageId}` as const;
