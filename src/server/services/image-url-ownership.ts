@@ -496,11 +496,16 @@ export async function recordedKeys(
   // Looked up MAX_KEYS at a time, as keyIssuers caps one lookup.
   for (let i = 0; i < keys.length; i += MAX_KEYS) {
     const chunk = keys.slice(i, i + MAX_KEYS);
-    const fromRecord = await ownersFromRedis(chunk, now);
-    const logged = await ownersFromClickhouse(chunk.filter((k) => !fromRecord.owners.has(k)));
+    // Records are written lowercased; the key is returned as given.
+    const lower = [...new Set(chunk.map((k) => k.toLowerCase()))];
+    const fromRecord = await ownersFromRedis(lower, now);
+    const logged = await ownersFromClickhouse(lower.filter((k) => !fromRecord.owners.has(k)));
     readFailed ||= fromRecord.readFailed || logged.failed;
-    for (const [key, owner] of [...fromRecord.owners, ...logged.owners])
-      if (!issuedTo || issuedTo.includes(owner)) recorded.add(key);
+    const owners = new Map([...fromRecord.owners, ...logged.owners]);
+    for (const key of chunk) {
+      const owner = owners.get(key.toLowerCase());
+      if (owner !== undefined && (!issuedTo || issuedTo.includes(owner))) recorded.add(key);
+    }
   }
   return { recorded, readFailed };
 }

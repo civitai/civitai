@@ -823,6 +823,17 @@ describe('a url whose upload is not in the image store', () => {
     expect(await ingestion()).toBe('Blocked');
   });
 
+  it('defers a key written in upper case like its stored lowercase form', async () => {
+    const upper = KEY2.toUpperCase();
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    const content = `<edge-media url="${upper}" type="image"></edge-media>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([upper]);
+  });
+
   it('links as before, not deferred, when its key has no issue record', async () => {
     // Such a key may predate the store the probe asks, so its absence there proves nothing.
     const content = `<p>${img(KEY2)}</p>`;

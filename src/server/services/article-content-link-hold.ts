@@ -144,7 +144,8 @@ export async function probeContentUploads(
   await limitConcurrency(
     urls.slice(0, max).map((url) => async () => {
       if (unreadable || Date.now() >= stopAt) return;
-      const verdict = await probeCreatedImageMedia(url);
+      // Objects are stored under lowercase keys.
+      const verdict = await probeCreatedImageMedia(url.toLowerCase());
       if (verdict === 'absent') absent.add(url);
       else if (verdict === 'unknown') unreadable = true;
       else present.add(url);
