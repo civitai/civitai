@@ -3131,9 +3131,8 @@ export const toggleBan = async ({
   /** Server-only: archive the profile and links even when the user is not named on a CSAM report. */
   alwaysArchiveProfile?: boolean;
   /**
-   * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
-   * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
-   * already banned rather than unbanning it, or replacing a ban that lands before the write.
+   * Server-only: never lifts a ban. Throws on an account that is already banned rather than
+   * unbanning it, or replacing a ban that lands before the write.
    */
   onlyBan?: boolean;
   /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
@@ -3141,9 +3140,9 @@ export const toggleBan = async ({
 }) => {
   // Get user with username for search index deletion
   const select = { bannedAt: true, meta: true, username: true, email: true } as const;
-  const user = onlyBan
-    ? await dbWrite.user.findUnique({ where: { id }, select })
-    : await getUserById({ id, select });
+  // The primary decides the direction: a replica behind the last ban or unban would reverse it, or
+  // ban twice and run the ban's side effects again.
+  const user = await dbWrite.user.findUnique({ where: { id }, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
 
@@ -3507,7 +3506,8 @@ export const toggleContestBan = async ({
   id,
   detailsInternal,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
-  const user = await getUserById({ id, select: { meta: true } });
+  // From the primary: the direction, and the whole meta written back, must not come from a stale read.
+  const user = await getUserById({ id, select: { meta: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
