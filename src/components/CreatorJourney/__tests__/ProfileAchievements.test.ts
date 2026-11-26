@@ -135,7 +135,7 @@ describe('profile achievement cards', () => {
     expect(card.textContent).toContain('Publish 25 models');
   });
 
-  // Justin (2026-10-10): the owner's earned special keeps its hint, above the description.
+  // The owner's earned special keeps its hint, above the description (#5697).
   it('shows an earned special its hint above the description', () => {
     const text =
       mount(
@@ -271,7 +271,7 @@ describe('achievements tab', () => {
       rung.getAttribute('aria-label')
     );
 
-  // Justin's pick (2026-10-12): the tier as one band holding the whole ladder, not a tile beside a grid.
+  // 2026-10-12: the tier as one band holding the whole ladder, not a tile beside a grid.
   it('heads the tab with the highest tier and every tier on the ladder, held ones dated', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
     mocks.ladderTiers = ladder(
