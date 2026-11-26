@@ -1,7 +1,7 @@
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
@@ -93,6 +93,12 @@ vi.mock('~/components/Storyline/StorylineLaneMap', () => ({ StorylineChapterLane
 vi.mock('~/components/Storyline/StorylineContextMenu', () => ({
   StorylineContextMenu: () => null,
 }));
+
+// The editor is a lazy chunk (next/dynamic). Loaded here, so the 1 s wait below covers a render, not
+// a cold import of the editor, which a busy runner can take longer than that to fetch.
+beforeAll(async () => {
+  await import('~/components/RichTextEditor/RichTextEditorComponent');
+}, 30_000);
 
 const renderPage = () =>
   renderWithProviders(
