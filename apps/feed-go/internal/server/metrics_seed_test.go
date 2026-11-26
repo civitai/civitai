@@ -208,10 +208,10 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 func TestPanicsDevalueSeededErrorsLazy(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	if n := testutil.CollectAndCount(m.Panics); n != 4 {
-		t.Errorf("feed_go_panics_total has %d series, want 4", n)
+	if n := testutil.CollectAndCount(m.Panics); n != 5 {
+		t.Errorf("feed_go_panics_total has %d series, want 5", n)
 	}
-	for _, w := range []string{"serve", "shadow", "probe", "serve-parity"} {
+	for _, w := range []string{"serve", "shadow", "probe", "serve-parity", "eval-capture"} {
 		if v, found := metricValue(t, reg, "feed_go_panics_total", map[string]string{"where": w}); !found || v != 0 {
 			t.Errorf("panics{%s} = %v found=%v, want a 0 series", w, v, found)
 		}

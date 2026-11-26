@@ -1084,3 +1084,53 @@ func TestServeParityEnv(t *testing.T) {
 		}
 	}
 }
+
+// FEED_GO_EVAL_CAPTURE defaults off and then reads none of the store's variables; on, it refuses to
+// start without all three (each one missing in turn), and reads them and the two rates.
+func TestLoadEvalCapture(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	store := map[string]string{
+		"FEED_GO_EVAL_CLICKHOUSE_URL":      "https://store.example.test:8443/evaldb",
+		"FEED_GO_EVAL_CLICKHOUSE_USER":     "writer",
+		"FEED_GO_EVAL_CLICKHOUSE_PASSWORD": "pw",
+	}
+	for k, v := range store {
+		t.Setenv(k, v)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_EVAL_CAPTURE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.EvalCapture != want {
+			t.Errorf("FEED_GO_EVAL_CAPTURE=%q -> %v, want %v", in, c.EvalCapture, want)
+		}
+		if !want && (c.EvalClickHouseURL != "" || c.EvalClickHouseUser != "" || c.EvalClickHousePassword != "") {
+			t.Errorf("FEED_GO_EVAL_CAPTURE=%q read the store's variables", in)
+		}
+	}
+	t.Setenv("FEED_GO_EVAL_CAPTURE", "true")
+	t.Setenv("FEED_GO_EVAL_CAPTURE_SERVE_RATE", "0.01")
+	t.Setenv("FEED_GO_EVAL_CAPTURE_SHADOW_RATE", "0.25")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EvalClickHouseURL != store["FEED_GO_EVAL_CLICKHOUSE_URL"] || c.EvalClickHouseUser != "writer" || c.EvalClickHousePassword != "pw" {
+		t.Errorf("store = %q %q %q", c.EvalClickHouseURL, c.EvalClickHouseUser, c.EvalClickHousePassword)
+	}
+	if c.EvalCaptureServeRate != 0.01 || c.EvalCaptureShadowRate != 0.25 {
+		t.Errorf("rates = %v %v, want 0.01 0.25", c.EvalCaptureServeRate, c.EvalCaptureShadowRate)
+	}
+	for missing := range store {
+		t.Run(missing, func(t *testing.T) {
+			t.Setenv(missing, "")
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "FEED_GO_EVAL_CAPTURE needs") {
+				t.Errorf("capture on without %s: err %v, want the refusal", missing, err)
+			}
+		})
+	}
+}

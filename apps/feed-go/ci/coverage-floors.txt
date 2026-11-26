@@ -19,6 +19,7 @@ internal/clock 100
 internal/config 78
 internal/dbpool 95
 internal/devalue 91
+internal/evalcapture 91
 internal/evalcorpus 90
 internal/feed 76
 internal/fallback 91

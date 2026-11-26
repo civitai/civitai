@@ -24,6 +24,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
+	"github.com/civitai/civitai/apps/feed-go/internal/chwrite"
 	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
@@ -682,6 +683,13 @@ func run(log *slog.Logger) error {
 		srv.Parity = newServeParity(cfg.ServeParityRate, target, prop)
 	}
 	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil)
+	// The eval capture (FEED_GO_EVAL_CAPTURE, default off; DESIGN.md §19.6): nil writers when off.
+	evalSamples, evalCases, err := newEvalCapture(cfg, srv, log)
+	if err != nil {
+		return err
+	}
+	log.Info("eval capture", "FEED_GO_EVAL_CAPTURE", cfg.EvalCapture, "FEED_GO_EVAL_CAPTURE_SERVE_RATE", cfg.EvalCaptureServeRate,
+		"FEED_GO_EVAL_CAPTURE_SHADOW_RATE", cfg.EvalCaptureShadowRate)
 	// The public /api/v1/models and /api/v1/images routes hand their fallbacks to the Node app that
 	// serves /api/v1, a different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the
 	// routes are not mounted).
@@ -785,6 +793,15 @@ func run(log *slog.Logger) error {
 		}
 		for _, s := range servers {
 			_ = s.Shutdown(shutdown)
+		}
+		// The eval capture's queued rows are sent once nothing can add more (the taps run on the
+		// shadow path, ended by srv.Close, and on requests, drained above).
+		for _, w := range []*chwrite.Writer{evalSamples, evalCases} {
+			if w != nil {
+				if err := w.Close(shutdown); err != nil {
+					log.Warn("eval capture rows still queued at the end of the grace period", "err", err)
+				}
+			}
 		}
 		// The spans of the drained requests are exported before exit.
 		if err := tp.Shutdown(shutdown); err != nil {

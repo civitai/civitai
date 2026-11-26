@@ -8,8 +8,8 @@
 // is actually called, not its traffic (DESIGN.md §19).
 //
 // It is pure: no I/O, no clock unless the caller leaves Env.Now zero, nothing global but the
-// embedded input schemas. The capture (the shadow sampler) and the replay harness are its callers;
-// neither is wired yet.
+// embedded input schemas. Its callers are the capture (internal/evalcapture, DESIGN.md §19.6) and,
+// later, the replay harness.
 //
 // Privacy, by construction rather than by review:
 //   - Headers are an allow-list (keptHeaders): cookies, Authorization, the sampler's credential
@@ -243,6 +243,10 @@ func canonicalJSON(v any) (string, error) {
 	}
 	return strings.TrimSuffix(buf.String(), "\n"), nil
 }
+
+// HostClass is the host class a Case's shape records for a request to host (the `host` of its shape):
+// the host's domain color, HostOther, or HostUnmapped when colors is nil.
+func HostClass(colors browsing.HostColors, host string) string { return hostClass(colors, host) }
 
 // hostClass is the host's domain color, HostOther, or HostUnmapped.
 func hostClass(colors browsing.HostColors, host string) string {

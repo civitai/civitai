@@ -119,6 +119,16 @@ func WithResolved(ctx context.Context, u *SessionUser, err error) context.Contex
 	return context.WithValue(ctx, resolvedKey{}, &resolved{user: u, err: err})
 }
 
+type observerKey struct{}
+
+// WithResolveObserver has every Resolve with a context derived from ctx call f with its answer (the
+// user, or nil, and the error), after resolving and before returning; the eval capture reads the
+// viewer a computation resolved through it, at no extra store read. f is called from the resolving
+// goroutine, so concurrently when a computation resolves on several: it must be safe for that.
+func WithResolveObserver(ctx context.Context, f func(*SessionUser, error)) context.Context {
+	return context.WithValue(ctx, observerKey{}, f)
+}
+
 // HasAPICredential reports whether the request carries an API credential: a non-empty Authorization
 // header, or a `?token=` value (hasQueryToken).
 func HasAPICredential(req *http.Request) bool {

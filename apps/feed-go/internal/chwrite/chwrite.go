@@ -1,7 +1,7 @@
 // Package chwrite is a ClickHouse INSERT client over the HTTP interface: rows a caller hands it are
 // queued in memory, batched, and sent as one INSERT ... FORMAT JSONEachRow per batch, from a single
-// background goroutine. It is not wired into the server yet: nothing in this module constructs a
-// Writer, so it has no effect on what the service does.
+// background goroutine. Its one user is the eval capture (internal/evalcapture, behind
+// FEED_GO_EVAL_CAPTURE, default off): off, no Writer is constructed.
 //
 // It is a separate package from chread on purpose. chread promises it is read-only by construction
 // (every query a GET, which ClickHouse runs read-only); a writer needs POST, so it lives here, and
