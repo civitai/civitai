@@ -174,10 +174,13 @@
   .hint {
     margin: 0;
     color: var(--io-parchment-muted);
-    font: 12px/1.4 var(--io-font-ui);
+    font: 13px/1.4 var(--io-font-ui);
   }
 
+  /* The card is a click-to-start target, so the link gets room around it. */
   .hint a {
+    display: inline-block;
+    padding: 6px 2px;
     color: var(--io-gold);
     text-decoration: underline;
     text-underline-offset: 2px;

@@ -265,7 +265,6 @@ describe('the milestone card lasts for the item it appeared with', () => {
       guide: true,
       whatsNew: true,
       consent: true,
-      updatesSeen: null,
     });
   });
 
@@ -290,7 +289,6 @@ describe('the milestone card lasts for the item it appeared with', () => {
       guide: true,
       whatsNew: true,
       consent: true,
-      updatesSeen: null,
     });
 
     await seen.store!.set(7, {

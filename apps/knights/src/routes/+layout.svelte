@@ -41,15 +41,19 @@
     userId: () => data.userId,
     path: () => page.url.pathname,
   });
-  // Entries the player has not seen open once by themselves on /home and /play, never over the launch dialog or the
-  // content warning; the header button opens them at any time.
+  // Entries the player has not seen open once by themselves on /home and /play, never over another dialog: the launch
+  // dialog, the content warning, or /play's rating guide and rank-up. They wait for the load after those close. The
+  // header button opens them at any time.
+  let otherDialogDue = $derived(
+    !!whatsNew ||
+      page.data.needsConsent === true ||
+      page.data.showGuide === true ||
+      (page.data.progress as { kind?: string } | null | undefined)?.kind === 'rank'
+  );
   const updates = provideUpdates({
     updates: () => data.updates,
     userId: () => data.userId,
-    autoOpen: () =>
-      (page.route.id === '/home' || page.route.id === '/play') &&
-      !whatsNew &&
-      page.data.needsConsent !== true,
+    autoOpen: () => (page.route.id === '/home' || page.route.id === '/play') && !otherDialogDue,
   });
   let fit = $derived(page.route.id === '/play');
 </script>

@@ -26,7 +26,7 @@
       <p class="intro">{copy.lead}</p>
       <div class="rule" aria-hidden="true"><span class="gem"></span></div>
       <ul>
-        {#each copy.items as item (item.lead)}
+        {#each copy.items as item (item.id ?? item.lead)}
           <li>
             <span class="mark" aria-hidden="true"></span>
             <p>

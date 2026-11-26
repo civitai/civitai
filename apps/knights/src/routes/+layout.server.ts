@@ -16,7 +16,7 @@ import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { readUpdatesSeen } from '$lib/server/seen';
 import { seenStore } from '$lib/server/seen-runtime';
 import { unseenCount, updatesFor } from '$lib/server/whats-new/entries';
-import type { UpdateEntry } from '$lib/whats-new';
+import type { Updates } from '$lib/updates';
 import type { LayoutServerLoad } from './$types';
 
 /** The most entries the dialog lists; older ones stay in the folder. */
@@ -27,7 +27,7 @@ const UPDATES_SHOWN = 6;
 function headerUpdates(
   rank: string,
   seen: Awaited<ReturnType<typeof readUpdatesSeen>>
-): { entries: UpdateEntry[]; unseen: number } | null {
+): Updates | null {
   const entries = updatesFor(rank)
     .slice(0, UPDATES_SHOWN)
     .map(({ id, title, body, link }) => ({ id, title, body, link }));

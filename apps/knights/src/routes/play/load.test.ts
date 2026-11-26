@@ -812,7 +812,6 @@ describe('play progress actions', () => {
       guide: true,
       whatsNew: true,
       consent: true,
-      updatesSeen: null,
     });
   });
 

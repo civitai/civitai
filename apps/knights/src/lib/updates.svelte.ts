@@ -31,7 +31,7 @@ export function provideUpdates(opts: {
   /** Whether unseen entries may open the dialog by themselves on this page right now. */
   autoOpen: () => boolean;
 }): UpdatesView {
-  const state = $state<UpdatesState>({ open: false, seen: null, autoOpened: false });
+  const state = $state<UpdatesState>({ open: false, seen: null, autoOpened: false, resent: false });
   const updates = $derived(opts.updates());
   const deps: UpdatesDeps = {
     get userId() {

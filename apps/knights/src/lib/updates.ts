@@ -1,5 +1,5 @@
+import { sendInBackground, type SeenStorage } from './seen-marker';
 import type { UpdateEntry } from './whats-new';
-import type { SeenStorage } from './whats-new-dismiss';
 
 /** The layout's "What's new" data: the entries for the player's rank, newest first, and how many they have not seen. */
 export type Updates = { entries: UpdateEntry[]; unseen: number };
@@ -14,8 +14,16 @@ export type UpdatesDeps = {
   refresh: () => unknown;
 };
 
-/** `seen` is the newest entry this browser closed the dialog on; `autoOpened` keeps it to one automatic showing per load. */
-export type UpdatesState = { open: boolean; seen: string | null; autoOpened: boolean };
+/**
+ * `seen` is the newest entry this browser closed the dialog on; `autoOpened` keeps it to one automatic showing per load, and
+ * `resent` to one repeat of the server write (a deploy in progress can answer from an older build, which would loop).
+ */
+export type UpdatesState = {
+  open: boolean;
+  seen: string | null;
+  autoOpened: boolean;
+  resent?: boolean;
+};
 
 const latestOf = (updates: Updates | null) => updates?.entries[0]?.id ?? null;
 const seenKey = (userId: number) => `knights:whats-new-entry:${userId}`;
@@ -38,13 +46,6 @@ function writeSeen({ userId, storage }: UpdatesDeps, id: string) {
   }
 }
 
-function sendInBackground(deps: UpdatesDeps) {
-  void deps
-    .send()
-    .then((stored) => (stored ? deps.refresh() : undefined))
-    .catch(() => undefined);
-}
-
 /** The entries still unseen here: none once this browser closed the dialog on the newest one, whatever the server says yet. */
 export function unseenNow(updates: Updates | null, state: UpdatesState): number {
   if (!updates || updates.unseen === 0) return 0;
@@ -65,7 +66,10 @@ export function syncUpdates(
   if (!updates || updates.unseen === 0 || latest === null) return;
   if (readSeen(deps) === latest) {
     state.seen = latest;
-    sendInBackground(deps);
+    if (!state.resent) {
+      state.resent = true;
+      sendInBackground(deps);
+    }
     return;
   }
   if (autoOpen && !state.autoOpened && unseenNow(updates, state) > 0) {

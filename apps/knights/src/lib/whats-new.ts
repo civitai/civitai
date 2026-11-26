@@ -7,6 +7,8 @@ export const ANNOUNCEMENT_URL =
 
 /** `link` turns that part of the lead-in into a link; `action` is a link after the body; `isNew` marks an unseen entry. */
 export type WhatsNewItem = {
+  /** Unique per item; the launch copy's leads are distinct, so it keys by lead. */
+  id?: string;
   lead: string;
   body: string;
   link?: { text: string; href: string };
@@ -36,6 +38,7 @@ export const updatesCopy = (entries: UpdateEntry[], unseen: number): WhatsNew =>
   title: 'News from the Order',
   lead: unseen > 0 ? 'Since your last visit:' : 'Recent changes to the game:',
   items: entries.map((entry, index) => ({
+    id: entry.id,
     lead: entry.title,
     body: entry.body,
     ...(entry.link ? { action: entry.link } : {}),

@@ -177,7 +177,8 @@
       return;
     }
     if (questionTimeShowing) {
-      if ((event.target as HTMLElement | null)?.closest('header')) return;
+      // The header and Question time's Settings link keep their own keys.
+      if ((event.target as HTMLElement | null)?.closest('header, a')) return;
       if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault();
         startQuestions();

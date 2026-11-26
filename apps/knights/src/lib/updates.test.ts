@@ -49,6 +49,15 @@ describe('syncUpdates', () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
+  it('repeats that send once per load, so an older build answering mid-deploy cannot make it loop', () => {
+    const state = fresh();
+    const { deps: d, send } = deps({ 'knights:whats-new-entry:7': '2030-01-02-b' });
+    syncUpdates(state, updates(2), d, true);
+    syncUpdates(state, updates(2), d, true);
+    syncUpdates(state, updates(2), d, true);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it('shows entries newer than the ones this browser closed', () => {
     const state = fresh();
     const { deps: d } = deps({ 'knights:whats-new-entry:7': '2030-01-01-a' });
