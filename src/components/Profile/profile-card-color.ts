@@ -18,7 +18,7 @@ export function profileCardBackground(color: string | null, opacity: number | nu
   return `${color}${alpha.toString(16).padStart(2, '0')}`;
 }
 
-/** The profile tab bar's tint: the card colour, nearly opaque so the tabs stay readable (Ellie's mockup). */
+/** The profile tab bar's tint: the card colour, nearly opaque so the tabs stay readable. */
 export function profileBarBackground(color: string | null) {
   return color ? `${color}ed` : undefined;
 }

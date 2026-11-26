@@ -11,29 +11,29 @@
 -- color, flags, createdAt handling, HTML skip, deleted-user skip, advisory lock and gate.
 --
 -- ============================================================================
--- THE LIVE RULE, TRANSLATED. Keep these in step with the code they cite.
+-- THE LIVE RULE, TRANSLATED. Keep these in step with the code they name.
 -- ============================================================================
--- A banner shows on a profile iff (profile.utils.ts:164-172, shouldShowProfileMessage, called
--- at ProfileHeader.tsx:104-112):
+-- A banner shows on a profile iff (profile.utils.ts, shouldShowProfileMessage, called
+-- at ProfileHeader.tsx):
 --   * the domain's banner text is truthy: on green, sfwMessage when it IS NOT NULL, else
---     message; on every other domain, message (user-profile.service.ts:189,254). '' is falsy;
---   * the author is not muted: the "User"."muted" column itself (user.selector.ts:73, and
---     hot-reads-9.reads.ts:141 on the Kysely path), with no expiry logic applied;
+--     message; on every other domain, message (user-profile.service.ts). '' is falsy;
+--   * the author is not muted: the "User"."muted" column itself (user.selector.ts, and
+--     hot-reads-9.reads.ts on the Kysely path), with no expiry logic applied;
 --   * the creator has no announcement returned by getCreatorAnnouncements
---     (creator-announcement.service.ts:178-189): any row with this userId, profileOnly or
---     not, that is live per activeAnnouncementWhere (announcement-window.ts:17-27,35-37:
+--     (creator-announcement.service.ts): any row with this userId, profileOnly or
+--     not, that is live per activeAnnouncementWhere (announcement-window.ts:
 --     disabled = false, startsAt <= now or NULL, endsAt >= now or NULL), and whose domain
 --     overlaps {all, <request domain>} (hasSome, i.e. &&).
 --
 -- The request domain is only ever green or blue: the red host is configured as blue too and
--- getRequestDomainColor is a first-match walk, so it resolves blue (server-domain.ts:174-178,
+-- getRequestDomainColor is a first-match walk, so it resolves blue (server-domain.ts,
 -- 213-222). A {red}-only announcement therefore never hides a banner, and the checks below
 -- test {all,blue} and {all,green}, never red. Stored domains map back to read domains as:
 -- shows on blue -> {blue,red}; on green -> {green}; on both -> {all}.
 --
 -- Not expressible here, so assumed: the creatorAnnouncements flag is on for every viewer (with
 -- it off the hook never queries and announcementCount is 0, creator-announcements.utils.ts:
--- 16-27); and the blocked-viewer branch (creator-announcement.service.ts:171-176) is
+-- 16-27); and the blocked-viewer branch (creator-announcement.service.ts) is
 -- per-viewer, though it hides the banner as well, so it changes no row here.
 --
 -- ============================================================================
@@ -50,9 +50,8 @@
 -- 1. Creators who DELETED their August announcement now show their banner again, so this file
 --    recreates it for them; the same holds for one past its endsAt. Pending: whether those are
 --    recreated or excluded; nothing here records who deleted what. A creator with ANY announcement
---    a moderator disabled (creators cannot set "disabled", creator-announcement.service.ts:
---    631-633) is excluded outright: a catch-up must not route around a moderation action.
--- 2. The 772 HTML banners (August count) stay SKIPPED, by the same predicate. Pending.
+--    a moderator disabled (creators cannot set "disabled", creator-announcement.service.ts) is excluded outright: a catch-up must not route around a moderation action.
+-- 2. HTML banners stay SKIPPED, by the same predicate. Pending.
 -- Dropping the UserProfile message columns (tracked privately) waits for both decisions.
 --
 -- HTML predicate, copied from August with its warnings: it over-matches on purpose, and do NOT
