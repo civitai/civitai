@@ -207,6 +207,12 @@ export const MAX_ID3_TAGS = 8;
  * The length of the ID3v2 tag `head` opens with (header, body and footer), or 0 if it opens with
  * none. A player skips the tag and plays whatever follows it, whatever that is.
  */
+const PDF_HEADER = Buffer.from('%PDF-');
+/** How far into a file a PDF reader looks for its header. */
+export const PDF_HEADER_WINDOW = 1024;
+export const holdsPdfHeader = (bytes: Buffer) =>
+  bytes.subarray(0, PDF_HEADER_WINDOW).includes(PDF_HEADER);
+
 export function id3TagLength(head: Buffer) {
   if (head.length < 10 || head.subarray(0, 3).toString('latin1') !== 'ID3') return 0;
   if (head[3] === 0xff || head[4] === 0xff) return 0;
@@ -216,8 +222,13 @@ export function id3TagLength(head: Buffer) {
   return 10 + body + (head[5] & 0x10 ? 10 : 0);
 }
 
-/** Collects a stream's first `SNIFF_BYTES` past its leading ID3v2 tags, as a player would read it. */
+/**
+ * Collects a stream's first `SNIFF_BYTES` past its leading ID3v2 tags, as a player would read it,
+ * and its first bytes as stored, tags and all.
+ */
 class SniffedHead {
+  private raw: Buffer[] = [];
+  private rawLength = 0;
   private parts: Buffer[] = [];
   private length = 0;
   private skip = 0;
@@ -227,6 +238,11 @@ class SniffedHead {
 
   /** Whether enough has been read to judge. */
   push(chunk: Buffer) {
+    if (this.rawLength < PDF_HEADER_WINDOW) {
+      const kept = chunk.subarray(0, PDF_HEADER_WINDOW - this.rawLength);
+      this.raw.push(kept);
+      this.rawLength += kept.length;
+    }
     while (chunk.length) {
       if (this.skip) {
         const skipped = Math.min(this.skip, chunk.length);
@@ -255,6 +271,11 @@ class SniffedHead {
 
   bytes() {
     return Buffer.concat(this.parts);
+  }
+
+  /** Whether the bytes as stored hold a PDF header, even inside a tag a player skips. */
+  holdsPdfHeader() {
+    return holdsPdfHeader(Buffer.concat(this.raw));
   }
 }
 
@@ -288,9 +309,6 @@ function isOggAudio(head: Buffer) {
   return streams > 0;
 }
 
-const PDF_HEADER = Buffer.from('%PDF-');
-const PDF_HEADER_WINDOW = 1024;
-
 /** What the first bytes of an entry are, whatever its name says. */
 /**
  * `tsAnywhere: false` looks for a transport stream only where a file of one starts (byte 0, or 4
@@ -304,7 +322,7 @@ export function sniffEntry(
     head.subarray(offset, offset + text.length).toString('latin1') === text;
   const bytes = (...values: number[]) => values.every((value, i) => head[i] === value);
   // Ahead of the rest: a reader finds the header anywhere in the first 1 KB.
-  if (head.subarray(0, PDF_HEADER_WINDOW).includes(PDF_HEADER)) return 'pdf';
+  if (holdsPdfHeader(head)) return 'pdf';
   // Ahead of the image signatures: a player finds the stream behind any header.
   if (isMpegTs(head, tsAnywhere) || id3TagLength(head)) return 'video';
   if (
@@ -577,6 +595,7 @@ export async function everyEntryHead(
           inflate?.destroy();
         }
         if (inflate && inflate.bytesWritten !== entry.compressedSize) throw mismatch();
+        if (head.holdsPdfHeader()) throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
         if (!accept(entry.fileName, head.bytes())) throw new EntryNotAccepted();
         return span;
       }).catch((error) => {
@@ -690,6 +709,7 @@ export async function readEntry(
 
   /** The entry's kind from its first bytes, refusing what must not be in a final. */
   const decide = (): EntryKind => {
+    if (sniffed.holdsPdfHeader()) throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     const found = sniffEntry(sniffed.bytes());
     if (found === 'video') throw new ZipRejectedError(VIDEO_REFUSAL);
     if (found === 'archive') throw new ZipRejectedError(NESTED_REFUSAL);

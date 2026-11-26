@@ -195,6 +195,7 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'wav',
   'flac',
   'ogg',
+  // An inline preview of the text types must strip or refuse embedded data: images.
   'txt',
   'md',
   'json',

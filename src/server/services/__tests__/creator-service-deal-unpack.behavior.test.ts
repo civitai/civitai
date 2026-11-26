@@ -320,6 +320,15 @@ const id3Tag = (body: number, footer = false) =>
     footer ? Buffer.concat([Buffer.from('3DI', 'latin1'), Buffer.alloc(7)]) : Buffer.alloc(0),
   ]);
 const MP3_FRAME = () => Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(600)]);
+/** An MP3 whose leading ID3 tag carries a PDF header, which a player skips past. */
+const pdfInId3 = () =>
+  Buffer.concat([
+    id3Tag(300).subarray(0, 10),
+    Buffer.from('%PDF-1.7\n'),
+    Buffer.alloc(291),
+    MP3_FRAME(),
+  ]);
+
 /** A data descriptor with its signature, carrying the checksum and sizes given. */
 const descriptor = (crc: number, compressed: number, uncompressed: number) => {
   const bytes = Buffer.alloc(16);
@@ -861,7 +870,8 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
-  // Uploads refuse a .pdf; a Final stored before that, or a PDF under another name, stops here.
+  // Deliverable policy: PDFs are not accepted. Uploads refuse a .pdf; a Final stored before that,
+  // or a PDF under another name, stops here.
   it.each([
     ['a .pdf stored before uploads refused it', 'brief.pdf', pdf()],
     ['a PDF called notes.txt', 'notes.txt', asciiPdf],
@@ -869,6 +879,14 @@ describe('judging a file by what it is', () => {
       'a PDF behind a line of text, called notes.txt',
       'notes.txt',
       Buffer.concat([Buffer.from('read me first\n'), asciiPdf]),
+    ],
+    ['a PDF header inside an ID3 tag, called song.mp3', 'song.mp3', pdfInId3()],
+    ['a PDF called clip.mp4', 'clip.mp4', asciiPdf],
+    ['a PDF called a.png', 'a.png', asciiPdf],
+    [
+      'a PDF header 1,000 bytes in, called notes.txt',
+      'notes.txt',
+      Buffer.concat([Buffer.from('a'.repeat(1000)), asciiPdf]),
     ],
   ])('refuses %s as a Final', async (_n, name, content) => {
     const dealId = await accepted();
@@ -881,10 +899,12 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
+  // Deliverable policy: PDFs are not accepted, inside a .zip either.
   it.each([
     ['a PDF called brief.pdf', 'brief.pdf', pdf()],
     ['a PDF called docs/notes.txt', 'docs/notes.txt', asciiPdf],
     ['a brief.pdf that holds plain text', 'brief.pdf', Buffer.from('plain words')],
+    ['a PDF header inside the ID3 tag of song.mp3', 'song.mp3', pdfInId3()],
   ])('refuses a zip holding %s', async (_n, name, data) => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [
@@ -910,17 +930,32 @@ describe('judging a file by what it is', () => {
     expect((await entries(fileId)).map((e) => e.path)).toEqual(['a.png']);
   });
 
-  it.each([['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))]])(
-    'delivers %s',
-    async (_n, name, content) => {
-      const dealId = await accepted();
-      const fileId = await final(dealId, name, content);
-      serveHeads();
-      expect(await unpack.unpackFinals()).toBe(1);
-      expect((await fileRow(fileId)).failReason).toBeNull();
-      expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
-    }
-  );
+  it.each([
+    ['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))],
+    // A reader looks for the header in the first 1 KB only.
+    [
+      'a .txt whose "%PDF-" starts just past 1 KB',
+      'notes.txt',
+      Buffer.from(`${'a'.repeat(1025)}%PDF-1.7`),
+    ],
+    [
+      'a .md that quotes "%PDF-" after 1 KB',
+      'notes.md',
+      Buffer.from(`${'# Notes\n'.repeat(200)}A PDF starts with \`%PDF-\`.\n`),
+    ],
+    [
+      'a .json that quotes "%PDF-" after 1 KB',
+      'data.json',
+      Buffer.from(JSON.stringify({ pad: 'a'.repeat(1100), magic: '%PDF-1.7' })),
+    ],
+  ])('delivers %s', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
+  });
 
   it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
     const dealId = await accepted();
@@ -1080,6 +1115,7 @@ describe('video by any other name', () => {
       torchZip([['data/1', Buffer.concat([id3Tag(20), MP4_BYTES()])]]),
       /\.ckpt model/,
     ],
+    ['weights.ckpt', torchZip([['data/1', pdfInId3(), 'deflate']]), /PDF files can't be delivered/],
     [
       'weights.pt',
       torchZip([['data/0', Buffer.alloc(64)]], 'weights', [], {

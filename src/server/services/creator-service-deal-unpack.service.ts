@@ -36,6 +36,8 @@ import {
   listZipPaths,
   MAX_ID3_TAGS,
   everyEntryHead,
+  holdsPdfHeader,
+  PDF_HEADER_WINDOW,
   isMediaName,
   sniffEntry,
   SNIFF_BYTES,
@@ -356,6 +358,20 @@ async function isTorchArchive(file: ClaimedFinal) {
   });
 }
 
+/** The Final's first bytes as stored, before any tag a player would skip. */
+async function readRawPrefix(file: ClaimedFinal) {
+  if (file.size === 0) return Buffer.alloc(0);
+  const response = await getS3Client().send(
+    new GetObjectCommand({
+      Bucket: await getBucket(),
+      Key: file.s3Key,
+      Range: `bytes=0-${Math.min(PDF_HEADER_WINDOW, file.size) - 1}`,
+    })
+  );
+  if (!response.Body) throw new Error('Empty object body');
+  return Buffer.from(await response.Body.transformToByteArray());
+}
+
 /** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
 async function readHead(file: ClaimedFinal) {
   let offset = 0;
@@ -423,6 +439,7 @@ async function isImageByContent(file: ClaimedFinal) {
   return kind === 'image';
 }
 
+// An inline preview of these types must strip or refuse embedded data: images.
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
 
 type DocumentBytes = {
@@ -451,7 +468,6 @@ async function isTheDocumentItsNamed(name: string, { open }: DocumentBytes) {
   return true;
 }
 
-/** The Final's bytes. */
 async function finalBytes(file: ClaimedFinal): Promise<DocumentBytes> {
   const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
   return { open: () => source.readRange(0, file.size) };
@@ -579,6 +595,8 @@ export async function unpackFinals({
   const began = Date.now();
   try {
     const extension = fileExtension(file.fileName);
+    if (holdsPdfHeader(await readRawPrefix(file)))
+      throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     if (extension === 'zip') {
       if (!(await unpackZip(file, shouldStop))) {
         await release(file.id);
