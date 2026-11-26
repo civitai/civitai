@@ -98,3 +98,65 @@ describe('upsertArticleHandler — isOfficial', () => {
     expect(lastUpsertArg()).toHaveProperty('isOfficial', undefined);
   });
 });
+
+describe('upsertArticleHandler — bannerImage', () => {
+  const banner = { url: 'banner-key', name: 'banner.jpg' };
+  const save = (articleTypography: boolean) =>
+    upsertArticleHandler({
+      input: { id: 5, title: 't', content: '<p>c</p>', bannerImage: banner } as never,
+      ctx: {
+        user: { id: 7, isModerator: false },
+        features: { articleImageScanning: false, articleTypography },
+        req: undefined,
+        track: { article: vi.fn(async () => undefined) },
+      } as never,
+    });
+
+  beforeEach(() => {
+    mockUpsertArticle.mockReset();
+    mockUpsertArticle.mockResolvedValue({ id: 5, publishedAt: null });
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ publishedAt: null });
+    dbMock.dbRead.tag.findMany.mockResolvedValue([]);
+  });
+
+  it('drops a banner from a caller without the flag, and still saves', async () => {
+    await expect(save(false)).resolves.toMatchObject({ id: 5 });
+
+    expect(lastUpsertArg().bannerImage).toBeUndefined();
+  });
+
+  it('passes the banner through for a flagged caller', async () => {
+    await save(true);
+
+    expect(lastUpsertArg().bannerImage).toEqual(banner);
+  });
+});
+
+describe('upsertArticleHandler — a moderator on a scoped key', () => {
+  beforeEach(() => {
+    mockUpsertArticle.mockReset();
+    mockUpsertArticle.mockResolvedValue({ id: 5, publishedAt: null });
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ publishedAt: null });
+    dbMock.dbRead.tag.findMany.mockResolvedValue([]);
+  });
+
+  // getArticleById reads them as a member, so their save must keep what that read withheld.
+  it('saves as a member', async () => {
+    const scoped = {
+      ...(ctx(true) as object),
+      apiKeyId: 1,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 1 },
+      tokenScope: BigInt(1),
+    } as never;
+    await upsertArticleHandler({ input: input(), ctx: scoped });
+
+    expect(lastUpsertArg().isModerator).toBe(false);
+  });
+
+  it('saves as a moderator on a session', async () => {
+    await upsertArticleHandler({ input: input(), ctx: ctx(true) });
+
+    expect(lastUpsertArg().isModerator).toBe(true);
+  });
+});

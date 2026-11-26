@@ -1,6 +1,7 @@
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -89,11 +90,12 @@ const storageRefusal = {
 function renderTable(width?: number) {
   renderWithProviders(
     <IsClientProvider>
-      <ModalsProvider>
+      <>
         <div style={{ width, maxWidth: '100%' }}>
           <ImportQueueTable />
         </div>
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     </IsClientProvider>
   );
 }
@@ -103,6 +105,9 @@ beforeEach(() => {
   mockRetry.mockReset();
   mockDelete.mockReset();
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('ImportQueueTable — stuck imports', () => {
   test('restart shows why cleanup failed, and "Restart anyway" re-sends with force', async () => {

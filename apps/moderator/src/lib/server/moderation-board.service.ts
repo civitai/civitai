@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import {
   activityLabel,
+  COMPANION_ACTIVITIES,
   DIRECTIONAL_ACTIVITIES,
   PURGE_UNCONFIRMED_ACTIVITY,
 } from '$lib/mod-activity';
@@ -8,7 +9,7 @@ import type { task_enum_0648e184 } from './moderator-db/enums';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
-import { REPORT_ENTITIES, reportLinkFilter } from './report-entities';
+import { REPORT_ENTITIES } from './report-entities';
 import { SYSTEM_USER_ID } from './users.service';
 
 // Retool's Moderation Status board — the parts that are NOT counts.
@@ -34,8 +35,7 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
         FROM "Report" r
         JOIN ${sql.table(reportTable)} rt ON rt."reportId" = r."id"
         LEFT JOIN "User" u ON u."id" = r."statusSetBy"
-        WHERE ${reportLinkFilter(e, 'rt.reportId')}
-          AND r."status" != 'Pending' AND r."statusSetAt" IS NOT NULL
+        WHERE r."status" != 'Pending' AND r."statusSetAt" IS NOT NULL
           AND r."statusSetBy" IS DISTINCT FROM ${SYSTEM_USER_ID}
         ORDER BY r."statusSetAt" DESC
         LIMIT 1
@@ -62,7 +62,8 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
  *
  * Grouped by (entityType, activity) because that is the granularity the log carries. Do NOT put the
  * queue into the stored `activity` string to get finer rows — its values are a contract with the main
- * app, which writes and types them too.
+ * app, which writes and types them too. The minor queue's `clearMinor` / `minorQueueAccept` are written
+ * beside its `review` row, never instead of it.
  *
  * The window is a row count, not a date range: `ModActivity_createdAt_idx` makes it an index scan,
  * where `DISTINCT ON` over a fortnight would sort every row in it. It is large because the log is one
@@ -80,8 +81,11 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   review: 'reviews',
   setNsfwLevel: 'ratings',
   setNsfwLevelKono: 'ratings (KoNO)',
+  moderateTagKono: 'tag reviews (KoNO)',
   resolveAppeal: 'appeals',
   ratingReview: 'rating disputes',
+  clearMinor: 'minor flags cleared',
+  minorQueueAccept: 'minor-queue accepts',
   [PURGE_UNCONFIRMED_ACTIVITY]: activityLabel(PURGE_UNCONFIRMED_ACTIVITY).toLowerCase(),
 };
 
@@ -108,6 +112,7 @@ export async function getRecentModActivity(): Promise<QueueActivity[]> {
     .leftJoin('User as u', 'u.id', 'ma.userId')
     .select(['ma.entityType', 'ma.activity', 'ma.createdAt', 'u.username'])
     .where('ma.userId', '>', AUTOMATED_USER_ID)
+    .where('ma.activity', 'not like', HIDDEN_ACTIVITY_PREFIX)
     .orderBy('ma.createdAt', 'desc')
     .limit(RECENT_ACTIVITY_ROWS)
     .execute();
@@ -357,7 +362,9 @@ const MIN_RECENTLY_ACTIVE = 3;
 const RECENTLY_ACTIVE_DAYS = 2;
 
 /** Rating-game (KoNO) votes: a moderator who plays is not working a queue. */
-const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono'];
+const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono', 'moderateTagKono'];
+/** The preserved-file review is a hidden page: who works it, and when, stays off the shared board. */
+const HIDDEN_ACTIVITY_PREFIX = 'preservedFile:%';
 
 export type WorkingNow = { username: string | null; label: string; at: Date; active: boolean };
 export type YouToday = { actions: number; actioned: number; dismissed: number };
@@ -382,6 +389,7 @@ async function fetchRecentlyActive() {
     )
     .where('ma.userId', '>', AUTOMATED_USER_ID)
     .where('ma.activity', 'not in', NON_MODERATOR_ACTIVITIES)
+    .where('ma.activity', 'not like', HIDDEN_ACTIVITY_PREFIX)
     .where('u.isModerator', '=', true)
     .orderBy('ma.userId')
     .orderBy('ma.createdAt', 'desc')
@@ -414,6 +422,7 @@ export async function getYouToday(userId: number): Promise<YouToday> {
       .select((eb) => eb.fn.countAll<string>().as('count'))
       .where('userId', '=', userId)
       .where('createdAt', '>=', midnight)
+      .where('activity', 'not in', COMPANION_ACTIVITIES)
       .executeTakeFirst(),
     // The `<> -1` literal lets the planner use Report_human_statusSetAt_idx.
     sql<{ actioned: string; dismissed: string }>`

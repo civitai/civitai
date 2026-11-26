@@ -6,14 +6,15 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
   minor: 'Minor',
   scam: 'Scam / phishing',
   csam: 'CSAM',
+  'model-com-face-intent': 'civitai.com face intent',
 };
 
 export const promptKeyName = (key: PromptKey): string =>
   key === 'base'
     ? 'General instructions'
     : key === 'label:model-com-face-intent'
-      ? 'civitai.com face definition'
-      : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
+    ? 'civitai.com face definition'
+    : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
 export const blankPromptKeys = (prompts: Partial<Record<PromptKey, unknown>>): PromptKey[] =>
   (Object.keys(prompts) as PromptKey[]).filter((k) => {
@@ -36,8 +37,7 @@ export const ENTITY_TYPE_NAMES: Record<LabEntityType, string> = {
   Crucible: 'Crucible',
   Collection: 'Collection',
   ChatMessage: 'Chat messages',
-  Comment: 'Model comment (old)',
-  CommentV2: 'Comment',
+  CommentV3: 'Comment',
   ResourceReview: 'Review',
   User: 'Username',
   UserProfile: 'Profile',
@@ -56,6 +56,7 @@ const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string 
   minor: { yes: 'Involves a minor', no: 'No minor' },
   scam: { yes: 'Scam', no: 'Not a scam' },
   csam: { yes: 'Sexualised minor', no: 'No sexualised minor' },
+  'model-com-face-intent': { yes: 'Intent detected', no: 'No intent detected' },
 };
 
 /** `neutral`: a rating is information, not a finding. */

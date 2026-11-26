@@ -1,3 +1,4 @@
+import { EventCosmeticsPreview } from '~/providers/BrowserSettingsProvider';
 import { Button, Group, Paper, Slider, Stack, Text, UnstyledButton } from '@mantine/core';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
@@ -181,13 +182,17 @@ function Sample({
         style={{ padding: room, '--event-decoration-allowance': `${room}px` } as CSSProperties}
       >
         {/* A frame lays its card out to fill the frame, as the feed sizes both. */}
-        <TwCosmeticWrapper
-          cosmetic={framed ? { cssFrame: 'linear-gradient(135deg, #fab005, #be4bdb)' } : undefined}
-          eventDecoration={hat}
-          style={{ width: 160, height: 200 }}
-        >
-          <div className="h-full w-full rounded-lg bg-gradient-to-br from-gray-6 to-gray-8" />
-        </TwCosmeticWrapper>
+        <EventCosmeticsPreview>
+          <TwCosmeticWrapper
+            cosmetic={
+              framed ? { cssFrame: 'linear-gradient(135deg, #fab005, #be4bdb)' } : undefined
+            }
+            eventDecoration={hat}
+            style={{ width: 160, height: 200 }}
+          >
+            <div className="h-full w-full rounded-lg bg-gradient-to-br from-gray-6 to-gray-8" />
+          </TwCosmeticWrapper>
+        </EventCosmeticsPreview>
       </Paper>
     </Stack>
   );

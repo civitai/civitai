@@ -1,15 +1,19 @@
 import { createJob } from './job';
 import { repackFinals } from '~/server/services/creator-service-deal-repack.service';
 import {
+  countDanglingScanCopies,
   deleteEntryScanCopies,
   settleEntryScans,
   settleFinals,
   settleMalwareScans,
   unpackFinals,
 } from '~/server/services/creator-service-deal-unpack.service';
+import { markExpiredDealFiles } from '~/server/services/creator-service-deal-file-retention';
 import {
   deleteScanCopies,
+  dropRemovedPreviewCopies,
   publishPreviews,
+  purgeRemovedFiles,
   settlePreviewScans,
   startPreviewScans,
 } from '~/server/services/creator-service-deal-file.service';
@@ -62,7 +66,25 @@ export const creatorServiceUnpackJob = createJob(
     const finals = await settleFinals();
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
-    return { unpacked, repacked, ...entries, ...scans, ...finals, copiesDeleted };
+    const danglingCopies = await countDanglingScanCopies();
+    jobContext.checkIfCanceled();
+    const retentionExpired = await markExpiredDealFiles();
+    jobContext.checkIfCanceled();
+    const previewCopiesDropped = await dropRemovedPreviewCopies();
+    jobContext.checkIfCanceled();
+    const removedPurged = await purgeRemovedFiles();
+    return {
+      unpacked,
+      repacked,
+      ...entries,
+      ...scans,
+      ...finals,
+      copiesDeleted,
+      danglingCopies,
+      retentionExpired,
+      previewCopiesDropped,
+      removedPurged,
+    };
   },
   { lockExpiration: 40 * 60 }
 );

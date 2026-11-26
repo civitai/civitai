@@ -1,7 +1,6 @@
 import { Anchor } from '@mantine/core';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { isDailyPostLimitMessage } from '~/server/schema/post.schema';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { getRateLimit, withRetryText } from '~/utils/rate-limit';
@@ -14,7 +13,7 @@ export function showCreatePostError(
 ) {
   const message = typeof error === 'string' ? error : error.message;
   const rateLimit = getRateLimit(error);
-  const linked = journey && isDailyPostLimitMessage(message);
+  const linked = journey && rateLimit?.id === 'posts.daily';
   showErrorNotification({
     title,
     error: typeof error === 'string' ? new Error(error) : error,

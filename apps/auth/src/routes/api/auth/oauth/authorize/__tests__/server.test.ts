@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { TokenScope } from '@civitai/auth/token-scope';
 
@@ -14,6 +15,7 @@ const h = vi.hoisted(() => ({
   consent: undefined as unknown,
   skipConsent: false,
   isFirstParty: false,
+  handoffUser: undefined as { id: number } | undefined,
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -38,16 +40,20 @@ vi.mock('$lib/server/db/db', () => ({
   },
 }));
 vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authorize } }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: async () => true,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
-vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => true) }));
 vi.mock('$lib/server/auth/device', () => ({
   getOrCreateDeviceId: () => 'dev',
   touchAccount: vi.fn(async () => undefined),
 }));
 vi.mock('$lib/server/auth/pending-authz', () => ({
-  resolveAuthorizingUser: async () => ({ id: 7 }),
+  resolveAuthorizingUser: async (o: { sessionUser?: unknown }) =>
+    h.handoffUser ?? o.sessionUser ?? { id: 7 },
 }));
 vi.mock('$lib/server/auth/session-producer', () => ({ getOrProduceSessionUser: vi.fn() }));
 vi.mock('$lib/server/oauth/access', () => ({ checkClientAccess: async () => ({ allowed: true }) }));
@@ -65,10 +71,12 @@ vi.mock('$lib/server/oauth/model', () => ({
 
 import { GET, POST } from '../+server';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
+import { markUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 
 function approve(
-  scope: number,
-  headers: Record<string, string> = { origin: 'https://auth.civitai.com' }
+  scope: bigint,
+  headers: Record<string, string> = { origin: 'https://auth.civitai.com' },
+  locals: Record<string, unknown> = { user: { id: 7 } }
 ) {
   const body = new URLSearchParams({
     client_id: 'game-frame',
@@ -85,7 +93,7 @@ function approve(
   return POST({
     request: new Request(url, { method: 'POST', body, headers }),
     url,
-    locals: { user: { id: 7 } },
+    locals,
     getClientAddress: () => '203.0.113.9',
     cookies: { get: () => undefined, set: () => undefined },
   } as never);
@@ -97,6 +105,7 @@ beforeEach(() => {
   h.consent = undefined;
   h.skipConsent = false;
   h.isFirstParty = false;
+  h.handoffUser = undefined;
 });
 
 /** A sign-in starting at /authorize (no approval yet). Returns the response, or the redirect it throws. */
@@ -163,8 +172,17 @@ describe('authorize — client_credentials-only scopes', () => {
   it('stores the consent for an ordinary scope (positive control)', async () => {
     h.authorize.mockRejectedValueOnce(new Error('stop after consent'));
     await Promise.resolve(approve(TokenScope.UserRead)).catch(() => undefined);
+    // The bigint column is written as its decimal string.
     expect(h.inserts).toEqual([
-      expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: TokenScope.UserRead }),
+      expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: '1' }),
+    ]);
+  });
+
+  it('stores the consent for AppsRead and AppDataRead (bits 31, 32) whole', async () => {
+    h.authorize.mockRejectedValueOnce(new Error('stop after consent'));
+    await Promise.resolve(approve(1n | 2147483648n | 4294967296n)).catch(() => undefined);
+    expect(h.inserts).toEqual([
+      expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: '6442450945' }),
     ]);
   });
 });
@@ -261,6 +279,76 @@ describe('authorize — skipConsent needs the exact registered redirect', () => 
   });
 });
 
+describe('authorize — session accepted without reading the session store', () => {
+  beforeEach(() => {
+    h.skipConsent = true;
+    h.authorize.mockResolvedValue({ authorizationCode: 'the-code' });
+  });
+  const unconfirmed = () => {
+    const session = { sub: '7', jti: 'j', sid: 'family-a' };
+    markUnconfirmedSession(session);
+    return { user: { id: 7 }, session };
+  };
+
+  it('sends a third-party client temporarily_unavailable and issues no code', async () => {
+    const res = await start({}, unconfirmed());
+    expect(new URL(res.location!).searchParams.get('error')).toBe('temporarily_unavailable');
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('answers a first-party client 503 and issues no code', async () => {
+    h.isFirstParty = true;
+    expect((await start({}, unconfirmed())).status).toBe(503);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('issues the code for a user handed over by a fresh sign-in, with no proof from the session', async () => {
+    h.isFirstParty = true;
+    h.handoffUser = { id: 9 };
+    vi.mocked(storeOidcContext).mockClear();
+    await start({}, unconfirmed());
+    expect(h.authorize).toHaveBeenCalledTimes(1);
+    expect(storeOidcContext).toHaveBeenCalledWith(
+      'the-code',
+      expect.objectContaining({ proofFamily: undefined })
+    );
+  });
+
+  it('refuses the session user even when the handover resolves to an equal copy', async () => {
+    h.handoffUser = { id: 7 };
+    const res = await start({}, unconfirmed());
+    expect(new URL(res.location!).searchParams.get('error')).toBe('temporarily_unavailable');
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('stores no remembered consent from an approval on it', async () => {
+    h.skipConsent = false;
+    const pending = approve(TokenScope.UserRead, undefined, unconfirmed());
+    expect(await redirectedError(pending)).toBe('temporarily_unavailable');
+    expect(h.inserts).toHaveLength(0);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('stores the remembered consent and issues the code once it is confirmed', async () => {
+    h.skipConsent = false;
+    const pending = approve(TokenScope.UserRead, undefined, {
+      user: { id: 7 },
+      session: { sub: '7', jti: 'j', sid: 'family-a' },
+    });
+    expect(await redirectedError(pending)).toBeNull();
+    expect(h.inserts).toHaveLength(1);
+    expect(h.authorize).toHaveBeenCalledTimes(1);
+  });
+
+  it('issues the code for the same session once it is confirmed', async () => {
+    const res = await start(
+      {},
+      { user: { id: 7 }, session: { sub: '7', jti: 'j', sid: 'family-a' } }
+    );
+    expect(res.location).toBe('https://games.example.com/cb?code=the-code&state=s');
+  });
+});
+
 describe('authorize — family', () => {
   beforeEach(() => {
     h.skipConsent = true;
@@ -294,6 +382,44 @@ describe('authorize — family', () => {
       'the-code',
       expect.objectContaining({ family: 'family-a', impersonatedBy: 100, impExp: 999 })
     );
+  });
+
+  it('sends no code back when an impersonation hub session cannot store its context', async () => {
+    vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
+    const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    const res = await start({}, { user: { id: 7 }, session, impersonatedBy: 100 });
+    // A first-party client gets the error as JSON, with no redirect carrying the code.
+    expect(res).toEqual({ status: 503 });
+  });
+
+  it('still signs in an ordinary hub session whose context could not be stored', async () => {
+    vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
+    const session = { sub: '7', jti: 'j', sid: 'family-a', iat0: 5 };
+    const res = await start({}, { user: { id: 7 }, session });
+    expect(res.location).toContain('code=the-code');
+  });
+
+  it("marks the code of an impersonation hub session's own user only", async () => {
+    const imp = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    const authenticated = async (locals: Record<string, unknown>) => {
+      h.authorize.mockClear();
+      await start({}, locals);
+      const opts = h.authorize.mock.calls[0][2] as {
+        authenticateHandler: { handle: () => unknown };
+      };
+      return opts.authenticateHandler.handle();
+    };
+    expect(await authenticated({ user: { id: 7 }, session: imp, impersonatedBy: 100 })).toEqual({
+      id: 7,
+      impersonation: true,
+    });
+    expect(await authenticated({ user: { id: 7 }, session: { sub: '7', jti: 'j' } })).toEqual({
+      id: 7,
+    });
+    // A code for another account than the impersonation hub session's own.
+    expect(
+      await authenticated({ user: { id: 7 }, session: { ...imp, sub: '8' }, impersonatedBy: 100 })
+    ).toEqual({ id: 7 });
   });
 });
 
@@ -333,5 +459,11 @@ describe('authorize — during impersonation', () => {
     expect(res.status).toBe(303);
     expect(res.location).toContain('error=access_denied');
     expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('control: the same registered app outside impersonation reaches code issuance', async () => {
+    h.skipConsent = true;
+    await start({}, { user: { id: 7 } });
+    expect(h.authorize).toHaveBeenCalled();
   });
 });

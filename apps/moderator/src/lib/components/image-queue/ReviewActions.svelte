@@ -17,8 +17,16 @@
     selected,
     submit,
   }: {
-    /** `version` comes with a review-queue item, the only kind `dismissFlag` is shown for. */
-    item: { id: number; nsfwLevel: number; minor: boolean; poi: boolean; version?: string };
+    /** `version` comes with a review-queue item, the only kind `dismissFlag` is shown for.
+     *  `needsReview`, when the queue shows it, is posted with Accept so a flag changed since is refused. */
+    item: {
+      id: number;
+      nsfwLevel: number;
+      minor: boolean;
+      poi: boolean;
+      version?: string;
+      needsReview?: string | null;
+    };
     /** Couples the report's status to the verdict: accept → Unactioned, block → Actioned. It is also
      *  the card's selection key on the reported queue, where cards key by report rather than image. */
     reportId?: number;
@@ -70,6 +78,7 @@
     <div class="flex flex-wrap gap-1.5">
       <form method="POST" action="?/accept" use:enhance={submit}>
         <input type="hidden" name="imageId" value={item.id} />
+        {#if item.needsReview !== undefined}<input type="hidden" name="needsReview" value={item.needsReview ?? ''} />{/if}
         {#if reportId}<input type="hidden" name="reportId" value={reportId} />{/if}
         <button
           type="submit"
@@ -81,6 +90,7 @@
       {#if minorQueue}
         <form method="POST" action="?/accept" use:enhance={submit}>
           <input type="hidden" name="imageId" value={item.id} />
+          {#if item.needsReview !== undefined}<input type="hidden" name="needsReview" value={item.needsReview ?? ''} />{/if}
           <input type="hidden" name="removeMinorFlag" value="true" />
           <button
             type="submit"

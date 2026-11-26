@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSetOwnerStatusInput,
+  feedbackEnvironmentLine,
+  feedbackForkLabel,
   feedbackRowMeta,
+  feedbackSourceLabel,
+  INBOX_COMMITS_NOTE,
   INBOX_EMPTY_MESSAGE,
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_GENERIC_ERROR_MESSAGE,
@@ -16,6 +20,7 @@ import {
   newFeedbackBadge,
   ownerStatusChoices,
   ownerStatusLabel,
+  recentErrorLine,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
 
@@ -137,7 +142,7 @@ describe('feedbackRowMeta — "version live when sent" and surface', () => {
         appBlockSha: '3f9c2ab81d0e',
         surface: 'page',
       })
-    ).toEqual(['v1.4.0 (3f9c2ab)', 'App page']);
+    ).toEqual(['v1.4.0 (platform commit 3f9c2ab)', 'App page']);
   });
 
   it('the model-slot surface has its own label', () => {
@@ -146,10 +151,37 @@ describe('feedbackRowMeta — "version live when sent" and surface', () => {
     ).toEqual(['v2.0.1', 'Model page']);
   });
 
+  it("names the developer's own source commit between the version and the surface", () => {
+    expect(
+      feedbackRowMeta({
+        appBlockVersion: '1.4.0',
+        appBlockSha: '07ee0915aa',
+        appSourceCommit: '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901',
+        appSourceDirty: false,
+        surface: 'page',
+      })
+    ).toEqual([
+      'v1.4.0 (platform commit 07ee091)',
+      'reported source 05c2d58 (unverified)',
+      'App page',
+    ]);
+  });
+
+  it('says "uncommitted changes" only on a known-dirty tree, never on an unknown one', () => {
+    const commit = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+    expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: true })).toBe(
+      'reported source 05c2d58 (unverified, uncommitted changes)'
+    );
+    expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: null })).toBe(
+      'reported source 05c2d58 (unverified)'
+    );
+    expect(feedbackSourceLabel({ appSourceCommit: null, appSourceDirty: true })).toBeNull();
+  });
+
   it('a sha with no version still identifies the build', () => {
     expect(
       feedbackRowMeta({ appBlockVersion: null, appBlockSha: 'abcdef0123', surface: null })
-    ).toEqual(['build abcdef0']);
+    ).toEqual(['platform commit abcdef0']);
   });
 
   it('nothing known → nothing rendered', () => {
@@ -205,5 +237,131 @@ describe('inboxEmptyMessage', () => {
   it('a filter that matches nothing says so', () => {
     expect(inboxEmptyMessage('resolved')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
     expect(inboxEmptyMessage('new')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
+  });
+});
+
+describe('recentErrorLine — one failed SDK call in the inbox', () => {
+  it('time, call, message and every detail, as one string', () => {
+    expect(
+      recentErrorLine({
+        method: 'SUBMIT_WORKFLOW',
+        message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        code: 'BAD_REQUEST',
+        workflowId: 'wf_8412',
+        input: { kind: 'textToImage', step: 'upscale', modelVersionId: 812 },
+        at: Date.UTC(2026, 10, 11, 12, 3, 4),
+        count: 3,
+      })
+    ).toBe(
+      '12:03:04 UTC SUBMIT_WORKFLOW: Validation failed: ecosystem: Ecosystem is currently unavailable (×3; code BAD_REQUEST; textToImage; step upscale; model version 812; workflow wf_8412)'
+    );
+  });
+
+  it('a rewritten NAVIGATE names the scopes and the app-relative route', () => {
+    expect(
+      recentErrorLine({
+        method: 'NAVIGATE',
+        message: 'Carried out differently than worded.',
+        reason: 'rewritten',
+        scope: { requested: 'unspecified', resolved: 'app' },
+        appRoute: '/generate',
+        at: Date.UTC(2026, 10, 11, 1, 2, 3),
+        count: 1,
+      })
+    ).toBe(
+      '01:02:03 UTC NAVIGATE: Carried out differently than worded. (scope unspecified → app; route /generate)'
+    );
+  });
+
+  it('a time Date cannot render reads as unknown instead of throwing', () => {
+    expect(
+      recentErrorLine({ method: 'X', message: 'm', at: 8_640_000_000_000_001, count: 1 })
+    ).toBe('unknown time X: m');
+  });
+
+  it('no details, no parentheses', () => {
+    expect(
+      recentErrorLine({
+        method: 'GET_BUZZ_BALANCE',
+        message: 'request failed',
+        at: Date.UTC(2026, 10, 11, 0, 0, 9),
+        count: 1,
+      })
+    ).toBe('00:00:09 UTC GET_BUZZ_BALANCE: request failed');
+  });
+});
+
+describe('feedbackEnvironmentLine', () => {
+  it('browser, window and route as one line', () => {
+    expect(
+      feedbackEnvironmentLine({
+        browser: { family: 'samsung', major: 26 },
+        viewport: { width: 412, height: 915 },
+        devicePixelRatio: 2.63,
+        appRoute: '/gallery/12',
+      })
+    ).toBe('Samsung Internet 26 · 412×915 @2.63x · app route /gallery/12');
+  });
+
+  it('names the OS and the scrollbar kind', () => {
+    expect(
+      feedbackEnvironmentLine({
+        browser: { family: 'chrome', major: 131 },
+        os: 'windows',
+        viewport: { width: 1280, height: 720 },
+        scrollbars: 'classic',
+      })
+    ).toBe('Chrome 131 on Windows · 1280×720 · classic scrollbars');
+    expect(feedbackEnvironmentLine({ os: 'linux', scrollbars: 'overlay' })).toBe(
+      'Linux · overlay scrollbars'
+    );
+  });
+
+  it('omits a DPR of 1 and whatever is missing', () => {
+    expect(
+      feedbackEnvironmentLine({ viewport: { width: 1280, height: 720 }, devicePixelRatio: 1 })
+    ).toBe('1280×720');
+    expect(feedbackEnvironmentLine({ browser: { family: 'other' } })).toBe('Other browser');
+    expect(feedbackEnvironmentLine({})).toBeNull();
+    expect(feedbackEnvironmentLine(null)).toBeNull();
+  });
+});
+
+describe('feedbackForkLabel', () => {
+  it('names a public upstream, its version and the commit the fork started at', () => {
+    expect(
+      feedbackForkLabel({
+        upstreamSlug: 'cool-app',
+        upstreamVersion: '1.2.0',
+        forkedAtCommit: '3f9c2ab81d0e3f9c2ab81d0e3f9c2ab81d0e3f9c',
+      })
+    ).toBe('Forked from cool-app v1.2.0 (at 3f9c2ab)');
+  });
+
+  it('a hidden upstream is not named; not a fork is null', () => {
+    expect(
+      feedbackForkLabel({ upstreamSlug: null, upstreamVersion: null, forkedAtCommit: null })
+    ).toBe('Forked from another app');
+    expect(feedbackForkLabel(null)).toBeNull();
+  });
+});
+
+describe('INBOX_COMMITS_NOTE — the checkout advice must be a command that runs', () => {
+  // Bug: the note told the owner to run `civitai app pull <slug>`. `app pull` takes the app in
+  // `--app` and the DIRECTORY as its positional, so that command exits 2. And for a fork or an
+  // App Assistant app, `app pull` clones the SOURCE repository, which does not hold the platform
+  // commit.
+  it('every `civitai app pull` it names passes the app in --app', () => {
+    const invocations = [...INBOX_COMMITS_NOTE.matchAll(/civitai app pull([^`]*)/g)].map(
+      (m) => m[1]
+    );
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const rest of invocations) expect(rest).toContain('--app');
+  });
+
+  it('places the platform commit in the build repository, and says how a source clone reaches it', () => {
+    expect(INBOX_COMMITS_NOTE).toBe(
+      "The platform commit is this release's commit in the app's build repository (civitai-apps/<slug>). For an app with no source repository, `civitai app pull <dir> --app <slug>` clones it; a clone of the source repository has to fetch it first: `git fetch` its origin URL with `civitai-apps-src` swapped for `civitai-apps`. Then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it."
+    );
   });
 });

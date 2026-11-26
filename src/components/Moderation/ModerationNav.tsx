@@ -37,6 +37,7 @@ export function ModerationNav() {
           hidden: !features.serviceStatus,
         },
         { label: 'Site Alerts', href: '/moderator/site-alerts' },
+        { label: 'Remix Apps', href: '/moderator/remix-apps', hidden: !features.remixApps },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         {
           label: 'Cash Management',

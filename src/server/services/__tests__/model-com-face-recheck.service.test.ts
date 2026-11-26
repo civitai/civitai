@@ -8,9 +8,11 @@ const {
   mockAddToQueue,
   mockCheckoutQueue,
   mockPreviewComFaceIntent,
+  mockPreviewTextScanNsfw,
   mockUpdateModelNsfwLevels,
   mockBust,
 } = vi.hoisted(() => ({
+  mockPreviewTextScanNsfw: vi.fn(),
   mockAddToQueue: vi.fn(),
   mockCheckoutQueue: vi.fn(),
   mockPreviewComFaceIntent: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('~/server/redis/queues', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanPreview>()),
   previewComFaceIntent: mockPreviewComFaceIntent,
+  previewTextScanNsfw: mockPreviewTextScanNsfw,
 }));
 vi.mock('~/server/services/nsfwLevels.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NsfwLevels>()),
@@ -40,11 +43,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   COM_FACE_RECHECK_FIRST_DELAY_MS,
+  COM_FACE_INTENT_RECORDED,
   COM_FACE_RECHECK_GAVE_UP,
   COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RECHECK_WINDOW_MS,
+  faceLossNotice,
+  faceLossRescan,
   processComFaceRechecks,
   queueComFaceRecheck,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 
 const db = dbMock.dbWrite;
@@ -55,6 +62,10 @@ const NOW = new Date('2026-11-05T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 const later = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
 const intent = (detected: boolean) => ({ status: 'ok', output: { detected, reason: 'stub' } });
+/** The .com rating of the version names and trigger words. */
+const PG = 1;
+const R = 4;
+const rated = (level: number) => ({ status: 'ok', level, reason: 'rating stub' });
 
 const withFace = {
   id: MODEL_ID,
@@ -91,6 +102,18 @@ const marker = () => {
   );
   return JSON.parse(String(arg));
 };
+/** The face stays up: nothing cleared, recorded or recomputed. */
+const expectFaceKept = () => {
+  expect(coverCleared()).toBe(false);
+  expect(db.$transaction).not.toHaveBeenCalled();
+  expect(db.modActivity.create).not.toHaveBeenCalled();
+  expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
+};
+/** The intent verdicts recorded for moderators. */
+const intentLogs = () =>
+  loggingMock.logToAxiom.mock.calls
+    .map((call) => call[0] as Record<string, unknown>)
+    .filter((entry) => entry.message === COM_FACE_INTENT_RECORDED);
 const savedRetry = () =>
   (db.keyValue.upsert.mock.calls[0]?.[0] as { update: { value: Record<string, unknown> } })?.update
     .value;
@@ -101,10 +124,14 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   db.model.findUnique.mockResolvedValue(withFace as never);
-  db.modelVersion.findMany.mockResolvedValue([{ trainedWords: ['trigger'] }] as never);
+  db.modelVersion.findMany.mockResolvedValue([
+    { name: 'Version One', trainedWords: ['trigger'] },
+  ] as never);
   db.$executeRaw.mockResolvedValue(1 as never);
   db.modActivity.create.mockResolvedValue({} as never);
   mockAddToQueue.mockResolvedValue(true);
+  mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+  mockPreviewTextScanNsfw.mockResolvedValue(rated(PG));
 });
 
 afterEach(() => {
@@ -112,22 +139,224 @@ afterEach(() => {
 });
 
 describe('the .com face listing re-check', () => {
-  it('takes a flagged model off .com, keeping its .com text and the cleared cover id', async () => {
+  it('takes the face off .com when the version names or trigger words rate mature', async () => {
     arrange({ fresh: [MODEL_ID] });
-    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
 
     const counts = await processComFaceRechecks(NOW);
 
-    expect(counts.removed).toBe(1);
     expect(coverCleared()).toBe(true);
-    const sql = removalWrite()?.sql;
-    expect(sql).not.toMatch(/"sfwName"\s*=|"sfwDescription"\s*=/);
-    expect(marker()).toMatchObject({ sfwCoverImageId: COVER_ID, reason: 'detected' });
+    expect(removalWrite()?.sql).not.toMatch(/"sfwName"\s*=|"sfwDescription"\s*=/);
+    expect(marker()).toMatchObject({
+      sfwCoverImageId: COVER_ID,
+      reason: 'detected',
+      detail: 'rating stub',
+    });
     expect(db.modActivity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ activity: 'removeComFace', entityId: MODEL_ID }),
     });
     expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
     expect(mockBust).toHaveBeenCalledWith(MODEL_ID);
+    expect(counts.removed).toBe(1);
+    // Rated as .com shows them: the stored version names and trigger words.
+    const text = (mockPreviewTextScanNsfw.mock.calls[0][0] as { fields: { text: string }[] }).fields
+      .map((field) => field.text)
+      .join(' ');
+    expect(text).toContain('Version One');
+    expect(text).toContain('trigger');
+  });
+
+  it.each([
+    ['detected', intent(true)],
+    ['unanswered', { status: 'unavailable' }],
+  ])(
+    'rates the version text first: a mature rating removes with the intent check %s',
+    async (_, verdict) => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewComFaceIntent.mockResolvedValue(verdict);
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+
+      const counts = await processComFaceRechecks(NOW);
+
+      expect(coverCleared()).toBe(true);
+      expect(counts.removed).toBe(1);
+    }
+  );
+
+  it('keeps the face when the version names and trigger words rate PG-13 or below', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(2));
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expectFaceKept();
+    expect(counts.allowed).toBe(1);
+  });
+
+  it('retries when the version rating gets no verdict, whatever the listing verdict', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(counts.unavailable).toBe(1);
+    expect(savedRetry()).toMatchObject({ attempt: 1 });
+  });
+
+  it('retries when the version rating gets no verdict', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expectFaceKept();
+    expect(counts.unavailable).toBe(1);
+    expect(savedRetry()).toMatchObject({ attempt: 1 });
+  });
+
+  it('writes nothing more when the cover changed after the read', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+    db.$executeRaw.mockResolvedValue(0 as never);
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(removalWrite()?.sql).toMatch(/AND "sfwCoverImageId" = \?/);
+    expect(counts.skipped).toBe(1);
+    expect(db.modActivity.create).not.toHaveBeenCalled();
+    expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
+  });
+
+  it('clears the cover and records the removal in one transaction', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+    const tx = {
+      $executeRaw: vi.fn(async () => 1),
+      $queryRaw: vi.fn(async () => []),
+      modActivity: { create: vi.fn() },
+    };
+    db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) =>
+      fn(tx)) as never);
+
+    await processComFaceRechecks(NOW);
+
+    // The removal, then the scan verdict its face held back, rated in the same transaction.
+    const statements = tx.$executeRaw.mock.calls.map((call: unknown[]) => {
+      const [first] = call as [{ sql?: string } | readonly string[]];
+      return Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql;
+    });
+    expect(statements[0]).toMatch(/SET "sfwCoverImageId" = NULL/);
+    const flip = tx.$executeRaw.mock.calls.find((call: unknown[]) => {
+      const [first] = call as [readonly string[]];
+      return Array.isArray(first) && first.join('?').includes('SET nsfw = TRUE');
+    });
+    expect(flip).toBeDefined();
+    expect(flip).toContain(MODEL_ID);
+    expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.modActivity.create).not.toHaveBeenCalled();
+  });
+
+  describe("the owner's rating notice after a removal", () => {
+    const realSend = faceLossNotice.send;
+    const send = vi.fn();
+    beforeEach(() => {
+      send.mockReset();
+      faceLossNotice.send = send as never;
+    });
+    afterEach(() => {
+      faceLossNotice.send = realSend;
+    });
+    /** A removal whose held-verdict flip writes `flipped` rows; reports when it committed. */
+    function removal(flipped: number) {
+      let committed = false;
+      const tx = {
+        $executeRaw: vi.fn(async (strings: unknown) =>
+          Array.isArray(strings) && strings.join('?').includes('SET nsfw = TRUE') ? flipped : 1
+        ),
+        $queryRaw: vi.fn(async () => [
+          { name: 'LoRA', userId: 99, meta: { comFaceHeldVerdict: { at: 'h', level: R } } },
+        ]),
+        modActivity: { create: vi.fn() },
+      };
+      db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) => {
+        const result = await fn(tx);
+        committed = true;
+        return result;
+      }) as never);
+      return () => committed;
+    }
+
+    it('tells the owner once, after commit, when the held verdict rates the model', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      const committed = removal(1);
+      let committedWhenSent: boolean | undefined;
+      let levelRefreshedWhenSent: boolean | undefined;
+      send.mockImplementation(async () => {
+        committedWhenSent = committed();
+        levelRefreshedWhenSent = mockUpdateModelNsfwLevels.mock.calls.length > 0;
+      });
+
+      await processComFaceRechecks(NOW);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith([
+        expect.objectContaining({ entityId: MODEL_ID, userId: 99, level: R }),
+      ]);
+      expect(committedWhenSent).toBe(true);
+      // After the level refresh: a slow notice must not keep the old level listed.
+      expect(levelRefreshedWhenSent).toBe(true);
+    });
+
+    it('still tells the owner when the level refresh after the removal throws', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(1);
+      mockUpdateModelNsfwLevels.mockRejectedValueOnce(new Error('level refresh failed'));
+
+      await processComFaceRechecks(NOW).catch(() => undefined);
+
+      expect(mockUpdateModelNsfwLevels).toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends nothing when the held verdict does not rate it', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(0);
+
+      await processComFaceRechecks(NOW);
+
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
+  it('logs the listing intent verdict on a clean version rating', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expectFaceKept();
+    expect(mockBust).not.toHaveBeenCalled();
+    expect(counts.recorded).toBe(1);
+    // The check's reason is kept for moderators (`intent` stubs it as 'stub').
+    expect(intentLogs()).toEqual([
+      expect.objectContaining({
+        type: 'info',
+        name: 'com-face-recheck',
+        modelId: MODEL_ID,
+        sfwCoverImageId: COVER_ID,
+        path: 'detected',
+        detail: 'stub',
+      }),
+    ]);
+    expect(db.keyValue.upsert).not.toHaveBeenCalled();
   });
 
   it('checks the current listing: title, description text and trigger words', async () => {
@@ -232,7 +461,44 @@ describe('the .com face listing re-check', () => {
     expect(db.keyValue.upsert).not.toHaveBeenCalled();
   });
 
-  it('takes the face off .com as unverified once the window has passed without a verdict', async () => {
+  it('takes the face off .com as unverified when neither check answers within the window', async () => {
+    arrange({
+      waiting: [{ since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() }],
+    });
+    mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(coverCleared()).toBe(true);
+    expect(marker()).toMatchObject({ reason: 'recheck-unverified' });
+    expect(counts.gaveUp).toBe(1);
+  });
+
+  it('takes the face off .com as unverified once the window has passed without a rating', async () => {
+    arrange({
+      waiting: [{ since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() }],
+    });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(coverCleared()).toBe(true);
+    expect(marker()).toMatchObject({ sfwCoverImageId: COVER_ID, reason: 'recheck-unverified' });
+    expect(db.modActivity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ activity: 'comFaceRecheckGaveUp', entityId: MODEL_ID }),
+    });
+    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+    expect(counts.gaveUp).toBe(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: COM_FACE_RECHECK_GAVE_UP, modelId: MODEL_ID })
+    );
+    expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+    expect(db.keyValue.upsert).not.toHaveBeenCalled();
+  });
+
+  it('logs an unanswered listing intent check at the window, on a clean version rating', async () => {
     arrange({
       waiting: [{ since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() }],
     });
@@ -240,17 +506,11 @@ describe('the .com face listing re-check', () => {
 
     const counts = await processComFaceRechecks(NOW);
 
-    expect(counts.gaveUp).toBe(1);
-    expect(coverCleared()).toBe(true);
-    expect(marker()).toMatchObject({ sfwCoverImageId: COVER_ID, reason: 'recheck-unverified' });
-    expect(db.modActivity.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ activity: 'comFaceRecheckGaveUp', entityId: MODEL_ID }),
-    });
-    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
-    expect(mockBust).toHaveBeenCalledWith(MODEL_ID);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: COM_FACE_RECHECK_GAVE_UP, modelId: MODEL_ID })
-    );
+    expectFaceKept();
+    expect(counts.gaveUp).toBe(0);
+    expect(intentLogs()).toEqual([
+      expect.objectContaining({ modelId: MODEL_ID, sfwCoverImageId: COVER_ID, path: 'gave-up' }),
+    ]);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
     expect(db.keyValue.upsert).not.toHaveBeenCalled();
   });
@@ -274,7 +534,7 @@ describe('the .com face listing re-check', () => {
     });
   });
 
-  it('takes the face off as unverified at the window from the first edit, however often it is edited', async () => {
+  it('gives up at the window from the first edit, however often it is edited', async () => {
     const start = NOW.getTime();
     const step = 4 * 60 * 60_000;
     let state: Record<string, unknown> | undefined;
@@ -285,7 +545,7 @@ describe('the .com face listing re-check', () => {
       db.model.findUnique.mockResolvedValue(withFace as never);
       db.$executeRaw.mockResolvedValue(1 as never);
       db.modActivity.create.mockResolvedValue({} as never);
-      mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+      mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
       arrange({ fresh: [MODEL_ID], waiting: state ? [state] : [] });
 
       const counts = await processComFaceRechecks(new Date(at));
@@ -300,19 +560,6 @@ describe('the .com face listing re-check', () => {
     expect(gaveUpAt).toBe(start + COM_FACE_RECHECK_WINDOW_MS);
     expect(coverCleared()).toBe(true);
     expect(marker()).toMatchObject({ reason: 'recheck-unverified' });
-  });
-
-  it('writes nothing more when the cover changed after the read', async () => {
-    arrange({ fresh: [MODEL_ID] });
-    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
-    db.$executeRaw.mockResolvedValue(0 as never);
-
-    const counts = await processComFaceRechecks(NOW);
-
-    expect(removalWrite()?.sql).toMatch(/AND "sfwCoverImageId" = \?/);
-    expect(counts.skipped).toBe(1);
-    expect(db.modActivity.create).not.toHaveBeenCalled();
-    expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
   });
 
   it('finishes a removal whose level recompute failed, on the retry', async () => {
@@ -348,20 +595,6 @@ describe('the .com face listing re-check', () => {
     );
   });
 
-  it('clears the cover and records the removal in one transaction', async () => {
-    arrange({ fresh: [MODEL_ID] });
-    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
-    const tx = { $executeRaw: vi.fn(async () => 1), modActivity: { create: vi.fn() } };
-    db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) =>
-      fn(tx)) as never);
-
-    await processComFaceRechecks(NOW);
-
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
-    expect(db.$executeRaw).not.toHaveBeenCalled();
-    expect(db.modActivity.create).not.toHaveBeenCalled();
-  });
   it('finishes an unfinished removal when it gives up, and keeps the retry until it does', async () => {
     const out = { since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() };
     arrange({ waiting: [out] });
@@ -382,6 +615,41 @@ describe('the .com face listing re-check', () => {
 
     expect(finished.skipped).toBe(1);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+  });
+
+  /** The JobQueue rows written: [entityId, entityType, type] each. */
+  const levelJobs = () =>
+    db.$executeRaw.mock.calls
+      .filter(([sql]) => JSON.stringify(sql).includes('INSERT INTO \\"JobQueue\\"'))
+      .map(([, ...values]) => values.flatMap((v) => (v as { values?: unknown[] }).values ?? [v]));
+
+  it('queues the level for the nsfw-level job when the refresh after a removal throws', async () => {
+    arrange({ waiting: [{ since: ago(60_000), attempt: 1, nextAt: NOW.toISOString() }] });
+    db.model.findUnique.mockResolvedValue({
+      ...withFace,
+      sfwCoverImageId: null,
+      meta: { comFaceRemoved: { at: ago(60_000), sfwCoverImageId: COVER_ID, reason: 'detected' } },
+    } as never);
+    mockUpdateModelNsfwLevels.mockRejectedValueOnce(new Error('level service down'));
+
+    await processComFaceRechecks(NOW);
+
+    expect(levelJobs()).toEqual([[MODEL_ID, 'Model', 'UpdateNsfwLevel']]);
+    // The re-check retry stays too: the level job is a second way back, not a replacement.
+    expect(db.keyValue.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('queues no level job when the refresh after a removal works (control)', async () => {
+    arrange({ waiting: [{ since: ago(60_000), attempt: 1, nextAt: NOW.toISOString() }] });
+    db.model.findUnique.mockResolvedValue({
+      ...withFace,
+      sfwCoverImageId: null,
+      meta: { comFaceRemoved: { at: ago(60_000), sfwCoverImageId: COVER_ID, reason: 'detected' } },
+    } as never);
+
+    await processComFaceRechecks(NOW);
+
+    expect(levelJobs()).toEqual([]);
   });
 
   it('keeps going past a model whose bookkeeping throws, and queues that edit again', async () => {
@@ -417,7 +685,7 @@ describe('the .com face listing re-check', () => {
     ['no state at all', {}],
   ])('treats a retry with %s as due and out of time', async (_, value) => {
     arrange({ waiting: [value] });
-    mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
 
     const counts = await processComFaceRechecks(NOW);
 
@@ -441,20 +709,60 @@ describe('the .com face listing re-check', () => {
     ]);
   });
 
-  it('records no give-up when there was no face left to take off', async () => {
+  it('records no give-up when the face went while the check was retrying', async () => {
     arrange({
       waiting: [{ since: ago(COM_FACE_RECHECK_WINDOW_MS), attempt: 30, nextAt: NOW.toISOString() }],
     });
     mockPreviewComFaceIntent.mockResolvedValue({ status: 'unavailable' });
-    db.$executeRaw.mockResolvedValue(0 as never);
+    // First read is the check's; the give-up reads again and finds the owner turned the face off.
+    db.model.findUnique
+      .mockResolvedValueOnce(withFace as never)
+      .mockResolvedValueOnce({ ...withFace, sfwName: null } as never);
 
     const counts = await processComFaceRechecks(NOW);
 
     expect(counts.gaveUp).toBe(0);
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: COM_FACE_RECHECK_GAVE_UP })
-    );
+    expect(intentLogs()).toEqual([]);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+  });
+});
+
+describe('the text rescan after a face loss', () => {
+  const realLoad = faceLossRescan.loadSubmit;
+  const scan = vi.fn();
+  beforeEach(() => {
+    scan.mockReset();
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+  });
+  afterEach(() => {
+    faceLossRescan.loadSubmit = realLoad;
+  });
+
+  it('forces a text rescan of a model the re-check takes off .com', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+    await processComFaceRechecks(NOW);
+    expect(coverCleared()).toBe(true);
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledWith({ entityType: 'Model', entityId: MODEL_ID, force: true });
+  });
+
+  it('forces none when the face stays (control)', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    await processComFaceRechecks(NOW);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the scan cannot be started', async () => {
+    faceLossRescan.loadSubmit = (async () => {
+      throw new Error('import failed');
+    }) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
+    scan.mockImplementation(() => {
+      throw new Error('scan threw');
+    });
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
   });
 });
 

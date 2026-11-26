@@ -1,7 +1,7 @@
 // The notif-DB read/mark/bulk/exists/cleanup operations — ported from the monolith's
-// notification.service.ts (getUserNotifications base query, getUserNotificationCount, markNotificationsRead
-// with its per-user serialization queue + transient-error retry) and the send-notifications job (bulk
-// UPSERT). Now that this app owns the notif pools + cache + lag window, these live here; the monolith
+// notification.service.ts (getUserNotificationCount, markNotificationsRead with its per-user
+// serialization queue + transient-error retry), the base query of notification-feed.service.ts's
+// getUserNotifications, and the send-notifications job (bulk UPSERT). Now that this app owns the notif pools + cache + lag window, these live here; the monolith
 // calls them over HTTP via @civitai/notifications and keeps only the main-DB `details` enrichment.
 
 import format from 'pg-format';
@@ -13,11 +13,16 @@ import type {
   NotificationCategory,
   NotificationListCursor,
   NotificationRow,
+  UnseenNotificationItem,
+  UnseenNotifications,
 } from '@civitai/notifications';
+import { UNSEEN_COUNT_LIMIT } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
-import { notificationCache, type NotificationCategoryCount } from './cache';
+import { notificationCache, redisWithin, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
 import { logToAxiom, safeError } from './clients/axiom';
+import { queryWithRetry } from './db-retry';
+import { countDbFallbackEnabled, countRedisDeadlineMs } from '../../env';
 
 const bulkBatchSize = 5000;
 
@@ -103,7 +108,8 @@ export async function queryNotifications(input: {
   params.push(limit);
 
   const db = await getNotifDbWithoutLag(userId);
-  const query = await db.cancellableQuery<NotificationRow>(
+  return queryWithRetry<NotificationRow>(
+    db,
     `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read,
        to_char(un."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "cursorAt"
      FROM "UserNotification" un
@@ -113,7 +119,6 @@ export async function queryNotifications(input: {
      LIMIT $${params.length}`,
     params
   );
-  return await query.result();
 }
 
 // --- read: per-category counts (cache-fronted, lag-aware, single-flighted) --------------------------
@@ -191,13 +196,35 @@ async function countNotificationsImpl(input: {
 
   // Check the lag flag BEFORE the cache — if a recent write flagged this user, bust the cache and read
   // the primary to avoid a stale count. Only the cacheable variant interacts with the cache at all.
-  const db = await getNotifDbWithoutLag(userId);
-  if (cacheable) {
+  //
+  // Every redis call here is bounded (countRedisDeadlineMs) and counted when it fails or times out. What
+  // a failure then answers is countDbFallbackEnabled's call: off, an empty count at once (the badge the
+  // main app already shows when this service is down, corrected by the next poll); on, the DB — the
+  // replica when the lag flag is unreadable, leaving the cache alone, since a replica count could be the
+  // stale one the flag exists to keep out of it. After a failed cache call, skip the rest of the cache.
+  const fallback = countDbFallbackEnabled();
+  const lag = await redisWithin('lag', () => getNotifDbWithoutLag(userId), countRedisDeadlineMs);
+  if (!lag.ok && !fallback) return [];
+  const db = lag.ok ? lag.value : notifDbRead();
+  let useCache = cacheable && lag.ok;
+  if (useCache) {
     if (isWritePool(db)) {
-      await notificationCache.bustUser(userId);
+      const bust = await redisWithin(
+        'bustUser',
+        () => notificationCache.bustUser(userId),
+        countRedisDeadlineMs
+      );
+      if (!bust.ok && !fallback) return [];
+      useCache = bust.ok;
     } else {
-      const cached = await notificationCache.getUser(userId);
-      if (cached) return cached;
+      const cached = await redisWithin(
+        'get',
+        () => notificationCache.getUser(userId),
+        countRedisDeadlineMs
+      );
+      if (cached.ok && cached.value) return cached.value;
+      if (!cached.ok && !fallback) return [];
+      useCache = cached.ok;
     }
   }
 
@@ -208,7 +235,8 @@ async function countNotificationsImpl(input: {
     params.push(category);
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
-  const query = await db.cancellableQuery<NotificationCategoryCount>(
+  const rows = await queryWithRetry<NotificationCategoryCount>(
+    db,
     `SELECT category, COUNT(*) AS count
      FROM (
        SELECT n.category
@@ -220,10 +248,10 @@ async function countNotificationsImpl(input: {
      GROUP BY category`,
     params
   );
-  const rows = await query.result();
   const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
   const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
-  if (cacheable) await notificationCache.setUser(userId, result);
+  if (useCache)
+    await redisWithin('set', () => notificationCache.setUser(userId, result), countRedisDeadlineMs);
   return result;
 }
 
@@ -232,11 +260,67 @@ async function countNotificationsImpl(input: {
 // replica-lag false-negative only risks a duplicate PendingNotification, which the worker collapses via
 // the UNIQUE Notification.key. No per-key lag flag exists to route on, so no primary read is warranted.
 export async function notificationExists(key: string): Promise<boolean> {
-  const query = await notifDbRead().cancellableQuery<{ exists: number }>(
+  const rows = await queryWithRetry<{ exists: number }>(
+    notifDbRead(),
     `SELECT 1 as exists FROM "Notification" WHERE key = $1`,
     [key]
   );
-  return (await query.result()).length > 0;
+  return rows.length > 0;
+}
+
+// Per user: how many notifications they have not seen (`viewed IS FALSE`) since their own `since`, and
+// the newest `limit` of them. One statement per call over the ("userId", "createdAt" DESC) index, each
+// user's scan bounded by their window. Reads the replica: a weekly digest can be a moment behind.
+export async function queryUnseenNotifications(input: {
+  users: { userId: number; since: Date }[];
+  excludeTypes: string[];
+  limit: number;
+}): Promise<UnseenNotifications[]> {
+  const { users, excludeTypes, limit } = input;
+  if (users.length === 0) return [];
+  const unseen = `un."userId" = u."userId" AND un."createdAt" > u.since AND un.viewed IS FALSE
+      AND n.type <> ALL($3::text[])`;
+  const rows = await queryWithRetry<
+    Omit<UnseenNotificationItem, 'id'> & { id: string | number; userId: number; total: number }
+  >(
+    notifDbRead(),
+    `SELECT u."userId", c.total, x.id, x.type, x.category, x.details, x."createdAt"
+     FROM unnest($1::int[], $2::timestamp[]) AS u("userId", since)
+     CROSS JOIN LATERAL (
+       SELECT count(*)::int AS total FROM (
+         SELECT 1 FROM "UserNotification" un JOIN "Notification" n ON n.id = un."notificationId"
+         WHERE ${unseen}
+         LIMIT $5
+       ) capped
+     ) c
+     CROSS JOIN LATERAL (
+       SELECT un.id, n.type, n.category, n.details, un."createdAt"
+       FROM "UserNotification" un JOIN "Notification" n ON n.id = un."notificationId"
+       WHERE ${unseen}
+       ORDER BY un."createdAt" DESC, un.id DESC
+       LIMIT $4
+     ) x
+     ORDER BY u."userId", x."createdAt" DESC, x.id DESC`,
+    [
+      users.map((u) => u.userId),
+      // `createdAt` is a UTC timestamp without a zone, so the window start goes in as UTC wall time.
+      users.map((u) => u.since.toISOString().replace('Z', '')),
+      excludeTypes,
+      limit,
+      UNSEEN_COUNT_LIMIT,
+    ]
+  );
+
+  const byUser = new Map<number, UnseenNotifications>();
+  for (const { userId, total, id, ...item } of rows) {
+    let user = byUser.get(userId);
+    if (!user) {
+      user = { userId, total, floor: total >= UNSEEN_COUNT_LIMIT, items: [] };
+      byUser.set(userId, user);
+    }
+    user.items.push({ ...item, id: Number(id) });
+  }
+  return [...byUser.values()];
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------
@@ -272,7 +356,7 @@ export async function cleanupNotifications(before: Date): Promise<number> {
     message: `Cleaned up notifications older than ${before.toISOString()}`,
     deleted,
     bustsAcked,
-  }).catch(() => null);
+  });
   return deleted;
 }
 
@@ -379,7 +463,7 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
           all,
           category,
           attempt,
-        }).catch(() => null);
+        });
       return;
     } catch (err) {
       const transient = isTransientWriteError(err);
@@ -394,7 +478,7 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
           all,
           category,
           attempt,
-        }).catch(() => null);
+        });
         return;
       }
       const backoff =

@@ -6,9 +6,10 @@
 import http from 'http';
 import { Kafka, type Consumer } from 'kafkajs';
 import { assertVectorSyncConfig, config } from '@/config';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { vectorPgPool } from './pg';
 import { logger } from '@/utils/logger';
 import { MixedStampError, Embedder } from './embedder';
+import { recordFlush, serveMetrics, timeEmbeds, vectorSyncMetrics } from './metrics';
 import { ModelMismatchError, VectorStore } from './qdrant';
 import { connectorBlock, staticEmbedBlock, syncImageIds, type SyncDeps } from './sync';
 
@@ -30,6 +31,7 @@ export const VECTOR_SYNC_TOPICS = ['postgres.TagsOnImageNew', 'postgres.ImageRes
 const IMAGE_TOPIC = 'postgres.Image';
 /** Above this many pending ids, consumption waits for a flush. */
 const MAX_PENDING = 5_000;
+const WEDGED_AFTER_MS = 45 * 60_000;
 /** Deferred ids beyond this are dropped (logged); the reconciler finds them. */
 const MAX_DEFERRED = 100_000;
 /**
@@ -49,6 +51,8 @@ export class VectorSyncQueue {
   private pending = new Set<number>();
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
+  /** When the flush now running began; null between flushes. */
+  flushStartedAt: number | null = null;
   lastFlushOk = Date.now();
   /** An embed workflow returning vectors, or a flush succeeding. */
   lastProgress = Date.now();
@@ -81,9 +85,13 @@ export class VectorSyncQueue {
   }
 
   flush(): Promise<void> {
-    this.flushing ??= this.doFlush().finally(() => {
-      this.flushing = null;
-    });
+    if (!this.flushing) {
+      this.flushStartedAt = Date.now();
+      this.flushing = this.doFlush().finally(() => {
+        this.flushing = null;
+        this.flushStartedAt = null;
+      });
+    }
     return this.flushing;
   }
 
@@ -114,8 +122,13 @@ export class VectorSyncQueue {
           this.deferred.delete(id);
         }
       }
-      const stats = await syncImageIds(ids, stamped ? this.deps : { ...this.deps, embedder: null });
+      const { embedder } = this.deps;
+      const stats = await syncImageIds(ids, {
+        ...this.deps,
+        embedder: stamped && embedder ? timeEmbeds('image', embedder) : null,
+      });
       const { deferredIds = [], ...counts } = stats;
+      recordFlush('image', counts);
       // Paused, not stopped: keep them for when it resumes. Stopped for good, they wait for a
       // reconcile like everything else that is missing.
       if (this.deps.embedder) this.defer(deferredIds);
@@ -124,6 +137,7 @@ export class VectorSyncQueue {
         'vector-sync: flushed'
       );
     } catch (err) {
+      vectorSyncMetrics.flushErrors.inc({ domain: 'image' });
       // Put the work back; newer offsets taken meanwhile stay, older ones are re-covered by them.
       for (const id of ids) this.pending.add(id);
       for (const o of offsets) {
@@ -195,6 +209,27 @@ export class VectorSyncQueue {
     if (now - this.lastFlushOk < 10 * 60_000) return true;
     return this.consecutiveFailures < 3 && now - this.lastProgress < 45 * 60_000;
   }
+
+  /**
+   * A flush has run WEDGED_AFTER_MS with no progress: no workflow returned vectors, nothing stored.
+   * Every later flush waits on it. A failing flush ends and retries, so it does not count. The same
+   * allowance as isHealthy's, so a flush still waiting on paid work is not killed; /live, unlike
+   * readiness, restarts the pod for this alone.
+   */
+  isWedged(now = Date.now()) {
+    if (this.flushStartedAt === null) return false;
+    const since = Math.max(this.flushStartedAt, this.lastProgress);
+    return now - since >= WEDGED_AFTER_MS;
+  }
+}
+
+/** The /live answer: 503 only for a wedged flush, which a restart clears. */
+export function liveness(
+  queue: Pick<VectorSyncQueue, 'isWedged' | 'flushStartedAt'>,
+  now = Date.now()
+) {
+  const wedged = queue.isWedged(now);
+  return { status: wedged ? 503 : 200, body: { wedged, flushStartedAt: queue.flushStartedAt } };
 }
 
 /**
@@ -216,11 +251,7 @@ export function consumerEmbedder(): Embedder | null {
 async function main() {
   assertVectorSyncConfig();
   const vs = config.vectorSync;
-  const pg = createGuardedPgPool(
-    { connectionString: config.postgres.connectionString, max: config.vectorSync.pgPoolMax },
-    'vector-sync',
-    (message, err) => logger.error({ err }, message)
-  );
+  const pg = vectorPgPool('vector-sync');
   const store = VectorStore.fromConfig();
   await store.bootstrap();
   const embedder = consumerEmbedder();
@@ -258,7 +289,14 @@ async function main() {
   }, vs.debounceMs);
 
   http
-    .createServer((_req, res) => {
+    .createServer(async (req, res) => {
+      if (req.url === '/metrics') return serveMetrics(res);
+      if (req.url === '/live') {
+        const live = liveness(queue);
+        if (live.status !== 200) logger.error(live.body, 'vector-sync: flush wedged');
+        res.writeHead(live.status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(live.body));
+      }
       const healthy = queue.isHealthy();
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(

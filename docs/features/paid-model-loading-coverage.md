@@ -385,6 +385,10 @@ model, excluding `EcosystemCheckpoints` and `ExternalGeneration`:
 | 15 smaller base models | 201 | 2 |
 | **total** | **738** | **8** |
 
+MiniMax H3 was unlocked after this measurement (2026-11). Its 47 rows are no longer withheld by the
+locked-ecosystem rule, but their stored answers stay false until the post-deploy re-queue in
+[paid-model-loading.md](paid-model-loading.md) re-evaluates them.
+
 Of the 738, **zero** are covered under the live rule — no `EcosystemCheckpoints` row, no auction
 winner, none reachable by the `ext` branch. Every one of them became generatable only through the
 staged expansion, so narrowing it restores the answer the live rule already gives and costs nothing
@@ -440,10 +444,13 @@ equally covered and equally unusable, so a new base model would have fixed none 
   through a fixed id→variant map and ignores anything else, so its community checkpoints stay
   over-covered. Closing that needs a list of handlers that hardcode their model, which is not
   derivable from the constants. Open.
-* **Over-shoots harmlessly.** `minimax.handler.ts` and `ltx.handler.ts` *do* pass the selected
-  version's AIR, but their ecosystems are locked, so the graph never gives them a custom one. If
-  either ecosystem is unlocked later, eligibility follows on the next request — the list is read
-  from the constants. `qwen21DiffusionModel` is the shape that needs no exclusion at all: it
+* **Over-shoots harmlessly.** `ltx.handler.ts` *does* pass the selected version's AIR, but its
+  ecosystem is locked, so the graph never gives it a custom one. If it is unlocked later, eligibility
+  follows on the next request — the list is read from the constants. MiniMax H3 was unlocked this
+  way (2026-11): `minimax.handler.ts` passes the selected AIR and `minimaxVariantOf` routes any
+  non-official checkpoint to the comfy build, so its community checkpoints are judged by the same
+  coverage rule as any unlocked ecosystem's, instead of being held to the live column.
+  `qwen21DiffusionModel` is the shape that needs no exclusion at all: it
   forwards the selected version's AIR as `diffusionModel` whenever it is not the ecosystem default,
   so unlocking Qwen 2.1 would work.
 
@@ -497,7 +504,7 @@ read the new view) was dropped with it: the swap shipped without either.
 ### B — search
 
 [models.search-index.ts](../../src/server/search-index/models.search-index.ts) and
-[models-update.ts](../../src/pages/api/mod/search/models-update.ts) derive an indexed `canGenerate`
+[models-update.ts](../../src/server/api-routes/mod/search/models-update.ts) derive an indexed `canGenerate`
 from `covered`. After the swap, search advertises every one of them as generatable — with no
 indication that many need a paid load first. Load state in search was deliberately deferred, so
 this widens exactly the surface that has no way to express the difference.
@@ -515,8 +522,8 @@ re-checks the same rule through `versionGeneratableFor()`. Both fields collapse 
 
 ### C — display
 
-`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector`,
-`generation.selector` and `AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
+`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector` and
+`AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
 button — mostly correct after the change, since that is where the load CTA belongs.
 
 **`/api/v1/model-versions/mini/[id]`'s `covered` is flag-gated like everything else**

@@ -1,3 +1,5 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -13,6 +15,7 @@ import {
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
 import { newBlockInstanceId, newBlockUserSubscriptionId } from '~/server/utils/app-block-ids';
+import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -299,7 +302,7 @@ export interface ResolvedBlockInstance {
     status: string;
     manifest: Record<string, unknown>;
     approvedScopes: string[];
-    app: { allowedScopes: number } | null;
+    app: { allowedScopes: bigint } | null;
     // DEPLOY-GATE: NULL ⇔ this app has NEVER successfully deployed its
     // `<slug>.<APPS_DOMAIN>` origin (set to now() ONLY on a successful apply in
     // build-callback.ts; left UNCHANGED on build failure/timeout AND while a
@@ -599,19 +602,6 @@ function manifestTargetsSlot(manifest: unknown, slotId: string): boolean {
     const cand = (t as { slotId?: unknown }).slotId;
     return typeof cand === 'string' && cand === slotId;
   });
-}
-
-/**
- * W10 — does the manifest declare a full-page surface? A page app carries a
- * `page: { path, title, icon? }` object (validated at registration time). Used
- * to gate the page-mint + SSR resolve so a region/model-only app can't be
- * opened as a full page.
- */
-function manifestDeclaresPage(manifest: unknown): boolean {
-  const m = (manifest ?? {}) as { page?: unknown };
-  if (!m.page || typeof m.page !== 'object') return false;
-  const page = m.page as { path?: unknown };
-  return typeof page.path === 'string' && page.path.length > 0;
 }
 
 /**
@@ -3461,7 +3451,7 @@ export class BlockRegistry {
         oc.name AS app_name,
         u.id AS owner_user_id,
         u.username AS owner_username,
-        u.image AS owner_image,
+        ${Prisma.raw(fallbackUserImageColumn)} AS owner_image,
         ab.manifest,
         ab.status,
         ab.content_rating,
@@ -3704,6 +3694,9 @@ export class BlockRegistry {
       select: { id: true, status: true },
     });
     if (!existing) throwNotFoundError('App block not found');
+    // A remix app's `featuredOrder` is its menu place, edited at /moderator/remix-apps.
+    if (REMIX_STATUSES.includes(existing!.status))
+      throwBadRequestError('A remix app is edited on the remix apps page.');
 
     // Approved-only featuring: refuse to feature anything not approved (it would
     // otherwise appear in the anon-capable featured rail).
@@ -3833,9 +3826,11 @@ export class BlockRegistry {
 
     const existing = await dbWrite.appBlock.findUnique({
       where: { id: appBlockId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!existing) throwNotFoundError('App block not found');
+    if (REMIX_STATUSES.includes(existing!.status))
+      throwBadRequestError('A remix app has no App Blocks spend caps.');
 
     // Build the patch from ONLY the provided fields. Override values are
     // normalised with the exact read-side rules (positive int, floored,

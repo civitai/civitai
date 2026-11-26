@@ -15,7 +15,9 @@
 // - A sourceId names one (kind, entity, person), e.g. one person's reactions on one image. Its adds
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
-// - People in restrictedUsers (banned, deleted, excluded from leaderboards) neither give nor earn.
+// - People in restrictedUsers (banned, deleted, excluded from event points) neither give nor earn,
+//   from their restrictedFrom on: rows before it stand. Banned and deleted people are restricted from
+//   0, the whole season.
 //   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
 //   Both are read from Postgres "User" by the caller.
 // - Nobody earns from acting on their own hat.
@@ -27,15 +29,24 @@
 //   are credited until the cap; the action that crosses it gets what was left.
 //
 // Params: event, seasonStart, recomputeFrom, cut, removeCut, cap, types (Array(String)), weights (Array(UInt32),
-// aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), newAccountMinId.
+// aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), restrictedFrom
+// (Array(Int64), epoch ms, aligned with restrictedUsers), newAccountMinId.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
+  -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
+  -- daily rows to the recomputed days only this way. One OR across both ranges reads the whole season.
   seasonRows AS (
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
-      AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
+      AND NOT has({dailyTypes:Array(String)}, type)
+    UNION ALL
+    SELECT * FROM event_point_events
+    WHERE event = {event:String}
+      AND time >= {recomputeFrom:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
+      AND has({types:Array(String)}, type)
+      AND has({dailyTypes:Array(String)}, type)
   ),
   firsts AS (
     SELECT
@@ -51,9 +62,9 @@ WITH
         WHERE sourceId != '' AND (op = 'remove' OR time < {cut:DateTime64(3)})
         GROUP BY type, actorId, sourceId HAVING argMax(op, time) = 'add'
       ))
-      -- NOT IN builds a hash set; has() scans the array for every row.
-      AND actorId NOT IN {restrictedUsers:Array(Int32)}
-      AND ownerId NOT IN {restrictedUsers:Array(Int32)}
+      -- transform over constant arrays builds a hash map once; indexOf() would scan them every row.
+      AND toUnixTimestamp64Milli(time) < transform(actorId, {restrictedUsers:Array(Int32)}, {restrictedFrom:Array(Int64)}, toInt64(9223372036854775807))
+      AND toUnixTimestamp64Milli(time) < transform(ownerId, {restrictedUsers:Array(Int32)}, {restrictedFrom:Array(Int64)}, toInt64(9223372036854775807))
       AND actorId < {newAccountMinId:Int32}
       AND actorId != ownerId
     GROUP BY type, actorId, entityType, entityId, onceKey
@@ -65,7 +76,8 @@ WITH
       (creditee, firstHat.2, firstHat.3, firstHat.4) AS hat
     FROM firsts
     ARRAY JOIN if(empty(firstHat.5), [firstHat.1], firstHat.5) AS creditee
-    WHERE creditee NOT IN {restrictedUsers:Array(Int32)} AND actorId != creditee
+    WHERE toUnixTimestamp64Milli(firstTime) < transform(creditee, {restrictedUsers:Array(Int32)}, {restrictedFrom:Array(Int64)}, toInt64(9223372036854775807))
+      AND actorId != creditee
   ),
   weighted AS (
     SELECT
@@ -117,9 +129,18 @@ ORDER BY day, userId, cosmeticId, claimKey
 export const eventPointsRefereeUsersSql = /* sql */ `
 SELECT groupUniqArray(actorId) AS actors,
   groupUniqArrayArray(if(empty(players), [ownerId], players)) AS owners
-FROM event_point_events
-WHERE event = {event:String}
-  AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
-  AND has({types:Array(String)}, type)
-  AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
+FROM (
+  -- Split for the primary key, as seasonRows is.
+  SELECT actorId, ownerId, players FROM event_point_events
+  WHERE event = {event:String}
+    AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
+    AND has({types:Array(String)}, type)
+    AND NOT has({dailyTypes:Array(String)}, type)
+  UNION ALL
+  SELECT actorId, ownerId, players FROM event_point_events
+  WHERE event = {event:String}
+    AND time >= {recomputeFrom:DateTime64(3)} AND time < {cut:DateTime64(3)}
+    AND has({types:Array(String)}, type)
+    AND has({dailyTypes:Array(String)}, type)
+)
 `;

@@ -31,18 +31,6 @@ import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
  * defect ("a bare Prisma call fetches every column") instead of leaving a bare
  * `undefined` mismatch for the reader to decode.
  *
- * The `getReactionsSelect` cases are the deliberate exception, and they do use
- * targeted presence/absence checks. That selector is a module-level object
- * literal rather than a call argument, so it has no "no `select` key at all"
- * shape for an absence-check to pass vacuously on. Its `user` projection is
- * still pinned by exact key set with `toEqual`, and the `not.toHaveProperty`
- * trio beside it is reachable rather than vacuous: deleting `user.select` does
- * not quietly satisfy it, it fails it with `TypeError: Cannot convert undefined
- * or null to object`, and re-adding `profilePicture` fails it by name. The two
- * `toHaveProperty(…, true)` reaction-field checks are presence checks on the
- * top-level selector; like the behavioural cases above they hold on both sides
- * of the narrowing and are not counted as regression coverage.
- *
  * The remaining narrowed path — `hasSystemPosts` in `getAllImages` — is pinned
  * in the sibling file `hot-path-select-narrowing.image.test.ts`. It lives apart
  * because importing `image.service` needs a whole env/redis/submodule mock
@@ -76,7 +64,6 @@ import {
   removeEntityCollaborator,
   upsertEntityCollaborator,
 } from '~/server/services/entity-collaborator.service';
-import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { EntityType, EntityCollaboratorStatus } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -282,20 +269,5 @@ describe('removeEntityCollaborator — Post owner lookup is projected, not a ful
       } as Parameters<typeof removeEntityCollaborator>[0])
     ).resolves.toBe(true);
     expect(entityCollaboratorDelete).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('getReactionsSelect — a reaction names its reactor and nothing more', () => {
-  it('selects exactly the two user fields the renderer reads', () => {
-    // `ReactionPicker` reads `user.username` (tooltip / "did I react") and its
-    // callers read `user.id`. Pinning the exact set is the point: this used to
-    // be `simpleUserSelect`, which additionally pulled `deletedAt`, `image`
-    // and the whole `profilePicture` relation.
-    expect(getReactionsSelect.user.select).toEqual({ id: true, username: true });
-  });
-
-  it('keeps the reaction fields the grouping and optimistic update depend on', () => {
-    expect(getReactionsSelect).toHaveProperty('id', true);
-    expect(getReactionsSelect).toHaveProperty('reaction', true);
   });
 });

@@ -46,7 +46,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import type { Icon as TablerIcon } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import type { ComponentProps, ReactNode } from 'react';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -65,6 +64,7 @@ import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
 import { ShopItemEventTagsPanel } from '~/components/CreatorShop/ShopItemEventTagsPanel';
 import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
+import { nextQueueSelection } from '~/components/CreatorShop/review-queue-selection';
 import { shopItemReviewVersion } from '~/server/services/creator-shop.data';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -106,6 +106,7 @@ import { MysteryPackReviewPanel } from '~/components/CreatorShop/MysteryPack/Mys
 import { reviewActions } from '~/components/CreatorShop/MysteryPack/review-actions';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
 import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
 
@@ -370,8 +371,11 @@ function CreatorShopReviewPage() {
   const activeTypeTab =
     typeFilter.length === 0 ? 'all' : typeFilter.length === 1 ? typeFilter[0] : null;
 
+  const prevItemsRef = useRef(items);
   useEffect(() => {
-    setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
+    const prev = prevItemsRef.current;
+    prevItemsRef.current = items;
+    setSelectedId((cur) => nextQueueSelection(prev, items, cur));
   }, [items]);
 
   // Reviewing items shrinks the queue, and the last page can disappear out from
@@ -574,9 +578,9 @@ function CreatorShopReviewPage() {
   const confirmDelete = () => {
     if (!selected) return;
     const purchases = selected._count?.purchases ?? 0;
-    openConfirmModal({
+    openConfirm({
       title: 'Delete shop item',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Permanently delete <strong>{selected.title}</strong>? This can&apos;t be undone and
@@ -593,7 +597,6 @@ function CreatorShopReviewPage() {
       ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => deleteItem.mutate({ id: selected.id }),
     });
   };
@@ -608,9 +611,9 @@ function CreatorShopReviewPage() {
         error: new Error('Add the takedown reason — buyers and the creator both see it.'),
       });
     const purchases = selected._count?.purchases ?? 0;
-    openConfirmModal({
+    openConfirm({
       title: 'Take down shop item',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Remove <strong>{selected.title}</strong> from sale, refund all{' '}
@@ -626,7 +629,6 @@ function CreatorShopReviewPage() {
       ),
       labels: { confirm: 'Take down', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
     });
   };
@@ -637,9 +639,9 @@ function CreatorShopReviewPage() {
     if (!selected) return;
     const takedown = (selected.meta as CosmeticShopItemMeta | null)?.takedown;
     if (!takedown) return;
-    openConfirmModal({
+    openConfirm({
       title: 'Retry takedown',
-      children: (
+      message: (
         <Text size="sm">
           Finish the takedown of <strong>{selected.title}</strong>: refund any buyer or box opener
           it still owes, then remove the cosmetic again. Nobody already refunded is paid twice.
@@ -647,7 +649,6 @@ function CreatorShopReviewPage() {
       ),
       labels: { confirm: 'Retry takedown', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: takedown.reason }),
     });
   };
@@ -949,10 +950,11 @@ function CreatorShopReviewPage() {
                       {artUrl(selected.cosmetic?.data) ? (
                         <EdgeMedia
                           src={artUrl(selected.cosmetic?.data)!}
-                          width={340}
+                          // Sticker art is capped at 512px, so the original is no bigger than the
+                          // resize, and serving it skips a cold resize on every newly queued item.
+                          {...(isSticker ? { original: true } : { width: 340, optimized: true })}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
-                          optimized
                         />
                       ) : selectedMeta.coverUrl ? (
                         <EdgeMedia
@@ -1263,8 +1265,6 @@ function CreatorShopReviewPage() {
                         placeable={
                           isMysteryPack
                             ? 'Mystery packs are sold only through their own page.'
-                            : selected.cosmetic && !selectedMeta.sellableByOthers
-                            ? "The creator hasn't allowed resale, so it can't be placed by hand. An event tag below still adds it to sections with that tag."
                             : true
                         }
                       />

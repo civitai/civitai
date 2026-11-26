@@ -19,14 +19,21 @@ import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 
 export function EventHomeBlock({ showAds, ...props }: Props) {
   const event = props.metadata.event;
   const { dismissed, dismiss, restore } = useNavBannersDismissed();
+  const showEventCosmetics = useShowEventCosmetics();
   if (!event) return null;
   const display = eventHomeBlockDisplay(event, dismissed);
   if (display === 'hidden') return null;
   const collapsed = display === 'collapsed';
+  // Event cosmetics off: a scored event's block (Hat Turf's) goes entirely, with no space held for it.
+  if (!showEventCosmetics)
+    return (
+      <UnscoredEventHomeBlock event={event} metadata={props.metadata} py={collapsed ? 16 : 32} />
+    );
 
   return (
     <HomeBlockWrapper py={collapsed ? 16 : 32}>
@@ -73,6 +80,25 @@ function EventHomeBlockBody({
         <EventHomeBlockContent metadata={metadata} />
       ) : null}
     </div>
+  );
+}
+
+// Read up front, not on scroll: only an unscored event gets a block, and its space is held for none.
+function UnscoredEventHomeBlock({
+  event,
+  metadata,
+  py,
+}: {
+  event: string;
+  metadata: HomeBlockMetaSchema;
+  py: number;
+}) {
+  const { data } = trpc.event.getData.useQuery({ event });
+  if (!data || data.scored) return null;
+  return (
+    <HomeBlockWrapper py={py}>
+      <EventHomeBlockContent metadata={metadata} />
+    </HomeBlockWrapper>
   );
 }
 

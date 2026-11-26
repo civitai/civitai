@@ -1,13 +1,24 @@
-import { Alert, Collapse, Group, Stack, Text, Textarea, UnstyledButton } from '@mantine/core';
+import {
+  Alert,
+  Checkbox,
+  Collapse,
+  Group,
+  Stack,
+  Text,
+  Textarea,
+  UnstyledButton,
+} from '@mantine/core';
 import { useDisclosure, useReducedMotion } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
+import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   isSensitiveTokenScope,
   tokenScopeKeyByBit,
-  tokenScopeLabels,
+  tokenScopeLabel,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 
@@ -45,9 +56,10 @@ export function DerivedScopesDisclosure({
   disabled = false,
   intro,
   forceShowErrors = false,
+  onOfflineAccessDeclaredChange,
 }: {
   /** The derived requested-scope mask (= the selected client's `allowedScopes`). */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** enum-key → rationale (prefilled + edited here). */
   justifications: Record<string, string>;
   onJustificationChange: (key: string, text: string) => void;
@@ -60,12 +72,19 @@ export function DerivedScopesDisclosure({
    * error shows only after the input is touched.
    */
   forceShowErrors?: boolean;
+  /**
+   * Renders the OFFLINE-ACCESS declaration (a box + a required justification, treated like a
+   * sensitive scope) when given. The box is ticked while `justifications` carries the
+   * `offline_access` key; this handler adds or removes it.
+   */
+  onOfflineAccessDeclaredChange?: (declared: boolean) => void;
 }) {
   const reduceMotion = useReducedMotion();
   const [otherOpened, { toggle: toggleOther }] = useDisclosure(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
-  const scopes = tokenScopeMaskToList(requestedScopes);
+  // The mask arrives as a number (the client's scope from tRPC); widened before it is decoded.
+  const scopes = tokenScopeMaskToList(BigInt(requestedScopes));
   const sensitive = scopes.filter((s) => isSensitiveTokenScope(s.bit));
   const nonSensitive = scopes.filter((s) => !isSensitiveTokenScope(s.bit));
 
@@ -95,7 +114,7 @@ export function DerivedScopesDisclosure({
                 <Group gap={6} wrap="nowrap">
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitive.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitive.length})
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
@@ -108,7 +127,7 @@ export function DerivedScopesDisclosure({
                   const isEmpty = text.trim().length === 0;
                   const showError = isEmpty && (forceShowErrors || touched[justificationKey]);
                   return (
-                    <div key={bit}>
+                    <div key={key}>
                       <Group gap={8} wrap="nowrap" align="center" mb={4}>
                         <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                           {key}
@@ -168,7 +187,7 @@ export function DerivedScopesDisclosure({
                     }}
                   />
                   <Text size="sm" fw={500}>
-                    Other permissions ({nonSensitive.length})
+                    {PERMISSION_GROUP_LABELS.other} ({nonSensitive.length})
                   </Text>
                   <Text size="xs" c="dimmed">
                     {otherOpened ? 'Hide' : 'Show'}
@@ -186,13 +205,13 @@ export function DerivedScopesDisclosure({
                     Standard permissions — no justification needed.
                   </Text>
                   {nonSensitive.map(({ bit, key, label }) => (
-                    <Group key={bit} gap={8} wrap="nowrap" align="center">
+                    <Group key={key} gap={8} wrap="nowrap" align="center">
                       <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                         {key}
                       </Text>
-                      {(label || tokenScopeLabels[bit]) && (
+                      {(label || tokenScopeLabel(bit)) && (
                         <Text size="xs" c="dimmed">
-                          {label || tokenScopeLabels[bit]}
+                          {label || tokenScopeLabel(bit)}
                         </Text>
                       )}
                     </Group>
@@ -202,6 +221,81 @@ export function DerivedScopesDisclosure({
             </div>
           )}
         </Stack>
+      )}
+
+      {onOfflineAccessDeclaredChange && (
+        <OfflineAccessDeclaration
+          justifications={justifications}
+          onDeclaredChange={onOfflineAccessDeclaredChange}
+          onJustificationChange={(text) =>
+            onJustificationChange(OFFLINE_ACCESS_JUSTIFICATION_KEY, text)
+          }
+          disabled={disabled}
+          forceShowErrors={forceShowErrors}
+        />
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * The offline-access declaration: does the app act for users while they are away (a refresh
+ * token, OAuth `offline_access`)? Ticking it requires a justification, as a sensitive scope does;
+ * a moderator approves only with one, and the agent review compares the declaration with what
+ * the OAuth client can actually do.
+ */
+function OfflineAccessDeclaration({
+  justifications,
+  onDeclaredChange,
+  onJustificationChange,
+  disabled,
+  forceShowErrors,
+}: {
+  justifications: Record<string, string>;
+  onDeclaredChange: (declared: boolean) => void;
+  onJustificationChange: (text: string) => void;
+  disabled: boolean;
+  forceShowErrors: boolean;
+}) {
+  const [touched, setTouched] = useState(false);
+  const declared = Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY);
+  const text = justifications[OFFLINE_ACCESS_JUSTIFICATION_KEY] ?? '';
+  const showError = declared && text.trim().length === 0 && (forceShowErrors || touched);
+  return (
+    <Stack gap={6} data-testid="apps-offsite-offline-access">
+      <Checkbox
+        checked={declared}
+        disabled={disabled}
+        onChange={(e) => onDeclaredChange(e.currentTarget.checked)}
+        label={
+          <Group gap={8} wrap="nowrap">
+            <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
+              {OFFLINE_ACCESS_JUSTIFICATION_KEY}
+            </Text>
+            <SensitiveScopeBadge />
+          </Group>
+        }
+        description="My app acts for users while they are away (it keeps a refresh token). Without this, your app is never offered offline access. Changing it on a live listing is sent for review."
+        data-testid="apps-offsite-offline-access-checkbox"
+      />
+      {declared && (
+        <Textarea
+          aria-label="Why your app needs offline access"
+          placeholder="Explain what your app does while the user is away, and why…"
+          autosize
+          minRows={2}
+          maxRows={4}
+          withAsterisk
+          required
+          value={text}
+          onChange={(e) => onJustificationChange(e.currentTarget.value)}
+          onBlur={() => setTouched(true)}
+          maxLength={SCOPE_JUSTIFICATION_MAX_LENGTH}
+          disabled={disabled}
+          error={showError ? 'A justification is required for offline access.' : undefined}
+          description={showError ? undefined : `${text.length}/${SCOPE_JUSTIFICATION_MAX_LENGTH}`}
+          data-testid="apps-offsite-offline-access-justification"
+        />
       )}
     </Stack>
   );

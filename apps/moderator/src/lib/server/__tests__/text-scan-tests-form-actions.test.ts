@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Access from '$lib/server/access';
+import type * as HarnessClient from '$lib/server/text-scan-lab/harness-client';
+import type * as IntentSet from '$lib/text-scan-tests/intent-set';
 import type * as Runs from '$lib/server/text-scan-tests/runs';
 import type * as Store from '$lib/server/text-scan-tests/store';
 
@@ -58,11 +60,25 @@ const reports = vi.hoisted(() => ({
 vi.mock('$lib/server/text-scan-tests/reports', () => reports);
 const activity = vi.hoisted(() => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('$lib/server/mod-activity', () => activity);
+// Set 7 stands in for the pinned intent set; set 3 is any other.
+vi.mock('$lib/text-scan-tests/intent-set', async (importOriginal) => ({
+  ...(await importOriginal<typeof IntentSet>()),
+  isIntentEvalSet: (setId: number) => setId === 7,
+}));
+const harness = vi.hoisted(() => ({
+  holdsMainPermission: vi.fn(async (_permission: string) => false),
+  composeComFaceIntent: vi.fn(async () => []),
+}));
+vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof HarnessClient>()),
+  ...harness,
+}));
 
 const {
   archiveSetAction,
   cancelAction,
   editCaseAction,
+  importIntentAction,
   quoteAction,
   removeCaseAction,
   rerunAction,
@@ -238,8 +254,8 @@ describe('progress endpoint', () => {
 
 describe('case, set and re-run actions', () => {
   beforeEach(() => {
-    store.updateExpectation.mockResolvedValue({ id: 9, entityType: 'CommentV2', entityId: 71 });
-    store.getCase.mockResolvedValue({ id: 9, entityType: 'CommentV2', entityId: 71 });
+    store.updateExpectation.mockResolvedValue({ id: 9, entityType: 'CommentV3', entityId: 71 });
+    store.getCase.mockResolvedValue({ id: 9, entityType: 'CommentV3', entityId: 71 });
     runs.rerunErrors.mockResolvedValue({ startId: 'y', runIds: [6], runId: 6 });
   });
 
@@ -264,7 +280,7 @@ describe('case, set and re-run actions', () => {
     expect(totals.refreshSetTotals).toHaveBeenCalledWith({}, 3);
     expect(activity.recordModActivity).toHaveBeenCalledWith({
       userId: 1,
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       entityId: 71,
       activity: 'textScan.testCase.relabel',
     });
@@ -347,5 +363,42 @@ describe('case, set and re-run actions', () => {
     session.requestCookie.mockReturnValue(null);
     expect(await rerunAction(event({ setId: '3', runId: '6' }))).toMatchObject({ status: 401 });
     expect(runs.rerunErrors).not.toHaveBeenCalled();
+  });
+});
+
+describe('the pinned intent set', () => {
+  const PINNED = { setId: '7', caseId: '9' };
+
+  beforeEach(() => {
+    store.requireSet.mockResolvedValue({ id: 7, workspace: 'prompts' });
+    harness.holdsMainPermission.mockResolvedValue(false);
+  });
+
+  it('refuses every change without the intent publish permission, asking the main app', async () => {
+    expect(await editCaseAction(event({ ...PINNED, expected: '{}' }))).toMatchObject({
+      status: 403,
+    });
+    expect(await removeCaseAction(event(PINNED))).toMatchObject({ status: 403 });
+    expect(await archiveSetAction(event({ setId: '7' }))).toMatchObject({ status: 403 });
+    expect(await importIntentAction(event({ setId: '7', rows: '11 detected' }))).toMatchObject({
+      status: 403,
+    });
+    expect(harness.holdsMainPermission).toHaveBeenCalledWith('textScanPromptPublishIntent');
+    expect(store.updateExpectation).not.toHaveBeenCalled();
+    expect(store.removeCase).not.toHaveBeenCalled();
+    expect(store.archiveSet).not.toHaveBeenCalled();
+    expect(harness.composeComFaceIntent).not.toHaveBeenCalled();
+  });
+
+  it('allows them with it', async () => {
+    harness.holdsMainPermission.mockResolvedValue(true);
+    expect(await archiveSetAction(event({ setId: '7' }))).toMatchObject({ success: true });
+    expect(store.archiveSet).toHaveBeenCalledWith({}, 7);
+  });
+
+  it('another set never asks for it', async () => {
+    store.requireSet.mockResolvedValue({ id: 3, workspace: 'prompts' });
+    expect(await archiveSetAction(event({ setId: '3' }))).toMatchObject({ success: true });
+    expect(harness.holdsMainPermission).not.toHaveBeenCalled();
   });
 });

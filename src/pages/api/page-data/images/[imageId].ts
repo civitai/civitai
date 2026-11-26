@@ -16,7 +16,10 @@ import {
   getFeatureFlagsAsync,
   getFliptGatedEligibility,
 } from '~/server/services/feature-flags.service';
+import { applySignedOutRolloutFlags } from '~/server/services/signed-out-rollout';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import {
   bootstrapSession,
   resolveSettingsBootstrapSeeds,
@@ -89,9 +92,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // session cookie can roll, and the viewer's own host, which that cookie's Domain comes from.
     // The credential the lookup records goes on THIS request's context, where the tRPC context
     // below reads it.
+    const sessionContext = ((req as { context?: Record<string, unknown> }).context ??= {});
     const sessionRequest = settingsBootstrapRequest(req, {
       host: req.headers.host,
-      context: ((req as { context?: Record<string, unknown> }).context ??= {}),
+      context: sessionContext,
     });
     // JSON round-tripped exactly as a server render's bootstrap is
     // (`resolveSettingsBootstrapForRender`), so the session the procedures below see is the one
@@ -102,7 +106,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // The same evaluation as both `_app` (which passes the request's own host) and
     // `createServerSideProps`. Decided before the rest of the bootstrap is read.
-    const flags = await getFeatureFlagsAsync({ user: session?.user, req });
+    const flags = await getFeatureFlagsAsync({
+      user: withModeratorRightsFor(session?.user, getRequestCredential(sessionRequest)),
+      req,
+    });
+    // This response is one visitor's own (`private, no-store`), so the signed-out per-visitor
+    // rollouts apply here as in `_app`'s render.
+    applySignedOutRolloutFlags(flags, { user: session?.user, req });
     // The route cookie follows the flag from here too: a viewer the flag went off for stops being
     // considered for the shell, and one it is on for keeps the cookie from expiring.
     if (!flags.shellImages) {
@@ -121,7 +131,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // The seeds, from the exact request a server render's bootstrap reads (the internal bootstrap
     // host for ToS, the viewer's host for announcements), so the host-derived ones are the page's.
     let bootstrapFailed = false;
-    const bootstrapSeeds = resolveSettingsBootstrapSeeds(settingsBootstrapRequest(req), session);
+    const bootstrapSeeds = resolveSettingsBootstrapSeeds(
+      settingsBootstrapRequest(req),
+      session,
+      sessionContext
+    );
     bootstrapSeeds.catch(() => {
       bootstrapFailed = true;
     });
@@ -178,6 +192,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         liveNow: bootstrap.liveNow,
         navBanners: bootstrap.navBanners,
         siteAlerts: bootstrap.siteAlerts,
+        eventSeeds: bootstrap.eventSeeds,
         flags,
         userFeatureFlags,
         chatSettings,
@@ -194,7 +209,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // After the flush the client sees a 200 with no body; this is the only place that says so.
       afterFlush: res.headersSent,
       message: e instanceof Error ? e.message : String(e),
-    }).catch(() => undefined);
+    });
     if (!res.headersSent) send(500, { error: 'Page data unavailable' });
     else if (!res.writableEnded) res.end();
   }

@@ -20,6 +20,7 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 const sparkHooks = vi.hoisted(() => ({
   onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
   onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
@@ -127,6 +128,7 @@ import {
   setCanonChapter,
   updateStoryline,
   STORYLINE_SPARK_REFUSALS,
+  STORYLINE_SPARK_START_LOCK_CLASS,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/cover-image.service';
@@ -1627,6 +1629,21 @@ describe('reading', () => {
       });
     });
 
+    it("returns the chapters' text stubs only for a reader with the text flag", async () => {
+      r.postText.findMany.mockResolvedValue([
+        { id: 1, postId: 101, index: 2, nsfwLevel: NsfwLevel.PG, refused: false },
+      ] as never);
+      const read = { chapterId: 4, viewer: { id: 99 }, browsingLevel: NsfwLevel.PG };
+      expect((await getStorylinePath(read)).texts).toEqual([]);
+      expect(r.postText.findMany).not.toHaveBeenCalled();
+
+      const { texts } = await getStorylinePath({ ...read, withTexts: true });
+      expect(texts).toEqual([{ id: 1, postId: 101, index: 2, nsfwLevel: NsfwLevel.PG }]);
+      const where = r.postText.findMany.mock.calls[0][0]?.where as { postId: { in: number[] } };
+      // Chapter 1 only: the removed chapter and the one above the reader's level are tombstones.
+      expect(where.postId.in).toEqual([101]);
+    });
+
     // A ban is the one removal no row on the chapter or post records: the post stays published and
     // untaken-down, only its author's account changed. The chapter must still read as removed to
     // everyone but moderators — the story's owner included — and must not cut the path short.
@@ -2769,6 +2786,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     // The PG-13 after the reader's level is the minor ceiling in the ceiling's CASE.
     expect(values).toEqual([
       [501],
+      nsfwBrowsingLevelsFlag,
       STRANGER,
       NsfwLevel.PG,
       NsfwLevel.PG13,
@@ -3897,7 +3915,16 @@ describe('covers and cast', () => {
       expect(read.text).toContain(
         'AND (i."nsfwLevel" & ~((CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ?) ELSE st."maxNsfwLevel" END) * 2 - 1)) = 0'
       );
-      expect(read.values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+      expect(read.values).toEqual([
+        [101],
+        nsfwBrowsingLevelsFlag,
+        99,
+        PG,
+        NsfwLevel.PG13,
+        [77],
+        [5],
+        99,
+      ]);
       expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: 99 });
     });
   });
@@ -3928,7 +3955,16 @@ describe('covers and cast', () => {
     const reads = rawCalls().filter((call) => isFirstImageRead(call.text));
     expect(reads).toHaveLength(1);
     // The same bound values as the path's read: posts, the reader, their level, hidden lists.
-    expect(reads[0].values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+    expect(reads[0].values).toEqual([
+      [101],
+      nsfwBrowsingLevelsFlag,
+      99,
+      PG,
+      NsfwLevel.PG13,
+      [77],
+      [5],
+      99,
+    ]);
     // One row past the cap, so the read can tell a full map from a cut one without reading more.
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
       take: STORYLINE_GRAPH_LIMIT + 1,
@@ -4149,7 +4185,17 @@ describe('covers and cast', () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.values).toEqual([[10, 10], [7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+      expect(read.values).toEqual([
+        [10, 10],
+        [7, 8],
+        nsfwBrowsingLevelsFlag,
+        99,
+        PG,
+        NsfwLevel.PG13,
+        [77],
+        [5],
+        99,
+      ]);
       // The hidden lists are read once for the picks and the main route together.
       expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);
     });
@@ -5069,6 +5115,165 @@ describe('a storyline started from an image', () => {
       });
       expect(w.storylineChapter.create).not.toHaveBeenCalled();
       expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+    });
+
+    describe('when an unwritten storyline from this image already exists', () => {
+      beforeEach(() => {
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+          Promise.resolve(
+            strings.join('?').includes('"sparkImageId" =') ? [{ id: 9, title: 'First try' }] : []
+          )) as never);
+      });
+
+      it('returns it with the title and terms just chosen, rescanning the new title', async () => {
+        await expect(
+          createStoryline({
+            sparkImageId: 77,
+            title: 'Second try',
+            maxNsfwLevel: NsfwLevel.X,
+            whoCanContinue: 'Collaborators',
+            userId: OWNER,
+          })
+        ).resolves.toEqual({ id: 9, rootChapterId: null });
+        expect(w.storyline.create).not.toHaveBeenCalled();
+        expect(w.storyline.update).toHaveBeenCalledExactlyOnceWith({
+          where: { id: 9 },
+          data: { title: 'Second try', maxNsfwLevel: NsfwLevel.X, whoCanContinue: 'Collaborators' },
+        });
+        expect(scanEntityInBackground).toHaveBeenCalledExactlyOnceWith({
+          entityType: 'Storyline',
+          entityId: 9,
+        });
+      });
+
+      it('starts a new one when its chapter 1 is written while this start looks it up', async () => {
+        // Answers as Postgres would: a `setFirstChapter` that committed after the first lookup is
+        // seen by any later statement.
+        const steps: string[] = [];
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.endsWith('FOR NO KEY UPDATE')) steps.push('lock');
+          if (!sql.includes('"sparkImageId" =')) return Promise.resolve([]);
+          steps.push('lookup');
+          // Only a lookup after the lock has waited out the chapter-1 writer sees its commit.
+          return Promise.resolve(steps.includes('lock') ? [] : [{ id: 9, title: 'First try' }]);
+        }) as never);
+
+        await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(steps).toEqual(['lookup', 'lock', 'lookup']);
+        expect(w.storyline.update).not.toHaveBeenCalled();
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+      });
+
+      it('starts a new one when the lookup under the lock finds a different storyline', async () => {
+        let lookups = 0;
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+          Promise.resolve(
+            strings.join('?').includes('"sparkImageId" =')
+              ? [lookups++ === 0 ? { id: 9, title: 'First try' } : { id: 8, title: 'Older' }]
+              : []
+          )) as never);
+
+        await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(w.storyline.update).not.toHaveBeenCalled();
+      });
+
+      it('still starts a new one when a published post is chapter 1', async () => {
+        w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+        w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+        await expect(
+          createStoryline({
+            sparkImageId: 77,
+            postId: 500,
+            title: 't',
+            maxNsfwLevel: NsfwLevel.R,
+            userId: OWNER,
+          })
+        ).resolves.toEqual({ id: 10, rootChapterId: 20 });
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('twice at once', () => {
+      /**
+       * Storyline rows, a lookup that answers from them, and an advisory lock that holds a key
+       * until the transaction that took it ends, as Postgres does. Every step yields, so two
+       * starts interleave: without the lock both look up before either inserts.
+       */
+      let rows: Array<{ id: number; userId: number; sparkImageId: number; title: string }>;
+      let lockCalls: Array<{ sql: string; values: unknown[] }>;
+      const yieldTurn = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      beforeEach(() => {
+        rows = [];
+        lockCalls = [];
+        const queue = new Map<string, Promise<void>>();
+        w.$queryRaw.mockImplementation((async (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => {
+          await yieldTurn();
+          if (!strings.join('?').includes('"sparkImageId" =')) return [];
+          const [userId, sparkImageId] = values as number[];
+          const mine = rows.filter((s) => s.userId === userId && s.sparkImageId === sparkImageId);
+          return mine.slice(-1).map(({ id, title }) => ({ id, title }));
+        }) as never);
+        w.storyline.create.mockImplementation((async ({
+          data,
+        }: {
+          data: { userId: number; sparkImageId: number; title: string };
+        }) => {
+          await yieldTurn();
+          const row = { ...data, id: 10 + rows.length };
+          rows.push(row);
+          return { id: row.id };
+        }) as never);
+        w.$transaction.mockImplementation((async (run: (tx: unknown) => Promise<unknown>) => {
+          const held: Array<() => void> = [];
+          const tx = new Proxy(w, {
+            get: (target, key) =>
+              key !== '$executeRaw'
+                ? target[key as keyof typeof target]
+                : async (strings: TemplateStringsArray, ...values: unknown[]) => {
+                    const sql = strings.join('?');
+                    if (!sql.includes('pg_advisory_xact_lock')) return 0;
+                    lockCalls.push({ sql, values });
+                    const key = JSON.stringify(values);
+                    const before = queue.get(key) ?? Promise.resolve();
+                    let release!: () => void;
+                    const mine = new Promise<void>((resolve) => (release = resolve));
+                    queue.set(
+                      key,
+                      before.then(() => mine)
+                    );
+                    held.push(release);
+                    await before;
+                    return 1;
+                  },
+          });
+          try {
+            return await run(tx);
+          } finally {
+            for (const release of held) release();
+          }
+        }) as never);
+      });
+
+      it('creates one storyline and returns it to both', async () => {
+        const [first, second] = await Promise.all([start(), start()]);
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+        expect(second.id).toBe(first.id);
+        expect(lockCalls[0]).toEqual({
+          sql: "SELECT pg_advisory_xact_lock(?::int, hashtext(?::text || ':' || ?::text)::int)",
+          values: [STORYLINE_SPARK_START_LOCK_CLASS, OWNER, 77],
+        });
+      });
+
+      it('still creates one for each of two different users', async () => {
+        const [mine, theirs] = await Promise.all([start(), start(NsfwLevel.R, STRANGER)]);
+        expect(w.storyline.create).toHaveBeenCalledTimes(2);
+        expect(theirs.id).not.toBe(mine.id);
+      });
     });
 
     it('tells event points once chapter 1 is written with the spark', async () => {

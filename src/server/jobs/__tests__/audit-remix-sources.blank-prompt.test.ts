@@ -31,11 +31,11 @@ vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: vi.fn() }
 
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const findUnique = dbMock.dbRead.image.findUnique;
-const update = dbMock.dbWrite.image.update;
+const update = dbMock.dbWrite.image.updateManyAndReturn;
 
 const imageWith = (meta: Record<string, unknown>) => ({
   id: 101,
@@ -52,7 +52,10 @@ const runJob = async () => {
 
 const flaggedForReview = () =>
   expect(update).toHaveBeenCalledWith(
-    expect.objectContaining({ where: { id: 101 }, data: { needsReview: 'remixSource' } })
+    expect.objectContaining({
+      where: { id: 101, needsReview: null },
+      data: { needsReview: 'remixSource' },
+    })
   );
 
 beforeEach(() => {
@@ -60,10 +63,19 @@ beforeEach(() => {
   moderatePrompt.mockImplementation(async () => ({ flagged: false, categories: [] }));
   // Not yet checked in the dedup window, so the sweep reaches the image.
   redisMock.sysRedis.get.mockResolvedValue(null);
-  update.mockResolvedValue({ postId: null });
+  update.mockResolvedValue([{ postId: null }] as never);
 });
 
 describe('audit-remix-sources — empty prompt with a non-empty negative prompt', () => {
+  it('counts nothing when a flag set since the read keeps the write from landing', async () => {
+    findUnique.mockResolvedValue(imageWith({ prompt: '', negativePrompt: 'tom cruise portrait' }));
+    update.mockResolvedValue([] as never);
+
+    const { result } = auditRemixSourcesJob.run({} as never);
+    expect(await result).toMatchObject({ flagged: 0 });
+    expect(bustCachesForPosts).not.toHaveBeenCalled();
+  });
+
   it('control: a celebrity name in the negative prompt is flagged beside a non-empty prompt', async () => {
     findUnique.mockResolvedValue(
       imageWith({ prompt: 'a landscape', negativePrompt: 'tom cruise portrait' })
@@ -110,5 +122,27 @@ describe('audit-remix-sources — empty prompt with a non-empty negative prompt'
     await runJob();
     expect(update).not.toHaveBeenCalled();
     expect(moderatePrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe('audit-remix-sources — home blocks', () => {
+  // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+  const lookedUp = () =>
+    dbMock.dbRead.$queryRaw.mock.calls
+      .map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+      .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+      .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+
+  it('refreshes the home blocks of an image it holds for review', async () => {
+    findUnique.mockResolvedValue(imageWith({ prompt: '', negativePrompt: 'tom cruise portrait' }));
+    await runJob();
+    expect(lookedUp()).toEqual([[101]]);
+  });
+
+  it('refreshes nothing when the hold did not land', async () => {
+    findUnique.mockResolvedValue(imageWith({ prompt: '', negativePrompt: 'tom cruise portrait' }));
+    update.mockResolvedValue([] as never);
+    await runJob();
+    expect(lookedUp()).toEqual([]);
   });
 });

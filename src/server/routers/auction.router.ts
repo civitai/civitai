@@ -12,6 +12,9 @@ import {
   deleteRecurringBid,
   getAllAuctions,
   getAuctionBases,
+  capAuctionBidImages,
+  bidImagesFor,
+  capBidImages,
   getAuctionBySlug,
   getMyBids,
   getMyRecurringBids,
@@ -19,6 +22,7 @@ import {
   togglePauseRecurringBid,
   updateAuctionBase,
 } from '~/server/services/auction.service';
+import { keepCrawlerAnswerOutOfEdgeCache } from '~/server/utils/image-media-visibility';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -38,13 +42,20 @@ export const auctionRouter = router({
   getBySlug: publicProcedure
     .meta({ requiredScope: TokenScope.BountiesRead })
     .input(getAuctionBySlugInput)
-    .query(({ input }) => getAuctionBySlug(input)),
+    .query(async ({ input, ctx }) => {
+      keepCrawlerAnswerOutOfEdgeCache(ctx);
+      return capAuctionBidImages(await getAuctionBySlug(input), bidImagesFor(ctx));
+    }),
   getMyBids: auctionProcedure
     .meta({ requiredScope: TokenScope.BountiesRead })
-    .query(({ ctx }) => getMyBids({ userId: ctx.user.id })),
+    .query(async ({ ctx }) =>
+      capBidImages(await getMyBids({ userId: ctx.user.id }), bidImagesFor(ctx))
+    ),
   getMyRecurringBids: auctionProcedure
     .meta({ requiredScope: TokenScope.BountiesRead })
-    .query(({ ctx }) => getMyRecurringBids({ userId: ctx.user.id })),
+    .query(async ({ ctx }) =>
+      capBidImages(await getMyRecurringBids({ userId: ctx.user.id }), bidImagesFor(ctx))
+    ),
   createBid: auctionProcedure
     .meta({ requiredScope: TokenScope.BountiesWrite, blockApiKeys: true })
     .input(createBidInput)

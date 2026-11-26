@@ -1,5 +1,5 @@
 import produce from 'immer';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import useSound from 'use-sound';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -11,7 +11,7 @@ import {
   shouldNotifyForMessage,
   upsertChatInList,
 } from '~/shared/utils/chat';
-import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import type { ChatAllMessages, ChatCreateChat, ChatListMessage } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -24,19 +24,45 @@ export const useChatNewMessageSignal = () => {
   const features = useFeatureFlags();
   const [play] = useSound(messageSound, { volume });
 
-  const onUpdate = useCallback(
-    (updated: ChatAllMessages[number]) => {
-      // queryUtils.chat.getInfiniteMessages.cancel();
+  // Signals that arrive while the list is loading share one fetch.
+  const listFetch = useRef<Promise<ChatListMessage[]> | null>(null);
+  const live = useRef({ mounted: true, userId: currentUser?.id });
+  useEffect(() => {
+    live.current = { mounted: true, userId: currentUser?.id };
+    return () => {
+      live.current = { mounted: false, userId: undefined };
+    };
+  }, [currentUser?.id]);
 
+  const onUpdate = useCallback(
+    async (updated: ChatAllMessages[number]) => {
       // - if chat is off or it's your message, ignore
       if (!currentUser || !features.chat || updated.userId === currentUser.id) return;
 
-      const chats = queryUtils.chat.getAllByUser.getData();
-      const thisChat = chats?.find((c) => c.id === updated.chatId);
+      // The member's notify level lives only on the list. Before the chat panel
+      // has loaded it, fetch it: guessing would ring a conversation set to Nothing.
+      let chats = queryUtils.chat.getAllByUser.getData();
+      if (!chats) {
+        const userId = currentUser.id;
+        listFetch.current ??= queryUtils.chat.getAllByUser.ensureData().finally(() => {
+          listFetch.current = null;
+        });
+        const stillHere = () => live.current.mounted && live.current.userId === userId;
+        try {
+          chats = await listFetch.current;
+        } catch {
+          // stay silent and let the server's count, which honours Nothing, decide the badge
+          if (stillHere()) queryUtils.chat.getUnreadCount.invalidate();
+          return;
+        }
+        if (!stillHere()) return;
+      }
+
+      const thisChat = chats.find((c) => c.id === updated.chatId);
       // A chat absent from the list is one this user deleted — the message that
       // just arrived is the first past their watermark, so refetch to bring it
       // back rather than dropping the signal.
-      if (chats && !thisChat) {
+      if (!thisChat) {
         // The server may have re-armed this member into Requests, in which case
         // its unread count is 0 — refetch rather than incrementing below.
         queryUtils.chat.getAllByUser.invalidate();
@@ -44,12 +70,14 @@ export const useChatNewMessageSignal = () => {
         return;
       }
 
-      const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser.id);
-      const notify = shouldNotifyForMessage({
-        level: myMember?.notifyLevel ?? ChatNotifyLevel.All,
-        content: updated.content,
-        username: currentUser.username,
-      });
+      const myMember = thisChat.chatMembers.find((cm) => cm.userId === currentUser.id);
+      const notify =
+        !!myMember &&
+        shouldNotifyForMessage({
+          level: myMember.notifyLevel,
+          content: updated.content,
+          username: currentUser.username,
+        });
 
       // - add the message to the chat list at the end
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
@@ -91,6 +119,13 @@ export const useChatNewMessageSignal = () => {
       // - a conversation set to Nothing (or Mentions, unmentioned) still updates
       //   in place; it just does not announce itself
       if (!notify) return;
+
+      // - a message in a Request counts, silently, and only the server knows
+      //   whether its author is blocked or banned, so refetch rather than +1
+      if (myMember?.filteredAt) {
+        queryUtils.chat.getUnreadCount.invalidate();
+        return;
+      }
 
       // - increment the unread message count
       queryUtils.chat.getUnreadCount.setData(
@@ -161,11 +196,13 @@ export const useChatMessageUpdatedSignal = () => {
       messageId,
       chatId,
       content,
+      maskedContent,
       editedAt,
     }: {
       messageId: number;
       chatId: number;
       content: string;
+      maskedContent?: string | null;
       editedAt: string;
     }) => {
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
@@ -176,6 +213,8 @@ export const useChatMessageUpdatedSignal = () => {
             const msg = page.items.find((m) => m.id === messageId);
             if (msg) {
               msg.content = content;
+              // The new text's masked copy, never the old one; absent leaves masking to the browser.
+              msg.maskedContent = maskedContent;
               msg.editedAt = new Date(editedAt);
             }
           }
@@ -242,17 +281,24 @@ export const useChatNewRoomSignal = () => {
     (updated: ChatCreateChat) => {
       if (!currentUser || !features.chat || updated.ownerId === currentUser.id) return;
 
-      // A filtered request is deliberately absent from the server's unread count.
-      // Incrementing it here anyway put it back in the header badge and rang the
-      // sound — the exact thing the filter exists to prevent.
+      // A request counts in the header badge but stays silent. Refetch rather than
+      // +1: the server leaves out a request from a blocked or banned sender.
       const myMember = updated.chatMembers?.find((cm) => cm.userId === currentUser.id);
       if (myMember?.filteredAt) {
         queryUtils.chat.getAllByUser.invalidate();
+        queryUtils.chat.getUnreadCount.invalidate();
         return;
       }
 
       const revived = { ...updated, createdAt: new Date(updated.createdAt) };
       queryUtils.chat.getAllByUser.setData(undefined, (old) => upsertChatInList(old, revived));
+
+      // Added to a group already set to Nothing or Mentions: there is no message
+      // to mention anyone yet, so stay silent and let the server count it.
+      if (myMember && myMember.notifyLevel !== ChatNotifyLevel.All) {
+        queryUtils.chat.getUnreadCount.invalidate();
+        return;
+      }
 
       queryUtils.chat.getUnreadCount.setData(
         undefined,

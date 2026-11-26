@@ -204,9 +204,10 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
               const toCache: Record<string, string> = { cachedAt: cachedAt.toISOString() };
               for (const [key, value] of Object.entries(item)) {
                 // Use JSON.stringify for arrays and objects, String() for primitives
-                toCache[key] = Array.isArray(value) || (typeof value === 'object' && value !== null)
-                  ? JSON.stringify(value)
-                  : String(value);
+                toCache[key] =
+                  Array.isArray(value) || (typeof value === 'object' && value !== null)
+                    ? JSON.stringify(value)
+                    : String(value);
               }
 
               const EX = staleWhileRevalidate ? ttl * 2 : ttl;
@@ -229,6 +230,7 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
       }
 
       // For IDs where someone else has the lock, wait and retry fetching from cache
+      const busted: number[] = [];
       let retry = 0;
       while (othersLocked.length > 0 && retry < LOCK_MAX_RETRIES) {
         await sleep(LOCK_RETRY_DELAY);
@@ -249,6 +251,11 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
 
             // Skip not found entries
             if (cacheResult.notFound === '1') continue;
+            // A bust marker: the lock holder read it too and cached nothing, so read the source.
+            if (cacheResult.debounce === '1') {
+              busted.push(id);
+              continue;
+            }
 
             // Parse the cached data through the SAME codec as the uncontended
             // read above. This branch used to carry its own copy of the decoder,
@@ -263,6 +270,12 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
         for (const id of found) {
           const index = othersLocked.indexOf(id);
           if (index > -1) othersLocked.splice(index, 1);
+        }
+      }
+
+      if (busted.length > 0) {
+        for (const item of await config.fetch(ctx, busted)) {
+          results[item[config.idKey] as unknown as number] = item;
         }
       }
     }
@@ -286,12 +299,12 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
 
     await Promise.all(
       ids.map((id) =>
-        ctx.redis.hSet(`${config.redisKey}:${id}`, {
-          debounce: '1',
-          cachedAt: new Date().toISOString(),
-        }).then(() =>
-          ctx.redis.expire(`${config.redisKey}:${id}`, debounce)
-        )
+        ctx.redis
+          .hSet(`${config.redisKey}:${id}`, {
+            debounce: '1',
+            cachedAt: new Date().toISOString(),
+          })
+          .then(() => ctx.redis.expire(`${config.redisKey}:${id}`, debounce))
       )
     );
   }
@@ -322,9 +335,10 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
         const toCache: Record<string, string> = { cachedAt: cachedAt.toISOString() };
         for (const [key, value] of Object.entries(item)) {
           // Use JSON.stringify for arrays and objects, String() for primitives
-          toCache[key] = Array.isArray(value) || (typeof value === 'object' && value !== null)
-            ? JSON.stringify(value)
-            : String(value);
+          toCache[key] =
+            Array.isArray(value) || (typeof value === 'object' && value !== null)
+              ? JSON.stringify(value)
+              : String(value);
         }
 
         cacheOps.push(ctx.redis.hSet(`${config.redisKey}:${id}`, toCache));

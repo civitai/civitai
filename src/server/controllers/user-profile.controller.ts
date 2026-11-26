@@ -1,23 +1,35 @@
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
+  addToShowcaseSection,
   getUserContentOverview,
   getUserWithProfile,
+  setShowcaseSections,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import type {
+  AddToShowcaseSectionSchema,
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
+  ShowcaseSectionSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  archiveProfileBeforeModeratorChange,
+} from '~/server/services/user.service';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
+import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
@@ -54,10 +66,12 @@ export const getUserProfileHandler = async ({
   try {
     const user = await getUserWithProfile({
       username: input.username,
-      isModerator: ctx.user?.isModerator,
+      isModerator: actsAsModerator(ctx),
       sessionUserId: ctx.user?.id,
+      sessionUsername: ctx.user?.username,
       eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
+      fromReplica: true,
     });
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -94,6 +108,7 @@ export const getUserProfileHandler = async ({
             location: null,
             nsfw: false,
             showcaseItems: [] as ShowcaseItemSchema[],
+            showcaseSections: [] as ShowcaseSectionSchema[],
             profileSectionsSettings: [] as ProfileSectionSchema[],
             privacySettings: {} as PrivacySettingsSchema,
           },
@@ -122,15 +137,54 @@ export const updateUserProfileHandler = async ({
       throw throwAuthorizationError();
 
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
+    const byModerator = userId !== sessionUser.id;
+    if (byModerator) {
+      // The civitai.com copies count as the field they override.
+      const touched = {
+        bio: ['bio', 'sfwBio'],
+        message: ['message', 'sfwMessage'],
+        location: ['location'],
+        links: ['socialLinks', 'sponsorshipLinks'],
+        showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
+      };
+      const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
+        touched[field].some((key) => key in input)
+      );
+      if (fields.length)
+        await archiveProfileBeforeModeratorChange({
+          userId,
+          actorId: sessionUser.id,
+          fields,
+          archive: archiveUserProfile,
+        });
+    }
     const user = await updateUserProfile({
       ...input,
       userId,
       isModerator: sessionUser.isModerator,
+      asModerator: actsAsModerator(ctx),
       sessionUserId: sessionUser.id,
       domain: ctx.domain,
     });
 
     await bustUserCreator(userId);
+    // The edit has committed: a failed record must not report it as failed.
+    if (byModerator) {
+      try {
+        await trackModActivity(sessionUser.id, {
+          entityType: 'user',
+          activity: 'editProfile',
+          entityId: userId,
+        });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'edit-profile-mod-activity',
+          userId,
+          message: (error as Error).message,
+        });
+      }
+    }
 
     return user;
   } catch (error) {
@@ -138,6 +192,38 @@ export const updateUserProfileHandler = async ({
     throw throwDbError(error);
   }
 };
+export const setShowcaseSectionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetShowcaseSectionsSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (ctx.user.muted) throw throwAuthorizationError();
+  try {
+    return await setShowcaseSections({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const addToShowcaseSectionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddToShowcaseSectionSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (ctx.user.muted) throw throwAuthorizationError();
+  try {
+    return await addToShowcaseSection({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
 export const addEntityToShowcaseHandler = async ({
   input,
   ctx,

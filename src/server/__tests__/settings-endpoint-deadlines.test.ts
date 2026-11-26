@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   follows: vi.fn(),
   addons: vi.fn(),
   navBanners: vi.fn(),
+  eventSeeds: vi.fn(),
   siteAlerts: vi.fn(),
   session: vi.fn(),
   tos: vi.fn(async (_: { domainColor: string }) => undefined as unknown),
@@ -79,6 +80,8 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
 }));
 // Its only export. Loading the real module pulls the whole event engine into this graph.
 vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
+// The same, for the event seeds.
+vi.mock('~/server/services/event-seeds.service', () => ({ getEventSeeds: h.eventSeeds }));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
   getActiveSiteAlerts: h.siteAlerts,
@@ -101,19 +104,27 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 import handler from '~/pages/api/user/settings';
 import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
-// The unit setup replaces this export with a spy (src/__tests__/setup.ts).
-import { logToAxiom } from '~/server/logging/client';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
+const invoke = (
+  headers: Record<string, string> = { host: 'civitai.com' },
+  context?: Record<string, unknown>
+) => {
   const json = vi.fn();
   const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
-  const req = { method: 'GET', headers, query: {}, cookies: {} };
+  const req = { method: 'GET', headers, query: {}, cookies: {}, ...(context ? { context } : {}) };
   const done = (handler as unknown as (q: NextApiRequest, s: NextApiResponse) => Promise<void>)(
     req as unknown as NextApiRequest,
     res as unknown as NextApiResponse
   );
   return { done, json };
 };
+
+// Reset per test: `clearAllMocks` keeps an implementation, so one test's never-settling seeds
+// would otherwise park every later test that awaits the bootstrap without advancing the clock.
+beforeEach(() => {
+  h.eventSeeds.mockReset().mockResolvedValue([]);
+});
 
 describe('/api/user/settings read deadlines', () => {
   beforeEach(() => {
@@ -125,6 +136,7 @@ describe('/api/user/settings read deadlines', () => {
     h.follows.mockResolvedValue([7]);
     h.addons.mockResolvedValue([{ id: 'a' }]);
     h.navBanners.mockResolvedValue([{ id: 'event:e1' }]);
+    h.eventSeeds.mockResolvedValue([{ event: 'e1', access: 'open' }]);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -141,6 +153,7 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.announcements).toEqual([{ id: 1 }]);
     expect(body.liveNow).toBe(true);
     expect(body.navBanners).toEqual([{ id: 'event:e1' }]);
+    expect(body.eventSeeds).toEqual([{ event: 'e1', access: 'open' }]);
   });
 
   it('still answers when a dependency never replies, and seeds the SAFE settings default', async () => {
@@ -187,6 +200,7 @@ describe('/api/user/settings read deadlines', () => {
   it('degrades each hanging member independently', async () => {
     h.announcements.mockReturnValue(new Promise(() => undefined));
     h.liveNow.mockReturnValue(new Promise(() => undefined));
+    h.eventSeeds.mockReturnValue(new Promise(() => undefined));
     const { json } = invoke();
     await vi.runAllTimersAsync();
 
@@ -194,6 +208,8 @@ describe('/api/user/settings read deadlines', () => {
     const body = json.mock.calls[0][0];
     expect(body.announcements).toBeUndefined();
     expect(body.liveNow).toBe(false);
+    // No seeds: the client fetches the event queries for itself, as before.
+    expect(body.eventSeeds).toBeUndefined();
     // The member that did reply is unaffected.
     expect(body.settings).toEqual({ showNsfw: true });
   });
@@ -231,19 +247,26 @@ describe('/api/user/settings nav banners', () => {
   // the dismissed cookie is applied on the client. Passing anything from the request here (cookies,
   // headers) is how one viewer's answer would reach another.
   it('resolves them from the session user alone, never the request', async () => {
-    h.session.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    // As the real lookup does: it records the (session) credential on the request it was given.
+    h.session.mockImplementation(async ({ req }: { req: { context?: object } }) => {
+      req.context ??= {};
+      return { user: { id: 42, isModerator: true } };
+    });
     const { done } = invoke();
     await vi.runAllTimersAsync();
     await done;
     expect(h.navBanners).toHaveBeenCalledTimes(1);
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: { id: 42, isModerator: true } }]);
+    // Plus the request's own cosmetic-read memo, which carries nothing from the request.
+    expect(h.navBanners.mock.calls[0]).toEqual([
+      { viewer: { id: 42, isModerator: true }, reads: expect.any(Map) },
+    ]);
   });
 
   it('resolves them as signed out when there is no session', async () => {
     const { done } = invoke();
     await vi.runAllTimersAsync();
     await done;
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined }]);
+    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined, reads: expect.any(Map) }]);
   });
 });
 
@@ -310,6 +333,7 @@ describe('settings bootstrap during a server render', () => {
       liveNow: true,
       navBanners: [],
       siteAlerts: { version: 7, alerts: [] },
+      eventSeeds: [],
       session: { user: { id: 42, username: 'x' } },
     });
   });
@@ -381,15 +405,6 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
-    // …while the full reason is kept in the structured log.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: 'connect ECONNREFUSED db.internal.example:5432',
-      },
-      'settings'
-    );
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();
@@ -576,5 +591,45 @@ describe('settings bootstrap during a server render — domain resolution', () =
     expect(getRequestDomainColor({ headers: { host: 'blue.example' } })).toBe('blue');
     expect(getRequestDomainColor({ headers: { host: 'civitai.red' } })).toBe('red');
     expect(getRequestDomainColor({ headers: { host: INTERNAL_HOST } })).toBeUndefined();
+  });
+});
+
+describe('/api/user/settings — the session it returns', () => {
+  const MODERATOR = { id: 4242, username: 'mod', isModerator: true, roles: ['moderator:admin'] };
+  const reducedKey = {
+    tokenScope: TokenScope.MediaRead,
+    apiKeyId: 11,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 11 },
+  };
+  const fullKey = { ...reducedKey, tokenScope: TokenScope.Full };
+
+  beforeEach(() => {
+    h.session.mockResolvedValue({ user: MODERATOR });
+    h.contentSettings.mockResolvedValue({});
+    h.announcements.mockResolvedValue([]);
+    h.liveNow.mockResolvedValue(false);
+    h.follows.mockResolvedValue([]);
+    h.addons.mockResolvedValue([]);
+    h.navBanners.mockResolvedValue([]);
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  const sessionFor = async (context?: Record<string, unknown>) => {
+    const { done, json } = invoke({ host: 'civitai.com' }, context);
+    await done;
+    return json.mock.calls[0][0].session;
+  };
+
+  it('keeps moderator rights on a browser session', async () => {
+    expect((await sessionFor()).user).toEqual(MODERATOR);
+  });
+
+  it('keeps moderator rights on a full-scope personal key', async () => {
+    expect((await sessionFor(fullKey)).user.isModerator).toBe(true);
+  });
+
+  it('is the same user without moderator rights on a reduced-scope key', async () => {
+    expect((await sessionFor(reducedKey)).user).toEqual({ ...MODERATOR, isModerator: false });
   });
 });

@@ -199,6 +199,16 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
 describe('logToAxiom Axiom dual-write containment', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
+  // `logToAxiom` no longer waits for the dual-write; the outcome is recorded in the background.
+  // These cases are about that outcome (the report, the counter), so each call also awaits
+  // `flush`, which resolves once the outcome is recorded.
+  const settled =
+    (logger: ReturnType<typeof createAxiomLogger>) =>
+    async (data: Record<string, unknown>, datastream?: string) => {
+      await logger.logToAxiom(data, datastream);
+      await logger.flush();
+    };
+
   beforeEach(() => {
     h.ingestEvents.mockReset().mockResolvedValue(undefined);
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -225,7 +235,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
 
   it('CONTAINMENT: a rejecting ingest resolves the caller and reports the failure once', async () => {
     h.ingestEvents.mockRejectedValue(new Error('ECONNREFUSED'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await expect(logToAxiom(ERR)).resolves.toBeUndefined();
 
@@ -238,27 +248,27 @@ describe('logToAxiom Axiom dual-write containment', () => {
     });
   });
 
-  it('BUDGET: a hanging ingest does not hold the caller past AXIOM_INGEST_TIMEOUT_MS', async () => {
+  it('BUDGET: a hanging ingest is reported as a timeout once AXIOM_INGEST_TIMEOUT_MS passes', async () => {
     vi.useFakeTimers();
-    // Never settles — the black-holed-endpoint case. Attach a sink so the abandoned promise
-    // cannot register as unhandled if the implementation regresses to leaving it bare.
+    // Never settles: the black-holed-endpoint case.
     h.ingestEvents.mockReturnValue(new Promise(() => {}));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logger = createAxiomLogger(PROD_CONFIGURED);
 
-    let settled = false;
-    const call = logToAxiom(ERR).then(() => {
-      settled = true;
+    // The caller is not held at all (./nonBlocking.test.ts pins that in real time).
+    await logger.logToAxiom(ERR);
+    let flushed = false;
+    const flush = logger.flush().then(() => {
+      flushed = true;
     });
 
-    // Advance to just under the budget: still waiting.
+    // Just under the budget: no outcome yet.
     await vi.advanceTimersByTimeAsync(1_999);
-    expect(settled).toBe(false);
+    expect(flushed).toBe(false);
+    expect(reports(errorSpy)).toEqual([]);
 
-    // Cross it: the caller is released even though the ingest never resolves.
+    // Cross it: reported as a timeout though the ingest never resolves.
     await vi.advanceTimersByTimeAsync(2);
-    await call;
-    expect(settled).toBe(true);
-
+    await flush;
     expect(reports(errorSpy)[0]).toMatchObject({ name: 'axiom-ingest-failed', reason: 'timeout' });
   });
 
@@ -273,7 +283,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
       h.ingestEvents.mockReturnValue(
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('late')), 10_000))
       );
-      const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+      const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
       const call = logToAxiom(ERR);
       await vi.advanceTimersByTimeAsync(2_001);
@@ -292,7 +302,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
 
   it('THROTTLE: an outage reports on the 1st and every 500th failure, not once per event', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     for (let i = 0; i < 501; i++) await logToAxiom(ERR);
 
@@ -301,7 +311,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   it('RECOVERY: the next success reports the outage total and resets the counter', async () => {
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     h.ingestEvents.mockRejectedValue(new Error('down'));
     await logToAxiom(ERR);
@@ -323,7 +333,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   it('HEALTHY PATH IS SILENT: a successful ingest emits no outage report', async () => {
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
     await logToAxiom(ERR);
     expect(reports(errorSpy)).toEqual([]);
   });
@@ -340,7 +350,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
    */
   it('the failure report is queryable as an ERROR and attributable to a pod', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await logToAxiom(ERR);
 
@@ -353,7 +363,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   it('the recovery report is INFO — good news must not page as an error', async () => {
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
     h.ingestEvents.mockRejectedValue(new Error('down'));
     await logToAxiom(ERR);
     h.ingestEvents.mockResolvedValue(undefined);
@@ -378,8 +388,8 @@ describe('logToAxiom Axiom dual-write containment', () => {
    */
   it('SHARED COUNTER: separate loggers on one datastream continue the same outage', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const a = createAxiomLogger(PROD_CONFIGURED);
-    const b = createAxiomLogger(PROD_CONFIGURED);
+    const a = { logToAxiom: settled(createAxiomLogger(PROD_CONFIGURED)) };
+    const b = { logToAxiom: settled(createAxiomLogger(PROD_CONFIGURED)) };
 
     await a.logToAxiom(ERR);
     await b.logToAxiom(ERR);
@@ -403,7 +413,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
 
   it('a DIFFERENT datastream is a different transport with its own count', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await logToAxiom(ERR);
     await logToAxiom(ERR, 'some-other-stream');
@@ -420,7 +430,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
    */
   it('clears the budget timer when the ingest wins', async () => {
     vi.useFakeTimers();
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await logToAxiom(ERR);
 
@@ -548,6 +558,90 @@ describe('logToAxiom injected sink (deps.emitLog)', () => {
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(h.ingestEvents).toHaveBeenCalledTimes(1);
+  });
+
+  describe('the logger’s own reports', () => {
+    const UNPROVISIONED = 'fixture-unprovisioned';
+    type SinkCall = { body: string; data: Record<string, unknown>; datastream?: string };
+    const reportCalls = (calls: SinkCall[]) =>
+      calls.filter((c) => String(c.data.name).startsWith('axiom-'));
+    const stderrReports = () =>
+      (errorSpy.mock.calls as unknown[][])
+        .map((c) => c[0] as string)
+        .filter((line) => line.startsWith('{"name":"axiom-'));
+
+    async function run(
+      ingest: 'down' | 'recovers' | 'unprovisioned',
+      emitLog: (body: string, data: Record<string, unknown>, datastream?: string) => void
+    ) {
+      const logger = createAxiomLogger(PROD_CONFIGURED, { emitLog });
+      const datastream = ingest === 'unprovisioned' ? UNPROVISIONED : undefined;
+      h.ingestEvents.mockRejectedValue(new Error('down'));
+      await logger.logToAxiom(ERR, datastream);
+      await logger.flush();
+      if (ingest === 'recovers') {
+        h.ingestEvents.mockResolvedValue(undefined);
+        await logger.logToAxiom(ERR);
+        await logger.flush();
+      }
+      return logger;
+    }
+
+    beforeEach(() => {
+      (globalThis as Record<symbol, unknown>)[
+        Symbol.for('@civitai/axiom.unprovisionedDatastreamsReported')
+      ] = new Set<string>();
+    });
+
+    it.each([
+      ['down', ['axiom-ingest-failed']],
+      ['recovers', ['axiom-ingest-failed', 'axiom-ingest-recovered']],
+      ['unprovisioned', ['axiom-datastream-unprovisioned']],
+    ] as const)(
+      'ingest %s: each report reaches the sink with the stderr line as its body',
+      async (ingest, names) => {
+        const calls: SinkCall[] = [];
+        await run(ingest, (body, data, datastream) => calls.push({ body, data, datastream }));
+
+        const reports = reportCalls(calls);
+        expect(reports.map((c) => c.data.name)).toEqual(names);
+        expect(reports.map((c) => c.body)).toEqual(stderrReports());
+        for (const c of reports) {
+          expect(c.datastream).toBe('civitai-errors');
+          expect(JSON.parse(c.body)).not.toHaveProperty('_axiom');
+        }
+      }
+    );
+
+    it('a report adds no Axiom write, and a sink that logs through the logger still terminates', async () => {
+      h.ingestEvents.mockRejectedValue(new Error('down'));
+      let reentries = 0;
+      const deps: { emitLog?: (body: string, data: Record<string, unknown>) => void } = {};
+      const logger = createAxiomLogger(PROD_CONFIGURED, deps);
+      // The worst sink: it logs every report it receives back through the logger.
+      deps.emitLog = (_body, data) => {
+        if (!String(data.name).startsWith('axiom-') || ++reentries > 50) return;
+        void logger.logToAxiom({ name: 'sink-echo', of: data.name });
+      };
+
+      await logger.logToAxiom(ERR);
+      for (let i = 0; i < 5; i++) await logger.flush();
+
+      // One report for the outage; its echo is one more event whose own failure is not reported.
+      expect(stderrReports()).toHaveLength(1);
+      expect(reentries).toBe(1);
+      expect(h.ingestEvents).toHaveBeenCalledTimes(2);
+    });
+
+    it('a sink that throws on a report does not reach the caller or the stderr line', async () => {
+      const logger = await run('down', (_body, data) => {
+        if (String(data.name).startsWith('axiom-')) throw new Error('sink exploded');
+      });
+
+      expect(stderrReports().map((l) => JSON.parse(l).name)).toEqual(['axiom-ingest-failed']);
+      expect(h.ingestEvents).toHaveBeenCalledTimes(1);
+      await expect(logger.logToAxiom(ERR)).resolves.toBeUndefined();
+    });
   });
 
   it('is NOT called outside prod, where no structured line is written either', async () => {

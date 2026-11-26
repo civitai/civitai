@@ -7,11 +7,13 @@ import {
   TEAM_HOURS_CUT_FIELD,
   utcDay,
 } from '~/server/events/points/keys';
-import { teamAwardsBy } from '~/server/events/scoring/team-awards';
+import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { dbRead, dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { Prisma } from '@prisma/client';
+import { eventPointsExcludedFromSql } from '~/server/events/player-eligibility';
 
 export type ScoredEvent = {
   name: string;
@@ -35,6 +37,7 @@ const scoreFromDay = (event: Pick<ScoredEvent, 'startDate' | 'scoreFrom'>) => {
 
 const TOP_COSMETICS = 50;
 const TOP_USERS_PER_TEAM = 20;
+const TOP_TURF_PLAYERS = 10;
 
 export type CosmeticScoreKey = { userId: number; cosmeticId: number; claimKey: string };
 // The same string as the live totals' hat field: live and settled points are merged by it.
@@ -64,6 +67,9 @@ export type EventStandings = {
   hourly?: TeamHourly;
   topCosmetics: CosmeticScore[];
   topUsers: Record<string, { userId: number; points: number }[]>;
+  // The people Hat Turf credited most, apart from their hats. Absent from snapshots taken before it
+  // existed.
+  topTurfPlayers?: { userId: number; team: string; points: number }[];
   updatedAt: Date;
 };
 
@@ -115,35 +121,41 @@ async function readTeamHourly(event: StandingsEvent, fromDay: Date) {
   }
 }
 
-// Banned, deleted and leaderboard-excluded users drop out of the standings (team totals, history and
-// rankings). Their rows stay in the table, so a reversal restores them; per-cosmetic reads below are
-// not filtered. The hourly job passes the primary: it builds this right after writing the day, and
+// Banned, deleted and event-points-excluded users drop out of the standings (team totals, history and
+// rankings) from their exclusion start day (eventPointsExcludedFromSql); days before it count. Their
+// rows stay in the table, so a reversal restores them; per-cosmetic reads below are not filtered. The hourly job passes the primary: it builds this right after writing the day, and
 // a lagging replica would freeze stale numbers into the snapshot for an hour.
 async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof dbRead) {
   const fromDay = scoreFromDay(event);
-  // The few hidden users, found once over the event's distinct users, so the three aggregates below
-  // need no per-row join to "User".
-  const hidden = await db.$queryRaw<{ id: number }[]>`
-    SELECT u.id FROM "User" u
-    WHERE u.id IN (
-      SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily"
-      WHERE event = ${event.name} AND day >= ${fromDay}::date
-    )
-      AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
+  // The few hidden users and the day each is hidden from, found once over the event's distinct users,
+  // so the aggregates below need no per-row join to "User".
+  const hidden = await db.$queryRaw<{ id: number; from: string }[]>`
+    SELECT id, to_char("from", 'YYYY-MM-DD') AS "from" FROM (
+      SELECT u.id, ${eventPointsExcludedFromSql()} AS "from" FROM "User" u
+      WHERE u.id IN (
+        SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily"
+        WHERE event = ${event.name} AND day >= ${fromDay}::date
+      )
+    ) hidden
+    WHERE "from" IS NOT NULL
   `;
-  const hiddenIds = hidden.map((u) => u.id);
-  // NOT IN over a subquery is hashed; <> ALL(array) compares every row with the whole array.
+  // A hidden user's rows drop out from their day on.
+  const shown = Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM unnest(${hidden.map((h) => h.id)}::int[], ${hidden.map((h) => h.from)}::date[])
+      AS h(id, "from")
+    WHERE h.id = "userId" AND day >= h."from"
+  )`;
 
   const teamDays = await db.$queryRaw<{ team: string; day: Date; points: number }[]>`
     SELECT team, day, sum(points)::int AS points
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND ${shown}
     GROUP BY team, day
     ORDER BY day
   `;
   // Cut where the referee last settled, so the snapshot and the live base count the same awards.
   const liveCut = Number((await sysRedis.get(eventSeasonKeys(event.name, 'live').cut)) ?? 0);
-  const awarded = teamAwardsBy(event, new Date(liveCut * LIVE_BUCKET_MS)).map(
+  const awarded = (await loadTeamAwards(event, new Date(liveCut * LIVE_BUCKET_MS), db)).map(
     ({ team, points, at }) => ({
       team,
       day: new Date(`${utcDay(at)}T00:00:00.000Z`),
@@ -179,7 +191,7 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
       sum(comments)::int AS comments, sum(stickers)::int AS stickers, sum(remixes)::int AS remixes,
       sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND ${shown}
       AND "claimKey" <> ${TURF_CLAIM_KEY}
     GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
@@ -192,7 +204,7 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
         row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
       FROM "EventCosmeticScoreDaily"
       WHERE event = ${event.name} AND day >= ${fromDay}::date
-        AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
+        AND ${shown}
       GROUP BY team, "userId"
     ) ranked
     WHERE rn <= ${TOP_USERS_PER_TEAM}
@@ -200,6 +212,18 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
   `;
   const topUsers: EventStandings['topUsers'] = {};
   for (const { team, userId, points } of userRows) (topUsers[team] ??= []).push({ userId, points });
+
+  // The referee writes one turf row per credited player, so each person is their own row here.
+  const topTurfPlayers = await db.$queryRaw<{ userId: number; team: string; points: number }[]>`
+    SELECT "userId", team, sum(points)::int AS points
+    FROM "EventCosmeticScoreDaily"
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND ${shown}
+      AND "claimKey" = ${TURF_CLAIM_KEY}
+    GROUP BY "userId", team
+    HAVING sum(points) > 0
+    ORDER BY points DESC, "userId"
+    LIMIT ${TOP_TURF_PLAYERS}
+  `;
 
   const hourly = await readTeamHourly(event, fromDay);
 
@@ -209,6 +233,7 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
     hourly,
     topCosmetics,
     topUsers,
+    topTurfPlayers,
     updatedAt: new Date(),
   } satisfies EventStandings;
 }
@@ -283,6 +308,7 @@ const emptyStandings = (event: StandingsEvent): EventStandings => ({
   history: event.teams.map((team) => ({ team, scores: [] })),
   topCosmetics: [],
   topUsers: {},
+  topTurfPlayers: [],
   updatedAt: new Date(0),
 });
 

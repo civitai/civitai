@@ -1,5 +1,8 @@
 import { randomUUID } from 'crypto';
+import { getProfanityFilter } from '~/libs/profanity-simple';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { constants } from '~/server/common/constants';
+import { env } from '~/env/server';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -9,11 +12,13 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   attachPromptOrigin,
+  type AppPromptOrigin,
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import {
   auditPromptEnriched,
   isBlankAuditInput,
@@ -126,8 +131,14 @@ async function reauditSeededRow(row: {
       stripBenignPhrases(normalizeText(row.prompt), BlocklistType.PromptBenignPhrase),
       stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
     ]);
-    // Profanity on, so a soft block recorded on the green domain re-audits as one.
-    const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
+    // Profanity on, so a soft block recorded on the green domain re-audits as one. The shipped
+    // list, whatever the gate uses now: these rows were recorded against it, and a soft block that
+    // re-audits clean becomes a hard one below.
+    const { success, triggers } = auditPromptEnriched(
+      prompt ?? row.prompt,
+      negative,
+      getProfanityFilter()
+    );
     if (success || triggers.length === 0) return { hardBlock: !overLengthShape };
     if (isSoftBlock(triggers)) return { hardBlock: false };
     return { hardBlock: true, evidence: triggers[0] };
@@ -223,7 +234,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
   // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
   // The deadline only BOUNDS a silent half-open (which would otherwise park each
-  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // awaited read ~11min): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving the same fail-closed
   // direction. See STEP-6 report's promptAuditing note.
   const exists = await withSysReadDeadline(sysRedis.exists(key));
 
@@ -314,7 +325,12 @@ export interface AuditPromptOptions {
   // deadline and no verdict. Absent ⇒ `other`, so a caller that declares nothing can never inflate
   // the `generate` population. See `~/server/prom/external-moderation.metrics`.
   moderationSource?: ExternalModerationSource;
+  /** An App Block submit: recorded on a stored block's origin so moderators see it came from an app. */
+  appOrigin?: AppPromptOrigin;
 }
+
+/** The `cause` of `auditPromptServer`'s refusal. */
+export type PromptRefusalCause = { softBlock?: boolean; blockedFor: string[] };
 
 export type PromptClassificationOutcome = 'pass' | 'soft' | 'hard';
 export type PromptClassificationSource = 'regex' | 'external';
@@ -343,6 +359,8 @@ export interface PromptClassification {
    * The external classifier's failure message when it threw. It fails OPEN — the verdict is then
    * computed as though it had not flagged — so this is the only trace that it did not actually
    * clear the text. Reporting it is the caller's job; this function records nothing.
+   * `auditPromptServer` refuses (503) any verdict carrying it that would otherwise let a submit through
+   * (unless PROMPT_CHECK_FAIL_CLOSED is off).
    */
   externalError: { message: string } | null;
 }
@@ -416,7 +434,13 @@ export async function classifyPromptServer(
   // 🔴 The green blocklist (`blocked-words.json`) is the ONLY list in this audit that
   // varies by domain, and it is not profanity in the ordinary sense — "breasts" blocks
   // on .com and passes on .red. Everything else below runs identically everywhere.
-  const checkProfanity = isGreen;
+  //
+  // With `profanity-managed-list` on, the gate stops running the profanity list and the
+  // orchestrator's rating decides. Off, the gate checks the shipped list; the flag is the rollback.
+  const profanity =
+    isGreen && !(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))
+      ? getProfanityFilter()
+      : undefined;
 
   // Moderator-managed benign phrases (proper nouns / technical terms that
   // coincidentally contain a detection token) are blanked before auditing, so the
@@ -438,7 +462,7 @@ export async function classifyPromptServer(
     triggers,
     success,
     blockedFor: regexBlockedFor,
-  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, checkProfanity);
+  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, profanity);
 
   let softRegexTriggers: PromptTrigger[] | null = null;
 
@@ -562,6 +586,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     orchestratorToken,
     acknowledgedSoftBlock,
     moderationSource,
+    appOrigin,
   } = options;
 
   // Skip auditing only when there is nothing to audit — the prompt AND the negative prompt both
@@ -570,175 +595,214 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     return;
   }
 
+  // The decision lives in `classifyPromptServer`; everything below is its consequences.
+  //
+  // 🔴 A THROW HERE IS NOT A VERDICT. It is the check failing to run (its benign-phrase list read
+  // hit a Redis / DB outage). It used to share the verdict's catch, where the missing `triggers`
+  // and `blockedFor` crashed the message building with a TypeError: every prompted submit became
+  // a 500 naming the TypeError instead of the outage. It fails CLOSED — an unaudited prompt is
+  // never submitted — but as a retry-able 503, and never counts toward the user's blocks.
+  let verdict: PromptClassification;
   try {
-    // The decision lives in `classifyPromptServer`; everything below is its consequences.
-    // A non-verdict throw from the classifier (an infrastructure failure) lands in the same
-    // catch it always did.
-    const verdict = await classifyPromptServer({
+    verdict = await classifyPromptServer({
       prompt,
       negativePrompt,
       isGreen,
       moderationSource,
     });
-
-    // The classifier fails open on an external-moderation error and leaves reporting it to us.
-    if (verdict.externalError) {
-      logToAxiom({
-        name: 'external-moderation-error',
-        type: 'error',
-        message: verdict.externalError.message,
-      });
-    }
-
-    if (verdict.outcome !== 'pass') {
-      throw { blockedFor: verdict.blockedFor, triggers: verdict.triggers, type: verdict.source };
-    }
   } catch (e) {
-    const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
-
-    const softBlock = isSoftBlock(error.triggers ?? []);
-
-    if (softBlock) {
-      // A soft block never counts toward the auto-mute, acknowledged or not.
-      // Counting the warning would auto-mute exactly the users this exists to help
-      // (`daughter` alone blocks 139 of them) while offering them a proceed button.
-      await reportProhibitedRequest({
-        prompt,
-        negativePrompt,
-        userId,
-        isModerator,
-        track,
-        source: error.type === 'external' ? 'External' : 'Regex',
-        count: 0,
-        remixOfId,
-        inputImages,
-        inputVideo,
-      });
-
-      // ClickHouse `source` is Enum8('Regex','External') and cannot record the
-      // override, so this is the only trail of it until a column migration lands.
-      if (acknowledgedSoftBlock) {
-        logToAxiom({
-          name: 'prompt-soft-block-override',
-          type: 'info',
-          userId,
-          details: {
-            triggers: error.triggers.map((t) => ({
-              category: t.category,
-              matchedWord: t.matchedWord,
-            })),
-          },
-        }).catch(() => null);
-        return;
-      }
-    }
-
-    // Build error message based on domain
-    let message: string;
-
-    if (softBlock) {
-      // No escalating "sent for review" tail (not counted), and on green no
-      // "go to civitai.red" redirect. Soft means we are NOT confident this is
-      // mature — that uncertainty is the whole reason we offer a proceed button,
-      // so sending them to the adult domain would contradict it and push users
-      // there over a false positive.
-      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
-    } else if (isGreen) {
-      // 🔴 `prohibitedRequests` and everything downstream of it (auto-mute,
-      // `UserRestriction` reviews) hold NO .com traffic — green takes this branch and
-      // never reaches the recording in the `else`. A false-positive rate computed from
-      // that data is a rate for .red and .blue only.
-      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
-    } else if (isOverLengthRefusal(error.triggers ?? [])) {
-      // A SIZE refusal, not content evidence: the regex layer refused the input unscanned. It
-      // is recorded for audit like a soft block — count 0 and no blocked-prompt counter write,
-      // so it cannot trigger the auto-mute here — and with each prompt truncated, so the
-      // unbounded payload the refusal exists to stop is never stored whole. No escalating
-      // warning tail either: that tail reports the counter, which this did not touch.
-      // ⚠ Like a soft block's row, the audit row is NOT distinguishable once recorded: a cold
-      // `seedBlockedPromptsFromClickHouse` rebuilds the counter from every row in the window.
-      await reportProhibitedRequest({
-        prompt: truncateForRecord(prompt) ?? '',
-        negativePrompt: truncateForRecord(negativePrompt),
-        userId,
-        isModerator,
-        track,
-        source: 'Regex',
-        count: 0,
-        remixOfId,
-        inputImages,
-        inputVideo,
-      });
-      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
-    } else {
-      const source = error.type === 'external' ? 'External' : 'Regex';
-
-      // The origin lookups are slow, so the entry is stored as incomplete now and completed after
-      // the response is decided (see attachPromptOrigin below).
-      const blockedEntry: BlockedPromptEntry & { id: string } = {
-        id: randomUUID(),
-        prompt: prompt ?? '',
-        negativePrompt: negativePrompt ?? '',
-        source,
-        ...triggerEvidence(error.triggers[0]),
-        imageId: imageId ?? null,
-        remixOfId: remixOfId ?? null,
-        inputImages,
-        inputVideo,
-        origin: { incomplete: true },
-        time: new Date().toISOString(),
-      };
-
-      // Add to blocked prompts store and get count
-      const count = await addBlockedPrompt(userId, blockedEntry);
-
-      // Report to ClickHouse for audit logging and handle auto-mute
-      await reportProhibitedRequest({
-        prompt,
-        negativePrompt,
-        userId,
-        isModerator,
-        track,
-        source,
-        count,
-        remixOfId,
-        inputImages,
-        inputVideo,
-      });
-
-      if (!isModerator) {
-        // Not awaited: the block must not wait on the lookups. attachPromptOrigin logs its own failures.
-        // No in-flight guard: the generation procedures refuse a muted user before the audit runs.
-        void Promise.resolve(
-          attachPromptOrigin({
-            userId,
-            entry: blockedEntry,
-            redisKey: getBlockedPromptsKey(userId),
-            prompt: prompt ?? '',
-            sourceImageIds,
-            remixOfId,
-            token: orchestratorToken,
-          })
-        ).catch(() => undefined);
-      }
-
-      // civitai.com/civitai.red - standard escalating warnings
-      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
-
-      if (count > constants.imageGeneration.requestBlocking.muted) {
-        message += '. Your account has been muted.';
-      } else if (count > constants.imageGeneration.requestBlocking.notified) {
-        message +=
-          '. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.';
-      } else if (count > constants.imageGeneration.requestBlocking.warned) {
-        message +=
-          '. If you continue to attempt blocked prompts, your account will be sent for review.';
-      }
-    }
-
-    // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
-    throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
+    logToAxiom({
+      name: 'prompt-check-unavailable',
+      type: 'error',
+      userId,
+      message: (e as Error)?.message,
+    }).catch(() => undefined);
+    throw new PromptCheckUnavailableError(e);
   }
+
+  // The classifier fails open on an external-moderation error and leaves reporting it to us.
+  if (verdict.externalError) {
+    logToAxiom({
+      name: 'external-moderation-error',
+      type: 'error',
+      message: verdict.externalError.message,
+    });
+  }
+
+  // 🔴 FAIL CLOSED when the external classifier could not answer. Whatever this audit would let
+  // through — a pass, or a soft block the user acknowledged — has then been checked by the word
+  // lists alone. It is refused as a retry-able 503: never submitted, never counted toward the
+  // user's blocks. A hard block, or an unacknowledged soft one, keeps its own refusal below.
+  // Not reached when the classifier is not configured (that returns "not flagged", no error).
+  // PROMPT_CHECK_FAIL_CLOSED=off restores the previous pass-through.
+  if (
+    env.PROMPT_CHECK_FAIL_CLOSED &&
+    verdict.externalError &&
+    (verdict.outcome === 'pass' || (verdict.outcome === 'soft' && acknowledgedSoftBlock))
+  ) {
+    logToAxiom({
+      name: 'prompt-check-unavailable',
+      type: 'error',
+      userId,
+      message: verdict.externalError.message,
+    }).catch(() => undefined);
+    throw new PromptCheckUnavailableError();
+  }
+
+  if (verdict.outcome === 'pass') return;
+
+  const error = {
+    blockedFor: verdict.blockedFor,
+    triggers: verdict.triggers,
+    type: verdict.source,
+  };
+
+  const softBlock = isSoftBlock(error.triggers);
+
+  if (softBlock) {
+    // A soft block never counts toward the auto-mute, acknowledged or not.
+    // Counting the warning would auto-mute exactly the users this exists to help
+    // (`daughter` alone blocks 139 of them) while offering them a proceed button.
+    await reportProhibitedRequest({
+      prompt,
+      negativePrompt,
+      userId,
+      isModerator,
+      track,
+      source: error.type === 'external' ? 'External' : 'Regex',
+      count: 0,
+      remixOfId,
+      inputImages,
+      inputVideo,
+    });
+
+    // ClickHouse `source` is Enum8('Regex','External') and cannot record the
+    // override, so this is the only trail of it until a column migration lands.
+    if (acknowledgedSoftBlock) {
+      logToAxiom({
+        name: 'prompt-soft-block-override',
+        type: 'info',
+        userId,
+        details: {
+          triggers: error.triggers.map((t) => ({
+            category: t.category,
+            matchedWord: t.matchedWord,
+          })),
+        },
+      }).catch(() => null);
+      return;
+    }
+  }
+
+  // Build error message based on domain
+  let message: string;
+
+  if (softBlock) {
+    // No escalating "sent for review" tail (not counted), and on green no
+    // "go to civitai.red" redirect. Soft means we are NOT confident this is
+    // mature — that uncertainty is the whole reason we offer a proceed button,
+    // so sending them to the adult domain would contradict it and push users
+    // there over a false positive.
+    message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+  } else if (isGreen) {
+    // 🔴 `prohibitedRequests` and everything downstream of it (auto-mute,
+    // `UserRestriction` reviews) hold NO .com traffic — green takes this branch and
+    // never reaches the recording in the `else`. A false-positive rate computed from
+    // that data is a rate for .red and .blue only.
+    message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
+  } else if (isOverLengthRefusal(error.triggers ?? [])) {
+    // A SIZE refusal, not content evidence: the regex layer refused the input unscanned. It
+    // is recorded for audit like a soft block — count 0 and no blocked-prompt counter write,
+    // so it cannot trigger the auto-mute here — and with each prompt truncated, so the
+    // unbounded payload the refusal exists to stop is never stored whole. No escalating
+    // warning tail either: that tail reports the counter, which this did not touch.
+    // ⚠ Like a soft block's row, the audit row is NOT distinguishable once recorded: a cold
+    // `seedBlockedPromptsFromClickHouse` rebuilds the counter from every row in the window.
+    await reportProhibitedRequest({
+      prompt: truncateForRecord(prompt) ?? '',
+      negativePrompt: truncateForRecord(negativePrompt),
+      userId,
+      isModerator,
+      track,
+      source: 'Regex',
+      count: 0,
+      remixOfId,
+      inputImages,
+      inputVideo,
+    });
+    message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+  } else {
+    const source = error.type === 'external' ? 'External' : 'Regex';
+
+    // The origin lookups are slow, so the entry is stored as incomplete now and completed after
+    // the response is decided (see attachPromptOrigin below).
+    const blockedEntry: BlockedPromptEntry & { id: string } = {
+      id: randomUUID(),
+      prompt: prompt ?? '',
+      negativePrompt: negativePrompt ?? '',
+      source,
+      ...triggerEvidence(error.triggers[0]),
+      imageId: imageId ?? null,
+      remixOfId: remixOfId ?? null,
+      inputImages,
+      inputVideo,
+      origin: appOrigin ? { incomplete: true, app: appOrigin } : { incomplete: true },
+      time: new Date().toISOString(),
+    };
+
+    // Add to blocked prompts store and get count
+    const count = await addBlockedPrompt(userId, blockedEntry);
+
+    // Report to ClickHouse for audit logging and handle auto-mute
+    await reportProhibitedRequest({
+      prompt,
+      negativePrompt,
+      userId,
+      isModerator,
+      track,
+      source,
+      count,
+      remixOfId,
+      inputImages,
+      inputVideo,
+    });
+
+    if (!isModerator) {
+      // Not awaited: the block must not wait on the lookups. attachPromptOrigin logs its own failures.
+      // No in-flight guard: the generation procedures refuse a muted user before the audit runs.
+      void Promise.resolve(
+        attachPromptOrigin({
+          userId,
+          entry: blockedEntry,
+          redisKey: getBlockedPromptsKey(userId),
+          prompt: prompt ?? '',
+          sourceImageIds,
+          remixOfId,
+          token: orchestratorToken,
+        })
+      ).catch(() => undefined);
+    }
+
+    // civitai.com/civitai.red - standard escalating warnings
+    message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+
+    if (count > constants.imageGeneration.requestBlocking.muted) {
+      message += '. Your account has been muted.';
+    } else if (count > constants.imageGeneration.requestBlocking.notified) {
+      message +=
+        '. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.';
+    } else if (count > constants.imageGeneration.requestBlocking.warned) {
+      message +=
+        '. If you continue to attempt blocked prompts, your account will be sent for review.';
+    }
+  }
+
+  // Flags ride `cause`; trpc.ts's errorFormatter lifts only `softBlock` onto data. `blockedFor` lets
+  // App Blocks rebuild the message without the account-status tail.
+  throw throwBadRequestError(message, {
+    ...(softBlock ? { softBlock: true } : {}),
+    blockedFor: error.blockedFor,
+  } satisfies PromptRefusalCause);
 }
 
 /**
@@ -791,17 +855,22 @@ async function reportProhibitedRequest(options: {
 
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
+    let recordMute = false;
     try {
       const allBlockedPrompts = await getBlockedPrompts(userId);
 
-      await applyPendingReviewMute({
+      const result = await applyPendingReviewMute({
         userId,
         triggers: allBlockedPrompts,
         updateSource: 'promptAuditing:autoMute',
       });
-
-      // Clear the blocked prompts from Redis now that they're stored in the DB
-      await clearBlockedPromptsAfterMute(userId);
+      if (result.muted) {
+        // A deduped claim joined an open case without storing these prompts, so the list may be
+        // their only copy; only a new case clears it. A skipped one leaves it to expire on its own.
+        if (!result.deduped) await clearBlockedPromptsAfterMute(userId);
+        // A deduped claim on an account that was not muted (an open case left unmuted) mutes it now.
+        recordMute = !result.deduped || !result.wasMuted;
+      }
     } catch (banError) {
       logToAxiom({
         name: 'user-ban-creation-error',
@@ -811,7 +880,7 @@ async function reportProhibitedRequest(options: {
       });
     }
 
-    if (track) {
+    if (recordMute && track) {
       await track.userActivity({
         type: 'Muted',
         targetUserId: userId,

@@ -282,6 +282,8 @@ describe('submitWorkflow (mocked)', () => {
         ],
       }),
       query: undefined,
+      // Every real submit is bounded (30s per attempt, 60s overall), so it always carries a signal.
+      signal: expect.any(AbortSignal),
     });
   });
 });

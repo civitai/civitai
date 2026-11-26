@@ -84,10 +84,10 @@ const user = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const evidence = (over: Record<string, unknown> = {}) => ({
-  source: 'text-scan:Comment:7',
+  source: 'text-scan:CommentV3:7',
   dedupeKey: 'wf-1',
   reason: 'Fake support',
-  entityType: 'Comment',
+  entityType: 'CommentV3',
   entityId: 7,
   text: 'DM me for the prize',
   textHash: 'h1',
@@ -147,10 +147,10 @@ describe('autoMuteScamAccount', () => {
     expect(call.triggers).toEqual([
       expect.objectContaining({
         category: 'scam',
-        source: 'text-scan:Comment:7',
+        source: 'text-scan:CommentV3:7',
         dedupeKey: 'wf-1',
         reason: 'Fake support',
-        entityType: 'Comment',
+        entityType: 'CommentV3',
         entityId: 7,
         text: 'DM me for the prize',
         textHash: 'h1',
@@ -167,7 +167,7 @@ describe('autoMuteScamAccount', () => {
       expect.objectContaining({
         type: 'Muted',
         targetUserId: 42,
-        source: expect.stringContaining('text-scan:Comment:7'),
+        source: expect.stringContaining('text-scan:CommentV3:7'),
       })
     );
     expect(m.appendScamTrigger).not.toHaveBeenCalled();
@@ -408,13 +408,9 @@ describe('autoMuteScamAccount', () => {
     expect(m.scamVerdictActioned).not.toHaveBeenCalled();
   });
 
-  it('appends to an open case without a second audit row or ClickHouse event', async () => {
-    m.claimPendingReviewMute.mockResolvedValue({
-      muted: true,
-      userRestrictionId: 5,
-      deduped: true,
-      wasMuted: true,
-    });
+  it('appends to an open case on an unmuted account and records the mute, without a second strike', async () => {
+    const claim = { muted: true, userRestrictionId: 5, deduped: true, wasMuted: false };
+    m.claimPendingReviewMute.mockResolvedValue(claim);
     expect(await autoMuteScamAccount(base)).toMatchObject({
       muted: true,
       deduped: true,
@@ -427,6 +423,27 @@ describe('autoMuteScamAccount', () => {
       expect.anything()
     );
     expect(m.recordScamCleanup).toHaveBeenCalledWith(5, 1, 'wf-1', RECORD);
+    expect(m.announcePendingReviewMute).toHaveBeenCalledWith(expect.objectContaining({ claim }));
+    expect(m.trackModActivity).toHaveBeenCalledExactlyOnceWith(-1, {
+      entityType: 'user',
+      entityId: 42,
+      activity: 'autoMuteScam',
+    });
+    expect(m.userActivity).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: 'Muted', targetUserId: 42 })
+    );
+  });
+
+  // `decide` skips a muted account before claiming, so this state is unreachable today; it guards a
+  // change there from auditing a mute that did not happen.
+  it('records no mute for a deduped claim on an account that was already muted', async () => {
+    m.claimPendingReviewMute.mockResolvedValue({
+      muted: true,
+      userRestrictionId: 5,
+      deduped: true,
+      wasMuted: true,
+    });
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, deduped: true });
     expect(m.trackModActivity).not.toHaveBeenCalled();
     expect(m.userActivity).not.toHaveBeenCalled();
   });
@@ -436,11 +453,13 @@ describe('autoMuteScamAccount', () => {
       muted: true,
       userRestrictionId: 5,
       deduped: true,
-      wasMuted: true,
+      wasMuted: false,
     });
     m.appendScamTrigger.mockResolvedValue(null);
     expect(await autoMuteScamAccount(base)).toEqual({ muted: false, skipped: 'duplicate' });
     expect(m.runScamCleanup).not.toHaveBeenCalled();
+    expect(m.trackModActivity).not.toHaveBeenCalled();
+    expect(m.userActivity).not.toHaveBeenCalled();
   });
 
   it('retries once into the dedupe path when a concurrent verdict opened the case first', async () => {
@@ -448,10 +467,11 @@ describe('autoMuteScamAccount', () => {
       .mockRejectedValueOnce(
         Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
       )
-      .mockResolvedValueOnce({ muted: true, userRestrictionId: 5, deduped: true, wasMuted: true });
+      .mockResolvedValueOnce({ muted: true, userRestrictionId: 5, deduped: true, wasMuted: false });
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, deduped: true });
     expect(m.claimPendingReviewMute).toHaveBeenCalledTimes(2);
-    expect(m.trackModActivity).not.toHaveBeenCalled();
+    expect(m.createStrike).not.toHaveBeenCalled();
+    expect(m.trackModActivity).toHaveBeenCalledOnce();
   });
 
   it('keeps the mute when the cleanup fails, and records nothing for it', async () => {

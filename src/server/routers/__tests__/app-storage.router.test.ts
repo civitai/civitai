@@ -35,6 +35,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksEnabled: vi.fn(async () => h.appBlocksEnabled),
 }));
+// The per-user ceiling comes from the membership-tier resolver, for the figures shown and the
+// writes charged alike; here it is the custom one, so a figure that leaked a constant would show.
+vi.mock('~/server/services/blocks/user-app-caps.service', () => ({
+  docStoreUserLimits: async () => ({ userBytes: 7_003, userDocs: 17 }),
+}));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };
@@ -45,6 +50,7 @@ vi.mock('~/server/utils/server-domain', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { appStorageRouter } from '~/server/routers/app-storage.router';
 import { createDocStore, createDocStoreViewerData } from '~/server/services/apps/doc-store';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -62,15 +68,13 @@ import {
   POSTS,
   PREFS,
   snapshot,
-  TALLIES,
 } from '~/server/services/apps/__tests__/doc-store.functional';
 
 // Pairwise distinct, and distinct from every figure below.
 const USER = 8_101;
 const OTHER = 8_202;
 const NOBODY = 8_303;
-// Holds only a counter document their increment created, then only a post moderation hid.
-const COUNTER_ONLY = 8_404;
+// Holds only a post moderation hid.
 const HIDDEN_ONLY = 8_505;
 
 const LIMITS = { appBytes: 900_001, appDocs: 9_001, userBytes: 7_003, userDocs: 17 };
@@ -91,13 +95,10 @@ const NOTES: DocCollection = { name: 'notes', config: decl({ visibility: 'privat
 const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 9) });
 const NONE = { bytes: 0, docs: 0 };
 /** What an empty does with each part of the user's figure (`holdings`). */
-const holdings = (
-  parts: Partial<Record<'private' | 'shared' | 'hidden' | 'counters', object>>
-) => ({
+const holdings = (parts: Partial<Record<'private' | 'shared' | 'hidden', object>>) => ({
   private: NONE,
   shared: NONE,
   hidden: NONE,
-  counters: NONE,
   ...parts,
 });
 
@@ -141,6 +142,8 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
 
   beforeEach(async () => {
     h.appBlocksEnabled = true;
+    // The record core's switch (`APP_RECORD_CORE_ENABLED`), through the canonical env mock.
+    setEnv({ APP_RECORD_CORE_ENABLED: false });
     h.store = createDocStore({ db: harness.db, limits: LIMITS });
     h.viewerData = createDocStoreViewerData({ db: harness.db, limits: LIMITS });
     await harness.raw(
@@ -162,11 +165,11 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
     await s.put(uA, PREFS, 'theme', sized(121));
     await s.put(uA, NOTES, 'n1', sized(233));
     await s.put(uA, POSTS, 'post-u', sized(57));
-    // OTHER in A: a private document and a shared post; each marks the other's post.
+    // OTHER in A: a private document and a shared post; each reports the other's post.
     await s.put(oA, PREFS, 'theme', sized(86));
     await s.put(oA, POSTS, 'post-o', sized(39));
-    await s.mark(oA, POSTS, 'post-u', 'vote');
-    await s.mark(uA, POSTS, 'post-o', 'vote');
+    await s.report(oA, POSTS, 'post-u');
+    await s.report(uA, POSTS, 'post-o');
     // USER elsewhere: another app, a removed app, and their own dev namespace of app A.
     await s.put(storeCtx(APP_B.id, 'prod', USER), PREFS, 'theme', sized(309));
     await s.put(storeCtx(APP_GONE, 'prod', USER), PREFS, 'theme', sized(73));
@@ -262,10 +265,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       });
     });
 
-    it('splits the figure by what Empty does with it: a counter document and a hidden post are listed as staying, and an empty removes neither', async () => {
-      // A counter document is created by the first increment and charged to the incrementer:
-      // its data is `{}`, 2 bytes.
-      await h.store.increment(storeCtx(APP_A.id, 'prod', COUNTER_ONLY), TALLIES, 'c1', 'plays');
+    it('splits the figure by what Empty does with it: a hidden post is listed as staying, and an empty removes none of it', async () => {
       await h.store.put(storeCtx(APP_A.id, 'prod', HIDDEN_ONLY), BOARD, 'hid', sized(47));
       await harness.raw(
         `UPDATE appdata.doc SET hidden_at = now(), hidden_by = 1
@@ -273,16 +273,12 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         [APP_A.id]
       );
       const expected = {
-        [COUNTER_ONLY]: {
-          usage: { bytes: 2, docs: 1 },
-          holdings: holdings({ counters: { bytes: 2, docs: 1 } }),
-        },
         [HIDDEN_ONLY]: {
           usage: { bytes: 47, docs: 1 },
           holdings: holdings({ hidden: { bytes: 47, docs: 1 } }),
         },
       };
-      for (const uid of [COUNTER_ONLY, HIDDEN_ONLY] as const) {
+      for (const uid of [HIDDEN_ONLY] as const) {
         const row = {
           appBlockId: APP_A.id,
           name: 'Alpha Notes',
@@ -396,7 +392,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       expect(await snapshot(harness, APP_A.id)).toEqual(after);
     });
 
-    it("with includeShared, also deletes the user's VISIBLE shared posts as an author delete does (marks, app refund, tombstone), leaves a hidden one for moderation, and leaves the other user's post and the user's mark on it", async () => {
+    it("with includeShared, also deletes the user's VISIBLE shared posts as an author delete does (reports, app refund, tombstone), leaves a hidden one for moderation, and leaves the other user's post and the user's report on it", async () => {
       const uA = storeCtx(APP_A.id, 'prod', USER);
       await h.store.put(uA, BOARD, 'note-hidden', sized(29));
       await harness.raw(
@@ -513,6 +509,337 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         status: 'ok',
         limits: { userBytes: 7_003, userDocs: 17 },
         apps: [],
+      });
+    });
+  });
+
+  describe('exportMine (the record core on)', () => {
+    // A delisted app: its block row is kept (suspended); the export reads it like any other.
+    const APP_DEL = { id: 'apb_STO_D', blockId: 'delta-store' };
+    const MANIFESTS: Record<string, unknown> = {
+      [APP_A.id]: {
+        scopes: ['apps:storage'],
+        storage: {
+          collections: {
+            prefs: { visibility: 'private' },
+            notes: { visibility: 'private' },
+            posts: { visibility: 'shared', write: 'own' },
+          },
+        },
+      },
+      [APP_B.id]: {
+        scopes: ['apps:storage'],
+        storage: { collections: { prefs: { visibility: 'private' } } },
+      },
+      [APP_DEL.id]: {
+        scopes: ['apps:storage'],
+        storage: {
+          collections: {
+            prefs: { visibility: 'private' },
+            posts: { visibility: 'shared', write: 'own' },
+            tallies: { visibility: 'shared', write: 'none', counters: ['plays'] },
+          },
+        },
+      },
+    };
+    const SLUGS: Record<string, string> = {
+      [APP_A.id]: APP_A.blockId,
+      [APP_B.id]: APP_B.blockId,
+      [APP_DEL.id]: APP_DEL.blockId,
+    };
+    // Literal record ids, set on the private rows so each URN is a literal.
+    const RID = {
+      aNotes: '0a1b2c3d-0000-4000-8000-000000000a01',
+      aPrefs: '0a1b2c3d-0000-4000-8000-000000000a02',
+      bPrefs: '0a1b2c3d-0000-4000-8000-000000000b01',
+      dPrefs: '0a1b2c3d-0000-4000-8000-000000000d01',
+    };
+    const setRecordId = (appId: string, coll: string, uid: number, key: string, id: string) =>
+      harness.raw(
+        `UPDATE appdata.doc SET record_id = $5::uuid
+          WHERE app_id = $1 AND ns = 'prod' AND coll = $2 AND scope_uid = $3 AND key = $4`,
+        [appId, coll, uid, key, id]
+      );
+    const owner = { kind: 'user', userId: USER };
+    // The revs were computed outside this code: sha256 of the sorted-key JSON of
+    // { version, data, schemas }, first 16 hex characters.
+    const A_RECORDS = [
+      {
+        urn: `urn:apps.civitai.com:alpha-store/notes/${RID.aNotes}`,
+        owner,
+        writer: { app: 'alpha-store', version: null },
+        collection: 'notes',
+        schemas: [],
+        rev: '3b4eadb036a63230',
+        body: sized(233),
+      },
+      {
+        urn: 'urn:apps.civitai.com:alpha-store/posts/post-u',
+        owner,
+        writer: { app: 'alpha-store', version: null },
+        collection: 'posts',
+        schemas: [],
+        rev: '832cc968c41416cd',
+        body: sized(57),
+      },
+      {
+        urn: `urn:apps.civitai.com:alpha-store/prefs/${RID.aPrefs}`,
+        owner,
+        writer: { app: 'alpha-store', version: null },
+        collection: 'prefs',
+        schemas: [],
+        rev: '57e15c205f6b48c3',
+        body: sized(121),
+      },
+    ];
+    const B_RECORDS = [
+      {
+        urn: `urn:apps.civitai.com:beta-store/prefs/${RID.bPrefs}`,
+        owner,
+        writer: { app: 'beta-store', version: null },
+        collection: 'prefs',
+        schemas: [],
+        rev: '4327fca1957d13a2',
+        body: sized(309),
+      },
+    ];
+    const GONE_SKIPPED = { appBlockId: APP_GONE, reason: 'app_unknown', docs: 1 };
+
+    beforeEach(async () => {
+      setEnv({ APP_RECORD_CORE_ENABLED: true });
+      dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
+        SLUGS[where.id]
+          ? { blockId: SLUGS[where.id], manifest: MANIFESTS[where.id] }
+          : null) as never);
+      dbMock.dbRead.appBlockPublishRequest.findMany.mockResolvedValue([] as never);
+      await setRecordId(APP_A.id, 'notes', USER, 'n1', RID.aNotes);
+      await setRecordId(APP_A.id, 'prefs', USER, 'theme', RID.aPrefs);
+      await setRecordId(APP_B.id, 'prefs', USER, 'theme', RID.bPrefs);
+    });
+
+    it('is not a route while the record core is off', async () => {
+      // The record core's switch (`APP_RECORD_CORE_ENABLED`), through the canonical env mock.
+      setEnv({ APP_RECORD_CORE_ENABLED: false });
+      await expect(caller(user(USER)).exportMine({})).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it("is every record the caller owns, across apps, as record-core objects: never another user's, never the dev namespace; an app with no row is reported, not guessed", async () => {
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+      expect(harness.violations).toEqual([]);
+    });
+
+    it("canary: another user's private record body never appears in the caller's bundle", async () => {
+      const OTHER_CANARY = 'other-private-canary-5d17';
+      const USER_CANARY = 'user-own-canary-9e24';
+      await h.store.put(storeCtx(APP_A.id, 'prod', OTHER), NOTES, 'secret', { c: OTHER_CANARY });
+      await h.store.put(storeCtx(APP_A.id, 'prod', USER), NOTES, 'mine', { c: USER_CANARY });
+      const mine = JSON.stringify(await caller(user(USER)).exportMine({}));
+      const theirs = JSON.stringify(await caller(user(OTHER)).exportMine({}));
+      // Positive controls: each user's own canary is in their own bundle.
+      expect(mine).toContain(USER_CANARY);
+      expect(theirs).toContain(OTHER_CANARY);
+      expect(mine).not.toContain(OTHER_CANARY);
+      expect(theirs).not.toContain(USER_CANARY);
+      // Every record in the caller's bundle is the caller's own.
+      const { records } = await caller(user(USER)).exportMine({});
+      expect(records.map((r) => r.owner)).toEqual(records.map(() => owner));
+    });
+
+    it("a delisted app's records are exported like any other's, and the owner can still delete them", async () => {
+      const uD = storeCtx(APP_DEL.id, 'prod', USER);
+      await h.store.put(uD, PREFS, 'theme', sized(64));
+      await h.store.put(uD, POSTS, 'post-d', sized(48));
+      // Another user's post (theirs, not the caller's) is not exported.
+      await h.store.put(storeCtx(APP_DEL.id, 'prod', OTHER), POSTS, 'post-o', sized(41));
+      await setRecordId(APP_DEL.id, 'prefs', USER, 'theme', RID.dPrefs);
+
+      const D_RECORDS = [
+        {
+          urn: 'urn:apps.civitai.com:delta-store/posts/post-d',
+          owner,
+          writer: { app: 'delta-store', version: null },
+          collection: 'posts',
+          schemas: [],
+          rev: '24486d2c012a1d2a',
+          body: sized(48),
+        },
+        {
+          urn: `urn:apps.civitai.com:delta-store/prefs/${RID.dPrefs}`,
+          owner,
+          writer: { app: 'delta-store', version: null },
+          collection: 'prefs',
+          schemas: [],
+          rev: 'b14df5dc6f1e6dbc',
+          body: sized(64),
+        },
+      ];
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS, ...D_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+
+      // The owner deletes them through the same account surface.
+      expect(
+        await caller(user(USER)).emptyMine({ appBlockId: APP_DEL.id, includeShared: true })
+      ).toEqual({ privateDocs: 1, privateBytes: 64, sharedDocs: 1, sharedBytes: 48 });
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+      // The other user's post is still theirs, untouched.
+      expect((await userRows(APP_DEL.id, 'prod', OTHER)).sharedKeys).toEqual(['posts/post-o']);
+      await assertUsageConsistent(harness, APP_DEL.id, 'prod');
+      expect(harness.violations).toEqual([]);
+    });
+
+    it('pages: limit 1 walks every record in order, then ends; a forged cursor is refused', async () => {
+      const urns: string[] = [];
+      let cursor: string | null = null;
+      for (let i = 0; i < 10; i += 1) {
+        const page: Awaited<ReturnType<ReturnType<typeof caller>['exportMine']>> = await caller(
+          user(USER)
+        ).exportMine({ limit: 1, cursor });
+        urns.push(...page.records.map((r) => r.urn));
+        expect(page.records.length).toBeLessThanOrEqual(1);
+        cursor = page.nextCursor;
+        if (cursor === null) break;
+      }
+      expect(cursor).toBeNull();
+      expect(urns).toEqual([...A_RECORDS, ...B_RECORDS].map((r) => r.urn));
+      for (const forged of ['not-base64-json', Buffer.from('[1,2]').toString('base64url')]) {
+        await expect(
+          caller(user(USER)).exportMine({ limit: 1, cursor: forged })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      }
+    });
+
+    it('a page stops once its bodies reach 1 MiB, inside the 100-record limit, and the cursor resumes with the next record', async () => {
+      // 25 private records of exactly 50,000 body bytes each (`recordBodyBytes`, the JSON text):
+      // 20 are 1,000,000 bytes, under the 1,048,576-byte cap; the 21st reaches 1,050,000, past
+      // it, so the first page ends at 21 records, well short of 100.
+      const BIG = 8_606;
+      const APP_C = { id: 'apb_STO_C', blockId: 'gamma-store' };
+      dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
+        where.id === APP_C.id
+          ? { blockId: APP_C.blockId, manifest: MANIFESTS[APP_B.id] }
+          : null) as never);
+      const roomy = createDocStore({
+        db: harness.db,
+        limits: { ...LIMITS, userBytes: 5_000_000, userDocs: 100 },
+      });
+      const body = (i: number) => ({ t: `${String(i).padStart(2, '0')}${'x'.repeat(49_990)}` });
+      expect(JSON.stringify(body(0)).length).toBe(50_000);
+      for (let i = 0; i < 25; i += 1) {
+        await roomy.put(
+          storeCtx(APP_C.id, 'prod', BIG),
+          PREFS,
+          `k${String(i).padStart(2, '0')}`,
+          body(i)
+        );
+      }
+      const order = (records: { body: unknown }[]) =>
+        records.map((r) => (r.body as { t: string }).t.slice(0, 2));
+
+      const first = await caller(user(BIG)).exportMine({});
+      expect(order(first.records)).toEqual(
+        Array.from({ length: 21 }, (_, i) => String(i).padStart(2, '0'))
+      );
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await caller(user(BIG)).exportMine({ cursor: first.nextCursor });
+      expect(order(second.records)).toEqual(['21', '22', '23', '24']);
+      expect(second.nextCursor).toBeNull();
+      expect(second.skipped).toEqual([]);
+    });
+
+    it('reports what it cannot export, per app and reason, once each, across page boundaries', async () => {
+      // Alpha's manifest no longer declares `notes` (the user holds notes/n1 there); their private
+      // pref in alpha has no record_id yet; and in the app with no row they hold one private
+      // document.
+      const collections = {
+        prefs: { visibility: 'private' },
+        posts: { visibility: 'shared', write: 'own' },
+      };
+      dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
+        SLUGS[where.id]
+          ? {
+              blockId: SLUGS[where.id],
+              manifest:
+                where.id === APP_A.id
+                  ? { scopes: ['apps:storage'], storage: { collections } }
+                  : MANIFESTS[where.id],
+            }
+          : null) as never);
+      await harness.raw(
+        `UPDATE appdata.doc SET record_id = NULL
+          WHERE app_id = $1 AND ns = 'prod' AND coll = 'prefs' AND scope_uid = $2 AND key = 'theme'`,
+        [APP_A.id, USER]
+      );
+
+      const NOT_DECLARED = { appBlockId: APP_A.id, reason: 'collection_not_declared', docs: 1 };
+      const UNREADABLE = { appBlockId: APP_A.id, reason: 'unreadable', docs: 1 };
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [A_RECORDS[1], ...B_RECORDS],
+        nextCursor: null,
+        skipped: [NOT_DECLARED, UNREADABLE, GONE_SKIPPED],
+      });
+
+      // One record per page: each skip is reported on the page that read its row, never again.
+      const pages: Array<{ urns: string[]; skipped: unknown[]; last: boolean }> = [];
+      let cursor: string | null = null;
+      for (let i = 0; i < 10; i += 1) {
+        const page: Awaited<ReturnType<ReturnType<typeof caller>['exportMine']>> = await caller(
+          user(USER)
+        ).exportMine({ limit: 1, cursor });
+        cursor = page.nextCursor;
+        pages.push({
+          urns: page.records.map((r) => r.urn),
+          skipped: page.skipped,
+          last: cursor === null,
+        });
+        if (cursor === null) break;
+      }
+      expect(pages).toEqual([
+        { urns: [A_RECORDS[1].urn], skipped: [NOT_DECLARED], last: false },
+        { urns: [B_RECORDS[0].urn], skipped: [UNREADABLE], last: false },
+        { urns: [], skipped: [GONE_SKIPPED], last: true },
+      ]);
+    });
+
+    it('never exports a shared document of theirs that moderation hid', async () => {
+      await h.store.put(storeCtx(APP_A.id, 'prod', USER), POSTS, 'post-hid', sized(66));
+      // Positive control: visible, it is exported.
+      expect((await caller(user(USER)).exportMine({})).records.map((r) => r.urn)).toContain(
+        'urn:apps.civitai.com:alpha-store/posts/post-hid'
+      );
+      await harness.raw(
+        `UPDATE appdata.doc SET hidden_at = now(), hidden_by = 1
+          WHERE app_id = $1 AND ns = 'prod' AND coll = 'posts' AND key = 'post-hid'`,
+        [APP_A.id]
+      );
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+    });
+
+    it('an API-key caller is refused', async () => {
+      await expect(apiKeyCaller(user(USER)).exportMine({})).rejects.toMatchObject({
+        code: 'FORBIDDEN',
       });
     });
   });

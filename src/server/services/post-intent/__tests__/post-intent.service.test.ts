@@ -482,6 +482,19 @@ describe('stageIntent: one manifest, one key', () => {
   });
 });
 
+/** The member's own unposted image rows, deleted through `deleteImageRows`. */
+function expectImagesDeleted(ids: number[]) {
+  const call = dbMock.dbWrite.$queryRaw.mock.calls.find(
+    ([strings]) => Array.isArray(strings) && strings.join('?').includes('DELETE FROM "Image"')
+  );
+  expect(call).toBeDefined();
+  const [strings, listed, ...rest] = call as unknown as [string[], number[], ...unknown[]];
+  // The first number after the ids: the child-safety case's parameters are text.
+  const owner = rest.find((value) => typeof value === 'number');
+  expect(strings.join('?')).toContain('"postId" IS NULL');
+  expect([listed, owner]).toEqual([ids, 7]);
+}
+
 describe('publishIntent', () => {
   const claim = (over: Record<string, unknown> = {}) => ({
     id: 1,
@@ -549,9 +562,7 @@ describe('publishIntent', () => {
     await expect(
       publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now })
     ).rejects.toMatchObject({ code: 'already-posted' });
-    expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: [501] }, userId: 7, postId: null },
-    });
+    expectImagesDeleted([501]);
   });
 
   it('says not-staged, not already-posted, when the hold lapsed before commit', async () => {
@@ -573,9 +584,7 @@ describe('publishIntent', () => {
     await expect(
       publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now })
     ).rejects.toThrow('ingest down');
-    expect(dbMock.dbWrite.image.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: [601] }, userId: 7, postId: null },
-    });
+    expectImagesDeleted([601]);
     expect(dbMock.dbWrite.post.create).not.toHaveBeenCalled();
   });
 

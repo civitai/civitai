@@ -38,6 +38,7 @@ export const loginRedirectReasons = {
   rater: 'You need to be logged in to play the rating game',
   'switch-accounts': 'Log into the account you wish to add',
   shop: 'You need to be logged in to preview and purchase cosmetics',
+  'list-service': 'You need to be logged in to list a service',
   'knights-new-order': 'You need to be logged in to join Knights of the New Order',
   'report-comic': 'You need to be logged in to report this comic',
   'create-challenge': 'You need to be logged in to create a challenge',

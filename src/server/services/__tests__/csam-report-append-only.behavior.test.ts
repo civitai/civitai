@@ -22,18 +22,20 @@ const SUBJECT = 21;
 const SECONDARY = 22;
 const UNRELATED = 23;
 
-async function createHoldView() {
-  await db.pg.exec(`
-    CREATE TABLE "HeldUserFixture" ("userId" int PRIMARY KEY);
-    CREATE VIEW "EvidenceHeldUser" AS SELECT "userId", NULL::timestamp AS "heldUntil" FROM "HeldUserFixture";
-  `);
-}
-
-async function dropHoldView() {
-  await db.pg.exec(`
-    DROP VIEW IF EXISTS "EvidenceHeldUser";
-    DROP TABLE IF EXISTS "HeldUserFixture";
-  `);
+/** `csam_report_guard_sent` as defined by the `20271127130000_drop_legal_hold_triggers` migration. */
+function guardWithoutHoldsSql() {
+  const text = readFileSync(
+    path.resolve(
+      path.dirname(MIGRATION),
+      '../20271127130000_drop_legal_hold_triggers/migration.sql'
+    ),
+    'utf8'
+  );
+  const start = text.indexOf('CREATE OR REPLACE FUNCTION csam_report_guard_sent()');
+  const end = text.indexOf('pg_temp;', start);
+  if (start < 0 || end < 0)
+    throw new Error('drop_legal_holds migration has no csam_report_guard_sent');
+  return text.slice(start, end + 'pg_temp;'.length);
 }
 
 async function insertReport(sentDaysAgo: number | null, details: object | null = {}) {
@@ -138,10 +140,10 @@ beforeAll(async () => {
     );
   `);
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
+  await db.pg.exec(guardWithoutHoldsSql());
 });
 
 beforeEach(async () => {
-  await dropHoldView();
   // Audit rows cannot be removed; each case reads only its own report's rows.
 });
 
@@ -314,7 +316,6 @@ describe('a sent report', () => {
 
   describe('deletion', () => {
     it('is refused within a year of sending', async () => {
-      await createHoldView();
       const id = await insertReport(30);
       await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow(
         'less than a year ago'
@@ -325,8 +326,7 @@ describe('a sent report', () => {
     it.each([
       [364, false],
       [367, true],
-    ])('at %i days after sending, with no hold, is allowed: %s', async (days, allowed) => {
-      await createHoldView();
+    ])('at %i days after sending, is allowed: %s', async (days, allowed) => {
       const id = await insertReport(days);
       const deleting = db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
       if (allowed) await deleting;
@@ -334,17 +334,7 @@ describe('a sent report', () => {
       expect(await exists(id)).toBe(!allowed);
     });
 
-    it('is refused after a year while hold status cannot be read', async () => {
-      const id = await insertReport(400);
-      await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow(
-        'hold status is unavailable'
-      );
-      expect(await exists(id)).toBe(true);
-    });
-
-    it('is allowed after a year with no hold, and recorded', async () => {
-      await createHoldView();
-      await db.pg.exec(`INSERT INTO "HeldUserFixture" VALUES (${UNRELATED})`);
+    it('is allowed after a year, and recorded', async () => {
       const id = await insertReport(400, { contents: ['a'] });
 
       await db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id]);
@@ -365,9 +355,7 @@ describe('a sent report', () => {
       expect(await auditedSendTimes(id)).toEqual([true]);
     });
 
-    it('is allowed after a year when neither the subject nor the secondary user is held', async () => {
-      await createHoldView();
-      await db.pg.exec(`INSERT INTO "HeldUserFixture" VALUES (${UNRELATED})`);
+    it('is allowed after a year with a secondary user, and recorded', async () => {
       const id = await insertReport(400, { secondaryUserId: SECONDARY, contents: ['a'] });
       await db.pg.query(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE id = $1`, [id]);
 
@@ -384,20 +372,43 @@ describe('a sent report', () => {
       ]);
       expect(await auditHoldsContent(id, 'contents')).toBe(false);
     });
+  });
+});
 
-    it.each([
-      ['its subject', SUBJECT],
-      ['its secondary user', SECONDARY],
-    ])('is refused after a year while %s is held', async (_case, heldUser) => {
-      await createHoldView();
-      await db.pg.exec(`INSERT INTO "HeldUserFixture" VALUES (${heldUser})`);
-      const id = await insertReport(400, { secondaryUserId: SECONDARY });
+// The generic details freeze, applied to the attached text a send relied on.
+describe("a sent report's attached text", () => {
+  const captured = {
+    contextText: [
+      { source: 'comment', id: 11, authorId: UNRELATED, text: 'as captured' },
+      { source: 'postDescription', id: 100, authorId: SUBJECT, text: 'the caption' },
+    ],
+  };
 
-      await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow(
-        'under an evidence hold'
-      );
-      expect(await exists(id)).toBe(true);
-    });
+  it.each([
+    ['its text rewritten', `jsonb_set(details, '{contextText,0,text}', '"[removed]"')`],
+    ['an entry removed', `jsonb_set(details, '{contextText}', (details->'contextText') - 0)`],
+    ['its author scrubbed', `jsonb_set(details, '{contextText,0,authorId}', 'null')`],
+    ['the whole field dropped', `details - 'contextText'`],
+  ])('refuses %s', async (_case, set) => {
+    const id = await insertReport(30, captured);
+    await expect(
+      db.pg.exec(`UPDATE "CsamReport" SET details = ${set} WHERE id = ${id}`)
+    ).rejects.toThrow('may only gain keys');
+    const { rows } = await db.pg.query<{ details: unknown }>(
+      `SELECT details FROM "CsamReport" WHERE id = $1`,
+      [id]
+    );
+    expect(rows[0].details).toEqual(captured);
+  });
+
+  it('accepts a further captured entry, as any gained key', async () => {
+    const id = await insertReport(30, captured);
+    const added = { source: 'comment', id: 12, authorId: SUBJECT, text: 'added' };
+    await db.pg.query(
+      `UPDATE "CsamReport" SET details = jsonb_set(details, '{contextText}', (details->'contextText') || $2::jsonb) WHERE id = $1`,
+      [id, JSON.stringify([added])]
+    );
+    expect(await audit(id)).toHaveLength(1);
   });
 });
 
@@ -470,6 +481,7 @@ describe('the audit', () => {
         );
       `);
       await pg.exec(readFileSync(MIGRATION, 'utf8'));
+      await pg.exec(guardWithoutHoldsSql());
       await pg.exec(`
         CREATE ROLE guard_owner;
         GRANT INSERT ON "CsamReportAudit" TO guard_owner;

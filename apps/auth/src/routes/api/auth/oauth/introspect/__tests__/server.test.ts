@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 
 // The db fake below FILTERS rather than returning a canned row: `type = 'Access'`, the not-expired
 // disjunction and the account-state predicates are enforced in SQL, so a fake that ignores `.where`
@@ -100,7 +101,8 @@ vi.mock('$lib/server/db/db', () => ({
   },
 }));
 
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: vi.fn(async (bucket: string, id: string | null | undefined) => {
     h.rateLimitCalls.push([bucket, id]);
     return h.rateLimitAllow[bucket] ?? true;
@@ -112,6 +114,8 @@ vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => h.clientIp }));
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { POST } from '../+server';
+import { RUNNER_TOKEN_SCOPE } from '$lib/server/oauth/runner-client';
+import { scopeNames } from '$lib/server/oauth/token-exchange';
 
 const LINK_SCOPE =
   TokenScope.UserRead | TokenScope.VaultRead | TokenScope.VaultWrite | TokenScope.LinkConnect;
@@ -209,6 +213,16 @@ beforeEach(() => {
       clientId: 'civitai-link-desktop',
       expiresAt: EXPIRES_AT,
     },
+    // A recipe-runner token: the runner bit lives only in the wide column.
+    {
+      key: generateSecretHash('civitai_runner'),
+      type: 'Access',
+      userId: 77,
+      tokenScope: TokenScope.UserRead,
+      tokenScopeWide: TokenScope.UserRead | TokenScope.RunnerMint,
+      clientId: 'recipe-runner',
+      expiresAt: EXPIRES_AT,
+    },
     // A client-credentials catalog token: single-purpose, so it reads as inactive here.
     {
       key: generateSecretHash('civitai_catalog'),
@@ -250,7 +264,26 @@ describe('introspect — active tokens', () => {
     });
     // `scope` is the DECIMAL BITMASK STRING this provider uses everywhere, not the RFC's
     // space-separated list — link-service tests the LinkConnect bit against it.
-    expect(Number(body.scope) & TokenScope.LinkConnect).toBe(TokenScope.LinkConnect);
+    expect(BigInt(body.scope as string) & TokenScope.LinkConnect).toBe(TokenScope.LinkConnect);
+  });
+
+  it('answers the scope from tokenScopeWide, bits 31 and 32 included', async () => {
+    // As the writer splits it: the 32-bit column holds UserRead alone, the wide one the whole scope.
+    h.apiKeys.push({
+      key: generateSecretHash('civitai_apps'),
+      type: 'Access',
+      userId: 4242,
+      tokenScope: 1,
+      tokenScopeWide: 6442450945,
+      clientId: 'civitai-link-desktop',
+      expiresAt: EXPIRES_AT,
+    });
+    const res = await post({
+      token: 'civitai_apps',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    expect(((await res.json()) as Record<string, unknown>).scope).toBe('6442450945');
   });
 
   it('omits exp for a token with no expiry', async () => {
@@ -284,6 +317,27 @@ describe('introspect — active tokens', () => {
     );
     expect(res.status).toBe(200);
     expect(((await res.json()) as { active: boolean }).active).toBe(true);
+  });
+});
+
+// Deliberate (civitai/civitai#10562): a runner token reads active:true, on the condition that its
+// scope names neither AIServicesRead nor AIServicesWrite, the only names the orchestrator grants
+// AI spend on.
+describe('introspect — a recipe-runner token', () => {
+  it('reads as active, with a scope that names no AIServices permission', async () => {
+    const res = await post({
+      token: 'civitai_runner',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    const body = (await res.json()) as { active: boolean; scope: string };
+    expect(body).toMatchObject({ active: true, sub: '77', client_id: 'recipe-runner' });
+    expect(body.scope).toBe(String(RUNNER_TOKEN_SCOPE));
+    expect(scopeNames(BigInt(body.scope))).not.toMatch(/AIServices/);
+  });
+
+  it('control: an AIServices token names it, so the check above can fail', () => {
+    expect(scopeNames(TokenScope.UserRead | TokenScope.AIServicesWrite)).toMatch(/AIServicesWrite/);
   });
 });
 
@@ -405,7 +459,13 @@ describe('introspect — rate limiting', () => {
       client_secret: CALLER_SECRET,
     });
     expect(res.status).toBe(429);
-    expect(await res.json()).toEqual({ error: 'rate_limited' });
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(await res.json()).toEqual({
+      error: 'rate_limited',
+      error_description: 'Too many introspection requests',
+      retry_after: 60,
+      rateLimit: { retryAfterSeconds: 60, retryAt: expect.any(String) },
+    });
     expect(h.rateLimitCalls).toEqual([
       ['introspect-anon', CLIENT_IP],
       ['introspect', CALLER],

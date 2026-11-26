@@ -296,6 +296,14 @@ describe('/api/mod/held-media', () => {
     expect(writeHead).toHaveBeenCalled();
   });
 
+  it('refuses bytes with a 503 when the view row cannot be written', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+    const res = await call();
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.body).not.toContain('bytes');
+  });
+
   it('skips the row only for a mid-file range', async () => {
     storeAnswers(206, 'bytes 2-99/100');
     await call({ imageId: '7' }, 'bytes=2-');

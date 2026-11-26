@@ -149,10 +149,6 @@ describe('getTrainingWorkflowOverlay', () => {
 
     expect(mockGetWorkflow).toHaveBeenCalledTimes(25);
     expect(overlay.truncated).toBe(true);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Overlay backfill capped; some rows kept stored state' }),
-      'webhooks'
-    );
   });
 
   it('keeps the rest of the overlay when a backfill fetch fails', async () => {

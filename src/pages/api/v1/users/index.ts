@@ -2,13 +2,24 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { env } from '~/env/server';
 import { publicApiContext2 } from '~/server/public-api-context';
 import { getAllUsersInput } from '~/server/schema/user.schema';
-import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+
+/** The search path rates the avatar in `avatarNsfw`; getUsers in `avatarNsfwLevel`. Unrated serves none. */
+function withPublicAvatarUrl<
+  U extends { avatarUrl?: string | null; avatarNsfw?: unknown; avatarNsfwLevel?: number }
+>({ avatarNsfwLevel, ...user }: U): Omit<U, 'avatarNsfwLevel'> {
+  if (!('avatarUrl' in user)) return user;
+  const nsfwLevel = avatarNsfwLevel ?? (typeof user.avatarNsfw === 'number' ? user.avatarNsfw : 0);
+  const shown = avatarAtLevel({ nsfwLevel }, publicBrowsingLevelsFlag);
+  return { ...user, avatarUrl: shown ? user.avatarUrl : null };
+}
 
 const schema = getAllUsersInput.extend({
   email: z.never().optional(),
@@ -16,7 +27,7 @@ const schema = getAllUsersInput.extend({
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const apiCaller = await publicApiContext2(req, res);
-  const isSystemRequest = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
+  const isSystemRequest = webhookTokenAuthenticates(req, req.query.token);
   const result = schema.safeParse(req.query);
   if (!result.success) return res.status(400).json(result.error);
 
@@ -27,7 +38,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const users = await apiCaller.user.getAll({ ...query, limit, include });
 
     return res.status(200).json({
-      items: users ?? [],
+      items: (users ?? []).map(withPublicAvatarUrl),
     });
   } catch (error) {
     // ORDER MATTERS, and both arms end in `handleEndpointError` — there is no
@@ -51,8 +62,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       // Retry-After so clients/CF retry the (typically seconds-long) flap. A
       // non-transient error (real app bug / auth / NOT_FOUND) is NOT matched and
       // still surfaces as its real status.
-      const trpcStatus =
-        error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
+      const trpcStatus = error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
       if (isTransientMeiliError(error) || trpcStatus === 503) {
         if (!res.headersSent) {
           res.setHeader('Cache-Control', 'no-store');

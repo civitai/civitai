@@ -5,7 +5,7 @@ import {
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { SENSITIVE_TOKEN_SCOPES } from '~/shared/constants/token-scope.constants';
-import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type { UpdateListingPatchInput } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 
@@ -83,6 +83,8 @@ export type ListingEditContext = {
      * absent reads exactly like "not set" — see {@link editContextToForm}.
      */
     sourceRepoUrl?: string | null;
+    /** The issue-tracker / support link. OPTIONAL for the reason `sourceRepoUrl` is. */
+    issueTrackerUrl?: string | null;
     /**
      * The author's beta declaration. OPTIONAL on this type so every pre-existing edit
      * context + fixture (all of which predate the field) still type-checks, and absent reads
@@ -112,8 +114,8 @@ export type ListingEditContext = {
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
    */
   connectClientId?: string | null;
-  connectAllowedScopes?: number | null;
-  connectRequestedScopes?: number | null;
+  connectAllowedScopes?: number | bigint | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -178,8 +180,11 @@ export function materialEditBlockedReason(
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
-    ? 'name, source repository and content rating'
-    : 'name, App URL, source repository and content rating';
+    ? 'content rating'
+    : ctx.connectClientId != null
+    ? 'name, App URL, source repository, issue tracker, content rating and permission ' +
+      'justifications (including offline access)'
+    : 'name, App URL, source repository, issue tracker and content rating';
 
   // 🔴 ROLE-AWARE, AND THE DEFAULT IS THE NEUTRAL ONE — see `ListingEditContext.role`.
   // `loadOwnedEditableListing` admits an accepted editor seat, so this copy is read by
@@ -211,7 +216,7 @@ export function materialEditBlockedReason(
   // the copy insisting otherwise. The outcome is honest (the server would refuse too); the
   // sentence was not. Say the true thing instead — nothing here can be saved until the
   // scopes are re-reviewed — rather than describing an edit that cannot land.
-  if (scopeDisclosureLockedForEdit(ctx)) {
+  if (scopesDriftedForEdit(ctx)) {
     const scopeWayOut = isOwnerEdit(ctx)
       ? `republish the app from the Publishing tab`
       : `ask the app's owner to republish it`;
@@ -222,6 +227,26 @@ export function materialEditBlockedReason(
       `NOTHING on this screen can be saved — not the tagline, description or category ` +
       `either. To edit anything, ${scopeWayOut}; the new permissions are then reviewed ` +
       `along with your changes.`
+    );
+  }
+
+  // 🔴 ON-SITE: the content rating is the only MATERIAL field this form can still change. The
+  // name, tagline, description and both links come from the app (`listingFieldsFromManifest`)
+  // and are never editable here, in any status, so they are neither "locked until republish" nor
+  // "editable now". The category comes from the app too: owners and editors (who read this notice)
+  // cannot change it here, and only a moderator may set it, on the live listing
+  // (`onsiteCategoryEditableByModerator`).
+  if (isOnsiteEdit(ctx)) {
+    const onsiteWayOut = isOwnerEdit(ctx)
+      ? `Republish the app from the Publishing tab first, then edit it — the edit is staged ` +
+        `for review.`
+      : `The app's owner has to republish it before it can be edited — the Publishing tab ` +
+        `that does it is theirs, not yours.`;
+    return (
+      `This app is unpublished, so its ${fields} is locked. Changing it needs moderator ` +
+      `review, and an unpublished listing has no way to reach it. ${onsiteWayOut} Its name, ` +
+      `tagline, description, source repository and issue tracker come from ` +
+      `block.manifest.json, and its category is set by the manifest or a moderator.`
     );
   }
 
@@ -248,37 +273,36 @@ export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
 }
 
 /**
- * Does the OAuth scope disclosure ALSO have to be locked in the repair state? PURE.
+ * Is the OAuth scope disclosure (every justification box, and the offline-access declaration)
+ * locked? PURE.
  *
- * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
- * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
- * connect client's CURRENT consentable scopes has DRIFTED from the stored snapshot, and
- * `materialPatchChanges` counts that key as material only when the two masks actually
- * differ. So while they agree, a justification edit is trivial and saves fine here.
- *
- * 🔴 WHEN THEY HAVE DRIFTED, EVERY SAVE IS REFUSED — including a tagline-only one, because
- * the drifted mask rides along on the patch. Leaving the justification boxes live in that
- * state is the same defect as the material inputs, one field further out, so they are
- * disabled and the reason says so. Detectable client-side because both masks are on the
- * edit context; absent values read as `0` exactly as the server's `?? 0` does.
+ * Justification-map edits are material (they decide hub offline access) and an unpublished
+ * listing refuses material changes, so the boxes lock with the other material inputs.
  */
 export function scopeDisclosureLockedForEdit(
+  ctx: Pick<ListingEditContext, 'status' | 'connectClientId'>
+): boolean {
+  return isUnpublishedEdit(ctx) && ctx.connectClientId != null;
+}
+
+/**
+ * Has the connect client's permission set DRIFTED from the stored snapshot on an unpublished
+ * listing? PURE. Then the drifted mask rides along on EVERY save (`buildScalarPatch`), so even a
+ * tagline-only save is refused, and `materialEditBlockedReason` says nothing here can be saved.
+ * Absent masks read as `0` on both sides, exactly as the server's `?? 0` does.
+ *
+ * 🔴 `isUnpublishedEdit`, NOT `materialEditBlockedReason`, which calls this: depending on the
+ * narrower predicate avoids a cycle and states the real precondition.
+ */
+export function scopesDriftedForEdit(
   ctx: Pick<
     ListingEditContext,
     'status' | 'kind' | 'connectClientId' | 'connectAllowedScopes' | 'connectRequestedScopes'
   >
 ): boolean {
-  // 🔴 `isUnpublishedEdit`, NOT `materialEditBlockedReason` — AND THE TWO ARE EQUIVALENT
-  // HERE BY CONSTRUCTION, so this is not a weakening. `materialEditBlockedReason` returns
-  // non-null IFF `isUnpublishedEdit(ctx)` is true; its first line IS that check. This used
-  // to call it and read the result for null, which was fine until
-  // `materialEditBlockedReason` grew a scope-drift arm that calls THIS function — a cycle
-  // (`materialEditBlockedReason` → `scopeDisclosureLockedForEdit` → `materialEditBlocked-
-  // Reason` → …). Depending on the narrower predicate breaks it and states the real
-  // precondition directly: the lock applies in the unpublished state.
   if (!isUnpublishedEdit(ctx)) return false;
   if (ctx.connectClientId == null) return false;
-  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
+  return BigInt(ctx.connectAllowedScopes ?? 0) !== BigInt(ctx.connectRequestedScopes ?? 0);
 }
 
 /**
@@ -301,6 +325,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
+    issueTrackerUrl: s.issueTrackerUrl ?? '',
     isBeta: s.isBeta === true,
     // 🔴 `s.isBeta === true &&`, not just `?? ''`. This mirrors the rule the server
     // projections apply, so the form's baseline and the wire value agree — otherwise
@@ -325,7 +350,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     // drops any non-sensitive (or no-longer-allowed) key — no dangling rationale.
     scopeJustifications: pruneJustificationsToMask(
       ctx.connectScopeJustifications ?? {},
-      derivedScopes & SENSITIVE_TOKEN_SCOPES
+      BigInt(derivedScopes) & SENSITIVE_TOKEN_SCOPES
     ),
   };
 }
@@ -348,6 +373,76 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
 export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
   return ctx.kind === 'onsite';
 }
+
+/**
+ * Do this listing's name, tagline, description, category and source-repository / issue-tracker
+ * links come from the app rather than from this form? PURE.
+ *
+ * True for an ON-SITE listing. The draft is minted from `block.manifest.json` at submit and every
+ * block-version approve re-syncs all of them (`buildListingScalarSync` and the issue-tracker
+ * sync), while an on-site revision apply copies assets only. So an edit here is either
+ * overwritten at the next approve or, on a live listing (staged on a revision), dropped. The form
+ * shows them read-only, `buildScalarPatch` never emits them, and the server refuses them
+ * (`assertNoOnsiteManifestPatch`). Off-site listings own them, so they stay editable. Inherits
+ * `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
+ */
+export function listingFieldsFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+  return isOnsiteEdit(ctx);
+}
+
+/**
+ * May THIS caller still change an on-site listing's category here? PURE.
+ *
+ * Only a MODERATOR, and only when the save writes the listing itself (`updateListing`): the
+ * operator's call made category read-only for on-site OWNERS and editors. A moderator's category
+ * fix on the live row is how a curated category reaches a listing before the app's next approved
+ * version (curation itself writes only the app). Not when the save goes to a revision draft (an
+ * approved listing with a shadow open): the on-site revision apply copies assets only and would
+ * drop it, so the server refuses it there.
+ */
+export function onsiteCategoryEditableByModerator(
+  ctx: Pick<ListingEditContext, 'kind' | 'role' | 'status' | 'shadowId'>
+): boolean {
+  return (
+    isOnsiteEdit(ctx) &&
+    ctx.role === 'moderator' &&
+    !(ctx.status === 'approved' && ctx.shadowId != null)
+  );
+}
+
+/** The explanation the read-only on-site link fields carry. */
+export const MANIFEST_LINK_FIELD_NOTE = {
+  sourceRepoUrl:
+    'Comes from "repository" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  issueTrackerUrl:
+    'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+} as const;
+
+/**
+ * The explanation the read-only on-site name / tagline / description / category fields carry.
+ *
+ * 🔴 CATEGORY IS NOT A STRAIGHT MANIFEST COPY, so its note does not say "change it there". The
+ * listing takes the APP's category (`AppBlock.category`) on every approve, and an approve copies
+ * the manifest's `category` onto the app only while the app has none, so a moderator's curated
+ * category (`setMarketplaceMeta`) survives version bumps. Once one is set, the manifest key no
+ * longer moves it.
+ */
+export const MANIFEST_COPY_FIELD_NOTE = {
+  name:
+    'Comes from "name" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  tagline:
+    'Comes from "tagline" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  description:
+    'Comes from "description" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  category:
+    'Comes from "category" in block.manifest.json while your app has no category yet; once ' +
+    'one is set, a moderator changes it. The listing takes it when a version is approved.',
+} as const;
 
 /**
  * The edit form's HEADER copy, by kind. PURE.
@@ -419,12 +514,17 @@ function shallowEqualStringMap(a: Record<string, string>, b: Record<string, stri
 export function buildScalarPatch(
   ctx: ListingEditContext,
   current: OffsiteSubmitFormValues
-): UpdateListingPatch {
+): UpdateListingPatchInput {
   const original = editContextToForm(ctx);
-  const patch: UpdateListingPatch = {};
+  const patch: UpdateListingPatchInput = {};
 
-  const name = current.name.trim();
-  if (name !== original.name.trim()) patch.name = name;
+  // 🔴 NEVER on an ON-SITE listing: name, tagline, description, category and both links come
+  // from the app (`listingFieldsFromManifest`), and the server refuses the keys outright.
+  const fromManifest = listingFieldsFromManifest(ctx);
+  if (!fromManifest) {
+    const name = current.name.trim();
+    if (name !== original.name.trim()) patch.name = name;
+  }
 
   // 🔴 NEVER patch `externalUrl` on an ON-SITE listing. Its CTA is its hosted page; an
   // external URL is not a field it has, and the edit form must not be able to write one
@@ -445,10 +545,22 @@ export function buildScalarPatch(
   // compares normalised forms. So re-saving `.../a/b` as `.../a/b/` does send a patch,
   // and the server correctly classifies it as no material change — an in-place no-op
   // write rather than a needless mod re-review.
-  const sourceRepoUrl = current.sourceRepoUrl.trim();
-  const originalSourceRepoUrl = original.sourceRepoUrl.trim();
-  if (sourceRepoUrl !== originalSourceRepoUrl) {
-    patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+  //
+  // 🔴 NEVER on an ON-SITE listing, for either link: the manifest owns both
+  // (`listingFieldsFromManifest`), and the server refuses the key outright.
+  if (!fromManifest) {
+    const sourceRepoUrl = current.sourceRepoUrl.trim();
+    const originalSourceRepoUrl = original.sourceRepoUrl.trim();
+    if (sourceRepoUrl !== originalSourceRepoUrl) {
+      patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+    }
+
+    // Issue tracker / support link — the same rule as the source link: only when retyped,
+    // cleared with `null`, and the canonical comparison is the server's.
+    const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+    if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
+      patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
+    }
   }
 
   // Beta status + note. Emitted ONLY when the author actually changed them, which is what
@@ -482,16 +594,21 @@ export function buildScalarPatch(
     }
   }
 
-  const tagline = current.tagline.trim();
-  const originalTagline = original.tagline.trim();
-  if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
+  if (!fromManifest) {
+    const tagline = current.tagline.trim();
+    const originalTagline = original.tagline.trim();
+    if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
 
-  const description = current.description.trim();
-  const originalDescription = original.description.trim();
-  if (description !== originalDescription)
-    patch.description = description.length > 0 ? description : null;
+    const description = current.description.trim();
+    const originalDescription = original.description.trim();
+    if (description !== originalDescription)
+      patch.description = description.length > 0 ? description : null;
+  }
 
-  if ((current.category ?? null) !== (original.category ?? null)) {
+  if (
+    (!fromManifest || onsiteCategoryEditableByModerator(ctx)) &&
+    (current.category ?? null) !== (original.category ?? null)
+  ) {
     patch.category = current.category ?? null;
   }
 
@@ -515,9 +632,10 @@ export function buildScalarPatch(
       storedSnapshot
     );
     const currentJust = shapeSensitiveJustifications(current.scopeJustifications, derived);
-    const drifted = derived !== storedSnapshot;
+    const drifted = BigInt(derived) !== BigInt(storedSnapshot);
     if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
-      patch.requestedScopes = derived;
+      // A JSON number on the wire.
+      patch.requestedScopes = Number(derived);
       patch.scopeJustifications = currentJust;
     }
   }
@@ -526,6 +644,6 @@ export function buildScalarPatch(
 }
 
 /** True when the scalar patch has at least one changed field (a save is needed). */
-export function hasScalarChanges(patch: UpdateListingPatch): boolean {
+export function hasScalarChanges(patch: UpdateListingPatchInput): boolean {
   return Object.keys(patch).length > 0;
 }

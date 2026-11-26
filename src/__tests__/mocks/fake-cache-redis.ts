@@ -73,10 +73,37 @@ export function installFakeCacheRedis() {
     write(key, value, options)
   );
   r.get.mockImplementation(async (key: string) => read(key));
+  r.mGet.mockImplementation(async (keys: string[]) => keys.map(read));
   r.set.mockImplementation(async (key: string, value: unknown, options?: SetOptions) =>
     write(key, value, options)
   );
   r.del.mockImplementation(async (keys: string | string[]) => del(keys));
+  const incrBy = (key: string, by: number) => {
+    const total = Number(read(key) ?? 0) + by;
+    write(key, String(total), { KEEPTTL: true });
+    return total;
+  };
+  r.incr.mockImplementation(async (key: string) => incrBy(key, 1));
+  r.incrBy.mockImplementation(async (key: string, by: number) => incrBy(key, by));
+  r.multi.mockImplementation(() => {
+    const queued: Array<() => unknown> = [];
+    const chain = {
+      set: (key: string, value: unknown, options?: SetOptions) => {
+        queued.push(() => write(key, value, options));
+        return chain;
+      },
+      incr: (key: string) => {
+        queued.push(() => incrBy(key, 1));
+        return chain;
+      },
+      incrBy: (key: string, by: number) => {
+        queued.push(() => incrBy(key, by));
+        return chain;
+      },
+      exec: async () => queued.map((op) => op()),
+    };
+    return chain;
+  });
   r.setNxKeepTtlWithEx.mockImplementation(async (key: string, value: string, ttl: number) => {
     if (read(key) !== null) return false;
     write(key, value, { EX: ttl });

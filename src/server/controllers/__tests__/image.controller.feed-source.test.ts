@@ -16,7 +16,10 @@ const { getAllImagesMock, getAllImagesIndexMock } = vi.hoisted(() => ({
 }));
 
 // Not a held-gallery test: no model is held.
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: async () => undefined }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: async () => undefined,
+  isModelGalleryWithheld: async () => false,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages: getAllImagesMock,
@@ -177,6 +180,19 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(result.source).toBe('meili');
   });
 
+  // ids alone must reach the DB for a non-owner; the index feed ignores ids and returns the creator's newest.
+  it('serves an ids query from the database for a viewer who is not the owner', async () => {
+    const result = await getInfiniteImagesHandler({
+      input: { ...(pickerInput as object), userId: 999, ids: [1, 2] } as never,
+      ctx,
+    });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(getAllImagesMock.mock.calls[0][0].ids).toEqual([1, 2]);
+    expect(result.source).toBe('db');
+  });
+
   it('leaves a broad feed on the index when only publishedOnly is set', async () => {
     // The control for the case above: it is the PAIR that routes. Without a
     // userId this is a site-wide feed, and routing it to the DB would be a
@@ -185,6 +201,23 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
       input: { limit: 10, browsingLevel: 1, include: [], publishedOnly: true } as never,
       ctx,
     });
+
+    expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesMock).not.toHaveBeenCalled();
+  });
+
+  it("serves a creator's Requiring Metadata filter from the database", async () => {
+    const input = { limit: 10, browsingLevel: 1, include: [], userId: 7, requiringMeta: true };
+    const result = await getInfiniteImagesHandler({ input: input as never, ctx });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('db');
+  });
+
+  it('leaves a broad feed on the index when only requiringMeta is set', async () => {
+    const input = { limit: 10, browsingLevel: 1, include: [], requiringMeta: true };
+    await getInfiniteImagesHandler({ input: input as never, ctx });
 
     expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
     expect(getAllImagesMock).not.toHaveBeenCalled();

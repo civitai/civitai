@@ -13,7 +13,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
   VIEWER_1,
   VIEWER_2,
 } from './doc-store.functional';
@@ -56,7 +55,7 @@ function defineModerationSuite(rls: boolean) {
   });
 
   const report = async (app: string, coll: DocCollection, key: string, ...users: number[]) => {
-    for (const u of users) await store.mark(ctx(app, NS_PROD, u), coll, key, 'report');
+    for (const u of users) await store.report(ctx(app, NS_PROD, u), coll, key);
   };
   const queue = async (
     app: string,
@@ -164,12 +163,10 @@ function defineModerationSuite(rls: boolean) {
   });
 
   describe('get', () => {
-    it('returns a shared doc with its data, every tally including reports, hidden or not', async () => {
+    it('returns a shared doc with its data and its report counts, hidden or not, and no tally', async () => {
       const app = freshApp('modget');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, POSTS, 'g', { status: 'open', score: 5 });
-      await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'g', 'views', 7);
-      await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'g', 'star');
       await report(app, POSTS, 'g', R1, R2);
       await mod.setHidden(app, NS_PROD, 'posts', 'g', true, MOD);
       const doc = await mod.get(app, NS_PROD, 'posts', 'g');
@@ -178,14 +175,15 @@ function defineModerationSuite(rls: boolean) {
         key: 'g',
         data: { status: 'open', score: 5 },
         reports: 2,
-        counters: { views: 7 },
-        marks: { star: 1, report: 2 },
+        reportsTotal: 2,
         authorKind: 'user',
         authorUid: VIEWER_1,
         hiddenBy: MOD,
         sizeBytes: OPEN5_BYTES,
         version: 1,
       });
+      expect(doc).not.toHaveProperty('counters');
+      expect(doc).not.toHaveProperty('marks');
       expect(doc?.dataMd5).toMatch(/^[0-9a-f]{32}$/);
     });
 
@@ -210,8 +208,6 @@ function defineModerationSuite(rls: boolean) {
         ['v1', 6],
       ] as const) {
         await store.put(v1, POSTS, k, { status: 'open', score });
-        await store.mark(v1, POSTS, k, 'star');
-        await store.increment(v1, POSTS, k, 'views', 3);
       }
       await report(app, POSTS, 'h1', R1);
       return { app, v1 };
@@ -236,10 +232,7 @@ function defineModerationSuite(rls: boolean) {
         ['index sort', { sort: 'score' }],
         ['index sort desc', { sort: '-score' }],
         ['index filter', { where: { status: 'open' } }],
-        ['counter sort', { sort: '-counter:views' }],
-        ['mark sort', { sort: 'mark:star' }],
         ['author=me', { author: 'me' }],
-        ['markedBy=me', { markedBy: 'me', mark: 'star' }],
         ['keyPrefix', { keyPrefix: '' }],
       ];
       for (const [name, q] of lists) {
@@ -258,30 +251,16 @@ function defineModerationSuite(rls: boolean) {
       await expectCode(store.put(v1, POSTS, 'h1', { status: 'x' }), 'not_found');
       await expectCode(store.put(v1, POSTS, 'h1', { status: 'x' }, { ifVersion: 1 }), 'not_found');
       expect(await store.delete(v1, POSTS, 'h1')).toEqual({ deleted: false });
-      await expectCode(store.mark(v1, POSTS, 'h1', 'vote'), 'not_found');
-      await expectCode(store.unmark(v1, POSTS, 'h1', 'star'), 'not_found');
-      await expectCode(store.mark(ctx(app, NS_PROD, R2), POSTS, 'h1', 'report'), 'not_found');
-      await expectCode(store.increment(v1, POSTS, 'h1', 'views'), 'not_found');
+      await expectCode(store.report(ctx(app, NS_PROD, R2), POSTS, 'h1'), 'not_found');
       // Nothing changed underneath.
       const doc = await mod.get(app, NS_PROD, 'posts', 'h1');
       expect(doc).toMatchObject({
         version: 1,
-        counters: { views: 3 },
-        marks: { star: 1, report: 1 },
+        reportsTotal: 1,
       });
     });
 
-    it('a hidden counter-collection key cannot be re-created by an increment', async () => {
-      const app = freshApp('modhidectr');
-      await store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 't', 'plays');
-      await mod.setHidden(app, NS_PROD, 'tallies', 't', true, MOD);
-      await expectCode(
-        store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 't', 'plays'),
-        'not_found'
-      );
-    });
-
-    it('unhide restores the doc with its tallies; hide/unhide move the feed seq; repeats change nothing', async () => {
+    it('unhide restores the doc; hide/unhide move the feed seq; repeats change nothing', async () => {
       const { app, v1 } = await seedHidden();
       const lastSeq = async () =>
         Number(
@@ -313,8 +292,7 @@ function defineModerationSuite(rls: boolean) {
       expect(got).toMatchObject({
         key: 'h1',
         version: 1,
-        counters: { views: 3 },
-        marks: { star: 1 },
+        data: { status: 'open', score: 5 },
       });
       expect(keysOf(await store.list(v1, POSTS, { sort: '-score' }))).toEqual(['v1', 'h1']);
       expect(await mod.setHidden(app, NS_PROD, 'posts', 'h1', false, MOD)).toEqual({
@@ -342,7 +320,7 @@ function defineModerationSuite(rls: boolean) {
     // share a timestamp; a real server ticks in microseconds. Step past a tick around each.
     const tick = () => new Promise((r) => setTimeout(r, 5));
 
-    it("closes the open reports, keeps every reporter's own mark, and a NEW report re-opens it", async () => {
+    it("closes the open reports, keeps every reporter's own report row, and a NEW report re-opens it", async () => {
       const app = freshApp('moddis');
       await seedQueue(app);
       await tick();
@@ -350,18 +328,21 @@ function defineModerationSuite(rls: boolean) {
       await tick();
       expect(await queue(app)).not.toContain('posts/p1:3');
       const doc = (await mod.get(app, NS_PROD, 'posts', 'p1'))!;
-      expect({ open: doc.reports, total: doc.marks.report }).toEqual({ open: 0, total: 3 });
+      expect({ open: doc.reports, total: doc.reportsTotal }).toEqual({ open: 0, total: 3 });
       expect(doc.reportsDismissedAt).toBeInstanceOf(Date);
-      // A reporter still sees their own report; they cannot withdraw it, and re-reporting is
-      // not a new report — so they cannot re-open what was dismissed.
-      expect((await store.get(ctx(app, NS_PROD, R1), POSTS, 'p1'))?.viewer?.marks).toContain(
-        'report'
-      );
-      await expectCode(
-        store.unmark(ctx(app, NS_PROD, R1), POSTS, 'p1', 'report'),
-        'invalid_request'
-      );
-      await store.mark(ctx(app, NS_PROD, R1), POSTS, 'p1', 'report');
+      // The reporters' rows are kept; there is no withdrawal, and re-reporting is not a new
+      // report — so a reporter cannot re-open what was dismissed.
+      expect(
+        Number(
+          (
+            await h.raw(
+              `SELECT count(*)::int AS n FROM appdata.doc_mark WHERE app_id = $1 AND key = 'p1' AND name = 'report'`,
+              [app]
+            )
+          )[0].n
+        )
+      ).toBe(3);
+      expect(await store.report(ctx(app, NS_PROD, R1), POSTS, 'p1')).toEqual({ added: false });
       await tick();
       expect(await queue(app)).not.toContain('posts/p1:1');
       expect((await mod.get(app, NS_PROD, 'posts', 'p1'))!.reports).toBe(0);
@@ -463,15 +444,13 @@ function defineModerationSuite(rls: boolean) {
   });
 
   describe('hard delete', () => {
-    it('removes the doc, its index rows, tallies and marks; refunds the author; leaves a tombstone', async () => {
+    it('removes the doc, its index rows and reports; refunds the author; leaves a tombstone', async () => {
       const app = freshApp('moddel');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       const v2 = ctx(app, NS_PROD, VIEWER_2);
       await store.put(v1, POSTS, 'd1', { status: 'open', score: 5 });
       await store.put(v1, POSTS, 'k1', { status: 'keep', score: 1 });
       await store.put(v2, POSTS, 'k2', { status: 'keep', score: 2 });
-      await store.mark(v2, POSTS, 'd1', 'star');
-      await store.increment(v2, POSTS, 'd1', 'views', 4);
       await report(app, POSTS, 'd1', R1, R2);
       const appBefore = (await store.usage(v1)).app;
       const v1Before = (await store.usage(v1)).viewer!;
@@ -494,10 +473,9 @@ function defineModerationSuite(rls: boolean) {
       expect({
         doc: await count('doc'),
         index: await count('doc_index'),
-        tally: await count('doc_tally'),
         mark: await count('doc_mark'),
         tomb: await count('doc_tomb'),
-      }).toEqual({ doc: 0, index: 0, tally: 0, mark: 0, tomb: 1 });
+      }).toEqual({ doc: 0, index: 0, mark: 0, tomb: 1 });
 
       expect((await store.usage(v1)).app).toEqual({
         bytes: appBefore.bytes - OPEN5_BYTES,
@@ -507,19 +485,16 @@ function defineModerationSuite(rls: boolean) {
         bytes: v1Before.bytes - OPEN5_BYTES,
         docs: v1Before.docs - 1,
       });
-      // The marker/incrementer was not charged for d1 and is not refunded for it.
+      // Another author was not charged for d1 and is not refunded for it.
       expect((await store.usage(v2)).viewer).toEqual(v2Before);
       await assertUsageConsistent(h, app, NS_PROD);
 
       expect(await store.get(v1, POSTS, 'd1')).toBeNull();
       expect((await store.list(v1, POSTS)).items.map((d) => d.key)).toEqual(['k1', 'k2']);
-      // The key is free again and starts from zero.
+      // The key is free again and starts from version 1, with no report.
       const again = await store.put(v1, POSTS, 'd1', { status: 'open', score: 5 });
-      expect(again).toMatchObject({
-        version: 1,
-        counters: { views: 0 },
-        marks: { star: 0, vote: 0 },
-      });
+      expect(again).toMatchObject({ version: 1 });
+      expect((await mod.get(app, NS_PROD, 'posts', 'd1'))?.reportsTotal).toBe(0);
       await expectCode(mod.delete(app, NS_PROD, 'posts', 'nope'), 'not_found');
     });
 
@@ -534,17 +509,6 @@ function defineModerationSuite(rls: boolean) {
       expect(tomb.map((t) => Number(t.seq))).toEqual([del.seq]);
       await assertUsageConsistent(h, app, NS_PROD);
     });
-
-    it('a counter-created doc refunds the viewer whose increment created it', async () => {
-      const app = freshApp('moddelctr');
-      const v2 = ctx(app, NS_PROD, VIEWER_2);
-      await store.increment(v2, TALLIES, 't', 'plays', 5);
-      expect((await store.usage(v2)).viewer?.docs).toBe(1);
-      await mod.delete(app, NS_PROD, 'tallies', 't');
-      expect((await store.usage(v2)).viewer).toEqual({ bytes: 0, docs: 0 });
-      expect((await store.usage(v2)).app).toEqual({ bytes: 0, docs: 0 });
-      await assertUsageConsistent(h, app, NS_PROD);
-    });
   });
 
   describe('cross-app isolation of moderator actions', () => {
@@ -553,7 +517,6 @@ function defineModerationSuite(rls: boolean) {
       const b = freshApp('modisoB');
       for (const app of [a, b]) {
         await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'same', { status: 'open', score: 5 });
-        await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'same', 'star');
         await report(app, POSTS, 'same', R1);
       }
       await store.put(ctx(b, NS_PROD, VIEWER_1), POSTS, 'only_b', { status: 'open' });

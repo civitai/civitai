@@ -4,6 +4,7 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import MemorialPanel from '../MemorialPanel.svelte';
   import { fetchAccountLinks } from '../account-links';
   import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
@@ -38,6 +39,7 @@
   import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
   import MembershipCancelPanel from '../MembershipCancelPanel.svelte';
   import MembershipResyncPanel from '../MembershipResyncPanel.svelte';
+  import MembershipGiftCompPanel from '../MembershipGiftCompPanel.svelte';
   import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
@@ -124,6 +126,9 @@
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
+      {#if data.grants['user.membership.gift.comp']}
+        <MembershipGiftCompPanel userId={result.identity.id} />
+      {/if}
       <ModerationMemoryPanel
         userId={result.identity.id}
         canAct={data.canAct}
@@ -161,7 +166,7 @@
       <BuzzBalances userId={result.identity.id} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         {#if data.grants['user.buzz.send']}
-          <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+          <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
             <BuzzTransactionPanel
               userId={result.identity.id}
               onSuccess={() => (version += 1)}
@@ -213,7 +218,7 @@
               : undefined}
           />
         </div>
-        <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+        <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
           <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
         </div>
       </div>
@@ -222,9 +227,8 @@
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}
-      <!-- No `onSuccess`: the panel keeps its own rows in step, and a refresh here would discard them. -->
+      <!-- No `onSuccess`: the panel fetches its own pages and refetches the current one after a delete. -->
       <CommentsPanel
-        {account}
         userId={result.identity.id}
         canBulkAct={!!data.grants['user.comments.bulk']}
         civitaiUrl={data.civitaiUrl}
@@ -296,8 +300,10 @@
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
         canDelete={!!data.grants['user.deleteAccount']}
-        deleteHold={data.deleteHold}
       />
+      {#if data.memorial}
+        <MemorialPanel identity={result.identity} panel={data.memorial} />
+      {/if}
       {#if data.grants['user.removeReactions']}
         <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
       {/if}

@@ -29,8 +29,6 @@ const placement = {
   data: { cosmeticId: 9, x: 0.5, y: 0.5, scale: 0.25, rotation: 0, flip: false, opacity: 1 },
 };
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
-
 type RevealState = { revealed: boolean; forced: boolean };
 
 // Spreads the real module so the REAL `stickersRevealed` runs against the fake
@@ -44,6 +42,15 @@ vi.mock('~/store/sticker-reveal.store', async (importOriginal) => ({
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementUtil>()),
   useStickerPlacements: () => ({ byImage: new Map([[IMAGE_ID, [placement]]]) }),
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useFeatureFlags: () => ({ stickerVideoTracks: false }),
+}));
+
+vi.mock('~/components/Sticker/useTrackPlayback', () => ({
+  useTrackPlayback: () => ({ hiddenIds: new Set(), bindPose: undefined }),
 }));
 
 vi.mock('~/components/Sticker/treatments/useStickerTreatment', () => ({
@@ -78,7 +85,8 @@ const renderStage = (src: string | null = PORTRAIT_PNG) => {
         style={{ position: 'absolute', left: '10%', top: '10%', width: '60%', height: '60%' }}
       />
       <ImageStickerOverlay imageId={IMAGE_ID} />
-    </div>
+    </div>,
+    { user: { id: 7 } }
   );
 };
 
@@ -173,7 +181,8 @@ describe('media that is not a plain image', () => {
           />
         </div>
         <ImageStickerOverlay imageId={IMAGE_ID} />
-      </div>
+      </div>,
+      { user: { id: 7 } }
     );
 
     const box = styleBox(await overlayBox());

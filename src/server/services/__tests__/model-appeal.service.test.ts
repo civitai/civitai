@@ -47,10 +47,10 @@ describe('createEntityAppeal — skipFee', () => {
     mockGetAppealCount.mockResolvedValue(5);
 
     await createEntityAppeal({
-      entityId: 2186217,
+      entityId: 990100031,
       entityType: EntityType.Model,
       message: 'This is my own character design.',
-      userId: 602767,
+      userId: 990100013,
       buzzType: 'user',
       skipFee: true,
     });
@@ -64,10 +64,10 @@ describe('createEntityAppeal — skipFee', () => {
     mockGetAppealCount.mockResolvedValue(5);
 
     await createEntityAppeal({
-      entityId: 2186217,
+      entityId: 990100031,
       entityType: EntityType.Model,
       message: 'This is my own character design.',
-      userId: 602767,
+      userId: 990100013,
       buzzType: 'user',
       skipFee: true,
     });
@@ -82,7 +82,7 @@ describe('createEntityAppeal — skipFee', () => {
       entityId: 99,
       entityType: EntityType.Image,
       message: 'Please review again.',
-      userId: 602767,
+      userId: 990100013,
       buzzType: 'user',
     });
 

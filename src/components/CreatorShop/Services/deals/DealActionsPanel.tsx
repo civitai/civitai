@@ -1,5 +1,5 @@
 import { Button, Group, Paper, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   cancellationCodeOptions,
@@ -19,6 +19,7 @@ import { acceptDeliveryBlocked } from '~/components/CreatorShop/Services/deals/d
 import { useServiceDealFiles } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { pluralize } from '~/shared/utils/pluralize';
+import { showSuccessNotification } from '~/utils/notifications';
 import type { DealAction } from '~/shared/utils/creator-service-deal-view';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 
@@ -34,11 +35,17 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
   if (buttons.length === 0) return null;
 
   const id = deal.id;
-  const confirm = (title: string, body: string, onConfirm: () => void, danger = false) =>
-    openConfirmModal({
+  const confirm = (
+    title: string,
+    body: string,
+    onConfirm: () => void,
+    danger = false,
+    confirmLabel = title
+  ) =>
+    openConfirm({
       title,
-      children: <Text size="sm">{body}</Text>,
-      labels: { confirm: title, cancel: 'Back' },
+      message: <Text size="sm">{body}</Text>,
+      labels: { confirm: confirmLabel, cancel: 'Back' },
       confirmProps: danger ? { color: 'red' } : undefined,
       onConfirm,
     });
@@ -97,16 +104,33 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
     withdraw: () =>
       confirm(
         'Withdraw request',
-        'The request is cancelled and the Buzz held for it goes back to you.',
+        'The request is canceled and the Buzz held for it goes back to you.',
         () => mutations.withdraw.mutate({ id }),
         true
       ),
     cancelLate: () =>
       confirm(
         'Cancel (overdue)',
-        'The seller is past the due date. Cancelling closes the deal and returns your Buzz.',
+        'The seller is past the due date. Canceling closes the deal and returns your Buzz.',
         () => mutations.cancelLate.mutate({ id }),
         true
+      ),
+    cancelAndRefund: () =>
+      confirm(
+        'Cancel this request?',
+        'You can cancel this request now and get a full refund of your Buzz.',
+        () =>
+          mutations.cancelAndRefund.mutate(
+            { id },
+            {
+              onSuccess: () =>
+                showSuccessNotification({
+                  message: 'Request canceled. Your Buzz has been refunded.',
+                }),
+            }
+          ),
+        true,
+        dealActionLabel.cancelAndRefund
       ),
     decline: () =>
       dialogStore.trigger({

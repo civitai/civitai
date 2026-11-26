@@ -1,4 +1,5 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 
 /**
  * Per-token fixed-window rate limit for the App Blocks catalog endpoints
@@ -82,7 +83,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      app, and this card's blast radius is explicitly asymmetric in that direction.
 //
 // **Closing condition for revisiting this ceiling and this key:
-// `civitai_app_block_bridge_rate_limit_refusals_total` (added alongside this, in
+// `civitai_app_block_rate_limit_refusals_total{bucket="catalog"}` (the per-app series in
 // `~/server/metrics/app-block-runtime.metrics`) shows refusals on this bucket, or a GA
 // week passes with none.** That series is what makes the sentence above checkable rather
 // than merely reasonable.
@@ -225,7 +226,10 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // `pollWorkflow` docblock names:
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
-//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again.
+//   - the long poll is ~1 per 15 s per workflow while nothing changes. It returns on
+//     CHANGE (`until=change`), so a workflow that changes every 2-3 s is read ~20-30
+//     times a minute — still 1/40 to 1/60 of this bucket for one workflow, i.e. room
+//     for ~40-60 such workflows per (install, viewer) before it bites.
 //
 //     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
 //     │  paragraph; none of it restates the status. Change it HERE and nowhere else.
@@ -611,6 +615,54 @@ export async function checkBlockUploadAppRateLimit(
   );
 }
 
+// GENERATION-SOURCE bucket (blocks.persistGenerationSource, the server half of
+// PERSIST_GENERATION_SOURCE). One token per call: each one can fetch and store an output,
+// write a private scanned Image row and hold a scan wait of up to 30 s.
+//
+// KEYED ON THE TOKEN SUBJECT (the viewer), NOT the install: the rows are the viewer's own and
+// private, so the bound that matters is per person, and a page app's install id is shared by
+// every viewer.
+//
+// 🔴 WHY IT EXISTS BESIDE THE PROCEDURE'S 60/h `rateLimit` MIDDLEWARE: that middleware skips
+// moderators — the current flag audience — and dev, test and preview, so for exactly the
+// callers who can reach this route today it bounded nothing. This bucket has no exemption.
+// Concurrency is bounded separately (`withInFlightLimit`, 2 per user, charged first).
+//
+// 60 per 3600 s. Not data-derived; a starting value, matching the middleware's number.
+//
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A refused call
+// still counts toward this window.
+// The limit is the registry's `apps.generation-source` (code default 60), resolved per viewer.
+export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
+/** Records ONE generation-source call against `userId`'s window. Own `:gen-source-user:` key. */
+export async function checkBlockGenerationSourceUserRateLimit(
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:gen-source-user:${userId}`,
+    await resolveUserAppLimit('apps.generation-source', userId),
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
+// UPLOADED-GENERATION-SOURCE bucket (blocks.persistUploadedGenerationSource): a picked
+// generation source copied into a private scanned row. Its own window, the same size as the
+// generation-source bucket above and keyed the same way (token subject, no exemption), so an app
+// saving its outputs and a viewer picking sources cannot use up each other's allowance.
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file.
+
+/** Records ONE uploaded-source call against `userId`'s window. Own `:uploaded-gen-source-user:` key. */
+export async function checkBlockUploadedGenerationSourceUserRateLimit(
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:uploaded-gen-source-user:${userId}`,
+    await resolveUserAppLimit('apps.generation-source', userId),
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
 // ESTIMATE-CELLS bucket (blocks.estimateWorkflowBatch). A batch estimate charges
 // the catalog bucket ONCE, like a single estimate — that is the point of it: a
 // 16-cell grid no longer spends 16 of an allowance that a page app shares between
@@ -724,7 +776,9 @@ export async function checkBlockSubmitRateLimit(
 // SUBMIT-USER bucket: the same subject across EVERY install, so the pre-spend work one
 // viewer can cause does not grow with the number of install tokens they hold. Twice the
 // per-install submit ceiling, so a viewer running two apps flat out still fits.
-export const BLOCK_SUBMIT_USER_RATE_LIMIT_MAX = 2 * BLOCK_SUBMIT_RATE_LIMIT_MAX;
+// The limit is the registry's `apps.submit-user` (code default twice the per-install ceiling,
+// pinned by the registry test), resolved without a user: the subject may be anonymous, so a tier
+// rule resolves to the lowest tier's value.
 export const BLOCK_SUBMIT_USER_RATE_LIMIT_WINDOW_SECONDS = BLOCK_SUBMIT_RATE_LIMIT_WINDOW_SECONDS;
 
 /**
@@ -737,7 +791,53 @@ export async function checkBlockSubmitUserRateLimit(
 ): Promise<BlockCatalogRateLimitResult> {
   return checkFixedWindow(
     `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:submit-user:${subject}`,
-    BLOCK_SUBMIT_USER_RATE_LIMIT_MAX,
+    await resolveUserAppLimit('apps.submit-user', null),
     BLOCK_SUBMIT_USER_RATE_LIMIT_WINDOW_SECONDS
   );
+}
+
+/**
+ * Standing consents — jobs above an app's per-call budget that run without a per-job confirm
+ * because the viewer opted in — per (viewer, app). The only bound on how fast an opted-in app
+ * can spend inside the viewer's daily limit, so unlike every bucket above it FAILS CLOSED: a
+ * store error or a bad reply refuses. Atomic (`SET NX EX` + `INCR` in one MULTI), so
+ * concurrent claims cannot overshoot. Not `claimRateLimitAttempt`: it exempts moderators, the
+ * first audience of this feature.
+ *
+ * Two buckets of the same size. The SUBMIT bucket is the bound: a consented quote can be
+ * submitted long after its consent, so only a slot taken when the job runs bounds how many run
+ * in a window. The CONSENT bucket is the same bound seen earlier, so in the usual flow (consent,
+ * then submit at once) the host is told before it submits and asks for that job instead.
+ */
+export const BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX = 5;
+export const BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS = 60;
+
+export function claimBlockStandingConsentSlot(
+  userId: number,
+  appBlockId: string
+): Promise<boolean> {
+  return claimStandingSlot('standing-consent', userId, appBlockId);
+}
+
+export function claimBlockStandingSubmitSlot(userId: number, appBlockId: string): Promise<boolean> {
+  return claimStandingSlot('standing-submit', userId, appBlockId);
+}
+
+async function claimStandingSlot(
+  bucket: 'standing-consent' | 'standing-submit',
+  userId: number,
+  appBlockId: string
+): Promise<boolean> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:${bucket}:${userId}:${appBlockId}` as const;
+  try {
+    const replies = await redis
+      .multi()
+      .set(key as never, '0', { NX: true, EX: BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS })
+      .incr(key as never)
+      .exec();
+    const count = Number(replies?.[1]);
+    return Number.isFinite(count) && count <= BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX;
+  } catch {
+    return false;
+  }
 }

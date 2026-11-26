@@ -1,6 +1,6 @@
 import type { MantineSize } from '@mantine/core';
 import { Center, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconAlertOctagon, IconAward, IconBell } from '@tabler/icons-react';
+import { IconAward, IconBell, IconSpeakerphone } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
 import React, { useMemo } from 'react';
@@ -26,6 +26,7 @@ type RouteMatch = {
 
 // this make it so that clicking on images in your notifications can user router.replace when appropriate.
 const ROUTES = ['/images/[imageId]'];
+const LEAVE_SITE_WAIT_MS = 1500;
 
 function matchRoute(inputUrl: string): RouteMatch | null {
   const url = new URL(inputUrl, 'http://localhost'); // base doesn't matter
@@ -101,19 +102,32 @@ export function NotificationList({
         // looked up with another, silently, with no test red.
         const imageId = notificationImageId(notificationDetails);
         const thumbnail = imageId ? thumbnails.get(imageId) : undefined;
-        const systemNotification = notification.type === 'system-announcement';
+        const announcementNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();
+          const leavesSite =
+            !!details.url &&
+            details.target !== '_blank' &&
+            new URL(details.url, window.location.href).origin !== window.location.origin;
           // The url is derived here by `getNotificationMessage`; the raw `notification.details`
           // carries one for announcements only, so a consumer reading it off there sees
           // `undefined` for every other type.
-          onItemClick(notification, {
+          const clicked = onItemClick(notification, {
             keepOpened: details.target === '_blank',
             url: details.url,
           });
           if (!details.url) return;
+          if (leavesSite) {
+            // Another host (a mature item's result links to .red) is a full navigation, which cancels
+            // the mark-read request still in flight: let it land first, but never hold the click long.
+            const url = details.url;
+            return void Promise.race([
+              Promise.resolve(clicked).catch(() => undefined),
+              new Promise((resolve) => setTimeout(resolve, LEAVE_SITE_WAIT_MS)),
+            ]).then(() => window.open(url, '_self'));
+          }
           if (details.target === '_blank') return window.open(details.url, '_blank');
           const toModal = details.url.includes('?dialog=');
           if (toModal) {
@@ -152,9 +166,9 @@ export function NotificationList({
           >
             <Group gap="xl" justify="space-between" align="start" wrap="nowrap">
               <Group gap="md" align="start" wrap="nowrap">
-                {systemNotification ? (
-                  <ThemeIcon variant="light" size="xl" radius="xl" color="red">
-                    <IconAlertOctagon stroke={1.5} />
+                {announcementNotification ? (
+                  <ThemeIcon variant="light" size="xl" radius="xl" color="blue">
+                    <IconSpeakerphone stroke={1.5} />
                   </ThemeIcon>
                 ) : milestoneNotification ? (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="green">
@@ -200,7 +214,7 @@ type Props = {
   onItemClick: (
     notification: NotificationGetAll['items'][number],
     options: { keepOpened: boolean; url?: string }
-  ) => void;
+  ) => void | Promise<unknown>;
   textSize?: MantineSize;
   truncate?: boolean;
   searchText: string;

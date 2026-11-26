@@ -40,7 +40,7 @@ function warn(name: string, run: TrainingRun, error: unknown) {
     source: run.source,
     errorName: error instanceof Error ? error.name : typeof error,
     errorCode: (error as { code?: unknown } | null | undefined)?.code,
-  }).catch(() => undefined);
+  });
 }
 
 async function checkDraftModel(run: TrainingRun, model: NonNullable<TrainingRun['model']>) {
@@ -89,8 +89,6 @@ async function checkTriggerWord(
   ];
   if (!ruleIds.length) return false;
   if (mode === 'active') return true;
-  logToAxiom({ name: 'training-model-rules-match', type: 'info', userId, source, ruleIds }).catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'training-model-rules-match', type: 'info', userId, source, ruleIds });
   return false;
 }

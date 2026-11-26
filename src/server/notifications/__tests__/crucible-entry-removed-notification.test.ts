@@ -21,6 +21,14 @@ describe('crucible-entry-removed message', () => {
     );
   });
 
+  it('names the theme review and its reason when the review removed it', () => {
+    expect(
+      message({ removedBy: 'review', reason: 'Off-topic for this crucible', refundedAmount: 0 })
+    ).toBe(
+      'The crucible\'s theme review removed your entry from the crucible "Neon". Reason: Off-topic for this crucible.'
+    );
+  });
+
   it('adds the refund after the reason', () => {
     expect(message({ removedBy: 'owner', reason: 'Off-topic', refundedAmount: 1500 })).toBe(
       'The crucible\'s owner removed your entry from the crucible "Neon". Reason: Off-topic. Your 1,500 Buzz entry fee was refunded.'

@@ -42,9 +42,8 @@ vi.mock('~/server/services/article.service', async (importOriginal) => ({
 }));
 
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-const { applyCsamHold, CSAM_HOLD_TEXT_CHARS, CsamHoldBusyError } = await import(
-  '~/server/services/text-scan/actions/csam-hold'
-);
+const { applyCsamHold, CSAM_HOLD_TEXT_CHARS, CsamHoldBusyError, pendingCsamHoldFields } =
+  await import('~/server/services/text-scan/actions/csam-hold');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
 const { createReport } = await import('~/server/services/report.service');
@@ -184,8 +183,7 @@ const args = (over: Record<string, unknown> = {}) => ({
 
 const WIRED = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'UserProfile',
   'User',
   'ResourceReview',
@@ -219,21 +217,38 @@ describe('csam verdicts through the registered adapters', () => {
 
   it('still holds a verdict that lands after the gate was turned off', async () => {
     vi.mocked(getTextScanCsamMode).mockResolvedValueOnce('off');
-    await getModerationAdapter('Comment')!.applyTextScan!(args() as never);
+    await getModerationAdapter('CommentV3')!.applyTextScan!(args() as never);
     expect(await rows()).toHaveLength(1);
   });
 
+  // The moderator's hold (holdPostTextForCsam) stores the same fields; post-text-moderation.pglite pins it.
+  it('stores the author and text pendingCsamHoldFields builds: capped, NUL-free', async () => {
+    const subject = {
+      fields: [{ heading: 'Comment', text: `a\u0000b${'x'.repeat(CSAM_HOLD_TEXT_CHARS)}` }],
+      declared: {},
+      userId: 5,
+    };
+    await getModerationAdapter('CommentV3')!.applyTextScan!(args({ subject }) as never);
+    const {
+      rows: [row],
+    } = await db.pg.query<{ userId: number | null; text: string }>(
+      'SELECT "userId", "text" FROM "TextScanHold"'
+    );
+    expect(row).toEqual(pendingCsamHoldFields(subject));
+    expect(row.text).toHaveLength(CSAM_HOLD_TEXT_CHARS - 1);
+  });
+
   it('records nothing for a verdict without csam', async () => {
-    await getModerationAdapter('Comment')!.applyTextScan!(
+    await getModerationAdapter('CommentV3')!.applyTextScan!(
       args({ outcome: { csam: { detected: false, reason: 'test' }, triggeredLabels: [] } }) as never
     );
     expect(await rows()).toHaveLength(0);
   });
 
   const ACTIONS = [
-    ...(
-      ['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'User', 'ResourceReview'] as const
-    ).map((entityType) => [entityType, () => autoMuteScamAccount] as const),
+    ...(['ChatMessage', 'CommentV3', 'UserProfile', 'User', 'ResourceReview'] as const).map(
+      (entityType) => [entityType, () => autoMuteScamAccount] as const
+    ),
     ['Post', () => applyRatingFloor] as const,
     ['Model', () => applyModelPoiMinor] as const,
   ];
@@ -273,7 +288,7 @@ describe('csam verdicts through the registered adapters', () => {
 
   it('fails the callback when the hold write throws a falsy value', async () => {
     dbMock.dbWrite.$queryRaw.mockImplementationOnce(() => Promise.reject(undefined));
-    await expect(getModerationAdapter('Comment')!.applyTextScan!(args() as never)).rejects.toBe(
+    await expect(getModerationAdapter('CommentV3')!.applyTextScan!(args() as never)).rejects.toBe(
       undefined
     );
   });
@@ -283,7 +298,7 @@ describe('csam verdicts through the registered adapters', () => {
       Object.assign(new Error('Invalid value: neutral text'), { code: 'P2009' })
     );
     await expect(
-      getModerationAdapter('Comment')!.applyTextScan!(args() as never)
+      getModerationAdapter('CommentV3')!.applyTextScan!(args() as never)
     ).rejects.toThrow();
     expect(JSON.stringify(vi.mocked(loggingMock.logToAxiom).mock.calls)).not.toContain(
       'neutral text'
@@ -585,7 +600,7 @@ describe('applyCsamHold', () => {
   it.each([undefined, 0, -1])('stores no author for user id %s', async (userId) => {
     const base = args();
     await applyCsamHold({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       ...base,
       subject: { ...base.subject, userId },
     });
@@ -610,7 +625,7 @@ describe('applyCsamHold', () => {
   it('strips NUL from the text, the reason and every string in meta', async () => {
     const base = args();
     await applyCsamHold({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       ...base,
       outcome: { ...csamOnly, csam: { detected: true, reason: 'te\u0000st' } },
       subject: {
@@ -628,7 +643,7 @@ describe('applyCsamHold', () => {
   it('replaces lone surrogates in the text, the reason and nested meta strings', async () => {
     const base = args();
     await applyCsamHold({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       ...base,
       outcome: { ...csamOnly, csam: { detected: true, reason: 'low \uDC00 high' } },
       subject: {
@@ -646,7 +661,7 @@ describe('applyCsamHold', () => {
   it('keeps a whole surrogate pair', async () => {
     const base = args();
     await applyCsamHold({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       ...base,
       subject: { ...base.subject, fields: [{ heading: 'Comment', text: 'smile \u{1F600}' }] },
     });
@@ -662,7 +677,7 @@ describe('applyCsamHold', () => {
     const text = 'a'.repeat(CSAM_HOLD_TEXT_CHARS - 1 - at) + '\u{1F600}' + 'tail';
     const subject = { ...base.subject, fields: [{ heading: 'Comment', text }] };
     expect(composeUserText(subject).charCodeAt(CSAM_HOLD_TEXT_CHARS - 1)).toBe(0xd83d);
-    await applyCsamHold({ entityType: 'Comment', ...base, subject });
+    await applyCsamHold({ entityType: 'CommentV3', ...base, subject });
     const stored = (await rows())[0].text as string;
     expect(stored.length).toBeLessThanOrEqual(CSAM_HOLD_TEXT_CHARS);
     expect(UNSTORABLE.test(stored)).toBe(false);

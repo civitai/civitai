@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isSafeToRetry } from '@civitai/buzz';
 import { dbWrite } from '~/server/db/client';
+import { fileImageGone, liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   serviceDealExhaustedLegsGauge,
@@ -21,6 +22,7 @@ import {
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -127,23 +129,29 @@ type ServiceDealHoldReason =
   (typeof SERVICE_DEAL_HOLD_REASONS)[keyof typeof SERVICE_DEAL_HOLD_REASONS];
 
 /**
- * The deal's current round has at least one final, and every final in it is Ready and passed
- * scanning: a final not yet Ready blocks, as it blocks delivery (`dealReadyToDeliver`). The
- * buyer downloads the finals only once the deal completes, so completing it and paying the seller
- * both wait on this. `deal` names the deal row in the surrounding statement.
+ * The deal's current round has at least one final, and every final in it is Ready, passed scanning
+ * and none of its scanned images is gone (`fileImageGone`): a final not yet Ready blocks, as it blocks
+ * delivery (`dealReadyToDeliver`). The buyer downloads the finals only once the deal completes, so
+ * completing it and paying the seller both wait on this. `deal` names the deal row in the surrounding statement.
  */
-export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) => Prisma.sql`(
+export const dealFinalsClear = (
+  deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`,
+  options?: Parameters<typeof fileImageGone>[1]
+) => Prisma.sql`(
   EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
   )
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
       AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
-        OR f."status" <> 'Ready'::"ServiceDealFileStatus")
+        OR f."status" <> 'Ready'::"ServiceDealFileStatus" OR ${fileImageGone(
+          Prisma.sql`f`,
+          options
+        )})
   )
 )`;
 
@@ -173,6 +181,8 @@ async function holdForReview(
   await tx.$executeRaw`
     INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
     VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${reason}::text)`;
+  // A happy review shown before the hold is unshown until it resolves.
+  await syncDealReviewPublication(tx, dealId);
   return true;
 }
 
@@ -221,14 +231,16 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
   const releasable = Prisma.sql`"id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
       AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
   const unclaimed = Prisma.sql`${releasable} AND ${noReleaseLeg}`;
-  // Finals that have not all passed scanning are never paid for, whatever a moderator decided.
+  // Finals that have not all passed scanning are never paid for, whatever a moderator decided. Our
+  // own scan-copy delete still settling does not hold the deal: the claim below waits for it, and a
+  // settle that never lands holds once its window ends.
   if (
     await holdForReview(
       tx,
       dealId,
       FINAL_SCAN_FAILED,
       Prisma.sql`${unclaimed}
-      AND NOT ${dealFinalsClear(Prisma.sql`d`)}`
+      AND NOT ${dealFinalsClear(Prisma.sql`d`, { exceptSettling: true })}`
     )
   )
     return 'held';
@@ -266,7 +278,7 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
     FROM "ServiceDeal" d
     JOIN "ServiceDealTransaction" h
       ON h."dealId" = d."id" AND h."leg" = 'Hold'::"ServiceDealLeg" AND h."transactionId" IS NOT NULL
-    WHERE d."id" = ${dealId}::int
+    WHERE d."id" = ${dealId}::int AND ${dealFinalsClear(Prisma.sql`d`)}
     ON CONFLICT ("dealId", "leg") DO NOTHING`;
   return claimed > 0;
 }
@@ -334,7 +346,7 @@ export async function runDealLeg(
           dealId,
           leg,
           amount: claimed.amount,
-        }).catch(() => null);
+        });
 
       let transactionId: string;
       try {
@@ -382,6 +394,23 @@ async function markHeld(tx: Db, dealId: number) {
       VALUES (${dealId}::int, -1, 'Held'::"ServiceDealEventType")`;
   return marked?.status ?? null;
 }
+
+/**
+ * A settled deal's review is published, unless it is a happy review of a refunded deal. Outside the receipt's transaction, so a
+ * recount that fails never rolls back the record of a payout; the deals job retries a missed one.
+ */
+const syncReviewAfterSettle = (dealId: number) =>
+  dbWrite
+    .$transaction((tx) => syncDealReviewPublication(tx, dealId))
+    .catch((error) =>
+      logToAxiom({
+        name: 'creator-service-deal-review',
+        type: 'error',
+        message: 'review publication after settlement failed; the deals job will retry',
+        payload: { dealId },
+        error: (error as Error)?.message,
+      })
+    );
 
 async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released') {
   const marked = await tx.$executeRaw`
@@ -450,7 +479,7 @@ export async function holdDeal({
       message: 'hold outcome unknown; reconcile will settle it',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null);
+    });
     return 'unknown';
   }
 }
@@ -503,7 +532,7 @@ export async function refundDeal(dealId: number) {
             message: 'refund answered 409 with the hold not fully refunded',
             dealId,
             shortfall,
-          }).catch(() => null);
+          });
           throw new Error(
             `creator service escrow: deal ${dealId} is not fully refunded: ${shortfall}`
           );
@@ -518,6 +547,7 @@ export async function refundDeal(dealId: number) {
     },
     (tx) => markSettled(tx, dealId, 'Refunded')
   );
+  if (paid !== null) await syncReviewAfterSettle(dealId);
   return paid !== null;
 }
 
@@ -592,6 +622,14 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
             return updated;
           });
           cancelled += closed;
+          if (closed)
+            await notifyServiceDeal({
+              dealId: hold.dealId,
+              notice: 'cancelled',
+              to: 'parties',
+              actorId: -1,
+              key: 'payment_failed',
+            });
         }
       } else {
         // Part of the price moved. Neither marking it held nor cancelling is safe.
@@ -602,7 +640,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
           dealId: hold.dealId,
           charged,
           amount: hold.amount,
-        }).catch(() => null);
+        });
       }
     } catch (error) {
       logToAxiom({
@@ -611,7 +649,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
         message: 'hold reconcile failed',
         dealId: hold.dealId,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -653,7 +691,7 @@ export async function sweepServiceDealRefunds({ limit = 100 }: { limit?: number 
         message: 'refund could not be completed',
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -692,7 +730,7 @@ export async function releaseDeal(dealId: number) {
           message: 'claimed release paying a seller who is now banned or deleted',
           dealId,
           sellerId,
-        }).catch(() => null);
+        });
       let transactionId: string | null = null;
       try {
         ({ transactionId } = await createBuzzTransaction(
@@ -734,7 +772,10 @@ export async function releaseDeal(dealId: number) {
       settled = await markSettled(tx, dealId, 'Released');
     }
   );
-  if (settled) await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+  if (settled) {
+    await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+    await syncReviewAfterSettle(dealId);
+  }
   return paid !== null;
 }
 
@@ -766,7 +807,7 @@ export async function sweepServiceDealReleases({ limit = 100 }: { limit?: number
         message: 'release could not be completed',
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
   return { considered: due.length, released };

@@ -1,4 +1,4 @@
-import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit } from '@civitai/shared';
+import type { Prisma } from '@prisma/client';
 import {
   collectionRatingLevel,
   modelRatingLevel,
@@ -7,7 +7,11 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { ratedLevel, scanFlagLevel, withContentLevel } from '~/server/services/bounty-rated-level';
+import { ratedEntityContentNsfwLevelSql } from '~/server/services/text-scan/scan-floor';
+import { BOUNTY_SCAN_DETAILS_KEY } from '~/server/utils/bounty-details';
 import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -36,7 +40,9 @@ export const FORCED_LEVEL_MESSAGE =
 // Moderator actions that lock or unlock a model's nsfw flag. Any logged after the system marker makes
 // the lock that stands now the moderator's: an unlock means a later lock (a dispute resolution logs
 // none) is not the one the system set.
-const MODERATOR_NSFW_LOCK_ACTIVITIES = [
+const SYSTEM_USER_ID = constants.system.user.id;
+
+export const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'lockProperty:nsfw',
   'unlockProperty:nsfw',
   'setSfwOnly',
@@ -52,7 +58,35 @@ const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'revertPoiAutoHash',
 ];
 
-async function hasSystemNsfwLock(
+/** Whether a moderator ruled on the model's nsfw flag after `at`; the primary, as a fresh ruling
+ *  may not have reached the replica. Pass `db` inside a transaction so it reads on that connection. */
+export async function moderatorRuledNsfwSince(
+  modelId: number,
+  at: Date,
+  {
+    alsoRejections = false,
+    db = dbWrite,
+  }: { alsoRejections?: boolean; db?: Pick<Prisma.TransactionClient, 'modActivity'> } = {}
+) {
+  const ruling = await db.modActivity.findFirst({
+    where: {
+      entityType: 'model',
+      entityId: modelId,
+      activity: {
+        in: alsoRejections
+          ? [...MODERATOR_NSFW_LOCK_ACTIVITIES, 'rejectLockReview']
+          : MODERATOR_NSFW_LOCK_ACTIVITIES,
+      },
+      createdAt: { gt: at },
+      // The system's own approval of a dispute is not a moderator's ruling.
+      NOT: { userId: SYSTEM_USER_ID },
+    },
+    select: { id: true },
+  });
+  return !!ruling;
+}
+
+export async function hasSystemNsfwLock(
   modelId: number,
   m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown }
 ) {
@@ -60,22 +94,43 @@ async function hasSystemNsfwLock(
   const at = readSystemNsfwLockAt(m.meta);
   if (!at) return false;
   // Primary: a moderator's lock that has not reached the replica would read as the system's.
-  const moderatorLock = await dbWrite.modActivity.findFirst({
-    where: {
-      entityType: 'model',
-      entityId: modelId,
-      activity: { in: MODERATOR_NSFW_LOCK_ACTIVITIES },
-      createdAt: { gt: at },
-    },
-    select: { id: true },
-  });
-  return !moderatorLock;
+  return !(await moderatorRuledNsfwSince(modelId, at));
 }
 
-// Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.
-const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
-
 type Db = typeof dbRead | typeof dbWrite;
+
+const setByTextScan = (details: unknown) =>
+  !!details && typeof details === 'object' && BOUNTY_SCAN_DETAILS_KEY in details;
+
+// The nsfw flag pins a bounty's stored level to every NSFW bit, which names no level. When the text
+// scan set the flag, its moderation row holds the level it rated; images can still rate the bounty
+// higher.
+async function bountyRatedLevel(
+  id: number,
+  b: {
+    nsfw: boolean;
+    details: unknown;
+    nsfwLevel: number;
+    moderatorNsfwLevel: number | null;
+  },
+  db: Db
+) {
+  const pinned = ratedLevel(b.nsfwLevel);
+  if (!b.nsfw || b.moderatorNsfwLevel != null || !setByTextScan(b.details)) return pinned;
+  const em = await db.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Bounty', entityId: id } },
+    select: { nsfwLevel: true, result: true },
+  });
+  const scanned = em && scanFlagLevel(em);
+  if (scanned == null) return pinned;
+  const rows = await db.$queryRaw<{ level: number | null }[]>`
+    SELECT ${ratedEntityContentNsfwLevelSql(
+      'Bounty',
+      'e'
+    )} AS level FROM "Bounty" e WHERE e.id = ${id}
+  `;
+  return withContentLevel(scanned, rows[0]?.level ?? null);
+}
 type Loader = (id: number, db: Db) => Promise<RatingReviewSubject | null>;
 
 const overrideSelect = { moderatorNsfwLevel: true, moderatorNsfwLevelBasis: true } as const;
@@ -151,12 +206,20 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
   Bounty: async (id, db) => {
     const b = await db.bounty.findUnique({
       where: { id },
-      select: { userId: true, nsfwLevel: true, updatedAt: true, name: true, ...overrideSelect },
+      select: {
+        userId: true,
+        nsfw: true,
+        details: true,
+        nsfwLevel: true,
+        updatedAt: true,
+        name: true,
+        ...overrideSelect,
+      },
     });
     return (
       b && {
         ownerId: b.userId,
-        currentLevel: ratedLevel(b.nsfwLevel),
+        currentLevel: await bountyRatedLevel(id, b, db),
         updatedAt: b.updatedAt,
         title: b.name,
         parentId: null,

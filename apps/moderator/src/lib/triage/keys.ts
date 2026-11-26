@@ -41,6 +41,14 @@ export const triageKeyAction = (e: TriageKeyEvent): TriageKeyAction | null => {
   return null;
 };
 
+/** The decision a plain digit named when `triageKeyAction` ignored it because that decision is
+ *  disabled for the row, so the page can say why nothing happened; null for any other key. */
+export const refusedDecisionKey = (e: TriageKeyEvent): number | null => {
+  if (!isPlainKey(e) || e.picking || !/^[1-9]$/.test(e.key)) return null;
+  const index = Number(e.key) - 1;
+  return index < e.decisionEnabled.length && !e.decisionEnabled[index] ? index : null;
+};
+
 export type BulkReviewKeyAction = 'next' | 'previous' | 'toggle';
 
 /**
@@ -55,6 +63,17 @@ export const bulkReviewKeyAction = (
   if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowDown') return 'next';
   if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowUp') return 'previous';
   if ((e.key === 'Enter' || e.key === ' ') && !e.onControl) return 'toggle';
+  return null;
+};
+
+/** `bulkReviewKeyAction`'s J/K, with Enter opening the row under the cursor instead of ticking it. */
+export const listKeyAction = (
+  e: PlainKeyEvent & { onControl: boolean }
+): 'next' | 'previous' | 'open' | null => {
+  if (!isPlainKey(e)) return null;
+  if (e.key === 'k' || e.key === 'K') return 'next';
+  if (e.key === 'j' || e.key === 'J') return 'previous';
+  if (e.key === 'Enter' && !e.onControl) return 'open';
   return null;
 };
 

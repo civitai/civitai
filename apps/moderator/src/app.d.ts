@@ -23,7 +23,19 @@ declare global {
        * the degenerate case fails closed.
        */
       grants: PermissionSet;
-      tokenClient?: 'webhook';
+      /** `cases`: the scoped takedown-intake credential, accepted only by the case actions. */
+      tokenClient?: 'webhook' | 'cases';
+      /** Set to 'sheet' by `hooks.server.ts` only when the held-media sheet cookie authenticated this
+       *  request in place of the web session. */
+      heldCredential?: 'sheet';
+      /** Set by `hooks.server.ts` only on a review batch route: the sheet session's tier and the
+       *  batch hashes it may open. */
+      reviewSheet?: {
+        tier: import('@civitai/shared/review-batch').ReviewTier;
+        batches: string[];
+        /** General sessions only: add a batch the route has already authorized. */
+        join?: (hash: string) => Promise<boolean>;
+      };
     }
     // interface PageData {}
     // interface PageState {}

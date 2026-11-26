@@ -24,6 +24,13 @@ import { GENERIC_CLIENT_ERROR_BY_STATUS } from '~/server/utils/rest-error-envelo
 // ── Ledger 1: no hand-rolled error envelope anywhere under src/pages/api ──────
 
 const API_ROOT = path.resolve(__dirname, '../../../pages/api');
+// The routes the /api/<key>/[...path] catch-alls serve, keyed as `<key>/<route>.ts`.
+const SERVED_API_ROOT = path.resolve(__dirname, '../../api-routes');
+const apiRel = (f: string) =>
+  path
+    .relative(f.startsWith(SERVED_API_ROOT) ? SERVED_API_ROOT : API_ROOT, f)
+    .split(path.sep)
+    .join('/');
 
 /**
  * Drop whole-line `//` comments before matching.
@@ -345,21 +352,21 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   // ("passes Hugging Face's own refusal back as a 400"), so it cannot drift
   // silently just because this ledger stops looking at it.
   'admin/huggingface-import.ts',
-  'admin/temp/backfill-b2-file-locations.ts',
-  'admin/temp/backfill-metric-agg.ts',
-  'admin/temp/backfill-user-downloads.ts',
   'admin/temp/clamp-publishedat-bumps.ts',
-  'admin/temp/dedupe-official-files.ts',
   'admin/temp/migrate-article-images.ts',
-  'admin/temp/remove-deprecated-base-models.ts',
   'admin/test.ts',
   'admin/update-freshdesk-customer.ts',
-  'mod/clavata-image-process.ts',
   'mod/csam-upload.ts',
+  // `{ error: FEEDBACK_CAPTURE_OWNER_REFUSAL }`, a string constant we wrote; no caught error object.
+  'mod/delete-user-images.ts',
+  'mod/knights/shop/cosmetics.ts',
+  'mod/knights/shop/membership.ts',
   'mod/mute-user-pending-review.ts',
   'mod/overturn-user-mute.ts',
   'mod/queue-model-metric-update.ts',
   'mod/reconcile-nowpayments.ts',
+  // `{ error: FEEDBACK_CAPTURE_OWNER_REFUSAL }`, a string constant we wrote; no caught error object.
+  'mod/remove-images.ts',
   'mod/reprocess-buzz-purchases.ts',
   'mod/reprocess-order.ts',
   'mod/resource-training-v2.ts',
@@ -408,7 +415,7 @@ const FIXED_BY_THIS_CHANGE = [
 ];
 
 describe('LEDGER: no REST route serializes an error object or its text (civitai#3845/4)', () => {
-  const files = walk(API_ROOT);
+  const files = [...walk(API_ROOT), ...walk(SERVED_API_ROOT)];
 
   it('finds the API tree (positive control — an empty sweep must not read as clean)', () => {
     // 🔴 A zero from a file walk is indistinguishable from a walk wired to
@@ -418,6 +425,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
       'the src/pages/api walk returned nothing — the guard is inert'
     ).toBeGreaterThan(200);
     expect(files.some((f) => f.endsWith(path.join('v1', 'creators.ts')))).toBe(true);
+    expect(files.some((f) => f.startsWith(SERVED_API_ROOT))).toBe(true);
   });
 
   it('extracts json bodies at all (positive control on the extractor itself)', () => {
@@ -471,7 +479,7 @@ describe('LEDGER: no REST route serializes an error object or its text (civitai#
   it('the offender set is EXACTLY the recorded baseline — a new one fails here', () => {
     const offenders = files
       .filter((f) => jsonBodies(stripLineComments(readFileSync(f, 'utf8'))).some(bodyLeaks))
-      .map((f) => path.relative(API_ROOT, f).split(path.sep).join('/'))
+      .map(apiRel)
       .sort();
 
     expect(

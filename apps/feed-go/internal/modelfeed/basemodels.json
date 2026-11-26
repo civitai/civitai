@@ -1,0 +1,1042 @@
+{
+  "modelTypes": [
+    "AestheticGradient",
+    "CLIP",
+    "CLIPVision",
+    "Checkpoint",
+    "ComfyWorkflows",
+    "Controlnet",
+    "Detection",
+    "DoRA",
+    "Hypernetwork",
+    "LLM",
+    "LORA",
+    "LoCon",
+    "MotionModule",
+    "Other",
+    "Poses",
+    "TextEncoder",
+    "TextualInversion",
+    "UNet",
+    "Upscaler",
+    "VAE",
+    "VisionLanguage",
+    "Wildcards",
+    "Workflows"
+  ],
+  "generation": {
+    "ACE Audio": [
+      "Checkpoint"
+    ],
+    "Ace": [
+      "Checkpoint"
+    ],
+    "Anima": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "VAE"
+    ],
+    "Boogu": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Chroma": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "VAE"
+    ],
+    "Ernie": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Fibo 2.0": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Fibo 2.0 Turbo": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Fibo2": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux 3 Video": [
+      "Checkpoint"
+    ],
+    "Flux.1 D": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.1 Kontext": [
+      "Checkpoint"
+    ],
+    "Flux.1 Krea": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.1 S": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.2 D": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.2 Klein 4B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.2 Klein 4B-base": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.2 Klein 9B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.2 Klein 9B-base": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.3": [
+      "Checkpoint"
+    ],
+    "Flux.3 Klein": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux.3 Klein-base": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux1": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux1Kontext": [
+      "Checkpoint"
+    ],
+    "Flux2": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux2Klein_4B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux2Klein_4B_base": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux2Klein_9B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux2Klein_9B_base": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux3": [
+      "Checkpoint"
+    ],
+    "Flux3Klein": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux3Klein_base": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Flux3Video": [
+      "Checkpoint"
+    ],
+    "FluxKrea": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Gemini Omni": [
+      "Checkpoint"
+    ],
+    "GeminiOmni": [
+      "Checkpoint"
+    ],
+    "Grok": [
+      "Checkpoint"
+    ],
+    "HappyHorse": [
+      "Checkpoint"
+    ],
+    "HiDream": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "HiDream-O1": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Hunyuan Video": [
+      "LORA"
+    ],
+    "HyV1": [
+      "LORA"
+    ],
+    "Ideogram": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Ideogram 4.5": [
+      "Checkpoint"
+    ],
+    "Ideogram 4.6": [
+      "Checkpoint"
+    ],
+    "Illustrious": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "Kling": [
+      "Checkpoint"
+    ],
+    "Krea 2": [
+      "Checkpoint",
+      "LORA",
+      "VAE"
+    ],
+    "Krea 2 Turbo": [
+      "Checkpoint",
+      "LORA",
+      "VAE"
+    ],
+    "Krea 3": [
+      "Checkpoint"
+    ],
+    "Krea2": [
+      "Checkpoint",
+      "LORA",
+      "VAE"
+    ],
+    "Krea3": [
+      "Checkpoint"
+    ],
+    "LTXV": [
+      "Checkpoint"
+    ],
+    "LTXV 2.3": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "LTXV 2.5": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "LTXV2": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "LTXV23": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "LTXV25": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Lens": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "MAI": [
+      "Checkpoint"
+    ],
+    "MOSS Image": [
+      "Checkpoint",
+      "LORA",
+      "LoCon"
+    ],
+    "MageFlow": [
+      "Checkpoint"
+    ],
+    "Ming": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Ming Image Design 0.1": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "MiniMax H3": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "MiniMax H3 Image": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "MiniMax Music 3": [
+      "Checkpoint"
+    ],
+    "MiniMaxH3": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "MiniMaxH3Image": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "MiniMaxMusic3": [
+      "Checkpoint"
+    ],
+    "MossImage": [
+      "Checkpoint",
+      "LORA",
+      "LoCon"
+    ],
+    "Muse Image": [
+      "Checkpoint"
+    ],
+    "MuseImage": [
+      "Checkpoint"
+    ],
+    "Nano Banana": [
+      "Checkpoint"
+    ],
+    "NanoBanana": [
+      "Checkpoint"
+    ],
+    "NoobAI": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "OpenAI": [
+      "Checkpoint"
+    ],
+    "Pony": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "Pony V7": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "PonyV7": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Qwen": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Qwen 2": [
+      "Checkpoint"
+    ],
+    "Qwen 2.1": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Qwen 3": [
+      "Checkpoint"
+    ],
+    "Qwen2": [
+      "Checkpoint"
+    ],
+    "Qwen21": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Qwen3": [
+      "Checkpoint"
+    ],
+    "Reve": [
+      "Checkpoint"
+    ],
+    "SD 1.4": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SD 1.5": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SD 1.5 Hyper": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SD 1.5 LCM": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SD1": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SDXL": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SDXL 0.9": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SDXL 1.0": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SDXL 1.0 LCM": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SDXL Hyper": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "SDXL Lightning": [
+      "Checkpoint",
+      "DoRA",
+      "LORA",
+      "LoCon",
+      "TextualInversion",
+      "VAE"
+    ],
+    "Seedance": [
+      "Checkpoint"
+    ],
+    "Seedream": [
+      "Checkpoint"
+    ],
+    "Sonilo": [
+      "Checkpoint"
+    ],
+    "Upscaler": [
+      "Upscaler"
+    ],
+    "Veo 3": [
+      "Checkpoint"
+    ],
+    "Veo3": [
+      "Checkpoint"
+    ],
+    "Vidu": [
+      "Checkpoint"
+    ],
+    "Vidu Q1": [
+      "Checkpoint"
+    ],
+    "Wan Image 2.7": [
+      "Checkpoint"
+    ],
+    "Wan Video 14B i2v 480p": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Wan Video 14B i2v 720p": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Wan Video 14B t2v": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Wan Video 2.2 I2V-A14B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Wan Video 2.2 T2V-A14B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Wan Video 2.2 TI2V-5B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "Wan Video 2.5 I2V": [
+      "Checkpoint"
+    ],
+    "Wan Video 2.5 T2V": [
+      "Checkpoint"
+    ],
+    "Wan Video 2.7": [
+      "Checkpoint"
+    ],
+    "Wan Video 3.0": [
+      "Checkpoint"
+    ],
+    "WanImage27": [
+      "Checkpoint"
+    ],
+    "WanVideo-22-I2V-A14B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "WanVideo-22-T2V-A14B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "WanVideo-22-TI2V-5B": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "WanVideo-25-I2V": [
+      "Checkpoint"
+    ],
+    "WanVideo-25-T2V": [
+      "Checkpoint"
+    ],
+    "WanVideo14B_I2V_480p": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "WanVideo14B_I2V_720p": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "WanVideo14B_T2V": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "WanVideo27": [
+      "Checkpoint"
+    ],
+    "WanVideo30": [
+      "Checkpoint"
+    ],
+    "YuE2": [
+      "Checkpoint"
+    ],
+    "ZImageBase": [
+      "Checkpoint",
+      "LORA"
+    ],
+    "ZImageTurbo": [
+      "Checkpoint",
+      "LORA"
+    ]
+  },
+  "gateEcosystems": {
+    "ACE Audio": [
+      "Ace"
+    ],
+    "Anima": [
+      "Anima"
+    ],
+    "AuraFlow": [
+      "AuraFlow"
+    ],
+    "Boogu": [
+      "Boogu"
+    ],
+    "Chroma": [
+      "Chroma"
+    ],
+    "CogVideoX": [
+      "CogVideoX"
+    ],
+    "Ernie": [
+      "Ernie"
+    ],
+    "Fibo 2.0": [
+      "Fibo2"
+    ],
+    "Fibo 2.0 Turbo": [
+      "Fibo2"
+    ],
+    "Flux 3 Video": [
+      "Flux3Video"
+    ],
+    "Flux.1 D": [
+      "Flux1"
+    ],
+    "Flux.1 Kontext": [
+      "Flux1Kontext"
+    ],
+    "Flux.1 Krea": [
+      "FluxKrea"
+    ],
+    "Flux.1 S": [
+      "Flux1"
+    ],
+    "Flux.2 D": [
+      "Flux2"
+    ],
+    "Flux.2 Klein 4B": [
+      "Flux2Klein_4B"
+    ],
+    "Flux.2 Klein 4B-base": [
+      "Flux2Klein_4B_base"
+    ],
+    "Flux.2 Klein 9B": [
+      "Flux2Klein_9B"
+    ],
+    "Flux.2 Klein 9B-base": [
+      "Flux2Klein_9B_base"
+    ],
+    "Flux.3": [
+      "Flux3"
+    ],
+    "Flux.3 Klein": [
+      "Flux3Klein"
+    ],
+    "Flux.3 Klein-base": [
+      "Flux3Klein_base"
+    ],
+    "Gemini Omni": [
+      "GeminiOmni"
+    ],
+    "Grok": [
+      "Grok"
+    ],
+    "HappyHorse": [
+      "HappyHorse"
+    ],
+    "HiDream": [
+      "HiDream"
+    ],
+    "HiDream-O1": [
+      "HiDream-O1"
+    ],
+    "Hunyuan 1": [
+      "HyDit1"
+    ],
+    "Hunyuan Video": [
+      "HyV1"
+    ],
+    "Hunyuan3D": [
+      "Hunyuan3D"
+    ],
+    "Ideogram 4.0": [
+      "Ideogram"
+    ],
+    "Ideogram 4.5": [
+      "Ideogram"
+    ],
+    "Ideogram 4.6": [
+      "Ideogram"
+    ],
+    "Illustrious": [
+      "Illustrious"
+    ],
+    "Imagen4": [
+      "Imagen4"
+    ],
+    "Kling": [
+      "Kling"
+    ],
+    "Kolors": [
+      "Kolors"
+    ],
+    "Krea 2": [
+      "Krea2"
+    ],
+    "Krea 2 Turbo": [
+      "Krea2"
+    ],
+    "Krea 3": [
+      "Krea3"
+    ],
+    "LTXV": [
+      "LTXV"
+    ],
+    "LTXV 2.3": [
+      "LTXV23"
+    ],
+    "LTXV 2.5": [
+      "LTXV25"
+    ],
+    "LTXV2": [
+      "LTXV2"
+    ],
+    "Lens": [
+      "Lens"
+    ],
+    "Lumina": [
+      "Lumina"
+    ],
+    "MAI": [
+      "MAI"
+    ],
+    "MOSS Image": [
+      "MossImage"
+    ],
+    "MageFlow": [
+      "MageFlow"
+    ],
+    "Ming Image Design 0.1": [
+      "Ming"
+    ],
+    "Ming Image Design Layer 0.1": [
+      "MingLayer"
+    ],
+    "MiniMax H3": [
+      "MiniMaxH3"
+    ],
+    "MiniMax H3 Image": [
+      "MiniMaxH3Image"
+    ],
+    "MiniMax Music 3": [
+      "MiniMaxMusic3"
+    ],
+    "Mochi": [
+      "Mochi"
+    ],
+    "Muse Image": [
+      "MuseImage"
+    ],
+    "Nano Banana": [
+      "NanoBanana"
+    ],
+    "NoobAI": [
+      "NoobAI"
+    ],
+    "ODOR": [
+      "ODOR"
+    ],
+    "OpenAI": [
+      "OpenAI"
+    ],
+    "Other": [
+      "Other"
+    ],
+    "PixArt E": [
+      "PixArtE"
+    ],
+    "PixArt a": [
+      "PixArtA"
+    ],
+    "Pixal3D": [
+      "Pixal3D"
+    ],
+    "Playground v2": [
+      "PlaygroundV2"
+    ],
+    "PolyGen": [
+      "PolyGen"
+    ],
+    "Pony": [
+      "Pony"
+    ],
+    "Pony V7": [
+      "PonyV7"
+    ],
+    "Qwen": [
+      "Qwen"
+    ],
+    "Qwen 2": [
+      "Qwen2"
+    ],
+    "Qwen 2.1": [
+      "Qwen21"
+    ],
+    "Qwen 3": [
+      "Qwen3"
+    ],
+    "Reve": [
+      "Reve"
+    ],
+    "SD 1.4": [
+      "SD1"
+    ],
+    "SD 1.5": [
+      "SD1"
+    ],
+    "SD 1.5 Hyper": [
+      "SD1"
+    ],
+    "SD 1.5 LCM": [
+      "SD1"
+    ],
+    "SD 2.0": [
+      "SD2"
+    ],
+    "SD 2.0 768": [
+      "SD2"
+    ],
+    "SD 2.1": [
+      "SD2"
+    ],
+    "SD 2.1 768": [
+      "SD2"
+    ],
+    "SD 2.1 Unclip": [
+      "SD2"
+    ],
+    "SD 3": [
+      "SD3"
+    ],
+    "SD 3.5": [
+      "SD3"
+    ],
+    "SD 3.5 Large": [
+      "SD3"
+    ],
+    "SD 3.5 Large Turbo": [
+      "SD3"
+    ],
+    "SD 3.5 Medium": [
+      "SD3_5M"
+    ],
+    "SDXL 0.9": [
+      "SDXL"
+    ],
+    "SDXL 1.0": [
+      "SDXL"
+    ],
+    "SDXL 1.0 LCM": [
+      "SDXL"
+    ],
+    "SDXL Distilled": [
+      "SDXLDistilled"
+    ],
+    "SDXL Hyper": [
+      "SDXL"
+    ],
+    "SDXL Lightning": [
+      "SDXL"
+    ],
+    "SDXL Turbo": [
+      "SDXL"
+    ],
+    "SVD": [
+      "SVD"
+    ],
+    "SVD XT": [
+      "SVD"
+    ],
+    "Seedance": [
+      "Seedance"
+    ],
+    "Seedream": [
+      "Seedream"
+    ],
+    "Sonilo": [
+      "Sonilo"
+    ],
+    "Sora 2": [
+      "Sora2"
+    ],
+    "Stable Cascade": [
+      "SCascade"
+    ],
+    "Trellis.2": [
+      "Trellis2"
+    ],
+    "Tripo": [
+      "Tripo"
+    ],
+    "Upscaler": [
+      "Upscaler"
+    ],
+    "Veo 3": [
+      "Veo3"
+    ],
+    "Vidu Q1": [
+      "Vidu"
+    ],
+    "Wan Image 2.7": [
+      "WanImage27"
+    ],
+    "Wan Video": [
+      "WanVideo"
+    ],
+    "Wan Video 1.3B t2v": [
+      "WanVideo1_3B_T2V"
+    ],
+    "Wan Video 14B i2v 480p": [
+      "WanVideo14B_I2V_480p"
+    ],
+    "Wan Video 14B i2v 720p": [
+      "WanVideo14B_I2V_720p"
+    ],
+    "Wan Video 14B t2v": [
+      "WanVideo14B_T2V"
+    ],
+    "Wan Video 2.2 I2V-A14B": [
+      "WanVideo-22-I2V-A14B"
+    ],
+    "Wan Video 2.2 T2V-A14B": [
+      "WanVideo-22-T2V-A14B"
+    ],
+    "Wan Video 2.2 TI2V-5B": [
+      "WanVideo-22-TI2V-5B"
+    ],
+    "Wan Video 2.5 I2V": [
+      "WanVideo-25-I2V"
+    ],
+    "Wan Video 2.5 T2V": [
+      "WanVideo-25-T2V"
+    ],
+    "Wan Video 2.7": [
+      "WanVideo27"
+    ],
+    "Wan Video 3.0": [
+      "WanVideo30"
+    ],
+    "YuE2": [
+      "YuE2"
+    ],
+    "ZImageBase": [
+      "ZImageBase"
+    ],
+    "ZImageTurbo": [
+      "ZImageTurbo"
+    ]
+  },
+  "modelLocked": [
+    "ACE Audio",
+    "Ernie",
+    "Flux 3 Video",
+    "Flux.1 Kontext",
+    "Flux.2 D",
+    "Flux.2 Klein 4B",
+    "Flux.2 Klein 4B-base",
+    "Flux.2 Klein 9B",
+    "Flux.2 Klein 9B-base",
+    "Flux.3",
+    "Flux.3 Klein",
+    "Flux.3 Klein-base",
+    "Gemini Omni",
+    "Grok",
+    "HappyHorse",
+    "HiDream",
+    "HiDream-O1",
+    "Hunyuan Video",
+    "Ideogram 4.0",
+    "Ideogram 4.5",
+    "Ideogram 4.6",
+    "Kling",
+    "Krea 3",
+    "LTXV",
+    "LTXV 2.3",
+    "LTXV 2.5",
+    "LTXV2",
+    "Lens",
+    "MAI",
+    "MageFlow",
+    "Ming Image Design 0.1",
+    "MiniMax Music 3",
+    "Mochi",
+    "Muse Image",
+    "Nano Banana",
+    "OpenAI",
+    "Pony V7",
+    "Qwen",
+    "Qwen 2",
+    "Qwen 2.1",
+    "Qwen 3",
+    "Reve",
+    "Seedance",
+    "Seedream",
+    "Sonilo",
+    "Veo 3",
+    "Vidu Q1",
+    "Wan Image 2.7",
+    "Wan Video",
+    "Wan Video 1.3B t2v",
+    "Wan Video 14B i2v 480p",
+    "Wan Video 14B i2v 720p",
+    "Wan Video 14B t2v",
+    "Wan Video 2.2 I2V-A14B",
+    "Wan Video 2.2 T2V-A14B",
+    "Wan Video 2.2 TI2V-5B",
+    "Wan Video 2.5 I2V",
+    "Wan Video 2.5 T2V",
+    "Wan Video 2.7",
+    "Wan Video 3.0",
+    "YuE2"
+  ],
+  "generationDisabled": [
+    "Hunyuan3D",
+    "Ideogram 4.0",
+    "SD 3",
+    "SD 3.5",
+    "SD 3.5 Large",
+    "SD 3.5 Large Turbo",
+    "SD 3.5 Medium",
+    "SDXL Turbo",
+    "SVD",
+    "SVD XT"
+  ],
+  "matureRestrictedModels": [
+    "fibo 2.0",
+    "fibo 2.0 turbo",
+    "ideogram 4.0",
+    "ideogram 4.5",
+    "ideogram 4.6",
+    "sd 3",
+    "sd 3.5",
+    "sd 3.5 large",
+    "sd 3.5 large turbo",
+    "sd 3.5 medium",
+    "sdxl turbo",
+    "stable cascade",
+    "svd",
+    "svd xt"
+  ],
+  "levels": {
+    "minorContent": 3,
+    "sfw": 3,
+    "nsfw": 60,
+    "public": 1,
+    "all": 31
+  },
+  "versionFlags": {
+    "generationDisabled": 2,
+    "partnerService": 32,
+    "partnerTrains": 64
+  }
+}

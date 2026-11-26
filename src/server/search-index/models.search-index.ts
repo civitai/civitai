@@ -1,17 +1,24 @@
-import { isGeneratorReady } from '~/shared/generation/generator-readiness';
+import type { getShowcaseHeldLevels } from '~/server/services/model.service';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
+import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
-import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
   SearchIndexContext,
@@ -30,7 +37,6 @@ import { modelsFilterableAttributes } from '~/server/search-index/filterable-att
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
-import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
@@ -44,7 +50,6 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
-import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -54,7 +59,9 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
+import { withoutUserImage } from '~/server/search-index/search-index-user';
 import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -109,7 +116,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   // live in ./displayed-attributes.ts so that this writer and the admin apply route cannot drift.
   // 🔴 This runs ONLY from `reset()`, against `<index>_NEW`, and that job is `UNRUNNABLE_JOB_CRON`,
   // so editing the list does NOT change what a live index returns. To narrow a LIVE index use
-  // `src/pages/api/admin/temp/apply-models-index-displayed-attributes.ts`.
+  // `src/server/api-routes/admin/temp/apply-models-index-displayed-attributes.ts`.
   // 🔴 The module export is passed straight through — no local copy. A local one could be mutated
   // between its declaration and this call, which re-opened the leak once and passed every test.
   // ⚠️ That alone is NOT what makes this safe, and an earlier version of this comment claimed it
@@ -180,27 +187,168 @@ type PullDataResult = {
   images: ImagesForModelVersions[];
 };
 
-type VersionMetricRow = {
-  generationCount: number;
-  downloadCount: number;
-  thumbsUpCount: number;
-  thumbsDownCount: number;
-};
+/**
+ * A cover can be someone else's image the creator featured in the model's showcase. The document's
+ * image list holds only the creator's images, so such a cover's row is added for the hoist below to
+ * find. Only the cover: the rest of the community showcase stays out of search.
+ */
+// The models each appended community cover was checked for. Kept beside the image so the document
+// itself carries no extra field.
+const featuredForModels = new WeakMap<object, Set<number>>();
 
-// Nested per-version metrics ship in `displayedAttributes`, so they must obey the
-// same model-level hide flags as the card — otherwise the raw hidden number leaks.
-// The search-index version selector carries no earned/tipped (buzz) field, so only
-// downloads + generations are maskable here.
-function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
-  metrics: T,
-  hidden: HiddenModelMetrics
+export async function appendCommunityCoverImages(
+  models: {
+    id: number;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+    minor?: boolean;
+    sfwOnly?: boolean;
+  }[],
+  images: ImagesForModelVersions[],
+  lookups: {
+    communityCovers?: typeof getShowcaseCommunityCovers;
+    heldLevels?: typeof getShowcaseHeldLevels;
+  } = {}
 ) {
-  if (!metrics) return metrics;
-  return {
-    ...metrics,
-    downloadCount: hidden.downloads ? null : metrics.downloadCount,
-    generationCount: hidden.generations ? null : metrics.generationCount,
-  };
+  const present = new Set(images.map((image) => image.id));
+  const missing = models.flatMap((model) =>
+    (
+      [
+        ['red', model.coverImageId],
+        ['com', model.sfwCoverImageId],
+      ] as const
+    )
+      .filter((cover): cover is ['red' | 'com', number] => !!cover[1] && !present.has(cover[1]))
+      .map(([site, imageId]) => ({ modelId: model.id, imageId, site }))
+  );
+  if (!missing.length) return;
+  const { getShowcaseHeldLevels, withinHeldLevel } = await import(
+    '~/server/services/model.service'
+  );
+  const {
+    communityCovers = getShowcaseCommunityCovers,
+    heldLevels: getHeldLevels = getShowcaseHeldLevels,
+  } = lookups;
+  const [community, heldLevels] = await Promise.all([
+    communityCovers(missing),
+    getHeldLevels(
+      models
+        .filter((model) => missing.some((cover) => cover.modelId === model.id))
+        .map((model) => ({ modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }))
+    ),
+  ]);
+  // Like every image in the document, a featured cover listed on a report is left out.
+  const listed = await getReportListedHiddenImageIds(
+    missing.flatMap((cover) => isShowcaseCoverImage(community, cover)?.id ?? []),
+    SIGNED_OUT_REPORT_LISTED
+  );
+  for (const cover of missing) {
+    const image = isShowcaseCoverImage(community, cover);
+    // The document is shared by every searcher: a held model's cover stays within its level.
+    if (!image || listed.has(image.id)) continue;
+    if (!withinHeldLevel([image], heldLevels.get(cover.modelId)).length) continue;
+    const appended = images.find((row) => row.id === image.id && featuredForModels.has(row));
+    if (appended) featuredForModels.get(appended)?.add(cover.modelId);
+    else if (!present.has(image.id)) {
+      images.push(image);
+      present.add(image.id);
+      featuredForModels.set(image, new Set([cover.modelId]));
+    }
+  }
+}
+
+/** A taken-down model's document names none of its images: its cover ids are cleared. */
+export const withheldCoverIds = (model: { mode?: string | null }) =>
+  isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
+
+/**
+ * The images a model's search document carries: the newest version of each distinct base model
+ * keeps its images, so base-model-filtered cards can show a matching version's cover. The latest
+ * version goes first, so images[0] stays the primary cover. A taken-down model is still listed,
+ * without its images.
+ */
+export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
+  model: {
+    id?: number;
+    mode?: string | null;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+  },
+  modelVersions: { id: number; baseModel: string }[],
+  images: TImage[]
+) {
+  if (isModelWithheld(model)) return [];
+  const coveredBaseModels = new Set<string>();
+  const coveredVersionIds: number[] = [];
+  for (const version of modelVersions) {
+    if (coveredBaseModels.has(version.baseModel)) continue;
+    coveredBaseModels.add(version.baseModel);
+    coveredVersionIds.push(version.id);
+  }
+
+  // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
+  // lands on theirs, while a .red viewer keeps the creator's pick.
+  return [model.sfwCoverImageId, model.coverImageId].reduce(
+    (list, coverId) =>
+      hoistCoverImage(
+        list,
+        list.find((image) => image.id === coverId) ??
+          // A featured community cover can sit on any of the model's versions, and counts only for
+          // the models it was checked for.
+          images.find(
+            (image) =>
+              image.id === coverId &&
+              model.id !== undefined &&
+              !!featuredForModels.get(image)?.has(model.id)
+          )
+      ),
+    coveredVersionIds.flatMap((versionId) =>
+      images.filter(
+        (image) =>
+          image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+      )
+    )
+  );
+}
+
+/** Each version's images less the listed ones. */
+export function withoutListedImages<E extends { images: { id: number }[] }>(
+  byVersion: Record<number, E>,
+  listed: Set<number>
+): Record<number, E> {
+  if (!listed.size) return byVersion;
+  return Object.fromEntries(
+    Object.entries(byVersion).map(([versionId, entry]) => [
+      versionId,
+      { ...entry, images: entry.images.filter((image) => !listed.has(image.id)) },
+    ])
+  ) as Record<number, E>;
+}
+
+/**
+ * The document is shared by every searcher: a held model's showcase at its gallery level, without
+ * the images listed on a CSAM report.
+ */
+export async function holdSearchShowcase<E extends { images: { id: number; nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: { id: number; minor: boolean; sfwOnly: boolean; modelVersions: { id: number }[] }[]
+) {
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  const held = await holdShowcaseImages(
+    byVersion,
+    new Map(
+      models.flatMap((m) =>
+        m.modelVersions.map(
+          (v) => [v.id, { modelId: m.id, minor: m.minor, sfwOnly: m.sfwOnly }] as const
+        )
+      )
+    )
+  );
+  const listed = await getReportListedHiddenImageIds(
+    Object.values(held).flatMap((entry) => entry.images.map((image) => image.id)),
+    SIGNED_OUT_REPORT_LISTED
+  );
+  return withoutListedImages(held, listed);
 }
 
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
@@ -292,8 +440,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const [version] = modelVersions;
       if (!version) return null;
-
-      const { files, ...restVersion } = version;
 
       const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, model.type));
       const canGenerate = eligibility.some((x) => x.canGenerate);
@@ -396,6 +542,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        ...withheldCoverIds(model),
         // All four keys written unconditionally — see the merge argument above. `?? null`
         // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
         // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.
@@ -485,7 +632,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         hasSfwFace: hasCompleteSfwFace(model),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
-        user,
+        user: withoutUserImage(user),
         category: {
           id: category?.id,
           name: category?.name,
@@ -501,41 +648,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           minor: modelRecord.minor,
           sfwOnly: modelRecord.sfwOnly,
         },
-        version: {
-          ...restVersion,
-          metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
-          hashes: restVersion.hashes.map((hash) => hash.hash),
-          hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-          settings: restVersion.settings as RecommendedSettingsSchema,
-          baseModel: restVersion.baseModel as BaseModel,
-        },
-        versions: modelVersions.map(
-          (
-            {
-              generationCoverage: _coverage,
-              files,
-              hashes,
-              settings,
-              metrics: vMetrics,
-              usageControl,
-              ...x
-            },
-            i
-          ) => ({
-            ...x,
-            // Keeps the column's name but holds readiness — the loaded-only filter reads this.
-            generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
-            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
-            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
-            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
-            metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
-            hashes: hashes.map((hash) => hash.hash),
-            hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            ...eligibility[i],
-            settings: settings as RecommendedSettingsSchema,
-            baseModel: x.baseModel as BaseModel,
-          })
-        ),
+        version: toIndexedVersion(version, hidden),
+        versions: toIndexedVersions(modelVersions, { hidden, paidAccessTerms, eligibility }),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],
@@ -597,32 +711,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         return null;
       }
 
-      // Keep images for the newest version of each distinct base model — not just the
-      // latest version — so base-model-filtered cards can show a matching version's
-      // cover. The latest version goes first, so images[0] stays the primary cover.
-      const coveredBaseModels = new Set<string>();
-      const coveredVersionIds: number[] = [];
-      for (const version of modelVersions) {
-        if (coveredBaseModels.has(version.baseModel)) continue;
-        coveredBaseModels.add(version.baseModel);
-        coveredVersionIds.push(version.id);
-      }
-
-      // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
-      // lands on theirs, while a .red viewer keeps the creator's pick.
-      const modelImages = [model.sfwCoverImageId, model.coverImageId].reduce(
-        (list, coverId) =>
-          hoistCoverImage(
-            list,
-            list.find((image) => image.id === coverId)
-          ),
-        coveredVersionIds.flatMap((versionId) =>
-          images.filter(
-            (image) =>
-              image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
-          )
-        )
-      );
+      const modelImages = pickModelIndexImages(model, modelVersions, images);
 
       return {
         id: model.id,
@@ -662,8 +751,12 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const imagesCache = await holdSearchShowcase(
+    await imagesForModelVersionsCache.fetch(modelVersionIds),
+    models
+  );
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+  await appendCommunityCoverImages(models, images);
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
     models,
@@ -851,7 +944,14 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        // bypassLocal reaches the cache's appendFn, which reads each image's tag ids past this
+        // process's L1 (see imagesForModelVersionsCache): the document keeps them until its next
+        // reindex. Only this index builder bypasses; getModelSearchIndexRecords is a request path
+        // (the resource picker) that stores nothing, so it stays on the L1.
+        const imagesCache = await holdSearchShowcase(
+          await imagesForModelVersionsCache.fetch(versionBatch, { bypassLocal: true }),
+          batch
+        );
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 
@@ -860,6 +960,7 @@ export const pullModelsData = async (
     }
   }
   await limitConcurrency(tasks, 2);
+  await appendCommunityCoverImages(models, results.images);
 
   logger(`PullData :: Finished pulling data for batch`, batchLogKey);
 

@@ -8,13 +8,20 @@ import {
   useEventTeamsLivePoints,
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
+import { ComebackCupSection } from '~/components/Events/ScoredEvent/ComebackCupSection';
+import { FlagRaceEventSection } from '~/components/Events/ScoredEvent/FlagRaceEventSection';
 import { HatTurfEventSection } from '~/components/Events/ScoredEvent/HatTurfEventSection';
 import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
 import { useMyTeamHatUrl } from '~/components/Events/ScoredEvent/useMyTeamHatUrl';
-import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
+import {
+  TeamStandings,
+  TopHats,
+  TopTurfPlayers,
+} from '~/components/Events/ScoredEvent/TeamStandings';
 import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
+import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
 import { ShowEventHomeBlock } from '~/components/HomeBlocks/ShowEventHomeBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
@@ -107,11 +114,11 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
             </Button>
           </div>
         )}
-        <div className="mt-4 empty:hidden">
-          <HatTurfEventSection event={event} team={team} />
-        </div>
       </div>
     ),
+    turf: <HatTurfEventSection event={event} team={team} teams={data.teams} />,
+    flagRace: <FlagRaceEventSection event={event} myTeam={team} teamHats={standings?.teamHats} />,
+    comeback: <ComebackCupSection event={event} myTeam={team} teamHats={standings?.teamHats} />,
     hats: joined && hats.length > 0 && (
       <div ref={hatsView.ref}>
         <MyHatsLivePoints
@@ -150,6 +157,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         <TopHats standings={standings} />
       </div>
     ),
+    turfPlayers: standings?.turfLive && <TopTurfPlayers standings={standings} />,
     rules: <EventRules data={data} />,
   };
 
@@ -174,8 +182,11 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           }
           rosterSwitch={data.joinable ? <RosterOptIn event={event} compact /> : undefined}
         />
-        <div className="mt-2 flex justify-end empty:hidden">
-          <ShowEventHomeBlock event={event} title={data.title} />
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-3 empty:hidden">
+          {joined && !ended && <EventPointPopsSetting size="sm" />}
+          <div className="ml-auto">
+            <ShowEventHomeBlock event={event} title={data.title} />
+          </div>
         </div>
       </div>
       {scoredSectionOrder({ joined, ended }).map((key) => (

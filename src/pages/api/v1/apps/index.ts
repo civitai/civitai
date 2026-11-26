@@ -1,10 +1,13 @@
 import * as z from 'zod';
 import {
   getAppListingsListQuery,
-  withoutViewerScopedFields,
+  withoutUndocumentedRestFields,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
-import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
+import {
+  listAvailableListings,
+  type ListAvailableListingsOpts,
+} from '~/server/services/blocks/app-listing.service';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -125,7 +128,7 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
         .json({ items: [], metadata: { nextCursor: undefined, nextPage: undefined } });
     }
 
-    const { items, nextCursor } = await listAvailableListings(parsed.data, {
+    const listOpts = {
       redCapable: isRedCapableHost(req.headers.host),
       scope,
       // 🔴 THE AUDIENCE FLOOR IS NOT LIFTED THE WAY THE SCOPE IS, AND PASSING IT
@@ -146,10 +149,25 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
         features: getFeatureFlagsLazy({ user, req }),
         user,
       }),
-    });
+    } satisfies ListAvailableListingsOpts;
+    // Behind `app-listings-read-model`. At `serve`, the page is read from the listings read model
+    // when it can answer this viewer, else from the database. At `shadow`, the page the database
+    // served is asked of the read model, with the same options, off the response path (never
+    // awaited, never throws into the request). A failure to load the module leaves the page on the
+    // database.
+    const readModel = await import(
+      '~/server/services/blocks/app-listings-read-model-shadow.service'
+    ).catch(() => null);
+    const dbRead = () => listAvailableListings(parsed.data, listOpts);
+    // Resolved once, so serving and shadowing cannot see two different answers.
+    const mode = readModel?.listingReadModelMode('rest_list');
+    const { items, nextCursor } = readModel
+      ? await readModel.serveListingPage('rest_list', parsed.data, listOpts, dbRead, mode)
+      : await dbRead();
+    readModel?.shadowListingPage('rest_list', parsed.data, listOpts, { items, nextCursor }, mode);
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({
-      items: items.map(withoutViewerScopedFields),
+      items: items.map(withoutUndocumentedRestFields),
       metadata: { nextCursor, nextPage },
     });
   } catch (e) {

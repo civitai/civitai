@@ -15,3 +15,11 @@ export const emptyMyAppStorageSchema = z.object({
   /** Also delete the visible shared documents the user authored. Off unless asked for. */
   includeShared: z.boolean().default(false),
 });
+
+/** One page of the user's record export (`appStorage.exportMine`). */
+export const exportMyAppRecordsSchema = z.object({
+  /** The previous page's `nextCursor`; absent for the first page. */
+  cursor: z.string().max(1024).nullish(),
+  /** Records per page (`APP_RECORD_EXPORT_PAGE_MAX`). */
+  limit: z.number().int().min(1).max(100).default(100),
+});

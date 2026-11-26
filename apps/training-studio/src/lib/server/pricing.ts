@@ -1,6 +1,6 @@
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import type { FromPrices } from '$lib/data/trainingModels';
-import { computeFromPrices } from '$lib/pricing-core';
+import { computeFromPrices, fromPriceQuotes } from '$lib/pricing-core';
 import { getSysRedis } from './redis';
 import { orchestratorClient } from './orchestrator';
 
@@ -11,7 +11,14 @@ const CACHE_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_FROM_PRICES;
 const FRESH_SECONDS = 6 * 60 * 60;
 const HARD_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-type CacheEntry = { prices: FromPrices; at: number };
+/** `catalog` is the sweep's key list when it was written: an entry from an older catalog lacks the keys
+ *  this one reads, so it is refreshed at once instead of serving "—" until it ages out. */
+type CacheEntry = { prices: FromPrices; at: number; catalog?: string };
+
+const catalogStamp = () =>
+  fromPriceQuotes()
+    .map((q) => q.key)
+    .join(',');
 
 // Per-pod de-dupe: concurrent cold-cache loads (and concurrent stale-triggered refreshes) share one
 // in-flight sweep instead of each firing ~20 whatIfs.
@@ -33,7 +40,8 @@ export async function getFromPrices(token: string): Promise<FromPrices> {
 
   if (entry?.prices) {
     // Aged past the freshness window: kick a deduped background refresh (void — this load returns stale).
-    if (Date.now() - entry.at > FRESH_SECONDS * 1000) void refresh(token).catch(() => {});
+    if (Date.now() - entry.at > FRESH_SECONDS * 1000 || entry.catalog !== catalogStamp())
+      void refresh(token).catch(() => {});
     return entry.prices;
   }
 
@@ -54,7 +62,11 @@ async function computeAndCache(token: string): Promise<FromPrices> {
 
   if (Object.keys(prices).length === 0) return prices; // nothing priced (e.g. bad token) — keep any stale value, don't overwrite with empty
   try {
-    await getSysRedis().packed.set(CACHE_KEY, { prices, at: Date.now() }, { EX: HARD_TTL_SECONDS });
+    await getSysRedis().packed.set(
+      CACHE_KEY,
+      { prices, at: Date.now(), catalog: catalogStamp() },
+      { EX: HARD_TTL_SECONDS }
+    );
   } catch {
     // best-effort; a later load re-refreshes
   }

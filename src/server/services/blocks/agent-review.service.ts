@@ -1,18 +1,41 @@
+import type { AppReviewAgentReport } from '@prisma/client';
+// Type-only: the client itself is imported lazily inside each function, as before.
+import type { dbRead as dbReadClient } from '~/server/db/client';
+import type { ConnectCivitaiChecks } from '~/shared/constants/connect-agent-review.constants';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
-import { getDp1Target, k8sFetch, unwrap } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  assertAppsNamespaceWritable,
+  getDp1Target,
+  k8sFetch,
+  unwrap,
+} from '~/server/services/blocks/apps-pipeline.service';
 import {
   AGENT_REVIEW_SECTIONS,
   isAgentSectionFailureMarker,
   type AgentReviewSection,
 } from '~/shared/constants/agent-review-section.constants';
+import {
+  agentReviewLaneFor,
+  type AgentReviewLane,
+} from '~/shared/constants/connect-agent-review.constants';
+import {
+  AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M,
+  fromRunnerModelId,
+  toRunnerModelId,
+  type AgentReviewModelOption,
+} from '~/shared/constants/agent-review-model.constants';
+import type { AgentReviewModelRefusal } from '~/server/services/blocks/agent-review-models.service';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
  *
  * A moderator reviewing a PENDING publish request can dispatch an EPHEMERAL,
- * sandboxed review agent. This service is the civitai side of that:
+ * sandboxed review agent. Two lanes share this one dispatcher: on-site
+ * (`AppBlockPublishRequest`, the hosted bundle) and OAuth-connect
+ * (`AppListingPublishRequest`, see `connect-agent-review.service`). This service is
+ * the civitai side of that:
  *   - `startAgentReview` gathers the reviewed bundle (presigned for in-cluster
  *     pull), the prior-version report, mints a per-review callback bearer, writes
  *     a `running` report row, and provisions a k8s apply Job that renders the
@@ -23,9 +46,9 @@ import {
  *     selector (best-effort, idempotent, never throws) — called from the shared
  *     `teardownReviewForRequest` decision hook.
  *
- * DARK: `startAgentReview` is only reachable via a tRPC procedure gated on the
- * `app-blocks-agentic-review` Flipt flag, which does not exist yet → the whole
- * feature is inert on merge.
+ * DARK: `startAgentReview` is only reachable via a tRPC procedure gated per lane:
+ * `app-blocks-agentic-review` for on-site, `app-listings-agentic-review` for connect
+ * (`isAgentReviewLaneEnabled`). Either flag absent → that lane is inert.
  *
  * Everything is a thin REST wrapper over the in-pod ServiceAccount k8s API (no
  * kubernetes-client dependency), reusing `k8sFetch`/`getDp1Target` from the
@@ -63,9 +86,9 @@ export function agentReviewName(publishRequestId: string): string {
 
 export type StartAgentReviewArgs = {
   publishRequestId: string;
-  /** Calling moderator's id — recorded for audit; the agent produces mod
-   *  decision-support, so the trigger is always moderator-bound. */
-  modUserId: number;
+  /** Calling moderator's id, or `null` for the automatic start when a review preview goes live
+   *  (review-autodeploy.service, under the platform's daily agent-review budget). */
+  modUserId: number | null;
   /**
    * Re-run only these analyses. Omitted (or all three) ⇒ a full run.
    *
@@ -73,6 +96,17 @@ export type StartAgentReviewArgs = {
    * `startAgentReviewSchema` for what it does not yet buy.
    */
   sections?: readonly AgentReviewSection[];
+  /**
+   * Run on this OpenRouter model instead of the review agent's default (a second opinion, or a
+   * way round a default model that stopped working). Omitted on a full run ⇒ the default, and
+   * the Job sets no model values.
+   *
+   * 🔴 ON A TARGETED RE-RUN IT MUST BE THE LATEST RUN'S OWN MODEL. A targeted re-run carries the
+   * other analyses forward from the latest report, and a report row names one model, so the
+   * re-run analysis has to come from the model that wrote the carried ones. The service refuses
+   * any other model (including none, when the latest run named one).
+   */
+  model?: string;
 };
 
 export type StartAgentReviewResult = {
@@ -81,11 +115,12 @@ export type StartAgentReviewResult = {
 };
 
 /**
- * Dispatch an ephemeral review agent for a PENDING on-site publish request.
+ * Dispatch an ephemeral review agent for a PENDING publish request of either lane.
  *
  * Steps (mirroring the review-sandbox lane's shape):
  *   a. Load the AppBlockPublishRequest (slug, bundle pointers, version, app key,
- *      forgejo commit).
+ *      forgejo commit) — or, on the connect lane, the AppListingPublishRequest and its
+ *      listing + OAuth client, staging a review ZIP built from them.
  *   b. Resolve ONE presigned MinIO object the pod pulls: the canonical bundle
  *      (`bundleKey`) if the ZIP was uploaded, else reconstruct-from-Forgejo and
  *      stage it to a per-review key, then presign THAT. Either way the pod pulls
@@ -109,12 +144,300 @@ export async function startAgentReview(
   // nothing to carry) nor stamp a pointless env var on the Job.
   const requested = args.sections ? Array.from(new Set(args.sections)) : [];
   const targeted = requested.length > 0 && requested.length < AGENT_REVIEW_SECTIONS.length;
+  // A targeted re-run is only allowed on the model of the run it carries from — checked
+  // before anything is staged or written.
+  const latest = targeted
+    ? await (await import('./app-review-report.service')).getAgentReport(publishRequestId)
+    : null;
+  if (targeted) assertSameModelAsLatest(args.model, latest?.model ?? null);
+  // Resolved (and priced) before anything is staged or written, so an unknown model costs nothing.
+  let analysisModel: AgentReviewModelOption | null = null;
+  if (args.model) {
+    const { resolveAgentReviewModel, AgentReviewModelRefusedError } = await import(
+      './agent-review-models.service'
+    );
+    try {
+      analysisModel = await resolveAgentReviewModel(args.model);
+    } catch (err) {
+      // On a targeted re-run the model was not the moderator's choice but the latest run's, and
+      // it can no longer be used (retired, unlisted, over the price ceiling, or the list is
+      // unreachable). The refusal says which, from the resolver's own reason.
+      if (targeted) {
+        throw cannotRerunOnLatestModel(
+          args.model,
+          err instanceof AgentReviewModelRefusedError ? err.refusal : undefined
+        );
+      }
+      throw err;
+    }
+  }
   const { dbRead, dbWrite } = await import('~/server/db/client');
 
+  // ONE DISPATCHER, TWO LANES. The id says which publish request this is: an on-site
+  // AppBlockPublishRequest (a hosted bundle) or an OAuth-connect AppListingPublishRequest
+  // (scopes, listing claims, linked source). Only steps (a)–(c) differ; the running guard,
+  // carry-forward, report row, bearer, Job and audit below are shared.
+  const lane = agentReviewLaneFor(publishRequestId);
+  const subject =
+    lane === 'connect'
+      ? await prepareConnectSubject(publishRequestId, dbRead)
+      : await prepareOnsiteSubject(publishRequestId, dbRead);
+
+  const bundleObjectKey = subject.bundleObjectKey;
+  const { presignBundleGet } = await import('~/utils/bundle-s3');
+  const bundlePresignedUrl = await presignBundleGet(
+    bundleObjectKey,
+    AGENT_REVIEW_BUNDLE_PRESIGN_TTL_SECONDS
+  );
+
+  // (c) Prior-version report → base64 JSON for the pod (empty string if none).
+  // Keyed by the stable slug so the chain resolves for a first version too. A connect
+  // listing has no version chain, so it has no prior.
+  let prior: AppReviewAgentReport | null = null;
+  if (subject.lane === 'onsite') {
+    const { getPriorAgentReport } = await import('./app-review-report.service');
+    prior = await getPriorAgentReport({ slug: subject.slug, version: subject.version });
+  }
+  const priorReportJsonB64 = prior ? Buffer.from(JSON.stringify(prior)).toString('base64') : '';
+
+  // (d') TARGETED RE-RUN — carry forward the sections we are NOT re-running.
+  //
+  // 🔴 WITHOUT THIS, A TARGETED RETRY WOULD DESTROY THE VERY THING IT EXISTS TO PRESERVE.
+  // A re-run inserts a NEW report row and `getAgentReport` returns the most recently
+  // started one, so retrying one analysis would replace a report holding two good sections
+  // with a report holding one. Seeding the new row from the LATEST report's surviving
+  // sections makes a targeted retry strictly additive: the runner's callback then
+  // overwrites whatever it actually produced (`buildReportUpdate` writes only the fields
+  // the body carries, so an omitted section keeps the seeded value), and the mod never
+  // loses a completed analysis — whether or not the agent honours the section list.
+  //
+  // Only on the targeted path. A full re-run is a fresh analysis of the same bundle and
+  // must not inherit stale verdicts from the run it replaces.
+  const carried: Record<string, unknown> = {};
+  if (targeted) {
+    if (latest) {
+      const keep = AGENT_REVIEW_SECTIONS.filter((s) => !requested.includes(s));
+      for (const section of keep) {
+        const value = latest[section];
+        // Skip a null/absent slot, and skip a slot that is itself a failure marker: seeding
+        // a `{ error: … }` forward would re-report an old failure as if it were this run's.
+        if (value == null) continue;
+        if (isAgentSectionFailureMarker(value)) continue;
+        // The old run's impersonation record does not describe this run: the check runs again
+        // when this run reports, and until then there is no record (so no fast lane).
+        carried[section] =
+          section === 'securityAudit'
+            ? (await import('./app-impersonation.logic')).stripImpersonationRecord(value)
+            : value;
+      }
+      // The model string describes the run that produced the carried content; keep it so a
+      // partially-seeded report is not attributed to nothing.
+      if (Object.keys(carried).length > 0 && latest.model) carried.model = latest.model;
+    }
+  }
+
+  // (d) Insert the running report row, keyed by `slug`. On-site: kind='onsite', `appBlockId`
+  // informational (null for a first version). Connect: kind='external' with the OAuth client;
+  // what Civitai checked itself goes to its own table just below, never into these sections.
+  const { newAppReviewAgentReportId } = await import('~/server/utils/app-block-ids');
+  const reportId = newAppReviewAgentReportId();
+  const laneData: Record<string, unknown> =
+    subject.lane === 'connect'
+      ? { kind: 'external', appBlockId: null, oauthClientId: subject.oauthClientId }
+      : { kind: 'onsite', appBlockId: subject.appBlockId };
+  await dbWrite.appReviewAgentReport.create({
+    data: {
+      ...carried,
+      id: reportId,
+      publishRequestId,
+      slug: subject.slug,
+      ...laneData,
+      version: subject.version,
+      bundleSha256: subject.bundleSha256,
+      status: 'running',
+      startedAt: new Date(),
+      priorReportId: prior?.id ?? null,
+      // Named up front so the run is identifiable while it is running.
+      ...(analysisModel ? { model: toRunnerModelId(analysisModel.id) } : {}),
+    },
+  });
+
+  if (subject.lane === 'connect') await finishConnectInsert(subject, reportId, publishRequestId);
+
+  return provisionAndRecordStart({
+    args,
+    lane: subject.lane,
+    slug: subject.slug,
+    reportId,
+    bundlePresignedUrl,
+    priorReportJsonB64,
+    sections: targeted ? requested : undefined,
+    analysisModel: analysisModel
+      ? {
+          model: toRunnerModelId(analysisModel.id),
+          priceInPerM: String(analysisModel.promptPerM),
+          priceOutPerM: String(analysisModel.completionPerM),
+        }
+      : undefined,
+  });
+}
+
+const RERUN_ALL_HINT =
+  'Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.';
+
+/** Why the report's model cannot be used, as the tail of the single-section refusal. */
+function whyModelUnusable(refusal: AgentReviewModelRefusal | undefined): string {
+  switch (refusal?.reason) {
+    case 'over-ceiling':
+      return `that model costs $${refusal.promptPerM} per million input tokens, above the $${AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M} limit for agent reviews`;
+    case 'not-listed':
+      return 'that model is no longer a tool-capable model on OpenRouter';
+    case 'list-unavailable':
+      return "OpenRouter's model list could not be loaded to price that model (try again shortly)";
+    default:
+      return 'that model cannot be used now';
+  }
+}
+
+function cannotRerunOnLatestModel(id: string, refusal?: AgentReviewModelRefusal): TRPCError {
+  return new TRPCError({
+    code: 'BAD_REQUEST',
+    message: `This analysis can only be re-run on the model that wrote the rest of the report (${id}), and ${whyModelUnusable(
+      refusal
+    )}. ${RERUN_ALL_HINT}`,
+  });
+}
+
+/**
+ * A targeted re-run must name exactly the latest run's model (`null` when that run named none):
+ * the carried analyses came from it, and a report row names one model. A stored model that is not
+ * in the `openrouter/<id>` form cannot be re-run on at all.
+ */
+function assertSameModelAsLatest(requested: string | undefined, latestModel: string | null) {
+  const required = latestModel == null ? null : fromRunnerModelId(latestModel);
+  if (latestModel != null && required == null) throw cannotRerunOnLatestModel(latestModel);
+  if ((requested ?? null) !== required) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `A single analysis has to be re-run on the model that wrote the rest of the report (${
+        required ?? 'the default model'
+      }), so its result is not mixed with another model's. ${RERUN_ALL_HINT}`,
+    });
+  }
+}
+
+type OnsiteSubject = {
+  lane: 'onsite';
+  slug: string;
+  version: string;
+  bundleSha256: string;
+  bundleObjectKey: string;
+  appBlockId: string | null;
+};
+type ConnectSubject = {
+  lane: 'connect';
+  slug: string;
+  version: string;
+  bundleSha256: string;
+  bundleObjectKey: string;
+  oauthClientId: string;
+  checks: ConnectCivitaiChecks;
+  fingerprint: string;
+};
+type DbRead = typeof dbReadClient;
+
+/**
+ * Double-provision guard (audit #3): refuse a second dispatch while a review is already
+ * `running` for this request. The partial-unique index (publish_request_id WHERE
+ * status='running') is the DB backstop; this is the friendly pre-check so the mod gets a clear
+ * error instead of a unique-violation. Runs after the request is validated and BEFORE any
+ * bundle is staged, in both lanes.
+ */
+async function assertNoRunningReview(publishRequestId: string, dbRead: DbRead): Promise<void> {
+  const alreadyRunning = await dbRead.appReviewAgentReport.findFirst({
+    where: { publishRequestId, status: 'running' },
+    select: { id: true },
+  });
+  if (alreadyRunning) {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'a review is already running for this request',
+    });
+  }
+}
+
+/** Connect lane (a)–(b): a pending OAuth-connect listing request; stage its review ZIP. */
+async function prepareConnectSubject(
+  publishRequestId: string,
+  dbRead: DbRead
+): Promise<ConnectSubject> {
+  const { loadConnectReviewSubject, stageConnectReviewBundle } = await import(
+    './connect-agent-review.service'
+  );
+  const loaded = await loadConnectReviewSubject(publishRequestId);
+  await assertNoRunningReview(publishRequestId, dbRead);
+  const staged = await stageConnectReviewBundle(loaded);
+  // The source fetch can take a while: a moderator may have decided the request meanwhile.
+  // Re-checked on the PRIMARY; decided ⇒ delete what was staged and stop before any row exists.
+  await assertConnectStillPending(publishRequestId);
+  return { lane: 'connect', ...staged };
+}
+
+const DECIDED_DURING_START = 'the submission was decided while the review was starting';
+
+async function assertConnectStillPending(publishRequestId: string): Promise<void> {
+  const { isConnectRequestStillPending, abandonDecidedConnectReview } = await import(
+    './connect-agent-review.service'
+  );
+  if (await isConnectRequestStillPending(publishRequestId)) return;
+  await abandonDecidedConnectReview(publishRequestId);
+  throw new Error(DECIDED_DURING_START);
+}
+
+/**
+ * Connect lane, right after the running row exists: store the Civitai checks (failure ⇒ the row is
+ * marked failed and the start refuses), then re-check the request once more. A decision that
+ * landed between the first re-check and the insert found no report to tear down, so it is caught
+ * here instead; one landing after this read finds the row and its teardown takes it down.
+ */
+async function finishConnectInsert(
+  subject: ConnectSubject,
+  reportId: string,
+  publishRequestId: string
+): Promise<void> {
+  const { writeConnectChecks } = await import('./connect-agent-review.service');
+  try {
+    await writeConnectChecks({
+      reportId,
+      publishRequestId,
+      checks: subject.checks,
+      fingerprint: subject.fingerprint,
+    });
+  } catch (err) {
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appReviewAgentReport
+      .updateMany({
+        where: { id: reportId, status: 'running' },
+        data: {
+          status: 'failed',
+          summaryMd: 'Could not store the Civitai checks for this review.',
+          completedAt: new Date(),
+        },
+      })
+      .catch(() => undefined);
+    throw err;
+  }
+  await assertConnectStillPending(publishRequestId);
+}
+
+/** On-site lane (a)–(b): the pending AppBlockPublishRequest and the ONE object the pod pulls. */
+async function prepareOnsiteSubject(
+  publishRequestId: string,
+  dbRead: DbRead
+): Promise<OnsiteSubject> {
   // (a) Load the pending on-site publish request. The whole review lane
   // (previewRequest / teardownReviewForRequest) targets AppBlockPublishRequest;
-  // this mirrors it. (The connect / AppListingPublishRequest → oauthClientId path
-  // is a separate flow, out of P1 scope — see the service docstring.)
+  // this mirrors it.
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: publishRequestId },
     select: {
@@ -135,28 +458,13 @@ export async function startAgentReview(
     );
   }
 
-  // Double-provision guard (audit #3): refuse a second dispatch while a review is
-  // already `running` for this request. The partial-unique index
-  // (publish_request_id WHERE status='running') is the DB backstop; this is the
-  // friendly pre-check so the mod gets a clear error instead of a unique-violation.
-  const alreadyRunning = await dbRead.appReviewAgentReport.findFirst({
-    where: { publishRequestId, status: 'running' },
-    select: { id: true },
-  });
-  if (alreadyRunning) {
-    throw new TRPCError({
-      code: 'CONFLICT',
-      message: 'a review is already running for this request',
-    });
-  }
+  await assertNoRunningReview(publishRequestId, dbRead);
 
   // Resolve the INFORMATIONAL on-site app key. The report is keyed by the stable
   // `slug` (present on every request), so this is best-effort: an UPDATE carries
   // appBlockId, or an AppBlock already exists for the slug; a genuine FIRST
   // version has neither (the AppBlock is created on approve) → appBlockId stays
-  // null. First-version reviews now persist fine (keyed by slug). External /
-  // connect (oauthClientId) is out of P1 scope — TODO: a later phase keys those
-  // by oauthClientId + kind='external'.
+  // null. First-version reviews now persist fine (keyed by slug).
   let appBlockId = request.appBlockId ?? null;
   if (!appBlockId) {
     const existing = await dbRead.appBlock.findFirst({
@@ -188,76 +496,35 @@ export async function startAgentReview(
       `publish request ${publishRequestId} has neither a bundle nor a forgejo commit to review`
     );
   }
-  const { presignBundleGet } = await import('~/utils/bundle-s3');
-  const bundlePresignedUrl = await presignBundleGet(
+  return {
+    lane: 'onsite',
+    slug: request.slug,
+    version: request.version,
+    bundleSha256: sha,
     bundleObjectKey,
-    AGENT_REVIEW_BUNDLE_PRESIGN_TTL_SECONDS
-  );
+    appBlockId,
+  };
+}
 
-  // (c) Prior-version report → base64 JSON for the pod (empty string if none).
-  // Keyed by the stable slug so the chain resolves for a first version too.
-  const { getPriorAgentReport } = await import('./app-review-report.service');
-  const prior = await getPriorAgentReport({ slug: request.slug, version: request.version });
-  const priorReportJsonB64 = prior ? Buffer.from(JSON.stringify(prior)).toString('base64') : '';
-
-  // (d') TARGETED RE-RUN — carry forward the sections we are NOT re-running.
-  //
-  // 🔴 WITHOUT THIS, A TARGETED RETRY WOULD DESTROY THE VERY THING IT EXISTS TO PRESERVE.
-  // A re-run inserts a NEW report row and `getAgentReport` returns the most recently
-  // started one, so retrying one analysis would replace a report holding two good sections
-  // with a report holding one. Seeding the new row from the LATEST report's surviving
-  // sections makes a targeted retry strictly additive: the runner's callback then
-  // overwrites whatever it actually produced (`buildReportUpdate` writes only the fields
-  // the body carries, so an omitted section keeps the seeded value), and the mod never
-  // loses a completed analysis — whether or not the agent honours the section list.
-  //
-  // Only on the targeted path. A full re-run is a fresh analysis of the same bundle and
-  // must not inherit stale verdicts from the run it replaces.
-  const carried: Record<string, unknown> = {};
-  if (targeted) {
-    const { getAgentReport } = await import('./app-review-report.service');
-    const latest = await getAgentReport(publishRequestId);
-    if (latest) {
-      const keep = AGENT_REVIEW_SECTIONS.filter((s) => !requested.includes(s));
-      for (const section of keep) {
-        const value = latest[section];
-        // Skip a null/absent slot, and skip a slot that is itself a failure marker: seeding
-        // a `{ error: … }` forward would re-report an old failure as if it were this run's.
-        if (value == null) continue;
-        if (isAgentSectionFailureMarker(value)) continue;
-        carried[section] = value;
-      }
-      // The model string describes the run that produced the carried content; keep it so a
-      // partially-seeded report is not attributed to nothing.
-      if (Object.keys(carried).length > 0 && latest.model) carried.model = latest.model;
-    }
-  }
-
-  // (d) Insert the running report row. Keyed by `slug` (+ kind='onsite'); the
-  // `appBlockId` column is informational (populated when resolvable, else null —
-  // first versions have none). oauthClientId is left null (external/connect is out
-  // of P1 scope).
-  const { newAppReviewAgentReportId } = await import('~/server/utils/app-block-ids');
-  const reportId = newAppReviewAgentReportId();
-  await dbWrite.appReviewAgentReport.create({
-    data: {
-      ...carried,
-      id: reportId,
-      publishRequestId,
-      slug: request.slug,
-      kind: 'onsite',
-      appBlockId,
-      version: request.version,
-      bundleSha256: sha,
-      status: 'running',
-      startedAt: new Date(),
-      priorReportId: prior?.id ?? null,
-    },
-  });
+/** Steps (e)–(f) plus the audit, shared by both lanes. */
+async function provisionAndRecordStart(opts: {
+  args: StartAgentReviewArgs;
+  lane: AgentReviewLane;
+  slug: string;
+  reportId: string;
+  bundlePresignedUrl: string;
+  priorReportJsonB64: string;
+  sections: readonly AgentReviewSection[] | undefined;
+  analysisModel: AnalysisModelEnv | undefined;
+}): Promise<StartAgentReviewResult> {
+  const { args, reportId, slug } = opts;
+  const { publishRequestId } = args;
+  const { dbWrite } = await import('~/server/db/client');
 
   // (e) Mint the per-review callback bearer bound to this publishRequestId. NOT
   // the fleet-wide BLOCK_BUILD_CALLBACK_SECRET — that must never reach the agent
-  // pod. Short-TTL + review-scoped: a leaked token can only touch THIS report.
+  // pod. Short-TTL + request-scoped: a leaked token can only write a still-`running`
+  // report of THIS publish request (the token binds the request, not one run's row).
   const { signAgentCallbackToken, deriveAgentHooksToken } = await import('./review-session');
   const callbackToken = signAgentCallbackToken({ publishRequestId });
   // Derive the per-review agent GATEWAY secret (no storage / no migration): the
@@ -281,25 +548,27 @@ export async function startAgentReview(
   // (f) Provision the apply Job. On failure, flip the row to failed so it never
   // lingers `running`, then rethrow.
   try {
-    // COST CEILING (audit #5): enforcement is POD-SIDE only — the runner self-aborts
-    // (status 'cost-capped') once its LLM spend crosses COST_CAP_USD. There is NO
-    // civitai-side spend ceiling in P1 (no per-mod/day budget, no global cap): an
-    // accepted risk while the feature is DARK (mod-only, flag-gated), to revisit
-    // before widening.
+    // COST CEILING (audit #5): per review, POD-SIDE — the runner self-aborts (status
+    // 'cost-capped') once its LLM spend crosses COST_CAP_USD. AUTOMATIC starts are also bounded
+    // by a platform-wide daily budget (review-autodeploy.service); a moderator's start is not.
     await provisionAgentReviewJob({
       agentName,
       publishRequestId,
-      slug: request.slug,
-      bundlePresignedUrl,
+      slug,
+      bundlePresignedUrl: opts.bundlePresignedUrl,
       callbackUrl,
       callbackToken,
-      priorReportJsonB64,
+      priorReportJsonB64: opts.priorReportJsonB64,
       costCapUsd: env.AGENT_REVIEW_COST_CAP_USD,
       hooksToken,
       // Only on a targeted re-run, so a full dispatch's Job body is byte-identical to what
       // it was before this contract var existed (and the orchestration test's exact env
       // ledger keeps proving that).
-      sections: targeted ? requested : undefined,
+      sections: opts.sections,
+      // Only on the connect lane, for the same reason: an on-site Job body is unchanged.
+      reviewKind: opts.lane === 'connect' ? 'connect' : undefined,
+      // Only when a model was named: a default-model Job sets no model values.
+      analysisModel: opts.analysisModel,
     });
   } catch (err) {
     await dbWrite.appReviewAgentReport
@@ -318,6 +587,24 @@ export async function startAgentReview(
       });
     throw err;
   }
+
+  // AUDIT: who started this run. An automatic start (no moderator) is recorded as `system`.
+  // Fire-and-forget: the audit must never fail the start.
+  const { logToAxiom } = await import('~/server/logging/client');
+  logToAxiom(
+    {
+      name: 'app-blocks.review.agent-start',
+      type: 'info',
+      publishRequestId,
+      reportId,
+      slug,
+      actor: args.modUserId == null ? 'system' : 'moderator',
+      modUserId: args.modUserId,
+      sections: opts.sections ?? null,
+      model: opts.analysisModel?.model ?? null,
+    },
+    'webhooks'
+  );
 
   return { reportId, agentName };
 }
@@ -347,7 +634,33 @@ type ProvisionAgentReviewJobArgs = {
    * means the mod's surviving sections are safe either way.
    */
   sections?: readonly AgentReviewSection[];
+  /**
+   * `connect` on the connect lane ⇒ `AGENT_REVIEW_KIND=connect`; omitted on-site, so an on-site
+   * Job body is unchanged. The bundle's contents do not choose the review kind: an on-site
+   * author could ship a file of any name, but cannot set this var.
+   *
+   * 🔴 LIKE `AGENT_REVIEW_SECTIONS`, THE POD SIDE SHIPS SEPARATELY. Until the agent template
+   * passes it to the runner and its skill reads it, a connect run is reviewed with the on-site
+   * prompt; the facts Civitai writes itself are on the report either way.
+   */
+  reviewKind?: 'connect';
+  /**
+   * A moderator-chosen model ⇒ `ANALYSIS_MODEL` plus its `PRICE_IN_PER_M` / `PRICE_OUT_PER_M`;
+   * omitted for the default model, so that Job sets no model values (its apply script's fallback
+   * renders them empty, which the agent reads as its defaults). The price travels with the
+   * model because the agent estimates its spend (and enforces `COST_CAP_USD`) from token counts
+   * times a per-model price: without it a dearer model would be costed at the default's rate.
+   *
+   * 🔴 LIKE `AGENT_REVIEW_SECTIONS`, THE POD SIDE SHIPS SEPARATELY. The agent template has to
+   * pass these three to the review agent, and the agent has to dispatch to `ANALYSIS_MODEL`, not
+   * only label its report with it. Until it does they are inert: the run uses the default model
+   * and its report says so.
+   */
+  analysisModel?: AnalysisModelEnv;
 };
+
+/** The chosen-model env values, already in the agent's format (`openrouter/<id>`, USD per M). */
+type AnalysisModelEnv = { model: string; priceInPerM: string; priceOutPerM: string };
 
 /**
  * Create the provisioning apply Job on dp-1's apps namespace. Mirrors
@@ -363,6 +676,7 @@ type ProvisionAgentReviewJobArgs = {
 export async function provisionAgentReviewJob(
   args: ProvisionAgentReviewJobArgs
 ): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('agent review Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const jobName = `${args.agentName}-apply`;
@@ -428,6 +742,15 @@ export async function provisionAgentReviewJob(
                 // Targeted re-run only — absent on a full run (see the arg's docstring).
                 ...(args.sections && args.sections.length > 0
                   ? [{ name: 'AGENT_REVIEW_SECTIONS', value: args.sections.join(',') }]
+                  : []),
+                ...(args.reviewKind ? [{ name: 'AGENT_REVIEW_KIND', value: args.reviewKind }] : []),
+                // Chosen model only — absent for the default (see the arg's docstring).
+                ...(args.analysisModel
+                  ? [
+                      { name: 'ANALYSIS_MODEL', value: args.analysisModel.model },
+                      { name: 'PRICE_IN_PER_M', value: args.analysisModel.priceInPerM },
+                      { name: 'PRICE_OUT_PER_M', value: args.analysisModel.priceOutPerM },
+                    ]
                   : []),
               ],
               securityContext: {
@@ -496,7 +819,10 @@ set -euo pipefail
 # envsubst only substitutes EXPORTED env vars; container env vars are already
 # exported into the process env, so AGENT_NAME / PUBLISH_REQUEST_ID / APP_SLUG /
 # BUNDLE_PRESIGNED_URL / CALLBACK_URL / CALLBACK_TOKEN / PRIOR_REPORT_JSON_B64 /
-# COST_CAP_USD / HOOKS_TOKEN all substitute.
+# COST_CAP_USD / HOOKS_TOKEN all substitute. AGENT_REVIEW_KIND, AGENT_REVIEW_SECTIONS and
+# the chosen-model trio (ANALYSIS_MODEL, PRICE_IN_PER_M, PRICE_OUT_PER_M) are set only on the
+# connect lane / a targeted re-run / a chosen-model run, so the sed fallback reads them with
+# \${VAR:-}: under set -u a bare \${VAR} would abort the apply on every other run.
 if command -v envsubst >/dev/null 2>&1; then
   envsubst < /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 else
@@ -509,6 +835,11 @@ else
       -e "s|\\\${PRIOR_REPORT_JSON_B64}|\${PRIOR_REPORT_JSON_B64}|g" \\
       -e "s|\\\${COST_CAP_USD}|\${COST_CAP_USD}|g" \\
       -e "s|\\\${HOOKS_TOKEN}|\${HOOKS_TOKEN}|g" \\
+      -e "s|\\\${AGENT_REVIEW_KIND}|\${AGENT_REVIEW_KIND:-}|g" \\
+      -e "s|\\\${AGENT_REVIEW_SECTIONS}|\${AGENT_REVIEW_SECTIONS:-}|g" \\
+      -e "s|\\\${ANALYSIS_MODEL}|\${ANALYSIS_MODEL:-}|g" \\
+      -e "s|\\\${PRICE_IN_PER_M}|\${PRICE_IN_PER_M:-}|g" \\
+      -e "s|\\\${PRICE_OUT_PER_M}|\${PRICE_OUT_PER_M:-}|g" \\
       /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 fi
 
@@ -548,6 +879,8 @@ export async function deleteAgentReviewResources(args: {
   slug: string;
   publishRequestId: string;
 }): Promise<void> {
+  // Build-only environments start no agent review Job, so there is nothing to tear down there.
+  if (env.APPS_REVIEW_BUILD_ONLY) return;
   let target: Awaited<ReturnType<typeof getDp1Target>>;
   try {
     target = await getDp1Target();
@@ -704,6 +1037,13 @@ export type AgentReviewChatArgs = {
   /** The running conversation from the client (server prepends its own system
    *  grounding message — the client never supplies the system role). */
   messages: AgentReviewChatMessage[];
+  /**
+   * The report the moderator is looking at. Omitted ⇒ the latest run's. A request can hold
+   * several runs (re-runs, other models' opinions), and the chat must answer about the one on
+   * screen. Looked up within `publishRequestId`, so it can only ever name a run of the request
+   * the caller was authorised for.
+   */
+  reportId?: string;
 };
 
 export type AgentReviewChatResult = { reply: string };
@@ -723,6 +1063,8 @@ function buildAgentReviewChatSystemMessage(report: {
   scopeVerdicts?: unknown;
   codeReview?: unknown;
   securityAudit?: unknown;
+  /** Connect lane: what Civitai checked itself (its own table, not the runner's sections). */
+  civitaiChecks?: unknown;
 }): string {
   const MAX_CTX = 8000;
   const grounding = {
@@ -733,6 +1075,7 @@ function buildAgentReviewChatSystemMessage(report: {
     scopeVerdicts: report.scopeVerdicts ?? null,
     codeReview: report.codeReview ?? null,
     securityAudit: report.securityAudit ?? null,
+    ...(report.civitaiChecks ? { checkedByCivitai: report.civitaiChecks } : {}),
   };
   let groundingJson: string;
   try {
@@ -776,10 +1119,10 @@ function buildAgentReviewChatSystemMessage(report: {
  * leaking internal detail.
  */
 export async function agentReviewChat(args: AgentReviewChatArgs): Promise<AgentReviewChatResult> {
-  const { publishRequestId, messages } = args;
+  const { publishRequestId, messages, reportId } = args;
 
   const { getAgentReport } = await import('./app-review-report.service');
-  const report = await getAgentReport(publishRequestId);
+  const report = await getAgentReport(publishRequestId, reportId);
   if (!report || !CHAT_GROUNDABLE_STATUSES.has(report.status)) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',

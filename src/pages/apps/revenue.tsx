@@ -62,10 +62,9 @@ export default function AppBlocksDashboardPage() {
         title="Apps Dashboard"
         subtitle={
           <>
-            Revenue share and analytics for your apps. Confirmed earnings accrue here; automated
-            payouts are not yet enabled. Digital goods sales are separate: that rail pays out in
-            Buzz at the time of each settled sale rather than accruing here, and the figures shown
-            are your recorded share. See{' '}
+            Earnings and analytics for your apps. Author fees are paid into your Buzz account once a
+            day. Digital goods sales pay out in Buzz at the time of each settled sale, and the
+            figures shown are your recorded share. See{' '}
             <Anchor component={Link} href="/apps/activity">
               Apps
             </Anchor>{' '}

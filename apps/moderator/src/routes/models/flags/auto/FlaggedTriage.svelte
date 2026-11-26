@@ -11,6 +11,7 @@
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import CoverThumb from '$lib/components/triage/CoverThumb.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
@@ -175,11 +176,15 @@
       selected={state.selected}
       title={row.modelName}
       meta={row.flaggedAt ? `flagged ${shortAge(row.flaggedAt)}` : 'flagged'}
-      coverUrl={row.coverImages[0]?.url}
+      coverUrl={row.coverImages[0]?.type === 'video' ? row.coverImages[0].url : undefined}
+      coverType={row.coverImages[0]?.type}
       verdict={state.verdict}
       error={state.error}
       onselect={state.select}
     >
+      {#snippet coverMedia()}
+        {#if row.coverImages[0]}<CoverThumb image={row.coverImages[0]} />{/if}
+      {/snippet}
       {#snippet badges()}
         {@const hash = row.flags.find((f) => f.source === 'hash')}
         {#each uniqueBy(row.flags, (f) => f.source) as flag (flag.source)}

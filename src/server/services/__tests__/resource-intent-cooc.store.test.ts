@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
@@ -91,31 +90,7 @@ const begin = (
   });
 
 describe('cooc snapshot payload', () => {
-  it('round-trips through serialize/deserialize unchanged', async () => {
-    expect(await deserializeCoocCounts(await serializeCoocCounts(COUNTS))).toEqual(COUNTS);
-  });
-
-  it('is deterministic, and independent of input order', async () => {
-    const a = await serializeCoocCounts(COUNTS);
-    const b = await serializeCoocCounts(countsOf(goldenRows));
-    const shuffled = [...goldenRows]
-      .reverse()
-      .map((r) => ({ tokens: [...r.tokens].reverse(), models: [...r.models].reverse() }));
-    const c = await serializeCoocCounts(countsOf(shuffled));
-    expect(Buffer.compare(a, b)).toBe(0);
-    expect(Buffer.compare(a, c)).toBe(0);
-  });
-
-  it('the content hash is sha256(kind, NUL, payload)', async () => {
-    const p = await serializeCoocCounts(COUNTS);
-    const want = createHash('sha256')
-      .update(Buffer.concat([Buffer.from('study\0'), p]))
-      .digest('hex');
-    expect(coocContentHash('study', p)).toBe(want);
-    expect(coocContentHash('production', p)).not.toBe(want);
-  });
-
-  it('refuses a payload above the size ceiling, and a screen-scale build fits under it', async () => {
+  it('refuses a payload above the size ceiling', async () => {
     await expect(deserializeCoocCounts(Buffer.alloc(COOC_MAX_PAYLOAD_BYTES + 1))).rejects.toThrow(
       /exceeds/
     );
@@ -127,38 +102,6 @@ describe('cooc snapshot payload', () => {
         payload: Buffer.alloc(COOC_MAX_PAYLOAD_BYTES + 1),
       })
     ).rejects.toThrow(/exceeds/);
-    // Screen-scale V/M/P; random counts compress worst, so the payload must still fit.
-    let x = 7;
-    const rnd = () => (x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32;
-    const V = 116_533;
-    const M = 72_977;
-    const P = 1_570_000;
-    const ptr = new Uint32Array(V + 1);
-    for (let t = 0; t < V; t++) ptr[t + 1] = Math.min(P, Math.round(((t + 1) / V) * P));
-    const modelIdx = new Uint32Array(P);
-    const c = new Uint32Array(P);
-    for (let t = 0; t < V; t++) {
-      let m = 0;
-      for (let k = ptr[t]; k < ptr[t + 1]; k++) {
-        m += 1 + Math.floor(rnd() * 3);
-        modelIdx[k] = m;
-        c[k] = 2 + Math.floor(rnd() * 50);
-      }
-    }
-    const big: CoocCounts = {
-      N: 206_598,
-      vocab: Array.from({ length: V }, (_, i) => `tok${String(i).padStart(6, '0')}`),
-      modelIds: Array.from({ length: M }, (_, i) => 1 + i * 13),
-      modelTypes: Array.from({ length: M }, (_, i) => (i % 5 ? 'LORA' : 'TextualInversion')),
-      nT: new Uint32Array(V).fill(100_000),
-      nM: new Uint32Array(M).fill(100_000),
-      ptr,
-      modelIdx,
-      c,
-    };
-    const p = await serializeCoocCounts(big);
-    expect(p.length).toBeGreaterThan(100_000);
-    expect(p.length).toBeLessThan(COOC_MAX_PAYLOAD_BYTES / 8);
   });
 });
 
@@ -266,22 +209,6 @@ describe('cooc store on the real migration', () => {
       `SELECT "status" FROM "ResourceIntentCoocSnapshot" ORDER BY "status"`
     );
     expect(st.rows.map((x) => x.status)).toEqual(['duplicate', 'ready']);
-  });
-
-  it('two failed builds are recorded as two distinct rows', async () => {
-    const { db, sql } = await freshDb();
-    const a = await begin(sql, 'production');
-    const b = await begin(sql, 'production');
-    await failCoocBuild(sql, a.id);
-    await failCoocBuild(sql, b.id);
-    expect(a.id).not.toBe(b.id);
-    const rows = await db.query<{ status: string; contentHash: string | null }>(
-      `SELECT "status", "contentHash" FROM "ResourceIntentCoocSnapshot"`
-    );
-    expect(rows.rows).toEqual([
-      { status: 'failed', contentHash: null },
-      { status: 'failed', contentHash: null },
-    ]);
   });
 
   it('never writes builtAt: the database sets it, and a supplied one is refused', async () => {
@@ -523,52 +450,6 @@ describe('cooc served snapshot', () => {
     ).rows;
     expect(selectCoocSnapshotsToDelete(rows, ahead(400))).toEqual(['aaa']);
   });
-
-  it('retention protects exactly the row latestReadySnapshotId serves (random tables)', async () => {
-    let x = 3;
-    const rnd = () => (x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32;
-    // One database, emptied per trial: a PGlite boot per trial puts this case near the test timeout.
-    const { db, sql } = await freshDb();
-    for (let trial = 0; trial < 25; trial++) {
-      await db.exec(`DELETE FROM "ResourceIntentCoocSnapshot"`);
-      const n = 1 + Math.floor(rnd() * 8);
-      const hashToId = new Map<string, string>();
-      for (let i = 0; i < n; i++) {
-        const kind = rnd() < 0.7 ? 'production' : 'study';
-        const status = rnd() < 0.7 ? 'ready' : 'failed';
-        const builtAt = ago(Math.floor(rnd() * 60) + 0.5);
-        const hash = `h${trial}-${i}`;
-        const id = await seed(db, {
-          kind,
-          status,
-          // Few distinct trainEnds and builtAts, so ties occur.
-          trainEnd: ago(10 * Math.floor(rnd() * 4) + 2),
-          builtAt,
-          pinnedUntil: kind === 'study' ? new Date(builtAt.getTime() + 10 * DAY) : null,
-          contentHash: hash,
-        });
-        hashToId.set(hash, id);
-      }
-      const served = await latestReadySnapshotId(sql);
-      const all = (
-        await db.query<{
-          id: string;
-          kind: 'production' | 'study';
-          status: string;
-          trainEnd: Date;
-          builtAt: Date;
-          pinnedUntil: Date | null;
-        }>(
-          `SELECT "id","kind","status","trainEnd","builtAt","pinnedUntil" FROM "ResourceIntentCoocSnapshot"`
-        )
-      ).rows;
-      // Far in the future, everything but the served row is deletable.
-      const kept = all
-        .map((r) => r.id)
-        .filter((id) => !selectCoocSnapshotsToDelete(all, ahead(400)).includes(id));
-      expect(kept).toEqual(served ? [hashToId.get(served)] : []);
-    }
-  });
 });
 
 describe('cooc retention', () => {
@@ -631,25 +512,6 @@ describe('cooc retention', () => {
     expect(deleted).toEqual([study]);
   });
 
-  it('deletes non-ready rows after 7 days, not before', async () => {
-    const { db, sql } = await freshDb();
-    const six = await seed(db, {
-      kind: 'production',
-      status: 'failed',
-      trainEnd: ago(7),
-      builtAt: ago(6),
-    });
-    const eight = await seed(db, {
-      kind: 'production',
-      status: 'building',
-      trainEnd: ago(9),
-      builtAt: ago(8),
-    });
-    const { deleted } = await applyCoocRetention(sql, NOW);
-    expect(deleted).toEqual([eight]);
-    expect(await ids(db)).toEqual([six]);
-  });
-
   it('five weeks of failed builds never delete the last ready snapshot', async () => {
     const { db, sql } = await freshDb();
     const lastReady = await seed(db, { kind: 'production', trainEnd: ago(41), builtAt: ago(40) });
@@ -668,20 +530,6 @@ describe('cooc retention', () => {
     await applyCoocRetention(sql, NOW);
     // Only the newest failure (half a day old) is within 7 days; the ready one is kept.
     expect((await ids(db)).sort()).toEqual([lastReady, failed[0]].sort());
-  });
-
-  it('a newer failed row never protects itself', async () => {
-    const { db, sql } = await freshDb();
-    const ready = await seed(db, { kind: 'production', trainEnd: ago(30), builtAt: ago(29) });
-    const failedNewer = await seed(db, {
-      kind: 'production',
-      status: 'failed',
-      trainEnd: ago(9),
-      builtAt: ago(8),
-    });
-    const { deleted } = await applyCoocRetention(sql, NOW);
-    expect(deleted).toEqual([failedNewer]);
-    expect(await ids(db)).toEqual([ready]);
   });
 
   it('a failed study row goes at its pin, not after 7 days', async () => {

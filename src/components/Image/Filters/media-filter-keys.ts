@@ -29,6 +29,11 @@ export const mediaFilterKeys = [
   'baseModels',
   'tools',
   'techniques',
+  'hatTeams',
+  'hatTurfMine',
+  'hatTurfExpired',
+  'hideTurfHats',
+  'hideWornHats',
 ] as const;
 
 export type MediaFilterKey = (typeof mediaFilterKeys)[number];
@@ -54,4 +59,10 @@ export const hubExcludedFilterKeys: MediaFilterKey[] = [
   'minorOnly',
   'disablePoi',
   'disableMinor',
+  // Hat Turf's: per player and per event, and the main feed's only.
+  'hatTeams',
+  'hatTurfMine',
+  'hatTurfExpired',
+  'hideTurfHats',
+  'hideWornHats',
 ];

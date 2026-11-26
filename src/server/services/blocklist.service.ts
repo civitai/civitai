@@ -1,8 +1,11 @@
+import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
+import addressparser from 'nodemailer/lib/addressparser/index.js';
 import { CacheTTL } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type { UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
@@ -37,11 +40,55 @@ function getBlocklistKey(type: string) {
  */
 const BLOCKLIST_CACHE_TTL = 5 * 60;
 
-// No in-process cache: pod-local copies can't be invalidated cross-pod on upsert.
+// No in-process cache on the normal path: pod-local copies can't be invalidated cross-pod on upsert.
+// (`lastKnown` below is read only while this cache is unreadable.) Best-effort and bounded: the
+// value is already read from the database, so a cache that cannot take it must not fail the read.
 async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
-  await redis.set(getBlocklistKey(type), JSON.stringify(data), {
-    EX: BLOCKLIST_CACHE_TTL,
-  });
+  const value = JSON.stringify(data);
+  await clusterCacheGuard.writeBestEffort('blocklist.setCache', () =>
+    redis.set(getBlocklistKey(type), value, { EX: BLOCKLIST_CACHE_TTL })
+  );
+}
+
+/**
+ * The copy of each list this process last read, and when. Read ONLY when the cache cannot be read
+ * (error, timeout, open cluster-cache breaker) — never on the normal path, so the cross-pod
+ * invalidation above is unaffected while the cache works.
+ *
+ * ⚠️ It is NOT invalidated by a write. After a moderator adds an entry, a pod whose cache read then
+ * fails or times out can keep enforcing its pre-addition copy for up to BLOCKLIST_CACHE_TTL
+ * (5 minutes) from when it read that copy — the same ceiling the cache entry itself has.
+ *
+ * 🔴 A blocklist is enforcement: an unreadable cache must never read as an empty, allow-everything
+ * list. So, with the cache unreadable:
+ * 1. a copy younger than BLOCKLIST_CACHE_TTL — the staleness the cache itself already allows — is
+ *    served as is, sparing the database a read per check during the outage;
+ * 2. otherwise the row is read from the database;
+ * 3. if that fails too, the database error is thrown: the caller fails closed. A copy older than
+ *    the TTL is staler than the cache itself would ever serve, so it is never used.
+ */
+const lastKnown = new Map<string, { dto: BlocklistDTO; at: number }>();
+
+/** Tests only: forget every last-known copy, so one test's reads cannot answer another's. */
+export function resetBlocklistLastKnownForTests() {
+  lastKnown.clear();
+}
+
+function remember(type: string, dto: BlocklistDTO) {
+  lastKnown.set(type, { dto, at: Date.now() });
+}
+
+/** Where a read was answered from: the database row, or a cached copy (Redis or last-known). */
+export type BlocklistReadSource = 'db' | 'cache';
+type SourcedBlocklist = { dto: BlocklistDTO; source: BlocklistReadSource };
+
+async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<SourcedBlocklist> {
+  const known = lastKnown.get(type);
+  if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000)
+    return { dto: known.dto, source: 'cache' };
+  const row = await readBlocklistRow(type);
+  remember(type, row);
+  return { dto: row, source: 'db' };
 }
 
 /**
@@ -80,7 +127,7 @@ async function bustCache(type: string) {
         blocklistType: type,
         error: error instanceof Error ? error.message : String(error),
       },
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -182,8 +229,8 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  * has exactly one row, so the guard is currently inert. It is kept because nothing PREVENTS a
  * duplicate; see the first-insert race in `upsertBlocklist`.)
  *
- * No writer calls this any more. Its one caller is the cache-aside populate in `getBlocklistDTO` —
- * so this is what decides which row the whole system enforces, and a write busts the key, making
+ * No writer calls this any more. Its callers are the cache-aside populate in `getBlocklistDTO` and
+ * that function's cache-unavailable path — so this is what decides which row the whole system enforces, and a write busts the key, making
  * the next read a post-write read whose value then serves every pod until it expires.
  *
  * This picks the lowest id, always, and reports the duplicate. It deliberately does NOT
@@ -213,7 +260,7 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
         ignoredIds: rows.slice(1).map((row) => row.id),
         ignoredEntryCounts: rows.slice(1).map((row) => row.data.length),
       },
-    }).catch(() => undefined);
+    });
   }
 
   // The absent-row fallback deliberately carries NO `id`: `getClientBenignLists` reads that as
@@ -223,7 +270,18 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
 }
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
-  const cached = await redis.get(getBlocklistKey(type));
+  return (await readBlocklistWithSource(type)).dto;
+}
+
+export async function readBlocklistWithSource(type: BlocklistType): Promise<SourcedBlocklist> {
+  let cached: string | null;
+  try {
+    cached = await clusterCacheGuard.call('blocklist.getBlocklistDTO', () =>
+      redis.get(getBlocklistKey(type))
+    );
+  } catch {
+    return readBlocklistCacheUnavailable(type);
+  }
   if (cached) {
     // 🔴 `data ?? []` is load-bearing. A cached value with no `data` key is a shape three
     // separately-released apps can write into this key, and every consumer here calls `.some`,
@@ -232,13 +290,16 @@ export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
     // new BlocklistType consumer inherits it. The spread preserves the absent-`id` sentinel that
     // `getClientBenignLists` reads as "no moderator row yet".
     const parsed = JSON.parse(cached) as BlocklistDTO;
-    return { ...parsed, data: parsed.data ?? [] };
+    const dto = { ...parsed, data: parsed.data ?? [] };
+    remember(type, dto);
+    return { dto, source: 'cache' };
   }
 
   const result = await readBlocklistRow(type);
+  remember(type, result);
 
   await setCache({ type: result.type, data: result });
-  return result;
+  return { dto: result, source: 'db' };
 }
 
 export async function getBlocklistData(type: BlocklistType) {
@@ -330,17 +391,15 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
   return stripBenignPhrasesWith(text, pattern);
 }
 /**
- * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
- * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
- * directly, so there is no server hop to strip on — the lists have to be shipped down.
- * Public and edge-cached; these are phrases moderators have declared SAFE, so the list
- * says nothing about what we block.
+ * The benign lists the BROWSER needs: its POI / minor checks, and its profanity check where the
+ * server does not run one (`browserChecksProfanity`), must strip them before checking.
+ * Public and edge-cached. Never carries a managed blocked word.
  */
 export type ClientBenignLists = {
   prompt: string[];
   /** `null` means "no moderator row", which is NOT the same as an empty one — see the filter. */
   profanityWords: string[] | null;
-  /** False when the lists could not be read. The caller MUST NOT let the edge cache this. */
+  /** False when any list could not be read. The caller MUST NOT let the edge cache this. */
   available: boolean;
 };
 
@@ -358,7 +417,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
   } catch (error) {
     // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
     // more rather than less. `available: false` exists because the caller must then skip the
-    // edge cache — a 200 carrying empty lists would otherwise be held for an hour, and every
+    // edge cache — a 200 carrying empty lists would otherwise be held for the edge TTL, and every
     // session started in that window pins it for its whole life, reinstating globally the
     // false positives this work removes. The throw it replaced was never cached.
     logToAxiom({
@@ -366,7 +425,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
       type: 'warning',
       message: 'Serving empty benign lists to the client; search gates will not strip',
       details: { error: error instanceof Error ? error.message : String(error) },
-    }).catch(() => undefined);
+    });
     return { prompt: [], profanityWords: null, available: false };
   }
 }
@@ -382,6 +441,15 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
 function findBlockedPattern(value: string, blockedPatterns: string[]) {
   const lowerValue = value.toLowerCase();
   return blockedPatterns.find((pattern) => lowerValue.includes(pattern));
+}
+
+/** Position of the first entry `value` contains in the STORED list (empties keep their slot), or -1. */
+function findBlockedPatternId(value: string, blockedPatterns: string[]) {
+  const lowerValue = value.toLowerCase();
+  return blockedPatterns.findIndex(
+    // Load-bearing: `includes('')` is true for every string, so one empty entry would block everything.
+    (pattern) => pattern.trim().length > 0 && lowerValue.includes(pattern)
+  );
 }
 
 /**
@@ -490,7 +558,14 @@ export type BlockedContentKind = 'link' | 'pattern';
  */
 export type BlockedContentHit =
   | { kind: 'link'; index: number; matched: string[] }
-  | { kind: 'pattern'; index: number; matched: string };
+  | {
+      kind: 'pattern';
+      index: number;
+      matched: string;
+      patternId: number;
+      /** The `Blocklist` row `patternId` indexes into; null when the type has no row. */
+      listId: number | null;
+    };
 
 type UserText = string | null | undefined;
 
@@ -530,11 +605,12 @@ async function findBlockedText(
   const present = values.flatMap((value, index) => (value ? [{ value, index }] : []));
   if (!present.length) return [];
 
-  const [blockedDomains, blockedPatterns] = await Promise.all([
+  const [blockedDomains, patternList] = await Promise.all([
     getBlocklistData(BlocklistType.LinkDomain),
-    getBlocklistData(BlocklistType.MessagePattern),
+    getBlocklistDTO({ type: BlocklistType.MessagePattern }),
   ]);
-  const matchable = substringEntries(blockedPatterns);
+  const blockedPatterns = patternList.data;
+  const listId = patternList.id ?? null;
   const matchableDomains = exactEntries(blockedDomains);
 
   const hits: BlockedContentHit[] = [];
@@ -550,9 +626,15 @@ async function findBlockedText(
     }
 
     for (const form of exemptFromPatterns ? [] : forms) {
-      const matched = findBlockedPattern(form, matchable);
-      if (matched !== undefined) {
-        hits.push({ kind: 'pattern', index, matched });
+      const patternId = findBlockedPatternId(form, blockedPatterns);
+      if (patternId !== -1) {
+        hits.push({
+          kind: 'pattern',
+          index,
+          matched: blockedPatterns[patternId],
+          patternId,
+          listId,
+        });
         break;
       }
     }
@@ -598,7 +680,7 @@ async function throwOnBlockedText(
     exemptFromLinks: boolean;
     exemptFromPatterns: boolean;
     onLinkMatch: (matched: string[]) => void;
-    onPatternMatch: (matched: string) => Promise<void> | void;
+    onPatternMatch: (patternId: number) => Promise<void> | void;
   }
 ) {
   const hits = await findBlockedText(values, { exemptFromLinks, exemptFromPatterns });
@@ -607,7 +689,7 @@ async function throwOnBlockedText(
       onLinkMatch(hit.matched);
       return;
     }
-    await onPatternMatch(hit.matched);
+    await onPatternMatch(hit.patternId);
   }
 }
 
@@ -694,10 +776,18 @@ export async function throwOnBlockedUserContent(
   {
     isModerator = false,
     surface,
+    entityType,
+    entityId,
+    userId,
     onBlocked,
   }: {
     isModerator?: boolean;
     surface?: string;
+    /** The row being written, for the pattern-match log. Omitted on a create (no id yet). */
+    entityType?: string;
+    entityId?: number;
+    /** The user saving the content, when the caller has one. */
+    userId?: number;
     /**
      * Replaces the thrown `BAD_REQUEST` for a caller that has its own error type. It is handed
      * WHICH list rejected the text, so a caller that classifies a block never has to read the
@@ -718,7 +808,7 @@ export async function throwOnBlockedUserContent(
     exemptFromLinks: false,
     exemptFromPatterns: isModerator,
     onLinkMatch: (blockedFor) => reject('link', `invalid urls: ${blockedFor.join(', ')}`),
-    onPatternMatch: async (matched) => {
+    onPatternMatch: async (patternId) => {
       // No try/catch: `getBoolean` swallows its own failures and returns `false`, so an
       // unreachable or uninitialised Flipt already degrades to recording. A catch here would be
       // unreachable code that reads as a safety net, and the only test able to exercise it would
@@ -734,8 +824,8 @@ export async function throwOnBlockedUserContent(
         message: enforce
           ? 'Blocked pattern found in user content; write rejected'
           : 'Blocked pattern found in user content; not enforced on this surface yet',
-        details: { surface, matched, enforced: enforce },
-      }).catch(() => undefined);
+        details: { surface, entityType, entityId, userId, patternId, enforced: enforce },
+      });
 
       if (enforce) {
         reject('pattern', 'Content blocked by content filter');
@@ -827,11 +917,14 @@ export function matchesBlockedSuffix(entries: string[], domain: string) {
  * Callers must exempt users who ALREADY have this address. A domain appended to the upstream list
  * later must not lock out an account that predates it — same rule as the hub's login action.
  */
-export async function assertEmailAllowed(email: string) {
-  // `lastIndexOf`, not `split('@')[1]`: a quoted-local address ("a@b"@host) has more than one `@`,
-  // and taking the first segment yields a domain that matches nothing. A trailing dot is the FQDN
-  // root and resolves identically, so `provider.com.` would otherwise miss every list entry, pass
-  // the MX probe, and take a second slot in a citext-unique column for one real mailbox.
+export async function assertEmailAllowed(input: string) {
+  // `addressparser` from the same nodemailer `~/server/email/client` sends with.
+  const email = parsePlainEmailAddress(input, addressparser);
+  if (!email) throw throwBadRequestError('Please provide a valid email address');
+
+  // A trailing dot is the FQDN root and resolves identically, so `provider.com.` would otherwise
+  // miss every list entry, pass the MX probe, and take a second slot in a citext-unique column for
+  // one real mailbox.
   // Kept identical to the hub's `emailDomain` -- fixing one side only is how the two diverge.
   const at = email.lastIndexOf('@');
   const rawDomain = at === -1 ? '' : email.slice(at + 1);
@@ -868,7 +961,7 @@ export async function assertEmailAllowed(email: string) {
         blocklistType,
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
       },
-    }).catch(() => undefined);
+    });
     return [] as string[];
   };
 

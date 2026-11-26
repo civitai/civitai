@@ -547,6 +547,33 @@ describe('sending a report of preserved generator evidence', () => {
     expect(submitReport.mock.calls[0][0].personOrUserReported.priorCTReports).toEqual([4242]);
   });
 
+  it('sends the same bytes to NCMEC whether or not the report keeps each output’s job id', async () => {
+    const JOB = 'a1b2c3d4-0000-4000-8000-000000000001';
+    const sent = () =>
+      JSON.stringify([
+        submitReport.mock.calls,
+        submitFileDetails.mock.calls,
+        uploadFile.mock.calls,
+      ]);
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-07T00:00:00Z') });
+    try {
+      await sendEvidenceReport(evidenceDetails());
+      const without = sent();
+      for (const fn of [submitReport, submitFileDetails, uploadFile]) fn.mockClear();
+
+      const withJob = evidenceDetails();
+      for (const blob of withJob.generatedImages[0].blobs)
+        if (blob.role === 'output') Object.assign(blob, { orchestratorJobId: JOB });
+      await sendEvidenceReport(withJob);
+
+      expect(submitFileDetails).toHaveBeenCalled();
+      expect(sent()).toBe(without);
+      expect(sent()).not.toContain(JOB);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports a file as viewed only when a moderator view of it on one of the user's reports is recorded", async () => {
     await sendEvidenceReport(evidenceDetails());
 
@@ -693,8 +720,12 @@ describe('a preserved-evidence report left waiting for approval', () => {
   const filedHoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000 - 60_000);
   const overdueLines = () =>
     loggingMock.logToAxiom.mock.calls
-      .map(([line]) => line as { subType?: string; awaiting?: string; reportId?: number })
-      .filter((line) => line.subType === 'send-blocked' && line.awaiting === 'evidence-approval');
+      .map(
+        ([line]) => line as { subType?: string; payload?: { awaiting?: string }; reportId?: number }
+      )
+      .filter(
+        (line) => line.subType === 'send-blocked' && line.payload?.awaiting === 'evidence-approval'
+      );
 
   it('raises a blocked line once it has waited past the threshold, and not once approved', async () => {
     loggingMock.logToAxiom.mockClear();

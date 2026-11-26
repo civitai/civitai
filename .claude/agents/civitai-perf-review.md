@@ -35,7 +35,8 @@ is the exact failure mode this lane exists to prevent, and one `EXPLAIN` settles
   idempotent and a ~1 s no-op when the tunnel is already up, so run it defensively before your first
   query rather than after your first failure.
 
-Prefer `EXPLAIN (ANALYZE, BUFFERS)` on a representative input. **Report the number you measured**, and
+Prefer `EXPLAIN (ANALYZE, BUFFERS)` on a representative input (`postgres-query --explain` is plan-only;
+`--explain-analyze` runs the query and reports actual timings). **Report the number you measured**, and
 mark anything you could not measure as *plausible* rather than confirmed.
 
 Two traps when you do measure: a cheap probe tells you about p50, not the tail — pick an input at the
@@ -60,7 +61,7 @@ once instead of serially — worse, not better.
 
 ### Query cost
 
-- **Missing index / seq scan.** EXPLAIN it. Large tables here (`Image`, `CommentV2`, `Post`,
+- **Missing index / seq scan.** EXPLAIN it. Large tables here (`Image`, `CommentV3`, `Post`,
   `ModelVersion`, metric tables) will happily scan hundreds of MB per query on a predicate with no
   supporting index, and a filter on a *timestamp* column that only exists in the ORDER BY is a common
   way to get one.

@@ -10,9 +10,12 @@ export * from '@civitai/clickhouse/client';
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalClickhouse: CustomClickHouseClient | undefined;
+  // eslint-disable-next-line no-var, vars-on-top
+  var globalClickhouseLongQueries: CustomClickHouseClient | undefined;
 }
 
-const make = () => createClickhouseClient({ log: createLogger('clickhouse', 'blue') });
+const make = () =>
+  createClickhouseClient({ log: createLogger('clickhouse', 'blue', { forward: false }) });
 
 const shouldConnect = !env.IS_BUILD && env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME;
 // Process-global in EVERY environment, not just for dev HMR: the production server evaluates this
@@ -21,6 +24,18 @@ const shouldConnect = !env.IS_BUILD && env.CLICKHOUSE_HOST && env.CLICKHOUSE_USE
 export const clickhouse: CustomClickHouseClient | undefined = !shouldConnect
   ? undefined
   : (globalThis.globalClickhouse ??= make());
+
+// For queries that bound themselves (max_execution_time plus an abort_signal) and may go quiet for
+// minutes: a GROUP BY that spills to disk sends no progress headers while it merges, and the shared
+// client's 300 s idle timer then drops a query the server is still running. Above every such
+// query's own bound, so that bound is what stops it.
+export const LONG_QUERY_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;
+export const clickhouseLongQueries: CustomClickHouseClient | undefined = !shouldConnect
+  ? undefined
+  : (globalThis.globalClickhouseLongQueries ??= createClickhouseClient({
+      log: createLogger('clickhouse', 'blue', { forward: false }),
+      requestTimeoutMs: LONG_QUERY_REQUEST_TIMEOUT_MS,
+    }));
 
 // The Tracker is app-coupled (auth/session/schemas); it lives in the app and is
 // re-exported here so existing `~/server/clickhouse/client` imports keep working.

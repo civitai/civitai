@@ -12,6 +12,7 @@ export type ImageRatingItem = {
   url: string;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;
+  modelRestricted: boolean;
   width: number | null;
   height: number | null;
   type: MediaType;
@@ -51,6 +52,7 @@ export async function getImageRatingRequests({
       i.url,
       i."nsfwLevel",
       i."nsfwLevelLocked",
+      i."modelRestricted",
       i.width,
       i.height,
       i.type,

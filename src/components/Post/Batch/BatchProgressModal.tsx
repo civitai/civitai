@@ -20,7 +20,7 @@ export type BatchSubmissionPayload = {
   tags: string[];
   tools: number[];
   techniques: number[];
-  extraResourceIds: number[];
+  resourceIds: number[];
 };
 
 type Created = { postId: number; publishedAt: string; alreadyCreated?: true };
@@ -93,11 +93,12 @@ export function BatchProgressModal({
           tags: payload.tags,
           tools: payload.tools,
           techniques: payload.techniques,
+          resourceIds: payload.resourceIds,
           posts: chunk.map((post) => ({
             clientKey: clientKeyFor(post),
             title: post.title,
             publishedAt: post.publishedAt,
-            images: post.media.map((media) => toBatchImage(media, payload.extraResourceIds)),
+            images: post.media.map((media) => toBatchImage(media)),
           })),
         });
         createdRef.current.push(...result.created);

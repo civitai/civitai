@@ -1,15 +1,18 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
-import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
+import { aspectRatioMap } from '~/components/CardTemplates/AspectRatioCard';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { IconLink, IconQuestionMark, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
+import { openArticleReframeModal } from '~/components/Article/ArticleReframeModal';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
 import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -40,8 +43,9 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { upsertArticleInput } from '~/server/schema/article.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { articleFormSchema } from '~/components/Article/article-form.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
+import { getReframeRefusal, type ArticleReframeTarget } from '~/shared/utils/article-reframe';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
@@ -51,21 +55,10 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
-const schema = upsertArticleInput
-  .omit({
-    coverImage: true,
-    userNsfwLevel: true,
-    moderatorNsfwLevel: true,
-    lockedProperties: true,
-  })
-  .extend({
-    categoryId: z.number().min(0, 'Please select a valid category'),
-    coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
-    userNsfwLevel: z.string().optional(),
-    moderatorNsfwLevel: z.string().optional(),
-    lockedProperties: z.string().array().optional(),
-  });
+const schema = articleFormSchema(true);
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
 });
@@ -98,6 +91,11 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
+  const hasWithheldImage = !!(article?.coverImageWithheld || article?.bannerImageWithheld);
+  const formSchema = useMemo(
+    () => articleFormSchema(!!features.articleTypography, hasWithheldImage),
+    [features.articleTypography, hasWithheldImage]
+  );
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
@@ -108,7 +106,7 @@ export function ArticleUpsertForm({ article }: Props) {
     : true;
 
   const form = useForm({
-    schema,
+    schema: formSchema,
     shouldUnregister: false,
     defaultValues: {
       ...article,
@@ -119,18 +117,20 @@ export function ArticleUpsertForm({ article }: Props) {
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
+      bannerImage: article?.bannerImage ?? null,
       lockedProperties: article?.lockedProperties ?? [],
       isOfficial: article?.isOfficial ?? false,
     } as any,
   });
   const clearStorage = useFormStorage({
-    schema,
+    schema: formSchema,
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, coverImage, categoryId, tags, title }) => ({
+    watch: ({ content, coverImage, bannerImage, categoryId, tags, title }) => ({
       content,
       coverImage,
+      bannerImage,
       categoryId,
       tags,
       title,
@@ -140,9 +140,16 @@ export function ArticleUpsertForm({ article }: Props) {
     // treat an image it already has a row for as brand new. Keep the loaded value when the
     // persisted one is the same object minus its id; a genuinely different url still wins.
     shouldRestoreField: ({ name, storedValue, currentValue }) =>
-      name !== 'coverImage' || !persistedValueLostIdentity(storedValue, currentValue),
+      (name !== 'coverImage' && name !== 'bannerImage') ||
+      !persistedValueLostIdentity(storedValue, currentValue),
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
+  const [watchedCover, watchedBanner] = form.watch(['coverImage', 'bannerImage']);
+  // The saved image, while it is still selected: its owner and moderators see it, its readers don't.
+  const isSavedRestricted = (
+    saved: ArticleGetById['coverImage'],
+    watched: { id?: number } | null | undefined
+  ) => !!saved && watched?.id === saved.id && isRestrictedImage(saved);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -176,6 +183,7 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId,
     tags: selectedTags,
     coverImage,
+    bannerImage,
     userNsfwLevel,
     moderatorNsfwLevel,
     lockedProperties,
@@ -202,6 +210,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
+          editForm: true,
           userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
@@ -216,6 +225,8 @@ export function ArticleUpsertForm({ article }: Props) {
           status: args?.status ? args.status : publishNow ? ArticleStatus.Published : undefined,
           scheduledAt,
           coverImage,
+          // Only flagged editors see the banner field; the server drops it for everyone else too.
+          bannerImage: features.articleTypography ? bannerImage ?? null : undefined,
           lockedProperties: lockedPropertiesRef.current,
           // Same shape as moderatorNsfwLevel above, and for a stronger reason: the server
           // DROPS this field for a non-moderator rather than refusing the save, so a
@@ -263,9 +274,9 @@ export function ArticleUpsertForm({ article }: Props) {
         return;
       }
 
-      openConfirmModal({
+      openConfirm({
         title: 'Article Image Processing',
-        children: (
+        message: (
           <Stack gap="sm">
             <Text>
               Your article contains {newImages.length} new embedded image
@@ -299,9 +310,9 @@ export function ArticleUpsertForm({ article }: Props) {
       return;
     }
 
-    openConfirmModal({
+    openConfirm({
       title: 'Moderator rating will be re-evaluated',
-      children: (
+      message: (
         <Text>
           A moderator previously set this article&apos;s rating manually. Saving will trigger a
           rescan and may reset that rating. Continue?
@@ -364,12 +375,17 @@ export function ArticleUpsertForm({ article }: Props) {
                 'formatting',
                 'list',
                 'link',
+                'mentions',
                 'media',
                 'video',
                 'polls',
                 'colors',
                 'timestamp',
                 'blurb',
+                'imageSize',
+                'align',
+                'civitaiEmbed',
+                'spoiler',
               ]}
               withAsterisk
               stickyToolbar
@@ -506,9 +522,49 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
-              withAsterisk
+              description={
+                features.articleTypography
+                  ? 'Portrait 7:9, e.g. 1400 x 1800. Cards crop it from the top. Optional if you add a banner.'
+                  : 'Portrait 7:9, e.g. 1400 x 1800. Cards crop it from the top; keep the subject near the top center.'
+              }
+              cardCrop={aspectRatioMap.portrait}
+              previewWidth={constants.article.coverImageWidth}
+              ratingClickable
+              withAsterisk={!features.articleTypography}
             />
+            <MatureRestrictedBadge
+              restricted={isSavedRestricted(article?.coverImage, watchedCover)}
+            />
+            {features.articleTypography && (
+              <ReframeButton
+                source={watchedCover}
+                target="banner"
+                onKeep={(image) => form.setValue('bannerImage', image, { shouldDirty: true })}
+              />
+            )}
+            {features.articleTypography && (
+              <InputSimpleImageUpload
+                name="bannerImage"
+                label="Banner Image"
+                description="Optional. Wide 4:1, e.g. 2400 x 600, across the top of your article. Cards use it when there is no cover."
+                aspectRatio={
+                  constants.article.bannerImageHeight / constants.article.bannerImageWidth
+                }
+                ratingClickable
+              />
+            )}
+            {features.articleTypography && (
+              <MatureRestrictedBadge
+                restricted={isSavedRestricted(article?.bannerImage, watchedBanner)}
+              />
+            )}
+            {features.articleTypography && (
+              <ReframeButton
+                source={watchedBanner}
+                target="cover"
+                onKeep={(image) => form.setValue('coverImage', image, { shouldDirty: true })}
+              />
+            )}
             <InputSelect
               name="categoryId"
               label={
@@ -680,7 +736,9 @@ function ActionButtons({
       ...(scanStatus.images?.error || []),
     ];
 
-    return problematicImages.some((img) => currentContentUrls.has(img.url));
+    // A blocked image sent without its url cannot be matched to the content, so it holds the
+    // publish until a save drops it from the scan.
+    return problematicImages.some((img) => img.url === null || currentContentUrls.has(img.url));
   }, [scanStatus, currentContentUrls]);
 
   const publishDisabled = publishButtonProps.disabled || hasProblematicImages;
@@ -744,6 +802,19 @@ function ActionButtons({
           )}
         </>
       )}
+      {article?.id &&
+        (article.status === ArticleStatus.Draft ||
+          article.status === ArticleStatus.Unpublished) && (
+          <Button
+            variant="default"
+            type="button"
+            fullWidth
+            leftSection={<IconLink size={16} />}
+            onClick={() => openArticleShareDraftModal(article.id)}
+          >
+            Share draft
+          </Button>
+        )}
       {article?.publishedAt ? (
         <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}
@@ -792,3 +863,36 @@ type ActionButtonProps = StackProps & {
   article?: ArticleGetById;
   currentContent?: string;
 };
+
+/** Only beside a saved image: the source must be an Image row the server can check. */
+function ReframeButton({
+  source,
+  target,
+  onKeep,
+}: {
+  source?: { id?: number; url: string; nsfwLevel?: number | null } | null;
+  target: ArticleReframeTarget;
+  onKeep: (image: ImageSchema) => void;
+}) {
+  const id = source?.id;
+  if (!source || !id) return null;
+  const refusal = getReframeRefusal(target, source);
+  if (refusal)
+    return (
+      <Text size="xs" c="dimmed" ta="right" mt={-8}>
+        {refusal}
+      </Text>
+    );
+  return (
+    <Group justify="flex-end" mt={-8}>
+      <Button
+        size="compact-sm"
+        variant="light"
+        leftSection={<IconSparkles size={14} />}
+        onClick={() => openArticleReframeModal({ source: { id, url: source.url }, target, onKeep })}
+      >
+        Generate {target} from this image
+      </Button>
+    </Group>
+  );
+}

@@ -18,7 +18,11 @@ import {
   SERVICES_TERMS_VERSION,
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
-import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ServiceOfferingIngestionStatus,
+  ServiceOfferingStatus,
+} from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -32,6 +36,20 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(async () => undefined),
 }));
+const checks = vi.hoisted(() => ({
+  scanServiceOffering: vi.fn(async () => undefined),
+  requeueBlockedServiceOffering: vi.fn(async () => undefined),
+  updateServiceOfferingNsfwLevels: vi.fn(async () => undefined),
+  isImageOwner: vi.fn(async () => true),
+}));
+vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
+  scanServiceOffering: checks.scanServiceOffering,
+  requeueBlockedServiceOffering: checks.requeueBlockedServiceOffering,
+}));
+vi.mock('~/server/services/nsfwLevels.service', () => ({
+  updateServiceOfferingNsfwLevels: checks.updateServiceOfferingNsfwLevels,
+}));
+vi.mock('~/server/services/util.service', () => ({ isImageOwner: checks.isImageOwner }));
 
 const SELLER = 7;
 const fields = {
@@ -173,6 +191,28 @@ describe('writes', () => {
       })
     );
     expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("saves the seller's choice to allow review work, and leaves it alone when omitted", async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Active,
+      sellerAffirmation: null,
+      title: fields.title,
+      description: fields.description,
+      ingestion: 'Scanned',
+      coverImageId: null,
+    } as never);
+    const data = () =>
+      (dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0] as { data: object }).data;
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      // Through the router's schema, which drops a key it does not declare.
+      input: upsertServiceOfferingSchema.parse({ ...fields, id: 9, allowReviewWork: true }),
+    });
+    expect(data()).toMatchObject({ allowReviewWork: true });
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, id: 9, publish: false } });
+    expect(data()).not.toHaveProperty('allowReviewWork');
   });
 
   it('removes by status, scoped to the caller', async () => {
@@ -391,6 +431,22 @@ describe('storefront read', () => {
           status: ServiceOfferingStatus.Active,
           seller: { bannedAt: null, deletedAt: null, muted: false },
           maxNsfwLevel: { lte: NsfwLevel.PG13 },
+          ingestion: ServiceOfferingIngestionStatus.Scanned,
+          AND: [
+            {
+              OR: [
+                { coverImageId: null },
+                {
+                  coverImage: {
+                    ingestion: ImageIngestionStatus.Scanned,
+                    needsReview: null,
+                    tosViolation: false,
+                    nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
+                  },
+                },
+              ],
+            },
+          ],
         },
       })
     );
@@ -417,6 +473,26 @@ describe('storefront read', () => {
       [2, null],
       [3, 0],
     ]);
+  });
+
+  it('lists an offering without its cover when the cover is mature and restricted, even for its seller', async () => {
+    shopEnabled(true);
+    const cover = (nsfwLevel: number, modelRestricted: boolean) => ({
+      id: 9,
+      url: 'u',
+      nsfwLevel,
+      modelRestricted,
+    });
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([
+      { id: 1, maxOpenDeals: null, coverImage: cover(4, true) },
+      { id: 2, maxOpenDeals: null, coverImage: cover(1, true) },
+      { id: 3, maxOpenDeals: null, coverImage: cover(4, false) },
+    ] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    for (const viewerId of [VISITOR, SELLER]) {
+      const offerings = await getShopServiceOfferings({ userId: SELLER, viewerId, servable: ALL });
+      expect(offerings.map((o) => o.coverImage?.nsfwLevel ?? null)).toEqual([null, 1, 4]);
+    }
   });
 
   it("hides a private shop's offerings from visitors, not from its owner", async () => {
@@ -522,33 +598,44 @@ describe('storefront ratings', () => {
     expect(isMatureServiceLevel(NsfwLevel.R)).toBe(true);
   });
 
-  it('rates a new offering PG-13 by default, and leaves the rating alone on an update without one', async () => {
+  it("stores the seller's rating on create, PG-13 by default, and leaves it alone on an update without one", async () => {
     seller();
     const input = upsertServiceOfferingSchema.parse({ ...fields });
     await upsertServiceOffering({ sellerId: SELLER, input });
     expect(dbMock.dbWrite.serviceOffering.create.mock.calls.at(-1)?.[0]?.data).toMatchObject({
-      maxNsfwLevel: NsfwLevel.PG13,
+      declaredNsfwLevel: NsfwLevel.PG13,
+    });
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...input, declaredNsfwLevel: NsfwLevel.X },
+    });
+    expect(dbMock.dbWrite.serviceOffering.create.mock.calls.at(-1)?.[0]?.data).toMatchObject({
+      declaredNsfwLevel: NsfwLevel.X,
     });
 
     dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      ...fields,
       status: ServiceOfferingStatus.Active,
+      ingestion: ServiceOfferingIngestionStatus.Scanned,
+      coverImageId: null,
     } as never);
     await upsertServiceOffering({ sellerId: SELLER, input: { ...input, id: 3 } });
     const data = dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0]?.data;
+    expect(data?.declaredNsfwLevel).toBeUndefined();
     expect(data?.maxNsfwLevel).toBeUndefined();
   });
 
   it('accepts one rating bit and refuses Blocked or a mask with a 400', () => {
     const base = { ...fields };
     // Omitted stays omitted: an update must not reset a mature offering to PG-13.
-    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBeUndefined();
+    expect(upsertServiceOfferingSchema.parse(base).declaredNsfwLevel).toBeUndefined();
     expect(
-      upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: NsfwLevel.X }).success
+      upsertServiceOfferingSchema.safeParse({ ...base, declaredNsfwLevel: NsfwLevel.X }).success
     ).toBe(true);
     for (const bad of [NsfwLevel.Blocked, NsfwLevel.PG | NsfwLevel.R, 0, 3])
-      expect(upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: bad }).success).toBe(
-        false
-      );
+      expect(
+        upsertServiceOfferingSchema.safeParse({ ...base, declaredNsfwLevel: bad }).success
+      ).toBe(false);
   });
 });
 
@@ -607,5 +694,371 @@ describe("a seller's own offerings", () => {
         sellerId: SELLER,
         status: { not: ServiceOfferingStatus.Removed },
       });
+  });
+});
+
+describe("an offering's content checks on save", () => {
+  const saved = (over: Record<string, unknown> = {}) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      ...fields,
+      status: ServiceOfferingStatus.Active,
+      sellerAffirmation: null,
+      ingestion: ServiceOfferingIngestionStatus.Scanned,
+      coverImageId: null,
+      ...over,
+    } as never);
+  const update = (input: Record<string, unknown> = {}) =>
+    upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 3, publish: false, ...input },
+    });
+  const lastData = () => dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0]?.data;
+
+  beforeEach(() => seller());
+
+  it('checks a new offering and recomputes its rating', async () => {
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledWith([1]);
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(1);
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledTimes(1);
+    expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends edited text back to its check, and leaves unchanged text as it was', async () => {
+    saved();
+    await update({ price: 5000 });
+    expect(lastData()?.ingestion).toBeUndefined();
+    expect(checks.scanServiceOffering).not.toHaveBeenCalled();
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledWith([3]);
+
+    await update({ description: 'Two animated badges.' });
+    expect(lastData()).toMatchObject({
+      ingestion: ServiceOfferingIngestionStatus.Pending,
+      scanWorkflowId: null,
+    });
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(3);
+    expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not undo a block that landed while new text was being saved', async () => {
+    saved();
+    // The row is Blocked by now; the write only matches the state it was read in.
+    dbMock.dbWrite.serviceOffering.updateMany.mockImplementationOnce((async ({
+      where,
+    }: {
+      where: { ingestion?: string };
+    }) => ({
+      count: where.ingestion === undefined || where.ingestion === 'Blocked' ? 1 : 0,
+    })) as never);
+    await expect(update({ description: 'Two animated badges.' })).rejects.toThrow(
+      'This service changed while you were editing it. Reload and try again.'
+    );
+    expect(checks.scanServiceOffering).not.toHaveBeenCalled();
+  });
+
+  it('hands a held offering with new text to the guarded requeue, then checks the text', async () => {
+    saved({ ingestion: ServiceOfferingIngestionStatus.Blocked });
+    await update({ price: 5000 });
+    expect(checks.requeueBlockedServiceOffering).not.toHaveBeenCalled();
+    await update({ title: 'Custom badges' });
+    expect(lastData()?.ingestion).toBeUndefined();
+    expect(checks.requeueBlockedServiceOffering).toHaveBeenCalledWith(3);
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(3);
+  });
+
+  it("refuses another user's image as the cover, and keeps the current cover without asking", async () => {
+    saved({ coverImageId: 55 });
+    const image = { id: 99, url: 'k', type: 'image' as const };
+    checks.isImageOwner.mockResolvedValueOnce(false);
+    expect(await rejects(update({ coverImage: image }))).toBe('Invalid cover image');
+    expect(checks.isImageOwner).toHaveBeenCalledWith({
+      userId: SELLER,
+      imageId: 99,
+      allowMods: false,
+    });
+
+    checks.isImageOwner.mockClear();
+    await update({ coverImage: { ...image, id: 55 } });
+    expect(checks.isImageOwner).not.toHaveBeenCalled();
+    expect(lastData()?.coverImageId).toBe(55);
+
+    await update({ coverImage: null });
+    expect(lastData()?.coverImageId).toBeNull();
+  });
+});
+
+describe('license terms', () => {
+  const NO_LICENSE = /Pick license terms/;
+  const affirmed = { version: SERVICES_TERMS_VERSION };
+  const draft = (extra: object = {}) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Draft,
+      sellerAffirmation: affirmed,
+      title: fields.title,
+      description: fields.description,
+      licensePreset: null,
+      licenseCustomText: null,
+      ...extra,
+    } as never);
+  const written = () =>
+    (dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1) as [{ data: object }])[0].data;
+
+  it('refuses a seller in the rollout who publishes without picking one, and writes nothing', async () => {
+    seller();
+    draft();
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, id: 5, publish: true },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(NO_LICENSE);
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(NO_LICENSE);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.serviceOffering.create).not.toHaveBeenCalled();
+  });
+
+  it('publishes with a preset and stores it', async () => {
+    seller();
+    draft();
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: {
+        ...fields,
+        id: 5,
+        publish: true,
+        licensePreset: 'CommercialCredit',
+        licenseAllowResale: true,
+      },
+      licenseEditor: true,
+    });
+    expect(written()).toMatchObject({
+      status: ServiceOfferingStatus.Active,
+      licensePreset: 'CommercialCredit',
+      licenseCustomText: null,
+      licenseAllowResale: true,
+    });
+  });
+
+  it('never stores resale with Personal use, or custom text with a preset', async () => {
+    seller();
+    draft();
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: {
+        ...fields,
+        id: 5,
+        publish: false,
+        licensePreset: 'Personal',
+        licenseAllowResale: true,
+        licenseCustomText: 'left over from Custom',
+      },
+      licenseEditor: true,
+    });
+    expect(written()).toMatchObject({
+      licensePreset: 'Personal',
+      licenseCustomText: null,
+      licenseAllowResale: false,
+    });
+  });
+
+  it('refuses to clear the license of a published service, and writes nothing', async () => {
+    seller();
+    draft({ status: ServiceOfferingStatus.Active, licensePreset: 'Personal' });
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, id: 5, publish: false, licensePreset: null },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(/keeps license terms/);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses Custom without text', async () => {
+    seller();
+    draft();
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: {
+            ...fields,
+            id: 5,
+            publish: false,
+            licensePreset: 'Custom',
+            licenseCustomText: '  ',
+          },
+          licenseEditor: true,
+        })
+      )
+    ).toMatch(/Write your license terms/);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends new custom text to the content check and the blocklist', async () => {
+    seller();
+    draft({ licensePreset: 'Custom', licenseCustomText: 'Old terms.' });
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: {
+        ...fields,
+        id: 5,
+        publish: false,
+        licensePreset: 'Custom',
+        licenseCustomText: 'New terms.',
+      },
+      licenseEditor: true,
+    });
+    expect(written()).toMatchObject({ ingestion: ServiceOfferingIngestionStatus.Pending });
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(5);
+    expect(vi.mocked(throwOnBlockedUserContent).mock.calls.at(-1)?.[0]).toContain('New terms.');
+  });
+
+  it('outside the rollout, neither requires a license nor writes one sent anyway', async () => {
+    seller();
+    draft();
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 5, publish: true, licensePreset: 'CommercialNoCredit' },
+    });
+    expect(written()).toMatchObject({ status: ServiceOfferingStatus.Active });
+    expect(written()).not.toHaveProperty('licensePreset');
+  });
+
+  it('refuses activation through setStatus in the rollout until a license is set', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: affirmed,
+      licensePreset: null,
+    } as never);
+    expect(
+      await rejects(
+        setServiceOfferingStatus({
+          sellerId: SELLER,
+          input: { id: 3, status: 'Active' },
+          licenseRequired: true,
+        })
+      )
+    ).toMatch(NO_LICENSE);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: affirmed,
+      licensePreset: 'Personal',
+    } as never);
+    await setServiceOfferingStatus({
+      sellerId: SELLER,
+      input: { id: 3, status: 'Active' },
+      licenseRequired: true,
+    });
+    expect(written()).toMatchObject({ status: ServiceOfferingStatus.Active });
+  });
+});
+
+describe('a request form', () => {
+  const FORM = {
+    questions: [
+      {
+        type: 'pickOne' as const,
+        id: 'style',
+        label: 'Style',
+        options: [
+          { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+          { id: 'color', label: 'Full color', price: 2_000, days: 1 },
+        ],
+      },
+    ],
+  };
+  const saved = (extra: object = {}) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Draft,
+      sellerAffirmation: { version: SERVICES_TERMS_VERSION },
+      title: fields.title,
+      description: fields.description,
+      ingestion: 'Scanned',
+      licensePreset: null,
+      licenseCustomText: null,
+      requestForm: null,
+      requestFormVersion: 2,
+      ...extra,
+    } as never);
+  const written = () =>
+    (dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1) as [{ data: object }])[0].data;
+  const save = (input: object, licenseEditor = true) =>
+    upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 5, publish: false, ...input },
+      licenseEditor,
+    });
+
+  it('stores the form, its cheapest total as the "from" price, and a new version', async () => {
+    seller();
+    saved();
+    await save({ requestForm: FORM });
+    expect(written()).toMatchObject({ requestForm: FORM, fromPrice: 4_000, requestFormVersion: 3 });
+  });
+
+  it('refuses a form whose dearest answers pass the price cap, and writes nothing', async () => {
+    seller();
+    saved();
+    const dear = structuredClone(FORM);
+    dear.questions[0].options[1].price = 999_000;
+    expect(await rejects(save({ requestForm: dear }))).toMatch(/at most/);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('checks a form left as it is again when the base price moves', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    await save({ price: 5_000 });
+    expect(written()).toMatchObject({ fromPrice: 5_000, requestFormVersion: 2 });
+    expect(await rejects(save({ price: 999_000 }))).toMatch(/at most/);
+  });
+
+  it('is left as it is for a seller outside the rollout', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    await save({ requestForm: null }, false);
+    expect(written()).toMatchObject({ requestForm: FORM, requestFormVersion: 2 });
+  });
+
+  it('sends its labels through the text check, and a new label to the content check', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    const renamed = structuredClone(FORM);
+    renamed.questions[0].options[1].label = 'Painted';
+    await save({ requestForm: renamed });
+    expect(vi.mocked(throwOnBlockedUserContent).mock.calls.at(-1)?.[0]).toContain('Painted');
+    expect(written()).toMatchObject({ ingestion: 'Pending' });
+  });
+
+  it('writes the price as the least a buyer pays on a new service without a form', async () => {
+    seller();
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(dbMock.dbWrite.serviceOffering.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ fromPrice: fields.price, requestFormVersion: 0 }),
+      })
+    );
+  });
+
+  it('removes the form when cleared, leaving the price as the least a buyer pays', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    await save({ requestForm: null });
+    expect(written()).toMatchObject({ fromPrice: fields.price, requestFormVersion: 3 });
   });
 });

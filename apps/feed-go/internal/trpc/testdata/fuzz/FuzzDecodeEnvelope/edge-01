@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"json\":{\"a\":1},\"meta\":{\"values\":{\"a\":[\"Map\"]}}}")

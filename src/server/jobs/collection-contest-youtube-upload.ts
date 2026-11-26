@@ -1,6 +1,7 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -14,7 +15,7 @@ const logWebhook = (data: MixedObject) => {
       ...data,
     },
     'webhooks'
-  ).catch();
+  );
 };
 
 const ATTEMPT_LIMIT = 3;
@@ -74,6 +75,7 @@ export const contestCollectionYoutubeUpload = createJob(
             AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
+            AND ${imageNotRestrictedSql()}
             -- We only want to upload videos that are longer than 30 seconds
             AND (i.metadata->'duration')::int > 30
             AND (i.metadata->'youtubeVideoId') IS NULL
@@ -119,28 +121,25 @@ export const contestCollectionYoutubeUpload = createJob(
               throw new Error(`Failed to upload video ${item.imageId}`);
             }
 
-            await dbWrite.image.update({
-              where: { id: item.imageId },
-              data: {
-                metadata: {
-                  ...item.metadata,
-                  youtubeUploadEnqueuedAt: new Date().toISOString(),
-                },
-              },
-            });
+            // Merged in place: the batch row may predate other metadata written since.
+            await dbWrite.$executeRaw`
+              UPDATE "Image"
+              SET "metadata" = COALESCE("metadata", '{}'::jsonb)
+                || jsonb_build_object('youtubeUploadEnqueuedAt', NOW())
+              WHERE id = ${item.imageId}
+            `;
           } catch (error) {
             console.error(`Error uploading video ${item.imageId}: ${(error as Error).message}`);
             logWebhook({ error, imageId: item.imageId });
 
-            await dbWrite.image.update({
-              where: { id: item.imageId },
-              data: {
-                metadata: {
-                  ...item.metadata,
-                  youtubeUploadAttempt: (item.metadata.youtubeUploadAttempt ?? 0) + 1,
-                },
-              },
-            });
+            await dbWrite.$executeRaw`
+              UPDATE "Image"
+              SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+                'youtubeUploadAttempt',
+                ${(item.metadata.youtubeUploadAttempt ?? 0) + 1}::int
+              )
+              WHERE id = ${item.imageId}
+            `;
 
             await dbWrite.collectionItem.updateMany({
               where: {

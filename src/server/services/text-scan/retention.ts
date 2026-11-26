@@ -10,8 +10,6 @@ export const CSAM_HOLD_TEXT_RETENTION_DAYS = 30;
 
 export const TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES: TextScanEntityType[] = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'ResourceReview',
 ];

@@ -130,6 +130,7 @@ describe('classifyException — DROP: ad-blocker / 3p script blocks', () => {
     'Failed to load script: //securepubads.g.doubleclick.net/tag/js/gpt.js',
     'Failed to load script: //cdn.snigelweb.com/adengine/loader.js',
     'Failed to load script: //adengine.snigelw.com/loader.js',
+    'Failed to load script: //www.flashb.id/universal/f812656a.js',
     'Failed to load script: googletag',
     'Failed to load script: //doubleclick.net/x',
     'Failed to load script: adsbygoogle',
@@ -1401,7 +1402,7 @@ describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-mo
   it.each([
     ['The prompt has been blocked due to mature content, which is not allowed on this site'],
     [
-      'The prompt has been blocked due to mature content, which private and in-training resources cannot generate',
+      'The prompt has been blocked due to mature content, which the resources or workflow in this generation cannot produce',
     ],
   ])('tags the mature-content block %j as bizlogic', (value) => {
     const r = classifyException(exc('TRPCClientError', value));

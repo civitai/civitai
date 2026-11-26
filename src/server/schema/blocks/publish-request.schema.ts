@@ -2,7 +2,20 @@ import * as z from 'zod';
 import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import {
+  AGENT_REVIEW_MODEL_ID_MAX,
+  AGENT_REVIEW_MODEL_ID_RE,
+} from '~/shared/constants/agent-review-model.constants';
 import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
+import {
+  HOLD_LABEL_MAX,
+  HOLD_REASON_MAX,
+  HOLD_REASON_MIN,
+  MAX_OPEN_HOLDS_PER_APP,
+  PUBLISH_REQUEST_HOLD_KINDS,
+} from '~/shared/constants/publish-request-holds.constants';
+
+export const holdReasonSchema = z.string().trim().min(HOLD_REASON_MIN).max(HOLD_REASON_MAX);
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -127,17 +140,37 @@ export const submitVersionSchema = z.object({
     .boolean()
     .nullish()
     .transform((v) => v ?? undefined),
+  // A GitHub Actions OIDC token for the run submitting this bundle (sent by the
+  // `civitai/app-submit-action` Action through `civitai app submit`). OPTIONAL: absent means
+  // the submit behaves exactly as before.
+  //
+  // Only a length cap here, no JWT shape check: with the `app-blocks-oidc-verified-submit` flag
+  // off the token is ignored entirely, so a value this schema refused would be a submit gate the
+  // flag cannot turn off. With the flag on, `verifyGithubActionsOidcToken` checks everything,
+  // and a token that fails refuses the submit.
+  //
+  // 🔴 A DIFFERENT TRUST LEVEL FROM `sourceCommit` / `sourceDirty` above: those are claims; a
+  // verified token yields the run facts GitHub signed (`actions_run_*`). Never alias between them.
+  // 🔴 A credential-shaped value: never log or echo it.
+  githubOidcToken: z
+    .string()
+    .min(1)
+    .max(16_384)
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
 
 /**
- * Per-field hints for a `submitVersionSchema` rejection. Only the #4059
- * provenance fields appear here, on purpose — see below.
+ * Per-field hints for a `submitVersionSchema` rejection. Only the optional
+ * provenance fields (#4059's claim, and the GitHub Actions token) appear here, on
+ * purpose — see below.
  */
 const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
   sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
   sourceDirty: 'sourceDirty must be a boolean',
+  githubOidcToken: 'githubOidcToken must be a non-empty string of at most 16384 characters',
 };
 
 /** The message both submit routes have always returned for a parse failure. */
@@ -214,6 +247,8 @@ export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
   mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
+  holdOverrideReason: holdReasonSchema.optional(),
+  holdOverrideIds: z.array(z.number().int().positive()).max(MAX_OPEN_HOLDS_PER_APP).optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
@@ -255,6 +290,12 @@ export const getPublishRequestScreenshotsSchema = z.object({
 });
 
 export type GetPublishRequestScreenshotsInput = z.infer<typeof getPublishRequestScreenshotsSchema>;
+
+/** MOD: preview or re-run the version rating sync for one approved app's on-site listing. */
+export const listingRatingResyncSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type ListingRatingResyncInput = z.infer<typeof listingRatingResyncSchema>;
 
 /** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
 export const getPublishRequestDiffSchema = z.object({
@@ -310,6 +351,14 @@ export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchem
  * client renderer cannot disagree about which analyses exist.
  */
 
+/** An OpenRouter model id a moderator chose for an agent review run. */
+export const agentReviewModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_REVIEW_MODEL_ID_MAX)
+  .regex(AGENT_REVIEW_MODEL_ID_RE, 'Not an OpenRouter model id (expected vendor/model)');
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
  *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
@@ -334,6 +383,14 @@ export const startAgentReviewSchema = z.object({
     .min(1)
     .max(AGENT_REVIEW_SECTIONS.length)
     .optional(),
+  /**
+   * Run on this OpenRouter model (`vendor/model`, as OpenRouter lists it) instead of the review
+   * agent's default. Omitted on a full run ⇒ the default, and the provisioned Job sets no model
+   * values. On a targeted re-run it must be the
+   * latest run's own model. An id OpenRouter does not list as tool-capable is refused (the
+   * service needs its price for the cost cap).
+   */
+  model: agentReviewModelIdSchema.optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
@@ -342,6 +399,14 @@ export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
  *  (P2) — the poll + render source for the report of a PENDING request. Same
  *  shape as previewRequest (the pending request id). */
 export const getAgentReviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  /** One run of this request (the report picker). Omitted ⇒ the latest run. */
+  reportId: z.string().min(1).max(64).optional(),
+});
+
+/** Input for the MOD-ONLY `blocks.listAgentReviews` (every run of a request, for the report
+ *  picker) and `blocks.getAgentReviewModels` (the re-run model picker). */
+export const agentReviewRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });
 
@@ -363,6 +428,8 @@ export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema
 export const agentReviewChatSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
+  /** The run the moderator is viewing; the chat grounds on it. Omitted ⇒ the latest run. */
+  reportId: z.string().min(1).max(64).optional(),
 });
 
 export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;
@@ -379,3 +446,20 @@ export const backfillPublishRequestSchema = z.object({
 });
 
 export type BackfillPublishRequestInput = z.infer<typeof backfillPublishRequestSchema>;
+
+export const placePublishRequestHoldSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  kind: z.enum(PUBLISH_REQUEST_HOLD_KINDS),
+  reason: holdReasonSchema,
+  label: z.string().trim().min(1).max(HOLD_LABEL_MAX),
+});
+
+export const clearPublishRequestHoldSchema = z.object({
+  holdId: z.number().int().positive(),
+  reason: holdReasonSchema,
+});
+
+export const listPublishRequestHoldsSchema = z.object({
+  slugs: z.array(z.string().min(1).max(128)).min(1).max(50),
+  includeCleared: z.boolean().optional(),
+});

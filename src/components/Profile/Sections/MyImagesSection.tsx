@@ -52,7 +52,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !images.length;
 
-  if (isNullState) {
+  if (isNullState && inView) {
     return null;
   }
 

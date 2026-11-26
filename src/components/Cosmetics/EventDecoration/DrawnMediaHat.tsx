@@ -1,4 +1,5 @@
 import type { EmblaCarouselType } from 'embla-carousel';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
@@ -27,6 +28,8 @@ export function DrawnMediaHat({
   layer: HTMLElement | null;
   embla?: EmblaCarouselType | null;
 }) {
+  const shown = useShowEventCosmetics();
+  if (!shown) decoration = null;
   const { hostRef, box } = useDrawnMediaBox(!!decoration && !!layer);
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);

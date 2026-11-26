@@ -75,19 +75,19 @@ export async function getMyHiddenApps(userId: number): Promise<HiddenApps> {
  * The run page's READ for "opening clears the hide" (`openingClearsHide`): is `slug` in the
  * viewer's hides? Read from the same cached settings as `getMyHiddenApps`, and FAILS OPEN to
  * `false` on any error — it sits on the app-launch path, where a throw would take the app
- * away, and the worst a false negative does is leave a hide in place (the pre-existing
- * behaviour). The WRITE is the client's `unhideMyApp` call after mount, only when this is true.
+ * away. A false negative leaves the hide in place, so `listMyApps` keeps dropping the row; the
+ * app still shows on this browser's home, as a recents-only tile (the run page records the
+ * open). The WRITE is the client's `unhideMyApp` call after mount, only when this is true.
  */
 export async function isMyAppHidden(args: { userId: number; slug: string }): Promise<boolean> {
   try {
     return openingClearsHide(await getMyHiddenApps(args.userId), args.slug);
   } catch (err) {
-    // Logged, not swallowed; the `.catch` keeps a failed log off `unhandledRejection`.
     logToAxiom({
       name: 'my-apps-hidden-read-degraded',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return false;
   }
 }

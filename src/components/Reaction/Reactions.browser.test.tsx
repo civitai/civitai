@@ -28,19 +28,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcUtils>()),
-  trpc: {
-    reaction: { toggle: { useMutation: () => ({ mutate: mocks.toggle, isPending: false }) } },
-    useUtils: () => ({}),
-  },
+  trpc: makeTrpcProxy({
+    'reaction.toggleWithPoints': {
+      useMutation: () => ({ mutate: mocks.toggle, isPending: false }),
+    },
+  }),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => mocks.flags,
-}));
-
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, muted: false }),
 }));
 
 // Boundary stub for the tip cases only: the real button needs a ContainerProvider this
@@ -53,6 +50,7 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', async (importOriginal) => 
 }));
 
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import { Reactions } from '~/components/Reaction/Reactions';
 
 // Every case uses its own `entityId`. The reaction and buzz-tipping stores are module
@@ -74,7 +72,8 @@ const placeholder = () => document.querySelector('[aria-label="Reaction counts u
 // Scoped to the row, NOT `document.body`: Mantine injects a <style> block whose
 // media queries ("max-width: 35.99375em") put digits in body.textContent, so a
 // digit assertion read against the body reports the stylesheet, not the badges.
-const renderRow = (ui: ReactElement) => renderWithProviders(<div data-testid="row">{ui}</div>);
+const renderRow = (ui: ReactElement) =>
+  renderWithProviders(<div data-testid="row">{ui}</div>, { user: { id: 1, muted: false } });
 const rowText = () => document.querySelector('[data-testid="row"]')?.textContent ?? '';
 
 beforeEach(() => {

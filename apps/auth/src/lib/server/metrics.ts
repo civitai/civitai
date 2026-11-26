@@ -72,6 +72,18 @@ export const captchaVerificationsTotal = new Counter({
   registers: [register],
 });
 
+/**
+ * First-party sign-in origins that matched a registry entry (`'always'` for a dev always-trust host), by
+ * call site and scheme. Counted on the origin match, before the caller checks client_id. `entry` is the
+ * row's domain, never the request host, so label cardinality stays bounded by the registry.
+ */
+export const firstPartyOriginTotal = new Counter({
+  name: 'hub_first_party_origin_total',
+  help: 'First-party sign-in origins that matched a registry entry, labeled by entry, call site and scheme.',
+  labelNames: ['entry', 'use', 'scheme'] as const,
+  registers: [register],
+});
+
 /** Unhandled errors surfaced to the SvelteKit handleError hook. */
 export const unhandledErrorsTotal = new Counter({
   name: 'hub_unhandled_errors_total',
@@ -135,4 +147,30 @@ export const authInternalParity = new Gauge({
   collect() {
     this.set({ app: 'hub' }, env.AUTH_INTERNAL_TOKEN ? 1 : 0);
   },
+});
+
+/**
+ * Session revocation checks that failed open (the token was treated as not revoked) because the shared session
+ * store errored or did not answer within the read deadline, by reason. A sustained rise means sign-outs and bans
+ * are not being enforced on the hub while the store is unhealthy.
+ */
+export const hubRevocationFailOpenTotal = new Counter({
+  name: 'hub_revocation_failopen_total',
+  help: 'Hub session revocation checks that failed open, labeled by reason (timeout|error).',
+  labelNames: ['reason'] as const,
+  registers: [register],
+});
+
+/**
+ * Session revocation checks whose store read failed but which still refused the session, because a revocation
+ * marker the hub had already read applied, by reason. Disjoint from hub_revocation_failopen_total: a failed read
+ * lands in exactly one of the two.
+ */
+export const hubRevocationDeniedCachedTotal = new Counter({
+  name: 'hub_revocation_denied_cached_total',
+  help:
+    'Hub session revocation checks that failed to read the store but refused the session from a revocation ' +
+    'marker already read, labeled by reason (timeout|error).',
+  labelNames: ['reason'] as const,
+  registers: [register],
 });

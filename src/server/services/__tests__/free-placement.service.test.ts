@@ -133,6 +133,21 @@ describe('createFreePlacement', () => {
     // query is `expiresAt <= now()`, which NULL never satisfies.
     expect(written.expiresAt).toBeInstanceOf(Date);
     expect(written.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(written).not.toHaveProperty('track');
+  });
+
+  it('stores a moving sticker’s track beside its data', async () => {
+    const track = { v: 1, ms: 100, x: [[0, 0.2]], y: [[0, 0.5]], s: [[0, 0.1]], r: [[0, 0]] };
+    await createFreePlacement({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { cosmeticId: 5 },
+      track,
+    });
+
+    expect(placementCreate.mock.calls[0][0].data.track).toEqual(track);
   });
 
   // The owner is taken from the space this function resolved, from the target it
@@ -565,6 +580,8 @@ describe('the advisory locks have exactly one call site', () => {
   // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
   // support-membership-code takes one per moderator (0x4d430001) for the daily mint cap's
   // count-then-insert, never nested inside another lock.
+  // membership-gift-comp takes one per moderator (0x4d470001) for the daily comp cap's
+  // count-then-insert, never nested inside another lock.
   // creator-score-grant takes one per moderator (0x43530001) for the daily grant cap's
   // count-then-insert, then the target's User row lock; never nested inside another advisory lock.
   // platform-feedback takes one per report fingerprint so two first reports cannot both insert.
@@ -580,7 +597,18 @@ describe('the advisory locks have exactly one call site', () => {
   // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
   // never nested inside another advisory lock.
   // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
-  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions, except
+  // a keyed submit, where it is taken inside buzz-charge-lock's lock (always that one first).
+  // buzz-charge-lock takes one per keyed charge (one-arg hashtextextended of the charge's external
+  // id or prefix: creator-shop-submit-…, donation-k-…, appeal-k-…, crucible-entry-k-…,
+  // creator-cash-withdrawal-…, bounty-k-…; or of a key naming a charge's legs together:
+  // crucible-create-k-…) around the record of a charge and any refund after a failed record;
+  // the Buzz charge itself runs outside. Taken first in its transaction; the only other advisory
+  // lock ever taken under it is the creator lock above, so there is no cycle. Row locks taken under
+  // it (the appealed Image, the entered Crucible, a new crucible's own unpaid row, a new bounty's
+  // rows and the Tag rows it connects or creates) cannot close one either: only a charge-key
+  // transaction waits on this lock, and it takes it before any row. A keyed cash withdrawal only
+  // inserts its CashWithdrawal row under it. Its callers are pinned in CHARGE_KEY_LOCK_CALLERS below.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
@@ -588,23 +616,55 @@ describe('the advisory locks have exactly one call site', () => {
   // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
   // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
   // transaction, for a decision's final update. The only lock in either transaction.
+  // post-text-moderation takes that same csam-hold lock (csamHoldLockKey('PostText')) around a
+  // moderator's hold: the pending-hold check, the hold insert and csamHeld. The only lock in its
+  // transaction.
   // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
   // form) around the open-hold check and the hold write. The only lock in its transaction.
+  // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
+  // count-then-insert, article saves' shared-text reads and every go-live revoke. Always before the
+  // Article row lock; the ingestion recompute takes article.service.ts's bare id lock first, then it.
   // apps/storage-migration-run takes one per app block (0x41534d01, hashtext of the id) around the
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
+  // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
+  // count and claim. The only lock in its transaction.
+  // app-hibernation/hibernation.repo takes one per user (0x48424e54) as the first statement of its
+  // commit transaction, around the record, usage and User FOR SHARE reads, the decision and the upsert.
+  // The only advisory lock in its transaction, never nested inside another lock.
+  // storyline takes one per (user, spark image) (0x53544c31, hashtext of both) as the first
+  // statement of createStoryline's spark start, around the unwritten-storyline lookup and the reuse
+  // or insert. The only advisory lock in its transaction.
+  // blocks/publish-request-holds takes one per app (0x41525648, hashtext of the slug) around hold
+  // placement and each approve's hold check. Hold placement takes no other lock; an off-site approve
+  // takes it after its own listing row lock, which no holder of it takes; lock_timeout is 5 s.
+  // metrics/model-image-count takes one platform-wide (one-arg hashtext('model-image-count')) as the
+  // first statement of every transaction that reads or writes its watermark or backfill progress:
+  // the hourly count, recount, pause and each backfill step. The only advisory lock in those
+  // transactions; it then takes ModelVersionMetric row locks in ascending id order.
   const ALLOWED = [
+    'metrics/model-image-count.ts',
+    'services/access-token.service.ts',
+    'services/app-hibernation/hibernation.repo.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
+    'services/blocks/publish-request-holds.service.ts',
+    'services/blocks/review-autodeploy.service.ts',
+    'services/buzz-charge-lock.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
     'services/creator-score-grant.service.ts',
+    'services/creator-service-deal-review-publish.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',
+    'services/membership-gift-comp.service.ts',
+    'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
+    'services/post-text-moderation.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
+    'services/storyline.service.ts',
     'services/support-membership-code.service.ts',
     'services/text-scan/actions/csam-hold.ts',
     'services/text-scan/actions/model-rules-hold.ts',
@@ -633,6 +693,44 @@ describe('the advisory locks have exactly one call site', () => {
       );
 
     expect(callers.sort()).toEqual(ALLOWED);
+  });
+
+  // Who takes buzz-charge-lock's lock (through withChargeKeyLock, recordKeyedCharge or
+  // refundUnlessRecorded) and on which charge: a new caller is a new transaction shape under that
+  // lock, so it has to be read against the ordering note above before it joins this list.
+  // creator-shop-fees: creator-shop-submit-… (item, pack and mystery pack submission fees).
+  // donation-goal: donation-k-…. report: appeal-k-… (the appeal fee). crucible: crucible-entry-k-…,
+  // and crucible-create-k-… (a keyed creation's setup fee and seed, recorded or refunded together).
+  // creator-program: creator-cash-withdrawal-… (a keyed Creator Program cash withdrawal's row).
+  // bounty: bounty-k-… (a keyed bounty's creation charge; the bounty's rows are written under it).
+  // A call with or without type arguments: `recordKeyedCharge(` and `recordKeyedCharge<T>(`.
+  const CHARGE_KEY_LOCK = /\b(withChargeKeyLock|recordKeyedCharge|refundUnlessRecorded)\s*[<(]/;
+  const CHARGE_KEY_LOCK_CALLERS = [
+    'services/bounty.service.ts',
+    'services/buzz-charge-lock.ts',
+    'services/creator-program.service.ts',
+    'services/creator-shop-fees.service.ts',
+    'services/crucible.service.ts',
+    'services/donation-goal.service.ts',
+    'services/report.service.ts',
+  ];
+
+  it('the charge-key lock is taken only by the keyed charges it was reviewed for', () => {
+    const root = path.resolve(__dirname, '../..');
+    const callers = fs
+      .readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((name) => name.split(path.sep).join('/'))
+      .filter((name) => name.endsWith('.ts') && !name.includes('__tests__/'))
+      .filter((name) =>
+        CHARGE_KEY_LOCK.test(
+          fs
+            .readFileSync(path.join(root, name), 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/\/\/[^\n]*/g, '')
+        )
+      );
+
+    expect(callers.sort()).toEqual(CHARGE_KEY_LOCK_CALLERS);
   });
 
   it('exports nothing but the three functions, so there is no lock to take', async () => {

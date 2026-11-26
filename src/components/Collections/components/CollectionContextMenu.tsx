@@ -2,6 +2,8 @@ import type { MenuProps } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  IconArchive,
+  IconArchiveOff,
   IconEdit,
   IconRobot,
   IconHome,
@@ -15,13 +17,12 @@ import { getQueryKey } from '@trpc/react-query';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import dynamic from 'next/dynamic';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -29,12 +30,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 
-const CollectionAiReviewModal = dynamic(
-  () => import('~/components/Collections/CollectionAiReviewModal')
-);
-const CollectionCollaboratorsModal = dynamic(
-  () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
-);
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { CollectionFollowAction } from './CollectionFollow';
@@ -89,6 +84,26 @@ export function CollectionContextMenu({
     },
   });
 
+  const isArchived = permissions?.archived ?? false;
+  const setArchivedMutation = trpc.collection.setArchived.useMutation({
+    async onSuccess(_res, { archived }) {
+      showSuccessNotification({
+        title: archived ? 'Collection archived' : 'Collection unarchived',
+        message: archived
+          ? "This collection is now hidden from the 'Save to collection' list and won't accept new entries until you unarchive it."
+          : 'This collection can receive new entries again.',
+      });
+      await queryUtils.collection.getById.invalidate({ id: collectionId });
+      await queryUtils.collection.getAllUser.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update collection',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const handleDeleteClick = () => {
     // Capture route info at click time so the redirect decision can't be
     // affected by route changes that happen while the dialog is open.
@@ -96,41 +111,35 @@ export function CollectionContextMenu({
       router.pathname.startsWith('/collections/[collectionId]') &&
       Number(router.query.collectionId) === collectionId;
 
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete collection',
-        message:
-          'Are you sure that you want to delete this collection? This action is destructive and cannot be reversed.',
-        labels: { cancel: "No, don't delete it", confirm: 'Delete collection' },
-        confirmProps: { color: 'red' },
-        // ConfirmDialog awaits this promise — the dialog stays open with a
-        // loading spinner until the mutation completes, and only then
-        // does the dialog close.
-        onConfirm: async () => {
-          try {
-            await deleteCollectionMutation.mutateAsync({ id: collectionId });
-          } catch (error) {
-            showErrorNotification({
-              title: 'Failed to delete collection',
-              error: error instanceof Error ? error : new Error(String(error)),
-            });
-            return;
-          }
-
-          showSuccessNotification({
-            title: 'Collection deleted',
-            message: 'Your collection has been deleted',
+    openConfirm({
+      title: 'Delete collection',
+      message:
+        'Are you sure that you want to delete this collection? This action is destructive and cannot be reversed.',
+      labels: { cancel: "No, don't delete it", confirm: 'Delete collection' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        try {
+          await deleteCollectionMutation.mutateAsync({ id: collectionId });
+        } catch (error) {
+          showErrorNotification({
+            title: 'Failed to delete collection',
+            error: error instanceof Error ? error : new Error(String(error)),
           });
+          return;
+        }
 
-          // Cache for getAllUser is already updated optimistically in onMutate,
-          // so the list /collections shows no longer includes the deleted one.
-          if (onDeletedCollectionPage) {
-            await router.replace('/collections');
-          }
-          await queryUtils.collection.getInfinite.invalidate();
-          await queryUtils.collection.getById.invalidate({ id: collectionId });
-        },
+        showSuccessNotification({
+          title: 'Collection deleted',
+          message: 'Your collection has been deleted',
+        });
+
+        // Cache for getAllUser is already updated optimistically in onMutate,
+        // so the list /collections shows no longer includes the deleted one.
+        if (onDeletedCollectionPage) {
+          await router.replace('/collections');
+        }
+        await queryUtils.collection.getInfinite.invalidate();
+        await queryUtils.collection.getById.invalidate({ id: collectionId });
       },
     });
   };
@@ -285,9 +294,8 @@ export function CollectionContextMenu({
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  dialogStore.trigger({
-                    component: CollectionAiReviewModal,
-                    props: { collectionId },
+                  openDialog(() => import('~/components/Collections/CollectionAiReviewModal'), {
+                    collectionId,
                   });
                 }}
               >
@@ -295,6 +303,25 @@ export function CollectionContextMenu({
               </Menu.Item>
             )}
           </>
+        )}
+        {!isBookmarkCollection && (isOwner || isMod) && (
+          <Menu.Item
+            leftSection={
+              isArchived ? (
+                <IconArchiveOff size={14} stroke={1.5} />
+              ) : (
+                <IconArchive size={14} stroke={1.5} />
+              )
+            }
+            disabled={setArchivedMutation.isPending}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setArchivedMutation.mutate({ id: collectionId, archived: !isArchived });
+            }}
+          >
+            {isArchived ? 'Unarchive collection' : 'Archive collection'}
+          </Menu.Item>
         )}
         {currentUser && permissions?.read && (
           <Menu.Item
@@ -339,10 +366,13 @@ export function CollectionContextMenu({
             onClick={(e: React.MouseEvent) => {
               e.preventDefault();
               e.stopPropagation();
-              dialogStore.trigger({
-                component: CollectionCollaboratorsModal,
-                props: { collectionId },
-              });
+              openDialog(
+                () =>
+                  import(
+                    '~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal'
+                  ),
+                { collectionId }
+              );
             }}
           >
             Collaborators

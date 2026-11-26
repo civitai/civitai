@@ -14,7 +14,8 @@ import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/se
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { parseRestrictionRuling, rulingReason } from '$lib/server/restriction-ruling';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
-import { planRemixSources } from '$lib/restrictions/origin';
+import { planRemixSources, triggerOrigin } from '$lib/restrictions/origin';
+import { withheldUrls } from '$lib/server/retracted-media';
 import {
   getGenerationRestrictions,
   getRemixSources,
@@ -58,11 +59,55 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
   };
 }
 
+type WithTriggers = { triggers: RestrictionRow['triggers'] };
+
+/**
+ * What of each trigger's inputs `user` is shown. A remix's input images can be its source's own file,
+ * so they are shown only beside a source read and cleared for this moderator: not one withheld,
+ * missing, past the lookup cap, or unread. Any other trigger's inputs are shown unless the url names
+ * an image withheld from this moderator.
+ */
+export async function triggerInputsFor(
+  rows: readonly WithTriggers[],
+  sources: Record<number, RemixSource>,
+  user: App.Locals['user'] | undefined
+) {
+  const withheld = await withheldUrls(
+    rows.flatMap((row) =>
+      row.triggers.flatMap((t) =>
+        triggerOrigin(t).imageId ? [] : [...(t.inputImages ?? []), t.inputVideo]
+      )
+    ),
+    user,
+    'restriction-inputs'
+  );
+  return <R extends WithTriggers>(row: R): R => ({
+    ...row,
+    triggers: row.triggers.map((trigger) => {
+      const id = triggerOrigin(trigger).imageId;
+      if (id)
+        return sources[id] && !sources[id].restricted
+          ? trigger
+          : { ...trigger, inputImages: undefined, inputVideo: undefined };
+      return {
+        ...trigger,
+        inputImages: trigger.inputImages?.filter((url) => !withheld.has(url)),
+        inputVideo:
+          trigger.inputVideo && withheld.has(trigger.inputVideo) ? undefined : trigger.inputVideo,
+      };
+    }),
+  });
+}
+
 /**
  * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
  * page ships at once: selection is client state, so the remix sources for every row have to be on it.
  */
-export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
+export async function restrictionTriageLoad(
+  url: URL,
+  queue: QueueConfig,
+  user: App.Locals['user'] | undefined
+) {
   const { type, status, origin, sort, q, page, selected, username, userId } = parseQueueQuery(
     url,
     queue,
@@ -105,14 +150,15 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
   let sources: Record<number, RemixSource> = {};
   let sourcesFailed = false;
   try {
-    sources = Object.fromEntries((await getRemixSources(plan.lookup)).map((s) => [s.id, s]));
+    sources = Object.fromEntries((await getRemixSources(plan.lookup, user)).map((s) => [s.id, s]));
   } catch {
     sourcesFailed = true;
   }
+  const shownInputs = await triggerInputsFor(pinned ? [...items, pinned] : items, sources, user);
 
   return {
-    items,
-    pinned,
+    items: items.map(shownInputs),
+    pinned: pinned && shownInputs(pinned),
     selectedMissing,
     sources,
     sourcesFailed,

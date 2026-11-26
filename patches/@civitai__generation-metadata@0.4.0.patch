@@ -1,0 +1,161 @@
+diff --git a/dist/chunk-D656XTWB.js b/dist/chunk-D656XTWB.js
+index a5a71eaffa63ebd216f2fb0350c68f36380d0734..a8236348a4323a755a56391d64ca545974d3b2ea 100644
+--- a/dist/chunk-D656XTWB.js
++++ b/dist/chunk-D656XTWB.js
+@@ -1183,11 +1183,11 @@ async function toBytes(input) {
+   }
+   throw new Error("Unsupported input type");
+ }
+-function extractExif(bytes) {
++async function extractExif(bytes) {
+   let tags = {};
+   try {
+     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+-    tags = ExifReader.load(buffer, { includeUnknown: true });
++    tags = await ExifReader.load(buffer, { includeUnknown: true, async: true });
+   } catch {
+   }
+   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+@@ -1204,7 +1204,7 @@ function extractExif(bytes) {
+ async function readMetadata(input, options) {
+   const bytes = await toBytes(input);
+   const format = sniffFormat(bytes);
+-  const exif = extractExif(bytes);
++  const exif = await extractExif(bytes);
+   const plugins = options?.plugins;
+   const { parsers, context } = applyPlugins(plugins, options?.parsers ?? defaultParsers);
+   const ctx = createParserContext({ ...context, ...options?.context });
+diff --git a/dist/civitai/index.cjs b/dist/civitai/index.cjs
+index e43ef33c8658279ea8a67b70ddff321f3e5d78cf..4119390b2372d893ba6810d1ac45909443d23957 100644
+--- a/dist/civitai/index.cjs
++++ b/dist/civitai/index.cjs
+@@ -1671,11 +1671,11 @@ async function toBytes(input) {
+   }
+   throw new Error("Unsupported input type");
+ }
+-function extractExif(bytes) {
++async function extractExif(bytes) {
+   let tags = {};
+   try {
+     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+-    tags = import_exifreader.default.load(buffer, { includeUnknown: true });
++    tags = await import_exifreader.default.load(buffer, { includeUnknown: true, async: true });
+   } catch {
+   }
+   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+@@ -1692,7 +1692,7 @@ function extractExif(bytes) {
+ async function readMetadata(input, options) {
+   const bytes = await toBytes(input);
+   const format = sniffFormat(bytes);
+-  const exif = extractExif(bytes);
++  const exif = await extractExif(bytes);
+   const plugins = options?.plugins;
+   const { parsers, context } = applyPlugins(plugins, options?.parsers ?? defaultParsers);
+   const ctx = createParserContext({ ...context, ...options?.context });
+diff --git a/dist/image/index.cjs b/dist/image/index.cjs
+index 1cb596add623b7c26e148b8939c76eb5524de073..aa14cffadcc86e410f2e33799d9ccb43597c2281 100644
+--- a/dist/image/index.cjs
++++ b/dist/image/index.cjs
+@@ -1252,11 +1252,11 @@ async function toBytes(input) {
+   }
+   throw new Error("Unsupported input type");
+ }
+-function extractExif(bytes) {
++async function extractExif(bytes) {
+   let tags = {};
+   try {
+     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+-    tags = import_exifreader.default.load(buffer, { includeUnknown: true });
++    tags = await import_exifreader.default.load(buffer, { includeUnknown: true, async: true });
+   } catch {
+   }
+   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+@@ -1273,7 +1273,7 @@ function extractExif(bytes) {
+ async function readMetadata(input, options) {
+   const bytes = await toBytes(input);
+   const format = sniffFormat(bytes);
+-  const exif = extractExif(bytes);
++  const exif = await extractExif(bytes);
+   const plugins = options?.plugins;
+   const { parsers, context } = applyPlugins(plugins, options?.parsers ?? defaultParsers);
+   const ctx = createParserContext({ ...context, ...options?.context });
+diff --git a/dist/image/index.d.cts b/dist/image/index.d.cts
+index 9dc31f6f58d350f3cef71929c1fa4451a990fea3..73353b551bc24738b25166c705303bfc5f4e597c 100644
+--- a/dist/image/index.d.cts
++++ b/dist/image/index.d.cts
+@@ -151,7 +151,7 @@ declare function toBytes(input: BinaryInput): Promise<Uint8Array>;
+  * `.value`. An EXIF `UserComment` additionally gets normalized to a Uint8Array
+  * under the `userComment` key (raw bytes, encoding header included).
+  */
+-declare function extractExif(bytes: Uint8Array): ExifData;
++declare function extractExif(bytes: Uint8Array): Promise<ExifData>;
+ 
+ /**
+  * Decode an EXIF UserComment payload: an 8-byte character-code header
+diff --git a/dist/image/index.d.ts b/dist/image/index.d.ts
+index e1fc1ccd3e986314abd67d6a57935f038d50aec7..afb6af8a8309afc223f66bd34af5493ac77466cc 100644
+--- a/dist/image/index.d.ts
++++ b/dist/image/index.d.ts
+@@ -151,7 +151,7 @@ declare function toBytes(input: BinaryInput): Promise<Uint8Array>;
+  * `.value`. An EXIF `UserComment` additionally gets normalized to a Uint8Array
+  * under the `userComment` key (raw bytes, encoding header included).
+  */
+-declare function extractExif(bytes: Uint8Array): ExifData;
++declare function extractExif(bytes: Uint8Array): Promise<ExifData>;
+ 
+ /**
+  * Decode an EXIF UserComment payload: an 8-byte character-code header
+diff --git a/dist/index.cjs b/dist/index.cjs
+index f658b0045c814c3eff025a0b65eb25cd47b0d400..37eaf96d8355f01c3ff1937be3905b9903c216af 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1261,11 +1261,11 @@ async function toBytes(input) {
+   }
+   throw new Error("Unsupported input type");
+ }
+-function extractExif(bytes) {
++async function extractExif(bytes) {
+   let tags = {};
+   try {
+     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+-    tags = import_exifreader.default.load(buffer, { includeUnknown: true });
++    tags = await import_exifreader.default.load(buffer, { includeUnknown: true, async: true });
+   } catch {
+   }
+   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+@@ -1282,7 +1282,7 @@ function extractExif(bytes) {
+ async function readMetadata(input, options) {
+   const bytes = await toBytes(input);
+   const format = sniffFormat(bytes);
+-  const exif = extractExif(bytes);
++  const exif = await extractExif(bytes);
+   const plugins = options?.plugins;
+   const { parsers, context } = applyPlugins(plugins, options?.parsers ?? defaultParsers);
+   const ctx = createParserContext({ ...context, ...options?.context });
+diff --git a/dist/node.cjs b/dist/node.cjs
+index 22952bb0824979f039ea4fe58c78c5d6f70bee1c..ee7e0921765c643d2d417d490eb53d69e5572f25 100644
+--- a/dist/node.cjs
++++ b/dist/node.cjs
+@@ -1207,11 +1207,11 @@ async function toBytes(input) {
+   }
+   throw new Error("Unsupported input type");
+ }
+-function extractExif(bytes) {
++async function extractExif(bytes) {
+   let tags = {};
+   try {
+     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+-    tags = import_exifreader.default.load(buffer, { includeUnknown: true });
++    tags = await import_exifreader.default.load(buffer, { includeUnknown: true, async: true });
+   } catch {
+   }
+   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+@@ -1228,7 +1228,7 @@ function extractExif(bytes) {
+ async function readMetadata(input, options) {
+   const bytes = await toBytes(input);
+   const format = sniffFormat(bytes);
+-  const exif = extractExif(bytes);
++  const exif = await extractExif(bytes);
+   const plugins = options?.plugins;
+   const { parsers, context } = applyPlugins(plugins, options?.parsers ?? defaultParsers);
+   const ctx = createParserContext({ ...context, ...options?.context });

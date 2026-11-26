@@ -18,7 +18,13 @@ name: tRPC server parity
 #     keys on by name (`assert-spans.mjs`), with Next's own export as the positive control;
 #   - runs the same requests against a copy of the standalone server with its internal-header
 #     strip removed, and fails unless that break shows up as a red case — the negative control
-#     that proves this harness can see a broken server at all.
+#     that proves this harness can see a broken server at all;
+#   - boots the standalone server once more under its `api` profile (`STANDALONE_SERVER_PROFILE=api`:
+#     `/api/v1/**` and `/api/auth/**` added) and runs the tRPC cases and the `--cases api` cases
+#     against it, with a copy whose proxy-policy call is removed as that profile's negative control
+#     (the 451 for a blocked region must go red), and checks an `/api/v1/` request span is emitted;
+#   - boots the api profile once more on an image whose `/api/v1/enums` route module throws at load,
+#     and requires that server to come up, answer that route 500 and serve the others.
 #
 # Runs when anything that can change either server's answers changes: the server itself, the
 # image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
@@ -27,17 +33,33 @@ name: tRPC server parity
 # Report-only: not a required check. It needs the preview image, which the preview pipeline builds
 # only for some PRs and finishes minutes after the PR event. So the cheap `gate` job runs first,
 # with no checkout, install or service containers:
-#   - a PR that will get no image fails red in seconds, with the reason;
+#   - a PR that will get no image passes in seconds with a warning annotation giving the reason
+#     (add the `preview` label to run it); the parity job is skipped. It used to fail red, which
+#     only ever meant "no label", never anything about the code;
 #   - a PR whose image is not built yet passes with a notice and the parity job is skipped. No
-#     runner waits for the build: when the preview pipeline marks the commit `preview / deploy`
-#     = success, the `status` trigger below runs parity for that commit and reports on it as the
+#     runner waits for the build: when the preview pipeline has deployed and verified the preview
+#     (the moment it marks the commit `preview / deploy` = success), it also creates a GitHub
+#     Deployment in environment `preview` for that commit, straight in state `success`. The
+#     `deployment_status` trigger below runs parity for that commit and reports on it as the
 #     `tRPC parity` commit status;
 #   - a PR whose image is already there runs the parity job straight away.
 #
-# `status` runs use this file as it is on the DEFAULT branch, never the PR's copy (GitHub runs a
-# `status` workflow from the default branch). Only the path list is read from the PR's own copy.
-# So a PR that changes this workflow's logic is tested by its `pull_request` run (when its image
-# is already there) or by a manual dispatch on its branch, never by the `status` run:
+# Why `deployment_status` and not the `status` event: GitHub cannot filter `status` at the
+# trigger, so EVERY commit status in the repository started a run of this workflow, nearly all
+# of them skipped. Deployments here come from the preview pipeline (once per verified preview)
+# and production deploys.
+#
+# 🔴 A `deployment_status` run uses this file as it is on the DEPLOYED commit (the PR head), not
+# the default branch's copy. So:
+#   - a branch whose head predates this trigger gets no deployment run; it is tested once it
+#     merges main (or by its `pull_request` run / a dispatch);
+#   - the preview pipeline creates the Deployment only for a head branch IN this repository whose
+#     PR passed its member + `preview` label gate, never for a fork. Pushing such a branch already
+#     lets its author run any workflow with this repository's secrets (`pull_request` and
+#     `workflow_dispatch` runs use the branch's copy too), so running the branch's copy here
+#     grants no one anything new;
+#   - a PR that changes this workflow's logic is tested by its own deployment run, as well as by
+#     its `pull_request` run (when its image is already there) or by a manual dispatch:
 #   gh workflow run trpc-server-parity.yml --ref <branch> -f image=<image ref>
 on:
   pull_request:
@@ -55,9 +77,12 @@ on:
       - 'pnpm-lock.yaml'
       - 'patches/**'
       - 'src/pages/api/trpc/**'
+      # The api profile (STANDALONE_SERVER_PROFILE=api) serves every /api/v1/ route.
+      - 'src/pages/api/v1/**'
       - 'src/pages/api/live.ts'
       - 'src/pages/api/health.ts'
       - 'src/pages/api/ready.ts'
+      - 'src/pages/api/readyz.ts'
       - 'src/pages/api/metrics.ts'
       - 'src/pages/api/internal/image-delivery/**'
       - 'src/server/services/image-delivery.service.ts'
@@ -84,9 +109,11 @@ on:
           other reference (e.g. a digest) is tested as given.
         required: true
         type: string
-  # Commit statuses fire for every context and state; the gate job's `if:` drops all but
-  # `preview / deploy` = success before a runner starts (each still lists as a skipped run).
-  status:
+  # Every deployment state change fires (queued, in_progress, success, failure; not inactive),
+  # for every environment. The gate job's `if:` keeps only environment `preview` in state
+  # `success`; the preview pipeline posts exactly that, once per verified preview, and production
+  # deploys list as skipped runs.
+  deployment_status:
 
 # `packages: read` lets the job's token pull the preview image, if the package grants this
 # repository read access.
@@ -95,21 +122,22 @@ permissions:
   packages: read
 
 # A run may only cancel an older run testing the SAME thing:
-#   - status: keyed on the commit, and only for `preview / deploy` = success. Every other status
-#     event gets a key of its own (the run id), so the stream of other statuses on the same commit
-#     cannot cancel its parity run. (Every status run has github.ref = the default branch, so a
-#     ref key would make them all cancel each other.)
+#   - deployment_status: keyed on the commit, and only for `preview` = success. Every other
+#     deployment event gets a key of its own (the run id), so a production deploy cannot cancel a
+#     parity run. (A deployment of a bare sha has an empty github.ref, so a ref key would make
+#     them all cancel each other.)
 #   - dispatch: keyed on branch and image; one for another commit's image (even one that only
 #     skips) must not cancel a run testing this one.
 #   - pull_request: keyed on the PR's ref.
-# The three never share a key, so a status, a dispatch and a PR run for one head commit run side
-# by side.
+# The three never share a key, so a deployment, a dispatch and a PR run for one head commit run
+# side by side.
 concurrency:
   group: >-
     trpc-server-parity-${{
-      github.event_name == 'status' && (
-        (github.event.context == 'preview / deploy' && github.event.state == 'success')
-          && format('status-{0}', github.event.sha)
+      github.event_name == 'deployment_status' && (
+        (github.event.deployment.environment == 'preview'
+          && github.event.deployment_status.state == 'success')
+          && format('deployment-{0}', github.event.deployment.sha)
           || format('ignored-{0}', github.run_id)
       )
       || format('{0}-{1}', github.ref, inputs.image)
@@ -121,18 +149,19 @@ jobs:
   gate:
     name: Preview image for parity
     runs-on: ubuntu-latest
-    # Draft PRs run ESLint only (lint.yml's header); a status run checks draft in its scope step.
-    # A status run starts a runner only for `preview / deploy` = success.
+    # Draft PRs run ESLint only (lint.yml's header); a deployment run checks draft in its scope
+    # step. A deployment run starts a runner only for environment `preview` in state `success`.
     if: >-
       (github.event_name == 'pull_request' && !github.event.pull_request.draft)
       || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'status'
-          && github.event.context == 'preview / deploy' && github.event.state == 'success')
+      || (github.event_name == 'deployment_status'
+          && github.event.deployment.environment == 'preview'
+          && github.event.deployment_status.state == 'success')
     timeout-minutes: 5
     outputs:
       run: ${{ steps.image.outputs.run }}
       image: ${{ steps.image.outputs.image }}
-      # The commit tested and reported on (dispatch and status runs; empty for a PR run).
+      # The commit tested and reported on (dispatch and deployment runs; empty for a PR run).
       sha: ${{ steps.scope.outputs.sha }}
     steps:
       # Whether the preview pipeline will build an image for this PR at all: the head branch is in
@@ -144,7 +173,15 @@ jobs:
       # `author_association` is deliberately NOT used, unlike the pipeline's own check: Actions
       # sees CONTRIBUTOR for a private org member (in the API and in the event payload alike), so
       # it would fail PRs that do get an image.
+      #
+      # NO IMAGE IS NOT A RED. This step used to fail the check here, so every PR touching a path
+      # above without the `preview` label showed a red `Preview image for parity` whose only
+      # message was "add the label": a red that says nothing about the code, on a check that is
+      # report-only anyway. Now it passes, says so in a warning annotation and the job summary,
+      # and sets `built=false`, which skips the image lookup and so the parity job (`run` stays
+      # empty, never 'true'). Adding the label re-runs this workflow (`labeled`, above).
       - name: Will a preview image be built for this PR?
+        id: built
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -163,14 +200,17 @@ jobs:
           [ "$head_repo" = "${{ github.repository }}" ] && same_repo=true
           echo "same-repo=$same_repo preview-label=$labelled auto-deploy=$auto"
           if [ "$same_repo" != true ] || { [ "$labelled" != true ] && [ "$auto" != true ]; }; then
-            echo "::error::No preview image will be built for this PR. Add the \`preview\` label to run the Mode R parity check."
-            exit 1
+            echo "::warning title=tRPC parity not run::No preview image will be built for this PR, so the parity check did not run. Add the \`preview\` label to run it."
+            echo "**tRPC parity not run**: no preview image will be built for this PR (same-repo=$same_repo, preview label=$labelled, auto-deploy=$auto). Add the \`preview\` label to run it." >> "$GITHUB_STEP_SUMMARY"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "built=true" >> "$GITHUB_OUTPUT"
 
-      # Dispatch and status runs name a commit, not a PR event. Test it only if:
+      # Dispatch and deployment runs name a commit, not a PR event. Test it only if:
       #   - it is still the head of its branch / open PR (otherwise the newer commit brings its
       #     own run, and this one would report on the wrong commit);
-      #   - (status) that PR is open, not a draft, from this repository, against main;
+      #   - (deployment) that PR is open, not a draft, from this repository, against main;
       #   - the PR / branch changes something listed under `on.pull_request.paths`, read from the
       #     commit's own copy of this file (so the list has one copy, and a PR that widens it is
       #     judged by its widened list), or from the running copy when the commit has none (a
@@ -184,18 +224,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           IMAGE: ${{ inputs.image }}
-          # status: the commit the status is on. dispatch: the dispatched branch's head.
-          SHA: ${{ github.event.sha || github.sha }}
+          # deployment: the deployed commit. dispatch: the dispatched branch's head.
+          SHA: ${{ github.event.deployment.sha || github.sha }}
           REPO: ${{ github.repository }}
-          # The commit this workflow file was read from (for a status run, the default branch).
+          # The commit this workflow file was read from (for a deployment run, the deployed one).
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           out() { echo "$1" >> "$GITHUB_OUTPUT"; }
           skip() { echo "::notice::$1"; out in-scope=false; exit 0; }
           out "sha=$SHA"
           base=main
-          if [ "$EVENT" = status ]; then
-            # The status event names a commit only; find the open PR it heads.
+          if [ "$EVENT" = deployment_status ]; then
+            # The deployment names a commit only; find the open PR it heads.
             pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq "[.[] | select(.state == \"open\"
                 and .head.sha == \"$SHA\" and .head.repo.full_name == \"$REPO\"
                 and .base.ref == \"main\")] | first // empty")
@@ -242,14 +282,15 @@ jobs:
           skip "This change touches nothing parity covers (on.pull_request.paths); nothing to test."
 
       # Is the image already pushed? One registry lookup, no waiting: a PR whose image is still
-      # being built is tested by the status run once its preview is deployed.
+      # being built is tested by the deployment run once its preview is deployed.
       - name: Is the preview image there?
         id: image
-        if: github.event_name == 'pull_request' || steps.scope.outputs.in-scope == 'true'
+        if: (github.event_name == 'pull_request' && steps.built.outputs.built == 'true') || steps.scope.outputs.in-scope == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
           IMAGE: ${{ steps.scope.outputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # The template above puts the full sha in the tag; the pipeline uses the first 7.
           case "$IMAGE" in
@@ -271,7 +312,17 @@ jobs:
               if [ "${{ github.event_name }}" != pull_request ]; then
                 echo "::error::$IMAGE does not exist"; exit 1
               fi
-              echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              # The later run is a deployment run, which uses the HEAD's copy of this file (this
+              # run uses the merge commit's). A head older than the `deployment_status` trigger
+              # gets no such run, so say so rather than promise one.
+              wf=.github/workflows/trpc-server-parity.yml
+              head_has=$(gh api "repos/${{ github.repository }}/contents/$wf?ref=$HEAD_SHA" --jq .content 2>/dev/null \
+                | base64 -d | yq -r '.on | has("deployment_status")' 2>/dev/null || echo unknown)
+              if [ "$head_has" = false ]; then
+                echo "::warning::The preview image for this commit is not built yet, and this branch's copy of $wf predates its \`deployment_status\` trigger, so NO parity run will follow the preview deploy. Merge main into the branch to get one."
+              else
+                echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              fi
               echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
             sleep $((attempt * 5))
@@ -284,7 +335,8 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # `statuses: write`: a dispatch or status run reports on its commit as the `tRPC parity` status.
+    # `statuses: write`: a dispatch or deployment run reports on its commit as the `tRPC parity`
+    # status.
     permissions:
       contents: read
       packages: read
@@ -309,14 +361,16 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
     env:
       IMAGE: ${{ needs.gate.outputs.image }}
-      # Dispatch and status runs: the commit under test, which the status is posted on.
+      # Dispatch and deployment runs: the commit under test, which the status is posted on.
       SHA: ${{ needs.gate.outputs.sha }}
       MUTANT_IMAGE: trpc-server-parity:mutant
+      API_MUTANT_IMAGE: trpc-server-parity:api-mutant
+      BROKEN_ROUTE_IMAGE: trpc-server-parity:broken-route
       CANDIDATE_IMAGE: trpc-server-parity:candidate
       STATUS_CONTEXT: tRPC parity
     steps:
-      # A dispatch or status run's check is not listed on the PR (a status run's is not even on
-      # the commit), so it reports as a commit status: pending now, the verdict at the end.
+      # A dispatch or deployment run is not a pull_request run, so its check is not reliably
+      # shown as the PR's own; it reports as a commit status: pending now, the verdict at the end.
       - name: Report pending on the head commit
         if: github.event_name != 'pull_request'
         env:
@@ -330,11 +384,11 @@ jobs:
       - name: Work directory
         run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
 
-      # A status run's own ref is the default branch: check out the commit under test instead.
+      # A deployment run has no branch ref: check out the commit under test by sha.
       # (A dispatch run's default is already its head; a PR run keeps its merge commit.)
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'status' && needs.gate.outputs.sha || '' }}
+          ref: ${{ github.event_name == 'deployment_status' && needs.gate.outputs.sha || '' }}
           submodules: true
 
       # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
@@ -343,10 +397,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # The gate job saw this image in the registry, so there is nothing to wait for. Its build
       # ran the Dockerfile's boot-graph gate, which also loads the standalone server's requires.
@@ -375,6 +432,7 @@ jobs:
             --watch 'GET /api/internal/image-delivery/[id]' \
             --watch 'POST /api/internal/ping' --watch 'POST /api/internal/pulse' \
             --watch 'POST /api/track/batch' \
+            --watch 'GET /api/v1/enums' \
             > "$WORK/otlp-stub.log" 2>&1 &
           echo $! > "$WORK/otlp-stub.pid"
 
@@ -407,7 +465,18 @@ jobs:
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/mutant/Dockerfile"
           docker build -q -t "$MUTANT_IMAGE" "$WORK/mutant"
           docker run --rm --entrypoint cat "$MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/mutant/server.cjs"
-          # The candidate: the image with this checkout's server.cjs. A pull_request or status run
+          # The api profile's negative control: the same, with the proxy-policy call removed instead.
+          mkdir -p "$WORK/api-mutant"
+          cp scripts/trpc-server/server.cjs "$WORK/api-mutant/server.cjs"
+          anchor='^    if (applyApiPolicy(req, res)) return;$'
+          n=$(grep -c "$anchor" "$WORK/api-mutant/server.cjs" || true)
+          if [ "$n" != 1 ]; then echo "api mutation anchor matched $n lines, expected 1"; exit 2; fi
+          sed -i "s|$anchor|  // MUTANT: proxy API policy not applied|" "$WORK/api-mutant/server.cjs"
+          if cmp -s scripts/trpc-server/server.cjs "$WORK/api-mutant/server.cjs"; then echo "api mutant is identical"; exit 2; fi
+          printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/api-mutant/Dockerfile"
+          docker build -q -t "$API_MUTANT_IMAGE" "$WORK/api-mutant"
+          docker run --rm --entrypoint cat "$API_MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/api-mutant/server.cjs"
+          # The candidate: the image with this checkout's server.cjs. A pull_request or deployment run
           # tests its own commit's image, so the copy must already be the image's (the run fails if
           # not). A dispatch run may test a branch's copy on top of an older image, which is how a
           # deliberately broken copy is tested without an image build; it says so in the log.
@@ -427,6 +496,14 @@ jobs:
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/candidate/Dockerfile"
           docker build -q -t "$CANDIDATE_IMAGE" "$WORK/candidate"
           docker run --rm --entrypoint cat "$CANDIDATE_IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
+          # The candidate with ONE route module that throws at load: /api/v1/enums.
+          mkdir -p "$WORK/broken"
+          rel=$(docker run --rm --entrypoint node "$CANDIDATE_IMAGE" -e "process.stdout.write(require('/app/.next/server/pages-manifest.json')['/api/v1/enums'] || '')")
+          [ -n "$rel" ] || { echo "/api/v1/enums is not in the image's pages-manifest"; exit 2; }
+          echo "throw new Error('parity: this route module fails to load on purpose');" > "$WORK/broken/broken.js"
+          printf 'FROM %s\nCOPY --chown=1001:1001 broken.js /app/.next/server/%s\n' "$CANDIDATE_IMAGE" "$rel" > "$WORK/broken/Dockerfile"
+          docker build -q -t "$BROKEN_ROUTE_IMAGE" "$WORK/broken"
+          docker run --rm --entrypoint cat "$BROKEN_ROUTE_IMAGE" "/app/.next/server/$rel" | cmp - "$WORK/broken/broken.js"
 
       - name: Start the servers
         run: |
@@ -434,6 +511,9 @@ jobs:
           docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE"
           docker run "${common[@]}" --name trpc -p 3001:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api -p 3003:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api-mutant -p 3004:3000 "$API_MUTANT_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name broken -p 3005:3000 "$BROKEN_ROUTE_IMAGE" node -- trpc-server/server.cjs
 
       # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
       #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
@@ -467,7 +547,18 @@ jobs:
             running trpc || { echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; }
             sleep 2
           done
-          check trpc '[trpc-server] instrumentation registered' '[trpc-server] ready'
+          check trpc '[trpc-server] instrumentation registered' '[trpc-server] ready (profile trpc,'
+
+          for _ in $(seq 1 180); do
+            docker logs api 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running api || { echo "api exited"; docker logs api 2>&1 | tail -100; exit 1; }
+            sleep 2
+          done
+          check api '[trpc-server] instrumentation registered' '[trpc-server] ready (profile api,' '/api/v1/models/[id]'
+          # /api/auth/ is not in the api profile.
+          if docker logs api 2>&1 | grep -F '[trpc-server] ready (profile api,' | grep -qF '/api/auth/'; then
+            echo "api: the ready line lists an /api/auth/ page"; exit 1
+          fi
 
           ok=
           for _ in $(seq 1 150); do
@@ -482,7 +573,7 @@ jobs:
       - name: Wait for all three to answer
         run: |
           token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
-          for port in 3000 3001 3002; do
+          for port in 3000 3001 3002 3003 3004; do
             ok=
             for _ in $(seq 1 150); do
               if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
@@ -544,6 +635,46 @@ jobs:
             --tracker-a-ip "$(ip next)" --tracker-b-ip "$(ip mutant)" \
             --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
 
+      - name: api profile, tRPC cases (Next vs standalone api profile)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3003 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-trpc.json"
+
+      - name: api profile parity (Next vs standalone api profile)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3003 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api.json" \
+            --cases api
+
+      - name: api profile negative control (Next vs api mutant must be red)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3004 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-mutant.json" \
+            --cases api --expect-red v1-blocked-region --expect-red-diff 'pinned 451 '
+
+      - name: A route module that fails to load does not take the server down
+        if: ${{ !cancelled() }}
+        run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          running() { [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ]; }
+          for _ in $(seq 1 180); do
+            docker logs broken 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running broken || { echo "broken: the server exited"; docker logs broken 2>&1 | tail -60; exit 1; }
+            sleep 2
+          done
+          docker logs broken 2>&1 | grep -F '[trpc-server] failed to load /api/v1/enums' \
+            || { echo "broken: no load-failure line for /api/v1/enums"; docker logs broken 2>&1 | tail -60; exit 1; }
+          code() { curl -s -o /dev/null -w '%{http_code}' -A 'python-requests/2.32.3' -H 'cf-connecting-ip: 198.51.100.23' "http://127.0.0.1:$1$2"; }
+          # Positive control: the unbroken api profile serves the route.
+          [ "$(code 3003 /api/v1/enums)" = 200 ] || { echo "api: /api/v1/enums is not 200"; exit 1; }
+          b=$(code 3005 /api/v1/enums); echo "broken /api/v1/enums -> $b"; [ "$b" = 500 ] || exit 1
+          a=$(code 3003 /api/v1/me); b=$(code 3005 /api/v1/me); echo "/api/v1/me: api $a, broken $b"; [ "$a" = "$b" ] || exit 1
+          b=$(code 3005 "/api/live?token=$token"); echo "broken /api/live -> $b"; [ "$b" = 200 ] || exit 1
+          running broken || { echo "broken exited after serving"; exit 1; }
+
       - name: The alerted span is still emitted
         if: ${{ !cancelled() }}
         run: |
@@ -564,11 +695,16 @@ jobs:
             node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
               --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)" --span "$span"
           done
+          # The api profile: its tRPC span and an /api/v1/ request span, by the same rule.
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip api)"
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip api)" --span 'GET /api/v1/enums'
 
       - name: Server logs
         if: always()
         run: |
-          for c in next trpc mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+          for c in next trpc mutant api api-mutant broken; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
 
       - uses: actions/upload-artifact@v7
         if: always()

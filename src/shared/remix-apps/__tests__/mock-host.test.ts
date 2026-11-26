@@ -1,20 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { dryRunRemixApp, remixOptionEffects } from '~/shared/remix-apps/mock-host';
 import type { RemixAsk } from '~/shared/remix-apps/define';
-import { pickOfFour, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
+import { compileRemixApp } from '~/shared/remix-apps/compile';
+import { replayRemixApp, type RemixReplayer } from '~/shared/remix-apps/replay';
+import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
+import { CODE_REMIX_APPS, pickOfFour } from '~/shared/remix-apps/system-apps';
+
+const SEED_APPS = SEED_REMIX_APPS.map(({ slug, name, spec }) =>
+  'code' in spec ? CODE_REMIX_APPS[spec.code] : compileRemixApp({ slug, name, version: 1 }, spec)
+);
 
 const source = { imageId: 7, url: 'https://image.example/source.png', width: 1200, height: 800 };
 
 describe('dryRunRemixApp', () => {
-  it.each(SYSTEM_RUNTIME_APPS.map((app) => [app.slug, app] as const))(
+  it.each(SEED_APPS.map((app) => [app.slug, app] as const))(
     '%s gives the same trace on every run',
     async (_, app) => {
       const first = await dryRunRemixApp(app, source);
       const second = await dryRunRemixApp(app, source);
 
       expect(second).toEqual(first);
-      // The host refuses an app that asks before it has run anything.
-      expect(first.trace[0].type).toBe('workflow');
+      // Answers are recorded on a workflow, so every app must reach one.
+      expect(first.trace.some((step) => step.type === 'workflow')).toBe(true);
     }
   );
 
@@ -49,7 +56,8 @@ describe('remixOptionEffects', () => {
     if (choice.type !== 'ask' || choice.spec.kind !== 'choice') throw new Error('not a choice');
     const picked = trace[0].type === 'workflow' ? trace[0].result.images[1] : undefined;
 
-    expect(await remixOptionEffects(pickOfFour, source, log, choice.spec)).toEqual([
+    const replay: RemixReplayer = (s, l) => replayRemixApp(pickOfFour, s, l);
+    expect(await remixOptionEffects(replay, source, log, choice.spec)).toEqual([
       {
         value: 'upscale',
         next: { type: 'workflow', request: { kind: 'upscale', image: picked, scale: 2 } },

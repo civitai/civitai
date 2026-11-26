@@ -27,7 +27,7 @@ import path from 'path';
  *
  * 🔴 WHY THE WALK COVERS `src/` AND NOT `src/server/`. It used to be rooted at
  * `src/server`, and two of the derivation sites live under `src/pages` —
- * `src/pages/api/auth/callback.ts` and `src/pages/api/mod/comment/remove-as-tos.ts`,
+ * `src/pages/api/auth/callback.ts` and `src/server/api-routes/mod/comment/remove-as-tos.ts`,
  * both of which held the library edge at the time and were invisible to it. A
  * ledger that cannot see half the population is not a ledger; it reports a clean
  * set because it never looked. Widening the root is what makes "the set matches
@@ -204,7 +204,7 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
       'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the ' +
       'falsy sentinel is preserved.',
   },
-  'pages/api/mod/comment/remove-as-tos.ts': {
+  'server/api-routes/mod/comment/remove-as-tos.ts': {
     symbol: 'resolveClientIpOrNull',
     why: 'Moderation audit-trail actor. Optional field, so the undefined sentinel is preserved.',
   },
@@ -226,6 +226,20 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'resolveClientIp',
     why: 'Public-API rate-limit bucket key.',
   },
+  'server/utils/app-visit-rate-limit.ts': {
+    symbol: 'resolveClientIp',
+    why: 'Rate-limit bucket key for the off-site visit redirect (/apps/go) — a limiter, not the control.',
+  },
+  'pages/api/internal/activity.ts': {
+    symbol: 'resolveClientIpOrNull',
+    why:
+      'Rate-limit bucket key for the click-activity beacon — a limiter, not the control. Null ' +
+      'skips the limit rather than putting every unresolved caller in one bucket.',
+  },
+  'server/registry-adapter/request-origin.ts': {
+    symbol: 'resolveClientIp',
+    why: 'Per-address cap on the registry adapter’s open subscriptions — a limiter, not the control.',
+  },
   // ── Enforcement ──────────────────────────────────────────────────────────
   'pages/api/v1/block-tokens/index.ts': {
     symbol: 'getTrustedClientIp',
@@ -241,6 +255,8 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
 const MUST_NOT_HOLD_EDGE = [
   'server/utils/rate-limit-bucket.ts',
   'server/utils/public-api-rate-limit.ts',
+  'server/utils/app-visit-rate-limit.ts',
+  'server/registry-adapter/request-origin.ts',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as OrchestrationNew from '~/server/services/orchestrator/orchestration-new.service';
 import type * as ImageService from '~/server/services/image.service';
 import type * as SignalClient from '~/utils/signal-client';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as StorageResolver from '~/server/services/storage-resolver';
+import type * as Workflows from '~/server/services/orchestrator/workflows';
 
 /**
  * The orchestrator can report a workflow succeeded before rating its outputs. Ready and saved
@@ -57,7 +59,9 @@ vi.mock('~/utils/signal-client', async (importOriginal) => ({
   signalClient: { send: vi.fn(async () => undefined) },
 }));
 
+import { TRPCError } from '@trpc/server';
 import { comicsRouter } from '../comics.router';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -105,13 +109,14 @@ const output = (id: string, over: Record<string, unknown> = {}) => ({
 
 function givenWorkflow(
   outputs: Array<Record<string, unknown>>,
-  normalized: Record<string, unknown> = {}
+  normalized: Record<string, unknown> = {},
+  { unlocked = false } = {}
 ) {
-  // The raw read the unlock guard checks: still locked, with an output rated mature.
+  // The raw read the unlock guard checks: locked (or not), with an output rated mature.
   mocks.getWorkflow.mockResolvedValue({
     id: 'wf-1',
     status: 'succeeded',
-    allowMatureContent: false,
+    allowMatureContent: unlocked,
     steps: [{ $type: 'comfy', name: '$0', output: { blobs: [output('b0', { nsfwLevel: 'x' })] } }],
   });
   mocks.formatGenerationResponse2.mockResolvedValue([
@@ -151,10 +156,35 @@ function givenPanel(over: Record<string, unknown> = {}) {
   dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panel);
 }
 
-const writes = () =>
-  dbMock.dbWrite.comicPanel.update.mock.calls.map(
-    (call: Array<{ data: Record<string, unknown> }>) => call[0].data
-  );
+/** Panel writes in call order; the poll's raw UPDATE is parsed back into the shape of an update's `data`. */
+const writes = () => {
+  const { update } = dbMock.dbWrite.comicPanel;
+  const raw = dbMock.dbWrite.$executeRaw.mock;
+  return [
+    ...update.mock.calls.map((call: Array<{ data: Record<string, unknown> }>, i: number) => ({
+      order: update.mock.invocationCallOrder[i],
+      data: call[0].data,
+    })),
+    ...raw.calls.flatMap((call: unknown[], i: number) => {
+      const strings = call[0] as string[];
+      if (!strings.join('').includes('SET status')) return [];
+      // Each value follows the template text that ends with its column.
+      const valueAfter = (text: string) => {
+        const at = strings.findIndex((s) => s.trimEnd().endsWith(text));
+        if (at < 0) throw new Error(`The poll's write no longer has "${text}"`);
+        return call[at + 1];
+      };
+      const data: Record<string, unknown> = {
+        status: valueAfter('SET status ='),
+        metadata: JSON.parse(valueAfter('metadata =') as string),
+      };
+      if (valueAfter('CASE WHEN')) data.errorMessage = valueAfter('THEN');
+      return [{ order: raw.invocationCallOrder[i], data }];
+    }),
+  ]
+    .sort((a, b) => a.order - b.order)
+    .map((w) => w.data);
+};
 
 beforeEach(() => {
   // Only the generation procedures' account-restriction read gets a row.
@@ -167,6 +197,9 @@ beforeEach(() => {
       ? { muted: false, bannedAt: null }
       : undefined) as never);
   vi.clearAllMocks();
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
+  dbMock.dbWrite.comicPanel.findFirst.mockImplementation((async (args: any) =>
+    args?.where?.workflowId === 'wf-1' ? { id: PANEL_ID } : null) as never);
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
   // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -330,7 +363,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     mocks.s3Send.mock.calls.map((c) => (c[0] as { input: { Key: string } }).input.Key);
   const recordedOwners = () =>
     vi
-      .mocked(redisMock.sysRedis.set)
+      .mocked(redisMock.redis.set)
       .mock.calls.filter((c) => String(c[0]).startsWith('system:upload-key-owner:'));
   beforeEach(() => track.imageUploadRequest.mockClear());
 
@@ -391,5 +424,681 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });
 
     await expectEachStoredKeyRecorded(2);
+  });
+});
+
+/** Unlocking a multi-image panel the owner already picked from; the per-panel claim on PGlite. */
+const pg = new PGlite();
+beforeAll(async () => {
+  await pg.exec(`
+    CREATE DOMAIN "ComicPanelStatus" AS text;
+    CREATE TABLE "ComicChapter" ("projectId" int, position int, PRIMARY KEY ("projectId", position));
+    INSERT INTO "ComicChapter" VALUES (11, 0);
+    CREATE TABLE "ComicPanel" (
+      id int PRIMARY KEY, metadata jsonb, status text, "errorMessage" text, "updatedAt" timestamptz,
+      "projectId" int, "chapterPosition" int
+    )`);
+});
+const storedClaim = async () =>
+  (
+    await pg.query<{ c: { token: string } | null }>(
+      `SELECT metadata->'unlockClaim' AS c FROM "ComicPanel" WHERE id = $1`,
+      [PANEL_ID]
+    )
+  ).rows[0]?.c ?? undefined;
+const seedClaim = (token: string, age: string) =>
+  pg.query(
+    `UPDATE "ComicPanel" SET metadata = jsonb_build_object('unlockClaim',
+      jsonb_build_object('token', $1::text, 'at', now() - $2::interval)) WHERE id = $3`,
+    [token, age, PANEL_ID]
+  );
+
+/** The charge write's failure as the real client maps an orchestrator answer of `status`. */
+const orchestratorFailure = async (status: number | undefined, detail: string) => {
+  const { throwOrchestratorFailure } = await vi.importActual<typeof Workflows>(
+    '~/server/services/orchestrator/workflows'
+  );
+  return throwOrchestratorFailure({
+    error: { detail },
+    response: status === undefined ? undefined : new Response(null, { status }),
+    message: detail,
+  });
+};
+/** A two-image panel the owner picked 'picked' from; slot 2 was mature and still locked. */
+const selectedPanel = () =>
+  givenPanel({
+    status: 'Ready',
+    imageUrl: 'picked',
+    imageId: 5,
+    metadata: {
+      quantity: 2,
+      candidateImages: [{ key: 'picked' }, { requiresUnlock: true, blockedReason: 'canUpgrade' }],
+    },
+  });
+const bothRated = [output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'x' })];
+
+describe('comics.unlockPanelGeneration - a multi-image panel with a selection', () => {
+  beforeEach(async () => {
+    await pg.exec(
+      `DELETE FROM "ComicPanel"; INSERT INTO "ComicPanel" (id, metadata, "projectId", "chapterPosition") VALUES (${PANEL_ID}, '{}', 11, 0)`
+    );
+    const raw = pgliteRaw(pg);
+    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+    // The panel writes reach the stored row too, so what a write leaves of the claim is real.
+    dbMock.dbWrite.comicPanel.update.mockImplementation((async ({ data }: { data: any }) => {
+      if (data.metadata)
+        await pg.query(`UPDATE "ComicPanel" SET metadata = $1 WHERE id = $2`, [
+          JSON.stringify(data.metadata),
+          PANEL_ID,
+        ]);
+      return { id: PANEL_ID, projectId: 11, imageUrl: null, errorMessage: null, ...data };
+    }) as never);
+  });
+
+  it('drops the claim when the unlock succeeds', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+    expect(await storedClaim()).toBeUndefined();
+  });
+
+  it('takes over a claim left more than 10 minutes ago, and refuses a fresh one', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    await seedClaim('crashed', '11 minutes');
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+
+    await seedClaim('live', '1 minute');
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /already being unlocked/
+    );
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing unlock frees only its own claim, not one taken over since', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(async () => {
+      // Its claim went stale and another request took the panel over.
+      await seedClaim('other', '0 minutes');
+      return orchestratorFailure(403, 'You need more yellow Buzz.');
+    });
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/Buzz/);
+
+    expect(await storedClaim()).toMatchObject({ token: 'other' });
+  });
+
+  it('collects a single-image unlock already paid for, without charging again', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow(
+      [output('b1', { nsfwLevel: 'x' })],
+      { allowMatureContent: true },
+      { unlocked: true }
+    );
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    expect(result.status).toBe('Ready');
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  /** A multi-image panel still choosing; `metadata` is the copy the poll read. */
+  const choosingPanel = (metadata: Record<string, unknown> = {}) =>
+    givenPanel({
+      status: 'AwaitingSelection',
+      metadata: {
+        quantity: 2,
+        candidateImages: [{ key: 'a' }, { requiresUnlock: true, blockedReason: 'canUpgrade' }],
+        ...metadata,
+      },
+    });
+
+  it("a collect of an unlock already paid for does not write back another request's claim", async () => {
+    givenPanel({
+      status: 'RequireUnlock',
+      metadata: {
+        quantity: 1,
+        blockedReason: 'canUpgrade',
+        unlockClaim: { token: 'other', at: new Date().toISOString() },
+      },
+    });
+    givenWorkflow(
+      [output('b1', { nsfwLevel: 'x' })],
+      { allowMatureContent: true },
+      { unlocked: true }
+    );
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    expect(writes().length).toBeGreaterThan(0);
+    expect(await storedClaim()).toBeUndefined();
+  });
+
+  it("the poll's candidate write keeps a claim an unlock took meanwhile", async () => {
+    choosingPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    await seedClaim('live', '0 minutes');
+
+    await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expect(writes()).toHaveLength(1);
+    expect(await storedClaim()).toMatchObject({ token: 'live' });
+  });
+
+  it("the poll's blocked-output write keeps a claim an unlock took meanwhile", async () => {
+    givenPanel();
+    givenWorkflow([output('b1', { nsfwLevel: 'r' })], { nsfwCap: 'pg13' });
+    await seedClaim('live', '0 minutes');
+
+    await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expect(writes()).toEqual([expect.objectContaining({ status: 'RequireUnlock' })]);
+    expect(await storedClaim()).toMatchObject({ token: 'live' });
+  });
+
+  it('the poll does not write back a claim released since it read the panel', async () => {
+    choosingPanel({ unlockClaim: { token: 'released', at: new Date().toISOString() } });
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expect(writes()).toHaveLength(1);
+    expect(await storedClaim()).toBeUndefined();
+  });
+
+  it('keeps the selection and unlocks the paid slot', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('Ready');
+    const [data] = writes();
+    expect(data).not.toHaveProperty('imageUrl');
+    expect(data).not.toHaveProperty('imageId');
+    expect(data.status).toBe('Ready');
+    const slots = (data.metadata as { candidateImages: Array<Record<string, unknown>> })
+      .candidateImages;
+    expect(slots[0]).toMatchObject({ key: 'picked' });
+    expect(slots[1]).toEqual({ key: expect.any(String), nsfwLevel: expect.any(Number) });
+    expect(mocks.createImage).not.toHaveBeenCalled();
+  });
+
+  it('gives no key of a selection whose image was blocked since, and keeps a clean one', async () => {
+    const unlock = async (blockedFor: string | null) => {
+      selectedPanel();
+      givenWorkflow(bothRated, { allowMatureContent: true });
+      dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+      const stored = dbMock.dbWrite.comicPanel.update.getMockImplementation()!;
+      dbMock.dbWrite.comicPanel.update.mockImplementation((async (args: never) => ({
+        ...(await stored(args)),
+        imageUrl: 'picked',
+        image: {
+          userId: USER_ID,
+          nsfwLevel: 1,
+          modelRestricted: false,
+          tosViolation: false,
+          needsReview: null,
+          ingestion: blockedFor ? 'Blocked' : 'Scanned',
+          blockedFor,
+        },
+      })) as never);
+      const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+      return {
+        imageUrl: result.imageUrl,
+        keyed: ('candidates' in result ? result.candidates ?? [] : []).filter(
+          (c) => 'key' in c && c.key
+        ).length,
+        picked: result.candidateImages.includes('picked'),
+      };
+    };
+    expect(await unlock('moderated')).toEqual({ imageUrl: null, keyed: 0, picked: false });
+    expect(await unlock(null)).toEqual({ imageUrl: 'picked', keyed: 2, picked: true });
+  });
+
+  it('collects the slots of an unlock already paid for, without charging again', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true }, { unlocked: true });
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    const [data] = writes();
+    const slots = (data.metadata as { candidateImages: Array<Record<string, unknown>> })
+      .candidateImages;
+    expect(slots[1]).toHaveProperty('key');
+  });
+
+  it('charges once when two unlocks of one panel overlap', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    const lockedRead = await mocks.getWorkflow();
+    let charged = false;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    mocks.updateWorkflow.mockImplementationOnce(async () => {
+      await held;
+      charged = true;
+    });
+    // The workflow reads unlocked once the first charge lands. The second request's second read is
+    // slow: it returns the locked state it saw before the first unlock finished and dropped its claim.
+    // Checked before claiming, that stale read would let the second request claim and charge too.
+    let secondReads: number | undefined;
+    mocks.getWorkflow.mockImplementation(async () => {
+      if (secondReads !== undefined && !charged && ++secondReads === 2) {
+        release();
+        await first.catch(() => undefined);
+        return lockedRead;
+      }
+      return { ...lockedRead, allowMatureContent: charged };
+    });
+
+    const first = caller().unlockPanelGeneration({ panelId: PANEL_ID });
+    await vi.waitFor(() => expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1));
+    secondReads = 0;
+    const second = caller().unlockPanelGeneration({ panelId: PANEL_ID });
+    await expect(second).rejects.toThrow(/already being unlocked/);
+    // Refused after its first read: a second read before the claim would get the stale answer.
+    expect(secondReads).toBe(1);
+    release();
+    await first;
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failure after the charge, such as the download, frees the claim', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' })]);
+    let heldDuringCharge: unknown;
+    mocks.updateWorkflow.mockImplementationOnce(async () => {
+      heldDuringCharge = await storedClaim();
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 500 }));
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /download failed/
+    );
+
+    expect(heldDuringCharge).toMatchObject({ token: expect.any(String) });
+    expect(await storedClaim()).toBeUndefined();
+  });
+
+  it('a charge cut off by its time bound keeps the claim until it expires', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(
+      ({ signal }: any) =>
+        new Promise((_, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('aborted')))
+        )
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const unlock = caller().unlockPanelGeneration({ panelId: PANEL_ID });
+      const refused = expect(unlock).rejects.toThrow(/not confirmed yet/);
+      while (!mocks.updateWorkflow.mock.calls.length) await new Promise((r) => setImmediate(r));
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
+      await refused;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
+  });
+
+  it('a charge write answered by a gateway error keeps the claim until it expires', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(() => orchestratorFailure(504, 'Gateway Timeout'));
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /not confirmed yet/
+    );
+
+    expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
+  });
+
+  it.each([
+    ['no response', () => orchestratorFailure(undefined, 'fetch failed')],
+    [
+      'an unmapped answer',
+      async () => {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      },
+    ],
+    [
+      'a failure the client did not map',
+      async () => {
+        throw new Error('socket hang up');
+      },
+    ],
+  ])('a charge write with %s keeps the claim until it expires', async (_, failure) => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(failure);
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /not confirmed yet/
+    );
+
+    expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
+  });
+
+  describe('a delete while an unlock is still finishing', () => {
+    const stored = async () =>
+      (await pg.query(`SELECT 1 FROM "ComicPanel" WHERE id = $1`, [PANEL_ID])).rows.length > 0;
+    const deletes = {
+      panel: {
+        run: () => caller().deletePanel({ panelId: PANEL_ID }),
+        deleted: async () => !(await stored()),
+      },
+      chapter: {
+        run: () => caller().deleteChapter({ projectId: 11, chapterPosition: 0 }),
+        deleted: async () => dbMock.dbWrite.comicChapter.delete.mock.calls.length > 0,
+      },
+      project: {
+        run: () => caller().deleteProject({ id: 11 }),
+        deleted: async () => dbMock.dbWrite.comicProject.update.mock.calls.length > 0,
+      },
+    };
+    beforeEach(() => {
+      givenPanel();
+      dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+        project: { userId: USER_ID },
+      } as never);
+      dbMock.dbRead.comicProject.findUnique.mockResolvedValue({ userId: USER_ID } as never);
+    });
+
+    it.each(Object.keys(deletes) as Array<keyof typeof deletes>)(
+      'refuses the %s delete while a panel claim is live',
+      async (scope) => {
+        await seedClaim('live', '1 minute');
+
+        await expect(deletes[scope].run()).rejects.toThrow(/still finishing/);
+
+        expect(await deletes[scope].deleted()).toBe(false);
+      }
+    );
+
+    it.each(Object.keys(deletes) as Array<keyof typeof deletes>)(
+      'CONTROL: deletes the %s once the claim has expired',
+      async (scope) => {
+        await seedClaim('crashed', '11 minutes');
+
+        await deletes[scope].run().catch(() => undefined);
+
+        expect(await deletes[scope].deleted()).toBe(true);
+      }
+    );
+
+    // A single connection cannot interleave two transactions, so no test here can watch the locks
+    // work. This pins that the chapter delete locks its chapter row (so a reorder cannot move
+    // another chapter into the position), then checks its panels under their row locks (so an
+    // unlock cannot claim one), before deleting. Drop either FOR UPDATE and that race reopens.
+    it('the chapter delete locks its chapter, then checks its panels, under row locks', async () => {
+      await deletes.chapter.run().catch(() => undefined);
+
+      const locks = dbMock.dbWrite.$queryRaw.mock.calls
+        .map((call: unknown[]) =>
+          Array.isArray(call[0]) ? call[0].join('?') : String((call[0] as { sql?: string }).sql)
+        )
+        .filter(
+          (sql: string) =>
+            sql.trimStart().startsWith('SELECT') &&
+            (sql.includes('FROM "ComicChapter"') || sql.includes('AS live'))
+        );
+      expect(locks).toHaveLength(2);
+      expect(locks[0]).toMatch(/FROM "ComicChapter"[\s\S]*FOR UPDATE\s*$/);
+      expect(locks[1]).toMatch(/AS live FROM "ComicPanel"[\s\S]*FOR UPDATE\s*$/);
+    });
+  });
+
+  describe('a copied panel does not carry the unlock claim', () => {
+    const source = {
+      id: PANEL_ID,
+      projectId: 11,
+      chapterPosition: 0,
+      position: 0,
+      prompt: 'a panel',
+      status: 'Ready',
+      imageUrl: 'picked',
+      metadata: { quantity: 1, unlockClaim: { token: 'live', at: new Date().toISOString() } },
+      references: [],
+      chapter: { project: { userId: USER_ID } },
+    };
+    const copiedMetadata = () =>
+      dbMock.dbWrite.comicPanel.create.mock.calls.map(
+        (c: Array<{ data: { metadata?: Record<string, unknown> } }>) => c[0].data.metadata
+      );
+    beforeEach(() => {
+      dbMock.dbWrite.comicPanel.create.mockResolvedValue({ id: 99, status: 'Ready' } as never);
+    });
+
+    it('by duplicatePanel', async () => {
+      dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(source as never);
+
+      await caller()
+        .duplicatePanel({ panelId: PANEL_ID })
+        .catch(() => undefined);
+
+      expect(copiedMetadata()).toEqual([{ quantity: 1 }]);
+    });
+
+    it('by duplicateChapter', async () => {
+      dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
+        name: 'one',
+        project: { userId: USER_ID },
+        panels: [source],
+      } as never);
+      dbMock.dbWrite.comicChapter.findMany.mockResolvedValue([] as never);
+      dbMock.dbWrite.comicChapter.create.mockResolvedValue({ position: 1 } as never);
+
+      await caller()
+        .duplicateChapter({ projectId: 11, chapterPosition: 0 })
+        .catch(() => undefined);
+
+      expect(copiedMetadata()).toEqual([{ quantity: 1 }]);
+    });
+  });
+
+  it('CONTROL: a refused charge releases the claim, so the next unlock can pay', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(() =>
+      orchestratorFailure(403, 'You need more yellow Buzz.')
+    );
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/Buzz/);
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it('CONTROL: a panel still choosing goes to AwaitingSelection as before', async () => {
+    givenPanel({
+      status: 'AwaitingSelection',
+      metadata: {
+        quantity: 2,
+        candidateImages: [{ key: 'a' }, { requiresUnlock: true, blockedReason: 'canUpgrade' }],
+      },
+    });
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(result.status).toBe('AwaitingSelection');
+  });
+
+  it('CONTROL: a single-image panel still takes the single-image path', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' })]);
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(result.status).toBe('Ready');
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: an already-unlocked generation with nothing locked is still refused', async () => {
+    givenPanel({
+      status: 'Ready',
+      imageUrl: 'a',
+      metadata: { quantity: 2, candidateImages: [{ key: 'a' }, { key: 'b' }] },
+    });
+    givenWorkflow(bothRated, { allowMatureContent: true }, { unlocked: true });
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /already unlocked/
+    );
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('comics.pollPanelStatus - a selection whose image was blocked since', () => {
+  // The owner selected "picked" (an Image was made for it), a moderator blocked that Image, and the
+  // owner set the panel back to Generating, so the next poll reuses the stored candidate keys.
+  const poll = async (pickedBlocked: boolean) => {
+    givenPanel({
+      status: 'Generating',
+      imageUrl: 'picked',
+      imageId: 5,
+      image: {
+        userId: USER_ID,
+        nsfwLevel: 1,
+        modelRestricted: false,
+        ingestion: pickedBlocked ? 'Blocked' : 'Scanned',
+        blockedFor: pickedBlocked ? 'moderated' : null,
+      },
+      metadata: { quantity: 2, candidateImages: [{ key: 'picked' }, { key: 'other' }] },
+    });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'pg' })]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue(
+      (pickedBlocked
+        ? [
+            {
+              url: 'picked',
+              userId: USER_ID,
+              nsfwLevel: 1,
+              modelRestricted: false,
+              ingestion: 'Blocked',
+              blockedFor: 'moderated',
+            },
+          ]
+        : []) as never
+    );
+    const result = await caller().pollPanelStatus({ panelId: PANEL_ID });
+    return {
+      imageUrl: result.imageUrl,
+      keys: ('candidates' in result ? result.candidates ?? [] : []).map((c) =>
+        'key' in c ? c.key : null
+      ),
+      candidateImages: 'candidateImages' in result ? result.candidateImages : undefined,
+    };
+  };
+
+  it('never emits the blocked key, and still emits a clean one', async () => {
+    expect(await poll(true)).toEqual({
+      imageUrl: null,
+      keys: ['other'],
+      candidateImages: ['other'],
+    });
+    expect(await poll(false)).toEqual({
+      imageUrl: 'picked',
+      keys: ['picked', 'other'],
+      candidateImages: ['picked', 'other'],
+    });
+  });
+});
+
+describe('selectPanelImage and addReferenceImages return media only as the block allows', () => {
+  const blockedRow = (url: string) => ({
+    url,
+    userId: USER_ID,
+    nsfwLevel: 1,
+    modelRestricted: false,
+    ingestion: 'Blocked',
+    blockedFor: 'moderated',
+  });
+  /** A candidate key whose image is blocked, and a context panel key stored on generation. */
+  const metadata = () => ({
+    candidateImages: [{ key: 'panel-key' }, { key: 'blocked-key' }],
+    previousPanelImageUrl: 'ctx-blocked',
+    referenceImages: [{ url: 'ctx-blocked', width: 1, height: 1 }],
+  });
+
+  it('selecting an image returns no blocked candidate key and no context key, and keeps a clean key', async () => {
+    const select = async (blocked: boolean) => {
+      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({
+        id: PANEL_ID,
+        projectId: 11,
+        workflowId: null,
+        prompt: 'p',
+        metadata: metadata(),
+        chapter: { project: { userId: USER_ID } },
+      } as never);
+      dbMock.dbWrite.image.findMany
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce(
+          (blocked ? [blockedRow('blocked-key'), blockedRow('ctx-blocked')] : []) as never
+        );
+      dbMock.dbWrite.comicPanel.update.mockResolvedValue({
+        id: PANEL_ID,
+        status: 'Ready',
+        imageUrl: 'panel-key',
+        metadata: metadata(),
+      } as never);
+      const panel = await caller().selectPanelImage({
+        panelId: PANEL_ID,
+        selectedImageKey: 'panel-key',
+      });
+      const meta = panel.metadata as { candidateImages: { key?: string }[] };
+      return {
+        keys: meta.candidateImages.map((c) => c.key ?? null),
+        leaksContext: JSON.stringify(meta).includes('ctx-blocked'),
+      };
+    };
+    expect(await select(true)).toEqual({ keys: ['panel-key', null], leaksContext: false });
+    expect(await select(false)).toEqual({
+      keys: ['panel-key', 'blocked-key'],
+      leaksContext: false,
+    });
+  });
+
+  it('adding images to a reference returns none that is blocked', async () => {
+    dbMock.dbRead.comicReference.findUnique.mockResolvedValue({ id: 11, userId: USER_ID } as never);
+    dbMock.dbWrite.comicReferenceImage.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.comicReference.update.mockResolvedValue({
+      id: 11,
+      userId: USER_ID,
+      images: [
+        { position: 0, image: { ...blockedRow('ref-blocked'), id: 1, width: 1, height: 1 } },
+        {
+          position: 1,
+          image: {
+            ...blockedRow('ref-clean'),
+            ingestion: 'Scanned',
+            blockedFor: null,
+            id: 2,
+            width: 1,
+            height: 1,
+          },
+        },
+      ],
+    } as never);
+    const ref = await caller().addReferenceImages({
+      referenceId: 11,
+      images: [{ url: '0a1b2c3d-1111-4222-8333-444455556666', width: 64, height: 64 }],
+    });
+    expect(ref.images.map((i) => i.image.url)).toEqual(['ref-clean']);
+    expect(ref.images[0]?.image).not.toHaveProperty('blockedFor');
   });
 });

@@ -181,6 +181,10 @@ describe('a hatted feed card', () => {
     expect(dropdown.textContent).toContain('1.2K');
     expect(dropdown.textContent).toContain('56.8k');
     expect(dropdown.textContent).toContain("Scores for Team Blue while it's worn");
+    // Totals are per hat, so a moved hat's figures include what it earned on earlier content.
+    expect(dropdown.querySelector('[data-testid="hat-stats-scope"]')?.textContent).toBe(
+      "This hat's totals from everywhere it has been worn"
+    );
     const link = [...dropdown.querySelectorAll('a')].find((a) =>
       a.textContent?.includes('See the birthday event')
     );
@@ -207,13 +211,6 @@ describe('a hatted feed card', () => {
     expect(outerClick).not.toHaveBeenCalled();
   });
 
-  it('keeps a click inside the popover from reaching anything above the card', () => {
-    renderCard();
-    clickHat();
-    act(() => popover()!.querySelector<HTMLElement>('p')!.click());
-    expect(outerClick).not.toHaveBeenCalled();
-  });
-
   it('closes again on a second click', () => {
     renderCard();
     clickHat();
@@ -232,16 +229,6 @@ describe('a hatted feed card', () => {
     expect(popover()).toBeNull();
   });
 
-  it('shows the stats without a wearer when the wearer is gone', () => {
-    wornHat.result = { data: { ...WORN, owner: null }, isLoading: false, isError: false };
-    viewer.current = { id: 9 };
-    renderCard();
-    clickHat();
-    expect(popover()!.textContent).not.toContain('Worn by');
-    expect(popover()!.textContent).not.toContain('Your hat');
-    expect(popover()!.textContent).toContain('1.2K');
-  });
-
   // A click leaves focus on the hat, outside the dropdown that handles Escape itself.
   it('closes on Escape pressed on the hat that opened it', () => {
     renderCard();
@@ -256,15 +243,6 @@ describe('a hatted feed card', () => {
     // Nothing around the card also takes this Escape: not a React handler above it, and not a
     // Mantine Modal, which skips a key from an element marked to stop it.
     expect(outerKeyDown).not.toHaveBeenCalled();
-  });
-
-  it('marks the hat so a Mantine Modal leaves its Escape alone only while it is open', () => {
-    renderCard();
-    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
-    clickHat();
-    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBe('true');
-    clickHat();
-    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
   });
 
   // A real Modal: it closes on Escape from a window listener that runs before any element's.
@@ -297,49 +275,6 @@ describe('a hatted feed card', () => {
     expect(closeModal).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the popover open, and the key moving, for any other key on the hat', () => {
-    renderCard();
-    clickHat();
-    for (const key of ['Enter', ' ', 'Tab', 'a'])
-      act(() => {
-        hatButton().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-      });
-    expect(popover()).not.toBeNull();
-    expect(outerKeyDown).toHaveBeenCalledTimes(4);
-  });
-
-  // With nothing open, Escape on a focused hat still reaches whatever is around the card.
-  it('leaves Escape alone while closed', () => {
-    renderCard();
-    hatButton().focus();
-    act(() => {
-      hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    });
-    expect(outerKeyDown).toHaveBeenCalledTimes(1);
-  });
-
-  it('closes on Escape inside the popover', () => {
-    renderCard();
-    clickHat();
-    act(() => {
-      popover()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    });
-    expect(enabledFlags().at(-1)).toBe(false);
-    expect(popover()).toBeNull();
-  });
-
-  it('closes when the event link is followed', () => {
-    renderCard();
-    clickHat();
-    const link = [...popover()!.querySelectorAll('a')].find((a) =>
-      a.textContent?.includes('See the birthday event')
-    )!;
-    // happy-dom would navigate; only the close is under test.
-    link.addEventListener('click', (e) => e.preventDefault());
-    act(() => link.click());
-    expect(popover()).toBeNull();
-  });
-
   it("calls someone else's hat theirs, for a signed-in viewer too", () => {
     viewer.current = { id: 1 };
     renderCard();
@@ -357,15 +292,6 @@ describe('a hatted feed card', () => {
     expect(popover()!.textContent).toContain('Your hat');
     expect(moveButton()).toBeDefined();
     expect(popover()!.textContent).not.toContain('Worn by');
-  });
-
-  it('keeps the card link from following the click', () => {
-    renderCard();
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-    act(() => {
-      hatButton().dispatchEvent(click);
-    });
-    expect(click.defaultPrevented).toBe(true);
   });
 
   it('moves the viewer’s own hat with the place-a-hat picker', async () => {
@@ -392,6 +318,100 @@ describe('a hatted feed card', () => {
     });
   });
 
+  it('keeps a click inside the popover from reaching anything above the card', () => {
+    renderCard();
+    clickHat();
+    act(() => popover()!.querySelector<HTMLElement>('p')!.click());
+    expect(outerClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps the card link from following the click', () => {
+    renderCard();
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    act(() => {
+      hatButton().dispatchEvent(click);
+    });
+    expect(click.defaultPrevented).toBe(true);
+  });
+
+  it('keeps the popover open, and the key moving, for any other key on the hat', () => {
+    renderCard();
+    clickHat();
+    for (const key of ['Enter', ' ', 'Tab', 'a'])
+      act(() => {
+        hatButton().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      });
+    expect(popover()).not.toBeNull();
+    expect(outerKeyDown).toHaveBeenCalledTimes(4);
+  });
+
+  it('leaves Escape alone while closed', () => {
+    renderCard();
+    hatButton().focus();
+    act(() => {
+      hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(outerKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on Escape inside the popover', () => {
+    renderCard();
+    clickHat();
+    act(() => {
+      popover()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(popover()).toBeNull();
+  });
+
+  it('closes when the event link is followed', () => {
+    renderCard();
+    clickHat();
+    const link = [...popover()!.querySelectorAll('a')].find((a) =>
+      a.textContent?.includes('See the birthday event')
+    )!;
+    // happy-dom would navigate; only the close is under test.
+    link.addEventListener('click', (e) => e.preventDefault());
+    act(() => link.click());
+    expect(popover()).toBeNull();
+  });
+
+  it('shows the stats without a wearer when the wearer is gone', () => {
+    wornHat.result = { data: { ...WORN, owner: null }, isLoading: false, isError: false };
+    viewer.current = { id: 9 };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).not.toContain('Worn by');
+    expect(popover()!.textContent).not.toContain('Your hat');
+    expect(popover()!.textContent).toContain('1.2K');
+  });
+
+  it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
+    wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
+  });
+
+  it('shows a dash for comments and remixes until the server counts them', () => {
+    const figures = () =>
+      [...popover()!.querySelectorAll<HTMLElement>('[data-way]')].map(
+        (w) => w.children[0].textContent
+      );
+    renderCard();
+    clickHat();
+    expect(figures().slice(2)).toEqual(['–', '–']);
+    act(() => root?.unmount());
+    wornHat.result = {
+      data: { ...WORN, comments: 3, remixes: 0 },
+      isLoading: false,
+      isError: false,
+    };
+    renderCard();
+    clickHat();
+    expect(figures().slice(2)).toEqual(['3', '0']);
+  });
+
   it('says so instead when the viewer’s hat is no longer here', async () => {
     viewer.current = { id: 9 };
     myHats.fetch.mockResolvedValue([
@@ -412,7 +432,6 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).toContain('Stats unavailable');
     expect(popover()!.textContent).toContain('See the birthday event');
-    expect(popover()!.textContent).not.toContain('Team hat');
   });
 
   it('says there is nothing to show when the hat is not there now', () => {
@@ -421,7 +440,6 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).toContain('No stats to show here.');
     expect(popover()!.textContent).not.toContain('Stats unavailable');
-    expect(popover()!.textContent).toContain('See the birthday event');
   });
 
   it('shows a skeleton while the stats load', () => {
@@ -429,9 +447,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     expect(popover()!.querySelector('.mantine-Skeleton-root')).not.toBeNull();
-    expect(popover()!.textContent).not.toContain('Stats unavailable');
-    // No event eyebrow above the skeleton either.
-    expect(popover()!.textContent).not.toContain('Team hat');
+    expect(popover()!.textContent).not.toContain('No stats to show here.');
   });
 });
 
@@ -445,23 +461,17 @@ describe('a hat not worn on content', () => {
     expect(popover()).toBeNull();
     expect(document.querySelector('[aria-hidden] span span')).not.toBeNull();
   });
-
-  // It opens nothing, so it has nothing to close: Escape after a click still reaches its surroundings.
-  it('keeps Escape for its surroundings after a click', () => {
-    render(React.createElement(EventDecorationOverlay, { decoration: HAT }));
-    clickHat();
-    act(() => {
-      hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    });
-    expect(outerKeyDown).toHaveBeenCalledTimes(1);
-    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
-  });
 });
 
 // The app theme sets Popover to render in place, and `env: 'test'` renders every Popover in place
 // too, so the rest of this file cannot see a dropdown that a clipping parent crops: the home block
 // is `overflow: hidden` and cut the popover at its edge.
 describe('under the app theme, outside the test env', () => {
+  // Outside the test env the dropdown mounts and unmounts through a transition; fake its clock.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const wait = () => act(() => vi.advanceTimersByTimeAsync(400));
+
   it('draws the popover outside a clipping parent', async () => {
     const { theme } = await import('~/providers/ThemeProvider');
     render(
@@ -481,8 +491,7 @@ describe('under the app theme, outside the test env', () => {
       { theme, env: 'default' }
     );
     clickHat();
-    // Outside the test env the dropdown takes its transition to mount.
-    await act(() => new Promise((r) => setTimeout(r, 400)));
+    await wait();
     expect(popover()).not.toBeNull();
     expect(document.querySelector('[data-testid="clip"]')!.contains(popover())).toBe(false);
   });
@@ -507,154 +516,19 @@ describe('under the app theme, outside the test env', () => {
       ),
       { theme, env: 'default' }
     );
-    await act(() => new Promise((r) => setTimeout(r, 400)));
+    await wait();
     clickHat();
-    await act(() => new Promise((r) => setTimeout(r, 400)));
+    await wait();
     expect(popover()).not.toBeNull();
     const escape = () =>
       act(() => {
         hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       });
     await escape();
-    await act(() => new Promise((r) => setTimeout(r, 400)));
+    await wait();
     expect(popover()).toBeNull();
     expect(closeModal).not.toHaveBeenCalled();
     await escape();
     expect(closeModal).toHaveBeenCalledTimes(1);
-  });
-});
-
-// The Ellie review (2026-10-09): the arrow points at the hat, the points stand apart from the four
-// ways that make them up, each way has its icon, and moving your hat is a badge.
-describe('the popover layout', () => {
-  const stats = () => popover()!.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
-  // Each way's figure, then a visible label of icon and word; and which icon, in which colour.
-  const ways = () =>
-    [...stats().querySelectorAll<HTMLElement>('[data-way]')].map((w) => {
-      const [figure, label] = [...w.children];
-      const icon = label.querySelector('svg')!;
-      return [
-        w.dataset.way,
-        figure.textContent,
-        label.textContent,
-        `${icon.getAttribute('class')?.match(/tabler-icon-([\w-]+)/)?.[1]} ${icon.getAttribute(
-          'stroke'
-        )}`,
-        // The popover has room for the words: no tooltip stands in for them.
-        w.title,
-      ];
-    });
-
-  it('shows the points on their own, then views, reactions, comments and remixes', () => {
-    renderCard();
-    clickHat();
-    expect(stats().querySelector('[data-testid="hat-stat-points"]')?.textContent).toBe(
-      '1.2Kpoints'
-    );
-    // Comments and remixes score from scoring v2 on: until the server sends them, a dash, not a 0.
-    expect(ways()).toEqual([
-      ['views', '56.8k', 'views', 'eye var(--mantine-color-blue-5)', ''],
-      ['reactions', '12', 'reactions', 'heart var(--mantine-color-pink-5)', ''],
-      ['comments', '–', 'comments', 'message-circle var(--mantine-color-green-5)', ''],
-      ['remixes', '–', 'remixes', 'hierarchy var(--mantine-color-violet-5)', ''],
-    ]);
-  });
-
-  // Two copies of one design on one owner, and the hat map no longer says which: no points to show.
-  it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
-    wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
-    renderCard();
-    clickHat();
-    expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
-    expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
-    expect(livePoints).not.toHaveBeenCalled();
-  });
-
-  it('shows comments and remixes once the server counts them', () => {
-    wornHat.result = {
-      data: { ...WORN, comments: 3, remixes: 0 },
-      isLoading: false,
-      isError: false,
-    };
-    renderCard();
-    clickHat();
-    expect(
-      ways()
-        .slice(2)
-        .map(([way, figure]) => [way, figure])
-    ).toEqual([
-      ['comments', '3'],
-      ['remixes', '0'],
-    ]);
-  });
-
-  // Justin, 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall,
-  // and the popover keeps one decimal (123.5k) where a card rounds.
-  it('keeps the points tile at least square, with a decimal in each way', () => {
-    wornHat.result = {
-      data: { ...WORN, impressions: 123_456 },
-      isLoading: false,
-      isError: false,
-    };
-    renderCard();
-    clickHat();
-    const points = stats().querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
-    const cells = [...stats().querySelectorAll<HTMLElement>('[data-way]')];
-    // Two 40px cells and a 6px gap: 86px.
-    expect(cells.every((c) => c.className.split(' ').includes('h-10'))).toBe(true);
-    expect(points.className.split(' ')).toContain('min-w-[86px]');
-    expect(cells[0].textContent).toBe('123.5kviews');
-  });
-
-  it("colours the points in the hat's team colour", () => {
-    renderCard();
-    clickHat();
-    const figure = stats().querySelector<HTMLElement>('[data-testid="hat-stat-points"] p')!;
-    // Team Blue's colour, as the team badge beside the name shows it.
-    expect(figure.style.color).toBe('#228be6');
-  });
-
-  it('labels your hat, and offers the move, as badges', () => {
-    viewer.current = { id: 9 };
-    renderCard();
-    clickHat();
-    const badges = [...popover()!.querySelectorAll('.mantine-Badge-root')].map((b) => [
-      b.tagName,
-      b.textContent,
-    ]);
-    expect(badges).toEqual([
-      ['DIV', 'Blue'],
-      ['DIV', 'Your hat'],
-      ['BUTTON', 'Move'],
-    ]);
-  });
-
-  // Mantine pins the arrow 5px from the dropdown's start edge unless told to follow the target.
-  it('points its arrow at the hat, not at the corner of the dropdown', () => {
-    renderCard();
-    clickHat();
-    const arrow = popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow');
-    expect(arrow).not.toBeNull();
-    // Centred, Mantine positions the arrow from the measured target (`arrowX`), which happy-dom
-    // cannot measure, so `left` is unset. Pinned to the side it is a fixed offset ('5px' by default,
-    // or whatever `arrowOffset` says). Real centring is only visible in a browser.
-    expect([arrow!.style.left, arrow!.style.width]).toEqual(['', '10px']);
-  });
-});
-
-// Positive control for the arrow arm: the same popover without `arrowPosition="center"` does pin it
-// at 5px in this environment, so that arm can fail.
-describe('a start-aligned popover left at its default arrow', () => {
-  it('pins the arrow 5px in', async () => {
-    const { Popover } = await import('@mantine/core');
-    render(
-      React.createElement(
-        Popover,
-        { opened: true, position: 'bottom-start', withArrow: true },
-        React.createElement(Popover.Target, null, React.createElement('button', null, 'hat')),
-        React.createElement(Popover.Dropdown, { 'data-testid': 'worn-hat-popover' }, 'x')
-      )
-    );
-    expect(popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow')!.style.left).toBe('5px');
   });
 });

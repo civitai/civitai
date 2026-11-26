@@ -29,6 +29,15 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
+/**
+ * A challenge or event cover. The edit views send a cover the editor may not see back with only
+ * its id (and an empty url); resolveCoverImageId keeps the stored cover for it.
+ */
+export const challengeCoverInputSchema = z.union([
+  imageReferenceInputSchema,
+  imageReferenceInputSchema.extend({ id: z.number().int().positive(), url: z.literal('') }),
+]);
+
 // Lives here rather than in the service util that derives it: the util and the client-side card
 // helpers both need it, and services depend on schema, never the reverse.
 export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered' | 'hosting';
@@ -42,6 +51,8 @@ export type ChallengeCoverImage = {
   width: number | null;
   height: number | null;
   type: MediaType;
+  /** Set by the edit reads (moderator, and the creator's own), which keep a cover restricted by its base model. */
+  restricted?: boolean;
 };
 
 // Sort options for challenges
@@ -146,22 +157,15 @@ export const challengeMetadataSchema = z.object({
     .optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
   // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
-  // daily-challenge-processing. TWO readers, and the second is the one that matters:
-  //
+  // daily-challenge-processing. Two readers:
   //   1. getActiveChallengesFromDb's `ORDER BY cast(metadata->>'reviewedAt' as bigint) NULLS FIRST`
-  //      round-robin. Only decides anything once the Active set exceeds CHALLENGE_JOB_BATCH_SIZE
-  //      (200 vs ~31 today), so on its own this reader would make the key look inconsequential.
-  //   2. The INCREMENTAL-REVIEW WATERMARK in the review job: `lastReviewedAt` defaults to the
-  //      challenge's start date and is overwritten by this key, then gates the candidate pool with
-  //      `AND ci."reviewedAt" >= ${lastReviewedAt}`. Losing the key rewinds that watermark to the
-  //      START OF THE CHALLENGE, so every entry since then re-enters the pool. This has nothing to
-  //      do with batch size and is not bounded by the Active count.
-  //
-  // Reader 2 is why this is not cosmetic: for PAID user challenges `judgeAllEntries` skips the
-  // sampling cap entirely, so a rewound watermark means the whole accumulated backlog is judged in
-  // a single run — re-judging work already paid for, at LLM cost. Do not reason about this key from
-  // the ordering alone.
+  //      round-robin across Active challenges.
+  //   2. The review job's since-last-review window (`ci."reviewedAt" >= lastReviewedAt`) for free
+  //      challenges. Losing the key rewinds it to the challenge start and widens the candidate pool.
   reviewedAt: z.number().optional(),
+  // Entries the review job owes a review whatever its sampling, window or per-user cap: imageId ->
+  // failed attempts. Changed only by raw jsonb SQL; a parsed write-back copies it unchanged.
+  pendingReview: z.record(z.string(), z.number()).optional(),
   // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
   // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's
   // claim-ownership check that gates its telemetry. Both read the RAW jsonb, not a parsed object,
@@ -176,6 +180,16 @@ export const challengeMetadataSchema = z.object({
   // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
   // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
   migratedAt: z.string().optional(),
+  // The daily's plan (daily-plan.ts), written at creation and by the reschedule route; compared by
+  // planIsCurrent (daily-reschedule.ts) to skip rows already on their date's plan.
+  dailyPlan: z
+    .object({
+      setKey: z.string(),
+      source: z.enum(['schedule', 'rotation']),
+      judgeName: z.string(),
+      occasion: z.string().optional(),
+    })
+    .optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),
@@ -383,6 +397,7 @@ export const getInfiniteChallengesSchema = z.object({
 export type GetChallengeWinnersInput = z.infer<typeof getChallengeWinnersSchema>;
 export const getChallengeWinnersSchema = z.object({
   challengeId: z.number(),
+  browsingLevel: z.number().optional(),
 });
 
 // Query schema for user entry count
@@ -480,7 +495,7 @@ export const upsertChallengeBaseSchema = z.object({
   theme: z.string().min(1),
   themeElements: z.array(z.string()).optional(),
   invitation: z.string().optional(),
-  coverImage: imageReferenceInputSchema,
+  coverImage: challengeCoverInputSchema,
   nsfwLevel: z.number().min(1).max(32).default(1),
   allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
   modelVersionIds: z.array(z.number()).default([]),
@@ -529,7 +544,7 @@ export const userChallengeUpsertBaseSchema = z.object({
   theme: z.string().trim().min(1).max(100),
   themeElements: z.array(z.string().max(100)).max(20).optional(),
   invitation: z.string().max(300).optional(),
-  coverImage: imageReferenceInputSchema,
+  coverImage: challengeCoverInputSchema,
   // Capped at the browsable-levels flag (31): 32 is NsfwLevel.Blocked, and accepting it would
   // let a user create a Blocked-level challenge whose collection admits Blocked images.
   allowedNsfwLevel: z.number().min(1).max(allBrowsingLevelsFlag).default(sfwBrowsingLevelsFlag),
@@ -730,7 +745,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
-  coverImage: imageReferenceInputSchema.nullable().optional(),
+  coverImage: challengeCoverInputSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

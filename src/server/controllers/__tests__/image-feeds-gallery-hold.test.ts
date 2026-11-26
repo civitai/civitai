@@ -31,6 +31,7 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: heldLevel,
   getHeldLevelsByPost: heldByPost,
+  isModelGalleryWithheld: async () => false,
 }));
 
 const { getInfiniteImagesHandler } = await import('~/server/controllers/image.controller');
@@ -194,6 +195,50 @@ describe('image.getInfinite on a held model', () => {
     }
   );
 
+  it.each([
+    ['a session', {}, 7],
+    [
+      'a full-access key',
+      {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: TokenScope.Full,
+      },
+      7,
+    ],
+    [
+      'a scoped key',
+      {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: TokenScope.ModelsRead,
+      },
+      undefined,
+    ],
+    ['an app', { subject: { type: 'oauth', id: 'app' } }, undefined],
+  ])(
+    'shows a hub viewer their own taken-down models on %s only if it is a full credential',
+    async (_name, credential, ownerId) => {
+      heldLevel.mockResolvedValue(undefined);
+      const input = { limit: 10, include: [], browsingLevel: allBrowsingLevelsFlag, hubId: 3 };
+
+      await getInfiniteImagesHandler({
+        input: input as never,
+        ctx: {
+          ...ctx(true),
+          features: { imageIndexFeed: true, userHubs: true },
+          ...credential,
+        } as unknown as Context,
+      });
+
+      expect(getAllImagesIndex).toHaveBeenCalledWith(
+        expect.objectContaining({ galleryOwnerId: ownerId })
+      );
+    }
+  );
+
   it('holds a signed-out viewer', async () => {
     heldLevel.mockResolvedValue(NsfwLevel.PG);
     const input = {
@@ -339,7 +384,7 @@ describe('image.getInfinite by image id', () => {
     expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, ctx(false, true)))).toEqual([1, 2, 3, 4]);
   });
 
-  const key = (tokenScope: number) => ({
+  const key = (tokenScope: bigint) => ({
     apiKeyId: 1,
     apiKeyType: 'User',
     subject: { type: 'apiKey', id: 1 },
@@ -363,5 +408,40 @@ describe('image.getInfinite by image id', () => {
   it('leaves a feed that does not pick images by id as it was', async () => {
     expect(idsOf(await run({ username: 'someone' }, false))).toEqual([1, 2, 3, 4]);
     expect(heldByPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('a narrow-scope key reads the feeds as a plain signed-in viewer', () => {
+  const credential = (tokenScope: bigint) => ({
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope,
+  });
+  it.each([
+    ['a scoped key', credential(TokenScope.ModelsRead), false],
+    ['a full-access key (control)', credential(TokenScope.Full), true],
+  ])('%s: owner and moderator views %s', async (_, key, elevated) => {
+    const viewer = { ...ctx(false, true), ...key } as unknown as Context;
+    await getInfiniteImagesHandler({ input: { postId: 100, include: [] } as never, ctx: viewer });
+    await getPostsInfiniteHandler({ input: { username: 'someone' } as never, ctx: viewer });
+
+    const view = { asModerator: elevated, asOwner: elevated };
+    expect(getAllImages).toHaveBeenCalledWith(expect.objectContaining(view));
+    expect(getPostsInfinite).toHaveBeenCalledWith(expect.objectContaining(view));
+  });
+
+  it.each([
+    ['a scoped key', credential(TokenScope.ModelsRead), false],
+    ['a full-access key (control)', credential(TokenScope.Full), true],
+  ])('%s on the index feed: owner and moderator views %s', async (_, key, elevated) => {
+    const viewer = { ...ctx(true, true), ...key } as unknown as Context;
+    await getInfiniteImagesHandler({
+      input: { modelVersionId: 10, include: [] } as never,
+      ctx: viewer,
+    });
+    expect(getAllImagesIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: elevated, asOwner: elevated })
+    );
   });
 });

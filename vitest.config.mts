@@ -4,7 +4,6 @@ import path from 'path';
 
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
-import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
 
 // CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
 // every worker inherits it on any machine.
@@ -108,6 +107,7 @@ const civitaiWorkspacePkgs = [
   'db-schema',
   'db',
   'redis',
+  'email',
   'clickhouse',
   'axiom',
   // `@civitai/flipt` (packages/civitai-flipt) backs src/server/flipt/client.ts, which the
@@ -142,6 +142,15 @@ const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
 });
 
 const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
+
+// Unit projects start every in-memory PGlite from one cached initialised cluster (test/pglite-empty-datadir.mjs).
+const unitAlias = [
+  {
+    find: /^@electric-sql\/pglite$/,
+    replacement: path.resolve(__dirname, 'test/pglite-cached-boot.mjs'),
+  },
+  ...alias,
+];
 
 // Browser-mode (`component` project) alias: stub the native `sharp` module.
 // A few `.browser.test.tsx` tests import a Next *page* to render its client shell;
@@ -193,6 +202,8 @@ const componentAlias = [
 // What the split does buy: the sharp crash is deterministic and gone, and anyone who wants to
 // EXPERIMENT with `threads` (`--pool=threads`) no longer has to fight it as well.
 const sharpExecutingTestFiles = [
+  'src/server/services/blocks/__tests__/block-generation-source.behavior.test.ts',
+  'src/server/services/blocks/__tests__/block-generation-source.upload.behavior.test.ts',
   'src/server/services/blocks/__tests__/block-image-upload.persist.test.ts',
   'src/server/services/blocks/__tests__/block-image-upload.service.test.ts',
   'src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts',
@@ -215,7 +226,6 @@ const mantineFamily = [
   '@mantine/hooks',
   '@mantine/dates',
   '@mantine/dropzone',
-  '@mantine/modals',
   '@mantine/notifications',
   '@mantine/nprogress',
   '@mantine/tiptap',
@@ -606,10 +616,11 @@ export default defineConfig({
       'apps/*/vitest.config.ts',
       'apps/*/vitest.config.mts',
       {
-        resolve: { alias },
+        resolve: { alias: unitAlias },
         plugins: [optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
+          globalSetup: ['test/pglite-empty-datadir.mjs'],
           name: 'unit',
           // `scripts/` is included so the typecheck wrapper's outcome
           // classifier (scripts/typecheck.mjs) is covered — it is the thing that
@@ -624,10 +635,11 @@ export default defineConfig({
         },
       },
       {
-        resolve: { alias },
+        resolve: { alias: unitAlias },
         plugins: [nativePoolPlugin, optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
+          globalSetup: ['test/pglite-empty-datadir.mjs'],
           name: 'unit-native',
           include: sharpExecutingTestFiles,
           // Pinned, not inherited: `unit` may be pointed at `threads` for an experiment, and these
@@ -645,25 +657,9 @@ export default defineConfig({
           ...browserTestShell(),
           name: 'component',
           include: ['src/**/*.browser.test.tsx'],
-          // Held out of the blocking run, see scripts/ci/component-quarantine.mjs.
-          exclude: ['**/node_modules/**', ...QUARANTINED_COMPONENT_FILES],
           // process-shim MUST come first (no imports) so it runs before any
           // component's module graph reads `process.env` at import time.
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
-        },
-      },
-      {
-        // Exactly the files `component` excludes, same setup, run by the quarantine step of
-        // the `component` CI job (push to `main` and dispatch only). `provide.quarantineRun` lets those files un-skip
-        // the groups that are skipped for the blocking run. Disjoint from `component` by
-        // construction: the same list is its `include` and `component`'s `exclude`.
-        ...browserProjectShell(),
-        test: {
-          ...browserTestShell(),
-          name: 'component-quarantine',
-          include: QUARANTINED_COMPONENT_FILES,
-          setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
-          provide: { quarantineRun: true },
         },
       },
       {

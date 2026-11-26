@@ -1,5 +1,6 @@
 import { Checkbox, NumberInput, Stack, Textarea } from '@mantine/core';
 import { FieldCorrectionNote } from './FieldCorrectionNote';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
@@ -7,11 +8,10 @@ import { GenerationTextEditor } from '~/components/Generate/Input/GenerationText
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { model3dHub } from '~/shared/form-graph/generation/model3d/hub.graph';
 import { model3dFieldLabels as labels } from '~/shared/form-graph/generation/model3d/model3d-params';
 
-import { ControllerLabel, PromptLabel } from './form-helpers';
+import { ControllerLabel, ModelCardSection, PromptLabel } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import type { GenerationStore } from './store';
 
@@ -37,7 +37,7 @@ function OptionButtons({
   return (
     <div className="flex flex-col gap-1">
       <ControllerLabel label={label} info={info} />
-      <ButtonGroupInput
+      <ChoiceGroup
         value={value}
         onChange={onChange}
         data={(options ?? []).map((o) => ({ label: o.label, value: o.value }))}
@@ -54,22 +54,25 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
         graph={model3dHub}
         name="version"
         render={({ value, meta, onChange }) =>
+          // With one engine version there is nothing to choose, and the model card stays shut.
           (meta?.options.length ?? 0) < 2 ? null : (
-            <OptionButtons
-              label={labels.version}
-              info={meta?.info}
-              value={value}
-              options={meta?.options}
-              onChange={(v) => {
-                const snap = store.getSnapshot().state as { workflow?: string };
-                const picked = meta?.options.find((o) => o.value === v);
-                if (picked && 'imageOnly' in picked && snap.workflow === 'txt2model3d') {
-                  store.set({ workflow: 'img2model3d', version: v as typeof value });
-                  return;
-                }
-                onChange(v as typeof value);
-              }}
-            />
+            <ModelCardSection>
+              <OptionButtons
+                label={labels.version}
+                info={meta?.info}
+                value={value}
+                options={meta?.options}
+                onChange={(v) => {
+                  const snap = store.getSnapshot().state as { workflow?: string };
+                  const picked = meta?.options.find((o) => o.value === v);
+                  if (picked && 'imageOnly' in picked && snap.workflow === 'txt2model3d') {
+                    store.set({ workflow: 'img2model3d', version: v as typeof value });
+                    return;
+                  }
+                  onChange(v as typeof value);
+                }}
+              />
+            </ModelCardSection>
           )
         }
       />
@@ -343,47 +346,6 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
         name="textureSeed"
         render={({ value, meta, onChange }) => (
           <SeedInput value={value} onChange={onChange} label={labels.textureSeed} max={meta?.max} />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="steps"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label={<ControllerLabel label={labels.steps} info={meta?.info} />}
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 10}
-            max={meta?.max ?? 50}
-            step={meta?.step ?? 1}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="cfgScale"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label={<ControllerLabel label={labels.cfgScale} info={meta?.info} />}
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 0}
-            max={meta?.max ?? 20}
-            step={meta?.step ?? 0.5}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="octreeResolution"
-        render={({ value, meta, onChange }) => (
-          <OptionButtons
-            label={labels.octreeResolution}
-            info={meta?.info}
-            value={String(value)}
-            options={meta?.options?.map((o) => ({ label: o.label, value: String(o.value) }))}
-            onChange={(v) => onChange(Number(v) as typeof value)}
-          />
         )}
       />
       <AccordionLayout label="Advanced" storeKey="form-graph-model3d-advanced">

@@ -83,6 +83,37 @@ export function findHeldItemById(
   });
 }
 
+/** The items this user holds whose `sourceKey` starts with `sourcePrefix`, in key order. */
+export function listHeldItemsBySourcePrefix(
+  client: Prisma.TransactionClient,
+  { sourcePrefix, userId }: { sourcePrefix: string; userId: number }
+) {
+  return client.item.findMany({
+    where: { sourceKey: { startsWith: sourcePrefix }, holderType: USER_HOLDER, holderId: userId },
+    select: { id: true, itemDefinitionId: true },
+    orderBy: { sourceKey: 'asc' },
+  });
+}
+
+/** How many of one definition this user holds whose `sourceKey` ends with `sourceSuffix`. */
+export function countHeldItemsBySourceSuffix(
+  client: Prisma.TransactionClient,
+  {
+    itemDefinitionId,
+    userId,
+    sourceSuffix,
+  }: { itemDefinitionId: number; userId: number; sourceSuffix: string }
+) {
+  return client.item.count({
+    where: {
+      itemDefinitionId,
+      holderType: USER_HOLDER,
+      holderId: userId,
+      sourceKey: { endsWith: sourceSuffix },
+    },
+  });
+}
+
 /** The held item a grant with this `sourceKey` made, if this user still holds it. */
 export function findHeldItemBySource(
   client: Prisma.TransactionClient,

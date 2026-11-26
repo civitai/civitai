@@ -20,6 +20,7 @@ import pLimit from 'p-limit';
 import { CacheTTL } from '~/server/common/constants';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import { contestBannedSql } from '~/server/services/contest-ban';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -333,6 +334,8 @@ export type EntryImage = {
   id: number;
   url: string;
   nsfwLevel: number;
+  /** Absent in snapshots saved before it was recorded. */
+  modelRestricted?: boolean;
   type: string;
   width: number | null;
   height: number | null;
@@ -433,6 +436,7 @@ export async function loadEntryImages(modelIds: number[]) {
         i.id          AS "id",
         i.url         AS "url",
         i."nsfwLevel" AS "nsfwLevel",
+        i."modelRestricted" AS "modelRestricted",
         i.type::text  AS "type",
         i.width       AS "width",
         i.height      AS "height"
@@ -444,6 +448,7 @@ export async function loadEntryImages(modelIds: number[]) {
         AND p."publishedAt" IS NOT NULL
         AND p."publishedAt" <= ${nowUtc}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+        AND NOT ${hasBlockMarkerSql('i')}
       ORDER BY mv."modelId", mv."index", p.id, i."index"
     `
   );
@@ -640,6 +645,7 @@ export async function loadImagePairs(
         AND p."publishedAt" >= ${utc(window.start)}
         AND p."publishedAt" < ${utc(window.effectiveEnd)}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+        AND NOT ${hasBlockMarkerSql('i')}
       ORDER BY "entryId", "imageId"
     `
   );
@@ -671,6 +677,7 @@ export async function countImageAuthors(
         AND p."publishedAt" >= ${utc(window.start)}
         AND p."publishedAt" < ${utc(window.effectiveEnd)}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+        AND NOT ${hasBlockMarkerSql('i')}
       GROUP BY e."entryId"
     `
   );

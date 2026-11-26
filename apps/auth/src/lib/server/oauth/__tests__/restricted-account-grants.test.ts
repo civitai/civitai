@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
 vi.mock('$lib/server/db/db', () => {
   const select = (table: string) => {
     const qb: Record<string, unknown> = {};
+    qb.innerJoin = () => qb;
     qb.select = () => qb;
     qb.selectAll = () => qb;
     qb.where = () => qb;
@@ -98,6 +99,19 @@ describe('AI Services grants for a restricted account', () => {
       accessToken: expect.any(String),
     });
     expect(h.inserts).toHaveLength(2);
+  });
+
+  it("names a user's tokens oauth:<client>, and only a client_credentials token oauth-cc:", async () => {
+    h.user = inGoodStanding;
+    await createOAuthTokenPair(USER, 'third-party', AI);
+    await createAppAccessToken(USER, 'app', AI, 600);
+    await createAppAccessToken(USER, 'app', AI, 600, { clientCredentials: true });
+    expect(h.inserts.map((row) => row.name)).toEqual([
+      'oauth:third-party',
+      'oauth-refresh:third-party',
+      'oauth:app',
+      'oauth-cc:app',
+    ]);
   });
 
   it.each([

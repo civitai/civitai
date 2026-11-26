@@ -17,7 +17,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({}),
@@ -42,7 +41,7 @@ afterEach(() => cleanup());
 // Accounts on the new settings layout render panes, not the legacy SettingsCard that held this.
 describe('Creator pane', () => {
   test("carries the owner's Hat Turf switch, under its own anchor", async () => {
-    await renderWithProviders(<AccountPane sectionId="creator" />);
+    await renderWithProviders(<AccountPane sectionId="creator" />, { user: { id: 1 } });
     await vi.waitFor(() =>
       expect(document.body.querySelector('[data-testid="hat-turf-owner-toggle"]')).not.toBeNull()
     );

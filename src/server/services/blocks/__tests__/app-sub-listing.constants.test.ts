@@ -27,9 +27,19 @@ const MIGRATION = path.resolve(
   '../../../../../packages/civitai-db-schema/prisma/migrations/20261010120000_app_sub_listings/migration.sql'
 );
 const sql = readFileSync(MIGRATION, 'utf8');
+// The migration that widened both rating CHECKs (`xxx`); the rating lists are read from it.
+const XXX_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20271118200000_app_sub_listing_xxx_rating/migration.sql'
+);
+// Its applied statements only: the header's ROLLBACK recipe repeats the old lists in comments.
+const xxxSql = readFileSync(XXX_MIGRATION, 'utf8')
+  .split('\n')
+  .filter((line) => !line.trimStart().startsWith('--'))
+  .join('\n');
 
-function inList(column: string): string[] {
-  const m = sql.match(new RegExp(`"${column}"\\s+IN\\s*\\(([^)]*)\\)`, 'i'));
+function inList(column: string, text = sql): string[] {
+  const m = text.match(new RegExp(`"${column}"\\s+IN\\s*\\(([^)]*)\\)`, 'i'));
   if (!m) throw new Error(`no IN-list for ${column}`);
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
@@ -44,9 +54,17 @@ describe('app sub-listing constants ⟺ migration', () => {
     expect(inList('status')).toEqual([...APP_SUB_LISTING_STATUSES]);
   });
 
-  it('both rating CHECKs equal APP_SUB_LISTING_CONTENT_RATINGS', () => {
-    expect(inList('content_rating')).toEqual([...APP_SUB_LISTING_CONTENT_RATINGS]);
-    expect(inList('pending_content_rating')).toEqual([...APP_SUB_LISTING_CONTENT_RATINGS]);
+  it('both rating CHECKs, as the xxx migration widened them, equal APP_SUB_LISTING_CONTENT_RATINGS', () => {
+    expect(inList('content_rating', xxxSql)).toEqual([...APP_SUB_LISTING_CONTENT_RATINGS]);
+    expect(inList('pending_content_rating', xxxSql)).toEqual([...APP_SUB_LISTING_CONTENT_RATINGS]);
+  });
+
+  it('the widening migration only adds xxx to the original lists', () => {
+    expect(inList('content_rating', xxxSql)).toEqual([...inList('content_rating'), 'xxx']);
+    expect(inList('pending_content_rating', xxxSql)).toEqual([
+      ...inList('pending_content_rating'),
+      'xxx',
+    ]);
   });
 
   it('both sub_path CHECKs use the same pattern as the code', () => {

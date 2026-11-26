@@ -15,7 +15,6 @@ vi.mock('@civitai/auth', async (importOriginal) => {
     createSessionClient: () => ({ getSessionUser: h.getSessionUser }),
     createSessionTokenClient: () => ({
       refresh: h.refresh,
-      exchangeLegacy: vi.fn(),
       revoke: vi.fn(),
     }),
   };
@@ -68,6 +67,7 @@ describe('session cookie roll rule', () => {
   });
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    vi.useRealTimers();
   });
 
   // Test 4. Host mode, a request carrying only the shared-slot token past the update age: it is served, but
@@ -104,6 +104,40 @@ describe('session cookie roll rule', () => {
     expect(setCookies.some((c) => c.startsWith(`${HOST}=`))).toBe(false);
   });
 
+  // The hub answers 503 while it cannot confirm the session: the cookie stays, and this process does not ask
+  // again for that token for five minutes, since an SSR render waits on the roll.
+  it('after a 503 keeps the cookie and backs off that token for five minutes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    h.refresh.mockImplementation(
+      async (_t: string, o?: { onFailure?: (r: CivitaiAuth.RefreshFailure) => void }) => {
+        o?.onFailure?.('unavailable');
+        return null;
+      }
+    );
+    const tok = token({ sub: '1', jti: 'j-roll', iat: now() - 2 * 24 * 3600, exp: now() + 3600 });
+    const first = await run('shared', { [SHARED]: tok });
+    expect(first.session?.user).toMatchObject({ id: 1 });
+    expect(first.setCookies).toEqual([]);
+    await run('shared', { [SHARED]: tok });
+    expect(h.refresh).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000 + 1000);
+    await run('shared', { [SHARED]: tok });
+    expect(h.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again on the next request after any other failed roll', async () => {
+    h.refresh.mockImplementation(
+      async (_t: string, o?: { onFailure?: (r: CivitaiAuth.RefreshFailure) => void }) => {
+        o?.onFailure?.('declined');
+        return null;
+      }
+    );
+    const tok = token({ sub: '1', jti: 'j-roll', iat: now() - 2 * 24 * 3600, exp: now() + 3600 });
+    await run('shared', { [SHARED]: tok });
+    await run('shared', { [SHARED]: tok });
+    expect(h.refresh).toHaveBeenCalledTimes(2);
+  });
+
   it('host mode rolls a host-only token in place', async () => {
     const { setCookies } = await run('host', { [HOST]: stale(), [SHARED]: 'other' });
     const written = setCookies.find((c) => c.startsWith(`${HOST}=`));
@@ -127,15 +161,41 @@ describe('sharedSlotNavigationSyncUrl', () => {
     url: '/models/1?x=2',
     headers: { 'sec-fetch-mode': 'navigate' },
     cookies,
+    signedIn: true,
     ...extra,
   });
 
-  it('sends a shared-slot-only navigation through the sync in host mode', async () => {
+  // Main web reads the shared slot, so a shared cookie it cannot read as a session is a dead one: syncing it sends the
+  // browser to a hub that cannot verify it either, which answers with its sign-in page and leaves the cookie in place.
+  it('does not sync a shared cookie that resolved no session', async () => {
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
     const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
-    expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 't' }))).toBe(
+    expect(sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'dead' }, { signedIn: false }))).toBeNull();
+  });
+
+  // A token main web still accepts but the hub has revoked comes back from the sync unchanged; the marker stops the
+  // next navigation from sending it again.
+  it('syncs a shared cookie once per value while its marker lives, the marker holding its hash', async () => {
+    process.env.AUTH_SESSION_COOKIE_MODE = 'host';
+    const { sharedSlotNavigationSyncUrl } = await import('../shared-slot-sync');
+    const first = sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-a' }));
+    expect(first?.location).toBe(
       `/api/auth/authorize?returnUrl=${encodeURIComponent('/models/1?x=2')}`
     );
+    expect(first?.setCookies).toHaveLength(1);
+    const marker = first!.setCookies[0];
+    expect(marker).toMatch(
+      /^civ_slot_sync=[^;]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=600; Secure$/
+    );
+    expect(marker).not.toContain('tok-a');
+    const value = marker.slice('civ_slot_sync='.length, marker.indexOf(';'));
+
+    expect(
+      sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-a', civ_slot_sync: value }))
+    ).toBeNull();
+    expect(
+      sharedSlotNavigationSyncUrl(nav({ [SHARED]: 'tok-b', civ_slot_sync: value }))?.location
+    ).toBe(first!.location);
   });
 
   it('does nothing in shared mode, with a host-only cookie, or for a non-navigation', async () => {

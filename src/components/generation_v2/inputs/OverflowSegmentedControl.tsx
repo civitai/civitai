@@ -1,7 +1,7 @@
 /**
  * OverflowSegmentedControl
  *
- * A wrapper around Mantine's SegmentedControl that handles overflow gracefully.
+ * A row of ChoiceGroup tiles that handles overflow gracefully.
  * When there are more options than can be displayed, it shows a "More" button
  * that opens a popover with all options.
  *
@@ -12,7 +12,8 @@
  * - Built-in popover for selecting from all options; a bottom sheet on a phone
  */
 
-import { ScrollArea, SegmentedControl, Text } from '@mantine/core';
+import { CHOICE_GROUP_GAP, ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { ScrollArea, Text } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
@@ -69,11 +70,7 @@ export interface OverflowSegmentedControlProps<T extends string = string> {
   gridColumns?: number;
   /** Title of the bottom sheet "More" opens on a phone, where the popover is replaced. */
   drawerTitle?: ReactNode;
-  /**
-   * A click on the segment that is already selected. Mantine's SegmentedControl
-   * reports nothing for it (the radio doesn't change), so a segment that opens
-   * something — Custom's size modal — would otherwise open only once.
-   */
+  /** A click on the tile that is already selected, for a tile that opens something (Custom's size modal). */
   onReselect?: (value: T) => void;
   className?: string;
 }
@@ -324,7 +321,6 @@ export function OverflowSegmentedControl<T extends string = string>({
     };
   }, [options, value, visibleCount, priorityOptions]);
 
-  // Build segmented control data (includes "More" button if needed)
   const segmentedData = useMemo(() => {
     const data = visibleOptions.map((opt) => ({
       value: opt.value,
@@ -356,34 +352,15 @@ export function OverflowSegmentedControl<T extends string = string>({
     setPopoverOpened(false);
   };
 
-  // Create a key based on visible option values and popover state to force re-render
-  const segmentedKey = useMemo(
-    () => `${segmentedData.map((d) => d.value).join(',')}-${popoverOpened}`,
-    [segmentedData, popoverOpened]
-  );
-
   return (
-    <div
-      ref={containerRef}
-      className={`relative ${className ?? ''}`}
-      onClick={(event) => {
-        if (!onReselect || !value || disabled) return;
-        // A segment is a <label> beside its radio, so one click arrives twice: on the
-        // label, then forwarded to the radio. Act on the radio's only — reacting to both
-        // opened Custom's modal twice.
-        const radio = event.target;
-        if (radio instanceof HTMLInputElement && radio.type === 'radio' && radio.value === value)
-          onReselect(value);
-      }}
-    >
-      <SegmentedControl
-        key={segmentedKey}
+    <div ref={containerRef} className={`relative ${className ?? ''}`}>
+      <ChoiceGroup
         value={controlValue}
         onChange={handleChange}
+        onReselect={(selected) => onReselect?.(selected as T)}
         data={segmentedData}
+        columns={segmentedData.length}
         disabled={disabled}
-        fullWidth
-        classNames={{ label: 'relative', innerLabel: 'static' }}
       />
       {showMoreButton && (
         <PopoverOrSheet
@@ -397,7 +374,18 @@ export function OverflowSegmentedControl<T extends string = string>({
             arrowSize: 12,
           }}
           dropdownProps={{ p: 0 }}
-          target={<span className="absolute bottom-0 right-0 top-0 w-px" />}
+          // Spans the More tile, not a 1px sliver at the edge: a centred arrow on a 1px anchor
+          // pushed the dropdown past the control, over the panel scrollbar.
+          target={
+            <span
+              className="pointer-events-none absolute inset-y-0 right-0"
+              style={{
+                width: `calc((100% - ${(segmentedData.length - 1) * CHOICE_GROUP_GAP}px) / ${
+                  segmentedData.length
+                })`,
+              }}
+            />
+          }
         >
           {(surface) => {
             const grid = (

@@ -95,6 +95,7 @@ const box = (overrides: Partial<MysteryBoxView> = {}): MysteryBoxView => ({
   team: 'Blue',
   art: null,
   listing: { shopItemId: 42, title: 'Birthday Box', unitAmount: 500, availableTo: null },
+  packListing: null,
   tiers: [{ id: 7, key: 'common', name: 'Common', color: null, weight: 1, sortOrder: 0 }],
   contents: [content(1), content(2)],
   heldBoxItemIds: [],
@@ -126,7 +127,9 @@ afterEach(async () => {
 
 describe('MysteryBoxCard', () => {
   it('offers Buy and open, which opens the modal ready to buy', async () => {
-    await render(React.createElement(MysteryBoxCard, { event: 'e', view: box(), color: '#000' }));
+    await render(
+      React.createElement(MysteryBoxCard, { source: { event: 'e' }, view: box(), color: '#000' })
+    );
 
     expect(byTestId('box-card-open')).toBeNull();
     await act(async () => (byTestId('box-card-buy') as HTMLButtonElement).click());
@@ -136,7 +139,7 @@ describe('MysteryBoxCard', () => {
   it('offers Open your box first when one is held', async () => {
     await render(
       React.createElement(MysteryBoxCard, {
-        event: 'e',
+        source: { event: 'e' },
         view: box({ heldBoxItemIds: ['501'] }),
         color: '#000',
       })
@@ -148,7 +151,9 @@ describe('MysteryBoxCard', () => {
   });
 
   it('looks inside without starting anything', async () => {
-    await render(React.createElement(MysteryBoxCard, { event: 'e', view: box(), color: '#000' }));
+    await render(
+      React.createElement(MysteryBoxCard, { source: { event: 'e' }, view: box(), color: '#000' })
+    );
 
     await act(async () => (byTestId('box-look-inside') as HTMLButtonElement).click());
     expect(state.trigger).toHaveBeenCalledTimes(1);
@@ -158,7 +163,7 @@ describe('MysteryBoxCard', () => {
   it('says Complete, with nothing to buy or open, once everything is collected', async () => {
     await render(
       React.createElement(MysteryBoxCard, {
-        event: 'e',
+        source: { event: 'e' },
         view: box({ contents: [content(1, false), content(2, false)] }),
         color: '#000',
       })

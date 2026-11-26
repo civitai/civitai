@@ -43,6 +43,9 @@ vi.mock('~/server/clickhouse/client', () => ({
 import {
   blockingHit,
   classifySharedTexts,
+  describeSharedRefusalField,
+  SHARED_REFUSAL_FIELD_MAX_CHARS,
+  sharedRefusalField,
   recordSharedDataScan,
   resolveSharedDataModerationMode,
   scanCounterKey,
@@ -61,6 +64,10 @@ import {
 import { auditPromptEnriched } from '~/utils/metadata/audit';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { normalizeText } from '~/utils/normalize-text';
+import { createProfanityFilter } from '~/libs/profanity-simple';
+
+/** The shipped lists, as the server uses with `profanity-managed-list` off. */
+const SHIPPED = createProfanityFilter();
 
 // `~/server/logging/client` has a canonical mock registered globally (docs/testing/shared-module-mocks.md).
 const mockLog = loggingMock.logToAxiom;
@@ -108,6 +115,17 @@ describe('resolveSharedDataModerationMode — two flags, enforce implies scan', 
 describe('classifySharedTexts — the local checks, one leaf at a time', () => {
   it('a clean leaf produces no hit', async () => {
     await expect(classifySharedTexts([leaf('a perfectly ordinary label')])).resolves.toEqual([]);
+  });
+
+  it('flags an orchestrator media link as a link hit, without recording the url', async () => {
+    const url = 'https://orchestration.civitai.com/v2/consumer/blobs/K1.png?sig=s';
+    const hits = await classifySharedTexts([leaf(url)]);
+    expect(hits).toContainEqual({
+      category: 'link',
+      matched: 'private_media',
+      label: 'private_media',
+      leaf: leaf(url),
+    });
   });
 
   it('flags a minor term, with the leaf it came from', async () => {
@@ -187,16 +205,30 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
     expect(mockFindBlocked.mock.calls[0][0]).toEqual(['first leaf', 'second leaf']);
   });
 
+  // With no Blocklist row there is no id to name; the reference still never falls back to the entry.
+  it('marks a pattern hit with no list row as an unknown list', async () => {
+    mockFindBlocked.mockResolvedValue([
+      { kind: 'pattern', index: 0, matched: 'scam phrase', patternId: 2, listId: null },
+    ]);
+    const [hit] = await classifySharedTexts([leaf('zero')]);
+    expect(hit).toMatchObject({ matched: 'blocklist:?#2', label: 'blocklist:?#2' });
+  });
+
   it('maps blocklist hits back to their leaf by index', async () => {
     mockFindBlocked.mockResolvedValue([
       { kind: 'link', index: 1, matched: ['bad.example', 'worse.example'] },
-      { kind: 'pattern', index: 0, matched: 'scam phrase' },
+      { kind: 'pattern', index: 0, matched: 'scam phrase', patternId: 3, listId: 12 },
     ]);
     const hits = await classifySharedTexts([leaf('zero'), leaf('one', 'k', 'key')]);
     expect(hits).toEqual([
-      // A pattern's `matched` is the list ENTRY, so it is its own label; a link's is the user's
-      // URL, so its label is empty.
-      { category: 'pattern', matched: 'scam phrase', label: 'scam phrase', leaf: leaf('zero') },
+      // A pattern hit names the list row and entry position, never the entry; a link's matched
+      // is the user's URL, so its label is empty.
+      {
+        category: 'pattern',
+        matched: 'blocklist:12#3',
+        label: 'blocklist:12#3',
+        leaf: leaf('zero'),
+      },
       {
         category: 'link',
         matched: 'bad.example,worse.example',
@@ -241,14 +273,14 @@ describe('the profanity prefilter never changes the audit verdict', () => {
     'dick van dyke',
   ];
   it.each(corpus)('%s', async (text) => {
-    const full = auditPromptEnriched(normalizeText(text), undefined, true).success === false;
+    const full = auditPromptEnriched(normalizeText(text), undefined, SHIPPED).success === false;
     const hits = await classifySharedTexts([leaf(text)]);
     expect(hits.some((h) => h.category === 'audit_regex')).toBe(full);
   });
 
   it('positive control: the corpus contains both verdicts', () => {
     const verdicts = corpus.map(
-      (t) => auditPromptEnriched(normalizeText(t), undefined, true).success
+      (t) => auditPromptEnriched(normalizeText(t), undefined, SHIPPED).success
     );
     expect(verdicts).toContain(true);
     expect(verdicts).toContain(false);
@@ -538,11 +570,17 @@ describe('recording', () => {
     expect(shadowRows.find((r) => r.category === 'audit_regex')?.matched).toBe('fuck');
   });
 
-  it('enforce keeps a PLATFORM-authored matched term: the POI list word and a blocklist entry', async () => {
-    mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 0, matched: 'list entry' }]);
+  it('enforce keeps a PLATFORM-authored matched term: the POI list word and a blocklist reference', async () => {
+    mockFindBlocked.mockResolvedValue([
+      { kind: 'pattern', index: 0, matched: 'list entry', patternId: 0, listId: 12 },
+    ]);
     const scan = await scanSharedData({ a: 'a list entry here', b: 'emma watson' });
     const rows = sharedDataHitRows(scan, enforce);
-    expect(rows.find((r) => r.category === 'pattern')?.matched).toBe('list entry');
+    expect(rows.find((r) => r.category === 'pattern')?.matched).toBe('blocklist:12#0');
+    expect(JSON.stringify(rows)).not.toContain('list entry');
+    // Shadow rows keep the user's leaf for review, but the matched column is still the reference.
+    const shadowRows = sharedDataHitRows(scan, { ...enforce, mode: 'shadow' });
+    expect(shadowRows.find((r) => r.category === 'pattern')?.matched).toBe('blocklist:12#0');
     expect(rows.find((r) => r.category === 'poi')?.matched).toBe('emma watson');
   });
 
@@ -847,6 +885,87 @@ describe('scheduleSharedDataShadow', () => {
         surface: 'counter',
       }),
       'block-audit'
+    );
+  });
+});
+
+describe('sharedRefusalField — the field a refusal names, never the refused text', () => {
+  const scanWith = (...hits: SharedTextScan['hits']): SharedTextScan => ({
+    leafCount: hits.length,
+    overflow: null,
+    hits,
+  });
+  const hitOn = (
+    raw: string,
+    segments: Array<string | number>,
+    kind: 'value' | 'key' = 'value',
+    category: SharedTextScan['hits'][number]['category'] = 'audit_regex',
+    matched = 'zqmatched'
+  ): SharedTextScan['hits'][number] => ({
+    category,
+    matched,
+    label: 'profanity',
+    leaf: { raw, path: segments.join('/'), segments, kind },
+  });
+
+  it.each([
+    [['a', 'b'], 'value', 'data.a.b'],
+    [['list', 3], 'value', 'data.list[3]'],
+    [['my key', 0, 'x'], 'value', 'data["my key"][0].x'],
+    [['tags', 'the zq text'], 'key', 'data.tags'],
+    [['the zq text'], 'key', 'data'],
+  ] as const)('%j (%s) → %s', (segments, kind, field) => {
+    const hit = hitOn('the zq text', [...segments], kind);
+    expect(sharedRefusalField(scanWith(hit), hit, 'data')).toEqual({ field, fieldKind: kind });
+  });
+
+  it('the key root is `key`, whatever the leaf', () => {
+    const hit = hitOn('a-zq-key', []);
+    expect(sharedRefusalField(scanWith(hit), hit, 'key')).toEqual({
+      field: 'key',
+      fieldKind: 'value',
+    });
+  });
+
+  it('a walk-cap overflow (no leaf) names the whole blob', () => {
+    const hit = { category: 'overflow' as const, matched: 'depth', label: 'depth', leaf: null };
+    expect(sharedRefusalField(scanWith(hit), hit, 'data')).toEqual({
+      field: 'data',
+      fieldKind: 'value',
+    });
+  });
+
+  it('a key on the path that is another hit’s leaf, or holds a matched term, is replaced', () => {
+    const refusedKey = hitOn('zqbadkey', ['outer', 'zqbadkey'], 'key', 'pattern', 'blocklist:1#2');
+    const value = hitOn(
+      'a value',
+      ['outer', 'zqbadkey', 'pre-ZQMATCHED-post', 'v'],
+      'value',
+      'minor',
+      'zqmatched'
+    );
+    expect(sharedRefusalField(scanWith(refusedKey, value), value, 'data')).toEqual({
+      field: 'data.outer[*][*].v',
+      fieldKind: 'value',
+    });
+  });
+
+  it('a long path is cut to the cap', () => {
+    const hit = hitOn(
+      'x',
+      Array.from({ length: 100 }, () => 'segment')
+    );
+    const { field } = sharedRefusalField(scanWith(hit), hit, 'data');
+    expect(field).toHaveLength(SHARED_REFUSAL_FIELD_MAX_CHARS);
+    expect(field.endsWith('…')).toBe(true);
+  });
+
+  it('describeSharedRefusalField words a key as a key', () => {
+    expect(describeSharedRefusalField({ field: 'data.a[1]', fieldKind: 'value' })).toBe(
+      'field: data.a[1]'
+    );
+    expect(describeSharedRefusalField({ field: 'data.meta', fieldKind: 'key' })).toBe(
+      'field: an object key in data.meta'
     );
   });
 });

@@ -31,7 +31,7 @@ import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review'
 import type { MediaType } from '$lib/media/edge-url';
 import type { ComFace } from '$lib/com-face';
 
-export type RatingReviewUser = { id: number; username: string | null; image: string | null };
+export type RatingReviewUser = { id: number; username: string | null };
 
 export type RatingReviewEntitySummary = {
   id: number;
@@ -41,6 +41,8 @@ export type RatingReviewEntitySummary = {
   override: number | null;
   /** Set for an Article only; every other type's cover is the first image of its preview set. */
   coverUrl: string | null;
+  /** The Article's cover image, so a withheld one can be blanked; absent on every other type. */
+  coverId?: number | null;
   coverType: MediaType | null;
   /** A Model's civitai.com face, null when it has none; absent on every other type. */
   comFace?: ComFace | null;
@@ -104,6 +106,8 @@ export type RatingReviewImage = {
   url: string;
   type: MediaType;
   nsfwLevel: number;
+  /** Withheld from this moderator (`withheldCoverImages`): `url` is empty. */
+  restricted?: true;
 };
 
 const IMAGE_FIELDS = ['i.id', 'i.url', 'i.type', 'i.nsfwLevel'] as const;
@@ -158,6 +162,7 @@ async function loadSummaries(
           'a.nsfwLevel',
           'a.moderatorNsfwLevel',
           'a.cover',
+          'a.coverId',
           'i.url',
           'i.type',
         ])
@@ -170,6 +175,7 @@ async function loadSummaries(
           nsfwLevel: r.nsfwLevel,
           override: r.moderatorNsfwLevel,
           coverUrl: r.url ?? r.cover,
+          coverId: r.coverId,
           coverType: (r.type as MediaType | null) ?? null,
           parentId: null,
         });
@@ -362,23 +368,23 @@ async function loadImagesForType(
             AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = ic."imageId")) x
         WHERE x.rn <= ${CONNECTION_CAP}
         ORDER BY "entityId", "imageId"`.execute(dbRead);
-      const covers = new Map<number, number>();
+      const covers = new Map<number, number[]>();
       if (entityType === 'Article') {
         const found = await dbRead
           .selectFrom('Article')
-          .select(['id', 'coverId'])
+          .select(['id', 'coverId', 'bannerId'])
           .where('id', 'in', ids)
           .execute();
-        const existing = await imagesById(found.map((a) => a.coverId));
+        const existing = await imagesById(found.flatMap((a) => [a.coverId, a.bannerId]));
         for (const a of found)
-          if (a.coverId && existing.has(a.coverId)) covers.set(a.id, a.coverId);
+          covers.set(
+            a.id,
+            [a.coverId, a.bannerId].filter((x): x is number => x != null && existing.has(x))
+          );
       }
-      // The cover leads, then connections by image id.
+      // The cover leads, then the banner, then connections by image id.
       const idsByEntity = new Map<number, number[]>();
-      for (const id of ids) {
-        const cover = covers.get(id);
-        idsByEntity.set(id, cover ? [cover] : []);
-      }
+      for (const id of ids) idsByEntity.set(id, [...new Set(covers.get(id) ?? [])]);
       for (const l of links) {
         const list = idsByEntity.get(l.entityId);
         if (list && !list.includes(l.imageId)) list.push(l.imageId);
@@ -666,10 +672,8 @@ export function ratingReviewRowQuery() {
       'rr.modComment',
       'owner.id as ownerId',
       'owner.username as ownerUsername',
-      'owner.image as ownerImage',
       'resolver.id as resolverId',
       'resolver.username as resolverUsername',
-      'resolver.image as resolverImage',
     ]);
 }
 
@@ -712,11 +716,8 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
       appliedLevel: r.appliedLevel,
       userComment: r.userComment,
       modComment: r.modComment,
-      user: { id: r.ownerId, username: r.ownerUsername, image: r.ownerImage },
-      resolver:
-        r.resolverId != null
-          ? { id: r.resolverId, username: r.resolverUsername, image: r.resolverImage }
-          : null,
+      user: { id: r.ownerId, username: r.ownerUsername },
+      resolver: r.resolverId != null ? { id: r.resolverId, username: r.resolverUsername } : null,
       entity: s
         ? {
             id: s.id,
@@ -726,6 +727,7 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
             override: s.override,
             coverUrl: s.coverUrl,
             coverType: s.coverType,
+            ...(t === 'Article' && { coverId: s.coverId ?? null }),
             ...(t === 'Model' && { comFace: comFaces.get(s.id) ?? null }),
           }
         : null,

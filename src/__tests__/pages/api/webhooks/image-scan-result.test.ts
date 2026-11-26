@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processImageScanWorkflow } from '~/server/services/image-scan-result.service';
 import { processImageScanningWorkflow } from '~/server/services/image-scanning-result.service';
+import { getImagesModRules } from '~/server/services/image.service';
+import * as notificationService from '~/server/services/notification.service';
 import { clickhouse } from '~/server/clickhouse/client';
 import { signalClient } from '~/utils/signal-client';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -135,6 +137,11 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   stripBenignPhrases: (text?: string, type?: unknown) => mockStripBenignPhrases(text, type),
 }));
 
+const mockBustPosts = vi.hoisted(() => vi.fn(async (_postId: number) => undefined));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCachesForPosts: mockBustPosts,
+}));
 vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
   dbRead: mockDbWrite,
@@ -200,9 +207,22 @@ vi.mock('~/server/services/games/new-order.service', () => ({
   addImageToQueue: vi.fn().mockResolvedValue(undefined),
 }));
 
+// The old-game gate reads a Flipt flag over the network.
+vi.mock('~/server/games/new-order/v1-gate', () => ({
+  isV1KnightsLive: vi.fn().mockResolvedValue(false),
+}));
+
 // Mock system-cache
 vi.mock('~/server/services/system-cache', () => ({
   getTagRules: vi.fn().mockResolvedValue([]),
+}));
+
+const { mockRefreshPicturesForImages } = vi.hoisted(() => ({
+  mockRefreshPicturesForImages: vi.fn(async (_imageIds: number[]) => undefined),
+}));
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForImagesLazy: mockRefreshPicturesForImages,
+  refreshProfilePicturesForUsersLazy: vi.fn(async () => undefined),
 }));
 
 // Auto-stubbing `~/server/redis/caches` mock.
@@ -266,6 +286,14 @@ vi.mock('~/libs/tags', async (importOriginal) => {
   };
 });
 
+// The home-block refresh (`evictHomeBlocksForImages`) is seen at the database: its lookup binds the
+// ids as one array.
+const homeBlockLookupsFor = (calls: unknown[][], table: string) =>
+  calls
+    .map(([query]) => query as { sql?: string; values?: unknown[] })
+    .filter((query) => !!query?.sql?.includes(table))
+    .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+
 vi.mock('~/server/services/image.service', () => ({
   getImagesModRules: vi.fn().mockResolvedValue([]),
   queueImageSearchIndexUpdate: vi.fn().mockResolvedValue(undefined),
@@ -324,6 +352,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps implementations: undo any test's throwing $executeRaw.
+    mockDbWrite.$executeRaw.mockImplementation(async () => 0);
     imageDbState.clear();
     imageUpdates.length = 0;
     envOverrides.BLOCKED_IMAGE_HASH_CHECK = false;
@@ -475,6 +505,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
       ).resolves.toBeUndefined();
 
       expect(markedError?.text).toContain(`'{retryCount}'`);
+      // A hidden (NotFound) image keeps NotFound: Error + a locked rating would republish it.
+      expect(markedError?.text).toContain(`WHEN "ingestion" = 'NotFound'`);
       expect(markedError?.params).toContain(ImageIngestionStatus.Error);
       expect(markedError?.params).toContain(10);
       const stamped = markedError?.params.find(
@@ -512,16 +544,23 @@ describe('image-scan-result webhook - pipeline tests', () => {
 
       // blockImageFromRating already persisted Blocked. markImageScanError is
       // unconditional, so running it here would un-block the image.
-      const blocked = mockDbWrite.image.updateMany.mock.calls.find(
-        (call: any) => call[0].where.id === 13
-      );
-      expect(blocked?.[0].data.ingestion).toBe(ImageIngestionStatus.Blocked);
+      const blocked = mockDbWrite.$executeRaw.mock.calls
+        .map((call: any) =>
+          renderSql(Array.isArray(call[0]) ? call[0] : call[0].strings, call.slice(1))
+        )
+        .find(
+          (sql: any) =>
+            /"blockedFor" = CASE WHEN "blockedFor" = \$\d+ OR/.test(sql.text) &&
+            sql.params.at(-1) === 13
+        );
+      expect(blocked?.params).toContain(ImageIngestionStatus.Blocked);
 
       const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
         const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
         return strings.join('').includes("'{retryCount}'");
       });
       expect(errorFlips).toHaveLength(0);
+      expect(mockRefreshPicturesForImages).toHaveBeenCalledWith([13]);
     });
 
     it('signals the Error state so the editor stops showing "Analyzing image"', async () => {
@@ -563,6 +602,121 @@ describe('image-scan-result webhook - pipeline tests', () => {
         })
       ).rejects.toThrow(/^image not found/);
     });
+  });
+
+  it("refreshes a hard-blocked image's post showcase when the rest of the scan throws", async () => {
+    getImageState(13).postId = 70;
+    const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('INSERT INTO "Tag"'))
+        throw new Error('Raw query failed. Code: `23502`.');
+      return passthrough(query, ...values);
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-blocked-then-failing-on-a-post',
+      status: 'succeeded',
+      imageId: 13,
+      steps: [
+        {
+          $type: 'wdTagging',
+          output: { tags: { 'a tag that cannot be created': 0.9 }, rating: { general: 0.9 } },
+        },
+        {
+          $type: 'mediaRating',
+          output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+        },
+      ] as any,
+    });
+
+    expect(mockBustPosts).toHaveBeenCalledWith(70);
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).toContainEqual([13]);
+  });
+
+  it('refreshes the home blocks holding an image the scan blocks', async () => {
+    await processImageScanWorkflow({
+      workflowId: 'workflow-that-blocks',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        {
+          $type: 'mediaRating',
+          output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+        },
+      ] as any,
+    });
+
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).toContainEqual([12]);
+  });
+
+  it('refreshes the home blocks of a blocked image when an earlier side effect throws', async () => {
+    mockDbWrite.$executeRaw.mockImplementation(async (query: any) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('DELETE FROM "JobQueue"'))
+        throw new Error('job queue delete failed');
+      return 0;
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-that-blocks-then-a-side-effect-throws',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        {
+          $type: 'mediaRating',
+          output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+        },
+      ] as any,
+    });
+
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).toContainEqual([12]);
+  });
+
+  it('leaves the home blocks alone for an image the scan passes', async () => {
+    await processImageScanWorkflow({
+      workflowId: 'workflow-that-passes',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+      ] as any,
+    });
+
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).not.toContainEqual([12]);
+  });
+
+  it("refreshes the image's post showcase when a post-verdict side effect throws first", async () => {
+    getImageState(12).postId = 71;
+    mockDbWrite.$executeRaw.mockImplementation(async (query: any) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('DELETE FROM "JobQueue"'))
+        throw new Error('job queue delete failed');
+      return 0;
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-with-a-failing-side-effect-on-a-post',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+      ] as any,
+    });
+
+    expect(mockBustPosts).toHaveBeenCalledWith(71);
   });
 
   it('keeps a persisted verdict when a post-verdict side effect throws', async () => {
@@ -658,7 +812,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
           (sql: any) =>
             sql.text.includes('UPDATE "Image"') &&
             sql.text.includes('"needsReview"') &&
-            sql.params.at(-1) === imageId
+            sql.params[Number(sql.text.match(/WHERE id = \$(\d+)/)?.[1]) - 1] === imageId
         );
       if (!update) return undefined;
       const param = (column: string, valueAt = '\\$(\\d+)') => {
@@ -666,14 +820,22 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return match ? update.params[Number(match[1]) - 1] : undefined;
       };
       return {
-        ingestion: param('ingestion'),
-        nsfwLevel: param('nsfwLevel'),
-        // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
+        // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql), itself the
+        // ELSE arm of the stored-CSAM guard.
+        ingestion: param('ingestion', `CASE[\\s\\S]*?ELSE \\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
+        nsfwLevel: param(
+          'nsfwLevel',
+          // The scan's value is the ELSE arm, after the CSAM and locked-rating arms.
+          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+[\\s\\S]*?ELSE \\$(\\d+)`
+        ),
+        // The key the scan sets, which reviewKeyAfterSql weighs against the stored one: the ELSE
+        // arm of the stored-CSAM guard.
         needsReview: param(
           'needsReview',
-          `CASE WHEN "needsReview" = 'csam' THEN 'csam'\\s+ELSE \\$(\\d+) END`
+          `CASE WHEN "blockedFor" = 'CSAM' THEN[\\s\\S]*?ELSE[\\s\\S]*?WHEN \\$(\\d+)::text = 'appeal'`
         ),
-        minor: param('minor'),
+        // What the scan ORs into the stored flag.
+        minor: param('minor', `"minor" OR \\$(\\d+)`),
         pHash: param('pHash'),
       };
     };
@@ -727,6 +889,22 @@ describe('image-scan-result webhook - pipeline tests', () => {
       );
     });
 
+    it('a clean verdict for a NotFound image is not reported as Scanned', async () => {
+      getImageState(43).ingestion = ImageIngestionStatus.NotFound;
+      await deliver(43, [scanStep(scanOutput()), hashStep]);
+
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 43, ingestion: ImageIngestionStatus.NotFound }),
+        })
+      );
+      expect(vi.mocked(signalClient.send)).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 43, ingestion: ImageIngestionStatus.Scanned }),
+        })
+      );
+    });
+
     it('queues an NSFW image with a minor tag for review', async () => {
       await deliver(41, [scanStep(scanOutput())]);
       expect(verdictFor(41)).toMatchObject({ needsReview: 'minor', minor: true });
@@ -738,6 +916,34 @@ describe('image-scan-result webhook - pipeline tests', () => {
         ingestion: ImageIngestionStatus.Scanned,
         nsfwLevel: 1,
       });
+    });
+
+    it('refreshes the home blocks of a blocked image when an earlier side effect throws', async () => {
+      const passthrough = mockDbWrite.$executeRaw.getMockImplementation();
+      mockDbWrite.$executeRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        if (strings.join('').includes('DELETE FROM "JobQueue"'))
+          throw new Error('job queue delete failed');
+        return passthrough ? passthrough(query, ...values) : 0;
+      });
+
+      // A rule block tells the owner; that service is not under test here.
+      vi.spyOn(notificationService, 'createNotification').mockResolvedValueOnce(undefined as never);
+      vi.mocked(getImagesModRules).mockResolvedValueOnce([
+        {
+          id: 9,
+          definition: { type: 'tag', tags: ['teen'], match: 'any' },
+          action: 'Block',
+          reason: 'r',
+        },
+      ] as never);
+
+      await deliver(44, [scanStep(scanOutput()), hashStep]);
+
+      expect(verdictFor(44)?.ingestion).toBe(ImageIngestionStatus.Blocked);
+      expect(
+        homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+      ).toContainEqual([44]);
     });
 
     it('writes version 2 scanner-audit rows, csam included', async () => {

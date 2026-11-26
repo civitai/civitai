@@ -1,0 +1,98 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import * as z from 'zod';
+import { Tracker } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+import { getOpenImageReportIdsByImage, handleBlockImages } from '~/server/services/image.service';
+import { ReportReason } from '~/shared/utils/prisma/enums';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { Limiter } from '~/server/utils/concurrency-helpers';
+import { ViolationType } from '~/server/common/enums';
+import { heldRemovalSummary, holdRemovals } from '~/server/services/image-removal-hold.service';
+
+const schema = z.object({
+  imageIds: z.array(z.number()).optional(),
+  userId: z.number().optional(),
+  moderatorId: z.number().optional(),
+  reason: z.string().optional(),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().trim().min(1).optional(),
+  /** The moderator holds `image.removal.confirm`; asserted by the trusted caller, like `moderatorId`. */
+  canConfirmReRemoval: z.boolean().optional(),
+});
+
+export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
+
+  try {
+    const {
+      imageIds,
+      userId,
+      reason,
+      moderatorId,
+      violationType,
+      violationDetails,
+      canConfirmReRemoval,
+    } = parsed.data;
+    if (isFeedbackCaptureOwner(userId))
+      return res.status(400).json({ error: FEEDBACK_CAPTURE_OWNER_REFUSAL });
+
+    // A removal of chosen images is held; an account-wide removal (`userId`) is not.
+    let ids = imageIds;
+    let held: ReturnType<typeof heldRemovalSummary> = [];
+    if (imageIds?.length && !canConfirmReRemoval) {
+      const reportIds = await getOpenImageReportIdsByImage(imageIds, ReportReason.TOSViolation);
+      const hold = await holdRemovals(
+        imageIds.map((imageId) => ({
+          imageId,
+          violationType,
+          violationDetails,
+          reportIds: reportIds.get(imageId) ?? [],
+        })),
+        moderatorId ?? 0,
+        'api.removeImages'
+      );
+      ids = hold.proceed;
+      held = heldRemovalSummary(hold.held);
+      if (!ids.length) return res.status(200).json({ images: 0, held });
+    }
+
+    const tracker = new Tracker(req, res);
+    const images = await handleBlockImages({ ids, userId, moderatorId });
+    await Limiter({ batchSize: 10000 }).process(images, async (images) => {
+      await tracker.images(
+        images.map((image) => ({
+          type: 'DeleteTOS',
+          imageId: image.id,
+          ownerId: image.userId,
+          nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+          tags: [],
+          resources: [],
+          tosReason: reason,
+          violationType: violationType,
+          violationDetails: violationDetails ?? '',
+          userId: moderatorId,
+        }))
+      );
+    });
+    res.status(200).json({ images: images.length, held });
+  } catch (e) {
+    const err = e as Error;
+    logToAxiom({
+      type: 'mod-remove-images-error',
+      error: err.message,
+      cause: err.cause,
+      stack: err.stack,
+    });
+    res
+      .status(500)
+      .json({ error: 'Removal may be incomplete; reload to see which images are blocked' });
+  }
+});

@@ -15,14 +15,14 @@ vi.mock('~/server/clickhouse/client', () => ({
 // Prom is NOT mocked here: setup.ts stubs it globally, including the
 // `clickhouseFailSoftCounter` this branch needs — which it was missing until
 // this PR added it, so a local three-item factory here would have been the
-// wider surface, not the narrower one. Neither ClickHouse nor buzz.service is
+// wider surface, not the narrower one. Neither ClickHouse nor buzz-payout is
 // stubbed globally, and spreading either would build a real client at import,
 // so those two stay hand-written and base.reward.mock-surface.test.ts checks
 // them against what base.reward actually imports.
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...(args as [])),
-  getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
   getTransactionByExternalId: vi.fn(async () => null),
+  getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
 }));
 
 import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';

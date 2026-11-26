@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import {
   readModelWithDetailsViaKysely,
   type ModelWithDetails,
@@ -17,7 +18,6 @@ import {
   type UserCreatorRead,
   type UserCreatorWhere,
 } from '~/server/services/user-creator.reads';
-import { getImageThread } from '@civitai/db-queries/hot-reads';
 import {
   readImageTagsViaKysely,
   type ImageTagsForImagesRow,
@@ -122,9 +122,6 @@ const IMAGE_TWO = 2102;
 const ALICE_VOTER = 1201;
 const BOB_VOTER = 1202;
 const IMAGE_UNTAGGED = 2103;
-const THREAD_LOCKED = 9301;
-const THREAD_OPEN = 9302;
-const THREAD_OF_MODEL = 9303;
 
 const golden = readTaggedGolden(
   resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/hot-reads-2-golden.json')
@@ -141,15 +138,15 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
 
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('User')} (id, username, image, "createdAt", "deletedAt", muted, "bannedAt",
-        "excludeFromLeaderboards", "profilePictureId", settings, "publicSettings") VALUES
+        "excludeFromLeaderboards", flags, "profilePictureId", settings, "publicSettings") VALUES
         (${CREATOR}, 'creator', 'avatar.png', '2025-05-06 07:08:09.123', NULL, true,
-          '2026-01-02 03:04:05.678', true, ${PICTURE}, '{"creatorShop": {"enabled": true}}',
-          '{"showcase": [1, 2]}'),
-        (${BARE}, 'bare', NULL, '2024-03-04 05:06:07.891', NULL, false, NULL, false, NULL, NULL, NULL),
-        (${NAMELESS}, NULL, NULL, '2024-03-05 05:06:07.891', NULL, false, NULL, false, NULL, '{}', '{}'),
+          '2026-01-02 03:04:05.678', true, ${UserFlag.ExcludeFromEventPoints}, ${PICTURE},
+          '{"creatorShop": {"enabled": true}}', '{"showcase": [1, 2]}'),
+        (${BARE}, 'bare', NULL, '2024-03-04 05:06:07.891', NULL, false, NULL, false, 0, NULL, NULL, NULL),
+        (${NAMELESS}, NULL, NULL, '2024-03-05 05:06:07.891', NULL, false, NULL, false, 0, NULL, '{}', '{}'),
         (${DELETED}, 'gone', NULL, '2024-03-06 05:06:07.891', '2026-02-03 04:05:06.789', false,
-          NULL, false, NULL, '{}', '{}'),
-        (${SYSTEM}, 'civitai', NULL, '2020-01-01 00:00:00.000', NULL, false, NULL, false, NULL,
+          NULL, false, 0, NULL, '{}', '{}'),
+        (${SYSTEM}, 'civitai', NULL, '2020-01-01 00:00:00.000', NULL, false, NULL, false, 0, NULL,
           '{}', '{}')
     `);
     await prisma.$executeRawUnsafe(`
@@ -244,23 +241,23 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         steps, epochs, "clipSkip", "createdAt", "updatedAt", "publishedAt", status,
         "trainingStatus", "trainingDetails", inaccurate, "baseModel", "baseModelType", meta,
         "requireAuth", settings, availability, "nsfwLevel", "uploadType", "usageControl", flags,
-        "generatorLoaded", "licensingFee") VALUES
+        "generatorLoaded", "licensingFee", "licensingFeeType") VALUES
         (${V_FULL}, 2, 'v-full', 'full version', ${MODEL}, '{alpha,beta}', 1000, 10, 2,
           '2026-04-01 00:00:00.111', '2026-04-02 00:00:00.222', '2026-04-03 00:00:00.333',
           'Published', NULL, NULL, true, 'SDXL 1.0', 'Standard', '{"earlyAccessConfig": {"timeframe": 3}}',
-          true, '{"strength": 0.7}', 'EarlyAccess', 4, 'Created', 'Generation', 5, true, 12.50),
+          true, '{"strength": 0.7}', 'EarlyAccess', 4, 'Created', 'Generation', 5, true, 12.50, 'PercentOfCompute'),
         (${V_EMPTY}, 0, 'v-empty', NULL, ${MODEL}, '{}', NULL, NULL, NULL,
           '2026-04-04 00:00:00.444', '2026-04-05 00:00:00.555', NULL, 'Draft', NULL, NULL, false,
           'Flux.1 D', 'Inpainting', '{}', false, NULL, 'Public', 0, 'Created', 'Download', 0,
-          false, NULL),
+          false, NULL, NULL),
         (${V_TRAINED}, 1, 'v-trained', 'trained', ${MODEL}, '{gamma}', 200, 4, NULL,
           '2026-04-06 00:00:00.666', '2026-04-07 00:00:00.777', NULL, 'Training', 'Approved',
           '{"type": "Character", "params": {"epochs": 4}}', false, 'SD 1.5', 'Standard', '{}',
-          false, NULL, 'Private', 1, 'Trained', 'InternalGeneration', 1, false, 0.05),
+          false, NULL, 'Private', 1, 'Trained', 'InternalGeneration', 1, false, 0.05, 'PerImageBuzz'),
         (${V_OTHER_MODEL}, 0, 'v-other', NULL, ${MODEL_OF_DELETED}, '{}', NULL, NULL, NULL,
           '2026-04-08 00:00:00.888', '2026-04-09 00:00:00.999', NULL, 'Published', NULL, NULL,
           false, 'SD 1.5', 'Standard', '{}', false, NULL, 'Public', 1, 'Created', 'Download', 0,
-          false, NULL)
+          false, NULL, NULL)
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('ModelVersionMetric')} VALUES
@@ -334,12 +331,6 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (9811, ${PICTURE}, ${BOB_VOTER}, 1, '2026-05-01 00:00:00.000'),
         (9817, ${IMAGE_TWO}, ${ALICE_VOTER}, 1, '2026-05-02 00:00:00.000')
     `);
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO ${t('Thread')} (id, locked, "imageId", "modelId") VALUES
-        (${THREAD_LOCKED}, true, ${PICTURE}, NULL),
-        (${THREAD_OPEN}, false, ${IMAGE_TWO}, NULL),
-        (${THREAD_OF_MODEL}, false, NULL, ${MODEL})
-    `);
   });
 
   afterAll(async () => {
@@ -367,6 +358,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(model?.modelVersions.map((v) => v.id)).toEqual([V_EMPTY, V_TRAINED, V_FULL]);
       const full = model?.modelVersions.find((v) => v.id === V_FULL);
       expect(full?.licensingFee).toBeInstanceOf(Prisma.Decimal);
+      // The model page shows a percent fee as a percent only if this read carries the type.
+      expect(full?.licensingFeeType).toBe('PercentOfCompute');
       expect(full?.files.map((f) => f.id).sort()).toEqual([FILE_A, FILE_B]);
       expect(full?.files.find((f) => f.id === FILE_B)?.hashes).toHaveLength(2);
       expect(full?.files.find((f) => f.id === FILE_B)?.scannedAt).toBeInstanceOf(Date);
@@ -405,7 +398,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     it('control: the full card exercises every relation, so its equality is not vacuous', async () => {
       const read = golden.peek<UserCreatorRead>('creator:by id, every relation filled');
       expect(read?.modelCount).toBe(1);
-      expect(read?.user.links).toHaveLength(2);
+      // The fixture creator is banned, so the card serves none of their links (the rows stay).
+      expect(read?.user.links).toEqual([]);
       expect(read?.user.cosmetics.map((c) => c.cosmetic.id).sort()).toEqual([
         COSMETIC_A,
         COSMETIC_B,
@@ -425,6 +419,8 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       const bare = golden.peek<UserCreatorRead>('creator:a user with no relations');
       expect(bare).toMatchObject({ modelCount: 0 });
       expect(bare?.user).toMatchObject({ stats: null, rank: null, profilePicture: null });
+      // An unbanned user's links are served, so the links shape is still compared.
+      expect(bare?.user.links).toHaveLength(1);
     });
   });
 
@@ -446,21 +442,6 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(golden.peek<ImageTagsForImagesRow[]>('tags:several images, one untagged')).toEqual(
         rows
       );
-    });
-  });
-
-  describe("an image's comment thread", () => {
-    it.each([
-      ['a locked thread', PICTURE],
-      ['an open thread', IMAGE_TWO],
-      ['no thread', IMAGE_UNTAGGED],
-    ])('%s', async (_, imageId) => {
-      const viaKysely = (await getImageThread(kysely, imageId)) ?? null;
-      expect(viaKysely).toStrictEqual(golden.take(`thread:${_}`));
-    });
-
-    it('control: the fixture threads are found', async () => {
-      expect(await getImageThread(kysely, PICTURE)).toEqual({ id: THREAD_LOCKED, locked: true });
     });
   });
 

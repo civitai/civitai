@@ -1,4 +1,5 @@
-import { describe, expect, test, vi } from 'vitest';
+import Router from 'next/router';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as NotificationThumbnails from '~/components/Notifications/notification-thumbnails';
 
 // The thumbnail hook is the only tRPC caller in this tree; the id normaliser
@@ -79,5 +80,123 @@ describe('NotificationList click payload', () => {
       keepOpened: true,
       url: '/images/123?postId=456',
     });
+  });
+});
+
+// An early-access invitation is sent as `system-announcement`; a red alert on it
+// reads as "you are in trouble". Every other type keeps its own marker, never red.
+describe('NotificationList announcement icon', () => {
+  const announcement = {
+    id: 2,
+    type: 'system-announcement',
+    category: 'System',
+    createdAt: new Date('2026-09-10T00:00:00Z'),
+    read: false,
+    details: { message: 'Try new Civitai features first', url: '/content/early-access' },
+  } as any;
+  const features = {
+    id: 3,
+    type: 'civitai-features',
+    category: 'System',
+    createdAt: new Date('2026-09-10T00:00:00Z'),
+    read: false,
+    details: { featureBlurb: 'a thing', releaseSlug: 'a-thing' },
+  } as any;
+
+  async function renderItems(items: any[]) {
+    renderWithProviders(
+      <IsClientProvider>
+        <NotificationList items={items} searchText="" onItemClick={vi.fn()} />
+      </IsClientProvider>
+    );
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('a[href]'),
+        `body: ${document.body.textContent}`
+      ).toBeTruthy();
+    });
+  }
+
+  test('announcement shows the neutral megaphone, not the red alert', async () => {
+    await renderItems([announcement]);
+    expect(document.body.querySelector('.tabler-icon-speakerphone')).toBeTruthy();
+    expect(document.body.querySelector('.tabler-icon-alert-octagon')).toBeNull();
+  });
+
+  test('other system types never get the alert or the megaphone', async () => {
+    await renderItems([features]);
+    expect(document.body.querySelector('.tabler-icon-bell')).toBeTruthy();
+    expect(document.body.querySelector('.tabler-icon-speakerphone')).toBeNull();
+    expect(document.body.querySelector('.tabler-icon-alert-octagon')).toBeNull();
+  });
+});
+
+// A mature item's appeal result links to .red, which the client router cannot reach.
+describe('NotificationList link to another host', () => {
+  const RED_URL = 'https://civitai.red.test/models/7';
+  const appealResult = (url?: string) =>
+    ({
+      id: 4,
+      type: 'entity-appeal-resolved',
+      category: 'Moderation',
+      createdAt: new Date('2026-09-10T00:00:00Z'),
+      read: false,
+      details: { entityType: 'Model', entityId: 7, status: 'Approved', ...(url && { url }) },
+    } as any);
+
+  async function clickRow(item: any, onItemClick: (...args: any[]) => unknown) {
+    renderWithProviders(
+      <IsClientProvider>
+        <NotificationList items={[item]} searchText="" onItemClick={onItemClick as any} />
+      </IsClientProvider>
+    );
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('a[href]'),
+        `body: ${document.body.textContent}`
+      ).toBeTruthy();
+    });
+    vi.mocked(Router.push).mockClear();
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    // If the list ever lets the anchor navigate, a test fails here instead of the page unloading the runner.
+    const stayOnPage = (e: Event) => e.preventDefault();
+    window.addEventListener('click', stayOnPage);
+    try {
+      (document.body.querySelector('a[href]') as HTMLAnchorElement).click();
+    } finally {
+      window.removeEventListener('click', stayOnPage);
+    }
+    return { open, push: vi.mocked(Router.push) };
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  test('leaves the origin for an absolute .red url only once mark-read has landed', async () => {
+    let markRead!: () => void;
+    const { open, push } = await clickRow(
+      appealResult(RED_URL),
+      () => new Promise<void>((resolve) => (markRead = resolve))
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    markRead();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(RED_URL, '_self'));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  test('still leaves when mark-read fails', async () => {
+    const { open } = await clickRow(appealResult(RED_URL), () => Promise.reject(new Error('down')));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(RED_URL, '_self'));
+  });
+
+  test('still leaves when mark-read never answers', async () => {
+    const { open } = await clickRow(appealResult(RED_URL), () => new Promise(() => undefined));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith(RED_URL, '_self'), { timeout: 5000 });
+  });
+
+  test('a relative url stays on the client router', async () => {
+    const { open, push } = await clickRow(appealResult(), () => undefined);
+    expect(push).toHaveBeenCalledWith('/models/7');
+    expect(open).not.toHaveBeenCalled();
   });
 });

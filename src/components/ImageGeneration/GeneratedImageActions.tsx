@@ -1,6 +1,6 @@
 import { Button, Checkbox } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconDownload, IconTrash, IconWand } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
@@ -13,6 +13,7 @@ import {
 import { downloadGeneratedImages } from '~/components/ImageGeneration/utils/downloadGeneratedImages';
 import type { UpdateImageStepMetadataArgs } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
+  GENERATOR_QUEUE_INPUT,
   matchesMarkerTags,
   useGetTextToImageRequests,
   useUpdateImageStepMetadata,
@@ -49,7 +50,7 @@ export function GeneratedImageActions({
 }) {
   const router = useRouter();
   const showCreatePostError = useShowCreatePostError();
-  const { data, markerTags } = useGetTextToImageRequests();
+  const { data, markerTags } = useGetTextToImageRequests(GENERATOR_QUEUE_INPUT);
   const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = useMemo(
     () =>
@@ -68,9 +69,9 @@ export function GeneratedImageActions({
   const createPostMutation = trpc.post.create.useMutation();
 
   const deleteSelectedImages = () => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete images',
-      children: 'Are you sure that you want to delete the selected images?',
+      message: 'Are you sure that you want to delete the selected images?',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -90,8 +91,6 @@ export function GeneratedImageActions({
           }, [])
         );
       },
-      zIndex: imageGenerationDrawerZIndex + 2,
-      centered: true,
     });
   };
 

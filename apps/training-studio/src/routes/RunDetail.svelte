@@ -11,8 +11,10 @@
     navigate,
     portalProps,
     publishUrl,
+    publishVersionUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
+  import { publishShareChoice } from '$lib/publish-url-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
   import { onSignal } from '$lib/signals';
@@ -34,6 +36,7 @@
     IconBoltFilled,
     IconSparkles,
     IconUpload,
+    IconVersions,
     IconExternalLink,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -41,7 +44,12 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import RunLog from '$lib/components/RunLog.svelte';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
+  import HelpTip from '$lib/components/HelpTip.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
@@ -57,14 +65,13 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
-  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
+  import { buildDatasetZip, runZipTrigger, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureRepriceError } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
 
   let {
@@ -96,13 +103,16 @@
   // terminal (ready/published/failed) → it will never arrive.
   const samplesPending = $derived(d.state === 'training');
 
-  // Live updates while training: re-read the run every few seconds so new epochs/samples stream in.
-  // Each tick re-arms after the refetch settles — success or failure, so one bad refetch can't end
-  // polling — and stops once the run leaves 'training' (this effect re-runs and the guard fails) or
-  // the component unmounts.
+  // Live updates while a run is training or held for review: re-read it so new epochs/samples stream
+  // in, and so a held run moves on by itself once reviewed. Every few seconds while training; once a
+  // minute while held, since a hold can last hours. Each tick re-arms after the refetch settles —
+  // success or failure, so one bad refetch can't end polling — and polling stops once the run is in
+  // neither state (this effect re-runs and the guard fails) or the component unmounts.
   const POLL_MS = 5000;
+  const REVIEW_POLL_MS = 60_000;
   $effect(() => {
-    if (!browser || d.state !== 'training') return;
+    if (!browser || (d.state !== 'training' && d.state !== 'review')) return;
+    const every = d.state === 'review' ? REVIEW_POLL_MS : POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
@@ -111,9 +121,9 @@
       } catch {
         // transient refetch failure — keep polling
       }
-      if (!stopped) timer = setTimeout(tick, POLL_MS);
+      if (!stopped) timer = setTimeout(tick, every);
     };
-    timer = setTimeout(tick, POLL_MS);
+    timer = setTimeout(tick, every);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -252,6 +262,7 @@
   // revoked on unmount. A failed fetch clears its slot so the next poll retries it.
   const datasetObjectUrls = new Map<string, string>();
   let datasetSrcs = $state<Record<string, string>>({});
+  let datasetRatings = $state<Record<string, string>>({});
   let destroyed = false;
   $effect(() => {
     if (!browser) return;
@@ -262,11 +273,12 @@
       datasetObjectUrls.set(air, '');
       backend()
         .datasetBlob(air, workflowId)
-        .then((blob) => {
+        .then(({ blob, nsfwLevel }) => {
           if (destroyed) return;
           const url = URL.createObjectURL(blob);
           datasetObjectUrls.set(air, url);
           datasetSrcs = { ...datasetSrcs, [air]: url };
+          if (nsfwLevel) datasetRatings = { ...datasetRatings, [air]: nsfwLevel };
         })
         .catch(() => {
           datasetObjectUrls.delete(air);
@@ -290,7 +302,7 @@
   }
   async function fetchDatasetBlob(air: string): Promise<Blob> {
     const direct = directDatasetUrl(air);
-    if (!direct) return backend().datasetBlob(air, d.workflowId);
+    if (!direct) return (await backend().datasetBlob(air, d.workflowId)).blob;
     const res = await fetch(direct);
     if (!res.ok) throw new Error(String(res.status));
     return res.blob();
@@ -314,7 +326,8 @@
           ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
-        }))
+        })),
+        runZipTrigger(d.settings.training)
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
@@ -486,9 +499,7 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
-  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
-  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
-  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  // The submit's own rating can find mature images the quote missed; its refusal raises this.
   let refusedFurther = $state<{ run: string; count: number } | null>(null);
   const furtherMature = $derived(
     Math.max(
@@ -498,23 +509,13 @@
   );
   const furtherSpend = $derived(
     quote?.cost != null
-      ? nonBlueSpend(quote.cost, buzzMode.value, {
-          mature: furtherMature > 0,
-          member: hostConfig().isPaidMember === true,
-        })
+      ? nonBlueSpend(quote.cost, buzzMode.value, { mature: furtherMature > 0 })
       : null
   );
-  // The run id is in the key so a tick never carries over to another run with the same price.
-  const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
-    return key && `${workflowIdKey}:${key}`;
-  });
-  let furtherAckedFor = $state<string | null>(null);
-  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
 
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
+    if (!publishTarget || continuing || quote?.cost == null) return;
     continuing = true;
     continueError = '';
     try {
@@ -523,13 +524,12 @@
         publishTarget.number,
         Number(furtherEpochs) || 5,
         buzzMode.currencies,
-        furtherAckKey !== null
+        furtherMature
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      if (err instanceof MatureAckRequiredError)
-        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      if (err instanceof MatureRepriceError) refusedFurther = { run: workflowIdKey, count: err.matureCount };
       else confirming = false;
     } finally {
       continuing = false;
@@ -544,27 +544,54 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
+  let ownRights = $state(false);
+  let shareDataset = $state(false);
+  let shareTouched = $state(false);
+  const publishRequest = $derived(
+    publishEpoch
+      ? {
+          workflowId: d.workflowId,
+          epoch: publishEpoch.number,
+          ...publishShareChoice(shareTouched, ownRights, shareDataset),
+        }
+      : null
+  );
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
-    if (!toUrl || !publishEpoch) return null;
-    return hostLink(toUrl({ workflowId: d.workflowId, epoch: publishEpoch.number }));
+    return toUrl && publishRequest ? hostLink(toUrl(publishRequest)) : null;
   });
+  // The main app asks which of the owner's models the run goes on.
+  const publishVersionLink = $derived.by(() => {
+    const toUrl = publishVersionUrl();
+    return toUrl && publishRequest ? hostLink(toUrl(publishRequest)) : null;
+  });
+  const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
+  function setOwnRights(next: boolean) {
+    shareTouched = true;
+    ownRights = next;
+    if (!next) shareDataset = false;
+  }
+  function setShareDataset(next: boolean) {
+    shareTouched = true;
+    shareDataset = next;
+  }
 
   // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
   const modelLink = $derived.by(() => {
     const toUrl = modelPageUrl();
     if (!toUrl || d.modelId == null) return null;
-    return hostLink(toUrl({ modelId: d.modelId }));
+    return hostLink(toUrl({ modelId: d.modelId, modelVersionId: d.modelVersionId }));
   });
   // The run keeps its modelId after the owner deletes the model, so ask once per id (a primitive,
   // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
   // settles on the server: SSR and hydration both render the pending branch.
   const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const runModelVersionId = $derived(modelLink ? d.modelVersionId : undefined);
   const modelLive = $derived(
     runModelId == null
       ? null
       : browser
-        ? backend().modelLive(runModelId)
+        ? backend().modelLive(runModelId, runModelVersionId)
         : new Promise<boolean>(() => {})
   );
 
@@ -598,7 +625,9 @@
     archiveError = '';
     archiveParts = [];
     showLineage = false;
-    furtherAckedFor = null;
+    ownRights = false;
+    shareDataset = false;
+    shareTouched = false;
   });
 </script>
 
@@ -731,14 +760,10 @@
         <div class="flex items-center gap-1.5">
           <dt class="text-dark-2">Expires</dt>
           <dd class="m-0 {expiresSoon ? 'text-buzz' : 'text-dark-0'}">
-            <Tooltip.Provider>
-              <Tooltip.Root>
-                <Tooltip.Trigger class="cursor-default">{expiresLabel}</Tooltip.Trigger>
-                <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-                  Download or publish anything you want to keep.
-                </Tooltip.Content>
-              </Tooltip.Root>
-            </Tooltip.Provider>
+            <HelpTip class="cursor-default">
+              {expiresLabel}
+              {#snippet content()}Download or publish anything you want to keep.{/snippet}
+            </HelpTip>
           </dd>
         </div>
       {/if}
@@ -839,7 +864,25 @@
     {/key}
   {/if}
 
-  {#if d.state === 'failed'}
+  {#if d.state !== 'training' && d.traces.length}
+    {#key d.workflowId}
+      <RunLog traces={d.traces} name={d.name} />
+    {/key}
+  {/if}
+
+  {#if d.state === 'review' || d.state === 'rejected' || d.state === 'unreviewed'}
+    <ReviewStatusPanel
+      kind={d.state}
+      workflowId={d.workflowId}
+      heldSince={d.heldSince}
+    >
+      {#if d.state === 'unreviewed' && d.dataset.length}
+        <Button class="mt-4" variant="outline" onclick={reuseDataset}>
+          <IconRepeat size={14} stroke={2} class="mr-1.5 inline" />Try again with this dataset
+        </Button>
+      {/if}
+    </ReviewStatusPanel>
+  {:else if d.state === 'failed'}
     <div class="rounded-xl border border-red-500/20 bg-red-500/5 p-8 text-center">
       <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>
@@ -1014,20 +1057,17 @@
           <div class="flex items-baseline gap-2">
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
             {#if featured === recommended}
-              <Tooltip.Provider>
-                <Tooltip.Root>
-                  <Tooltip.Trigger
-                    class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
-                  >
-                    <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
-                  </Tooltip.Trigger>
-                  <Tooltip.Content class="max-w-[280px] text-xs" portalProps={portalProps()}>
-                    This epoch has had the most training time applied to it and, in most cases, is
-                    the best choice. Models made with smaller datasets may overbake at high training
-                    time, so a lower epoch can be better.
-                  </Tooltip.Content>
-                </Tooltip.Root>
-              </Tooltip.Provider>
+              <HelpTip
+                class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
+                contentClass="max-w-[280px] text-xs"
+              >
+                <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
+                {#snippet content()}
+                  This epoch has had the most training time applied to it and, in most cases, is
+                  the best choice. Models made with smaller datasets may overbake at high training
+                  time, so a lower epoch can be better.
+                {/snippet}
+              </HelpTip>
             {/if}
           </div>
           {#if featured.modelUrl}
@@ -1209,7 +1249,7 @@
               {#if confirming}
                 <Button
                   onclick={doTrainFurther}
-                  disabled={continuing || quote?.cost == null || furtherAckMissing}
+                  disabled={continuing || quote?.cost == null}
                 >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
@@ -1223,6 +1263,7 @@
                 <Button onclick={() => (confirming = true)}>Train further</Button>
               {/if}
             </div>
+            <BlueFirstNote />
             <div class="font-mono text-xs text-dark-2">
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
@@ -1243,34 +1284,12 @@
                 pricing…
               {/if}
             </div>
-            {#if furtherAckKey}
-              <div
-                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
-              >
-                <Checkbox
-                  id="ack-further-mature"
-                  bind:checked={
-                    () => furtherAckedFor === furtherAckKey,
-                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
-                  }
-                  class="mt-0.5 shrink-0"
-                />
-                <label for="ack-further-mature" class="cursor-pointer">
-                  {furtherMature}
-                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
-                  <strong>mature</strong>.
-                  {#if furtherSpend}
-                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
-                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
-                    > will be charged.
-                  {:else if buzzMode.blueFirst}
-                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
-                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {:else}
-                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {/if}
-                </label>
-              </div>
+            {#if furtherMature > 0 && hostConfig().isPaidMember !== true && buzzMode.blueFirst}
+              <p class="max-w-sm text-xs leading-snug text-dark-2">
+                Without a membership, mature sample images from runs paid with
+                <span class="text-blue-400">Blue</span> Buzz are blurred. Turn off Spend Blue first to
+                pay in <span class="text-yellow-400">Yellow</span> and see them.
+              </p>
             {/if}
           </div>
         </div>
@@ -1295,9 +1314,37 @@
               This run was published as a model on Civitai.
             </p>
           {:else if publishLink && publishEpoch}
+            <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
+              <label class="inline-flex items-center gap-2 text-sm text-dark-0">
+                <Checkbox bind:checked={() => ownRights, setOwnRights} />
+                I have the right, or the rightholder’s explicit permission, to redistribute these files
+              </label>
+              <label
+                class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"
+              >
+                <Checkbox bind:checked={() => shareDataset, setShareDataset} disabled={!ownRights} />
+                Share my dataset with the published model
+              </label>
+              <p class="m-0 text-xs text-dark-2">
+                Shared datasets can be downloaded from the model page once it's published.
+                {#if dataPolicyUrl}
+                  See the <a
+                    href={dataPolicyUrl}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-blue-400 underline">dataset storage policy</a
+                  >.
+                {/if}
+              </p>
+            </div>
             <Button size="sm" {...publishLink}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </Button>
+            {#if publishVersionLink && !link}
+              <Button size="sm" variant="outline" {...publishVersionLink}>
+                <IconVersions size={14} stroke={2} />Add as a new version
+              </Button>
+            {/if}
             {#if link}
               <Button size="sm" variant="outline" {...link}>
                 <IconExternalLink size={14} stroke={2} />View draft
@@ -1311,6 +1358,8 @@
                 Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
                 recommended
                   ? ' (recommended)'
+                  : ''}{publishVersionLink
+                  ? ', or a draft version on one of your existing models'
                   : ''} — you review, finish, and publish it there. Nothing goes public until you do.
               </p>
             {/if}
@@ -1393,15 +1442,18 @@
         {#each d.dataset as item, i (item.air + i)}
           {@const src = datasetSrc(item.air)}
           <figure class="m-0 flex flex-col gap-1">
-            {#if src}
-              <img
-                src={src}
-                alt={item.caption || `dataset image ${i + 1}`}
-                class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
-              />
-            {:else}
-              <div class="aspect-square w-full rounded bg-dark-7 ring-1 ring-inset ring-dark-4/60"></div>
-            {/if}
+            <div class="relative">
+              {#if src}
+                <img
+                  src={src}
+                  alt={item.caption || `dataset image ${i + 1}`}
+                  class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
+                />
+              {:else}
+                <div class="aspect-square w-full rounded bg-dark-7 ring-1 ring-inset ring-dark-4/60"></div>
+              {/if}
+              <RatingBadge level={datasetRatings[item.air]} class="absolute bottom-1.5 left-1.5" />
+            </div>
             {#if item.caption}
               <figcaption
                 class="line-clamp-2 font-mono text-xs leading-snug text-dark-2"

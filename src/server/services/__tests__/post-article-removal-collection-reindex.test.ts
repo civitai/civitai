@@ -29,7 +29,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: mockArticlesQueueUpdate },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/search-index/articles.search-index', () => ({
@@ -58,14 +57,14 @@ beforeEach(() => {
 });
 
 describe('deletePost', () => {
-  function primePost() {
+  function primePost({ deletable = true } = {}) {
     dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = sqlText(strings);
       issued.push(sql);
       if (sql.includes('pg_class')) return [{ present: false }];
       // The only statement selecting collection ids.
       if (sql.includes('"collectionId"')) return [{ collectionId: COLLECTION_A }];
-      if (sql.includes('AS deletable')) return [POST_IMAGE];
+      if (sql.includes('AS deletable')) return [{ ...POST_IMAGE, deletable }];
       if (sql.includes('DELETE FROM "Image"')) return [{ id: POST_IMAGE.id, url: POST_IMAGE.url }];
       if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 0 }];
       // The resolver's own image-id lookup.
@@ -78,10 +77,12 @@ describe('deletePost', () => {
   }
 
   it('queues a rebuild for the collections the post was showing in', async () => {
-    primePost();
+    // No image of the post is deleted, so the image delete's own rebuild (covered in
+    // image-removal-collection-reindex) does not run and this one call is the post's.
+    primePost({ deletable: false });
     const { deletePost } = await import('~/server/services/post.service');
 
-    await deletePost({ id: POST_ID });
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
 
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith([
@@ -92,12 +93,13 @@ describe('deletePost', () => {
   it('queues the rebuild even when a later post-commit step fails', async () => {
     // The rows are already gone by then, and the pre-delete snapshot is the only
     // record of which documents went stale — so a Redis blip in a sibling step must
-    // not be able to skip it.
-    primePost();
+    // not be able to skip it. The image left behind is de-indexed by deletePost itself, after
+    // the rebuild, and that is the step made to fail.
+    primePost({ deletable: false });
     mockQueueImageSearchIndexUpdate.mockRejectedValueOnce(new Error('redis down'));
     const { deletePost } = await import('~/server/services/post.service');
 
-    await expect(deletePost({ id: POST_ID })).rejects.toThrow();
+    await expect(deletePost({ id: POST_ID, actor: { system: 'test' } })).rejects.toThrow();
 
     expect(mockCollectionsQueueUpdate).toHaveBeenCalled();
   });
@@ -106,7 +108,7 @@ describe('deletePost', () => {
     primePost();
     const { deletePost } = await import('~/server/services/post.service');
 
-    await deletePost({ id: POST_ID });
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
 
     const resolveAt = issued.findIndex((s) => s.includes('"collectionId"'));
     const deleteAt = issued.findIndex((s) => s.includes('DELETE FROM "Post"'));

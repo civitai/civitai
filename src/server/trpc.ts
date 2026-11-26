@@ -3,6 +3,7 @@ import {
   clampRequestBrowsingLevels,
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
+  stripBlockedForNonModerator,
 } from '~/server/utils/browsing-level';
 import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
@@ -11,19 +12,24 @@ import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
-import {
-  acquireBulkheadSlot,
-  BulkheadFullError,
-  HEAVY_REQUEST_CONCURRENCY,
-} from '~/server/utils/request-bulkhead';
+import { HEAVY_REQUEST_CONCURRENCY, withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
+import {
+  recordTrpcCaller,
+  safeClassifyTrpcCaller,
+  TRPC_CALLER_METRICS_ENABLED,
+  type TrpcCallerClass,
+} from '~/server/prom/trpc-caller.metrics';
 import { canDecodeDevalueResponse, isWebClient } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import { pyroscopeArmed, withProfileRoute } from '~/server/pyroscope-labels';
 import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
 import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-union-transformer';
 import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
+import { captureFeedGoShadowResponse } from '~/server/trpc/feed-go-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
@@ -36,7 +42,10 @@ import {
   runEnforceTokenScope,
 } from '~/server/services/oauth/enforce-token-scope';
 import { errorFormatter } from '~/server/trpc/error-formatter';
+import { toDbUnavailableError } from '~/server/utils/errorHandling';
 import type { Context } from './createContext';
+import { appBlocksAuthorAccount } from '~/server/auth/full-user-credential';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 
 // Attribute + ship each devalue-write fallback (a non-POJO response payload that
 // fell back to superjson — see writeSerializeWithFallback). Path comes from the
@@ -63,7 +72,7 @@ onDevalueWriteFallback((error) => {
       type: 'warning',
       path,
       message,
-    }).catch(() => undefined);
+    });
   }
 });
 
@@ -75,13 +84,13 @@ onDevalueWriteFallback((error) => {
 type TRPCScopeMeta =
   | {
       /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
-      requiredScope?: number;
+      requiredScope?: bigint;
       anyOfScopes?: never;
     }
   | {
       requiredScope?: never;
       /** A scoped token passes with any one of these. An empty list refuses every scoped token. */
-      anyOfScopes: readonly number[];
+      anyOfScopes: readonly bigint[];
     };
 
 export type TRPCMeta = TRPCScopeMeta & {
@@ -121,11 +130,15 @@ const t = initTRPC
       // uses, so the freeze-instrumentation frame name matches what is ACTUALLY
       // written (superjson vs devalue). The wrappers are pass-through.
       const devalue = responseWritesDevalue();
-      return instrumentSerialize(() =>
+      const written = instrumentSerialize(() =>
         withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
           responseWriteSerialize(data)
         )
       );
+      // feed-go shadow: keeps a reference to what was written for a sampled request (one integer
+      // compare when no sample is in flight). See src/server/trpc/feed-go-shadow.ts.
+      captureFeedGoShadowResponse(data, written, devalue);
+      return written;
     }),
     errorFormatter,
   });
@@ -190,6 +203,7 @@ const applyDomainFeature = t.middleware(async (options) => {
   // v11: `rawInput` became the async `getRawInput()`.
   const input = ((await options.getRawInput()) ?? {}) as RequestBrowsingLevels;
 
+  stripBlockedForNonModerator(input, ctx.user?.isModerator);
   const maxAllowed = requestDomainBrowsingLevelCap(ctx);
 
   if (maxAllowed !== undefined) clampRequestBrowsingLevels(input, maxAllowed);
@@ -245,7 +259,10 @@ function runRecordProcedureDuration<T>(
   path: string,
   type: string,
   userId: number | undefined,
-  next: () => Promise<T>
+  caller: TrpcCallerClass | undefined,
+  next: () => Promise<T>,
+  /** False for a feed-go parity replay: the procedure metrics count real callers only. */
+  metrics = true
 ): Promise<T> {
   const startedAt = performance.now();
   return next().then(
@@ -259,13 +276,17 @@ function runRecordProcedureDuration<T>(
       // Reuse the single performance.now() delta for BOTH the opt-in histogram and
       // the always-on slow-log — avoids startTimer's separate hrtime capture +
       // Object.assign per procedure. Same histogram semantics (wall-clock seconds).
-      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (metrics && TRPC_PROCEDURE_METRICS)
+        trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (metrics && caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({ path, type, durationMs, ok, errorCode, userId });
       return result;
     },
     (err) => {
       const durationMs = performance.now() - startedAt;
-      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (metrics && TRPC_PROCEDURE_METRICS)
+        trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (metrics && caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({
         path,
         type,
@@ -281,23 +302,53 @@ function runRecordProcedureDuration<T>(
 
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
-  recordTrpcCall(ctx.req?.headers, !!ctx.user);
+  // feed-go's serve-side parity replay (feed-go-parity-replay.ts) re-asks for an answer feed-go
+  // already served: counted, it would read as Node traffic in the per-procedure call rates and
+  // latencies (up to a large share of a procedure Node no longer serves). The slow log still names it.
+  const metrics = !isFeedGoParityReplay(ctx.req?.headers);
+  if (metrics) recordTrpcCall(ctx.req?.headers, !!ctx.user);
+  const caller =
+    metrics && TRPC_CALLER_METRICS_ENABLED
+      ? safeClassifyTrpcCaller({
+          cache: ctx.cache,
+          apiKeyId: ctx.apiKeyId,
+          subject: ctx.subject,
+          user: ctx.user,
+          bannedUser: ctx.bannedUser,
+          userAgent: ctx.req?.headers?.['user-agent'],
+        })
+      : undefined;
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the
   // async_hooks context-propagation cost — so it is OFF by default. When it is not
   // armed (the disarmed default), the procedure-timing path is a single `.then()`
   // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
-  if (longTaskLabelsArmed) {
-    return runWithLongTaskLabel(`trpc:${path}`, () =>
-      runRecordProcedureDuration(path, type, userId, next)
-    );
+  // Re-label per procedure: the request-level label in [trpc].ts is trpc:batch for batched calls.
+  if (longTaskLabelsArmed || pyroscopeArmed) {
+    const run = () => runRecordProcedureDuration(path, type, userId, caller, next, metrics);
+    const profiled = pyroscopeArmed ? () => withProfileRoute(`trpc:${path}`, run) : run;
+    return longTaskLabelsArmed ? runWithLongTaskLabel(`trpc:${path}`, profiled) : profiled();
   }
-  return runRecordProcedureDuration(path, type, userId, next);
+  return runRecordProcedureDuration(path, type, userId, caller, next, metrics);
+});
+
+// An unreachable database (or no pooled connection in time) answers a retryable 503 with a generic
+// message instead of a 500 carrying the driver's text. Database-originated errors only (db-errors.ts),
+// and each re-map logs a warning line, since a 503 skips the central error log. Inside
+// recordProcedureDuration, so the duration metric records the code the client actually gets.
+const mapDbUnavailable = t.middleware(async ({ path, next }) => {
+  const result = await next();
+  if (!result.ok) {
+    const mapped = toDbUnavailableError(result.error, path);
+    if (mapped) throw mapped;
+  }
+  return result;
 });
 
 export const publicProcedure = t.procedure
   .use(recordProcedureDuration)
+  .use(mapDbUnavailable)
   .use(isAcceptableOrigin)
   .use(enforceClientVersion)
   .use(applyDomainFeature)
@@ -309,21 +360,7 @@ export const publicProcedure = t.procedure
 // timeout → Error/137. Keyed so the tRPC feed procedures and the REST
 // /api/v1/images handler share one per-pod budget (they hit the same heavy path).
 const withBulkhead = (key: string) =>
-  t.middleware(async ({ next }) => {
-    let release: () => void;
-    try {
-      release = acquireBulkheadSlot(key, HEAVY_REQUEST_CONCURRENCY);
-    } catch (e) {
-      if (e instanceof BulkheadFullError)
-        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
-      throw e;
-    }
-    try {
-      return await next();
-    } finally {
-      release();
-    }
-  });
+  t.middleware(({ next }) => withBulkheadSlotOrBusy(key, HEAVY_REQUEST_CONCURRENCY, next));
 
 /**
  * Public procedure for CPU-heavy endpoints (e.g. the image feed). Adds a per-pod
@@ -343,8 +380,9 @@ function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null |
   return user;
 }
 
+// A banned viewer is on `bannedUser`, not `user` (see `trpcViewer`), so these two read both.
 const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
-  const user = requireSignedIn(maybeUser);
+  const user = requireSignedIn(maybeUser ?? ctx.bannedUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -411,9 +449,11 @@ export function guardFlagEnabled(
   return !!getFeatureFlags(ctx)[flag];
 }
 
-export const isFlagProtected = (flag: keyof FeatureAccess) =>
+/** Refuses unless the caller has at least one of `flags`. */
+export const isFlagProtected = (...flags: (keyof FeatureAccess)[]) =>
   middleware(({ ctx, next }) => {
-    if (!guardFlagEnabled(ctx, flag)) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!flags.some((flag) => guardFlagEnabled(ctx, flag)))
+      throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
   });
@@ -453,9 +493,15 @@ export const moderatorProcedure = protectedProcedure.use(isMod);
  * Fail-CLOSED: the flag evaluator resolves `appBlocksAuthor` from Flipt when the
  * flag exists, else falls back to the static `availability: ['mod']` — so an
  * absent flag / Flipt-down yields mods only, never open-to-all.
+ *
+ * Moderators are a floor, read off the ACCOUNT (`appBlocksAuthorAccount`), as the REST author
+ * routes and the author pages read it (`isAppDeveloper`). A moderator on a scoped key or an app
+ * token has no moderator rights here (`ctx.user.isModerator` is false), and keeps this capability:
+ * the flag alone would be evaluated without the moderators segment and refuse them.
  */
 const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
-  if (!guardFlagEnabled(ctx, 'appBlocksAuthor'))
+  const appBlocksAuthor = guardFlagEnabled(ctx, 'appBlocksAuthor');
+  if (!isAppDeveloper(appBlocksAuthorAccount(ctx), { appBlocksAuthor }))
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You do not have access to Apps authoring',
@@ -498,7 +544,7 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
 
 const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
-  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
+  next({ ctx: { ...ctx, user: requireSignedIn(user ?? ctx.bannedUser), acceptableOrigin } })
 );
 
 /**

@@ -11,17 +11,16 @@
  *   1. A row whose underlying field is null/absent is OMITTED. A "Rating: —" row is
  *      noise; an absent row is the honest signal.
  *   2. In `preview` posture (the moderator listing-media review, rendering an
- *      UNAPPROVED shadow listing) the REVIEWS, INSTALLS and UPDATED rows are omitted.
+ *      UNAPPROVED shadow listing) the REVIEWS, PLAYS and UPDATED rows are omitted.
  *      One rule, three fields — every one of them is a number or a date the posture
  *      cannot supply honestly:
  *        - REVIEWS: a shadow listing has no review rows at all, so its rollup is
  *          structurally 0/0. "No reviews yet" there reads as a fact about the APP
  *          rather than about the POSTURE.
- *        - INSTALLS: identical reasoning, and it was the inconsistency this rule was
- *          widened to close. `buildListingStatChips` already returns NO chips in
- *          preview precisely so a zero cannot be read as a measurement — and then
- *          `Installs: 0` rendered here anyway, in the rail, one column over. An
- *          un-approved listing has never been installable by anyone.
+ *        - PLAYS: the preview has no metric rollup to read (this row was INSTALLS,
+ *          widened into the rule for the same reason). `buildListingStatChips` already
+ *          returns NO chips in preview precisely so a zero cannot be read as a
+ *          measurement.
  *        - UPDATED: the date a preview carries is NOT `app_listings.updated_at`.
  *          `buildListingDetailPreview` has no such field to read and substitutes the
  *          publish request's SUBMISSION time, so the row labelled "Updated" showed a
@@ -46,6 +45,7 @@ import {
   STANDALONE_KIND_LABEL,
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   offsiteContentRatingColor,
@@ -54,17 +54,30 @@ import {
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
+/** The `rel` of the Support row's outbound, author-chosen, any-host link. */
+export const SUPPORT_LINK_REL = 'noopener noreferrer nofollow ugc';
+
 /** A single label/value row of the Details panel. */
 export type ListingDetailRow = {
   /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
-  key: 'kind' | 'category' | 'rating' | 'reviews' | 'installs' | 'updated' | 'source';
+  key:
+    | 'kind'
+    | 'category'
+    | 'rating'
+    | 'reviews'
+    | 'plays'
+    | 'installs'
+    | 'updated'
+    | 'source'
+    | 'support'
+    | 'actions-run';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
   value: string;
   /**
    * When set, the row's value renders as an ANCHOR to this URL rather than as plain
-   * text. Only the `source` row sets it.
+   * text. The `source`, `support` and `actions-run` rows set it.
    *
    * 🔴 THE RENDERER MUST EMIT `target="_blank"` + `rel="noopener noreferrer"` for it.
    * `noopener` is the load-bearing half — without it the opened page gets a live
@@ -75,6 +88,13 @@ export type ListingDetailRow = {
    * this is defence in depth on a link we already constrain, not the only control.
    */
   href?: string;
+  /**
+   * The `rel` for an {@link href} row, when it must say MORE than `noopener noreferrer`. Only
+   * the `support` row sets it, to `noopener noreferrer nofollow ugc`: its destination is ANY
+   * host the author chose (the source link is host-allowlisted), so the store neither vouches
+   * for it (`nofollow`) nor presents it as its own (`ugc`). It always includes `noopener`.
+   */
+  rel?: string;
   /**
    * When set, the row's value renders as a SAME-PAGE fragment link to this element id.
    * Only the `reviews` row sets it, and only when there is something to jump to.
@@ -118,6 +138,14 @@ export type ListingDetailRow = {
 };
 
 /**
+ * The Submitted-by row's text: `GitHub Actions run of <owner/repo> @ <tag> (<sha7>)`. Exported so
+ * the test pins the whole string.
+ */
+export function actionsRunRowValue(run: { repository: string; tag: string; sha: string }): string {
+  return `GitHub Actions run of ${run.repository} @ ${run.tag} (${run.sha.slice(0, 7)})`;
+}
+
+/**
  * Human label for the store kind. Mirrors `getListingBadge`'s wording — and now
  * actually does: off-site used to fork here into "Connect app" / "Off-site link"
  * while the badge said "Connect app" / "Off-site", so the two surfaces disagreed
@@ -131,7 +159,7 @@ function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
 /**
  * Build the ordered Details rows for a listing.
  *
- * @param opts.preview read-only moderator posture — omits the reviews, installs and
+ * @param opts.preview read-only moderator posture — omits the reviews, plays and
  *   updated rows (rule 2).
  * @param opts.formatDate injected so this module stays pure and the test can pin the
  *   ORDER and OMISSION rules without depending on dayjs' locale or the host timezone.
@@ -144,10 +172,11 @@ export function buildListingDetailRows(
     | 'contentRating'
     | 'recommend'
     | 'reviewCount'
+    | 'openCount'
     | 'installCount'
     | 'updatedAt'
   > &
-    Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
+    Partial<Pick<ListingDetail, 'sourceRepoUrl' | 'issueTrackerUrl' | 'actionsRunSource'>>,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
@@ -185,15 +214,15 @@ export function buildListingDetailRows(
 
   // SOURCE — the app's public source repository, when the author declared one.
   //
-  // 🔴 PRESENT IN `preview`, unlike reviews / installs / updated, and that is rule 2
+  // 🔴 PRESENT IN `preview`, unlike reviews / plays / updated, and that is rule 2
   // applied rather than ignored. Rule 2 omits a row when the PREVIEW POSTURE cannot
   // supply the value honestly: a shadow listing structurally has no reviews and no
-  // installs, and the date a preview carries is the submission time wearing an
+  // metric rollup, and the date a preview carries is the submission time wearing an
   // "Updated" label. None of that is true here — the source link is a scalar the
   // shadow carries verbatim and the one `applyApprovedRevision` will publish, so
   // showing it to the moderator is the entire point of a review preview.
   //
-  // 🔴 RUNTIME-GUARDED on the type, like `installCount`/`updatedAt` above and for the
+  // 🔴 RUNTIME-GUARDED on the type, like `openCount`/`updatedAt` below and for the
   // same MEASURED reason: not every producer of a `ListingDetail`-shaped object goes
   // through `projectListingDetail` (the moderator combined-review surface builds one
   // through a cast), so a required TYPE is not a runtime guarantee. Absent, a
@@ -211,9 +240,50 @@ export function buildListingDetailRows(
     });
   }
 
+  // SUPPORT — where to report a problem (the issue tracker), right after Source. Present in
+  // `preview` for the reason Source is: the shadow carries it and approving publishes it.
+  // Runtime-guarded on the type for the same cast-producer reason.
+  if (typeof detail.issueTrackerUrl === 'string' && detail.issueTrackerUrl.length > 0) {
+    rows.push({
+      key: 'support',
+      label: 'Support',
+      value: detail.issueTrackerUrl.replace(/^https:\/\//, '').replace(/\/$/, ''),
+      href: detail.issueTrackerUrl,
+      rel: SUPPORT_LINK_REL,
+    });
+  }
+
+  // SUBMITTED BY — the GitHub Actions run that submitted the version this app is serving, when
+  // the server checked that run's OIDC token at submit and its repository is public (the server
+  // sets `actionsRunSource` only then, so a private repository's name never arrives here).
+  //
+  // 🔴 THE COPY SAYS EXACTLY WHAT WAS CHECKED, AND NO MORE. GitHub signed a token naming the run's
+  // repository, tag and commit; the developer's own workflow built and uploaded the bundle. So this
+  // is "submitted by a GitHub Actions run of <repo> @ <tag> (<sha7>)": not "verified", not
+  // "secure", not "built by Civitai", and not a security review. Do not reword it into a badge.
+  //
+  // Runtime-guarded for the cast-producer reason the rows above give.
+  const run = detail.actionsRunSource;
+  if (
+    run &&
+    typeof run.repository === 'string' &&
+    typeof run.tag === 'string' &&
+    typeof run.sha === 'string' &&
+    run.sha.length >= 7
+  ) {
+    rows.push({
+      key: 'actions-run',
+      label: 'Submitted by',
+      value: actionsRunRowValue(run),
+      // The commit, not the tag: a tag can be moved afterwards, the commit cannot. `repository`
+      // and `sha` are shape-checked server-side (`publicActionsRunSource`).
+      href: `https://github.com/${run.repository}/commit/${run.sha}`,
+    });
+  }
+
   if (!opts.preview) {
     const { recommendPct } = detail.recommend;
-    if (recommendPct == null || detail.reviewCount === 0) {
+    if (detail.reviewCount === 0) {
       // Matches `getRecommendLabel`'s zero case. 🔴 The ladder is NOT called here: with
       // zero reviews `positiveRating` is 0, which the ladder scores `Mixed` — a verdict
       // about an app nobody has reviewed.
@@ -221,6 +291,17 @@ export function buildListingDetailRows(
       // in it, so a link would move the viewer to an empty heading. The link is an
       // affordance for content that exists.
       rows.push({ key: 'reviews', label: 'Reviews', value: 'No reviews yet' });
+    } else if (recommendPct == null) {
+      // Reviews exist, but the server withheld the percentage (too few for one to mean
+      // anything — `recommendRollup` owns the number). The counts, and no ladder verdict:
+      // one positive review must not read "Positive (1)". No colour, since there is no
+      // verdict; the link stays, because there are reviews to jump to.
+      rows.push({
+        key: 'reviews',
+        label: 'Reviews',
+        value: getRecommendLabel(detail.recommend, detail.reviewCount),
+        anchorId: LISTING_REVIEWS_ANCHOR_ID,
+      });
     } else {
       const { label, color } = getRatingLabel({
         positiveRating: recommendPct,
@@ -231,7 +312,7 @@ export function buildListingDetailRows(
         label: 'Reviews',
         value: `${label} (${detail.reviewCount.toLocaleString()})`,
         color: String(color),
-        // 🔴 Only in this branch — the zero-review row above deliberately omits it.
+        // 🔴 Only with reviews — the zero-review row above deliberately omits it.
         // No `preview` guard is needed HERE because the whole block is already inside
         // `if (!opts.preview)`. That matters: the reviews SECTION is not rendered in
         // the preview posture, so a link emitted there would point at an id that does
@@ -257,15 +338,17 @@ export function buildListingDetailRows(
   // and a required TYPE is not a runtime guarantee about a value that crossed a cast.
   // An absent field therefore takes the same path as a null `category`: omit the row.
   //
-  // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2). A shadow listing has never been
-  // installable, so the zero is a fact about the POSTURE, not about the app — the same
-  // reasoning that makes `buildListingStatChips` return no chips at all in preview.
-  if (!opts.preview && typeof detail.installCount === 'number') {
-    rows.push({
-      key: 'installs',
-      label: 'Installs',
-      value: detail.installCount.toLocaleString(),
-    });
+  // USAGE — "Plays" for an on-site listing (the store card's number), "Installs" for an
+  // off-site one, which has no play count. `listingUsageStat` is the one rule, shared with
+  // the header chip; a zero or a cast producer's `undefined` shows no row rather than
+  // throwing.
+  //
+  // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2): a preview has no metric rollup, so
+  // any number there is a fact about the POSTURE, not about the app — the same reasoning
+  // that makes `buildListingStatChips` return no chips at all in preview.
+  const usage = opts.preview ? null : listingUsageStat(detail);
+  if (usage) {
+    rows.push({ key: usage.key, label: usage.label, value: usage.count.toLocaleString() });
   }
 
   // 🔴 OMITTED IN `preview` (rule 2): a preview's `updatedAt` is not the listing row's

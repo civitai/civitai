@@ -1,0 +1,208 @@
+import React from 'react';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { renderWithProviders } from '../../../../test/component-setup';
+import { requiresImageDbPath } from '~/server/schema/image.schema';
+import type * as ArticleUtils from '~/components/Article/article.utils';
+import type * as ImageUtils from '~/components/Image/image.utils';
+import type * as ModelUtils from '~/components/Model/model.utils';
+import {
+  FixedSessionProvider,
+  SignedOutSessionProvider,
+} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { CustomShowcaseSection } from './CustomShowcaseSection';
+
+// The feeds are mocked: these pin what the section asks for and does with the answer, not the feeds' own filtering.
+const { useQueryModels, useQueryArticles, useQueryImages, card } = vi.hoisted(() => ({
+  useQueryModels: vi.fn(),
+  useQueryArticles: vi.fn(),
+  useQueryImages: vi.fn(),
+  card: (label: string) =>
+    function Card({ data }: { data: { id: number } }) {
+      return <div data-testid="card">{`${label} ${data.id}`}</div>;
+    },
+}));
+vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelUtils>()),
+  useQueryModels,
+}));
+vi.mock('~/components/Article/article.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ArticleUtils>()),
+  useQueryArticles,
+}));
+vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUtils>()),
+  useQueryImages,
+}));
+vi.mock(
+  '~/components/IntersectionObserver/IntersectionObserverProvider',
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    useInViewDynamic: () => [{ current: null }, true],
+  })
+);
+vi.mock('~/components/Cards/ModelCard', () => ({ ModelCard: card('model') }));
+vi.mock('~/components/Cards/ArticleCard', () => ({ ArticleCard: card('article') }));
+vi.mock('~/components/Cards/ImageCard', () => ({ ImageCard: card('image') }));
+vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
+  ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+const user = { id: 7, username: 'creator' } as never;
+const items = [3, 1, 2];
+const sectionOf = (type: 'Model' | 'Article' | 'Image') => ({
+  id: 'abc',
+  type,
+  title: 'My best',
+  items,
+});
+const feedReturns = (ids: number[]) => {
+  const rows = ids.map((id) => ({ id }));
+  useQueryModels.mockReturnValue({ models: rows, isLoading: false });
+  useQueryArticles.mockReturnValue({ articles: rows, isLoading: false });
+  useQueryImages.mockReturnValue({ images: rows, isLoading: false });
+};
+const cards = () =>
+  [...document.querySelectorAll('[data-testid="card"]')].map((c) => c.textContent);
+const renderSection = async (type: 'Model' | 'Article' | 'Image' = 'Model') => {
+  const screen = await renderWithProviders(
+    <SignedOutSessionProvider>
+      <CustomShowcaseSection section={sectionOf(type)} user={user} />
+    </SignedOutSessionProvider>
+  );
+  await vi.waitFor(() =>
+    expect(
+      useQueryModels.mock.calls.length +
+        useQueryArticles.mock.calls.length +
+        useQueryImages.mock.calls.length
+    ).toBeGreaterThan(0)
+  );
+  return screen;
+};
+
+beforeEach(() => {
+  useQueryModels.mockReset();
+  useQueryArticles.mockReset();
+  useQueryImages.mockReset();
+});
+
+describe('CustomShowcaseSection', () => {
+  test("on the owner's own profile, its edit button opens this section's editor", async () => {
+    feedReturns(items);
+    const section = sectionOf('Model');
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined);
+    const owner = { id: 7, username: 'creator', profile: { showcaseSections: [section] } } as never;
+    const screen = await renderWithProviders(
+      <FixedSessionProvider user={{ id: 7, username: 'creator' }}>
+        <CustomShowcaseSection section={section} user={owner} />
+      </FixedSessionProvider>
+    );
+    await screen.getByRole('button', { name: 'Edit section' }).click();
+    expect(trigger.mock.calls[0][0].props).toEqual({ sections: [section], sectionId: 'abc' });
+    trigger.mockRestore();
+  });
+
+  test.each([
+    ['Model', useQueryModels, { ids: items, username: 'creator' }],
+    ['Article', useQueryArticles, { ids: items, username: 'creator' }],
+    ['Image', useQueryImages, { ids: items, userId: 7 }],
+  ] as const)(
+    'a %s section asks its feed for exactly its items, from their owner',
+    async (type, hook, args) => {
+      feedReturns(items);
+      await renderSection(type);
+      expect(hook.mock.calls[0][0]).toMatchObject(args);
+    }
+  );
+
+  test("an Image section's request reaches the image path that honours ids, for any viewer", async () => {
+    feedReturns(items);
+    await renderSection('Image');
+    // As a visitor's request reaches requiresImageDbPath: the handler withdraws `publishedOnly`
+    // for anyone but the owner, so `ids` alone has to carry it.
+    expect(
+      requiresImageDbPath({ ...useQueryImages.mock.calls[0][0], publishedOnly: undefined })
+    ).toBe(true);
+  });
+
+  test("renders in the creator's order, not the feed's", async () => {
+    feedReturns([1, 2, 3]);
+    await renderSection();
+    expect(cards()).toEqual(['model 3', 'model 1', 'model 2']);
+  });
+
+  test('renders only what the feed returns', async () => {
+    feedReturns([1, 2]);
+    await renderSection();
+    expect(cards()).toEqual(['model 1', 'model 2']);
+  });
+
+  // Backstop for a feed that ignores ids and returns other rows.
+  test('drops a row the feed returns that is not one of its items', async () => {
+    feedReturns([9, 1, 2]);
+    await renderSection();
+    expect(cards()).toEqual(['model 1', 'model 2']);
+  });
+
+  describe('more items than its rows show, on a wide screen', () => {
+    const many = Array.from({ length: 12 }, (_, i) => i + 1);
+    const renderWide = async (ids: number[]) => {
+      feedReturns(ids);
+      const screen = await renderWithProviders(
+        <SignedOutSessionProvider>
+          <div style={{ width: 1200 }}>
+            <CustomShowcaseSection section={{ ...sectionOf('Model'), items: ids }} user={user} />
+          </div>
+        </SignedOutSessionProvider>
+      );
+      await vi.waitFor(() => expect(cards()).toHaveLength(ids.length));
+      return screen;
+    };
+    const shown = () =>
+      [...document.querySelectorAll<HTMLElement>('[data-testid="card"]')].filter(
+        (c) => getComputedStyle(c).visibility !== 'hidden'
+      ).length;
+
+    test('offers View all, which unfolds every item in place and folds back', async () => {
+      const screen = await renderWide(many);
+      await vi.waitFor(() => expect(shown()).toBeLessThan(12));
+
+      await screen.getByRole('button', { name: 'View all 12' }).click();
+      await vi.waitFor(() => expect(shown()).toBe(12));
+
+      await screen.getByRole('button', { name: 'Show less' }).click();
+      await vi.waitFor(() => expect(shown()).toBeLessThan(12));
+    });
+
+    // 13 model cards at a 1440px desktop width: more than two rows hold, so the button is offered.
+    test('offers View all for 13 items at a 1440px desktop width', async () => {
+      feedReturns(Array.from({ length: 13 }, (_, i) => i + 1));
+      await renderWithProviders(
+        <SignedOutSessionProvider>
+          <div style={{ width: 1440 }}>
+            <CustomShowcaseSection
+              section={{
+                ...sectionOf('Model'),
+                items: Array.from({ length: 13 }, (_, i) => i + 1),
+              }}
+              user={user}
+            />
+          </div>
+        </SignedOutSessionProvider>
+      );
+      await vi.waitFor(() => expect(document.body.textContent).toContain('View all 13'));
+    });
+
+    test('offers nothing when every item already shows', async () => {
+      await renderWide([1, 2]);
+      await vi.waitFor(() => expect(shown()).toBe(2));
+      expect(document.body.textContent).not.toContain('View all');
+    });
+  });
+
+  test('a section the feed returns nothing for renders nothing', async () => {
+    feedReturns([]);
+    const { container } = await renderSection();
+    expect(container.textContent).not.toContain('My best');
+  });
+});

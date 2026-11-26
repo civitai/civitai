@@ -1,17 +1,28 @@
 import { Prisma } from '@prisma/client';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { withoutUserImage } from '~/server/search-index/search-index-user';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
+import {
+  hasBlockMarker,
+  isMinorMatureImage,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getPublicWithheldImageIds } from '~/server/services/article-image-holds';
 
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -67,24 +78,44 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-const transformData = async ({
+export const transformData = async ({
   articles,
   cosmetics,
+  withheldImageIds = new Set(),
 }: {
   articles: Article[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
+  /** From `getPublicWithheldImageIds`: a withheld cover leaves no card image. */
+  withheldImageIds?: Set<number>;
 }) => {
+  // A restricted minor image, or one restricted by its base model, is withheld like one its model
+  // withholds: the index has no viewer.
+  const withheld = (image: NonNullable<Article['coverImage']>) =>
+    withheldImageIds.has(image.id) || isMinorMatureImage(image) || isRestrictedImage(image);
+  const servable = (image: Article['coverImage']) =>
+    image && !withheld(image) ? servableArticleImage(image) : null;
   const records = articles
-    .map(({ tags, stats, ...articleRecord }) => {
-      const coverImage = articleRecord.coverImage;
-      if (!coverImage) return null;
+    .map(({ tags, stats, bannerImage, user, ...articleRecord }) => {
+      // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
+      // article stays searchable.
+      const cover = articleRecord.coverImage;
+      if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
+      // As on the feed card, a withheld cover does not fall back to the banner.
+      const coverWithheld = !!cover && withheld(cover);
+      const coverImage = coverWithheld ? null : servable(cover) ?? servable(bannerImage);
+      if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
+        user: withoutUserImage(user),
+        // The legacy `cover` is the same image's key. Null, not absent: an update merges into the
+        // stored document.
+        ...(coverWithheld && { cover: null }),
         // `content` is a searchable attribute and is stored as HTML, so tag and
         // attribute names were indexed as prose — a query for `iframe` could
         // match on markup. Regex-strip rather than a full HTML-to-text pass:
-        // this runs over every article on a reindex.
-        content: removeTags(articleRecord.content),
+        // this runs over every article on a reindex. Spoilers are dropped first so
+        // a search hit cannot show them; only bodies naming "spoiler" pay a parse.
+        content: removeTags(removeSpoilers(articleRecord.content)),
         nsfwLevel: parseBitwiseBrowsingLevel(articleRecord.nsfwLevel),
         stats: stats
           ? {
@@ -102,28 +133,37 @@ const transformData = async ({
           : undefined,
         // Flatten tags:
         tags: tags.map((articleTag) => articleTag.tag),
-        coverImage: {
-          ...coverImage,
-          // Lift the cover image nsfwLevel to the article's aggregate so
-          // front-end filters (ImageGuard blur, browsingLevel mask) reflect
-          // the article's true rating whenever content images, userNsfwLevel,
-          // or the moderation floor raised it above the cover's own level.
-          nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
-          meta: coverImage.meta as ImageMetaProps,
-          tags: coverImage.tags.map((x) => x.tag),
-        },
+        coverImage: coverImage
+          ? {
+              ...withoutMinorFlag(coverImage),
+              // Lift the cover image nsfwLevel to the article's aggregate so
+              // front-end filters (ImageGuard blur, browsingLevel mask) reflect
+              // the article's true rating whenever content images, userNsfwLevel,
+              // or the moderation floor raised it above the cover's own level.
+              nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
+              meta: coverImage.meta as ImageMetaProps,
+              tags: coverImage.tags.map((x) => x.tag),
+            }
+          : undefined,
         cosmetic: cosmetics[articleRecord.id] ?? null,
       };
     })
     .filter(isDefined);
 
-  return records;
+  // Articles pulled but not indexed: `updateDocs` upserts, so their documents are deleted.
+  const indexed = new Set(records.map((record) => record.id));
+  const disqualifiedIds = articles.map((a) => a.id).filter((id) => !indexed.has(id));
+
+  return { records, disqualifiedIds };
 };
 
-export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
+export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>['records'][number];
 
-const articleSelect = {
+const coverSelect = { select: { ...imageSelect, minor: true } };
+export const articleSelect = {
   ...articleDetailSelect,
+  coverImage: coverSelect,
+  bannerImage: coverSelect,
   stats: {
     select: {
       favoriteCountAllTime: true,
@@ -144,8 +184,46 @@ type Article = Prisma.ArticleGetPayload<{
   select: typeof articleSelect;
 }>;
 
+/** The articles the index holds. The semantic search sync copies it; a parity test pins the copy. */
+export const articleSearchEligibleWhere = {
+  publishedAt: { not: null },
+  status: ArticleStatus.Published,
+  ingestion: ArticleIngestionStatus.Scanned,
+  tosViolation: false,
+  availability: { notIn: [Availability.Unsearchable, Availability.Private] },
+} satisfies Prisma.ArticleWhereInput;
+
+/**
+ * Which articles the semantic search may return: the Meilisearch rule narrowed to Public articles
+ * (a point's search_text holds the body, and the search service cannot tell who may read a Private
+ * one), minus unlisted articles and those whose owner is banned. The event-engine's
+ * ARTICLE_ELIGIBLE_SQL is its copy, held to it by article-eligibility.parity.test.ts.
+ */
+export const articleSemanticEligibleWhere = {
+  ...articleSearchEligibleWhere,
+  availability: Availability.Public,
+  unlisted: false,
+  user: { bannedAt: null },
+} satisfies Prisma.ArticleWhereInput;
+
+export const pushData = async (
+  { indexName }: { indexName: string },
+  { records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>
+) => {
+  await updateDocs({
+    indexName,
+    // An explicit null: the update merges, so a document without the key keeps its stored cover.
+    documents: records.map((record) => ({ ...record, coverImage: record.coverImage ?? null })),
+    batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+  });
+  // `updateDocs` upserts: an article that stopped qualifying keeps its old document otherwise.
+  if (disqualifiedIds.length > 0)
+    await onSearchIndexDocumentsCleanup({ indexName, ids: disqualifiedIds });
+};
+
 export const articlesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Article',
   setup: onIndexSetup,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
@@ -172,11 +250,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     const articles = await db.article.findMany({
       select: articleSelect,
       where: {
-        publishedAt: { not: null },
-        status: ArticleStatus.Published,
-        ingestion: ArticleIngestionStatus.Scanned,
-        tosViolation: false,
-        availability: { not: Availability.Unsearchable },
+        ...articleSearchEligibleWhere,
         id: batch.type === 'update' ? { in: batch.ids } : { gte: batch.startId, lte: batch.endId },
       },
     });
@@ -190,19 +264,22 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled cosmetics`);
 
+    const withheldImageIds = await getPublicWithheldImageIds(
+      articles.flatMap((a) => [a.coverImage?.id, a.bannerImage?.id]).filter(isDefined),
+      db
+    );
+
     return {
       articles,
       cosmetics,
+      withheldImageIds,
     };
   },
   transformData,
-  pushData: async ({ indexName }, records) => {
-    await updateDocs({
-      indexName,
-      documents: records as any[],
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    return;
-  },
+  pushData,
+  // A disqualified article is handled: `pushData` deletes its document.
+  getHandledIds: ({ records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>) => [
+    ...records.map((record) => record.id),
+    ...disqualifiedIds,
+  ],
 });

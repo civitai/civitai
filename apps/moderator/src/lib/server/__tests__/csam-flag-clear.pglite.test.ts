@@ -1,5 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -20,8 +24,15 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld, HOLD_MARKER_TABLE, HOLD_MARKER_VIEW } =
-  await import('../csam-flag-clear');
+const { fireDeferredBlockEffects } = vi.hoisted(() => ({
+  fireDeferredBlockEffects: vi.fn(async (_c: unknown, _o: unknown) => undefined),
+}));
+vi.mock('../deferred-block-effects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../deferred-block-effects')>()),
+  fireDeferredBlockEffects,
+}));
+
+const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld } = await import('../csam-flag-clear');
 
 const SCHEMA = `
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
@@ -30,8 +41,12 @@ CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,
   "needsReview" TEXT,
+  "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
+CREATE TABLE IF NOT EXISTS "Appeal" (id serial PRIMARY KEY, "entityType" text, "entityId" int, status text);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
   "images" JSONB NOT NULL DEFAULT '[]'
@@ -42,7 +57,6 @@ CREATE TABLE "ModActivity" (
 `;
 
 const MOD = 9;
-const PATTERN = '\\mzzfixture';
 
 // Every user owns three CSAM-flagged images: two removed, one still live. A held user keeps all three.
 const ban = (reasonCode: string | null, detailsInternal?: string, detailsExternal?: string) =>
@@ -66,18 +80,11 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
     meta: ban('Chargeback', 'Lost payment dispute', 'A payment on this account was reversed.'),
   },
   chargebackBanNoNotes: { id: 128, bannedAt: true, meta: ban('Chargeback') },
-  held: { id: 130 },
-  heldReleased: { id: 131 },
-  heldExpired: { id: 132 },
-  releasedWithReport: { id: 133 },
-  heldExtended: { id: 134 },
   mismatch: { id: 140 },
   reportedImage: { id: 150 },
   otherImageReported: { id: 151 },
   notedByPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
   otherBanUnset: { id: 161, bannedAt: true, meta: ban('Other', 'spam') },
-  driftProbe: { id: 170 },
-  lateMarker: { id: 171 },
 };
 
 let db: PGlite;
@@ -100,8 +107,6 @@ const activityFor = async (ids: number[]) =>
   ).rows;
 
 beforeAll(async () => {
-  // A pattern set in the shell would shift which users hold.
-  process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   for (const { id, bannedAt, meta } of Object.values(USERS)) {
@@ -139,7 +144,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   dbHandle.current = null;
   await db.close();
 });
@@ -191,12 +195,19 @@ describe('clearing one user’s CSAM flags', () => {
     });
   });
 
-  it.each(['otherBanPlain', 'harassmentBan'])(
-    'clears a user banned for another reason (%s)',
-    async (key) => {
-      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
-    }
-  );
+  // A ban's notes are not a hold, whatever they name.
+  it.each([
+    'otherBanPlain',
+    'harassmentBan',
+    'otherBanNoted',
+    'otherBanNotedExternally',
+    'notedByPattern',
+    'otherBanUnset',
+    'chargebackBan',
+    'chargebackBanNoNotes',
+  ])('clears a user banned for another reason (%s)', async (key) => {
+    expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
+  });
 });
 
 const HELD = [
@@ -206,8 +217,6 @@ const HELD = [
   'minorBan',
   'minorTrainingBan',
   'noReasonBan',
-  'otherBanNoted',
-  'otherBanNotedExternally',
   'reportedImage',
 ];
 
@@ -224,117 +233,84 @@ describe('a held user', () => {
   // The pre-check and the UPDATE each carry the hold; this pins the UPDATE's on its own.
   it.each(HELD)('is skipped by the update itself (%s)', async (key) => {
     const kysely = dbHandle.current as Kysely<never>;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, 'none')).toEqual([]);
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id)).toEqual([]);
     expect(await flagged(USERS[key].id)).toHaveLength(3);
   });
 });
 
-describe('the ban-notes pattern', () => {
-  afterEach(() => {
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
-  });
+describe('clearing a user whose block put effects off', () => {
+  const USER = 177;
+  const [A, B] = [USER * 10 + 1, USER * 10 + 2];
 
-  it.each([undefined, '', ' '])('holds every "Other" ban when it is %j', async (pattern) => {
-    if (pattern === undefined) delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
-    else process.env.MOD_HOLD_BAN_NOTES_PATTERN = pattern;
-    const id = USERS.otherBanUnset.id;
-
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it.each(['chargebackBan', 'chargebackBanNoNotes'])(
-    'handles an account banned for a lost payment dispute (%s)',
-    async (key) => {
-      delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
-      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
-    }
-  );
-
-  it('is read from the deployment', async () => {
-    const id = USERS.notedByPattern.id;
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzother';
-    expect(await clear(id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-});
-
-describe('a hold marker', () => {
-  beforeAll(async () => {
+  it('claims and fires them once, and puts a Pending appeal back in its queue', async () => {
     await db.exec(`
-      CREATE TABLE "${HOLD_MARKER_TABLE}" (
-        "id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "releasedAt" TIMESTAMP(3),
-        "releaseAt" TIMESTAMP(3), "extendedUntil" TIMESTAMP(3)
-      );
-      -- The view's WHERE as the migration that adds it writes it: released and expired holds drop out.
-      CREATE VIEW "${HOLD_MARKER_VIEW}" AS
-        SELECT "userId" FROM "${HOLD_MARKER_TABLE}"
-        WHERE "releasedAt" IS NULL
-          AND ("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())
-        GROUP BY "userId";
-      INSERT INTO "${HOLD_MARKER_TABLE}" ("userId", "releasedAt", "releaseAt", "extendedUntil") VALUES
-        (130, NULL, NULL, NULL),
-        (131, '2026-01-01', NULL, NULL),
-        (132, NULL, now() - interval '1 day', NULL),
-        (133, '2026-01-01', NULL, NULL),
-        (134, NULL, now() - interval '1 day', now() + interval '1 day');
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "details") VALUES (133, NULL, '{}');
+      INSERT INTO "User" ("id") VALUES (${USER});
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
+        (${A}, ${USER}, 'csam', 'Blocked'), (${B}, ${USER}, 'csam', 'Blocked');
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId", "violationType") VALUES (${A}, 'gore');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${B}, 'Pending');
     `);
+
+    fireDeferredBlockEffects.mockClear();
+    expect(await clear(USER)).toMatchObject({ ok: true, cleared: 2 });
+
+    expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
+    expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
+      [{ imageId: A, violationType: 'gore', notifyOwner: true, reportReason: null, reportIds: [] }],
+      { moderatorId: MOD }
+    );
+    expect((await db.query(`SELECT * FROM "ImageDeferredBlockEffect"`)).rows).toEqual([]);
+    expect(
+      (await db.query(`SELECT id, "needsReview" FROM "Image" WHERE id IN (${A}, ${B}) ORDER BY id`))
+        .rows
+    ).toEqual([
+      { id: A, needsReview: null },
+      { id: B, needsReview: 'appeal' },
+    ]);
   });
 
-  afterAll(async () => {
-    await db.exec(`DROP VIEW IF EXISTS "${HOLD_MARKER_VIEW}"; DROP TABLE "${HOLD_MARKER_TABLE}"`);
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    const user = 179;
+    const [csam, moderated] = [user * 10 + 1, user * 10 + 2];
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (${user});
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion") VALUES
+        (${csam}, ${user}, 'csam', 'CSAM', 'Blocked'), (${moderated}, ${user}, 'csam', 'moderated', 'Blocked');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', ${csam}, 'Pending'), ('Image', ${moderated}, 'Pending');
+    `);
+
+    expect(await clear(user)).toMatchObject({ ok: true, cleared: 2 });
+    expect(
+      (
+        await db.query(
+          `SELECT id, "needsReview" FROM "Image" WHERE id IN (${csam}, ${moderated}) ORDER BY id`
+        )
+      ).rows
+    ).toEqual([
+      { id: csam, needsReview: null },
+      // Control: the same clear restores it on an image under another block.
+      { id: moderated, needsReview: 'appeal' },
+    ]);
   });
 
-  it('refuses a user the marker view holds', async () => {
-    const id = USERS.held.id;
+  it('fires nothing, and keeps them, when the clear rolls back', async () => {
+    const C = 1781;
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (178);
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (${C}, 178, 'csam', 'Blocked');
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (${C});
+    `);
+    fireDeferredBlockEffects.mockClear();
 
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it('is skipped by the update itself', async () => {
-    const kysely = dbHandle.current as Kysely<never>;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS.held.id, 'view')).toEqual([]);
-  });
-
-  // A released marker is how Legal lets a user go; the view is the one definition of held.
-  it('clears a user whose marker was released', async () => {
-    expect(await clear(USERS.heldReleased.id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  it('clears a user whose marker expired unreleased', async () => {
-    expect(await clear(USERS.heldExpired.id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  it('refuses a user whose expired marker was extended', async () => {
-    expect(await clear(USERS.heldExtended.id)).toEqual({ ok: false, reason: 'held' });
-  });
-
-  // A release lets the marker go, never a report.
-  it('refuses a user whose marker was released but who is named on a report', async () => {
-    expect(await clear(USERS.releasedWithReport.id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(USERS.releasedWithReport.id)).toHaveLength(3);
-  });
-
-  it('still clears a user with no hold', async () => {
-    expect(await clear(USERS.otherClean.id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  // Built when neither object existed, the update must still see one that appeared since.
-  it('is skipped by an update built before the marker objects appeared', async () => {
-    const kysely = dbHandle.current as Kysely<never>;
-    const id = USERS.lateMarker.id;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, id, 'none')).toEqual([]);
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it('refuses everyone while the table exists without its view', async () => {
-    await db.exec(`DROP VIEW "${HOLD_MARKER_VIEW}"`);
-    const id = USERS.driftProbe.id;
-
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
+    expect(await clearUserCsamFlags({ userId: 178, expectedCount: 5, moderatorId: MOD })).toEqual({
+      ok: false,
+      reason: 'changed',
+    });
+    expect(fireDeferredBlockEffects).not.toHaveBeenCalled();
+    expect(
+      (await db.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect" WHERE "imageId" = ${C}`))
+        .rows
+    ).toHaveLength(1);
   });
 });

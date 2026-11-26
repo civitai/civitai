@@ -25,6 +25,9 @@ export const watchedEntityFields = {
     'allowCommercialUse',
     'allowDerivatives',
     'allowDifferentLicense',
+    // Cover changes, including the version showcase's, are audited through these fields.
+    'coverImageId',
+    'sfwCoverImageId',
   ],
   ModelVersion: [
     'description',
@@ -36,6 +39,8 @@ export const watchedEntityFields = {
     'flags',
     'trainedWords',
     'licensingFee',
+    // Decides what the licensingFee number means (Buzz per image, or a percent of compute).
+    'licensingFeeType',
     // Decides who is paid per image and by whom: a derivative inherits its root's fee, charged to the
     // derivative's users and settled to the ROOT's owner. It was writable with no trail at all until
     // CU 868kwf2fd — 160 versions carried a value nobody could account for, and the one that reached
@@ -45,6 +50,8 @@ export const watchedEntityFields = {
   // A new upload behind a file is a new record; `replacedBy` links the old record to it so the
   // file's history can be followed across the two ids.
   ModelFile: ['hash.SHA256', 'replacedBy'],
+  // One row per section an item enters or leaves; written by cosmetic-shop-featured-log.service.
+  CosmeticShopItem: ['shopSection'],
 } as const;
 
 export type WatchedEntityType = keyof typeof watchedEntityFields;

@@ -13,6 +13,7 @@ import type {
   NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import {
   exceedsNsfwLevel,
   isPrivateMature,
@@ -42,21 +43,55 @@ export const defaultWorkflowCost: WorkflowCost = {
 // =============================================================================
 export interface WorkflowDataOptions {
   domain: Record<ColorDomain, boolean>;
-  nsfwEnabled: boolean;
   holdUnrated?: boolean;
 }
 
 export const PENDING_RATING = 'pendingRating';
 export const NSFW_CAPPED = 'nsfwCapped';
-/** Paying the yellow unlock never lifts the workflow's cap, so a capped output offers no unlock. */
 export const NSFW_CAPPED_MESSAGE =
   "This generation is limited to a lower rating, so its mature result can't be shown.";
+export const PRIVATE_GEN = 'privateGen';
+export const PRIVATE_GEN_MESSAGE =
+  "Private and unpublished models can only generate PG and PG-13 content, so this mature result can't be shown.";
+const RESOURCE_MATURE_REFUSAL =
+  'One or more resources used in this generation cannot be used to generate mature content.';
+const MINOR_CONTENT = 'Inappropriate minor content detected.';
+
+/**
+ * Every output `blockedReason` a surface explains, from the orchestrator or `BlobData`. A
+ * `capped` reason is a rating cap the yellow unlock never lifts, so it offers no unlock.
+ */
+const BLOCKED_REASONS: Record<string, { message: string; capped?: true }> = {
+  ChildReference: { message: 'An inappropriate child reference was detected.' },
+  Bestiality: { message: 'Bestiality detected.' },
+  'Child Sexual - Anime': { message: MINOR_CONTENT },
+  'Child Sexual - Realistic': { message: MINOR_CONTENT },
+  NsfwLevel: { message: RESOURCE_MATURE_REFUSAL },
+  NSFWLevel: { message: RESOURCE_MATURE_REFUSAL },
+  NSFWLevelSourceImageRestricted: { message: UNMARKED_SOURCE_IMAGE_MESSAGE },
+  [NSFW_CAPPED]: { message: NSFW_CAPPED_MESSAGE, capped: true },
+  [PRIVATE_GEN]: { message: PRIVATE_GEN_MESSAGE, capped: true },
+  siteRestricted: {
+    message:
+      'This result was rated mature and is not available on this site. Open it on civitai.red to use it.',
+  },
+  MatureContent: { message: 'This result was withheld as mature content.' },
+  canUpgrade: { message: 'This result was rated mature. Unlock it with yellow Buzz to see it.' },
+  membershipRequired: { message: 'This result requires a membership upgrade to view.' },
+};
+
+export const isCappedBlock = (blockedReason: string | null | undefined) =>
+  !!blockedReason && !!BLOCKED_REASONS[blockedReason]?.capped;
+
+export const blockedReasonMessage = (blockedReason: string | undefined) =>
+  (blockedReason && BLOCKED_REASONS[blockedReason]?.message) ||
+  `Generation blocked: ${blockedReason}.`;
 
 /**
  * Video engines the orchestrator never rates (the provider moderates its own output), so a hold
  * on them never releases. Remove once it writes `nsfwLevel: 'na'` on unscanned outputs.
  */
-const NEVER_RATED_VIDEO_ECOSYSTEMS = new Set(['Grok', 'Kling', 'Veo3', 'Vidu']);
+const NEVER_RATED_VIDEO_ECOSYSTEMS = new Set(['GeminiOmni', 'Grok', 'Kling', 'Veo3', 'Vidu']);
 
 type StepParamsSource = {
   $type?: string;
@@ -409,7 +444,6 @@ export abstract class BlobData {
     step,
     index,
     domain,
-    nsfwEnabled,
     holdUnrated,
   }: BlobConstructorArgs) {
     Object.assign(this, data);
@@ -431,7 +465,11 @@ export abstract class BlobData {
       this.blockedReason = 'siteRestricted';
     }
 
-    if (data.blockedReason === 'none') this.blockedReason = null;
+    // Off green, an output withheld as 'MatureContent' (workflow created with mature content off,
+    // e.g. on .com) goes through the rules below like any other, so a rated-mature one can offer its
+    // owner the unlock; when no rule matches it keeps 'MatureContent'.
+    const withheldMature = this.blockedReason === 'MatureContent';
+    if (data.blockedReason === 'none' || withheldMature) this.blockedReason = null;
 
     if (!this.blockedReason) {
       // Stored as a blockedReason so every `!blockedReason` check downstream treats the output as
@@ -439,16 +477,17 @@ export abstract class BlobData {
       const neverRated = isNeverRatedVideoStep(step, step.workflow?.metadata?.params);
       if (holdUnrated && isUnratedOutput(data, neverRated)) {
         this.blockedReason = PENDING_RATING;
+      } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
+        // Ahead of the cap: a private submit always carries a PG-13 cap, and this names its cause.
+        this.blockedReason = PRIVATE_GEN;
       } else if (nsfwCap && exceedsNsfwLevel(data.nsfwLevel, nsfwCap)) {
         // The orchestrator reports these available but serves a placeholder in their place.
         this.blockedReason = NSFW_CAPPED;
-      } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
-        this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {
         if (domain.green) this.blockedReason = 'siteRestricted';
-        else if (!nsfwEnabled) this.blockedReason = 'enableNsfw';
         else if (allowMatureContent === false) this.blockedReason = 'canUpgrade';
       }
+      if (withheldMature && !this.blockedReason) this.blockedReason = 'MatureContent';
     }
   }
 

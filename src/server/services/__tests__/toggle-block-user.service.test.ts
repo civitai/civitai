@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
 import { userFollowsCache } from '~/server/redis/caches';
@@ -34,7 +35,6 @@ import {
   BLOCK_HIDE_MAX_COMMENTS,
   BLOCK_HIDE_READ_TIMEOUT_MS,
   blockHideCandidatesSql,
-  blockHideV3CandidatesSql,
 } from '~/server/services/block-hide-comments.service';
 
 const userId = 42;
@@ -486,8 +486,7 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     const result = await blockHiding();
 
-    // One read per comment table, both after the block.
-    expect(order).toEqual(['block', 'hide', 'hide']);
+    expect(order).toEqual(['block', 'hide']);
     expect(result.commentsHidden).toEqual({ status: 'hidden', count: 0, capped: false });
   });
 
@@ -496,17 +495,11 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     await blockHiding();
 
-    expect(queryWithTimeout).toHaveBeenCalledTimes(2);
+    expect(queryWithTimeout).toHaveBeenCalledTimes(1);
     expect(queryWithTimeout).toHaveBeenCalledWith(
       expect.anything(),
       BLOCK_HIDE_READ_TIMEOUT_MS,
       blockHideCandidatesSql,
-      [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
-    );
-    expect(queryWithTimeout).toHaveBeenCalledWith(
-      expect.anything(),
-      BLOCK_HIDE_READ_TIMEOUT_MS,
-      blockHideV3CandidatesSql,
       [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
     );
   });
@@ -549,5 +542,29 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     expect(queryWithTimeout).not.toHaveBeenCalled();
     expect(result.commentsHidden).toBeUndefined();
+  });
+});
+
+describe('toggleHidden kind=blockedUser — version showcases', () => {
+  it("takes each one's images out of the other's model showcases, and back on an unblock", async () => {
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    // Each author's images, on the other's models only.
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
+    await block(true);
+    expect(showcaseReads()).toEqual(
+      expect.arrayContaining([
+        [targetUserId, userId],
+        [userId, targetUserId],
+      ])
+    );
+    expect(showcaseReads()).toHaveLength(2);
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+    await block(false);
+    expect(showcaseReads()).toHaveLength(2);
   });
 });

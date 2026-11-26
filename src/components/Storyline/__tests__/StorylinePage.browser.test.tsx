@@ -163,9 +163,6 @@ vi.mock('~/components/CommentsV3/CommentSection', () => ({
     );
   },
 }));
-// The header's report menu reads the session, which this scaffold does not mount: unmocked,
-// `useCurrentUser` throws and the whole page renders nothing. A signed-out reader.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ user, subText }: { user: { username: string }; subText?: string }) => (
     <span>

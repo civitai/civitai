@@ -1,10 +1,21 @@
-import { Stack } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Code, Group, Stack, Text, Title } from '@mantine/core';
+import { IconArrowLeft, IconConfetti } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import {
   ReviewDecisionAlert,
+  ReviewSourceProvenanceMeta,
   ReviewSubmitterMeta,
+  type ManifestDiffSummary,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
+import {
+  DECLARED_REPOSITORY_LABEL,
+  declaredRepository,
+} from '~/components/Apps/reviewSourceProvenance';
+import { appDisplayName } from '~/shared/utils/app-display-name';
+import { trpc } from '~/utils/trpc';
 import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
 import { ReviewDetailTabsView } from '~/components/Apps/ReviewDetailTabsView';
 import { useNowTick } from '~/components/Apps/reviewRelativeTime';
@@ -45,17 +56,21 @@ import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationG
 const STATUS_MESSAGE: Record<ReviewActionStatus, string> = {
   idle: '',
   submitting: 'Submitting the review decision…',
-  approved: 'Submission approved. Returning to the review queue.',
-  rejected: 'Submission rejected. Returning to the review queue.',
+  approved: 'Submission approved. Opening the next submission.',
+  rejected: 'Submission rejected. Opening the next submission.',
   error: 'The review action failed. Please try again.',
 };
 
 export function ReviewDetailView({
   selection,
   onClose,
+  onSkip,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
+  /** After a decision — the page opens the next pending submission (or "No more app submissions waiting"). */
   onClose: () => void;
+  /** The bar's "Skip": the next submission, with no decision on this one. */
+  onSkip?: () => void;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<ReviewActionStatus>('idle');
@@ -121,7 +136,17 @@ export function ReviewDetailView({
         style={{ outline: 'none' }}
       >
         <Stack gap="md">
-          <ReviewSubmitterMeta request={selection.request} now={now} />
+          <Stack gap={6}>
+            <ReviewDetailHeader selection={selection} />
+            <ReviewSubmitterMeta request={selection.request} now={now} />
+            <ReviewDeclaredRepository
+              repository={
+                (selection.request.manifest as Record<string, unknown> | null)?.repository
+              }
+              claimedCommit={selection.request.sourceProvenance?.claimedCommit ?? null}
+            />
+            <ReviewSourceProvenanceMeta provenance={selection.request.sourceProvenance} />
+          </Stack>
           <ReviewDecisionAlert selection={selection} now={now} />
           <ReviewDetailTabsView selection={selection} />
         </Stack>
@@ -136,7 +161,201 @@ export function ReviewDetailView({
         onClose={handleActionSuccess}
         onStatusChange={setStatus}
         sticky
+        approveAndNext
+        onSkip={onSkip}
       />
     </>
+  );
+}
+
+/**
+ * What is being reviewed, at a glance: the app's icon and display name, then its slug,
+ * version, kind and first-version / decision badges. The submitter and the submitted age sit
+ * on the line directly below (`ReviewSubmitterMeta`).
+ *
+ * 🔴 THE BADGE WORDS ARE THE QUEUE'S. "first version" in violet is `OnsiteReviewModalTitle`'s
+ * and the queue row's spelling; "App" is the queue's kind badge for an on-site code request.
+ */
+export function ReviewDetailHeader({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  const { request, mode } = selection;
+  const name = appDisplayName(request.manifest, request.slug);
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Group gap="sm" wrap="nowrap" align="center" data-testid="apps-review-detail-header">
+      <ListingIconThumb
+        url={request.iconUrl ?? null}
+        name={name}
+        imgTestId="apps-review-detail-icon"
+        placeholderTestId="apps-review-detail-icon-placeholder"
+      />
+      <Stack gap={2} style={{ minWidth: 0 }}>
+        <Title order={2} lineClamp={1} data-testid="apps-review-detail-name">
+          {name}
+        </Title>
+        <Group gap={6} wrap="wrap">
+          <Code>{request.slug}</Code>
+          <Code data-testid="apps-review-detail-version">v{request.version}</Code>
+          <Badge size="sm" variant="light" color="blue" data-testid="apps-review-detail-kind">
+            App
+          </Badge>
+          {mds.kind === 'first-version' && (
+            <Badge color="violet" size="sm">
+              first version
+            </Badge>
+          )}
+          {mode === 'approved' && (
+            <Badge color="green" size="sm">
+              approved
+            </Badge>
+          )}
+          {mode === 'rejected' && (
+            <Badge color="red" size="sm">
+              rejected
+            </Badge>
+          )}
+        </Group>
+      </Stack>
+    </Group>
+  );
+}
+
+/**
+ * The manifest's `repository` on the header, as the developer's claim: a link only for an
+ * `https:` URL on a known code host (`declaredRepository`), opened with no referrer and no
+ * opener, and the client-claimed commit beside it labelled "claimed". The word "verified" is
+ * reserved for the GitHub-signed Actions run on the line below.
+ */
+export function ReviewDeclaredRepository({
+  repository,
+  claimedCommit,
+}: {
+  repository: unknown;
+  claimedCommit: string | null;
+}) {
+  const repo = declaredRepository(repository, claimedCommit);
+  if (!repo) return null;
+  const rel = 'noopener noreferrer nofollow';
+  return (
+    <Text size="xs" data-testid="apps-review-declared-repo">
+      <Text span size="xs" c="dimmed">
+        {DECLARED_REPOSITORY_LABEL}:{' '}
+      </Text>
+      {repo.href ? (
+        <Anchor
+          size="xs"
+          ff="monospace"
+          href={repo.href}
+          target="_blank"
+          rel={rel}
+          data-testid="apps-review-declared-repo-link"
+          style={{ wordBreak: 'break-all' }}
+        >
+          {repo.text}
+        </Anchor>
+      ) : (
+        <Code data-testid="apps-review-declared-repo-text">{repo.text}</Code>
+      )}
+      {repo.claimedCommit && (
+        <Text span size="xs" data-testid="apps-review-declared-repo-commit">
+          {' · commit '}
+          {repo.claimedCommitHref ? (
+            <Anchor
+              size="xs"
+              ff="monospace"
+              href={repo.claimedCommitHref}
+              target="_blank"
+              rel={rel}
+            >
+              {repo.claimedCommit}
+            </Anchor>
+          ) : (
+            <Code>{repo.claimedCommit}</Code>
+          )}{' '}
+          <Text span size="xs" c="dimmed">
+            (claimed)
+          </Text>
+        </Text>
+      )}
+    </Text>
+  );
+}
+
+/**
+ * The end of the APP SUBMISSION queue: no on-site submission is left after the last decision.
+ *
+ * 🔴 IT DOES NOT SAY "NOTHING ELSE IS WAITING", because "next" only walks on-site app
+ * submissions — listing requests (store media revisions, standalone listings) can still be
+ * pending. Those are counted here, from the same count proc as the Pending tab's badge, and
+ * linked to the queue.
+ */
+export function AllCaughtUp({
+  skippedPending = 0,
+  onReviewSkipped,
+  moreBeyondPage = false,
+}: {
+  /** Submissions skipped this session that are still pending (`useNextPendingReview`). */
+  skippedPending?: number;
+  /** Forget the skips and open the oldest of them. */
+  onReviewSkipped?: () => void;
+  /** The queue page "next" reads was full, so more submissions may wait beyond it. */
+  moreBeyondPage?: boolean;
+} = {}) {
+  const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, { retry: false });
+  const listingRequests = data?.offsite ?? 0;
+  // 🔴 Skipped submissions are still waiting, so this is not "no more": say what is left.
+  const onlySkipped = skippedPending > 0 && !!onReviewSkipped;
+  return (
+    <Card
+      withBorder
+      p="xl"
+      data-testid="apps-review-all-caught-up"
+      data-end-state={onlySkipped ? 'only-skipped' : 'caught-up'}
+    >
+      <Stack align="center" gap="sm">
+        <IconConfetti size={40} color="var(--mantine-color-green-6)" />
+        <Title order={3}>
+          {onlySkipped ? 'Only skipped submissions remain' : 'No more app submissions waiting'}
+        </Title>
+        <Text c="dimmed" ta="center">
+          Pending approvals finish in the background.
+        </Text>
+        {onlySkipped && (
+          <Stack align="center" gap={6} data-testid="apps-review-skipped-pending">
+            <Text ta="center">
+              You skipped {skippedPending} submission{skippedPending === 1 ? '' : 's'} that{' '}
+              {skippedPending === 1 ? 'is' : 'are'} still waiting.
+              {moreBeyondPage && ' More may be waiting after them.'}
+            </Text>
+            <Button
+              variant="light"
+              onClick={onReviewSkipped}
+              data-testid="apps-review-skipped-review"
+            >
+              Review skipped
+            </Button>
+          </Stack>
+        )}
+        {listingRequests > 0 && (
+          <Text ta="center" data-testid="apps-review-other-queues">
+            {listingRequests} listing request{listingRequests === 1 ? '' : 's'} still pending —{' '}
+            <Anchor component={Link} href="/apps/review?tab=pending">
+              open the queue
+            </Anchor>
+          </Text>
+        )}
+        <Button
+          component={Link}
+          href="/apps/review"
+          variant="default"
+          leftSection={<IconArrowLeft size={14} />}
+        >
+          Back to the queue
+        </Button>
+      </Stack>
+    </Card>
   );
 }

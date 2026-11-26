@@ -44,6 +44,8 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 }));
 const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow }));
+const submitTrainingDataScanSafe = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('~/server/services/training-data-scan.service', () => ({ submitTrainingDataScanSafe }));
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   deleteFilesForModelVersionCache: async () => undefined,
@@ -69,14 +71,51 @@ const placeholder = (
   },
 });
 
-const workflowWith = (items: { air: string; caption?: string }[]) => ({
+const workflowWith = (
+  items: { air: string; caption?: string }[],
+  moderationStatus: string | undefined = 'approved'
+) => ({
   id: 'wf-1',
-  steps: [{ $type: 'training', input: { trainingData: { type: 'blobs', items } } }],
+  steps: [
+    {
+      $type: 'training',
+      input: { trainingData: { type: 'blobs', items } },
+      output: { moderationStatus },
+    },
+  ],
 });
 
+/** The swap's write: the one update that points the row at a zip. */
+const swaps = () =>
+  dbMock.dbWrite.modelFile.update.mock.calls
+    .map(([args]) => args as { where: unknown; data: Record<string, unknown> })
+    .filter((args) => 'url' in args.data);
+/** Whether the share-restriction read finds a restricted owner or content. */
+const restriction = vi.hoisted(() => ({ on: false }));
+/** `rows` for every raw read but the share-restriction read, which answers `restriction.on`. */
+const answerQueries = (rows: unknown[]) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      strings.join('').includes('AS restricted') ? [{ restricted: restriction.on }] : rows
+    )) as never);
+/** The row the swap locks and re-reads, as the archive sees it at write time. */
+const lockedRow = (metadata: Record<string, unknown> = {}) =>
+  answerQueries([
+    {
+      metadata: {
+        selectedEpochUrl: 'https://orch.example/v2/consumer/blobs/E.safetensors',
+        ...metadata,
+      },
+    },
+  ]);
+
 const fetchMock = vi.fn();
-const blobResponse = (bytes: string, contentType: string) =>
-  new Response(bytes, { status: 200, headers: { 'content-type': contentType } });
+/** A blob the orchestrator rated `nsfwLevel` (PG unless a test says otherwise; null = unrated). */
+const blobResponse = (bytes: string, contentType: string, nsfwLevel: string | null = 'pg') =>
+  new Response(bytes, {
+    status: 200,
+    headers: { 'content-type': contentType, ...(nsfwLevel && { 'x-nsfw-level': nsfwLevel }) },
+  });
 
 beforeEach(() => {
   uploads.stored = [];
@@ -90,7 +129,9 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   dbMock.dbWrite.modelFile.findUnique.mockReset();
   dbMock.dbWrite.modelFile.update.mockReset().mockResolvedValue({});
-  dbMock.dbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  dbMock.dbWrite.$queryRaw.mockReset();
+  lockedRow();
+  restriction.on = false;
 });
 
 describe('archiveStudioDataset', () => {
@@ -122,8 +163,12 @@ describe('archiveStudioDataset', () => {
     expect(await zip.file('01.png')!.async('string')).toBe('png-bytes');
     expect(await zip.file('01.txt')!.async('string')).toBe('a red fox');
 
-    const { where, data } = dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0];
-    expect(where).toEqual({ id: 7, sizeKB: 0 });
+    const [{ where, data }] = swaps();
+    expect(where).toEqual({ id: 7 });
+    // The row is locked only while it is still the placeholder.
+    const [lockSql, ...lockValues] = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    expect(lockSql.join('?')).toMatch(/WHERE id = \? AND "sizeKB" = 0 FOR UPDATE/);
+    expect(lockValues).toEqual([7]);
     expect(data).toMatchObject({
       url: expect.stringMatching(
         /^https:\/\/storage\.example\/bucket\/training-images\/5\/.+\.zip$/
@@ -150,10 +195,30 @@ describe('archiveStudioDataset', () => {
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'unavailable' });
 
     expect(uploads.stored).toHaveLength(0);
-    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(swaps()).toHaveLength(0);
     expect(dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata).toMatchObject({
       datasetArchive: { status: 'unavailable' },
     });
+  });
+
+  it('reads the run of a version added to a model that never came from the Studio', async () => {
+    const added = placeholder();
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...added,
+      modelVersion: {
+        meta: { trainingStudioWorkflowId: 'wf-added' },
+        model: { ...added.modelVersion.model, meta: null },
+      },
+    });
+    getWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND' }));
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      reason: 'workflow no longer exists',
+    });
+    expect(getWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-added' } })
+    );
   });
 
   it('never stores an empty zip: a run whose blobs all fail is retried, then given up on', async () => {
@@ -175,7 +240,7 @@ describe('archiveStudioDataset', () => {
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'unavailable' });
 
     expect(uploads.stored).toHaveLength(0);
-    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(swaps()).toHaveLength(0);
   });
 
   it('leaves a file alone once it is no longer a placeholder', async () => {
@@ -183,6 +248,35 @@ describe('archiveStudioDataset', () => {
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
     expect(getWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('marks the new zip unscanned and sends it to the virus scan', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
+    getWorkflow.mockResolvedValue(workflowWith([{ air: 'urn:air:other:blob@AAA.png' }]));
+    fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png'));
+    submitTrainingDataScanSafe.mockClear();
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
+
+    const [{ data }] = swaps();
+    expect(data).toMatchObject({
+      virusScanResult: 'Pending',
+      virusScanMessage: null,
+      scannedAt: null,
+    });
+    expect(submitTrainingDataScanSafe).toHaveBeenCalledWith(
+      { fileId: 7, modelVersionId: 70, url: data.url },
+      'studio-dataset-archive'
+    );
+  });
+
+  it('sends nothing to the scan when the file was not swapped', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({ ...placeholder(), sizeKB: 1234 });
+    submitTrainingDataScanSafe.mockClear();
+
+    await archiveStudioDataset(7);
+
+    expect(submitTrainingDataScanSafe).not.toHaveBeenCalled();
   });
 });
 
@@ -208,7 +302,7 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       headers: { Authorization: 'Bearer service-token' },
     });
-    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data.visibility).toBe('Private');
+    expect(swaps()[0].data.visibility).toBe('Private');
   });
 
   it('still reads an owner in good standing with their own token', async () => {
@@ -243,7 +337,7 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
       datasetArchiveServiceAttempts: 1,
       datasetArchiveRetryAfter: expect.any(String),
     });
-    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(swaps()).toHaveLength(0);
     expect(uploads.stored).toHaveLength(0);
   });
 
@@ -292,5 +386,247 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'retry', attempts: 2 });
     expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('archiveStudioDataset applies the owner’s sharing choice only to the real zip', () => {
+  const items = [
+    { air: 'AAA.png', caption: 'a' },
+    { air: 'BBB.png', caption: 'b' },
+  ];
+  const shared = { ownRights: true, shareDataset: true };
+  const archive = async () => {
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
+    return swaps()[0].data.visibility;
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
+    getWorkflow.mockResolvedValue(workflowWith(items));
+    fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png'));
+  });
+
+  it('a shared, complete, approved dataset with nothing restricted is Public', async () => {
+    lockedRow(shared);
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: true } });
+  });
+
+  it('reads the choice at write time, not from the row it started with', async () => {
+    // The choice landed while the zip was being built: only the locked re-read sees it.
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder({}));
+    lockedRow(shared);
+    expect(await archive()).toBe('Public');
+  });
+
+  it.each([
+    ['rights, not shared', { ownRights: true, shareDataset: false }, 'Sensitive'],
+    ['no choice', {}, 'Private'],
+    ['shared without the rights', { ownRights: false, shareDataset: true }, 'Private'],
+  ])('%s is %s', async (_, choice, expected) => {
+    lockedRow(choice);
+    expect(await archive()).toBe(expected);
+  });
+
+  it('a restricted owner or content keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    restriction.on = true;
+    expect(await archive()).toBe('Private');
+  });
+
+  it('a run that is not approved keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    getWorkflow.mockResolvedValue(workflowWith(items, 'underReview'));
+    expect(await archive()).toBe('Private');
+  });
+
+  it('a zip missing any item of the run keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/BBB.png')
+        ? new Response('', { status: 404 })
+        : blobResponse('png-bytes', 'image/png')
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
+  });
+
+  it('a run listing an item with no readable blob keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    getWorkflow.mockResolvedValue(
+      workflowWith([...items, { air: 42 } as unknown as { air: string }])
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({
+      datasetArchive: { items: 2, complete: false },
+    });
+  });
+
+  it('records the zip’s rating from every item’s orchestrator rating', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(
+      async (url: string) =>
+        new Response('png-bytes', {
+          status: 200,
+          headers: {
+            'content-type': 'image/png',
+            'x-nsfw-level': url.includes('/BBB') ? 'R' : 'pg',
+          },
+        })
+    );
+    await archive();
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 4 | 1 });
+  });
+
+  it('a fully rated SFW zip is Public and recorded as fully rated', async () => {
+    lockedRow(shared);
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 1, fullyRated: true });
+  });
+
+  it('a partly rated zip stays Private, and an unrated item does not hide a mature one', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async (url: string) =>
+      blobResponse('png-bytes', 'image/png', url.includes('/BBB') ? null : 'x')
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 8, fullyRated: false });
+    expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
+  });
+
+  // A blocked blob never counts as rated, whatever level it carries (as for an extraction entry).
+  it.each([
+    [
+      'says it is withheld',
+      () => {
+        const res = blobResponse('png-bytes', 'image/png', 'pg');
+        res.headers.set('x-blocked-reason', 'Withheld');
+        return res;
+      },
+    ],
+    [
+      'resolved to the blocked placeholder',
+      () => {
+        const res = blobResponse('png-bytes', 'image/png', 'pg');
+        Object.defineProperty(res, 'url', {
+          value: 'https://orch.example/v2/consumer/blobs/blocked/token',
+        });
+        return res;
+      },
+    ],
+  ])(
+    'an item whose blob %s is left out of the zip, unrated, and keeps it Private',
+    async (_, blocked) => {
+      lockedRow(shared);
+      fetchMock.mockImplementation(async (url: string) =>
+        url.includes('/BBB') ? blocked() : blobResponse('png-bytes', 'image/png', 'pg')
+      );
+      expect(await archive()).toBe('Private');
+      expect(swaps()[0].data.metadata).toMatchObject({
+        nsfwLevel: 1,
+        fullyRated: false,
+        numImages: 1,
+        numCaptions: 1,
+        datasetArchive: { items: 1, skipped: 1, blocked: 1, complete: false },
+      });
+      // Neither the placeholder bytes nor the blocked item's caption reach the zip.
+      const zip = await JSZip.loadAsync(uploads.stored[0]);
+      expect(Object.keys(zip.files).sort()).toEqual(['01.png', '01.txt']);
+    }
+  );
+
+  it('reads a /blocked/ path on another host as content, not the placeholder', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => {
+      const res = blobResponse('png-bytes', 'image/png', 'pg');
+      Object.defineProperty(res, 'url', {
+        value: 'https://cdn.example/v2/consumer/blobs/blocked/token',
+      });
+      return res;
+    });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: true, numImages: 2 });
+  });
+
+  it("reads the orchestrator's 'none' block header as not blocked", async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => {
+      const res = blobResponse('png-bytes', 'image/png', 'pg');
+      res.headers.set('x-blocked-reason', 'none');
+      return res;
+    });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: true, numImages: 2 });
+  });
+
+  it('a zip with no rated item stays Private and records no rating', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png', null));
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).not.toHaveProperty('nsfwLevel');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: false });
+  });
+
+  it('a file swapped in while the zip was built is left alone', async () => {
+    answerQueries([]);
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
+    expect(swaps()).toHaveLength(0);
+  });
+});
+
+// The rating probe as a fixture (synthetic, no user content): a blob named like a caption, a
+// real caption, and a blob the orchestrator could not rate.
+describe('archiveStudioDataset types and rates every entry', () => {
+  const PNG = '\x89PNG\r\n\x1a\nfixture';
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
+    lockedRow({ ownRights: true, shareDataset: true });
+  });
+
+  const zipNames = async () => Object.keys((await JSZip.loadAsync(uploads.stored[0])).files).sort();
+
+  it('writes an image named like a caption as media, never as a .txt the caption reader skips', async () => {
+    getWorkflow.mockResolvedValue(
+      workflowWith([
+        { air: 'urn:air:other:blob@04.txt', caption: 'a red fox' },
+        { air: 'urn:air:other:blob@05.txt', caption: '' },
+      ])
+    );
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/04.txt')
+        ? blobResponse(PNG, 'image/png', 'pg')
+        : blobResponse(PNG, 'application/octet-stream', 'pg')
+    );
+    await archiveStudioDataset(7);
+
+    const zip = await JSZip.loadAsync(uploads.stored[0]);
+    // (a) the image is media with a level; (b) the only .txt is the real caption.
+    expect(await zipNames()).toEqual(['01.png', '01.txt', '02.bin']);
+    expect(await zip.file('01.png')!.async('string')).toBe(PNG);
+    expect(await zip.file('01.txt')!.async('string')).toBe('a red fox');
+    expect(swaps()[0].data.metadata).toMatchObject({
+      numImages: 2,
+      numCaptions: 1,
+      nsfwLevel: 1,
+      fullyRated: true,
+    });
+  });
+
+  it('counts an entry the orchestrator could not rate as unrated, so the zip is not fully rated', async () => {
+    getWorkflow.mockResolvedValue(
+      workflowWith([
+        { air: 'AAA.png', caption: 'a' },
+        { air: 'BBB.png', caption: 'b' },
+      ])
+    );
+    fetchMock.mockImplementation(async (url: string) =>
+      blobResponse(PNG, 'image/png', url.includes('/BBB') ? null : 'pg')
+    );
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
+    // (c) every entry is in the zip and either carries a level or leaves the zip unrated.
+    expect(await zipNames()).toEqual(['01.png', '01.txt', '02.png', '02.txt']);
+    expect(swaps()[0].data.metadata).toMatchObject({ numImages: 2, fullyRated: false });
+    expect(swaps()[0].data.visibility).toBe('Private');
   });
 });

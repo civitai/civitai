@@ -1,13 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
-import type * as ImageService from '~/server/services/image.service';
 
 // A non-moderator post delete keeps images owned by someone else, and their `postId` is nulled by
 // the FK. The image index only selects `postId IS NOT NULL` at build time, so an already-indexed
 // doc is never revisited — the feed keeps serving a thumbnail whose detail page is gone.
-//
-// This is the only deletePost coverage in the suite; inverting the `deletable` filter deletes the
-// other user's images, and nothing else would print.
+// Which images the delete takes is decided in SQL: held-owner-delete-paths.behavior.test.ts.
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -47,24 +44,21 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   onStorySparkLost,
 }));
 
-const { mockQueueImageSearchIndexUpdate, mockInvalidateManyImageExistence, mockDeleteImageFromS3 } =
-  vi.hoisted(() => ({
-    mockQueueImageSearchIndexUpdate: vi.fn(),
-    mockInvalidateManyImageExistence: vi.fn(),
-    mockDeleteImageFromS3: vi.fn(),
-  }));
-
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageService>()),
-  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
-  invalidateManyImageExistence: mockInvalidateManyImageExistence,
-  deleteImageFromS3: mockDeleteImageFromS3,
+const { announceReviewsInBackground } = vi.hoisted(() => ({
+  announceReviewsInBackground: vi.fn(),
+}));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  announceReviewsInBackground,
 }));
 
 import { deletePost } from '../post.service';
 import { userImageVideoCountCaches } from '~/server/redis/caches';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const POST_ID = 500;
 const POSTER_ID = 3307;
@@ -85,18 +79,13 @@ const deletedState: {
   blockedFor: string | null;
 } = { ...SCANNED };
 
-/** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
-function primeQueries(
-  images: (typeof OWNER_IMAGE)[],
-  kept: number[] = [],
-  reported: number[] = []
-) {
+/** `kept`: deletable images the DELETE does not return, as when a child-safety case keeps the row. */
+function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
   const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = sqlTextOf(strings);
     if (sql.includes('pg_class')) return [{ present: false }];
-    if (sql.includes('"ImageReport"')) return reported.map((imageId) => ({ imageId }));
-    if (sql.includes('"collectionId"')) return [];
+    // Before the report read below: the DELETE reads "ImageReport" for its child-safety case.
     if (sql.includes('DELETE FROM "Image"'))
       return deletable.map(({ id, url, userId }) => ({
         id,
@@ -105,40 +94,52 @@ function primeQueries(
         ...deletedState,
       }));
     if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
+    if (sql.includes('"ImageReport"')) return [];
+    if (sql.includes('"collectionId"')) return [];
     if (sql.includes('AS deletable')) return images;
+    if (sql.includes('SELECT id FROM "Image" WHERE "postId"'))
+      return images.map(({ id }) => ({ id }));
     return [];
   });
 }
+
+/** The ids sent to the image index for removal, across every call. */
+const deindexed = () =>
+  [
+    ...new Set(
+      vi
+        .mocked(imagesMetricsSearchIndex.queueUpdate)
+        .mock.calls.flatMap(([items]) => items as { id: number; action: string }[])
+        .filter((item) => item.action === SearchIndexUpdateQueueAction.Delete)
+        .map((item) => item.id)
+    ),
+  ].sort((a, b) => a - b);
+
+/** The images whose existence cache was set to gone. */
+const existenceBusted = () =>
+  vi
+    .mocked(redisMock.sysRedis.packed.set)
+    .mock.calls.map(([key]) => String(key))
+    .filter((key) => key.startsWith(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`))
+    .map((key) => Number(key.split(':').pop()));
 
 const callContaining = (needle: string) =>
   dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
     sqlTextOf(strings).includes(needle)
   ) as [string[], ...unknown[]];
 
-// The scoping predicate is a `Prisma.raw` VALUE in the template, so joining `strings` alone
-// renders it as `?` — the one token these assertions are about. Interleave to recover it.
-const selectImagesSql = () => {
-  const [strings, ...values] = callContaining('AS deletable');
-  return strings
-    .map((chunk, i) => {
-      if (i === 0) return chunk;
-      const value = values[i - 1] as { sql?: string } | undefined;
-      return (typeof value?.sql === 'string' ? value.sql : '?') + chunk;
-    })
-    .join('');
-};
-
 describe('deletePost orphan de-indexing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: any) => fn(dbMock.dbWrite));
     vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
+    vi.spyOn(imagesMetricsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
   });
 
   it('takes back the event points of a story started from an image, when the post was its chapter 1', async () => {
     primeQueries([OWNER_IMAGE]);
     dbMock.dbWrite.storylineChapter.findFirst.mockResolvedValueOnce({ storylineId: 9 } as never);
-    await deletePost({ id: POST_ID });
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
     expect(dbMock.dbWrite.storylineChapter.findFirst).toHaveBeenCalledWith({
       where: { postId: POST_ID, depth: 0, storyline: { sparkImageId: { not: null } } },
       select: { storylineId: true },
@@ -146,20 +147,31 @@ describe('deletePost orphan de-indexing', () => {
     expect(onStorySparkLost).toHaveBeenCalledWith(9);
   });
 
-  it('touches no event points for a post that starts no story', async () => {
+  it('announces the unreleased reviews written from the post, read before the post goes', async () => {
     primeQueries([OWNER_IMAGE]);
-    await deletePost({ id: POST_ID });
-    expect(onStorySparkLost).not.toHaveBeenCalled();
+    const base = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      sqlTextOf(strings).includes('"releasedAt" IS NULL')
+        ? Promise.resolve([{ id: 77 }])
+        : base(strings)) as never);
+
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
+
+    expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reviewIds: [77] })
+    );
+    const { calls, invocationCallOrder } = dbMock.dbWrite.$queryRaw.mock;
+    const order = (needle: string) =>
+      invocationCallOrder[
+        calls.findIndex((call) => sqlTextOf(call[0] as string[]).includes(needle))
+      ];
+    expect(order('"releasedAt" IS NULL')).toBeLessThan(order('DELETE FROM "Post"'));
   });
 
-  it('scopes the delete to poster-owned images in SQL', async () => {
-    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
-
-    await deletePost({ id: POST_ID });
-
-    // The faked rows carry `deletable` already, so without this the SQL expression that DERIVES it
-    // is never observed — inverting it to `!=` would delete the other user's images silently.
-    expect(selectImagesSql()).toContain('i."userId" = p."userId"');
+  it('touches no event points for a post that starts no story', async () => {
+    primeQueries([OWNER_IMAGE]);
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
+    expect(onStorySparkLost).not.toHaveBeenCalled();
   });
 
   it('lets a moderator take every image', async () => {
@@ -168,167 +180,30 @@ describe('deletePost orphan de-indexing', () => {
       { ...FOREIGN_IMAGE, deletable: true },
     ]);
 
-    await deletePost({ id: POST_ID, isModerator: true });
+    await deletePost({ id: POST_ID, isModerator: true, actor: { system: 'test' } });
 
-    expect(selectImagesSql()).toContain('TRUE AS deletable');
-    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
-      ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(2);
+    expect(deindexed()).toEqual([OWNER_IMAGE.id, FOREIGN_IMAGE.id]);
+    expect(callContaining('DELETE FROM "Image"')[1]).toEqual([OWNER_IMAGE.id, FOREIGN_IMAGE.id]);
   });
 
-  it('de-indexes the surviving foreign image as well as the deleted one', async () => {
-    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+  it('de-indexes the surviving foreign image and a kept image, as well as the deleted one', async () => {
+    const KEPT = { id: 9, url: 'kept-url', userId: POSTER_ID, deletable: true };
+    primeQueries([OWNER_IMAGE, KEPT, FOREIGN_IMAGE], [KEPT.id]);
 
-    await deletePost({ id: POST_ID });
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
 
-    // The action is asserted, not just the ids: `Update` never revisits an orphan (the index build
-    // requires `postId IS NOT NULL`), so that slip reproduces the original bug verbatim.
-    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
-      ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-  });
-
-  it('drops a deletable image the delete kept from search, and never deletes its file', async () => {
-    primeQueries([OWNER_IMAGE, { ...FOREIGN_IMAGE, deletable: true }], [FOREIGN_IMAGE.id]);
-
-    await deletePost({ id: POST_ID, isModerator: true });
-
-    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
-      ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(1);
-    expect(mockInvalidateManyImageExistence).toHaveBeenCalledWith([OWNER_IMAGE.id]);
-  });
-
-  it('returns the ids of the images it deleted, and only those', async () => {
-    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
-
-    const result = await deletePost({ id: POST_ID });
-
-    expect(result?.deletedImageIds).toEqual([OWNER_IMAGE.id]);
-  });
-
-  it('deletes only the poster-owned image, and never the foreign one', async () => {
-    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
-
-    await deletePost({ id: POST_ID });
-
-    // The ids arrive as a `Prisma.join` fragment, so they have to be read out of its own `values`.
-    const [strings, ...values] = callContaining('DELETE FROM "Image"');
-    const bound = values.flatMap((v) => (v as { values?: unknown[] })?.values ?? [v]);
-    expect(strings.join('?')).toContain('DELETE FROM "Image"');
-    expect(bound).toContain(OWNER_IMAGE.id);
-    expect(bound).not.toContain(FOREIGN_IMAGE.id);
-
-    expect(mockInvalidateManyImageExistence).toHaveBeenCalledWith([OWNER_IMAGE.id]);
-    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(1);
-    expect(mockDeleteImageFromS3).toHaveBeenCalledWith({
-      id: OWNER_IMAGE.id,
-      url: OWNER_IMAGE.url,
-      keepShopArtwork: false,
-    });
-  });
-
-  // Only then may the storage delete keep an object that shop artwork still uses.
-  it.each([
-    ['the poster deletes it', POSTER_ID, {}, true],
-    ['someone else deletes it', 99, {}, false],
-    ['it is blocked', POSTER_ID, { ingestion: 'Blocked' }, false],
-    ['it keeps a block reason', POSTER_ID, { ingestion: 'Error', blockedFor: 'tos' }, false],
-    ['it is not scanned yet', POSTER_ID, { ingestion: 'Pending' }, false],
-    ['it is held for review', POSTER_ID, { needsReview: 'csam' }, false],
-  ] as const)(
-    'asks to keep shop artwork only for a plain owner delete: %s',
-    async (_case, deletedById, state, keep) => {
-      Object.assign(deletedState, SCANNED, state);
-      primeQueries([OWNER_IMAGE]);
-
-      await deletePost({ id: POST_ID, deletedById });
-
-      expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
-        expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: keep })
-      );
-      Object.assign(deletedState, SCANNED);
-    }
-  );
-
-  // The report links cascade with the rows, so the lookup must see every deletable image before the delete.
-  it('looks up reports for the deletable images before deleting them, and keeps per image', async () => {
-    const SECOND = { id: 9, url: 'second-url', userId: POSTER_ID, deletable: true };
-    primeQueries([OWNER_IMAGE, SECOND, FOREIGN_IMAGE], [], [SECOND.id]);
-
-    await deletePost({ id: POST_ID, deletedById: POSTER_ID });
-
-    const calls = dbMock.dbWrite.$queryRaw.mock.calls as [string[], ...unknown[]][];
-    const order = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder;
-    const at = (needle: string) =>
-      calls.findIndex(([strings]) => sqlTextOf(strings).includes(needle));
-    const reportCall = at('"ImageReport"');
-    expect(reportCall).toBeGreaterThanOrEqual(0);
-    expect(calls[reportCall].slice(1)).toContainEqual([OWNER_IMAGE.id, SECOND.id]);
-    expect(order[reportCall]).toBeLessThan(order[at('DELETE FROM "Image"')]);
-    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
-      expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: true })
-    );
-    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
-      expect.objectContaining({ id: SECOND.id, keepShopArtwork: false })
-    );
-  });
-
-  // The report links cascade with the rows: a lookup that fails must not let the delete go ahead.
-  it('deletes nothing when the report lookup fails', async () => {
-    primeQueries([OWNER_IMAGE]);
-    const prime = dbMock.dbWrite.$queryRaw.getMockImplementation();
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (
-      strings: TemplateStringsArray,
-      ...v: unknown[]
-    ) => {
-      if (sqlTextOf(strings).includes('"ImageReport"')) throw new Error('lookup failed');
-      return prime?.(strings, ...v);
-    }) as never);
-
-    await expect(deletePost({ id: POST_ID, deletedById: POSTER_ID })).rejects.toThrow(
-      'lookup failed'
-    );
-    expect(callContaining('DELETE FROM "Image"')).toBeUndefined();
-    expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
-  });
-
-  it('does not ask to keep shop artwork for an image under an open report', async () => {
-    primeQueries([OWNER_IMAGE], [], [OWNER_IMAGE.id]);
-
-    await deletePost({ id: POST_ID, deletedById: POSTER_ID });
-
-    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
-      expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: false })
-    );
-  });
-
-  it('de-indexes without deleting when every image is someone else’s', async () => {
-    primeQueries([FOREIGN_IMAGE]);
-
-    await deletePost({ id: POST_ID });
-
-    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
-      ids: [FOREIGN_IMAGE.id],
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-    expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
-    expect(mockInvalidateManyImageExistence).not.toHaveBeenCalled();
+    // Removals only, not just the ids: `Update` never revisits an orphan (the index build requires
+    // `postId IS NOT NULL`), so that slip reproduces the original bug verbatim.
+    expect(deindexed()).toEqual([OWNER_IMAGE.id, FOREIGN_IMAGE.id, KEPT.id]);
+    expect(existenceBusted()).toEqual([OWNER_IMAGE.id]);
   });
 
   // Orphaned images leave the count too: a NULL `postId` fails the count query's `NOT IN`.
   it("busts the image count of every image's owner, including orphaned ones", async () => {
     primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
 
-    await deletePost({ id: POST_ID });
+    await deletePost({ id: POST_ID, actor: { system: 'test' } });
 
-    expect(selectImagesSql()).toContain('i."userId"');
-    expect(userImageVideoCountCaches.bust).toHaveBeenCalledTimes(1);
     expect(userImageVideoCountCaches.bust).toHaveBeenCalledWith([POSTER_ID, FOREIGN_USER_ID]);
   });
 });

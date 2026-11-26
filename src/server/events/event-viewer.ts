@@ -18,3 +18,10 @@ export function eventViewerOf(
     isModerator: !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx),
   };
 }
+
+/** eventViewerOf for a signed-in caller, for services that need the user's id. */
+export function eventUserOf(
+  ctx: Parameters<typeof eventViewerOf>[0] & { user: { id: number; isModerator?: boolean } }
+): { id: number; isModerator: boolean } {
+  return { id: ctx.user.id, isModerator: !!eventViewerOf(ctx).isModerator };
+}

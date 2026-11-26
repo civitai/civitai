@@ -46,7 +46,7 @@ const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const q = parseQuery(url, querySchema);
 
   const [feed, announcement] = await Promise.all([
@@ -59,6 +59,7 @@ export const load: PageServerLoad = async ({ url }) => {
       dateFrom: dayStart(q.from),
       dateTo: dayEnd(q.to),
       cannotPublish: q.publishing === 'all' ? undefined : q.publishing === 'blocked',
+      viewer: locals.user,
     }),
     getTrainingAnnouncement(),
   ]);

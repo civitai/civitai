@@ -413,7 +413,7 @@ export async function consumeRedeemableCode({
               level: 'info',
               userId,
               code: consumedCode.code,
-            }).catch(() => undefined);
+            });
           }
 
           // Check provider compatibility for any remaining active membership

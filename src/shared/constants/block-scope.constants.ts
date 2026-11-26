@@ -42,7 +42,7 @@ import type { AppRole } from './app-capabilities.constants';
  * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
-export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
+export type ScopeBitmaskRequirement = bigint | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
@@ -126,7 +126,7 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // the publish scope, and narrower than the token: the storage route also requires a grant
   // per (viewer, this app, source app) covering the import on every call
   // (`storage-import-grant.service.ts`). In NO dev, tunnel, review or private-run allowlist,
-  // and the route refuses an import on a dev, hub or review token.
+  // and the route refuses an import on a dev or review token.
   'apps:storage:import': SKIP_OAUTH_CHECK,
   // collections:read:self / collections:write:self — the App Blocks Collections
   // surface (discover + read public collections and the viewer's OWN collections;
@@ -495,30 +495,12 @@ export function isPrivateRunAudience(value: unknown): value is PrivateRunAudienc
 export const PRIVATE_RUN_BUZZ_CAP = 2500;
 
 /**
- * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
- * a viewer has installed. The abuse ceiling nobody consents to — a per-call
- * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is
- * the aggregate that actually binds. Enforced in `blocks.router.ts`
- * (`reserveBlockBuzzSpend`, keyed WITHOUT appBlockId so N installed apps share
- * ONE ceiling rather than multiplying it).
- *
- * Lives HERE, in the client-safe shared module, because it is now read by three
- * places that must agree: the server enforcement, the `blocks.grantScopes` zod
- * bound on a user-set consent budget, and the consent dialog that shows the user
- * what the ceiling is. It is also the upper bound on
- * `app_user_scope_grants.buzz_budget_per_day` — a consent budget ABOVE the
- * platform cap could never bind, so storing one would be storing a number that
- * means nothing.
- */
-export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
-
-/**
  * The most a block token's per-call `buzzBudget` claim may be, for an install token
  * and a pre-approval (dev / private-run / review) token alike. It bounds one
  * generation only. A multi-step (`kind: 'workflow'`) call is bounded in TOTAL at this
  * budget times its step count, and at `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` whatever the
  * budget; no single step is held to the budget. Total spend is bounded by
- * `BLOCK_BUZZ_CAP_PER_DAY`, `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
+ * the per-user daily cap (`resolveUserAppCaps`), `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
  * the dev-tunnel session cap and the per-app caps.
  *
  * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
@@ -576,6 +558,21 @@ export function resolvePerCallBuzzBudget(declared: unknown): number {
  */
 export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
 
+/**
+ * A generation input names the viewer's own upload before its scan has finished. Retry once the
+ * upload's scan completes. Returned by the estimate and the submit of `kind:'textToImage'`,
+ * `kind:'step'` and `kind:'workflow'` bodies and inline `customComfy` graphs as a failed
+ * snapshot's `errorCode`.
+ */
+export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
+
+/**
+ * An inline `customComfy` graph uses a node the host does not run inline: one that reads or
+ * writes a file path, or a loader that takes an input from another node instead of a literal
+ * value. Returned by the estimate and the submit as a failed snapshot's `errorCode`.
+ */
+export const INLINE_NODE_REFUSED_ERROR_CODE = 'inline-node-refused' as const;
+
 /** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
 export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
 
@@ -601,7 +598,15 @@ export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
  * decides for them.
  */
 export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
-export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+/**
+ * The most a viewer may set as one app's daily consent budget
+ * (`app_user_scope_grants.buzz_budget_per_day`, the `blocks.grantScopes` zod bound and the
+ * consent dialog). A fixed 50,000 for every tier, by decision: it was the per-user daily cap
+ * before that cap became per-tier (`resolveUserAppCaps`), and it is no longer tied to it. So
+ * a paid tier's higher daily cap, and the opt-in above it, are reachable only across several
+ * apps or on grants with no budget set.
+ */
+export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = 50_000;
 
 /**
  * The scope the per-app daily Buzz budget governs.
@@ -678,9 +683,9 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
  * enforced exactly as given.
  *
  * The number is the LOWEST per-engine post-paid ceiling any registered recipe
- * declares today: `STARTER_BUDGET.maxBuzz` = 90 and `seamless-pano`'s cheapest engine
- * (`zimage-turbo`) = 90. A budget under it cannot fund a single customComfy
- * generation, so an app using one will appear broken. Registry steps can be far
+ * declares (`STARTER_BUDGET.maxBuzz`, `seamless-pano`'s `zimage-turbo`). A budget
+ * under it cannot fund a single customComfy generation, so an app using one will
+ * appear broken. Registry steps can be far
  * cheaper (`convert-image` = 1 Buzz), which is why this warns instead of blocking.
  * If a cheaper recipe engine is ever registered this number is free to drop — it
  * changes copy, never enforcement.
@@ -688,8 +693,8 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
 export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
 
 /**
- * The HIGHEST per-engine post-paid ceiling any registered recipe declares
- * (`seamless-pano`'s `qwen-image` = 180). Pinned to the registry alongside LOW
+ * The HIGHEST per-engine post-paid ceiling any registered recipe declares.
+ * Pinned to the registry alongside LOW
  * by `recipes/__tests__/budget-bounds-parity.test.ts`; read by no enforcement
  * path.
  *
@@ -698,7 +703,7 @@ export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
  * figure at all. This constant exists solely so the parity test notices a
  * widening of the RECIPE range.
  */
-export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
+export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 90;
 
 /**
  * The body of the low-budget warning, shared by the consent modal and the editor
@@ -717,9 +722,9 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * asserts no figure, and no claim about which actions still run.** Every such
  * claim was falsifiable because the reservation space has no short true
  * description —
- *   · recipe ceilings are 90, 90, 150, 180 (note the TIE — it falsified
- *     "more on the other engines", and the parity test cannot see it because
- *     `LOW === min(...)` holds for any number of ties);
+ *   · recipe ceilings have tied (which falsified "more on the other engines",
+ *     and the parity test cannot see it because `LOW === min(...)` holds for any
+ *     number of ties);
  *   · the INLINE customComfy arm reserves an app-declared ceiling up to
  *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
  *   · `textToImage` reserves its live whatIf quote, which can be far LOWER;
@@ -731,7 +736,7 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * this docblock asserted: every path gates the reservation against the token's
  * per-call budget, which every mint clamps at `BUZZ_BUDGET_CAP`.
  * It is simply not renderable — it is per-app, far above what most paths reserve
- * (INLINE_MAX_BUZZ = 250; 180 for recipes; a quoted step can reach the cap itself),
+ * (INLINE_MAX_BUZZ = 250; recipes sit far below that; a quoted step can reach the cap itself),
  * and alarming rather than informative. Do not "correct" the copy by naming it.
  *
  * What IS true on every consent-bearing path, and all this sentence claims:
@@ -792,7 +797,7 @@ export type { SensitiveScopeManifestInput } from '@civitai/shared/sensitive-bloc
  */
 export function validateBlockScopesAgainstOauthClient(
   blockScopes: string[],
-  oauthClientAllowedScopes: number
+  oauthClientAllowedScopes: bigint
 ): { valid: boolean; rejectedScopes: string[] } {
   const rejected: string[] = [];
   for (const scope of blockScopes) {
@@ -844,8 +849,8 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * the OAuth-eligible scope set, exactly what the validator / token-mint path
  * expects as the per-client ceiling.
  */
-export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number {
-  let bitmask = 0;
+export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): bigint {
+  let bitmask = 0n;
   for (const scope of blockScopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
@@ -854,3 +859,172 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number
   }
   return bitmask;
 }
+
+/**
+ * Bits an operator grants an app-block OauthClient by hand that no manifest scope maps to, so
+ * `deriveOauthBitmaskFromBlockScopes` can never produce them. `AppDataRead` is the one the auth
+ * hub's block exchange requires of the app.
+ */
+export const OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS = TokenScope.AppDataRead;
+
+/**
+ * The `allowedScopes` to write when re-deriving an existing app-block client's ceiling from its
+ * manifest: the derived bits, plus any operator-granted bit the client already holds. It grants
+ * nothing new — a client without the bit does not gain it — and every other bit follows the
+ * manifest, so a bit the manifest dropped is still dropped. Every writer that re-derives an
+ * `appblk-*` client's `allowedScopes` goes through this.
+ */
+export function appBlockOauthCeiling(derived: bigint, existing: bigint | null | undefined): bigint {
+  return derived | ((existing ?? 0n) & OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS);
+}
+
+/**
+ * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
+ * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
+ * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
+ * is gated (see its entry below). The per-user KV scopes are each
+ * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
+ * (resolveStorageContext). Subjecting them to per-user consent would make the
+ * publisher re-consent to their own block's storage on every version bump for
+ * no security gain. The remaining user-resource scopes (user/ai/buzz/
+ * social, models:write) flow through the consent gate.
+ *
+ * `apps:storage:shared:read` / `apps:storage:shared:write` (the SHARED, app-
+ * global / cross-user datastore) are ALSO exempt — and, unlike the per-user
+ * scopes, they are NOT publisher-only. Their governance is NOT a per-scope
+ * consent prompt but the SERVER-SIDE controls in `resolveSharedContext`
+ * (apps-shared.router.ts): a fail-closed min-trust gate (not-anon, not-banned,
+ * not-muted, onboarding-complete, email-verified, account age ≥ 7d) plus
+ * content moderation and one-vote / per-user-row / rate limits, all enforced at
+ * every read/write REGARDLESS of the token scope. `shared:read` is reading
+ * PUBLIC community data (anon-safe — the router allows anon reads by design);
+ * `shared:write` is trust-gated PUBLIC posting/voting (the resolver rejects anon
+ * and any ineligible caller before touching data, whether or not the scope is
+ * present). A per-scope consent prompt would add nothing that the trust gate +
+ * moderation don't already enforce — so, mirroring the per-user storage scopes,
+ * these sign without a grant. (Pre-GA consideration, NOT built here: an EXPLICIT
+ * shared-WRITE consent prompt if widening the audience beyond the trust gate.)
+ *
+ * `models:read:self` is ALSO exempt (allow-by-default): a low-sensitivity read
+ * of the viewer's OWN models, and a no-op for an anon viewer (no user → nothing
+ * to read), so it is safe in an anon token. Exempting it lets the block render
+ * fully for a logged-in viewer with no upfront consent prompt; the consent gate
+ * is reserved for the money / AI scopes (`ai:write:budgeted`, `buzz:read:self`),
+ * which the host requests lazily on the first buzz-spending action (Generate)
+ * rather than on load.
+ *
+ * `collections:read:self` / `collections:write:self` are exempt — but
+ * `collections:read:private` is DELIBERATELY NOT (the read split, below). The
+ * exempt pair's gate is SERVER-SIDE per op, not a per-scope consent prompt:
+ * read:self covers own-PUBLIC + any PUBLIC collection (public data — nothing
+ * sensitive to consent to), and the follow write is SELF-BOUND to the token
+ * subject (a bookmark on the caller's OWN account). A per-scope consent prompt
+ * would add nothing the visibility/ownership/subject checks don't already
+ * enforce. Exempting them is ALSO the #3090 fix: a page-app token that declared a
+ * consent-gated scope silently dropped it at mint (the user had no grant row) →
+ * every op 403'd; consent-exempt scopes flow through partitionByConsent
+ * unconditionally, so the minted PAGE token actually carries them end-to-end.
+ *
+ * `collections:read:private` (the subject's OWN PRIVATE collections) is the
+ * CONSENT-GATED half of the read split and is INTENTIONALLY absent from this set:
+ * reading a user's private collections IS sensitive, so it must flow through the
+ * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
+ * only then does a token carry it. (This is the deliberate contrast to the #3090
+ * exemption above: read:self always mints; read:private mints only after consent.)
+ *
+ * `posts:write:self` (create a REAL Post on the viewer's profile from an app's
+ * own outputs) is likewise INTENTIONALLY ABSENT, for a strictly stronger version
+ * of the `collections:read:private` reason. It is the first block scope that
+ * writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+ * No server-side visibility/ownership check can substitute for it, because the
+ * app IS acting on the subject's own account — ownership is satisfied by
+ * construction, which is exactly what makes it dangerous rather than safe. So it
+ * flows through the gated branch: the host surfaces it as `needs_consent`, the
+ * user grants it, and only then does a token carry it.
+ *
+ * ⚠️ THE GRANT IS NOT THE WHOLE CONSENT. A one-time grant cannot inform about
+ * content that differs on every call, so `blocks.createPostFromApp` is ALSO
+ * gated on a per-post host-chrome confirm rendering the HOST-RESOLVED title /
+ * detail / tags / image thumbnails / gallery target. Do NOT "simplify" that
+ * confirm away as redundant with this grant — they answer different questions
+ * ("may this app post as me at all" vs "may it post THIS").
+ *
+ * `social:react:self` (set the viewer's public, reward-paying reaction on an image) is
+ * INTENTIONALLY ABSENT as well, and unlike `posts:write:self` there is NO per-action confirm
+ * behind it — so this grant is the ONLY consent the reaction path has. Exempting it would mean
+ * an app could react as the viewer with no prompt at all. Revoking it stops future reactions;
+ * reactions already made stay (decision on civitai-app-starters#669).
+ *
+ * 🔴 MEMBERSHIP HERE MAKES A SCOPE UN-REVOKABLE, AND A REVOKE CONTROL ON ONE WOULD BE A
+ * LIE. `partitionByConsent` (scope-grant.service.ts) signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
+ * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
+ * so a suppression entry for a member of this set would be stored and enforce NOTHING.
+ * `blocks.revokeScopes` therefore REFUSES every member of this set with a specific error rather than
+ * accepting and silently doing nothing, and the permissions UI must not offer a control for
+ * them (ScopeConsentList shows them as fixed). Making revocation override exemption is deliberately NOT the design: each
+ * exemption above rests on its own server-side gate (min-trust, moderation,
+ * visibility/ownership, self-bound subject, rate limits), and removing the scope would
+ * not remove those gates' subject matter — it would only break the #3090 page-token fix.
+ * The scopes a revoke DOES reach are the gated ones: notably `ai:write:budgeted`,
+ * `collections:read:private`, `posts:write:self`, `social:react:self`.
+ */
+export const CONSENT_EXEMPT_SCOPES: ReadonlySet<string> = new Set([
+  // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed
+  // from the block-scope registry (decorative/unenforced). Do NOT re-add them
+  // here: if a settings scope is ever reintroduced it must be reintroduced WITH
+  // an explicit consent decision, not silently exempted (a stale exempt entry
+  // would mint it consent-free the moment it re-entered the registry).
+  'apps:storage:read',
+  'apps:storage:write',
+  // SHARED (cross-user) storage — governed by resolveSharedContext's server-side
+  // min-trust gate + content moderation + rate limits, not per-scope consent.
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
+  // DOCUMENT STORE — `apps:storage` reaches only this app's own store: the viewer's private
+  // collections, reads of shared ones, marks and counters. Each is bounded by the app's
+  // reviewed `storage` declaration and by the server-side per-op checks of the storage
+  // routes. Its sibling `apps:storage:publish` is deliberately ABSENT: authoring documents
+  // other viewers read, under the viewer's identity, needs a grant — one prompt per app.
+  // (Unlike `apps:storage:shared:write` above, which signs consent-free today and which the
+  // publish scope replaces.)
+  'apps:storage',
+  'models:read:self',
+  // Collections — server-side visibility/ownership (read) + self-bound subject
+  // (follow) are the gate; see the block collections endpoints. #3090: exempting
+  // them guarantees they reach `claims.scopes` in the minted page token.
+  'collections:read:self',
+  'collections:write:self',
+  // goods:read:self — the app's OWN sales ledger, filtered to this viewer. The
+  // read is scoped to `claims.appBlockId` in the query, so it can only ever
+  // return what the calling app itself sold; there is no third-party data to
+  // consent to. Its sibling `goods:purchase:self` is deliberately ABSENT — money
+  // out of the viewer's balance always needs an explicit grant.
+  'goods:read:self',
+  // apps:store:items:write — gated per call server-side; a consent gate here would only drop
+  // the scope from tokens.
+  'apps:store:items:write',
+]);
+
+/**
+ * Whether a scope is signed WITHOUT a grant, and therefore cannot be revoked; see
+ * CONSENT_EXEMPT_SCOPES.
+ */
+export function isConsentExemptScope(scope: string): boolean {
+  return CONSENT_EXEMPT_SCOPES.has(scope);
+}
+
+/** `blocks.revokeScopes` takes at most this many scopes per call; the router schema and the client share it. */
+export const REVOKE_SCOPES_MAX_PER_CALL = 32;
+
+/**
+ * The site's prompt check refused the prompt. A failed snapshot's `errorCode` on every App Block
+ * generation submit, with `error` the refusal reasons only. Nothing is charged; resubmitting the
+ * same prompt is refused again.
+ */
+export const PROMPT_POLICY_REFUSED_ERROR_CODE = 'prompt-policy-refused' as const;
+
+/**
+ * The prompt check could not run, so nothing was submitted or charged. Retry no sooner than
+ * 30 seconds later, at most 3 times.
+ */
+export const PROMPT_CHECK_UNAVAILABLE_ERROR_CODE = 'prompt-check-unavailable' as const;

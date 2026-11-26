@@ -448,7 +448,7 @@ describe('flowChecklist', () => {
     ['tier missing', { ...good, contents: [...good.contents, row(f.pin.id, 'nope')] }, TEAMS],
     [
       'reward does not exist',
-      { ...good, contents: [...good.contents, row(99999, 'uncommon')] },
+      { ...good, contents: [...good.contents, row(990100008, 'uncommon')] },
       TEAMS,
     ],
     ['a box in a box', { ...good, contents: [...good.contents, row(aBox.id, 'uncommon')] }, TEAMS],

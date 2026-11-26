@@ -30,11 +30,17 @@ export interface GenerateRequest {
 export interface PublishRequest {
   workflowId: string;
   epoch: number;
+  /** The owner's dataset-sharing choice: they hold the rights to the files, and want the dataset
+   *  shared with the published model. Sharing is applied only with the rights. */
+  ownRights?: boolean;
+  shareDataset?: boolean;
 }
 
-/** What "view this run's model" hands the host: the Civitai model stamped onto the workflow. */
+/** What "view this run's model" hands the host: the Civitai model and version stamped onto the
+ *  workflow. */
 export interface ModelPageRequest {
   modelId: number;
+  modelVersionId?: number;
 }
 
 /** What the Custom-base "Browse models" affordance hands the host: the run's orchestrator
@@ -63,12 +69,28 @@ export interface HostContext {
      *  explanation; absent = unknown (a host with no membership knowledge, e.g. the standalone
      *  shell) and the affordance behaves as before. */
     canGenerateUnpublished?: boolean;
-    /** Whether this user holds a paid membership — without one, Blue Buzz can't pay for a mature
-     *  dataset and the run is charged in full from the chosen account. Absent = unknown. */
+    /** Whether this host can auto-label (free to the user, so it must run on a system-paid path the
+     *  host owns). Explicit `false` hides every auto-label action; absent = available. */
+    canAutoLabel?: boolean;
+    /** Where auto-labeling does work, linked from the line that replaces its actions when
+     *  `canAutoLabel` is false (`hostLink` URL semantics). Absent => the line renders without a link. */
+    autoLabelUrl?: string;
+    /** Whether this user holds a paid membership — without one, a mature run's samples are blurred
+     *  when Blue paid any of it, and Review says so. Absent = unknown. */
     isPaidMember?: boolean;
-    /** The host's membership-plans page, linked from the explanation above (`hostLink` URL
+    /** The host's membership-plans page, linked from the membership explanations (`hostLink` URL
      *  semantics). Absent => the explanation renders without a link. */
     pricingUrl?: string;
+    /** The host's support ticket portal, offered on a run held for review past the raise threshold.
+     *  Always opens in a new tab: it leaves for the external ticket portal. Absent => the panel
+     *  asks for a ticket without a link. */
+    supportUrl?: string;
+    /** The host's dataset storage policy, linked beside the dataset-sharing choice. Absent => the
+     *  choice shows without a link. */
+    dataPolicyUrl?: string;
+    /** The signed-in user — keys the New training flow's browser-local autosave, so one user never
+     *  sees another's draft. Absent => no autosave. */
+    userId?: number;
   };
   /** The host's URL for a location — for real `<a href>`s (middle-click / open-in-new-tab). */
   hrefFor: (loc: StudioLocation) => string;
@@ -89,6 +111,9 @@ export interface HostContext {
    *  workflowId + epoch. Absent when the host has no publish surface — the affordance hides. Same
    *  URL semantics as `generateUrl`: relative = in-host same-tab, absolute = new tab. */
   publishUrl?: (req: PublishRequest) => string;
+  /** The host's URL for the same entry with the run added as a new version of one of the owner's
+   *  existing models (the main app asks which). Absent => only `publishUrl`'s new-model CTA shows. */
+  publishVersionUrl?: (req: PublishRequest) => string;
   /** The host's URL for the run's model page on Civitai — draft or published (a run carries its
    *  modelId from the moment a draft exists; see TrainingStudioMeta). Absent => the "view model"
    *  affordance hides. Same URL semantics as `generateUrl`. */
@@ -138,6 +163,8 @@ function host(): HostContext {
 
 export const hostConfig = () => host().config;
 export const backend = () => host().backend;
+/** Whether the flow should offer auto-label at all; see `HostContext.config.canAutoLabel`. */
+export const autoLabelAvailable = () => hostConfig().canAutoLabel !== false;
 export const hrefFor = (loc: StudioLocation) => host().hrefFor(loc);
 export const navigate = (loc: StudioLocation, opts?: { refreshAll?: boolean }) =>
   host().navigate(loc, opts);
@@ -145,6 +172,7 @@ export const refresh = (key: string) => host().refresh(key);
 export const generate = () => host().generate;
 export const generateUrl = () => host().generateUrl;
 export const publishUrl = () => host().publishUrl;
+export const publishVersionUrl = () => host().publishVersionUrl;
 export const modelPageUrl = () => host().modelPageUrl;
 export const pickModel = () => host().pickModel;
 export function portalProps(): { to?: Element; disabled?: boolean } {

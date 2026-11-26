@@ -17,18 +17,12 @@ const { bountiesIndex, collectionsIndex, bountyService } = vi.hoisted(() => ({
   },
 }));
 
-// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-}));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   const idx = { queueUpdate: vi.fn(async () => undefined) };
   return {
     ...actual,
     modelsSearchIndex: idx,
-    imagesSearchIndex: idx,
     imagesMetricsSearchIndex: idx,
     articlesSearchIndex: idx,
     collectionsSearchIndex: collectionsIndex,

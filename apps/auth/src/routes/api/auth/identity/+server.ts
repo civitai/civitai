@@ -1,5 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { refusesMemorializedSession } from '@civitai/auth';
+import { createLogWindowCap } from '@civitai/shared/log-window-cap';
 import { verifier } from '$lib/server/auth/verifier';
 import {
   getOrProduceSessionUser,
@@ -10,6 +12,8 @@ import { readHubSession } from '$lib/server/auth/session';
 import { acceptHubSession } from '$lib/server/auth/lineage';
 import { sessions } from '$lib/server/auth/registry';
 import { isInternalRequest } from '$lib/server/auth/internal';
+import { getClientIp } from '$lib/server/auth/request';
+import { logToAxiom } from '$lib/server/axiom';
 
 // The hub is the SOLE PRODUCER of session-user data (docs/thin-session-token-design.md, "LOCKED
 // ARCHITECTURE"). Consumers (main app, spokes) call this on a cache miss: present the user's session token
@@ -24,7 +28,7 @@ import { isInternalRequest } from '$lib/server/auth/internal';
 // token returns 401 — matching the resolver, which treats 401/404 as "no session".
 export const GET: RequestHandler = async ({ request, url, cookies }) => {
   // INTERNAL by-userId read-through (createSessionClient.getSessionUserById) — for consumer paths that start
-  // from a userId with no session token to present (API-key/bearer auth, the legacy-cookie fallback). Returns
+  // from a userId with no session token to present (API-key/bearer auth). Returns
   // ANY user's session to a holder of AUTH_INTERNAL_TOKEN, the SAME trust as the POST refresh below — no new
   // privilege. This is a READ (getOrProduce), not a bust. Branches before the token path on `?userId=`.
   const byId = url.searchParams.get('userId');
@@ -49,23 +53,76 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
 
   const user = await getOrProduceSessionUser(userId);
   if (!user) return json({ error: 'not_found' }, { status: 404 });
+  if (refusesMemorializedSession(user, claims))
+    return json({ error: 'unauthorized' }, { status: 401 });
 
   return json(user);
 };
+
+type PostBody = { userId?: unknown; refresh?: unknown; scope?: unknown };
+
+// A flood of refused calls must not become a flood of records: past the cap, one count per window.
+const refusedCap = createLogWindowCap({
+  limit: 20,
+  windowMs: 60_000,
+  onSummary: (summary) =>
+    logToAxiom({
+      name: 'identity-invalidate-audit',
+      type: 'info',
+      payload: { internal: false, summary: true, ...summary },
+    }),
+});
 
 // WRITE side — service-authed cache invalidation (createSessionClient). Targets an ARBITRARY userId
 // (a mod banning user X, a subscription webhook), so it's authed by the shared `AUTH_INTERNAL_TOKEN`, NOT a
 // user session token. Body: { userId, refresh? } per-user; or { scope: 'all', asOf? } mass. Default busts
 // the cache (lazy — next read re-produces); `refresh: true` also re-produces now and returns the fresh user.
-export const POST: RequestHandler = async ({ request }) => {
-  if (!isInternalRequest(request)) return json({ error: 'unauthorized' }, { status: 401 });
-
-  let body: { userId?: unknown; refresh?: unknown; scope?: unknown };
+export const POST: RequestHandler = async ({ request, platform }) => {
+  const internal = isInternalRequest(request);
+  let body: PostBody;
   try {
-    body = await request.json();
+    body = (await request.json()) ?? {};
   } catch {
     body = {};
   }
+
+  let status = 500;
+  try {
+    const res = await invalidateOrRefresh(internal, body);
+    status = res.status;
+    return res;
+  } finally {
+    // Every mass invalidation and every refused call (past the cap, counted); per-user busts are
+    // too frequent to record.
+    const clientIp = getClientIp(request);
+    // Counted by the socket peer: the proxy headers behind clientIp are the caller's to choose.
+    if (
+      internal
+        ? body.scope === 'all'
+        : refusedCap.admit({ key: 'post', clientIp: socketAddress(platform) })
+    ) {
+      logToAxiom({
+        name: 'identity-invalidate-audit',
+        type: 'info',
+        payload: {
+          method: request.method,
+          internal,
+          status,
+          scope: typeof body.scope === 'string' ? body.scope.slice(0, 64) : undefined,
+          userId: typeof body.userId === 'number' ? body.userId : undefined,
+          refresh: body.refresh === true,
+          // The proxy headers are caller-supplied; the socket peer is not.
+          clientIp,
+          socketIp: socketAddress(platform),
+          userAgent: request.headers.get('user-agent')?.slice(0, 512),
+        },
+      });
+    }
+  }
+};
+
+async function invalidateOrRefresh(internal: boolean, body: PostBody): Promise<Response> {
+  if (!internal) return json({ error: 'unauthorized' }, { status: 401 });
 
   // Mass invalidation (createSessionClient.invalidateAll): set the global token-revocation cutoff (now) via
   // the registry — revokes every token signed before this call. No userId. We deliberately do NOT wipe the
@@ -85,4 +142,10 @@ export const POST: RequestHandler = async ({ request }) => {
     return json(user); // SessionUser, or null when there's no such user
   }
   return new Response(null, { status: 204 });
-};
+}
+
+// adapter-node's `platform.req`. Not `getClientAddress()`: with ADDRESS_HEADER set it reads x-forwarded-for.
+function socketAddress(platform: unknown): string | undefined {
+  return (platform as { req?: { socket?: { remoteAddress?: string } } } | undefined)?.req?.socket
+    ?.remoteAddress;
+}

@@ -55,26 +55,46 @@
   }
 
   let userQuery = $state('');
-  let userResults = $state<{ id: number; username: string | null; image: string | null }[]>([]);
+  let userResults = $state<{ id: number; username: string | null }[]>([]);
+  let searchedFor = $state('');
+  let searchFailed = $state(false);
   let timer: ReturnType<typeof setTimeout>;
+  let searchSeq = 0;
+  function clearSearch() {
+    clearTimeout(timer);
+    searchSeq++;
+    userResults = [];
+    searchedFor = '';
+    searchFailed = false;
+  }
   function onUserInput(e: Event) {
     userQuery = (e.currentTarget as HTMLInputElement).value;
     clearTimeout(timer);
+    const seq = ++searchSeq;
     const q = userQuery.trim();
-    if (!q) {
-      userResults = [];
-      return;
-    }
+    if (!q) return clearSearch();
     timer = setTimeout(async () => {
-      const res = await fetch(`/cosmetics/grant/users?q=${encodeURIComponent(q)}`);
-      userResults = res.ok ? await res.json() : [];
+      let results: typeof userResults | null = null;
+      try {
+        const res = await fetch(`/cosmetics/grant/users?q=${encodeURIComponent(q)}`);
+        if (res.ok) results = await res.json();
+      } catch {
+        // offline: `results` stays null
+      }
+      // A slower earlier search must not replace the answer to the latest one.
+      if (seq !== searchSeq) return;
+      // A failed search empties the list as well, so an older term's matches never outlive the error.
+      userResults = results ?? [];
+      searchFailed = !results;
+      searchedFor = results ? q : '';
     }, 300);
   }
   function addUser(u: { id: number; username: string | null }) {
     if (u.username) selectedUsers.set(u.id, u.username);
     userQuery = '';
-    userResults = [];
+    clearSearch();
   }
+  $effect(() => () => clearTimeout(timer));
 
   function urlWith(params: Record<string, string | number | null>) {
     const url = new URL(page.url);
@@ -183,10 +203,14 @@
       <Input
         value={userQuery}
         oninput={onUserInput}
-        placeholder="Search users by username…"
+        placeholder="Search users by username or id…"
         class="h-8"
       />
-      {#if userResults.length > 0}
+      {#if searchFailed}
+        <p class="mt-1 text-xs text-red-300">The user search failed. Try again.</p>
+      {:else if searchedFor && searchedFor === userQuery.trim() && userResults.length === 0}
+        <p class="mt-1 text-xs text-dark-2">No user matches “{searchedFor}”.</p>
+      {:else if userResults.length > 0}
         <div class="absolute z-10 mt-1 w-full overflow-hidden rounded-md border bg-popover shadow">
           {#each userResults as u (u.id)}
             <button

@@ -1,3 +1,5 @@
+@use './image-layout' as layout;
+
 .mention {
   color: var(--mantine-color-blue-4);
 }
@@ -17,6 +19,36 @@
   aspect-ratio: 4 / 3;
   max-height: 480px;
   pointer-events: auto !important;
+}
+
+// Article images. max-width, not width: images never upscale past their natural size.
+.sizedImages,
+.htmlRenderer {
+  img {
+    height: auto;
+    max-width: 100%;
+  }
+
+  img[data-width],
+  img[data-align] {
+    display: block;
+    width: auto;
+  }
+
+  img {
+    @include layout.image-layout;
+  }
+}
+
+.htmlRenderer,
+.sizedImages :global(.ProseMirror) {
+  @include layout.image-float-container;
+}
+
+// RenderRichText wraps the doc in one div.
+.htmlRenderer > div,
+.sizedImages :global(.ProseMirror) {
+  @include layout.blank-line-clears-float;
 }
 
 .bubbleTooltip {
@@ -93,6 +125,31 @@
     > :first-child {
       margin-top: 0;
     }
+
+    // The author sees what they hid, marked rather than masked.
+    span[data-type='spoiler'] {
+      border-radius: var(--mantine-radius-xs);
+      background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+      outline: 1px dashed light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+    }
+
+    div[data-type='spoiler'] {
+      position: relative;
+      margin: var(--mantine-spacing-sm) 0;
+      border: 1px dashed light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+      border-radius: var(--mantine-radius-sm);
+      padding: var(--mantine-spacing-lg) var(--mantine-spacing-sm) var(--mantine-spacing-xs);
+
+      &::before {
+        content: 'Spoiler';
+        position: absolute;
+        top: 2px;
+        left: var(--mantine-spacing-xs);
+        font-size: var(--mantine-font-size-xs);
+        font-weight: 600;
+        color: var(--mantine-color-dimmed);
+      }
+    }
   }
 
   iframe {
@@ -100,9 +157,15 @@
   }
 }
 
+.sizedImages {
+  // A plain img is the selected node itself; an uploaded image sits inside its node view.
+  img:global(.ProseMirror-selectednode),
+  :global(.ProseMirror-selectednode) img {
+    outline: 2px solid var(--mantine-primary-color-filled);
+  }
+}
 
 .htmlRenderer {
-
   // Remove margin from the last paragraph
   & p:last-of-type {
     margin-bottom: 0;
@@ -124,13 +187,13 @@
   }
 
   // Instagram embed styling
-  div[data-type="instagram"] {
+  div[data-type='instagram'] {
     display: flex;
     flex-direction: column;
     align-items: center;
     height: 769px;
 
-    &>iframe {
+    & > iframe {
       width: 50%;
       overflow: hidden;
       flex-grow: 1;
@@ -143,20 +206,20 @@
     @container (max-width: theme('screens.sm')) {
       height: 681px;
 
-      &>iframe {
+      & > iframe {
         width: 100%;
       }
     }
   }
 
   // StrawPoll embed styling
-  div[data-type="strawPoll"] {
+  div[data-type='strawPoll'] {
     display: flex;
     flex-direction: column;
     align-items: center;
     height: 480px;
 
-    &>iframe {
+    & > iframe {
       flex-grow: 1;
     }
   }
@@ -182,4 +245,45 @@
     background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
     border: 0;
   }
+}
+
+.spoilerText {
+  border-radius: var(--mantine-radius-xs);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 150ms ease;
+}
+
+// Masked rather than blurred: a blur of short text is often still legible. `visibility` rather
+// than a transparent colour, because it also hides an inline image and beats an inline colour.
+.spoilerTextHidden {
+  cursor: pointer;
+  user-select: none;
+  background-color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-3));
+
+  > * {
+    visibility: hidden;
+  }
+
+  &:hover {
+    background-color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--mantine-primary-color-filled);
+    outline-offset: 1px;
+  }
+}
+
+.spoilerBlock {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--mantine-radius-sm);
+  margin-bottom: var(--mantine-spacing-md);
+}
+
+.spoilerBlockHidden {
+  filter: blur(32px);
+  pointer-events: none;
+  user-select: none;
 }

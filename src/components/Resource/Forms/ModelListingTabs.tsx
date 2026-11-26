@@ -22,20 +22,24 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useFormContext, useFormState, useWatch } from 'react-hook-form';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { InputRTE, InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import type { ComCoverState } from '~/shared/utils/model-sfw-face';
 import {
+  COM_COVER_NOT_LISTED_LABEL,
+  comCoverStateMessages,
   COM_FACE_REFUSED_MESSAGE,
+  comFaceRemovedMessage,
   isComSafeLevel,
   normalizeSfwFaceText,
   SFW_DESCRIPTION_MAX_LENGTH,
 } from '~/shared/utils/model-sfw-face';
 import { showErrorNotification } from '~/utils/notifications';
+import { ComFaceDisputeAlert } from '~/components/Model/LockReview/ComFaceDisputeAlert';
 import { trpc } from '~/utils/trpc';
 
 type ListingForm = {
@@ -61,11 +65,14 @@ export function ModelListingTabs({
   modelId,
   redFields,
   comFaceRemoved,
+  comCoverState,
 }: {
   modelId?: number;
   redFields: ReactNode;
   /** The listing re-check took the model off civitai.com. */
-  comFaceRemoved?: boolean;
+  comFaceRemoved?: 'detected' | 'recheck-unverified' | null;
+  /** Why the saved .com cover does not list the model on .com; null when it does. */
+  comCoverState?: ComCoverState | null;
 }) {
   const form = useFormContext<ListingForm>();
   const [sfwName, sfwDescription, nsfw] = useWatch({
@@ -77,6 +84,14 @@ export function ModelListingTabs({
   const [site, setSite] = useState<Site>(features.isGreen ? 'com' : 'red');
   const ownComContent = sfwName != null;
   const cardState: CardState = ownComContent ? 'custom' : nsfw ? 'redOnly' : 'same';
+  const coverNotListed = ownComContent && nsfw && comCoverState ? comCoverState : null;
+  const comCardState: CardState = coverNotListed ? 'notListed' : cardState;
+  const removedMessage = comFaceRemoved ? comFaceRemovedMessage(comFaceRemoved, !!nsfw) : null;
+  const removedAlert = removedMessage && (
+    <Alert color="red" p="xs" mb="md">
+      <Text size="xs">{removedMessage}</Text>
+    </Alert>
+  );
 
   const nameVerdict = useSfwFaceVerdict(
     'sfwName',
@@ -120,7 +135,7 @@ export function ModelListingTabs({
           <Tabs.List>
             <Tabs.Tab
               value="com"
-              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
+              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={comCardState} />}
             >
               civitai.com
             </Tabs.Tab>
@@ -133,6 +148,7 @@ export function ModelListingTabs({
           </Tabs.List>
 
           <Tabs.Panel value="red" pt="md">
+            {removedAlert}
             <Stack>
               {redFields}
               {modelId && <SiteCoverPicker site="red" modelId={modelId} />}
@@ -140,9 +156,11 @@ export function ModelListingTabs({
           </Tabs.Panel>
 
           <Tabs.Panel value="com" pt="md">
-            {comFaceRemoved && (
-              <Alert color="red" p="xs" mb="md">
-                <Text size="xs">{COM_FACE_REFUSED_MESSAGE}</Text>
+            {removedAlert}
+            {modelId && <ComFaceDisputeAlert modelId={modelId} />}
+            {coverNotListed && (
+              <Alert color="yellow" p="xs" mb="md" title={COM_COVER_NOT_LISTED_LABEL}>
+                <Text size="xs">{comCoverStateMessages[coverNotListed]}</Text>
               </Alert>
             )}
             <ComListing
@@ -188,10 +206,15 @@ function ComListing({
     if (name === null) form.setValue('sfwCoverImageId', null, { shouldDirty: true });
   };
 
+  const queryUtils = trpc.useUtils();
   const draftMutation = trpc.model.draftSfwFace.useMutation({
     onSuccess: (draft) => setComContent(draft.sfwName, draft.sfwDescription),
-    onError: (error) =>
-      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) }),
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) });
+      // A refusal can lock the rating, which brings up the Dispute button.
+      if (modelId && error.message === COM_FACE_REFUSED_MESSAGE)
+        void queryUtils.report.getLockReviewState.invalidate({ id: modelId });
+    },
   });
 
   const handleDraft = () => {
@@ -199,28 +222,22 @@ function ComListing({
     const draft = () => draftMutation.mutate({ name, description, modelId });
     if (!sfwName || sfwName === name) return draft();
 
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Replace your civitai.com content?',
-        message: 'The draft replaces the civitai.com title and description you have now.',
-        labels: { confirm: 'Replace', cancel: 'Keep mine' },
-        onConfirm: draft,
-      },
+    openConfirm({
+      title: 'Replace your civitai.com content?',
+      message: 'The draft replaces the civitai.com title and description you have now.',
+      labels: { confirm: 'Replace', cancel: 'Keep mine' },
+      onConfirm: draft,
     });
   };
 
   const handleUseRed = () =>
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Use the same card on both sites?',
-        message:
-          'The civitai.com title, description and cover are removed, and civitai.com shows the same card as civitai.red.',
-        labels: { confirm: 'Use the same card on both sites', cancel: 'Keep it' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => setComContent(null, null),
-      },
+    openConfirm({
+      title: 'Use the same card on both sites?',
+      message:
+        'The civitai.com title, description and cover are removed, and civitai.com shows the same card as civitai.red.',
+      labels: { confirm: 'Use the same card on both sites', cancel: 'Keep it' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => setComContent(null, null),
     });
 
   const draftButton = (
@@ -397,11 +414,12 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
   );
 }
 
-type CardState = 'custom' | 'same' | 'redOnly';
+type CardState = 'custom' | 'same' | 'redOnly' | 'notListed';
 const cardBadges: Record<CardState, { label: string; color: string }> = {
   custom: { label: 'Custom for this site', color: 'green' },
   same: { label: 'Same on both sites', color: 'gray' },
   redOnly: { label: 'Only on civitai.red', color: 'yellow' },
+  notListed: { label: COM_COVER_NOT_LISTED_LABEL, color: 'yellow' },
 };
 
 function CardBadge({ state }: { state: CardState }) {

@@ -11,15 +11,10 @@ import {
   sourceImageKey,
   useRecentSourceImagesStore,
 } from '~/store/recent-source-images.store';
-import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
 import { almostEqual } from '~/utils/number-helpers';
+import { refreshBlobUrls } from './refresh-blob-urls';
 
 type AspectRatio = `${number}:${number}`;
-
-type BlobRefreshResult =
-  | { blobId: string; status: 'refreshed'; url: string }
-  | { blobId: string; status: 'gone' }
-  | { blobId: string; status: 'unknown' };
 
 export type RecentImagesPickerProps = {
   /** How many more images the input will accept. */
@@ -34,35 +29,13 @@ export type RecentImagesPickerProps = {
   onSelect: (images: RecentSourceImage[]) => void;
 };
 
-/**
- * Presigned URLs expire, so refresh the stale ones before showing them. A blob the
- * orchestrator reports as gone is dropped; anything else (offline, 5xx, blocked
- * request) leaves the entry alone — a failed refresh is not evidence it's gone.
- */
+/** Presigned URLs expire, so refresh the stale ones before showing them, dropping any gone. */
 async function refreshExpired(images: RecentSourceImage[]) {
-  const urlByBlobId = new Map<string, string>();
-  for (const img of images) {
-    const blobId = refreshableBlobId(img.url);
-    if (blobId) urlByBlobId.set(blobId, img.url);
-  }
-  if (!urlByBlobId.size) return;
-
-  const response = await fetch('/api/orchestrator/refreshBlobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ blobIds: [...urlByBlobId.keys()] }),
-  });
-  if (!response.ok) return;
-
-  const { results } = (await response.json()) as { results?: BlobRefreshResult[] };
-  if (!Array.isArray(results)) return;
-
+  const settled = await refreshBlobUrls(images.map((img) => img.url));
   const gone: string[] = [];
-  for (const result of results) {
-    const url = urlByBlobId.get(result.blobId);
-    if (!url) continue;
+  for (const [url, result] of settled) {
     if (result.status === 'refreshed') recentSourceImagesStore.replaceUrl(url, result.url);
-    else if (result.status === 'gone') gone.push(url);
+    else gone.push(url);
   }
   recentSourceImagesStore.forget(gone);
 }
@@ -287,6 +260,7 @@ export function RecentImagesButton(props: RecentImagesPickerProps) {
       size="xs"
       c="blue"
       className="flex cursor-pointer items-center gap-1 whitespace-nowrap border-0 bg-transparent p-0"
+      data-tap-area
       onClick={() => dialogStore.trigger({ component: RecentImagesPicker, props })}
     >
       <IconClockHour9 size={12} />

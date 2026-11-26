@@ -62,8 +62,13 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
+const { mockPurgeCache } = vi.hoisted(() => ({ mockPurgeCache: vi.fn() }));
+vi.mock('~/server/cloudflare/client', () => ({ purgeCache: mockPurgeCache }));
 
-import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
+import {
+  bustPublicModelResponseCache,
+  purgePublicModelShowcaseEdgeCache,
+} from '~/server/services/model-version.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -76,8 +81,8 @@ const mockDbWrite = dbMock.dbWrite;
 const mockRedisDel = redisMock.redis.del;
 
 const keysFor = (id: number) => [
-  `packed:caches:public-model-response:${id}:${allBrowsingLevelsFlag}`,
-  `packed:caches:public-model-response:${id}:${sfwBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${allBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${sfwBrowsingLevelsFlag}`,
 ];
 
 beforeEach(() => {
@@ -98,10 +103,6 @@ describe('bustPublicModelResponseCache', () => {
     expect(mockRedisDel).toHaveBeenCalledWith([...keysFor(1), ...keysFor(2)]);
   });
 
-  // NB: the IS_DATAPACKET gate (PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) is captured
-  // ONCE at module load, so the disabled-path no-op isn't runtime-toggleable here
-  // — it's covered by code review (env.IS_DATAPACKET=true on Datapacket only).
-
   it('is a no-op for an empty id array (no redis call)', async () => {
     await bustPublicModelResponseCache([]);
     expect(mockRedisDel).not.toHaveBeenCalled();
@@ -110,5 +111,17 @@ describe('bustPublicModelResponseCache', () => {
   it('fails open: swallows a Redis error and does not throw into the mutation path', async () => {
     mockRedisDel.mockRejectedValueOnce(new Error('redis down'));
     await expect(bustPublicModelResponseCache(123)).resolves.toBeUndefined();
+  });
+});
+
+describe('purgePublicModelShowcaseEdgeCache', () => {
+  it('drops the origin model response before purging the edge, so the edge cannot refill from it', async () => {
+    mockDbRead.modelFileHash.findMany.mockResolvedValue([] as never);
+    await purgePublicModelShowcaseEdgeCache(123, [10]);
+    expect(mockRedisDel).toHaveBeenCalledWith(keysFor(123));
+    expect(mockPurgeCache).toHaveBeenCalled();
+    expect(mockRedisDel.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPurgeCache.mock.invocationCallOrder[0]
+    );
   });
 });

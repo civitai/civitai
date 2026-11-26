@@ -53,6 +53,7 @@ vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: h.sysRedis,
   withSysReadDeadline: <T>(p: Promise<T>) => p, // transparent in tests (matches rate-limiting.test.ts)
+  withRevocationReadBreaker: <T>(p: Promise<T>) => p,
 }));
 // session-invalidation marks TOKEN_STATE via the atomic eval helper (hSetMultiWithTTL); the
 // fake sysRedis above has no `eval`, so stub the helper to write straight to the in-memory hash.
@@ -94,7 +95,6 @@ vi.mock('~/server/auth/session-client', () => ({
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => {} } }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: () => {} }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => {} }));
-vi.mock('~/server/common/enums', () => ({ SignalMessages: { SessionRefresh: 'session:refresh' } }));
 // The global unit setup (src/__tests__/setup.ts) mocks session-invalidation to a stub; we need the REAL
 // module here to exercise the actual ban→revoke chain against our in-memory sysRedis.
 vi.unmock('~/server/auth/session-invalidation');

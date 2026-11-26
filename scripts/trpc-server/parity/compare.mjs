@@ -8,6 +8,7 @@
  *   - headers, as a case-insensitive multiset, ignoring only Date, Connection and Keep-Alive
  *   - Set-Cookie: cookie names and attributes; Max-Age/Expires within a tolerance; never values
  *   - body: exact bytes
+ *   - a case's `expectStatus` / `expectBody` / `expectHeaders`, required on BOTH sides
  *
  * Shared state is reset between the two sends of a case (Redis FLUSHALL), so a cache write or a
  * rate-limit counter left by the first server cannot change the second server's answer.
@@ -15,11 +16,12 @@
  * Usage:
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
  *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json
- *     [--cases trpc|image-delivery|beacons] [--route-counter]
+ *     [--cases trpc|image-delivery|beacons|api] [--route-counter]
  *     [--tracker <url> --tracker-a-ip <ip> --tracker-b-ip <ip>]
  *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
- * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery` or `beacons`. A case
+ * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery`, `beacons` or
+ * `api` (the standalone server's `api` profile: `/api/v1/**` and `/api/auth/**`). A case
  * with `warm: true` is sent once more to the same server, unmeasured, right before its measured
  * send (after the Redis reset), so the measured request finds what the first one cached.
  *
@@ -49,7 +51,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
+import { buildApiCases, buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
 
 const IGNORED_HEADERS = new Set(['date', 'connection', 'keep-alive']);
 const COOKIE_TIME_TOLERANCE_S = 30;
@@ -92,7 +94,8 @@ const env = Object.fromEntries(
 if (!env.NEXTAUTH_SECRET || !env.WEBHOOK_TOKEN)
   fail2('env file has no NEXTAUTH_SECRET/WEBHOOK_TOKEN');
 
-// A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it.
+// A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it. Both targets must run with
+// IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production: nothing else reads this cookie.
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64url');
@@ -293,6 +296,17 @@ function compare(c, ra, rb) {
         parts.headers.push(`${side} lacks required ${name}: ${value}`);
     }
   }
+  // Likewise a case may pin the status and exact body on BOTH sides, for an answer where both
+  // servers agreeing on the wrong value (e.g. both 503) must not pass.
+  for (const [side, r] of [
+    ['A', ra],
+    ['B', rb],
+  ]) {
+    if (c.expectStatus !== undefined && r.status !== c.expectStatus)
+      parts.status.push(`${side} answered ${r.status}, required ${c.expectStatus}`);
+    if (c.expectBody !== undefined && !r.body.equals(Buffer.from(c.expectBody)))
+      parts.body.push(`${side} body ${snippet(r.body)}, required ${c.expectBody}`);
+  }
   return parts;
 }
 
@@ -390,6 +404,7 @@ const suites = {
   trpc: () => buildCases({ sessionCookie }),
   'image-delivery': () => buildImageDeliveryCases({ webhookToken: env.WEBHOOK_TOKEN }),
   beacons: () => buildBeaconCases({ sessionCookie }),
+  api: () => buildApiCases({ sessionCookie }),
 };
 if (!suites[args.cases]) fail2(`--cases ${args.cases}: expected one of ${Object.keys(suites)}`);
 const cases = suites[args.cases]();

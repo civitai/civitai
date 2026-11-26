@@ -50,10 +50,6 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 
 const WIDE: [number, number] = [1440, 900];
 
-// Anonymous viewer, so the `⋮` menu and its modals never mount — nothing here is
-// about them, and each is a portal that would sit beside the viewer's own portal.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
 // no-wholesale-module-mock): a hand-written factory silently breaks every importer
 // the day the real module grows an export it omits — and in this project that
@@ -153,8 +149,10 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     installCount: 4213,
+    openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     betaMessage: null,
     forkable: false,
     forkOf: null,

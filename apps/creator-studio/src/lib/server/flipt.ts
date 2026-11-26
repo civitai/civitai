@@ -14,10 +14,7 @@ export function getFlipt(): FliptFeatureFlags {
   if (!g.flipt) {
     g.flipt = createFliptClient({
       onInitError: (error) => {
-        // logToAxiom rejects when Axiom ingest is degraded; telemetry must not fail the caller.
-        getLogger()
-          .logToAxiom({ name: 'init-flipt-error', error: safeError(error) })
-          .catch(() => undefined);
+        getLogger().logToAxiom({ name: 'init-flipt-error', error: safeError(error) });
       },
     });
   }

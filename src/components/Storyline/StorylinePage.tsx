@@ -146,7 +146,7 @@ export function StorylinePage({ id }: { id: number }) {
   );
 }
 
-function StorylineHeader({
+export function StorylineHeader({
   storyline,
   startLink,
   lastPostId,
@@ -165,7 +165,7 @@ function StorylineHeader({
         'flex flex-col gap-4 p-3.5 sm:p-5 md:flex-row md:items-end'
       )}
     >
-      <div className="flex min-w-0 flex-1 items-end gap-3.5">
+      <div className="flex min-w-0 flex-1 items-end gap-3.5 md:min-w-[50%]">
         <div className="mt-[-50px] w-[92px] shrink-0 sm:mt-[-80px] sm:w-[150px]">
           <StorylineThumb
             image={storyline.coverImage}
@@ -207,7 +207,7 @@ function StorylineHeader({
       </div>
 
       <div className="flex flex-col gap-2.5 md:items-end">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 md:justify-end">
           {startLink && (
             <Button
               component={Link}
@@ -224,7 +224,7 @@ function StorylineHeader({
               component={Link}
               href={storylineWriteChapterUrl(storyline.id)}
               size="lg"
-              className="grow basis-[140px] sm:grow-0 sm:basis-auto"
+              className="grow basis-full sm:grow-0 sm:basis-auto"
               leftSection={<IconPlus size={18} />}
             >
               Write chapter 1

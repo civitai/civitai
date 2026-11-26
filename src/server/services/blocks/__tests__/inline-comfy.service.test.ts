@@ -13,6 +13,7 @@ vi.mock('~/server/services/subscriptions.service', () => ({
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
+  checkInlineComfyGraph,
   collectInlineAuditText,
   collectInlineGraphStrings,
   INLINE_ALLOWED_AIR_SOURCES,
@@ -270,11 +271,11 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
   it('🔴 the revert did NOT narrow anything else — a non-nodepack resource is gated exactly as before', async () => {
     // The mirror of the test that guarded the flip. The failure it pins: a
     // revert that accidentally tightens (or loosens) the belt for the rest of
-    // `resources`. A well-formed, generatable civitai LoRA plus a huggingface
-    // weight must still be ACCEPTED, and a non-generatable one still REJECTED,
-    // with nodepacks out of the picture entirely.
+    // `resources`. A well-formed, generatable civitai LoRA must still be
+    // ACCEPTED, and a non-generatable one still REJECTED, with nodepacks out of
+    // the picture entirely.
     await expect(
-      assertViewerEntitledToInlineResources({ airs: [LORA_AIR, HF_AIR], user: VIEWER })
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
     ).resolves.toBeUndefined();
 
     vi.clearAllMocks();
@@ -338,13 +339,13 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
   });
 
   it('🔴 …and from an ALLOWLISTED source too, where NO sibling guard could mask it', async () => {
-    // `huggingface` IS allowlisted, so the source guard cannot reject this AIR:
+    // `civitai` IS allowlisted, so the source guard cannot reject this AIR:
     // the type guard is the only thing standing between an app and an arbitrary
     // container image. Remove it and this case does not merely change its error
     // — it stops throwing at all.
     await expect(
       assertViewerEntitledToInlineResources({
-        airs: ['urn:air:oci:image:huggingface:evil/comfy@v1'],
+        airs: ['urn:air:oci:image:civitai:118025@136251'],
         user: VIEWER,
       })
     ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
@@ -352,12 +353,12 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
 
   it('POSITIVE CONTROL — the same AIR with an ALLOWLISTED type is accepted', async () => {
     // Isolates the `type` token as the cause: same source, same `oci` ecosystem,
-    // same `evil/comfy@v1` id and version — only `image` → `lora` changes, and
-    // the rejection goes away. Without this, the case above is also satisfied by
-    // a guard that rejects every huggingface AIR for some unrelated reason.
+    // same id and version — only `image` → `lora` changes, and the rejection
+    // goes away. Without this, the case above is also satisfied by a guard that
+    // rejects every `oci` AIR for some unrelated reason.
     await expect(
       assertViewerEntitledToInlineResources({
-        airs: ['urn:air:oci:lora:huggingface:evil/comfy@v1'],
+        airs: ['urn:air:oci:lora:civitai:118025@136251'],
         user: VIEWER,
       })
     ).resolves.toBeUndefined();
@@ -367,16 +368,12 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     // The strict reader is a second, deliberately narrower copy of the AIR
     // grammar. Its failure direction is safe (false reject, never false accept),
     // but a reader so strict it rejects the platform's own live AIRs is useless.
-    // These are copied verbatim from `recipes/seamless-pano.recipe.ts` — note
-    // the `/`-and-`.`-bearing huggingface versions and the underscored
-    // `diffusion_model` / `text_encoders` types, all of which a naive
-    // `[a-z0-9]+@\d+` reader would reject.
+    // The recipes pin files by `+<fileId>`; the underscored
+    // `diffusion_model` / `text_encoders` types are spellings the orchestrator
+    // accepts and civitai's own type names do not use.
     const shipped = [
-      'urn:air:zimageturbo:diffusion_model:huggingface:Comfy-Org/z_image_turbo@main/split_files/diffusion_models/z_image_turbo_bf16.safetensors',
-      'urn:air:qwen:clip:huggingface:Comfy-Org/z_image_turbo@main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors',
-      'urn:air:flux1:vae:huggingface:black-forest-labs/FLUX.1-dev@main/ae.safetensors',
-      'urn:air:qwen:diffusion_model:huggingface:unsloth/Qwen-Image-2512-GGUF@main/qwen-image-2512-Q5_K_M.gguf',
-      'urn:air:flux2:text_encoders:huggingface:Comfy-Org/vae-text-encorder-for-flux-klein-9b@main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
+      'urn:air:zimageturbo:diffusion_model:civitai:2168935@2442439+2333412',
+      'urn:air:zimageturbo:text_encoders:civitai:2168935@2442440',
       'urn:air:zimageturbo:lora:civitai:118025@2702227',
       'urn:air:qwen:lora:civitai:118025@2702222',
       'urn:air:flux2:lora:civitai:118025@2702214',
@@ -388,7 +385,7 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
       assertViewerEntitledToInlineResources({ airs: shipped, user: VIEWER })
     ).resolves.toBeUndefined();
     expect(mockGetResourceData).toHaveBeenCalledWith(
-      [2702227, 2702222, 2702214],
+      [2442439, 2442440, 2702227, 2702222, 2702214],
       expect.anything()
     );
   });
@@ -448,16 +445,16 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     ).rejects.toThrow(/duplicate resource declared/);
   });
 
-  it('a huggingface-only manifest needs no civitai belt call (exempt by construction)', async () => {
+  it('rejects a Hugging Face resource, which carries no base model to gate', async () => {
     await expect(
       assertViewerEntitledToInlineResources({ airs: [HF_AIR], user: VIEWER })
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("resource AIR source 'huggingface' is not permitted in an inline workflow");
     expect(mockGetResourceData).not.toHaveBeenCalled();
   });
 
   it('POSITIVE CONTROL — a well-formed civitai AIR for a generatable resource passes', async () => {
     await expect(
-      assertViewerEntitledToInlineResources({ airs: [LORA_AIR, HF_AIR], user: VIEWER })
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
     ).resolves.toBeUndefined();
     expect(mockGetResourceData).toHaveBeenCalledWith([136251], expect.anything());
   });
@@ -532,7 +529,7 @@ describe('assertViewerEntitledToInlineResources — the silent fail-opens', () =
   });
 });
 
-describe('assertViewerEntitledToInlineResources — Private / epoch subscription', () => {
+describe('assertViewerEntitledToInlineResources — Private subscription', () => {
   it('rejects a Private resource for a viewer with no subscription', async () => {
     mockGetResourceData.mockResolvedValue([resourceRow({ availability: 'Private' })]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
@@ -549,14 +546,14 @@ describe('assertViewerEntitledToInlineResources — Private / epoch subscription
     ).resolves.toBeUndefined();
   });
 
-  it('an EPOCH resource takes the same subscription path', async () => {
+  it('an owned EPOCH resource needs no subscription', async () => {
     mockGetResourceData.mockResolvedValue([
       resourceRow({ epochDetails: { epochNumber: 3, isExpired: false } }),
     ]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
     await expect(
       assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
-    ).rejects.toThrow(/requires an active subscription/);
+    ).resolves.toBeUndefined();
   });
 
   it('an EXPIRED epoch is rejected even for a subscriber', async () => {
@@ -659,7 +656,7 @@ describe('INVARIANT GUARD (not a contract test) — allowlist membership', () =>
   });
 
   it('pins the exact AIR SOURCE allowlist', () => {
-    expect([...INLINE_ALLOWED_AIR_SOURCES].sort()).toEqual(['civitai', 'huggingface'].sort());
+    expect([...INLINE_ALLOWED_AIR_SOURCES].sort()).toEqual(['civitai']);
   });
 
   it('records the CURRENT nodepack membership — a state, not a rule', () => {
@@ -729,5 +726,141 @@ describe('inlineAirTypeRefusal — the refusal must not shadow a future allowlis
     const stranger = inlineAirTypeRefusal('image', 'urn:air:oci:image:ghcr:evil/comfy@v1');
     expect(stranger).toContain("resource AIR type 'image' is not permitted in an inline workflow");
     expect(stranger).not.toContain('nodepack resources are not permitted');
+  });
+});
+
+describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
+  const AIR = 'urn:air:sdxl:lora:civitai:101@202';
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const verdictFor = (class_type: string, inputs: Record<string, unknown>) =>
+    checkInlineComfyGraph({
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: AIR } },
+      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'a', string_b: 'b' } },
+      '3': { class_type, inputs },
+    });
+  const reasonFor = (class_type: string, inputs: Record<string, unknown>) => {
+    const verdict = verdictFor(class_type, inputs);
+    if (verdict.runnable) return null;
+    expect(verdict.snapshot.errorCode).toBe('inline-node-refused');
+    return verdict.snapshot.error;
+  };
+
+  const PATH = 'reads or writes a file path';
+  const LINKED = 'from another node instead of a literal value';
+  const LOCAL = 'names a local file';
+  const URL_REFUSED = 'a URL the host does not fetch';
+
+  const REFUSED: [string, Record<string, unknown>, string][] = [
+    ['VHS_LoadImagePath', { image: 'x' }, PATH],
+    ['LoadImagesFromDir', { limit: 1 }, PATH],
+    ['LoadImagesFromFolderKJ', { limit: 1 }, PATH],
+    ...[
+      'VHS_LoadAudio',
+      'LoadImageOutput',
+      'WebcamCapture',
+      'RecordAudio',
+      'ImageReceiver',
+      'LatentReceiver',
+      'Get Batch From History (mtb)',
+      'LoadText|pysssss',
+      'SaveText|pysssss',
+    ].map((name): [string, Record<string, unknown>, string] => [name, {}, PATH]),
+    ...['output_path', 'directory', 'folder', 'output_dir', 'outputDir', 'root', 'subdirs'].map(
+      (input): [string, Record<string, unknown>, string] => ['TextNode', { [input]: 'x' }, PATH]
+    ),
+    ['LoadImage', { image: ['2', 0] }, LINKED],
+    ['ImageFromUrl', { url: ['2', 0] }, LINKED],
+    ['FetchImage', { src: ['2', 0] }, LINKED],
+    ['DownloadMedia', { src: ['2', 0] }, LINKED],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: ['2', 0] }, LINKED],
+    // An array that is not a `[nodeId, slot]` link is a value, even in an input that may be linked.
+    [
+      'LoraLoader',
+      { model: [{ $ref: '$arguments', path: 'm' }], clip: ['1', 1], lora_name: AIR },
+      'as an object',
+    ],
+    ['LoraLoader', { model: ['1', 0, 'x'], clip: ['1', 1], lora_name: AIR }, 'as an object'],
+    ['CreateHookLora', { lora_name: ['2', 0], strength_model: 1 }, LINKED],
+    ['LoadImage', { image: 'x.png' }, LOCAL],
+    ['LoadImage', { image: '../x.png' }, LOCAL],
+    ['VHS_LoadVideo', { video: 'clip.mp4' }, LOCAL],
+    ['LoadLatent', { latent: 'a.latent' }, LOCAL],
+    ['LoadImage', { image: 'http://cdn.example.com/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'https://127.0.0.1/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'https://localhost/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'https://cdn.example.com:8443/x.png' }, URL_REFUSED],
+    ['LoadImage', { image: 'file:///x.png' }, URL_REFUSED],
+    ...[
+      'https://localhost./x.png',
+      'https://cdn.internal./x.png',
+      'https://cdn.local/x.png',
+      'https://kubernetes.default.svc/x.png',
+      'https://u:p@cdn.example.com/x.png',
+      'https://cdn/x.png',
+      'https://cdn.example.com/%E0%A4%A',
+      'https://cdn.example.com/..%2fx.png',
+      'https://2130706433/x.png',
+      'https://0x7f.1/x.png',
+      'https://cdn.example.com\\x.png',
+    ].map((image): [string, Record<string, unknown>, string] => [
+      'LoadImage',
+      { image },
+      URL_REFUSED,
+    ]),
+    ['LoadImage', { image: 'abc [output]' }, LOCAL],
+    ['LoadImage', { image: 'abc' }, LOCAL],
+    ['LoadImage', { image: KEY }, LOCAL],
+    ['LoadImage', { image: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
+    ['VHS_LoadAudioUpload', { audio: 'clip' }, LOCAL],
+    ['CustomLoader', { source: `0001_${KEY.replace(/-/g, '')}` }, LOCAL],
+    ['CustomLoader', { source: KEY }, LOCAL],
+    ['PreviewBridge', { images: ['2', 0], image: 'x' }, PATH],
+    ['PreviewBridgeLatent', {}, PATH],
+    ['LoraLoader', { model: ['1', 0], lora_name: AIR, my_strength: ['2', 0] }, LINKED],
+    ['LoraLoader', { model: ['1', 0], lora_name: AIR, prev_hooks: ['2', 0] }, LINKED],
+    ...['CreateHookLoraModelOnly', 'CreateHookModelAsLora', 'CreateHookModelAsLoraModelOnly'].map(
+      (name): [string, Record<string, unknown>, string] => [name, { ckpt_name: ['2', 0] }, LINKED]
+    ),
+    [
+      'Load3D',
+      { model_file: 'https://cdn.example.com/a.glb', image: { image: 'a' } },
+      'as an object',
+    ],
+  ];
+  it.each(REFUSED)('refuses %s %j', (classType, inputs, reason) => {
+    expect(reasonFor(classType, inputs)).toContain(reason);
+  });
+
+  it.each([
+    ['LoadImage', { image: `https://image.civitai.com/x/${KEY}/original=true`, upload: 'image' }],
+    ['LoadImageMask', { image: AIR, channel: 'alpha' }],
+    ['UNETLoader', { unet_name: AIR, weight_dtype: 'fp8_e4m3fn' }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] }],
+    ['LoraLoaderModelOnly', { model: ['1', 0], lora_name: AIR, strength_model: 1 }],
+    ['LoraLoaderBypass', { model: ['1', 0], clip: ['1', 1], lora_name: AIR }],
+    ['LoraLoaderBypassModelOnly', { model: ['1', 0], lora_name: AIR }],
+    ['LoraModelLoader', { model: ['1', 0], lora: ['1', 0], strength_model: 1 }],
+    ['HypernetworkLoader', { model: ['1', 0], hypernetwork_name: AIR, strength: 1 }],
+    ['DiffControlNetLoader', { model: ['1', 0], control_net_name: AIR }],
+    ['CreateHookLora', { lora_name: AIR, prev_hooks: ['2', 0], strength_clip: 1 }],
+    ['CLIPTextEncode', { text: 'a cat at x.png', clip: ['1', 1] }],
+    ['ImageStitch', { image1: ['2', 0], direction: 'right', match_image_size: true }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength: ['2', 0] }],
+    ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_clip: ['2', 0] }],
+    ['LoadImage', { image: `https://image.civitai.com/x/${KEY}/a.png`, upload: null, keep: true }],
+  ])('runs %s %j', (classType, inputs) => {
+    expect(verdictFor(classType, inputs).runnable).toBe(true);
+  });
+
+  it('names every refused node up to five, then counts the rest', () => {
+    const graph: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {};
+    for (let i = 1; i <= 7; i++) {
+      graph[String(i)] = { class_type: 'LoadImage', inputs: { image: `${i}.png` } };
+    }
+    const verdict = checkInlineComfyGraph(graph);
+    const error = verdict.runnable ? '' : verdict.snapshot.error;
+    expect(error).toContain('node 5 (LoadImage)');
+    expect(error).not.toContain('node 6 (LoadImage)');
+    expect(error).toContain(' and 2 more');
   });
 });

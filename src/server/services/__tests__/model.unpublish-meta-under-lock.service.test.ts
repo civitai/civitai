@@ -61,6 +61,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(async () => mockDbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
@@ -75,7 +80,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -139,7 +143,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
-import unpublishAllModels from '~/pages/api/admin/unpublish-all-models';
+import unpublishAllModels from '~/server/api-routes/admin/unpublish-all-models';
 import { unpublishModelById } from '~/server/services/model.service';
 import { unpublishForModelRules } from '~/server/services/text-scan/actions/model-rules';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -305,6 +309,17 @@ describe('unpublishModelById and story sparks', () => {
     mockDbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
     await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
     expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({ postIds: [5, 6] });
+  });
+
+  it("recounts the reviews written from the owner's posts on the model", async () => {
+    setupModel({ locked: { status: ModelStatus.Published, meta: {} } });
+    mockDbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'unpublish', postIds: [5, 6] })
+    );
   });
 });
 

@@ -12,6 +12,7 @@ import {
   takedownConsequenceCopy,
   takedownSubmitLabel,
   takedownSuccessMessage,
+  withLiveNote,
 } from '~/components/Apps/appListingDetailModActions';
 import {
   ALL_LISTING_MOD_ACTIONS,
@@ -683,5 +684,24 @@ describe('appListingDetailModActions — purge is unreachable from the detail su
     // `purge` needs `status === 'draft'`; this surface only ever produces 'approved' or null.
     expect(detailListingStatus({ preview: false })).toBe('approved');
     expect(detailListingStatus({ preview: true })).toBeNull();
+  });
+});
+
+describe('withLiveNote', () => {
+  it("appends the server's liveNote when the takedown result carries one", () => {
+    expect(
+      withLiveNote('Listing hidden.', {
+        appListingId: 'x',
+        liveNote: "some-app keeps serving: it is the static server's readiness app",
+      })
+    ).toBe("Listing hidden. some-app keeps serving: it is the static server's readiness app.");
+  });
+
+  it('leaves the message alone otherwise', () => {
+    expect(withLiveNote('Listing hidden.', { appListingId: 'x', status: 'removed' })).toBe(
+      'Listing hidden.'
+    );
+    expect(withLiveNote('Listing hidden.', undefined)).toBe('Listing hidden.');
+    expect(withLiveNote('Listing hidden.', { liveNote: 7 })).toBe('Listing hidden.');
   });
 });

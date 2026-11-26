@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /** Which models' file hashes the takedown-hash ledger offers, on the real SQL. */
@@ -34,7 +34,6 @@ beforeEach(async () => {
   await pg.exec(`
     INSERT INTO "Model" (id, status, "deletedAt", meta) VALUES
       (1, 'UnpublishedViolation', NULL, '{}'),
-      (2, 'UnpublishedViolation', NULL, '{"removedWithOwner": true}'),
       (3, 'Published', now(), NULL),
       (4, 'Published', NULL, NULL);
     INSERT INTO "ModelVersion" (id, "modelId") SELECT id * 10, id FROM "Model";
@@ -44,8 +43,11 @@ beforeEach(async () => {
   `);
 });
 
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
+
 describe('getTakedownHashCandidates', () => {
-  it('offers taken-down and deleted models, not one kept when its owner was wiped', async () => {
+  it('offers taken-down and deleted models, not live ones', async () => {
     const rows = await getTakedownHashCandidates();
     expect(rows.map((r) => r.modelId).sort()).toEqual([1, 3]);
   });

@@ -60,18 +60,6 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   values the Prisma reads returned, runs in CI on the same Postgres service, and also fails if any
   statement names a relation declared as a view.
 
-  `hot-reads-4.db.ts` holds the model page's comment reads: the visible top-level comment count
-  (`comment.getVisibleCountByModel`) and the first page of `comment.getAll` (the unpinned list and the
-  pinned block, each with its author, reactions and model name in one statement where Prisma issues
-  one query per relation). Both apply one viewer filter (hidden and blocked users, ToS violations
-  outside the moderator view, the hidden view). They replaced the Prisma reads (formerly behind a
-  server Flipt flag), each on the database the Prisma read used, and read base tables only. A cursor
-  page or another sort of the unpinned list still reads through Prisma.
-  `<civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts` pins the counts and
-  the pinned block to the values the Prisma reads returned, compares the unpinned list with the Prisma
-  read that still serves the other pages, and runs on the same Postgres service with the same
-  no-view check.
-
   `hot-reads-5.db.ts` holds high-volume single-row lookups (KeyValue configs, a post's linked
   Model3D, dismissed announcement ids, a post's collaborators, a home block, the unclaimed prize
   count, a model's version ids, a user's model reviews, the download path's model version, the image
@@ -104,6 +92,38 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   base tables only. Parity is pinned by
   `<civitai>/src/server/services/__tests__/hot-reads-8.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
+
+  `hot-reads-9.db.ts` holds the user profile read (the user with its profile picture, cosmetics,
+  links, rank, profile and the profile's two cover images with their tags) as ONE statement, where
+  the Prisma read issues one per relation. It is served behind the default-off server Flipt flag
+  `kysely-hot-reads-9`. It reads base tables plus "UserRank" (marked `/// @view` but a table) and
+  the "TagsOnImageDetails" projection view, whose base-table scan the parity suite EXPLAINs. Parity
+  is pinned by `<civitai>/src/server/services/__tests__/hot-reads-9.kysely-parity.test.ts`, on the
+  same Postgres service.
+
+  `hot-reads-10.db.ts` holds the collection read (the collection with its cover image and that
+  image's tags, its tags, and its owner with their profile picture and equipped cosmetics) as ONE
+  statement, where the Prisma read issues one per relation. It is served behind the default-off
+  server Flipt flag `kysely-hot-reads-10`. It reads base tables plus the "TagsOnImageDetails"
+  projection view, whose base-table scan the parity suite EXPLAINs. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-10.kysely-parity.test.ts`, on the same
+  Postgres service.
+
+  `hot-reads-11.db.ts` holds the four per-page reads of `getModelsWithVersions` (the public
+  /api/v1/models list and /api/v1/models/:id: the versions' linked components, the model and
+  version metrics, and the versions' `meta`) as ONE statement of four uncorrelated `json_agg`
+  subqueries, where Prisma issues four. It is served behind the default-off server Flipt flag
+  `kysely-hot-reads-11`. It reads base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-11.kysely-parity.test.ts`, on the same
+  Postgres service.
+
+  `hot-reads-12.db.ts` holds `userWithCosmeticsSelect` (a user with its profile picture and
+  equipped cosmetics) as ONE statement, where Prisma issues one per relation: a list of users by
+  id (the users of a `resourceReview.getInfinite` page) and `model.getSimple`'s model with its
+  owner. It is served behind the default-off server Flipt flag `kysely-hot-reads-12`. It reads base
+  tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-12.kysely-parity.test.ts`, on the same
+  Postgres service.
 
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The

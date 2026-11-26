@@ -8,11 +8,12 @@ import {
   NumberInput,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBox, IconHistory, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
@@ -20,7 +21,12 @@ import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
-import { listingStatusChip } from '~/components/Apps/appListingModerationView';
+import {
+  listingStatusChip,
+  moderationHistoryTarget,
+} from '~/components/Apps/appListingModerationView';
+import { openListingModerationHistory } from '~/components/Apps/ListingModerationHistoryModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
@@ -54,6 +60,8 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
+import { showOfflineCutFailureWarning } from '~/components/Apps/offlineCutNotice';
 
 /**
  * /apps/review — the unified MODERATOR listings management table (W13 post-approval
@@ -148,6 +156,7 @@ export function AppListingsModerationTable({
   openOffsiteReview: (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => void;
 }) {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
@@ -352,6 +361,10 @@ export function AppListingsModerationTable({
             // unit tier can reach — inline here, nothing could test them (see the 🔴 note on
             // `listingModActionsForRow`).
             const actions = listingModActionsForRow(row);
+            const historyTarget = moderationHistoryTarget(currentUser, {
+              appListingId: row.id,
+              slug: row.slug,
+            });
             return (
               <Fragment key={row.id}>
                 <Table.Tr data-testid={`apps-mod-listing-row-${row.slug}`}>
@@ -401,6 +414,11 @@ export function AppListingsModerationTable({
                         “{row.betaMessage}”
                       </Text>
                     )}
+                    <ModListingOfficialSwitch
+                      appListingId={row.id}
+                      slug={row.slug}
+                      isOfficial={row.isOfficial}
+                    />
                   </Table.Td>
                   <Table.Td>
                     <Text size="xs">
@@ -412,7 +430,24 @@ export function AppListingsModerationTable({
                       // testid so the display-label assertion can select this badge
                       // STRUCTURALLY — a text search for a category word would also
                       // match the app's name or a status chip.
-                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
+                      <Badge
+                        size="sm"
+                        variant="light"
+                        data-testid="apps-listing-mod-category"
+                        title={marketplaceCategoryLabel(row.category)}
+                        // The category column is narrow by design; the label WRAPS onto a
+                        // second line rather than being cut to "GENER…" by the badge's
+                        // ellipsis.
+                        styles={{
+                          root: { height: 'auto', maxWidth: '100%' },
+                          label: {
+                            whiteSpace: 'normal',
+                            overflow: 'visible',
+                            textOverflow: 'clip',
+                            lineHeight: 1.3,
+                          },
+                        }}
+                      >
                         {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
@@ -472,6 +507,17 @@ export function AppListingsModerationTable({
                             {listingModActionLabel(action)}
                           </Button>
                         ))}
+                        {historyTarget && (
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            leftSection={<IconHistory size={12} />}
+                            onClick={() => openListingModerationHistory(historyTarget)}
+                            data-testid={`apps-mod-history-${row.slug}`}
+                          >
+                            History
+                          </Button>
+                        )}
                       </Group>
                     )}
                   </Table.Td>
@@ -623,6 +669,49 @@ export function AppListingsModerationTable({
 }
 
 /**
+ * Moderator toggle for the Official flag. Shows the mutation result instead of invalidating the
+ * table, because `invalidate` resets paging.
+ */
+function ModListingOfficialSwitch({
+  appListingId,
+  slug,
+  isOfficial,
+}: {
+  appListingId: string;
+  slug: string;
+  isOfficial: boolean;
+}) {
+  // The value THIS moderator last wrote (the server's confirmed result), or `null` before any
+  // write, when the row prop is authoritative. The table reads from a replica, so a refetch after
+  // a write can deliver a pre-write value — including after an on→off pair, where the prop can
+  // briefly read `false`, then a lagged `true`. So once written, the confirmed value wins for the
+  // life of this row; a reload shows the stored value.
+  const [written, setWritten] = useState<boolean | null>(null);
+  const checked = written ?? isOfficial;
+  const mutation = trpc.appListings.setListingOfficial.useMutation({
+    onSuccess: (result: { isOfficial: boolean }) => {
+      setWritten(result.isOfficial);
+      showSuccessNotification({
+        message: result.isOfficial ? 'Marked as Official.' : 'Official mark removed.',
+      });
+    },
+    onError: (e: { message: string }) =>
+      showErrorNotification({ title: 'Official update failed', error: new Error(e.message) }),
+  });
+  return (
+    <Switch
+      mt={4}
+      size="xs"
+      label="Official"
+      checked={checked}
+      disabled={mutation.isPending}
+      onChange={(e) => mutation.mutate({ appListingId, isOfficial: e.currentTarget.checked })}
+      data-testid={`apps-mod-official-${slug}`}
+    />
+  );
+}
+
+/**
  * The reason/confirm modal for a single lifecycle action (reset-to-pending / hide /
  * relist / claim / purge). Every action requires a reason (≥{@link
  * OFFSITE_MOD_REASON_MIN} chars, audited); `claim` also needs a numeric target
@@ -667,11 +756,17 @@ function ListingModActionModal({
   });
   // On-site reset routes through the block-review re-queue proc (#3165).
   const resetOnsiteMut = trpc.appListings.resetOnsiteListingToPending.useMutation({
-    onSuccess: () => afterSuccess('Listing reset to pending.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing reset to pending.', result)),
     onError: onError('Reset failed'),
   });
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: () => afterSuccess('Listing hidden.'),
+    onSuccess: (result, vars) => {
+      showOfflineCutFailureWarning(result, {
+        appListingId: vars.appListingId,
+        slug: pending?.row.id === vars.appListingId ? pending.row.slug : '',
+      });
+      return afterSuccess(withLiveNote('Listing hidden.', result));
+    },
     onError: onError('Hide failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

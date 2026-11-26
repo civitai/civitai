@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import * as z from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { dbWrite } from '~/server/db/client';
 import { createReport, findReportToFoldInto } from '~/server/services/report.service';
 import { ReportReason } from '~/shared/utils/prisma/enums';
@@ -43,7 +44,7 @@ type GfReason = keyof typeof GF_REASONS;
 export const gameFrameReportSchema = z
   .object({
     gfReportId: z.string().regex(/^gr_[0-9A-HJKMNP-TV-Z]{26}$/),
-    at: z.iso.datetime(),
+    at: isoDatetimeCompat(),
     game: gameFrameGameSchema,
     reporter: z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('user'), userId: z.number().int().positive() }),
@@ -88,7 +89,7 @@ export const gameFrameReportSchema = z
   });
 export type GameFrameReportInput = z.infer<typeof gameFrameReportSchema>;
 
-export const gameFrameStateSchema = gameFrameGameSchema.extend({ at: z.iso.datetime() });
+export const gameFrameStateSchema = gameFrameGameSchema.extend({ at: isoDatetimeCompat() });
 export type GameFrameStateInput = z.infer<typeof gameFrameStateSchema>;
 
 export type FileGameFrameReportResult =

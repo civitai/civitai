@@ -104,3 +104,49 @@ describe('getResourceData applies the members gate', () => {
     expect(await canGenerate(FREE)).toBe(true);
   });
 });
+
+describe('getResourceData — boost-to-load', () => {
+  const resource = async (
+    user: Record<string, unknown>,
+    acceptBoostRequired: boolean,
+    data = row()
+  ) => {
+    mockFetch.mockResolvedValue([data]);
+    const [r] = await getResourceData([VERSION_ID], {
+      user,
+      generation: true,
+      acceptBoostRequired,
+    });
+    return { canGenerate: r?.canGenerate, boostRequired: r?.boostRequired };
+  };
+
+  beforeEach(() => {
+    mockIsFlipt.mockImplementation(
+      async (flag: string) =>
+        flag === 'generation-coverage-next' || flag === 'generation-loading-boost-for-free'
+    );
+  });
+
+  it('admits a free user who opted in, marked as needing the boost', async () => {
+    expect(await resource(FREE, true)).toEqual({ canGenerate: true, boostRequired: true });
+  });
+
+  it('refuses the same user without the opt-in', async () => {
+    expect(await resource(FREE, false)).toEqual({ canGenerate: false, boostRequired: undefined });
+  });
+
+  it('never marks what is admitted without the boost', async () => {
+    expect(await resource(MEMBER, true)).toEqual({ canGenerate: true, boostRequired: undefined });
+    expect(await resource(FREE, true, row({ generatorLoaded: true }))).toEqual({
+      canGenerate: true,
+      boostRequired: undefined,
+    });
+  });
+
+  it('never marks a version refused for another reason', async () => {
+    expect(await resource(FREE, true, row({ status: 'Deleted' }))).toMatchObject({
+      canGenerate: false,
+      boostRequired: undefined,
+    });
+  });
+});

@@ -54,18 +54,18 @@ import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Mod
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
 import { isAppealableModel3D } from '~/shared/utils/appeal';
+import { isInlineViewableModel3DFile } from '~/shared/orchestrator/model3d-output';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
 import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
-import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -91,11 +91,6 @@ const Model3DVariantViewer = dynamic(
       </Center>
     ),
   }
-);
-
-// Lazy-loaded review modal — only imported when the user clicks "Write a review".
-const Model3DReviewModal = dynamic<Model3DReviewModalProps>(
-  () => import('~/components/Model3D/Reviews/Model3DReviewModal')
 );
 
 const querySchema = z.object({
@@ -245,12 +240,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const openReviewModal = () => {
     if (!model3d) return;
-    dialogStore.trigger({
-      component: Model3DReviewModal,
-      props: {
-        model3dId: id,
-        model3dName: model3d.name,
-      },
+    openDialog(() => import('~/components/Model3D/Reviews/Model3DReviewModal'), {
+      model3dId: id,
+      model3dName: model3d.name,
     });
   };
 
@@ -309,14 +301,10 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     ).toFixed(1)} MB${f.isPrimary ? ' · primary' : ''}`,
   }));
 
-  // Viewable variants for the inline three.js viewer — GLB only (GLTFLoader
-  // doesn't speak FBX) and armature-only meshes filtered out (they'd
-  // render as empty space with no visible geometry). Embedded animations
-  // on walking/running play automatically via the viewer's AnimationMixer.
+  // Embedded animations on walking/running play automatically via the
+  // viewer's AnimationMixer.
   const viewableVariants: Model3DViewableVariant[] = files
-    .filter(
-      (f) => f.format.toLowerCase() === 'glb' && !(f.variant ?? 'primary').endsWith('-armature')
-    )
+    .filter(isInlineViewableModel3DFile)
     .map((f) => ({
       key: getFileKey(f),
       label: formatVariantLabel(f.variant),

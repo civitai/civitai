@@ -1,9 +1,12 @@
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+// After `makeTrpcProxy`: this module imports `~/utils/trpc`, whose mock factory reads it.
+import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -32,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
   errorMode: false,
+  // Per-test overrides on the one report row (status, listing status).
+  reportOver: {} as Record<string, unknown>,
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -67,13 +72,18 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 // link ("does not provide an export named X") and the whole file collects 0 tests.
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
+  // `onSuccess` gets `(data, variables)` like react-query's: the delist success handler reads
+  // which listing it took down from them.
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (data: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
-        else void opts?.onSuccess?.();
+        else void opts?.onSuccess?.(undefined, vars);
       },
       mutateAsync: vi.fn(),
       isPending: false,
@@ -84,7 +94,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         'appListings.listListingReports': {
           useQuery: () => ({
-            data: { items: [REPORT], nextCursor: null },
+            data: { items: [{ ...REPORT, ...mocks.reportOver }], nextCursor: null },
             isLoading: false,
             isFetching: false,
             error: null,
@@ -117,19 +127,33 @@ beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.mutate.mockClear();
   mocks.errorMode = false;
+  mocks.reportOver = {};
 });
+
+// The /apps/review page is moderator-only, and each row's "History" entry point is drawn for a
+// moderator (`moderationHistoryTarget`). The shared harness mounts no session, so each render
+// gets a fixed moderator session and the real `useCurrentUser` reads it.
+const asModerator = (ui: ReactElement) => (
+  <FixedSessionProvider user={{ id: 1, username: 'mod', isModerator: true }}>
+    {ui}
+  </FixedSessionProvider>
+);
+async function renderAsModerator(ui: ReactElement) {
+  const result = await renderWithProviders(asModerator(ui));
+  return { ...result, rerender: (next: ReactElement) => result.rerender(asModerator(next)) };
+}
 
 describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () => {
   test('Relist shows the live counter + inline error, disables under the floor, then fires', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-relist-bad-app').click();
     // The gate UX now matches the reject paths.
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toBeDisabled();
 
     await page.getByTestId('apps-report-action-reason').fill('ab');
-    await expect.element(page.getByText('2/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Enter at least 3 characters.')).toBeInTheDocument();
     await expect.element(confirm).toBeDisabled();
     expect(mocks.mutate).not.toHaveBeenCalled();
@@ -144,9 +168,9 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   });
 
   test('Purge is destructive (red "Purge permanently"), counter-gated, then fires', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-purge-bad-app').click();
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toHaveTextContent('Purge permanently');
     await expect.element(confirm).toBeDisabled();
@@ -161,7 +185,7 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   });
 
   test('Claim is gated on BOTH a valid target and a ≥3 reason', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-claim-bad-app').click();
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toBeDisabled();
@@ -180,13 +204,48 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   });
 
   test('Resolve is an OPTIONAL note — enabled with no reason, no counter, fires resolveReport', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-resolve-bad-app').click();
     // No reason floor for a note → no counter, and the confirm is immediately enabled.
-    expect(page.getByText('0/3 characters minimum').elements()).toHaveLength(0);
+    expect(page.getByText('3+ characters', { exact: true }).elements()).toHaveLength(0);
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toBeEnabled();
     await confirm.click();
     expect(mocks.mutate).toHaveBeenCalledWith('resolve', { reportId: 'rep-1', note: undefined });
+  });
+});
+
+describe('🔴 a DISMISSED report offers no actions, and its count is not an alarm', () => {
+  test('dismissed + a LIVE listing: no Delist / Claim / Resolve / Dismiss — History only', async () => {
+    mocks.reportOver = {
+      status: 'dismissed',
+      appListing: { slug: 'bad-app', name: 'Bad App', kind: 'offsite', status: 'approved' },
+    };
+    renderAsModerator(<OffsiteReportsQueue />);
+    await expect.element(page.getByRole('button', { name: 'History' })).toBeInTheDocument();
+    for (const action of ['delist', 'claim', 'relist', 'purge', 'resolve', 'dismiss']) {
+      expect(page.getByTestId(`apps-report-${action}-bad-app`).elements()).toHaveLength(0);
+    }
+  });
+
+  test('POSITIVE CONTROL: the same listing with a PENDING report does offer Delist', async () => {
+    mocks.reportOver = {
+      status: 'pending',
+      appListing: { slug: 'bad-app', name: 'Bad App', kind: 'offsite', status: 'approved' },
+    };
+    renderAsModerator(<OffsiteReportsQueue />);
+    await expect.element(page.getByTestId('apps-report-delist-bad-app')).toBeInTheDocument();
+  });
+
+  test('the heading count is red only on the Pending view', async () => {
+    renderAsModerator(<OffsiteReportsQueue />);
+    const count = page.getByTestId('apps-reports-count');
+    await expect.element(count).toBeInTheDocument();
+    // Pending (the default view) with one report: the alarm colour.
+    expect(count.element().getAttribute('style') ?? '').toContain('red');
+    await page.getByText('Dismissed', { exact: true }).click();
+    await vi.waitFor(() =>
+      expect(count.element().getAttribute('style') ?? '').not.toContain('red')
+    );
   });
 });

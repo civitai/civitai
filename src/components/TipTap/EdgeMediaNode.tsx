@@ -13,18 +13,27 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
+import { parseImageAlign, parseImageWidth } from '~/shared/tiptap/image-width';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
+import {
+  ResizableImageFrame,
+  resizeAndKeepSelected,
+} from '~/components/RichTextEditor/ResizableImageFrame';
 
 type NodeOptions = {
   accepts: MediaType[];
   maxFileSize: number;
   inline?: boolean;
+  /** Drag handles on a selected image; only editors that show the image placement menu. */
+  resizable?: boolean;
 };
 
 interface SetMediaOptions {
   url: string;
   type: MediaType;
   filename?: string;
+  size?: string | null;
+  align?: string | null;
 }
 
 declare module '@tiptap/core' {
@@ -50,6 +59,7 @@ export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
     return {
       ...this.parent?.(),
       inline: false,
+      resizable: false,
       accepts: ['image'],
       maxFileSize: constants.richTextEditor.maxFileSize,
     };
@@ -134,9 +144,13 @@ const getUploadNotificationId = (url: string) => `upload-media-${url}`;
 function EdgeMediaEditComponent({
   node,
   ref,
+  selected,
+  editor,
+  extension,
+  getPos,
   updateAttributes,
 }: ReactNodeViewProps<HTMLDivElement>) {
-  const { url, type, filename } = node.attrs as SetMediaOptions;
+  const { url, type, filename, size, align } = node.attrs as SetMediaOptions;
   const { uploadToCF } = useCFImageUpload();
   const isObjectUrl = url?.startsWith('blob');
   const uploadingRef = useRef(false);
@@ -184,6 +198,15 @@ function EdgeMediaEditComponent({
       <div ref={ref as any} data-drag-handle>
         {isObjectUrl ? (
           <Loader type="dots" />
+        ) : type === 'image' ? (
+          <ResizableImageFrame
+            size={parseImageWidth(size)}
+            align={parseImageAlign(align)}
+            selected={selected && !!extension.options.resizable}
+            onResize={(next) => resizeAndKeepSelected({ editor, getPos, updateAttributes }, next)}
+          >
+            <EdgeMediaComponent url={url} type={type} filename={filename} />
+          </ResizableImageFrame>
         ) : (
           <EdgeMediaComponent url={url} type={type} filename={filename} />
         )}
@@ -217,11 +240,16 @@ export function EdgeMediaLayoutComponent({ node }: ReactNodeViewProps<HTMLDivEle
   );
 }
 
-export function EdgeMediaComponent({ url, type, filename }: SetMediaOptions) {
+export function EdgeMediaComponent({ url, type, filename, size, align }: SetMediaOptions) {
   const { url: src } = useEdgeUrl(url, { original: true });
   return type === 'image' ? (
     // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-    <img src={src} alt={filename} />
+    <img
+      src={src}
+      alt={filename}
+      data-width={parseImageWidth(size) ?? undefined}
+      data-align={parseImageAlign(align) ?? undefined}
+    />
   ) : type === 'video' ? (
     <video playsInline disablePictureInPicture controls preload="metadata">
       <source src={src?.replace('.mp4', '.webm')} type="video/webm" />

@@ -102,7 +102,7 @@ export const resetToDraftWithoutRequirements = createJob(
     // and cascade-deletes the model with its versions, files and training data, so a
     // model this sweep flips to Draft would arrive with its 30-day grace period
     // already spent and be destroyable on the next run. The Unpublished branch is
-    // bumped too: the backfill in src/pages/api/admin/temp/backfill-swept-trained-models.ts
+    // bumped too: the backfill in src/server/api-routes/admin/temp/backfill-swept-trained-models.ts
     // later flips those rows to Draft, and a stale clock carried forward lands in
     // exactly the same hole.
     //

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { APP_BLOCK_TAG_REFUSED_MESSAGE, isAppBlockTag } from '~/shared/utils/app-block-tags';
 
 export const workflowIdSchema = z.object({
   workflowId: z.string(),
@@ -18,6 +19,12 @@ export const workflowQuerySchema = z.object({
   fromDate: z.date().optional(),
   toDate: z.date().optional(),
   excludeFailed: z.boolean().optional(),
+});
+
+export type GeneratedImagesQuerySchema = z.input<typeof generatedImagesQuerySchema>;
+export const generatedImagesQuerySchema = workflowQuerySchema.extend({
+  /** Leave out workflows an App Block ran: the generator Queue, Feed and queue counter set it. */
+  excludeAppWorkflows: z.boolean().optional(),
 });
 
 export const workflowResourceSchema = z.object({
@@ -44,11 +51,17 @@ export const jsonPatchSchema = z.object({
 });
 
 export type TagsPatchSchema = z.infer<typeof tagsPatchSchema>;
-export const tagsPatchSchema = z.object({
-  workflowId: z.string(),
-  tag: z.string(),
-  op: z.enum(['add', 'remove']),
-});
+// Removing an app-block tag only narrows an app's access to the owner's workflow, so removal stays open.
+export const tagsPatchSchema = z
+  .object({
+    workflowId: z.string(),
+    tag: z.string(),
+    op: z.enum(['add', 'remove']),
+  })
+  .refine(({ tag, op }) => op !== 'add' || !isAppBlockTag(tag), {
+    message: APP_BLOCK_TAG_REFUSED_MESSAGE,
+    path: ['tag'],
+  });
 
 // The orchestrator charges for some top-level fields (`/allowMatureContent` is the yellow-Buzz
 // unlock, which must go through `updateWorkflow`'s guards), and it matches field names

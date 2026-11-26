@@ -31,7 +31,7 @@ const tagOf = vi.hoisted(() => (name: string) => {
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
   // Stands in for the prompt audit, which runs only on an image rated NSFW.
-  auditMetaData: vi.fn(() => ({ success: false, blockedFor: ['audit'] })),
+  auditPostImageMeta: vi.fn(() => ({ success: false, blockedFor: ['audit'] })),
   includesPoi: vi.fn(() => false),
   // Stands in for the checks gated on the image being NSFW.
   includesInappropriate: vi.fn((_: unknown, nsfw: boolean) => (nsfw ? 'minor' : false)),
@@ -97,7 +97,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { buildAndInsertScanTags, resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import {
-  auditMetaData,
+  auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
   includesPoi,
@@ -111,8 +111,21 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
+    );
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "userId" int,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus",
@@ -125,6 +138,10 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
 });
 
@@ -135,7 +152,7 @@ beforeEach(async () => {
     nsfw ? 'minor' : false
   );
   holder.holdRuleTag = '';
-  vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['audit'] } as never);
+  vi.mocked(auditPostImageMeta).mockReturnValue({ success: false, blockedFor: ['audit'] } as never);
   holder.tags.clear();
   await holder.db.exec(
     `DELETE FROM "Image"; INSERT INTO "Image" (id, ingestion) VALUES (${ID}, 'Pending')`
@@ -153,8 +170,6 @@ beforeEach(async () => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
       return [...holder.tags.entries()].map(([id, t]) => ({ id, ...t }));
-    if (text.includes('bannedAt'))
-      return [{ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1, ownerBanned: false }];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
@@ -205,7 +220,7 @@ describe('prompt keywords and the rating', () => {
     'rates from the image, storing no keyword tag: %s',
     async (prompt) => {
       vi.mocked(includesInappropriate).mockReturnValue(false as never);
-      vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
+      vi.mocked(auditPostImageMeta).mockReturnValue({ success: true } as never);
       const row = await scan(prompt);
       expect(row.nsfwLevel).toBe(1);
       expect([...holder.tags.values()].map((t) => t.name)).toEqual(['still life']);
@@ -213,7 +228,7 @@ describe('prompt keywords and the rating', () => {
   );
 
   it('still runs the minor check gated on NSFW when only the prompt signals it', async () => {
-    vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
+    vi.mocked(auditPostImageMeta).mockReturnValue({ success: true } as never);
     const row = await scan(KEYWORD_PROMPTS[1]);
     expect(row).toMatchObject({ needsReview: 'minor' });
   });
@@ -227,7 +242,7 @@ describe('prompt keywords and the rating', () => {
   it('still matches a mod rule on a keyword tag', async () => {
     vi.mocked(includesInappropriate).mockReturnValue(false as never);
     holder.holdRuleTag = (getTagsFromPrompt(KEYWORD_PROMPTS[1]) || [])[0];
-    vi.mocked(auditMetaData).mockReturnValueOnce({ success: true } as never);
+    vi.mocked(auditPostImageMeta).mockReturnValueOnce({ success: true } as never);
     const row = await scan(KEYWORD_PROMPTS[1]);
     expect(row).toMatchObject({ nsfwLevel: 1, needsReview: 'modRule' });
   });

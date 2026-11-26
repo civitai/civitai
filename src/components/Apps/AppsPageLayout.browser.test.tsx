@@ -34,10 +34,6 @@ import type * as TrpcMod from '~/utils/trpc';
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
-}));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock): a hand-written replacement silently breaks every importer the day
 // '~/utils/trpc' grows an export this factory omits — the whole FILE then fails to
@@ -78,7 +74,8 @@ describe('AppsPageLayout — exactly ONE rule under the tabs', () => {
     renderWithProviders(
       <AppsPageLayout>
         <div data-testid="body">body</div>
-      </AppsPageLayout>
+      </AppsPageLayout>,
+      { user: { id: 1, username: 'author', isModerator: false } }
     );
     await expect.element(page.getByTestId('body')).toBeInTheDocument();
 
@@ -99,7 +96,8 @@ describe('AppsPageLayout — exactly ONE rule under the tabs', () => {
         actions={<button>Act</button>}
       >
         <div data-testid="body">body</div>
-      </AppsPageLayout>
+      </AppsPageLayout>,
+      { user: { id: 1, username: 'author', isModerator: false } }
     );
     await expect
       .element(page.getByRole('heading', { name: 'Your installed apps' }))
@@ -118,7 +116,8 @@ describe('AppsPageLayout — exactly ONE rule under the tabs', () => {
     renderWithProviders(
       <AppsPageLayout title="Your installed apps">
         <div data-testid="body">body</div>
-      </AppsPageLayout>
+      </AppsPageLayout>,
+      { user: { id: 1, username: 'author', isModerator: false } }
     );
     await expect.element(page.getByTestId('body')).toBeInTheDocument();
 

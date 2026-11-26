@@ -32,9 +32,12 @@ const {
   commentDedupeKey,
   commentDedupeKeyByShape,
   commentDedupeKeyIfAddressable,
+  postTextOwnerNoticeSql,
+  threadUrlMap,
 } = await import('~/server/notifications/comment.notifications');
 const { mentionNotifications } = await import('~/server/notifications/mention.notifications');
 const { reactionNotifications } = await import('~/server/notifications/reaction.notifications');
+const { postTextGateRowSql } = await import('~/server/services/post-text-hold');
 const { commentDetailFetcher } = await import(
   '~/server/notifications/detail-fetchers/comment.detail-fetcher'
 );
@@ -46,7 +49,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
 const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
-const { getThreadMuted } = await import('~/server/services/commentsv2.service');
+const { getCommentMuted } = await import('~/server/services/commentv3/section.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -81,18 +84,40 @@ const dialect = (pg: PGlite): Dialect => {
 const SETUP = `
 ALTER TABLE "User" ADD COLUMN username text;
 UPDATE "User" SET username = 'u' || id;
-ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int;
-ALTER TABLE "Post" ADD COLUMN "userId" int, ADD COLUMN "modelVersionId" int, ADD COLUMN title text;
+ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int, ADD COLUMN index int,
+  ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "needsReview" text,
+  ADD COLUMN "blockedFor" text, ADD COLUMN ingestion text NOT NULL DEFAULT 'Scanned',
+  ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+ALTER TABLE "Post" ADD COLUMN "userId" int, ADD COLUMN "modelVersionId" int, ADD COLUMN title text,
+  ADD COLUMN "publishedAt" timestamp DEFAULT '2020-01-01', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+CREATE TABLE "TextScanHold"("entityType" text NOT NULL, "entityId" int NOT NULL, label text NOT NULL,
+  status text NOT NULL DEFAULT 'Pending');
+CREATE TABLE "PostText"(id int PRIMARY KEY, "postId" int NOT NULL, index int NOT NULL,
+  refused boolean NOT NULL DEFAULT false, "csamHeld" boolean NOT NULL DEFAULT false,
+  "nsfwLevel" int NOT NULL DEFAULT 1);
 ALTER TABLE "Model" ADD COLUMN name text, ADD COLUMN "userId" int, ADD COLUMN description text,
-  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp, ADD COLUMN status text;
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp, ADD COLUMN status text,
+  ADD COLUMN poi boolean NOT NULL DEFAULT false;
 ALTER TABLE app_listings ADD COLUMN slug text;
 CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
-INSERT INTO "Article" VALUES (10);
+-- Text 50 sits after post 1's image 10: both are at index 0, and an image sorts before a text.
+INSERT INTO "PostText"(id, "postId", index) VALUES (50, 1, 0);
+ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int,
+  -- Read by new-mention's article branch; no article here names anyone.
+  ADD COLUMN title text NOT NULL DEFAULT '', ADD COLUMN content text NOT NULL DEFAULT '',
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp,
+  ADD COLUMN "contentScannedAt" timestamp, ADD COLUMN ingestion text NOT NULL DEFAULT 'Scanned',
+  ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
+  ADD COLUMN unlisted boolean NOT NULL DEFAULT false,
+  ADD COLUMN availability text NOT NULL DEFAULT 'Public', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+ALTER TABLE "User" ADD COLUMN "bannedAt" timestamp, ADD COLUMN "deletedAt" timestamp,
+  ADD COLUMN muted boolean NOT NULL DEFAULT false, ADD COLUMN "browsingLevel" int NOT NULL DEFAULT 1;
+INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
-UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
+UPDATE "Model" SET name = 'M', "userId" = 1, status = 'Published' WHERE id = 1;
 UPDATE app_listings SET slug = 'pixel-forge' WHERE serial_id = 9;
 INSERT INTO app_listings(id, serial_id, slug) VALUES ('02ULID', 10, NULL);
 -- User 6 has blocked user 3.
@@ -177,6 +202,13 @@ beforeAll(async () => {
   await db.pg.exec(SETUP);
   await db.pg.exec(migration('20261110120000_comment_v3_schema'));
   await db.pg.exec(migration('20261120120000_comment_v3_mirror'));
+  // Step 1 adds the enum value on its own: a value cannot be used in the transaction that adds it.
+  const [addValue, partition] = migration('20270108094000_post_text_comment_type').split('\n-- 2.');
+  await db.pg.exec(addValue);
+  await db.pg.exec(`-- 2.${partition}`);
+  const [fpValue, fpRest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
+  await db.pg.exec(fpValue);
+  await db.pg.exec(`-- 2.${fpRest}`);
   await db.pg.exec(COMMENTS);
   holder.kysely = new Kysely({ dialect: dialect(db.pg) });
 });
@@ -286,11 +318,17 @@ describe('notification queries on CommentV3', () => {
     expect(modelReply.dedupeKey).toBe('comment:v1:101');
   });
 
-  it('the model page processors carry the old ids, and only for comments with one', async () => {
+  it('the model page processors carry a comment’s old id, and its own where it has none', async () => {
     const comment = await emitted('new-comment');
-    expect(pairs(comment)).toEqual([[55, 1]]);
-    expect(comment[0].key).toBe('new-comment-model:owner:v3:55');
-    expect(comment[0].dedupeKey).toBe('comment:v1:55');
+    // 202 has no old id: a v2 comment on the model thread, as a comment written since the flip is.
+    expect(pairs(comment)).toEqual([
+      [55, 1],
+      [202, 1],
+    ]);
+    const old = comment.find((c) => c.details.commentId === 55)!;
+    expect(old.details.version).toBe(4);
+    expect(old.key).toBe('new-comment-model:owner:v3:55');
+    expect(old.dedupeKey).toBe('comment:v1:55');
 
     const response = await emitted('new-comment-response');
     expect(pairs(response)).toEqual([
@@ -298,14 +336,17 @@ describe('notification queries on CommentV3', () => {
       [101, 2],
     ]);
     expect(response.find((r) => r.details.commentId === 101)!.details).toMatchObject({
+      version: 4,
       modelId: 1,
       parentId: 55,
     });
 
-    expect(pairs(await emitted('new-comment-nested'))).toEqual([
+    const nested = await emitted('new-comment-nested');
+    expect(pairs(nested)).toEqual([
       [57, 1],
       [101, 1],
     ]);
+    expect(nested.every((n) => n.details.version === 4)).toBe(true);
   });
 
   it('new-mention notifies the named, keyed as the comment it is in, and honours a block', async () => {
@@ -326,11 +367,239 @@ describe('notification queries on CommentV3', () => {
     );
   });
 
+  it('new-mention stays quiet on an unpublished article, so the draft reaches nobody new', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Draft' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
+    );
+  });
+
+  describe('on a storyline text', () => {
+    // On text 50 (post 1, owner 1): 501 by 2 at the top; 502 by 3 answers it; 503 by the owner at
+    // the top; 504 by 3 answers the owner's 503 and names user 9.
+    const ours = (out: Emitted[]) => pairs(out).filter(([id]) => id >= 501 && id <= 504);
+    const mentioned = async () => ours(await run(mentionNotifications['new-mention'].prepareQuery));
+    const withTextComments = (check: () => Promise<void>) =>
+      temporarily(
+        `INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('postText', 50);
+         INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+           (501, 'postText', 50, NULL, NULL, 2, 'a', now()), (502, 'postText', 50, 501, NULL, 3, 'b', now()),
+           (503, 'postText', 50, NULL, NULL, 1, 'c', now()), (504, 'postText', 50, 503, NULL, 3, 'see "mention:9"', now())`,
+        `DELETE FROM "CommentV3" WHERE id BETWEEN 501 AND 504;
+         DELETE FROM "CommentTopic" WHERE "entityType" = 'postText'`,
+        check
+      );
+
+    it('notifies, linked to the text slide on its anchor image (control)', async () => {
+      await withTextComments(async () => {
+        const replies = await emitted('new-comment-reply');
+        expect(ours(replies)).toEqual([
+          [502, 2],
+          [504, 1],
+        ]);
+        expect(ours(await emitted('new-thread-response')).length).toBeGreaterThan(0);
+        expect(await mentioned()).toEqual([[504, 9]]);
+        const reply = replies.find((r) => r.details.commentId === 502)!;
+        expect(threadUrlMap(reply.details)).toMatch(/^\/images\/10\?text=50&highlight=502&/);
+        // Linkable, so it claims the comment's key.
+        expect(reply.details.threadType).toBe('postText');
+      });
+    });
+
+    it.each([
+      ['refused', `UPDATE "PostText" SET refused = true WHERE id = 50`],
+      ['held', `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`],
+      [
+        'under a Pending csam hold',
+        `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+      ],
+    ])('reach nobody once the text is %s, its owner included', async (_, change) => {
+      await withTextComments(() =>
+        temporarily(
+          change,
+          `UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50;
+           DELETE FROM "TextScanHold"`,
+          async () => {
+            expect(ours(await emitted('new-comment-reply'))).toEqual([]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+            expect(await mentioned()).toEqual([]);
+          }
+        )
+      );
+    });
+
+    it.each([
+      [
+        'unscanned',
+        `UPDATE "PostText" SET "nsfwLevel" = 0 WHERE id = 50`,
+        `UPDATE "PostText" SET "nsfwLevel" = 1 WHERE id = 50`,
+      ],
+      [
+        'on an unpublished post',
+        `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 1`,
+        `UPDATE "Post" SET "publishedAt" = '2020-01-01' WHERE id = 1`,
+      ],
+    ])('reach only the owner while the text is %s', async (_, change, undo) => {
+      await withTextComments(() =>
+        temporarily(change, undo, async () => {
+          expect(ours(await emitted('new-comment-reply'))).toEqual([[504, 1]]);
+          expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          expect(await mentioned()).toEqual([]);
+        })
+      );
+    });
+
+    it('is not linked, and claims no key, in a post with no image', async () => {
+      await withTextComments(() =>
+        temporarily(
+          `UPDATE "Image" SET "postId" = NULL WHERE id = 10`,
+          `UPDATE "Image" SET "postId" = 1 WHERE id = 10`,
+          async () => {
+            const reply = (await emitted('new-comment-reply')).find(
+              (r) => r.details.commentId === 502
+            );
+            expect(reply?.details.threadType).toBe('comment');
+          }
+        )
+      );
+    });
+  });
+
+  it('replies on an unpublished article reach only its owner', async () => {
+    // On article 10 (owner 1): 401 by 2 at the top; 402 by 3 answers 106 (by 10); 403 by the owner
+    // answers 401; 404 by 3 answers the owner's 403, clamped under 401.
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        expect(ours(await emitted('new-thread-response')).length).toBeGreaterThan(0);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Unpublished' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => {
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
+    );
+  });
+
+  it('replies on an article under the availability rule reach only its owner', async () => {
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        await temporarily(
+          `UPDATE "Article" SET availability = 'Private' WHERE id = 10`,
+          `UPDATE "Article" SET availability = 'Public' WHERE id = 10`,
+          async () => {
+            // The owner (1) still hears the reply to their own comment.
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
+    );
+  });
+
+  it('new-mention follows the article availability rule', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET availability = 'Private' WHERE id = 10`,
+          `UPDATE "Article" SET availability = 'Public' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
+    );
+  });
+
+  it.each([
+    ['unpublished', `UPDATE "Model" SET status = 'Unpublished' WHERE id = 1`],
+    ['POI', `UPDATE "Model" SET poi = true WHERE id = 1`],
+  ])('replies on a model that is %s reach only its owner', async (_, change) => {
+    const undo = `UPDATE "Model" SET status = 'Published', poi = false WHERE id = 1`;
+    await temporarily(change, undo, async () => {
+      expect(await emitted('new-comment-response')).toEqual([]);
+      // 201, the model reply naming user 9, goes quiet; the image reply naming 10 does not.
+      expect(pairs(await run(mentionNotifications['new-mention'].prepareQuery))).toEqual([
+        [104, 10],
+      ]);
+      expect((await emitted('new-thread-response')).filter((t) => t.details.modelId === 1)).toEqual(
+        []
+      );
+      expect(pairs(await emitted('new-comment-nested'))).toEqual([
+        [57, 1],
+        [101, 1],
+      ]);
+    });
+  });
+
   it('the comment reaction milestone keys on the old ids, for live model comments only', async () => {
     const out = await run(reactionNotifications['comment-reaction-milestone'].prepareQuery);
     expect(out.map((r) => [r.userId, r.details])).toEqual([
       [8, { modelName: 'M', modelId: 1, rootCommentId: 55, commentId: 101, reactionCount: 5 }],
+      [4, { modelName: 'M', modelId: 1, rootCommentId: 202, commentId: 202, reactionCount: 5 }],
     ]);
+  });
+
+  it('the model page processors honour the owner’s section mute and a thread mute', async () => {
+    await temporarily(
+      `INSERT INTO "CommentTopicMute"("userId", "entityType", "entityId") VALUES (1, 'model', 1)`,
+      `DELETE FROM "CommentTopicMute" WHERE "userId" = 1 AND "entityType" = 'model'`,
+      async () => {
+        expect(await emitted('new-comment')).toEqual([]);
+        expect(await emitted('new-comment-nested')).toEqual([]);
+        // Replies still reach the author of the comment answered.
+        expect(pairs(await emitted('new-comment-response'))).toHaveLength(2);
+      }
+    );
+    // User 2 mutes their model comment 200: replies under it stop reaching them.
+    await temporarily(
+      `INSERT INTO "CommentMute"("userId", "commentId") VALUES (2, 200)`,
+      `DELETE FROM "CommentMute" WHERE "userId" = 2`,
+      async () => {
+        expect(await emitted('new-comment-response')).toEqual([]);
+      }
+    );
   });
 
   it('a mute by the recipient drops only their notification', async () => {
@@ -474,6 +743,10 @@ describe('the detail fetcher', () => {
         { type: 'new-thread-response', details: { version: 3, commentId: 400 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 401 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 402 } },
+        // A model comment with no old id is addressed by its own; image
+        // comment 100 still may not stand in.
+        { type: 'new-comment', details: { version: 4, commentId: 202 } },
+        { type: 'new-comment', details: { version: 4, commentId: 100 } },
       ])
     ).toEqual([
       ['model top', 2],
@@ -484,17 +757,62 @@ describe('the detail fetcher', () => {
       [undefined, undefined],
       [undefined, undefined],
       [undefined, undefined],
+      ['v2 on the model thread', 4],
+      [undefined, undefined],
     ]);
+  });
+
+  describe('a comment on a storyline text', () => {
+    const withTextComment = (check: () => Promise<void>) =>
+      temporarily(
+        `INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('postText', 50);
+         INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+           VALUES (520, 'postText', 50, 2, 'words about the text', now())`,
+        `DELETE FROM "CommentV3" WHERE id = 520;
+         DELETE FROM "CommentTopic" WHERE "entityType" = 'postText'`,
+        check
+      );
+    const previewOf = async () =>
+      (
+        await preview([
+          {
+            type: 'new-comment-reply',
+            details: { version: 3, threadType: 'postText', commentId: 520 },
+          },
+        ])
+      )[0];
+
+    it('is previewed while its text is readable (control)', async () => {
+      await withTextComment(async () =>
+        expect(await previewOf()).toEqual(['words about the text', 2])
+      );
+    });
+
+    it.each([
+      ['refused', `UPDATE "PostText" SET refused = true WHERE id = 50`],
+      ['held', `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`],
+      [
+        'under a Pending csam hold',
+        `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+      ],
+    ])('carries no words once the text is %s', async (_, change) => {
+      await withTextComment(() =>
+        temporarily(
+          change,
+          `UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50;
+           DELETE FROM "TextScanHold"`,
+          async () => expect((await previewOf())[0]).toBeUndefined()
+        )
+      );
+    });
   });
 });
 
 describe('the mute menu', () => {
-  // getThreadMuted's raw query, run here as Prisma would send it.
+  // getCommentMuted's raw queries, run here as Prisma would send them.
   const menu = (commentId: number, userId: number) => {
-    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({
-      tosViolation: false,
-      childThread: null,
-    });
+    dbMock.dbWrite.$queryRawUnsafe.mockImplementation(((sql: string, ...values: unknown[]) =>
+      db.pg.query(sql, values).then((r) => r.rows)) as never);
     dbMock.dbWrite.$queryRaw.mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -502,7 +820,7 @@ describe('the mute menu', () => {
       const q = Prisma.sql(strings, ...values);
       return db.pg.query(q.text, q.values).then((r) => r.rows);
     }) as never);
-    return getThreadMuted({ commentId, userId });
+    return getCommentMuted({ commentId, userId });
   };
 
   it("reports the user's own mute, one inherited from an ancestor, and none", async () => {
@@ -510,21 +828,35 @@ describe('the mute menu', () => {
     expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
     expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
   });
+});
 
-  it('refuses a mute anywhere in a locked chain: an ancestor, or the topic', async () => {
+describe("the text thread gate's one read", () => {
+  const hidden = async () => {
+    const q = postTextGateRowSql(50);
+    return (await db.pg.query<{ hidden: boolean }>(q.text, q.values)).rows[0].hidden;
+  };
+  const withHold = (status: string, label = 'csam') =>
+    `INSERT INTO "TextScanHold"("entityType", "entityId", label, status) VALUES ('PostText', 50, '${label}', '${status}')`;
+
+  it('reads the post, rating and hidden decision in one statement', async () => {
+    const q = postTextGateRowSql(50);
+    expect((await db.pg.query(q.text, q.values)).rows).toEqual([
+      { postId: 1, nsfwLevel: 1, hidden: false },
+    ]);
+  });
+
+  it.each([
+    ['a Pending csam hold', true, withHold('Pending')],
+    ['a Confirmed csam hold', true, withHold('Confirmed')],
+    ['a Dismissed csam hold', false, withHold('Dismissed')],
+    ['a Pending hold of another label', false, withHold('Pending', 'poi')],
+    ['csamHeld', true, `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`],
+    ['refused', true, `UPDATE "PostText" SET refused = true WHERE id = 50`],
+  ])('with %s, hidden is %s', async (_, expected, change) => {
     await temporarily(
-      `UPDATE "CommentV3" SET locked = true WHERE id = 100`,
-      `UPDATE "CommentV3" SET locked = false WHERE id = 100`,
-      async () => {
-        expect((await menu(102, 9)).canMute).toBe(false);
-        // Another conversation on the same image is not locked.
-        expect((await menu(105, 9)).canMute).toBe(true);
-      }
-    );
-    await temporarily(
-      `UPDATE "CommentTopic" SET locked = true WHERE "entityType" = 'image' AND "entityId" = 10`,
-      `UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'image' AND "entityId" = 10`,
-      async () => expect((await menu(100, 9)).canMute).toBe(false)
+      change,
+      `DELETE FROM "TextScanHold"; UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50`,
+      async () => expect(await hidden()).toBe(expected)
     );
   });
 });
@@ -537,6 +869,91 @@ describe('the permalink row', () => {
     );
     expect(buildCommentPermalink(await getCommentPermalinkRow(301))).toBe(
       '/apps/store-preview/pixel-forge?highlight=301&commentParentType=comment&commentParentId=301'
+    );
+  });
+
+  it('addresses a storyline text by the image before it, else the first after', async () => {
+    // Post 1: image 10 (index 0), then text 50 (index 0), then image 911 (index 5); text 51 (index -1)
+    // comes before every image.
+    await temporarily(
+      `INSERT INTO "Image"(id, "userId", "postId", index) VALUES (911, 1, 1, 5);
+       INSERT INTO "PostText"(id, "postId", index) VALUES (51, 1, -1);
+       INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('postText', 50), ('postText', 51);
+       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt") VALUES
+         (510, 'postText', 50, 2, 'a', now()), (511, 'postText', 51, 2, 'b', now())`,
+      `DELETE FROM "CommentV3" WHERE id IN (510, 511);
+       DELETE FROM "CommentTopic" WHERE "entityType" = 'postText';
+       DELETE FROM "PostText" WHERE id = 51; DELETE FROM "Image" WHERE id = 911`,
+      async () => {
+        expect(buildCommentPermalink(await getCommentPermalinkRow(510))).toBe(
+          '/images/10?text=50&highlight=510&commentParentType=comment&commentParentId=510'
+        );
+        expect(buildCommentPermalink(await getCommentPermalinkRow(511))).toBe(
+          '/images/10?text=51&highlight=511&commentParentType=comment&commentParentId=511'
+        );
+        await temporarily(
+          `UPDATE "Image" SET index = -2 WHERE id = 911`,
+          `UPDATE "Image" SET index = 5 WHERE id = 911`,
+          // Both images now sort before text 50; the later one (10, index 0) is its anchor still,
+          // and text 51 (index -1) now follows image 911.
+          async () => {
+            expect(buildCommentPermalink(await getCommentPermalinkRow(510))).toMatch(
+              /^\/images\/10\?/
+            );
+            expect(buildCommentPermalink(await getCommentPermalinkRow(511))).toMatch(
+              /^\/images\/911\?/
+            );
+          }
+        );
+        // An image no reader may open is never the anchor: text 50 falls to image 911 after it,
+        // whichever way image 10 is withheld.
+        for (const [change, undo] of [
+          [`"tosViolation" = true`, `"tosViolation" = false`],
+          [`"needsReview" = 'poi'`, `"needsReview" = NULL`],
+          [`"blockedFor" = 'tos'`, `"blockedFor" = NULL`],
+          [`ingestion = 'Pending'`, `ingestion = 'Scanned'`],
+          [`"nsfwLevel" = 0`, `"nsfwLevel" = 1`],
+        ])
+          await temporarily(
+            `UPDATE "Image" SET ${change} WHERE id = 10`,
+            `UPDATE "Image" SET ${undo} WHERE id = 10`,
+            async () =>
+              expect(buildCommentPermalink(await getCommentPermalinkRow(510))).toMatch(
+                /^\/images\/911\?text=50&/
+              )
+          );
+      }
+    );
+  });
+
+  it("reads the owner notice's post, owner, title and anchor image for a text", async () => {
+    await temporarily(
+      `UPDATE "Post" SET title = 'Chapter one' WHERE id = 1`,
+      `UPDATE "Post" SET title = NULL WHERE id = 1`,
+      async () => {
+        expect((await db.pg.query(postTextOwnerNoticeSql, [50])).rows).toEqual([
+          { postId: 1, userId: 1, title: 'Chapter one', anchorImageId: 10 },
+        ]);
+        expect((await db.pg.query(postTextOwnerNoticeSql, [99999])).rows).toEqual([]);
+        // Checked again at send time: no notice once the text is refused or held.
+        for (const [change, undo] of [
+          [
+            `UPDATE "PostText" SET refused = true WHERE id = 50`,
+            `UPDATE "PostText" SET refused = false WHERE id = 50`,
+          ],
+          [
+            `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`,
+            `UPDATE "PostText" SET "csamHeld" = false WHERE id = 50`,
+          ],
+          [
+            `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+            `DELETE FROM "TextScanHold"`,
+          ],
+        ])
+          await temporarily(change, undo, async () =>
+            expect((await db.pg.query(postTextOwnerNoticeSql, [50])).rows).toEqual([])
+          );
+      }
     );
   });
 
@@ -644,4 +1061,56 @@ describe('a comment hidden for ToS', () => {
     );
     expect(rows[0].n).toBe(1);
   });
+});
+
+describe('a Feature Pages comment', () => {
+  // Topic 1: 880 (by 2) names user 9, and 881 (by 3) answers it. Image 10's 101, which names user 6
+  // and answers 100 by 2, is the control in each check.
+  const FP = `
+    INSERT INTO "FeaturePageTopic"(id, urn, kind) VALUES (1, 'urn:data.civitai.com:feature-pages/requests/r1', 'request');
+    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('featurePage', 1);
+    INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES
+      (880, 'featurePage', 1, NULL, 2, 'on a feature "mention:9"', now()),
+      (881, 'featurePage', 1, 880, 3, 'a reply on the feature', now());`;
+  const UNDO = `DELETE FROM "CommentV3" WHERE id IN (881, 880);
+    DELETE FROM "CommentTopic" WHERE "entityType" = 'featurePage';
+    DELETE FROM "FeaturePageTopic";`;
+  const ids = (out: Emitted[]) => out.map((r) => r.details.commentId as number);
+
+  it('notifies no one of a reply or a response, while a reply on an image still notifies', () =>
+    temporarily(FP, UNDO, async () => {
+      for (const type of [
+        'new-comment-reply',
+        'new-thread-response',
+        'new-comment-response',
+      ] as const) {
+        const out = ids(await emitted(type));
+        expect(out).not.toContain(880);
+        expect(out).not.toContain(881);
+      }
+      expect(ids(await emitted('new-comment-reply'))).toContain(101);
+    }));
+
+  it('sends no mention, while a mention on an image still goes out', () =>
+    temporarily(FP, UNDO, async () => {
+      const out = ids(await run(mentionNotifications['new-mention'].prepareQuery));
+      expect(out).not.toContain(880);
+      expect(out).toContain(101);
+    }));
+
+  it('is never previewed in a notification, while an image comment is', () =>
+    temporarily(FP, UNDO, async () => {
+      const notifications = [881, 101].map((commentId) => ({
+        type: 'new-comment-reply',
+        details: { version: 3, commentId } as Record<string, unknown>,
+      }));
+      await commentDetailFetcher.fetcher(
+        notifications as never,
+        {
+          db: { user: { findMany: async () => [] } },
+        } as never
+      );
+      expect(notifications[0].details.content).toBeUndefined();
+      expect(notifications[1].details.content).toBeDefined();
+    }));
 });

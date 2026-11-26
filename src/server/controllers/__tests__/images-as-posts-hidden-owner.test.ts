@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const { fetches } = vi.hoisted(() => ({
   fetches: vi.fn(async () => ({ items: [], nextCursor: undefined })),
@@ -15,6 +16,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', () => ({
   getGallerySettingsByModelId: async () => ({ pinnedPosts: {}, hiddenImages: { 10: [7, 8] } }),
   getHeldGalleryLevel: async () => undefined,
+  isModelGalleryWithheld: async () => false,
 }));
 vi.mock('~/server/services/promotion.service', () => ({
   getSponsoredGalleryPost: async () => undefined,
@@ -28,10 +30,12 @@ function run({
   hidden = true,
   user,
   subject,
+  credential,
 }: {
   hidden?: boolean;
   user?: { id: number; isModerator?: boolean };
   subject?: unknown;
+  credential?: object;
 }) {
   return getImagesAsPostsInfiniteHandler({
     input: {
@@ -42,9 +46,16 @@ function run({
       include: [],
       browsingLevel: allBrowsingLevelsFlag,
     } as never,
-    ctx: { user, subject, features: {}, req: { headers: {} } } as never,
+    ctx: { user, subject, ...credential, features: {}, req: { headers: {} } } as never,
   });
 }
+
+const userKey = (tokenScope: bigint) => ({
+  subject: { type: 'apiKey', id: 1 },
+  apiKeyId: 1,
+  apiKeyType: 'User',
+  tokenScope,
+});
 
 const fetchedIds = () =>
   (fetches.mock.calls as unknown as [{ ids?: number[] }][]).map(([args]) => args.ids);
@@ -63,6 +74,22 @@ describe('getImagesAsPostsInfiniteHandler with hidden images', () => {
       expect.objectContaining({ where: { id: 1 } })
     );
     expect(fetchedIds()[0]).toEqual([7, 8]);
+  });
+
+  it("lists them for its owner's full-access key", async () => {
+    await run({ user: { id: OWNER }, credential: userKey(TokenScope.Full) });
+
+    expect(fetchedIds()[0]).toEqual([7, 8]);
+  });
+
+  it("lists nothing for its owner's scoped key", async () => {
+    const result = await run({
+      user: { id: OWNER },
+      credential: userKey(TokenScope.ModelsRead | TokenScope.MediaRead),
+    });
+
+    expect(result).toEqual({ nextCursor: undefined, items: [] });
+    expect(fetches).not.toHaveBeenCalled();
   });
 
   it('lists them for a moderator', async () => {

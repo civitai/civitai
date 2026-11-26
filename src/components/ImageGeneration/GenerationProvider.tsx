@@ -1,7 +1,10 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
 
 import { produce } from 'immer';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  GENERATOR_QUEUE_INPUT,
+  useGetTextToImageRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -80,7 +83,7 @@ function GenerationStateProvider({ children }: { children: React.ReactNode }) {
   // Bypass the user's marker / tag filter: the queue snackbar / canGenerate /
   // hasGeneratedImages need to reflect ALL in-flight and completed workflows,
   // not just those matching the currently-selected filter (e.g. "liked").
-  const { data: requests, isLoading } = useGetTextToImageRequests(undefined, {
+  const { data: requests, isLoading } = useGetTextToImageRequests(GENERATOR_QUEUE_INPUT, {
     enabled: opened,
     includeTags: false,
     ignoreFilters: true,

@@ -43,8 +43,8 @@
 
 import { TRPCError } from '@trpc/server';
 
-import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import type { ListingForkOf } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -183,15 +183,60 @@ export const NO_FORK_PROVENANCE: ListingForkProvenance = Object.freeze({
 });
 
 /**
- * Read one listing's fork facts. Degrades to {@link NO_FORK_PROVENANCE} on a missing column only;
- * everything else propagates. Use {@link readListingForkProvenanceForRender} on a page.
+ * Read one listing's fork facts: {@link readListingForkProvenanceMany} for that one listing, so the
+ * store page and the registry adapter's listing stream read them by one predicate. Degrades to
+ * {@link NO_FORK_PROVENANCE} on a missing column only; everything else propagates. Use
+ * {@link readListingForkProvenanceForRender} on a page.
  */
 export async function readListingForkProvenance(
   listingId: string,
   db: ForkReadClient
 ): Promise<ListingForkProvenance> {
+  return (
+    (await readListingForkProvenanceMany([listingId], db)).get(listingId) ?? NO_FORK_PROVENANCE
+  );
+}
+
+/**
+ * The listing each of `listingIds` was forked from, in one query: fork listing id → parent
+ * listing id, for the forks among them only. Degrades to an empty map on a missing column, like
+ * {@link readListingForkProvenance}; everything else propagates. It returns ids, never a parent's
+ * name or slug: a caller decides whether a parent may be named.
+ */
+export async function readListingForkParents(
+  listingIds: readonly string[],
+  db: ForkReadClient
+): Promise<Map<string, string>> {
+  if (listingIds.length === 0) return new Map();
+  try {
+    const rows =
+      (await db.$queryRaw`SELECT al."id" AS "id", al."fork_of_listing_id" AS "forkOfListingId"
+        FROM "app_listings" al
+        WHERE al."id" = ANY(${[...listingIds]}::text[])
+          AND al."fork_of_listing_id" IS NOT NULL`) as Array<{
+        id: string;
+        forkOfListingId: string;
+      }>;
+    return new Map(rows.map((r) => [r.id, r.forkOfListingId]));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
+  }
+}
+
+/**
+ * {@link readListingForkProvenance} for many listings in one query: listing id → its provenance,
+ * for every listing given that has a row. Degrades to an empty map (every listing reads as
+ * {@link NO_FORK_PROVENANCE}) on a missing column only; everything else propagates.
+ */
+export async function readListingForkProvenanceMany(
+  listingIds: readonly string[],
+  db: ForkReadClient
+): Promise<Map<string, ListingForkProvenance>> {
+  if (listingIds.length === 0) return new Map();
   try {
     const rows = (await db.$queryRaw`SELECT
+          al."id" AS "id",
           al."forkable" AS "forkable",
           al."fork_of_listing_id" AS "forkOfListingId",
           (al."fork_of_listing_id" IS NOT NULL
@@ -199,42 +244,25 @@ export async function readListingForkProvenance(
             OR ab."fork_of_commit_sha" IS NOT NULL) AS "isFork"
         FROM "app_listings" al
         LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
-        WHERE al."id" = ${listingId}
-        LIMIT 1`) as Array<{
+        WHERE al."id" = ANY(${[...listingIds]}::text[])`) as Array<{
+      id: string;
       forkable: boolean | null;
       forkOfListingId: string | null;
       isFork: boolean | null;
     }>;
-    const row = rows[0];
-    if (!row) return NO_FORK_PROVENANCE;
-    return {
-      forkable: row.forkable === true,
-      forkOfListingId: row.forkOfListingId ?? null,
-      isFork: row.isFork === true,
-    };
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          forkable: row.forkable === true,
+          forkOfListingId: row.forkOfListingId ?? null,
+          isFork: row.isFork === true,
+        },
+      ])
+    );
   } catch (err) {
-    if (isMissingColumnError(err)) return NO_FORK_PROVENANCE;
+    if (isMissingColumnError(err)) return new Map();
     throw err;
-  }
-}
-
-/**
- * Record a degraded render read without letting the recording break the page. A missing column
- * never reaches here (the narrow reader swallows it), so what arrives is a real fault — `error`.
- * The `.catch(() => null)` is load-bearing: nothing awaits this, so an unhandled rejection would
- * take down the render this exists only to observe.
- */
-function noteDegradedForkRead(name: string, err: unknown): void {
-  try {
-    logToAxiom({
-      name,
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-      code: (err as { code?: unknown })?.code ?? null,
-    }).catch(() => null);
-  } catch {
-    // The degraded path's whole job is to keep rendering; a logger that throws synchronously
-    // must not undo that.
   }
 }
 
@@ -249,7 +277,7 @@ export async function readListingForkProvenanceForRender(
   try {
     return await readListingForkProvenance(listingId, db);
   } catch (err) {
-    noteDegradedForkRead('app-fork-provenance-read-degraded', err);
+    noteDegradedRead('app-fork-provenance-read-degraded', err);
     return NO_FORK_PROVENANCE;
   }
 }
@@ -278,7 +306,7 @@ export async function resolveForkAttribution(
     const parent = await lookupVisibleParent(provenance.forkOfListingId);
     return parent ? { visible: true, slug: parent.slug, name: parent.name } : { visible: false };
   } catch (err) {
-    noteDegradedForkRead('app-fork-attribution-degraded', err);
+    noteDegradedRead('app-fork-attribution-degraded', err);
     return { visible: false };
   }
 }
@@ -409,7 +437,7 @@ export async function carryForkProvenanceToPublishRequest(
     );
     return count > 0;
   } catch (err) {
-    if (!isMissingColumnError(err)) noteDegradedForkRead('app-fork-provenance-carry-failed', err);
+    if (!isMissingColumnError(err)) noteDegradedRead('app-fork-provenance-carry-failed', err);
     return false;
   }
 }

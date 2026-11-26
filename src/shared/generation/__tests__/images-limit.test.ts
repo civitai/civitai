@@ -31,6 +31,7 @@ const ECOSYSTEMS_WITH_A_LIMIT: string[] = [
   'Flux3Klein_base',
   'Flux3Video',
   'FluxKrea',
+  'GeminiOmni',
   'Grok',
   'Haiper',
   'HappyHorse',
@@ -58,6 +59,7 @@ const ECOSYSTEMS_WITH_A_LIMIT: string[] = [
   'Ming',
   'MingLayer',
   'MiniMaxH3',
+  'MiniMaxH3Image',
   'MiniMaxMusic3',
   'Mochi',
   'MuseImage',
@@ -125,6 +127,7 @@ const ECOSYSTEMS_WITH_A_LIMIT: string[] = [
  */
 const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['Ace', 'txt2music', 0, 1],
+  ['Fibo2', 'img2img:edit', 1, 16],
   ['Flux2', 'img2img:edit', 1, 7],
   ['Flux2Klein_4B_base', 'img2img:edit', 1, 7],
   ['Flux2Klein_4B', 'img2img:edit', 1, 7],
@@ -136,15 +139,19 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['Flux3Video', 'img2vid', 1, 2],
   ['Flux3Video', 'img2vid:first-last', 1, 2],
   ['Grok', 'img2img:edit', 1, 7],
+  ['GeminiOmni', 'img2vid', 1, 2],
+  ['GeminiOmni', 'img2vid:first-last', 1, 2],
+  ['GeminiOmni', 'img2vid:ref2vid', 3, 6],
   ['Grok', 'img2vid:ref2vid', 1, 7],
   ['HappyHorse', 'img2vid:ref2vid', 1, 9],
   ['HappyHorse', 'vid2vid:edit', 1, 9],
   ['HiDream-O1', 'img2img:edit', 1, 4],
-  ['Ideogram', 'img2img:edit', 1, 4],
+  ['Ideogram', 'img2img:edit', 1, 5],
   ['Kling', 'img2vid:ref2vid', 1, 7],
   ['Kling', 'vid2vid:edit', 1, 10],
   ['Krea2', 'img2img:edit', 1, 4],
   ['Krea3', 'img2img:edit', 1, 6],
+  ['MiniMaxH3Image', 'img2img:edit', 1, 16],
   ['LTXV2', 'img2vid', 1, 2],
   ['LTXV2', 'img2vid:first-last', 1, 2],
   ['LTXV23', 'img2vid', 1, 2],
@@ -152,6 +159,7 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['LTXV25', 'img2vid', 1, 2],
   ['LTXV25', 'img2vid:first-last', 1, 2],
   ['MageFlow', 'img2img:edit', 1, 3],
+  ['MAI', 'img2img:edit', 1, 5],
   ['Ming', 'img2img:edit', 1, 3],
   ['MiniMaxH3', 'img2vid', 1, 2],
   ['MiniMaxH3', 'img2vid:first-last', 1, 2],
@@ -221,7 +229,7 @@ describe('getImagesLimit', () => {
     expect(
       withLimit,
       'fewer pairs answer than before — a limit was lost, not added'
-    ).toBeGreaterThanOrEqual(282);
+    ).toBeGreaterThanOrEqual(403);
 
     // Which ecosystems answer at all is frozen by name, so losing one reads as its own
     // key rather than as an arithmetic drop.

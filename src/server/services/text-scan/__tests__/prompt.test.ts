@@ -293,17 +293,21 @@ describe('setTextScanRollout', () => {
 
   it('writes a shadow rollout, logs who, and removes the field for null', async () => {
     dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
-    await setTextScanRollout('Comment', { shadow: 100, active: 0 }, { moderatorId: 5 });
+    await setTextScanRollout('CommentV3', { shadow: 100, active: 0 }, { moderatorId: 5 });
     expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
       'system:text-scan:modes',
-      'Comment',
+      'CommentV3',
       '{"shadow":100,"active":0}'
     );
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'rollout updated', moderatorId: 5, entityType: 'Comment' })
+      expect.objectContaining({
+        message: 'rollout updated',
+        moderatorId: 5,
+        entityType: 'CommentV3',
+      })
     );
-    await setTextScanRollout('Comment', null, { moderatorId: 5 });
-    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'Comment');
+    await setTextScanRollout('CommentV3', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'CommentV3');
   });
 });
 
@@ -377,8 +381,8 @@ describe('setTextScanLabelMode', () => {
       expect.objectContaining({
         message: 'label mode updated',
         moderatorId: 5,
-        label: 'minor',
         mode: 'review',
+        payload: { label: 'minor' },
       })
     );
   });
@@ -440,7 +444,11 @@ describe('setTextScanCsamMode', () => {
     expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'csam');
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'label mode updated', label: 'csam', mode: 'review' })
+      expect.objectContaining({
+        message: 'label mode updated',
+        mode: 'review',
+        payload: { label: 'csam' },
+      })
     );
     resetTextScanRolloutCache();
   });

@@ -6,8 +6,6 @@ import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../../test/c
 
 const useModelShowcaseCollection = vi.fn();
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelUtils>()),
   useModelShowcaseCollection: (args: { modelId: number }) => useModelShowcaseCollection(args),

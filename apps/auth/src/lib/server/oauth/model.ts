@@ -7,7 +7,8 @@ import type {
   User,
 } from '@node-oauth/oauth2-server';
 import { isHttpError } from '@sveltejs/kit';
-import { AccessDeniedError } from '@node-oauth/oauth2-server';
+import { AccessDeniedError, InvalidGrantError } from '@node-oauth/oauth2-server';
+import { MemorializedAccountError } from '$lib/server/auth/account-refusal';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pack } from 'msgpackr';
@@ -17,11 +18,38 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL, SYSTEM_USER_ID } from './constants';
-import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
+import {
+  createAppAccessToken,
+  createOAuthTokenPair,
+  createPlannedOAuthTokens,
+} from './token-helpers';
+import {
+  isOfflineGrantOn,
+  isRefreshReuse,
+  newRefreshFamilyId,
+  planAuthCodeGrant,
+  planRefreshGrant,
+  readRefreshChainColumns,
+  readRefreshTombstone,
+  revokeRefreshFamily,
+  tombstoneRotatedRefreshToken,
+  type RefreshChain,
+} from './offline-grant';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
-import { firstPartyClientForOrigin, originOf } from './first-party';
-import { hasScope, isScopeGrantable, scopeToString, stringToScope } from './scope';
+import { isAppBlockOauthClientId } from './block-guard';
+import { firstPartyClientForOrigin, originOf, type FirstPartyOriginUse } from './first-party';
+import {
+  apiKeyRowScope,
+  carriesClientCredentialsOnlyScope,
+  carriesRunnerOnlyScope,
+  hasScope,
+  isScopeGrantable,
+  scopeFromColumn,
+  scopeToString,
+  stringToScope,
+} from './scope';
+import { readRunnerAdmission, RUNNER_TOKEN_SCOPE, scopeStringCarriesRunner } from './runner-client';
 import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 
 // Ported from the main app's src/server/oauth/model.ts. Every `prisma.*` call is rewritten to Kysely
@@ -52,6 +80,8 @@ export const oauthModel = {
     clientSecret: string | null,
     request?: Request
   ): Promise<Client | false> {
+    // An app block's client mints only through the internal app-token route, never a grant here.
+    if (isAppBlockOauthClientId(clientId)) return false;
     const client = await db
       .selectFrom('OauthClient')
       .selectAll()
@@ -66,7 +96,7 @@ export const oauthModel = {
       // /authorize endpoint stashed in AsyncLocalStorage for exactly this call.
       const origin =
         redirectOriginFromRequest(request) ?? originOf(authorizeRedirectUriStore.getStore());
-      const fp = origin ? await firstPartyClientForOrigin(origin) : undefined;
+      const fp = origin ? await firstPartyClientForOrigin(origin, 'authorize_client') : undefined;
       if (!fp || fp.clientId !== clientId) return false;
       return {
         id: fp.clientId,
@@ -145,7 +175,7 @@ export const oauthModel = {
       redirectUris: client.redirectUris,
       accessTokenLifetime: ACCESS_TOKEN_TTL,
       refreshTokenLifetime: REFRESH_TOKEN_TTL,
-      allowedScopes: client.allowedScopes,
+      allowedScopes: scopeFromColumn(client.allowedScopes),
       isConfidential: client.isConfidential,
     } as Client;
   },
@@ -186,6 +216,11 @@ export const oauthModel = {
     const data = {
       clientId: client.id,
       userId: user.id,
+      // On the code itself, so the hand-off knows an impersonation even when its context is lost.
+      ...((user as { impersonation?: boolean }).impersonation && { impersonation: true }),
+      // Set by /authorize only with the offline-grant flag on: the request asked for offline_access
+      // and the consent carries the offline grant. The token grant re-checks the consent.
+      ...((user as GrantUser).offlineRequested && { offlineRequested: true }),
       scope: scopeValue,
       redirectUri: code.redirectUri,
       codeChallenge: code.codeChallenge,
@@ -221,12 +256,14 @@ export const oauthModel = {
       codeChallenge?: string;
       codeChallengeMethod?: string;
       expiresAt: string;
+      impersonation?: boolean;
+      offlineRequested?: boolean;
     }>(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode);
 
     if (!data) return false;
 
     // Resolve the code's client (DB, or first-party by the stored redirect_uri origin) — shared with /authorize.
-    const client = await resolveClientLite(data.clientId, data.redirectUri);
+    const client = await resolveClientLite(data.clientId, data.redirectUri, 'code_exchange');
     if (!client) return false;
 
     return {
@@ -237,7 +274,11 @@ export const oauthModel = {
       codeChallenge: data.codeChallenge,
       codeChallengeMethod: data.codeChallengeMethod,
       client: client as Client,
-      user: { id: data.userId },
+      user: {
+        id: data.userId,
+        ...(data.impersonation && { impersonation: true }),
+        ...(data.offlineRequested && { offlineRequested: true }),
+      },
     } as unknown as AuthorizationCode;
   },
 
@@ -261,6 +302,7 @@ export const oauthModel = {
     } catch (err) {
       // The library turns any non-OAuth error into a 503, which a client retries; a refusal is final.
       if (isHttpError(err, 403)) throw new AccessDeniedError(err.body.message);
+      if (err instanceof MemorializedAccountError) throw new InvalidGrantError(err.message);
       throw err;
     }
   },
@@ -271,18 +313,21 @@ export const oauthModel = {
 
     const apiKey = await db
       .selectFrom('ApiKey')
-      .select(['userId', 'tokenScope', 'expiresAt', 'clientId'])
+      .select(['userId', 'tokenScope', 'tokenScopeWide', 'expiresAt', 'clientId'])
       .where('key', '=', hash)
       .where('type', '=', 'Access')
       .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
       .executeTakeFirst();
 
     if (!apiKey) return false;
+    // A client-credentials or runner token is single-purpose: the library's authenticate admits neither.
+    const scope = apiKeyRowScope(apiKey);
+    if (carriesClientCredentialsOnlyScope(scope) || carriesRunnerOnlyScope(scope)) return false;
 
     return {
       accessToken,
       accessTokenExpiresAt: apiKey.expiresAt ?? undefined,
-      scope: scopeToString(apiKey.tokenScope),
+      scope: scopeToString(scope),
       client: { id: apiKey.clientId ?? '' } as Client,
       user: { id: apiKey.userId },
     } as unknown as Token;
@@ -294,20 +339,53 @@ export const oauthModel = {
 
     const apiKey = await db
       .selectFrom('ApiKey')
-      .select(['userId', 'tokenScope', 'expiresAt', 'clientId'])
-      .where('key', '=', hash)
-      .where('type', '=', 'Refresh')
-      .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
+      .innerJoin('User', 'User.id', 'ApiKey.userId')
+      .select([
+        'ApiKey.userId',
+        'ApiKey.tokenScope',
+        'ApiKey.tokenScopeWide',
+        'ApiKey.expiresAt',
+        'ApiKey.clientId',
+      ])
+      .where('ApiKey.key', '=', hash)
+      .where('ApiKey.type', '=', 'Refresh')
+      .where((eb) => eb.or([eb('ApiKey.expiresAt', '>=', now), eb('ApiKey.expiresAt', 'is', null)]))
+      // A disabled owner cannot renew: the grant fails as invalid_grant. Deletion is soft, so the
+      // join alone catches nothing.
+      .where('User.deletedAt', 'is', null)
+      .where('User.bannedAt', 'is', null)
       .executeTakeFirst();
 
-    if (!apiKey) return false;
+    // Offline-grant flag on: a token with no live row may be one that was already rotated, i.e.
+    // replayed. Its tombstone names the chain, which is revoked whole once the reuse grace has
+    // passed (offline-grant.ts); inside it, the replay is plain invalid_grant.
+    const offlineGrant = await isOfflineGrantOn();
+    if (!apiKey) {
+      if (offlineGrant) {
+        const tombstone = await readRefreshTombstone(refreshToken);
+        if (tombstone && isRefreshReuse(tombstone)) await revokeRefreshFamily(tombstone);
+      }
+      return false;
+    }
+
+    // Flag on: the chain this token belongs to rides the user object to revokeToken (tombstone) and
+    // saveToken (family + expiry); the library passes `token.user` to both.
+    let refreshChain: RefreshChain | undefined;
+    if (offlineGrant && apiKey.clientId) {
+      const chain = await readRefreshChainColumns(hash);
+      refreshChain = {
+        familyId: chain?.familyId ?? newRefreshFamilyId(),
+        rootOrigin: chain?.rootOrigin ?? null,
+        expiresAt: apiKey.expiresAt ?? null,
+      };
+    }
 
     return {
       refreshToken,
       refreshTokenExpiresAt: apiKey.expiresAt ?? undefined,
-      scope: scopeToString(apiKey.tokenScope),
+      scope: scopeToString(apiKeyRowScope(apiKey)),
       client: { id: apiKey.clientId ?? '' } as Client,
-      user: { id: apiKey.userId },
+      user: { id: apiKey.userId, viaRefresh: true, ...(refreshChain && { refreshChain }) },
     } as unknown as RefreshToken;
   },
 
@@ -327,8 +405,24 @@ export const oauthModel = {
       .where('key', '=', hash)
       .where('type', '=', 'Refresh')
       .executeTakeFirst();
+    const revoked = Number(deleted.numDeletedRows ?? 0n) > 0;
 
-    return Number(deleted.numDeletedRows ?? 0n) > 0;
+    // Offline-grant flag on (getRefreshToken attached the chain): only the caller that actually
+    // deleted the row leaves the tombstone, so a concurrent loser of the same rotation does not.
+    const chain = (token.user as GrantUser | undefined)?.refreshChain;
+    if (revoked && chain) {
+      await tombstoneRotatedRefreshToken(
+        token.refreshToken,
+        {
+          familyId: chain.familyId,
+          userId: token.user.id,
+          clientId: token.client.id,
+          rotatedAt: Date.now(),
+        },
+        chain.expiresAt
+      );
+    }
+    return revoked;
   },
 
   // ─── Client Credentials ─────────────────────────────────────
@@ -363,7 +457,7 @@ export const oauthModel = {
     // first-party client). The OauthClient.allowedScopes column is NOT NULL, so this fallback is unreachable
     // for real rows — it's purely fail-safe.
     const allowedScopes =
-      (client as Client & { allowedScopes?: number }).allowedScopes ?? TokenScope.UserRead;
+      (client as Client & { allowedScopes?: bigint }).allowedScopes ?? TokenScope.UserRead;
     // The library does not pass the grant type here; the client_credentials grant is recognised by
     // the user `getUserFromClient` returned.
     const grant = isClientCredentialsUser(user) ? 'client_credentials' : 'user';
@@ -382,6 +476,18 @@ export const oauthModel = {
   },
 };
 
+/**
+ * The user the library carries through a grant. `viaRefresh` marks one getRefreshToken returned.
+ * `offlineRequested` comes off an authorization code and `refreshChain` off a refresh token; those
+ * two are set only with the offline-grant flag on.
+ */
+type GrantUser = User & {
+  id: number;
+  viaRefresh?: boolean;
+  offlineRequested?: boolean;
+  refreshChain?: RefreshChain;
+};
+
 /** The client owner, as `getUserFromClient` returns it for the client_credentials grant. */
 type ClientCredentialsUser = { id: number; viaClientCredentials: true };
 
@@ -389,11 +495,26 @@ function isClientCredentialsUser(user: User): user is User & ClientCredentialsUs
   return (user as Partial<ClientCredentialsUser>).viaClientCredentials === true;
 }
 
-async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
-  const scope = stringToScope(token.scope as unknown as string);
+/**
+ * A runner client never gets more than RUNNER_TOKEN_SCOPE, and its admission is re-read on every
+ * grant. Other clients' stored scope goes through stringToScope, which reads a runner bit as 0.
+ */
+async function userGrantScope(token: Token, client: Client, user: GrantUser): Promise<bigint> {
+  const requested = stringToScope(token.scope as unknown as string);
+  const admission = await readRunnerAdmission(client.id);
+  if (admission === null) return requested;
+  const runnerGrant =
+    !user.viaRefresh || scopeStringCarriesRunner(token.scope as unknown as string);
+  return admission === 'active' && runnerGrant ? RUNNER_TOKEN_SCOPE : TokenScope.UserRead;
+}
 
+async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
   if (isClientCredentialsUser(user)) {
-    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
+    const scope = stringToScope(token.scope as unknown as string);
+    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL, {
+      clientCredentials: true,
+      ...((await isOfflineGrantOn()) && { mintOrigin: 'client_credentials' as const }),
+    });
     return {
       accessToken: access.accessToken,
       accessTokenExpiresAt: access.expiresAt,
@@ -403,13 +524,39 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
     } as Token;
   }
 
-  const pair = await createOAuthTokenPair(user.id, client.id, scope);
+  // Offline-grant flag on: what the grant mints depends on the consent's offline grant
+  // (offline-grant.ts). A refresh grant follows the flag as getRefreshToken read it, i.e. whether it
+  // attached the chain, so one grant never mixes the two behaviours; an authorization-code grant
+  // reads the flag here.
+  const grantUser = user as GrantUser;
+  const scope = await userGrantScope(token, client, grantUser);
+  const plan = grantUser.viaRefresh
+    ? grantUser.refreshChain &&
+      (await planRefreshGrant({
+        userId: user.id,
+        clientId: client.id,
+        clientGrants: ([] as string[]).concat(client.grants ?? []),
+        chain: grantUser.refreshChain,
+      }))
+    : (await isOfflineGrantOn())
+    ? await planAuthCodeGrant({
+        userId: user.id,
+        clientId: client.id,
+        offlineRequested: grantUser.offlineRequested === true,
+      })
+    : undefined;
+  const pair = plan
+    ? await createPlannedOAuthTokens(user.id, client.id, scope, plan)
+    : await createOAuthTokenPair(user.id, client.id, scope);
 
   return {
     accessToken: pair.accessToken,
     accessTokenExpiresAt: pair.accessTokenExpiresAt,
-    refreshToken: pair.refreshToken,
-    refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    // Absent when the plan issues no refresh token; the token response then has no refresh_token.
+    ...(pair.refreshToken && {
+      refreshToken: pair.refreshToken,
+      refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    }),
     scope: scopeToString(scope),
     client,
     user,
@@ -424,7 +571,8 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
  */
 export async function resolveClientLite(
   clientId: string,
-  redirectUri?: string
+  redirectUri: string | undefined,
+  use: FirstPartyOriginUse
 ): Promise<
   | {
       id: string;
@@ -475,7 +623,7 @@ export async function resolveClientLite(
   // requiring the client_id to be the one derived from that origin. This synthesized path is the ONLY
   // first-party case.
   const origin = originOf(redirectUri);
-  const fp = origin ? await firstPartyClientForOrigin(origin) : undefined;
+  const fp = origin ? await firstPartyClientForOrigin(origin, use) : undefined;
   return fp && fp.clientId === clientId
     ? {
         id: fp.clientId,

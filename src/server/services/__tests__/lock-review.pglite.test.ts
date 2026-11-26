@@ -3,10 +3,10 @@ import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as Email from '~/server/email/templates';
-import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as ReportService from '~/server/services/report.service';
@@ -14,9 +14,7 @@ import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 /**
  * An owner's request to review a locked model setting, filed as an `Appeal` row and ruled on from the
- * moderator app's flag-appeals queue. The ruling's own SQL runs against PGlite; the hold is a stand-in
- * table behind `accountHoldSql`, so what is tested is that the ruling reads the owner's hold, not
- * which holds exist. Ids are invented.
+ * moderator app's flag-appeals queue. The ruling's own SQL runs against PGlite. Ids are invented.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -27,7 +25,6 @@ const mocks = vi.hoisted(() => ({
   reopenAppeal: vi.fn(),
   getLatestAppeal: vi.fn(),
   trackModActivity: vi.fn(),
-  isAccountUnderLegalHold: vi.fn(),
   createNotification: vi.fn(),
   sendEmail: vi.fn(),
 }));
@@ -42,13 +39,6 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: mocks.trackModActivity,
-}));
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  accountHoldSql: (id: Prisma.Sql) =>
-    Prisma.sql`EXISTS (SELECT 1 FROM "Held" h WHERE h."userId" = ${id})`,
-  holdMarkerViewExists: async () => true,
-  isAccountUnderLegalHold: mocks.isAccountUnderLegalHold,
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLag>()),
@@ -67,13 +57,23 @@ const {
   resolveLockReviewAppeal,
   getLockReviewState,
   latestModelAppealOfKind,
-  LOCK_REVIEW_HELD,
+  LOCK_REVIEW_DETECTION_HELD,
+  LOCK_REVIEW_LATER_VERDICT,
+  LOCK_REVIEW_LOCK_CHANGED,
+  LOCK_REVIEW_MATCH_CHECK_FAILED,
   LOCK_REVIEW_UNAVAILABLE,
 } = await import('~/server/services/lock-review.service');
 const { createEntityAppealHandler } = await import('~/server/controllers/report.controller');
+const { comFaceIntentTextHash, reusableComFaceIntent } = await import(
+  '~/server/services/model-com-face-intent.service'
+);
 const actualReport = await vi.importActual<typeof ReportService>(
   '~/server/services/report.service'
 );
+const { moderationActionEmail: actualEmail } = await vi.importActual<typeof Email>(
+  '~/server/email/templates'
+);
+const { reportNotifications } = await import('~/server/notifications/report.notifications');
 
 const MODEL = 71;
 const OWNER = 82;
@@ -94,8 +94,17 @@ beforeAll(async () => {
       nsfw boolean NOT NULL DEFAULT false,
       poi boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'Published',
       meta jsonb NOT NULL DEFAULT '{}'
     );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id int PRIMARY KEY,
+      "modelVersionId" int NOT NULL,
+      type text NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "ModelFileHash" ("fileId" int NOT NULL, type text NOT NULL, hash text NOT NULL);
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -113,7 +122,6 @@ beforeAll(async () => {
       "resolvedMessage" text,
       "internalNotes" text
     );
-    CREATE TABLE "Held" ("userId" int PRIMARY KEY);
   `);
   const raw = pgliteRaw(db);
   const tx = {
@@ -140,22 +148,14 @@ type Seed = {
   nsfw?: boolean;
   poi?: boolean;
   minor?: boolean;
-  held?: boolean;
   owner?: number;
   meta?: Record<string, unknown>;
 };
 
-async function seed({
-  locked,
-  asked = ['nsfw'],
-  nsfw = true,
-  poi,
-  minor,
-  held,
-  owner,
-  meta = {},
-}: Seed) {
-  await db.exec(`DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held";`);
+async function seed({ locked, asked = ['nsfw'], nsfw = true, poi, minor, owner, meta = {} }: Seed) {
+  await db.exec(
+    `DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash";`
+  );
   await db.query(
     `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [MODEL, owner ?? OWNER, locked, nsfw, !!poi, !!minor, meta]
@@ -164,7 +164,6 @@ async function seed({
     `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", context) VALUES (1, $1, 'Model', $2, $3)`,
     [OWNER, MODEL, { kind: 'lock-review', locks: asked }]
   );
-  if (held) await db.query(`INSERT INTO "Held" ("userId") VALUES ($1)`, [owner ?? OWNER]);
 }
 
 const modelRow = async () =>
@@ -203,13 +202,45 @@ beforeEach(async () => {
   mocks.createEntityAppeal.mockResolvedValue({ id: 1 });
   mocks.reopenAppeal.mockResolvedValue({ id: 1 });
   mocks.getLatestAppeal.mockResolvedValue(null);
-  mocks.isAccountUnderLegalHold.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
   dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
   dbMock.dbWrite.appeal.update.mockReset();
   dbMock.dbWrite.appeal.updateMany.mockReset();
   await db.exec(`DELETE FROM "Appeal"`);
+});
+
+describe("a ruling on the nsfw lock ends the owner's filter explanation", () => {
+  const marker = {
+    source: 'profanity-filter',
+    at: '2026-01-01T00:00:00.000Z',
+    fields: ['name'],
+    category: 'mature-language',
+    textHash: 'hash-placeholder',
+  };
+  const kept = { source: marker.source, at: marker.at };
+
+  // The appeal row is reopened in place on a new request, erasing this ruling from it.
+  it('a rejection keeps the lock and its marker, without the explanation', async () => {
+    await seed({ locked: ['nsfw'], meta: { [SYSTEM_NSFW_LOCK_META_KEY]: marker, other: 1 } });
+
+    await reject();
+
+    expect(await modelRow()).toEqual({ lockedProperties: ['nsfw'], nsfw: true });
+    expect(await modelMeta()).toEqual({ [SYSTEM_NSFW_LOCK_META_KEY]: kept, other: 1 });
+  });
+
+  it('a ruling on other settings leaves the explanation', async () => {
+    await seed({
+      locked: ['nsfw', 'tags'],
+      asked: ['tags'],
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: marker },
+    });
+
+    await reject();
+
+    expect(await modelMeta()).toEqual({ [SYSTEM_NSFW_LOCK_META_KEY]: marker });
+  });
 });
 
 describe('approving a lock review', () => {
@@ -223,7 +254,7 @@ describe('approving a lock review', () => {
     expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
     expect(mocks.settleResolvedAppeals).toHaveBeenCalledWith(
       [expect.objectContaining({ id: 1, userId: OWNER, status: 'Approved' })],
-      { status: AppealStatus.Approved }
+      { status: AppealStatus.Approved, lockReview: { unlocked: ['nsfw'], cooldown: false } }
     );
     expect(loggedActivities()).toEqual(['approveLockReview', 'unlockProperty:nsfw']);
   });
@@ -234,6 +265,268 @@ describe('approving a lock review', () => {
     await approve();
 
     expect(await modelMeta()).toEqual({ other: 1 });
+  });
+
+  const listing = { name: 'Listing', description: '<p>Its text</p>' };
+  const listingHash = comFaceIntentTextHash({ ...listing, triggerWords: [] });
+  const storesListing = (stored: { name: string; description: string }) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ ...stored, userId: OWNER } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+  };
+
+  it('overturns the listing intent detection when it lifts the nsfw lock, so a .com version is allowed', async () => {
+    const intent = {
+      detected: true,
+      textHash: listingHash,
+      at: '2026-01-01T00:00:00.000Z',
+      promptId: 77,
+    };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta).not.toHaveProperty(SYSTEM_NSFW_LOCK_META_KEY);
+    expect(meta.comFaceIntent).toEqual({ ...intent, overturnedAt: expect.any(String) });
+  });
+
+  // A review of another lock rules on the rating only, as the model form does.
+  it("keeps the detection and suppresses only the re-lock when the lock lifted isn't the intent check's", async () => {
+    const intent = {
+      detected: true,
+      textHash: listingHash,
+      at: '2026-01-01T00:00:00.000Z',
+      promptId: 77,
+    };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'text-scan', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta.comFaceIntent).toEqual(intent);
+    expect(meta.comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
+  });
+
+  // Edit the listing, have the edit allowed, restore the text: the original detection must still refuse it.
+  it('leaves a detection of other text standing, so restoring that text is still refused', async () => {
+    const intent = {
+      detected: true,
+      textHash: listingHash,
+      at: '2026-01-01T00:00:00.000Z',
+      promptId: 77,
+    };
+    storesListing({ ...listing, description: '<p>Edited for the dispute</p>' });
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta.comFaceIntent).toEqual(intent);
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toMatchObject({ detected: true });
+  });
+
+  it('puts back the text-scan rating marker the intent lock replaced', async () => {
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-02-01T00:00:00.000Z' },
+        comFaceIntent: { detected: true, textHash: 'h', at: 'x', priorSystemNsfwLock: scan },
+      },
+    });
+
+    const ruledAt = Date.now();
+    await approve();
+
+    // Stamped after the ruling, so the unlock it logs does not release the owner guard.
+    const restored = (await modelMeta())[SYSTEM_NSFW_LOCK_META_KEY] as {
+      source: string;
+      at: string;
+    };
+    expect(restored.source).toBe(scan.source);
+    expect(new Date(restored.at).getTime()).toBeGreaterThan(ruledAt);
+  });
+
+  it("never puts back a replaced marker when the lock lifted is not the listing check's", async () => {
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'profanity-filter', at: '2026-02-01T00:00:00.000Z' },
+        comFaceIntent: {
+          detected: false,
+          textHash: 'other',
+          at: 'x',
+          priorSystemNsfwLock: scan,
+          laterVerdict: { source: 'xguard-text-moderation', at: 'y' },
+        },
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta).not.toHaveProperty(SYSTEM_NSFW_LOCK_META_KEY);
+    expect(meta.comFaceIntent).toEqual({ detected: false, textHash: 'other', at: 'x' });
+  });
+
+  it('puts the marker back even when the stored verdict is now for other text', async () => {
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-02-01T00:00:00.000Z' },
+        comFaceIntent: { detected: false, textHash: 'other', at: 'x', priorSystemNsfwLock: scan },
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta[SYSTEM_NSFW_LOCK_META_KEY]).toMatchObject({ source: scan.source });
+    expect(meta.comFaceIntent).toEqual({ detected: false, textHash: 'other', at: 'x' });
+  });
+
+  it('leaves the listing intent detection standing on a rejection', async () => {
+    const intent = { detected: true, textHash: 'h', at: '2026-01-01T00:00:00.000Z' };
+    await seed({ locked: ['nsfw'], meta: { comFaceIntent: intent } });
+
+    await reject();
+
+    expect((await modelMeta()).comFaceIntent).toEqual(intent);
+  });
+
+  describe('as the re-judging job, with a verdict recorded under the lock', () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    const seedVerdict = (at: string) =>
+      seed({
+        locked: ['nsfw'],
+        meta: {
+          [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+          comFaceIntent: {
+            detected: true,
+            textHash: 'h',
+            at: 'x',
+            laterVerdict: { source: 'xguard-text-moderation', at },
+          },
+        },
+      });
+    const approveAsJob = () =>
+      resolveLockReviewAppeal({
+        appealId: 1,
+        modelId: MODEL,
+        approve: true,
+        userId: MODERATOR,
+        asDisputeJob: { intentLockAt: lockedAt },
+      });
+
+    // The job read the model before its slow re-check; the verdict landed after that read.
+    it('refuses, leaving the appeal pending and the lock and verdict in place', async () => {
+      await seedVerdict('2026-03-01T00:00:00.000Z');
+
+      await expect(approveAsJob()).rejects.toThrow(LOCK_REVIEW_LATER_VERDICT);
+
+      expect(await appealRow()).toMatchObject({ status: 'Pending', resolvedBy: null });
+      expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+      expect(await modelMeta()).toMatchObject({
+        comFaceIntent: { laterVerdict: { source: 'xguard-text-moderation' } },
+      });
+    });
+
+    it('approves when the verdict is older than the lock', async () => {
+      await seedVerdict('2026-01-01T00:00:00.000Z');
+
+      await approveAsJob();
+
+      expect(await appealRow()).toMatchObject({ status: 'Approved' });
+    });
+
+    it('still lets a moderator approve, who rules on the verdict', async () => {
+      await seedVerdict('2026-03-01T00:00:00.000Z');
+
+      await approve();
+
+      expect(await appealRow()).toMatchObject({ status: 'Approved' });
+    });
+  });
+
+  describe('as the re-judging job, after a ruling replaced the intent lock it judged', () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    const intent = { detected: true, textHash: 'h', at: 'x' };
+    const approveAsJob = () =>
+      resolveLockReviewAppeal({
+        appealId: 1,
+        modelId: MODEL,
+        approve: true,
+        userId: MODERATOR,
+        asDisputeJob: { intentLockAt: lockedAt },
+      });
+    const expectUnchanged = async () => {
+      expect(await appealRow()).toMatchObject({ status: 'Pending', resolvedBy: null });
+      expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+    };
+
+    // The job read the intent lock; the moderator app's rating ruling then set nsfw and the nsfw lock
+    // and dropped the marker, logging no moderator activity.
+    it("refuses to lift a moderator's rating-review lock", async () => {
+      await seed({
+        locked: ['nsfw'],
+        meta: {
+          [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+          comFaceIntent: intent,
+        },
+      });
+      await db.query(
+        `UPDATE "Model" SET nsfw = true, "lockedProperties" = array['nsfw'], meta = meta - $2 WHERE id = $1`,
+        [MODEL, SYSTEM_NSFW_LOCK_META_KEY]
+      );
+
+      await expect(approveAsJob()).rejects.toThrow(LOCK_REVIEW_LOCK_CHANGED);
+
+      await expectUnchanged();
+    });
+
+    it('refuses when the intent lock was set again since the job read it', async () => {
+      await seed({
+        locked: ['nsfw'],
+        meta: {
+          [SYSTEM_NSFW_LOCK_META_KEY]: {
+            source: 'com-face-intent',
+            at: '2026-03-01T00:00:00.000Z',
+          },
+          comFaceIntent: intent,
+        },
+      });
+
+      await expect(approveAsJob()).rejects.toThrow(LOCK_REVIEW_LOCK_CHANGED);
+
+      await expectUnchanged();
+    });
   });
 
   it('keeps the marker when the nsfw lock is not among those lifted', async () => {
@@ -248,23 +541,8 @@ describe('approving a lock review', () => {
     expect(await modelMeta()).toEqual({ [SYSTEM_NSFW_LOCK_META_KEY]: true });
   });
 
-  it('refuses while the owner is under an evidence hold, and changes nothing', async () => {
-    await seed({ locked: ['nsfw'], held: true });
-
-    await expect(approve()).rejects.toThrow(LOCK_REVIEW_HELD);
-    expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
-    expect((await appealRow()).status).toBe('Pending');
-    expect(mocks.settleResolvedAppeals).not.toHaveBeenCalled();
-    expect(mocks.trackModActivity).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { poi: true },
-    { minor: true },
-    { locked: ['nsfw', 'minor'] },
-    { locked: ['nsfw', 'poi'] },
-  ])(
-    'refuses once the model is flagged or locked as a real person or a minor (%o)',
+  it.each([{ poi: true }, { minor: true }])(
+    'refuses once the model is flagged as a real person or a minor (%o)',
     async (flag) => {
       await seed({ locked: ['nsfw'], ...flag });
       const before = (await modelRow()).lockedProperties;
@@ -274,6 +552,114 @@ describe('approving a lock review', () => {
       expect((await appealRow()).status).toBe('Pending');
     }
   );
+
+  it('lifts the named lock while poi and minor stay locked off', async () => {
+    await seed({ locked: ['poi', 'minor', 'sfwOnly', 'nsfw'] });
+
+    await approve();
+
+    expect(await modelRow()).toMatchObject({
+      lockedProperties: ['poi', 'minor', 'sfwOnly'],
+      nsfw: true,
+    });
+    expect((await appealRow()).status).toBe('Approved');
+  });
+
+  const heldDetection = (label: string) => ({
+    textScanFlags: { [label]: { redetected: { kind: 'redetected', textHash: 'held' } } },
+  });
+
+  it.each(['poi', 'minor'])(
+    'refuses while a %s detection is held for a moderator, and changes nothing',
+    async (label) => {
+      await seed({ locked: ['poi', 'minor', 'nsfw'], meta: heldDetection(label) });
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+      expect((await modelRow()).lockedProperties).toEqual(['poi', 'minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    }
+  );
+
+  it('refuses while a real person file match waits for a moderator', async () => {
+    await seed({ locked: ['poi', 'nsfw'], meta: { poiHashMatch: { at: 'then', hash: 'h' } } });
+
+    await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+    expect((await modelRow()).lockedProperties).toEqual(['poi', 'nsfw']);
+  });
+
+  describe('with a minor file match waiting for a moderator', () => {
+    const SEED_MODEL = 90;
+    const SEED_OWNER = 99;
+
+    /** A moderator-flagged minor model, by default another uploader's, shares a weights file with the model. */
+    async function matchFile(seedOwner = SEED_OWNER) {
+      await db.query(
+        `INSERT INTO "Model" (id, "userId", "lockedProperties", minor) VALUES ($1, $2, '{minor}', true)`,
+        [SEED_MODEL, seedOwner]
+      );
+      await db.exec(`
+        INSERT INTO "ModelVersion" VALUES (1, ${MODEL}), (2, ${SEED_MODEL});
+        INSERT INTO "ModelFile" (id, "modelVersionId", type) VALUES (1, 1, 'Model'), (2, 2, 'Model');
+        INSERT INTO "ModelFileHash" VALUES (1, 'SHA256', 'same'), (2, 'SHA256', 'same');
+      `);
+    }
+
+    it('refuses to approve, and changes nothing', async () => {
+      await seed({ locked: ['poi', 'minor', 'nsfw'] });
+      await matchFile();
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+      expect((await modelRow()).lockedProperties).toEqual(['poi', 'minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    });
+
+    it('approves once a moderator has dismissed the match', async () => {
+      await seed({
+        locked: ['minor', 'nsfw'],
+        meta: { minorHashDismissed: { at: 'then', by: 1 } },
+      });
+      await matchFile();
+
+      await approve();
+
+      expect((await modelRow()).lockedProperties).toEqual(['minor']);
+    });
+
+    it('approves when the match is to the same uploader, which the sweep flags rather than queues', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      await matchFile(OWNER);
+
+      await approve();
+
+      expect((await modelRow()).lockedProperties).toEqual(['minor']);
+    });
+
+    it('still lets the review be rejected', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      await matchFile();
+
+      await reject();
+
+      expect((await appealRow()).status).toBe('Rejected');
+    });
+
+    it('refuses to approve when the match cannot be checked', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_MATCH_CHECK_FAILED);
+      expect((await modelRow()).lockedProperties).toEqual(['minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    });
+  });
+
+  it('still lets the review be rejected while a detection is held', async () => {
+    await seed({ locked: ['poi', 'nsfw'], meta: heldDetection('poi') });
+
+    await reject();
+
+    expect((await appealRow()).status).toBe('Rejected');
+  });
 
   it('refuses a request filed by someone who no longer owns the model', async () => {
     await seed({ locked: ['nsfw'], owner: NEW_OWNER });
@@ -304,9 +690,98 @@ describe('approving a lock review', () => {
   });
 });
 
+// A moderator's ruling on a review the second pass left to them is a sample for tuning the prompt.
+describe('a moderator ruling on a listing intent dispute', () => {
+  const seedDispute = async (context: Record<string, unknown>) => {
+    await seed({
+      locked: ['nsfw'],
+      meta: { comFaceIntent: { detected: true, textHash: 'h', at: 'x', promptId: 77 } },
+    });
+    await db.query(`UPDATE "Appeal" SET context = $1 WHERE id = 1`, [context]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'n',
+      description: '',
+      userId: OWNER,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+  };
+  const samples = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.name === 'model-com-face-intent-dispute');
+
+  it.each([
+    ['an approval', approve, true],
+    ['a rejection', reject, false],
+  ])(
+    'logs one sample for %s, with the job outcome and the first prompt',
+    async (_, rule, approved) => {
+      await seedDispute({
+        kind: 'lock-review',
+        locks: ['nsfw'],
+        dispute: 'comFaceIntent',
+        autoReview: 'upheld',
+      });
+
+      await rule();
+
+      expect(samples()).toEqual([
+        expect.objectContaining({
+          message: 'moderator-ruled',
+          appealId: 1,
+          modelId: MODEL,
+          approved,
+          autoReview: 'upheld',
+          firstPromptId: 77,
+        }),
+      ]);
+    }
+  );
+
+  // The job logs its own sample where it judges; a second one here would count its approval twice.
+  it("logs nothing for the dispute job's own approval", async () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+        comFaceIntent: { detected: true, textHash: 'h', at: 'x', promptId: 77 },
+      },
+    });
+    await db.query(`UPDATE "Appeal" SET context = $1 WHERE id = 1`, [
+      { kind: 'lock-review', locks: ['nsfw'], dispute: 'comFaceIntent' },
+    ]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'n',
+      description: '',
+      userId: OWNER,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+
+    const { unlocked } = await resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: true,
+      userId: MODERATOR,
+      asDisputeJob: { intentLockAt: lockedAt },
+    });
+
+    expect(unlocked).toEqual(['nsfw']);
+    expect(samples()).toEqual([]);
+  });
+
+  it('logs nothing for an ordinary review (control)', async () => {
+    await seedDispute({ kind: 'lock-review', locks: ['nsfw'] });
+
+    await approve();
+
+    expect(samples()).toEqual([]);
+  });
+});
+
 describe('rejecting a lock review', () => {
-  it('keeps the locks and closes the request as rejected, even under a hold', async () => {
-    await seed({ locked: ['nsfw', 'tags'], asked: ['nsfw'], held: true });
+  it('keeps the locks and closes the request as rejected', async () => {
+    await seed({ locked: ['nsfw', 'tags'], asked: ['nsfw'] });
 
     const { unlocked } = await reject();
 
@@ -314,37 +789,6 @@ describe('rejecting a lock review', () => {
     expect((await modelRow()).lockedProperties).toEqual(['nsfw', 'tags']);
     expect(await appealRow()).toEqual({ status: 'Rejected', resolvedBy: MODERATOR });
     expect(loggedActivities()).toEqual(['rejectLockReview']);
-  });
-
-  it('tells the owner in the standard rejection words, never naming a hold', async () => {
-    await seed({ locked: ['nsfw'], held: true });
-    await expect(approve()).rejects.toThrow(LOCK_REVIEW_HELD);
-    await reject();
-    const [claimed, options] = mocks.settleResolvedAppeals.mock.calls[0];
-
-    dbMock.dbRead.user.findMany.mockResolvedValue([
-      { id: OWNER, email: 'owner@example.test', username: 'owner' },
-    ] as never);
-    await actualReport.settleResolvedAppeals(claimed, options);
-
-    expect(mocks.createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: OWNER,
-        type: 'entity-appeal-resolved',
-        details: {
-          entityType: EntityType.Model,
-          entityId: MODEL,
-          status: AppealStatus.Rejected,
-          resolvedMessage: undefined,
-        },
-      })
-    );
-    expect(mocks.sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'appeal-rejected' })
-    );
-    expect(
-      JSON.stringify([mocks.createNotification.mock.calls, mocks.sendEmail.mock.calls])
-    ).not.toMatch(/hold/i);
   });
 
   it('starts the 30-day cooldown while every setting asked about stays locked', async () => {
@@ -392,6 +836,157 @@ describe('rejecting a lock review', () => {
     } as never);
 
     expect((await getLockReviewState({ modelId: MODEL, userId: OWNER }))?.reopensAt).toBeNull();
+  });
+});
+
+const APPROVED = 'Your request to review the locked settings on your model was approved.';
+const DECLINED =
+  'Your request to review the locked settings on your model was declined, so those settings stay locked.';
+/** The closing line every rejection ends with; the date itself is pinned in the shared package. */
+const NEXT_REQUEST = String.raw` You can request another review after [A-Z][a-z]+ \d{1,2}(st|nd|rd|th)(, \d{4})?\.`;
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** What the owner reads of the ruling: the in-app notice and the email, rendered as sent. */
+async function ownerNotice() {
+  const [claimed, options] = mocks.settleResolvedAppeals.mock.calls[0];
+  dbMock.dbRead.user.findMany.mockResolvedValue([
+    { id: OWNER, email: 'owner@example.test', username: 'owner' },
+  ] as never);
+  await actualReport.settleResolvedAppeals(claimed, options);
+
+  expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+  // Round-tripped as the notification store does, so `resolvedAt` arrives as a string.
+  const notification = JSON.parse(JSON.stringify(mocks.createNotification.mock.calls[0][0]));
+  const rendered = reportNotifications['entity-appeal-resolved'].prepareMessage(
+    notification as never
+  );
+  const [email] = mocks.sendEmail.mock.calls[0];
+  return {
+    notification: notification as { type: string; key: string },
+    message: rendered?.message,
+    url: rendered?.url,
+    email: actualEmail.getHtml(email as never),
+  };
+}
+
+describe('telling the owner of a lock review ruling', () => {
+  it('names the settings an approval unlocked, never the reason or notes', async () => {
+    await seed({ locked: ['nsfw', 'tags', 'category'], asked: ['tags', 'nsfw'] });
+    await resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: true,
+      userId: MODERATOR,
+      resolvedReason: 'lock-not-needed',
+      internalNotes: 'mod-only note',
+    });
+
+    const told = await ownerNotice();
+    const copy = `${APPROVED} You can now change: Is intended to produce mature themes, Tags.`;
+    expect(told.message).toBe(copy);
+    expect(told.email).toContain(copy);
+    expect(told.url).toBe(`/models/${MODEL}`);
+    expect(told.notification).toMatchObject({
+      type: 'entity-appeal-resolved',
+      key: expect.stringMatching(new RegExp(String.raw`^entity-appeal-resolved:Model:${MODEL}:1:`)),
+    });
+    expect(JSON.stringify([told.message, told.email])).not.toMatch(
+      /lock[- ]not[- ]needed|mod-only/i
+    );
+  });
+
+  it('ends at "approved" when nothing it asked about was still locked', async () => {
+    await seed({ locked: ['tags'], asked: ['nsfw'] });
+    await approve();
+
+    const told = await ownerNotice();
+    expect(told.message).toBe(APPROVED);
+    expect(told.email).toContain(APPROVED);
+    expect(told.email).not.toContain('You can now change');
+  });
+
+  const rejectFor = (resolvedReason: string, internalNotes = 'mod-only note') =>
+    resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: false,
+      userId: MODERATOR,
+      resolvedReason,
+      internalNotes,
+    });
+
+  it.each([
+    [
+      'lock-stands',
+      ['tags'],
+      'A moderator reviewed your model and found the locked settings correct for it.',
+    ],
+    [
+      'sexual-purpose',
+      ['nsfw'],
+      'A moderator reviewed your model and found that its main purpose is sexual content, so it keeps the mature setting.',
+    ],
+    ['other', ['nsfw'], DECLINED],
+  ])(
+    'declines for %s with its line and the next request date, never the notes',
+    async (reason, asked, line) => {
+      await seed({ locked: ['nsfw', 'tags'], asked });
+      await rejectFor(reason);
+
+      const told = await ownerNotice();
+      expect(told.message).toMatch(new RegExp(`^${escapeRegExp(line)}${NEXT_REQUEST}$`));
+      expect(told.email).toContain(told.message);
+      expect(JSON.stringify([told.message, told.email])).not.toMatch(/mod-only/i);
+    }
+  );
+
+  it('promises no date when a setting it asked about was unlocked meanwhile, as no cooldown starts', async () => {
+    await seed({ locked: ['tags'], asked: ['nsfw', 'tags'] });
+    await rejectFor('lock-stands');
+
+    const told = await ownerNotice();
+    const line = 'A moderator reviewed your model and found the locked settings correct for it.';
+    expect(told.message).toBe(line);
+    expect(told.email).toContain(line);
+    expect(told.email).not.toContain('request another review');
+  });
+
+  it('refuses the sexual-purpose reason when the mature setting was not asked about', async () => {
+    await seed({ locked: ['nsfw', 'tags'], asked: ['tags'] });
+    await expect(rejectFor('sexual-purpose')).rejects.toThrow(/does not apply/);
+    expect(await appealRow()).toMatchObject({ status: 'Pending' });
+  });
+});
+
+describe('telling the owner of a flag appeal ruling', () => {
+  it('keeps the appeal wording, which only a lock review replaces', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: OWNER, email: 'owner@example.test', username: 'owner' },
+    ] as never);
+    await actualReport.settleResolvedAppeals(
+      [
+        {
+          id: 2,
+          entityId: MODEL,
+          entityType: EntityType.Model,
+          resolvedAt: new Date(),
+          buzzTransactionId: null,
+          status: AppealStatus.Rejected,
+          userId: OWNER,
+          createdAt: new Date(),
+        },
+      ],
+      { status: AppealStatus.Rejected }
+    );
+
+    const [notification] = mocks.createNotification.mock.calls[0];
+    expect(
+      reportNotifications['entity-appeal-resolved'].prepareMessage(notification as never)?.message
+    ).toBe('Your appeal regarding your Model has been rejected.');
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'appeal-rejected', intro: undefined })
+    );
   });
 });
 
@@ -460,6 +1055,53 @@ describe("an owner's request", () => {
     );
   });
 
+  it('tags a request on the listing intent lock as a dispute, for the re-judging job', async () => {
+    ownModel({
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-01-01' } },
+    });
+
+    await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: { kind: 'lock-review', locks: ['nsfw'], dispute: 'comFaceIntent' },
+      })
+    );
+  });
+
+  it('files a request naming other locks beside the intent lock as an ordinary review', async () => {
+    ownModel({
+      lockedProperties: ['nsfw', 'tags'],
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-01-01' } },
+    });
+
+    await createEntityAppealHandler({ input: request(['nsfw', 'tags']), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw', 'tags'] } })
+    );
+  });
+
+  it('files a refiled dispute as an ordinary review once a moderator has ruled on the lock', async () => {
+    ownModel({
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-01-01' } },
+    });
+    dbMock.dbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+
+    await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
+    );
+    expect(dbMock.dbWrite.modActivity.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          activity: { in: expect.arrayContaining(['rejectLockReview']) },
+        }),
+      })
+    );
+  });
+
   it('reopens the earlier row as a lock review once the cooldown is over', async () => {
     ownModel();
     mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
@@ -487,7 +1129,7 @@ describe("an owner's request", () => {
     );
   });
 
-  it.each([{ poi: true }, { minor: true }, { lockedProperties: ['nsfw', 'poi'] }])(
+  it.each([{ poi: true }, { minor: true }])(
     'is refused on a model flagged as a real person or a minor (%o)',
     async (flag) => {
       ownModel(flag);
@@ -498,6 +1140,28 @@ describe("an owner's request", () => {
       expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
     }
   );
+
+  it.each([['poi'], ['minor'], ['poi', 'minor']].map((marks) => [marks.join(' and '), marks]))(
+    'is filed while %s is locked off',
+    async (_, marks) => {
+      ownModel({ lockedProperties: [...marks, 'sfwOnly', 'nsfw'] });
+
+      await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+      expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
+      );
+    }
+  );
+
+  it('is refused when it names a locked poi or minor', async () => {
+    ownModel({ lockedProperties: ['poi', 'minor', 'nsfw'] });
+
+    expect(
+      await refusal(createEntityAppealHandler({ input: request(['nsfw', 'poi']), ctx: owner() }))
+    ).toEqual({ code: 'BAD_REQUEST', message: LOCK_REVIEW_UNAVAILABLE });
+    expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
+  });
 
   it("reopens only the owner's flag-appeal row for a flag appeal, never a lock review", async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
@@ -567,18 +1231,6 @@ describe("an owner's request", () => {
     expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
     );
-  });
-
-  it.each([true, null])('under a hold (%s) files exactly as without one', async (held) => {
-    ownModel();
-    const unheld = await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
-    const unheldRow = mocks.createEntityAppeal.mock.calls[0];
-
-    mocks.isAccountUnderLegalHold.mockResolvedValue(held);
-    const underHold = await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
-
-    expect(underHold).toEqual(unheld);
-    expect(mocks.createEntityAppeal.mock.calls[1]).toEqual(unheldRow);
   });
 });
 

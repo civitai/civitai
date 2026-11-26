@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 
 // Pins the missing-XFF regression fix on the first-party session-exchange endpoint. Under internal routing
 // (AUTH_HUB_INTERNAL_URL → in-cluster ClusterIP) the spoke's server-to-server POST bypasses Traefik and arrives
@@ -20,12 +21,16 @@ const h = vi.hoisted(() => ({
   mintSession: vi.fn(),
   addDeviceFamily: vi.fn(),
   touchAccount: vi.fn(),
-  consumeOidcContext: vi.fn().mockResolvedValue({ deviceId: undefined }),
+  readOidcContext: vi.fn().mockResolvedValue({ deviceId: undefined }),
+  deleteOidcContext: vi.fn().mockResolvedValue(undefined),
   logOAuthEvent: vi.fn(),
 }));
 
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: h.checkOAuthRateLimit }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: h.checkOAuthRateLimit,
+}));
 vi.mock('$lib/server/oauth/model', () => ({
   oauthModel: {
     getAuthorizationCode: h.getAuthorizationCode,
@@ -41,7 +46,10 @@ vi.mock('$lib/server/auth/lineage', () => ({
   addDeviceFamily: h.addDeviceFamily,
 }));
 vi.mock('$lib/server/auth/device', () => ({ touchAccount: h.touchAccount }));
-vi.mock('$lib/server/oauth/oidc-nonce', () => ({ consumeOidcContext: h.consumeOidcContext }));
+vi.mock('$lib/server/oauth/oidc-nonce', () => ({
+  readOidcContext: h.readOidcContext,
+  deleteOidcContext: h.deleteOidcContext,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }));
 
 import { POST } from '../+server';
@@ -65,7 +73,7 @@ beforeEach(() => {
   h.checkOAuthRateLimit.mockResolvedValue(true);
   h.getAuthorizationCode.mockResolvedValue(undefined);
   h.revokeAuthorizationCode.mockResolvedValue(true);
-  h.consumeOidcContext.mockResolvedValue({ deviceId: undefined });
+  h.readOidcContext.mockResolvedValue({ deviceId: undefined });
 });
 
 // A valid, unexpired, first-party auth code whose PKCE challenge matches the makeEvent() verifier.
@@ -151,11 +159,48 @@ describe('oauth/session +server — client-IP resolution never 500s the exchange
 });
 
 describe('oauth/session +server — family', () => {
+  it('mints nothing for an impersonation code whose context cannot be read, and leaves the code', async () => {
+    h.getAuthorizationCode.mockResolvedValue({
+      ...validCode(),
+      user: { id: 7, impersonation: true },
+    });
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+    h.readOidcContext.mockResolvedValue(null);
+
+    expect((await POST(makeEvent())).status).toBe(503);
+    expect(h.mintSession).not.toHaveBeenCalled();
+    expect(h.revokeAuthorizationCode).not.toHaveBeenCalled();
+  });
+
+  it('mints nothing for an impersonation code whose context lacks the impersonation', async () => {
+    h.getAuthorizationCode.mockResolvedValue({
+      ...validCode(),
+      user: { id: 7, impersonation: true },
+    });
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a' });
+
+    expect((await POST(makeEvent())).status).toBe(503);
+    expect(h.mintSession).not.toHaveBeenCalled();
+  });
+
+  it('signs in an ordinary code whose context cannot be read, as before', async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+    h.readOidcContext.mockResolvedValue(null);
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintSession).toHaveBeenCalledWith({ id: 7 }, { parent: null });
+    expect(h.deleteOidcContext).toHaveBeenCalledWith('auth-code');
+  });
+
   it("mints the site's session into the family of the hub session that authorized it", async () => {
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
     h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
-    h.consumeOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a', iat0: 5 });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a', iat0: 5 });
 
     expect((await POST(makeEvent())).status).toBe(200);
     expect(h.mintSession).toHaveBeenCalledWith({ id: 7 }, { parent: { sid: 'family-a', iat0: 5 } });
@@ -165,7 +210,7 @@ describe('oauth/session +server — family', () => {
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
     h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-a' });
-    h.consumeOidcContext.mockResolvedValue({
+    h.readOidcContext.mockResolvedValue({
       deviceId: 'd',
       family: 'family-a',
       iat0: 5,
@@ -184,7 +229,7 @@ describe('oauth/session +server — family', () => {
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
     h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-b' });
-    h.consumeOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
 
     expect((await POST(makeEvent())).status).toBe(200);
     expect(h.addDeviceFamily).toHaveBeenCalledWith('d', 'family-b', { proofFamily: 'family-a' });
@@ -195,7 +240,7 @@ describe('oauth/session +server — family', () => {
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
     h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-b' });
     h.addDeviceFamily.mockResolvedValueOnce('rotate');
-    h.consumeOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
 
     const res = await POST(makeEvent());
 

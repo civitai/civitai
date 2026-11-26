@@ -106,6 +106,8 @@ function installDb() {
     client.appBlock.update.mockImplementation(async (a: { data?: unknown }) => a?.data ?? {});
     client.appBlock.updateMany.mockResolvedValue({ count: 0 });
     client.oauthClient.update.mockResolvedValue({});
+    // The ceiling a late hold would put back, read on the primary before step (3).
+    client.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
     client.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
     client.appListing.updateMany.mockResolvedValue({ count: 0 });
   }
@@ -116,7 +118,7 @@ const existingAppBlock = {
   appId: 'app_1',
   repoUrl: 'https://forgejo.example/cool-app',
   trustTier: 'unverified',
-  app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'], userId: 4242 },
+  app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'], userId: 4242 },
 };
 
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
@@ -165,6 +167,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path resolves the manifest `bugs` link beside the two builders; inert here.
+  buildListingIssueTrackerSync: () => ({ write: false }),
   buildListingScalarSync: () => ({
     name: 'Cool App',
     description: null,
@@ -186,9 +190,7 @@ const { createDocStore, createDocStoreMaintenance, reviewNamespace } = await imp
   '~/server/services/apps/doc-store'
 );
 const { createPgliteHarness } = await import('~/server/services/apps/__tests__/doc-store.harness');
-const { PREFS, POSTS, TALLIES, ctx } = await import(
-  '~/server/services/apps/__tests__/doc-store.functional'
-);
+const { PREFS, POSTS, ctx } = await import('~/server/services/apps/__tests__/doc-store.functional');
 const { APPDATA_TABLES } = await import('~/server/services/apps/__tests__/doc-store.sql-scan');
 const { approveRequest, rejectRequest, withdrawRequest, teardownReviewStorageForRequest } =
   await import('~/server/services/blocks/publish-request.service');
@@ -221,14 +223,15 @@ function pending(slug: string, extra: Partial<Req> = {}): Req {
   return r;
 }
 
-/** Both moderators write a private doc, a shared doc, a mark and a counter in their namespaces. */
+/** Both moderators write a private doc, a shared doc, a report and a deleted doc's tombstone. */
 async function seedReview(publishRequestId: string) {
   for (const uid of MODS) {
     const c = ctx(publishRequestId, reviewNamespace(publishRequestId, uid), uid);
     await liveStore.put(c, PREFS, 'k', { uid });
     await liveStore.put(c, POSTS, 'p', { status: 'open' });
-    await liveStore.mark(c, POSTS, 'p', 'vote');
-    await liveStore.increment(c, TALLIES, 'g', 'plays', 2);
+    await liveStore.report(c, POSTS, 'p');
+    await liveStore.put(c, POSTS, 'gone', { status: 'open' });
+    await liveStore.delete(c, POSTS, 'gone');
   }
 }
 

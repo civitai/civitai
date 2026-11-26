@@ -1,4 +1,9 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import {
+  fallbackUserImage,
+  servableProfilePicture,
+} from '~/server/services/profile-picture.servable';
+import { fallbackPictureOf } from '~/server/services/user-creator.reads';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -20,7 +25,7 @@ import {
   type UserWithCosmeticsRow,
 } from '@civitai/db-queries/hot-reads-6';
 import { postSelect } from '~/server/selectors/post.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import type { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 
@@ -42,8 +47,9 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
     id: row.id,
     username: row.username,
     deletedAt: row.deletedAt,
-    image: row.image,
-    profilePicture:
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
+    // One payload for every viewer: no owner exception.
+    profilePicture: servableProfilePicture(
       row.profilePictureId !== null
         ? {
             id: row.profilePictureId,
@@ -59,6 +65,10 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
             metadata: row.profilePictureMetadata as Prisma.JsonValue,
           }
         : null,
+      row.profilePictureNeedsReview,
+      row.profilePictureModelRestricted,
+      row.profilePictureBlockedFor
+    ),
     cosmetics: row.cosmetics.map((cosmetic) => ({
       data: cosmetic.data as Prisma.JsonValue,
       cosmetic: {
@@ -287,6 +297,8 @@ export const downloadFileSelect = {
   type: true,
   metadata: true,
   sizeKB: true,
+  pickleScanResult: true,
+  virusScanResult: true,
   hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
 };
 
@@ -304,6 +316,8 @@ export async function readDownloadFilesViaKysely(
     type: row.type,
     metadata: row.metadata as Prisma.JsonValue,
     sizeKB: row.sizeKB,
+    pickleScanResult: row.pickleScanResult,
+    virusScanResult: row.virusScanResult,
     hashes: row.hashes.map((hash) => ({ hash: hash.hash })),
   }));
 }

@@ -32,6 +32,7 @@ import {
   PinGlyph,
   PROFILE_PIN,
   pinMoveDirection,
+  useDismissClickGuard,
   useDragClickGuard,
   usePinActions,
   useTrackHeaderOpen,
@@ -46,13 +47,17 @@ import type { UserMenuShellProps } from './UserMenuV2';
  */
 export function UserMenuDesktop({ open, setOpen, pins, trigger }: UserMenuShellProps) {
   const [switching, setSwitching] = useState(false);
+  const dismissGuard = useDismissClickGuard();
 
   return (
     <Menu
       opened={open}
       onChange={(next) => {
         setOpen(next);
-        if (!next) setSwitching(false);
+        if (!next) {
+          setSwitching(false);
+          dismissGuard.onClose();
+        }
       }}
       position="bottom-end"
       width={260}

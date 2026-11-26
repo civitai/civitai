@@ -1,11 +1,10 @@
 import type { InputWrapperProps, MantineSize } from '@mantine/core';
 import { Group, Input, Text } from '@mantine/core';
-import { openModal } from '@mantine/modals';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
 import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle, IconUnlink } from '@tabler/icons-react';
 import { TextStyleKit } from '@tiptap/extension-text-style';
-import ImageExtension from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extensions';
 import type { Editor, Extensions } from '@tiptap/react';
 import { Extension, nodePasteRule, useEditor } from '@tiptap/react';
@@ -13,15 +12,14 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
-import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
+import { InsertEmbedControl } from '~/components/RichTextEditor/InsertEmbedControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ImageSizeMenu } from './ImageSizeMenu';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
-import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
 import clsx from 'clsx';
@@ -33,15 +31,28 @@ import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
+import { EmbedNode } from '~/shared/tiptap/embed.node';
+import { SizedImageEditNode } from './SizedImageEditNode';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
+import { WithheldMediaEditNode } from '~/components/TipTap/WithheldMediaNode';
+import { withWithheldHref } from '~/shared/tiptap/withheld-link';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { TextColorControl } from './TextColorControl';
+import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
+import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 import { BlurbEditNode, BlurbEditorProvider } from '~/components/TipTap/BlurbNode';
+import { CivitaiEmbedEditNode } from '~/components/TipTap/CivitaiEmbedEditNode';
+import { SpoilerBlockNode, SpoilerMark } from '~/shared/tiptap/spoiler.node';
+import {
+  SpoilerBlockControl,
+  SpoilerTextControl,
+} from '~/components/RichTextEditor/InsertSpoilerControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -66,7 +77,7 @@ const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
 };
 
 function openLinkWhitelistRequestModal() {
-  return openModal({
+  return openContentDialog({
     title: (
       <Group gap="xs">
         <IconAlertTriangle color="gold" />
@@ -136,6 +147,8 @@ export function RichTextEditor({
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
+  compactToolbar = false,
+  headingLevels = [1, 2, 3],
   ...props
 }: Props) {
   const addHeading = includeControls.includes('heading');
@@ -151,6 +164,12 @@ export function RichTextEditor({
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
   const addBlurbs = includeControls.includes('blurb');
+  // Needs the addVideo branch: only it registers the image nodes that carry `size`.
+  const addImageSize = addVideo && includeControls.includes('imageSize');
+  const addAlign = includeControls.includes('align');
+  const addSpoilers = includeControls.includes('spoiler');
+  const civitaiCardPaste =
+    !!useFeatureFlags().articleCivitaiCards && includeControls.includes('civitaiEmbed');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
@@ -192,6 +211,8 @@ export function RichTextEditor({
     return accepts;
   }, [addImages, addVideo]);
 
+  // A key, not the array: callers pass a fresh array each render, and the editor rebuilds on change.
+  const headingLevelsKey = headingLevels.join(',');
   const extensions = useMemo(() => {
     const arr: Extensions = [
       Placeholder.configure({ placeholder }),
@@ -215,9 +236,9 @@ export function RichTextEditor({
     if (addColors) arr.push(TextStyleKit);
     if (addLink) {
       const linkExtension = withLinkValidation ? LinkWithValidation : Link;
-      arr.push(linkExtension);
+      arr.push(withWithheldHref(linkExtension));
     }
-    if (addHeading) arr.push(CustomHeading);
+    if (addHeading) arr.push(CustomHeading.configure({ levels: headingLevels }));
     if (onSuperEnter)
       arr.push(
         Extension.create({
@@ -232,8 +253,8 @@ export function RichTextEditor({
       );
     if (addVideo) {
       arr.push(
-        EdgeMediaEditNode.configure({ accepts, inline: true }),
-        ImageExtension.configure({ inline: true })
+        EdgeMediaEditNode.configure({ accepts, inline: true, resizable: addImageSize }),
+        SizedImageEditNode.configure({ inline: true, resizable: addImageSize })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));
@@ -251,7 +272,8 @@ export function RichTextEditor({
             ];
           },
         }),
-        InstagramNode
+        InstagramNode,
+        EmbedNode
       );
     }
     if (addMentions)
@@ -259,7 +281,7 @@ export function RichTextEditor({
     if (addPolls) arr.push(StrawPollNode);
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
-    arr.push(TimestampEditNode);
+    arr.push(TimestampEditNode, WithheldMediaEditNode);
     // Comment editors only. Verified rather than assumed: the four surfaces
     // passing `includeControls: ['sticker']` are exactly the four comment
     // editors, and nothing else loads comment content — so no editor that could
@@ -268,11 +290,18 @@ export function RichTextEditor({
     // rendering it and having it vanish on save.
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
+    if (addAlign) arr.push(TextAlignExtension);
+    if (addSpoilers) arr.push(SpoilerMark, SpoilerBlockNode);
+    // Registered everywhere, like the timestamp node, so content holding cards survives a save.
+    arr.push(CivitaiEmbedEditNode.configure({ pasteToCard: civitaiCardPaste }));
 
     return arr;
   }, [
+    civitaiCardPaste,
     addStickers,
     addBlurbs,
+    addAlign,
+    addSpoilers,
     addList,
     addFormatting,
     withoutBlockContainers,
@@ -280,6 +309,7 @@ export function RichTextEditor({
     addLink,
     withLinkValidation,
     addHeading,
+    headingLevelsKey,
     onSuperEnter,
     addMedia,
     addMentions,
@@ -421,6 +451,7 @@ export function RichTextEditor({
             ...props.classNames,
             content: clsx(
               classes.richTextEditor,
+              addImageSize && classes.sizedImages,
               props.classNames && 'content' in props.classNames
                 ? props.classNames.content
                 : undefined
@@ -447,9 +478,9 @@ export function RichTextEditor({
             <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
               {addHeading && (
                 <RTE.ControlsGroup>
-                  <RTE.H1 />
-                  <RTE.H2 />
-                  <RTE.H3 />
+                  {headingLevels.includes(1) && <RTE.H1 />}
+                  {headingLevels.includes(2) && <RTE.H2 />}
+                  {headingLevels.includes(3) && <RTE.H3 />}
                 </RTE.ControlsGroup>
               )}
 
@@ -457,13 +488,15 @@ export function RichTextEditor({
                 <RTE.ControlsGroup>
                   <RTE.Bold />
                   <RTE.Italic />
-                  <RTE.Underline />
-                  <RTE.Strikethrough />
-                  <RTE.ClearFormatting />
-                  {!withoutBlockContainers && <RTE.CodeBlock />}
-                  {addColors && (
-                    <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
+                  {!compactToolbar && (
+                    <>
+                      <RTE.Underline />
+                      <RTE.Strikethrough />
+                      <RTE.ClearFormatting />
+                      {!withoutBlockContainers && <RTE.CodeBlock />}
+                    </>
                   )}
+                  {addColors && <TextColorControl colors={constants.richTextEditor.presetColors} />}
                 </RTE.ControlsGroup>
               )}
 
@@ -474,10 +507,16 @@ export function RichTextEditor({
                 </RTE.ControlsGroup>
               )}
 
+              {addAlign && (
+                <RTE.ControlsGroup>
+                  <TextAlignControl />
+                </RTE.ControlsGroup>
+              )}
+
               {addLink && (
                 <RTE.ControlsGroup>
                   <RTE.Link />
-                  <RTE.Unlink />
+                  {!compactToolbar && <RTE.Unlink />}
                 </RTE.ControlsGroup>
               )}
 
@@ -491,13 +530,18 @@ export function RichTextEditor({
                   ) : addImages ? (
                     <InsertImageControlLegacy maxFileSize={constants.richTextEditor.maxFileSize} />
                   ) : null}
-                  <InsertYoutubeVideoControl />
-                  <InsertInstagramEmbedControl />
+                  <InsertEmbedControl />
                 </RTE.ControlsGroup>
               )}
-              {addPolls && (
+              {addPolls && !addMedia && (
                 <RTE.ControlsGroup>
-                  <InsertStrawPollControl />
+                  <InsertEmbedControl />
+                </RTE.ControlsGroup>
+              )}
+              {addSpoilers && (
+                <RTE.ControlsGroup>
+                  <SpoilerTextControl />
+                  <SpoilerBlockControl />
                 </RTE.ControlsGroup>
               )}
               {addTimestamp && (
@@ -527,6 +571,7 @@ export function RichTextEditor({
               shouldShow={({ editor }) =>
                 !editor.state.selection.empty &&
                 !editor.isActive('image') &&
+                !editor.isActive('media') &&
                 !editor.isActive('blurb')
               }
               className={classes.bubbleTooltip}
@@ -534,9 +579,9 @@ export function RichTextEditor({
               <RTE.ControlsGroup>
                 {addHeading ? (
                   <>
-                    <RTE.H1 />
-                    <RTE.H2 />
-                    <RTE.H3 />
+                    {headingLevels.includes(1) && <RTE.H1 />}
+                    {headingLevels.includes(2) && <RTE.H2 />}
+                    {headingLevels.includes(3) && <RTE.H3 />}
                   </>
                 ) : null}
                 {addFormatting ? (
@@ -547,9 +592,12 @@ export function RichTextEditor({
                 ) : null}
                 {addList ? <RTE.BulletList /> : null}
                 {addLink ? <RTE.Link /> : null}
+                {addSpoilers ? <SpoilerTextControl /> : null}
               </RTE.ControlsGroup>
             </BubbleMenu>
           )}
+
+          {editor && addImageSize && <ImageSizeMenu editor={editor} />}
 
           <RTE.Content />
 
@@ -585,7 +633,11 @@ type ControlType =
   | 'colors'
   | 'timestamp'
   | 'sticker'
-  | 'blurb';
+  | 'blurb'
+  | 'imageSize'
+  | 'align'
+  | 'civitaiEmbed'
+  | 'spoiler';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
@@ -609,4 +661,11 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;
+    /**
+     * A short toolbar at every width, to fit one row on a phone: bold, italic and the link control only (an empty address in the link
+     * popover removes the link), for a surface that offers little markup.
+     */
+    compactToolbar?: boolean;
+    /** The heading levels `heading` offers, for a surface whose stored allowlist omits some. */
+    headingLevels?: Array<1 | 2 | 3>;
   };

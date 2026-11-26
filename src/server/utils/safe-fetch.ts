@@ -67,8 +67,15 @@ export class SafeFetchError extends Error {
 }
 
 export type SafeFetchOptions = {
-  /** Per-request timeout in ms (also the whole-chain budget per hop). */
+  /** Per-hop timeout in ms: connect + headers + body of ONE request in the redirect chain. */
   timeoutMs: number;
+  /**
+   * One deadline in ms for the WHOLE chain: the connect, headers and body of every hop, together.
+   * Each hop's timer is the smaller of `timeoutMs` and what is left, and no hop starts once it is
+   * spent. (DNS resolution before a hop is not timed, by this or by `timeoutMs`.) Omitted ⇒ only
+   * the per-hop `timeoutMs` applies, as before this existed.
+   */
+  deadlineMs?: number;
   /** Hard cap on the response body; the stream is destroyed once it is exceeded. */
   maxBytes: number;
   /**
@@ -82,6 +89,11 @@ export type SafeFetchOptions = {
   connectTimeoutMs?: number;
   /** A tighter cap chosen from the body's first bytes (e.g. by file type), applied as it streams. */
   capFromHead?: { headBytes: number; maxBytes: (head: Buffer) => number };
+  /**
+   * Narrows which URLs may be fetched, checked on EVERY hop before DNS or any socket. For a
+   * fetch that must stay on one site (e.g. Bandcamp), so a redirect cannot leave it.
+   */
+  allowUrl?: (url: URL) => boolean;
 };
 
 export type SafeFetchResult = {
@@ -330,14 +342,20 @@ function drain(stream: IncomingMessage): void {
  */
 export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<SafeFetchResult> {
   const maxRedirects = opts.maxRedirects ?? 2;
+  const deadlineAt = opts.deadlineMs != null ? Date.now() + opts.deadlineMs : null;
   let currentUrl = url;
 
   for (let hop = 0; ; hop++) {
     const parsed = assertLexicallySafe(currentUrl);
+    if (opts.allowUrl && !opts.allowUrl(parsed)) {
+      throw new SafeFetchError('blocked_host', 'URL outside the allowed set');
+    }
     const validated = await resolveAndValidateHost(parsed.hostname);
 
+    const remaining = deadlineAt != null ? deadlineAt - Date.now() : Infinity;
+    if (remaining <= 0) throw new SafeFetchError('timeout', 'overall deadline exceeded');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), Math.min(opts.timeoutMs, remaining));
     try {
       let res: Hop;
       try {

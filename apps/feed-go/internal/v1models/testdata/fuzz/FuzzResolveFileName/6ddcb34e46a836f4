@@ -1,0 +1,6 @@
+go test fuzz v1
+string("0")
+string("0")
+string("\xc2\x0e\x82")
+string("0")
+string("I")

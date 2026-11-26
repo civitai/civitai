@@ -142,6 +142,8 @@ export type CreateFreePlacement = SpaceTarget & {
   sellerId?: number | null;
   /** The surface's own payload. Opaque here, exactly as on the paid path. */
   data: Prisma.InputJsonObject;
+  /** A sticker's movement over a video, stored beside `data`. Opaque here, like `data`. */
+  track?: Prisma.InputJsonObject;
   /**
    * An event's team waiver pays for this row instead of the free tier: the creator's free slots and
    * the placer's daily allowance are neither required nor spent, and the waiver's own daily limit
@@ -190,6 +192,7 @@ export async function createFreePlacement({
   placerId,
   sellerId,
   data,
+  track,
   teamWaiver,
 }: CreateFreePlacement) {
   // A surface that may be priced at zero has no free tier: a `free` row on it would spend a slot
@@ -317,6 +320,7 @@ export async function createFreePlacement({
         status: 'pending',
         expiresAt,
         data: teamWaiver ? { ...data, waiver: TEAM_WAIVER } : data,
+        ...(track ? { track } : {}),
       },
       select: { id: true },
     });

@@ -29,7 +29,8 @@ const isTestFile = (file: string) => /\.test\.|[\\/]__tests__[\\/]/.test(file);
 /** Every file allowed to name the tables, and why. */
 const ALLOWED: Record<string, string> = {
   'src/server/services/storyline.service.ts': 'the delete writes the copy (`deleteStoryline`)',
-  'src/server/services/held-review.service.ts': 'the purge releases it (`purgeReleasedHeldCopies`)',
+  'src/server/services/held-review.service.ts':
+    'the purge drops old copies (`purgeReleasedHeldCopies`)',
   'apps/moderator/src/lib/server/storyline-takedown.service.ts':
     'the report page shows it (`getDeletedReportStorylines`)',
 };

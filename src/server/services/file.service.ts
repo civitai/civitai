@@ -5,11 +5,12 @@ import { componentFileTypes } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
-import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { ModelModifier, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { canViewArticle } from '~/server/services/article-read';
+import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import type { ResolveAttribution } from '~/utils/resolve-attribution';
@@ -28,6 +29,15 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
+import { trainingDataShareRestricted } from './training-data-restricted.service';
+import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibility';
+import {
+  getVersionEarlyAccess,
+  isModelArchived,
+  isModelDeleted,
+  isModelTakenDown,
+  isVersionPublished,
+} from '~/server/utils/model-version-gates';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -159,6 +169,14 @@ export const getFileWithPermission = async ({
 
       return file;
     }
+    case 'Article': {
+      const article = await dbRead.article.findUnique({
+        where: { id: file.entityId },
+        select: { availability: true, userId: true },
+      });
+      if (!article) return isModerator ? file : null;
+      return canViewArticle(article, { id: userId, isModerator }) ? file : null;
+    }
     default:
       return file;
   }
@@ -195,6 +213,7 @@ export const getFileForModelVersion = async ({
   fileId,
   direct,
   attribution,
+  redCapable,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -221,6 +240,10 @@ export const getFileForModelVersion = async ({
    * resolver for attribution only. Required so every caller names itself.
    */
   attribution: ResolveAttribution;
+  /** Whether the request's host serves mature content (`isRedCapableHost`). When false, a
+   *  Training Data file rated above PG13 or not fully rated is not-found for anyone but its owner
+   *  or a moderator. */
+  redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model. The read's inner join drops a version whose model row was
   // hard-deleted (an orphaned foreign key), so that version is `not-found` (404), not a 500.
@@ -242,32 +265,25 @@ export const getFileForModelVersion = async ({
   });
 
   // Paid-access gate now sourced from PaidAccess (mirrors the old columns during Phase 1).
-  const paidAccess = (await getPaidAccess('ModelVersion', [modelVersion.id]))[modelVersion.id];
-  const inEarlyAccess = !!paidAccess && isPaidAccessActive(paidAccess);
-  const deadline = paidAccess?.endsAt ?? undefined;
+  const { inEarlyAccess, deadline } = await getVersionEarlyAccess(modelVersion.id);
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
-  const archived = modelVersion.model.mode === ModelModifier.Archived;
-  if (!noAuth && archived) return { status: 'archived' };
+  if (!noAuth && isModelArchived(modelVersion)) return { status: 'archived' };
 
   const isMod = user?.isModerator;
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
 
-  // A deleted model is downloadable by moderators only — no exceptions. This
+  // A deleted or taken-down model is downloadable by moderators only — no exceptions. This
   // gate runs before every other access path (owner, internal noAuth callers,
-  // and the published-state check) so a deleted (incl. DMCA-removed) model can
-  // never be served to its owner or anyone else. Owners are otherwise allowed
-  // to download their own unpublished work, but a deleted model's owner is
-  // frequently the exact party a takedown targets (the uploader).
-  const modelDeleted = modelVersion.model.status === 'Deleted';
-  if (modelDeleted && !isMod) return { status: 'not-found' };
+  // and the published-state check) so such a model can never be served to its
+  // owner or anyone else. Owners are otherwise allowed to download their own
+  // unpublished work, but the owner is frequently the exact party a takedown
+  // targets (the uploader). Both answer the same `not-found`.
+  if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !isMod)
+    return { status: 'not-found' };
 
-  const canDownload =
-    noAuth ||
-    isMod ||
-    isOwner ||
-    (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
+  const canDownload = noAuth || isMod || isOwner || isVersionPublished(modelVersion);
 
   if (!canDownload) return { status: 'not-found' };
 
@@ -340,11 +356,22 @@ export const getFileForModelVersion = async ({
         // Fetch the primary 'Model' file from the linked version
         const linkedFile = await dbRead.modelFile.findFirst({
           where: { modelVersionId: linked.resourceId, type: 'Model' },
-          select: downloadFileSelect,
+          select: {
+            ...downloadFileSelect,
+            modelVersion: {
+              select: { status: true, model: { select: { status: true, mode: true } } },
+            },
+          },
           orderBy: { id: 'asc' },
         });
-        if (linkedFile) {
-          file = { ...linkedFile, type: type } as FileResult;
+        // The linked file belongs to another model, which the gates above never saw.
+        const linkedRefused =
+          !!linkedFile &&
+          !isMod &&
+          (isModelDeleted(linkedFile.modelVersion) || isModelTakenDown(linkedFile.modelVersion));
+        if (linkedFile && !linkedRefused) {
+          const { modelVersion: _linkedVersion, ...linkedRow } = linkedFile;
+          file = { ...linkedRow, type: type } as FileResult;
           // Belongs to the linked version, so this version's files are not its siblings.
           versionFiles = [];
         }
@@ -352,6 +379,32 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    !trainingDataServableOnHost(
+      file.metadata as { nsfwLevel?: unknown; fullyRated?: unknown } | null,
+      redCapable
+    )
+  )
+    return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    (await trainingDataShareRestricted(dbRead, modelVersionId))
+  )
+    return { status: 'not-found' };
+  // Fails closed: an unscanned or failed dataset is served only to its owner and moderators.
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    file.virusScanResult !== ScanResultCode.Success
+  )
+    return { status: 'not-found' };
+  if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };
 
   // Named against every file on the version, not only the files this request could pick from:
   // otherwise two files sharing an uploaded name both download under it and overwrite each other.
@@ -386,9 +439,7 @@ export const getFileForModelVersion = async ({
       isDownloadable,
       // The download endpoint excludes unpublished versions from the download metric — a draft is only
       // reachable by its owner and by internal services, so anything fetching one isn't a download.
-      published:
-        modelVersion.status === ModelStatus.Published &&
-        modelVersion.model.status === ModelStatus.Published,
+      published: isVersionPublished(modelVersion),
     };
   } catch (err) {
     // Both storage-resolver and delivery-worker fallback rejected this file —
@@ -421,7 +472,7 @@ export const getFileForModelVersion = async ({
       fileUrl: file.url,
       fileType: file.type,
       userId: user?.id,
-    }).catch(() => undefined);
+    });
     return { status: 'resolve-failed' };
   }
 };
@@ -449,6 +500,7 @@ type ModelVersionFileResult =
         | 'no-access'
         | 'archived'
         | 'downloads-disabled'
+        | 'failed-scan'
         | 'error';
     }
   | {
@@ -485,4 +537,6 @@ type FileResult = {
     hash: string;
   }[];
   url: string;
+  pickleScanResult: ScanResultCode;
+  virusScanResult: ScanResultCode;
 };

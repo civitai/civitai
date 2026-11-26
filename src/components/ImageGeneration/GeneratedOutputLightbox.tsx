@@ -7,6 +7,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
+  GENERATOR_QUEUE_INPUT,
   matchesMarkerTags,
   useGetTextToImageRequestsImages,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -23,7 +24,8 @@ export default function GeneratedOutputLightbox({
   workflowId: string;
 }) {
   const dialog = useDialogContext();
-  const { requests, markerTags, isLoading } = useGetTextToImageRequestsImages();
+  const { requests, markerTags, isLoading } =
+    useGetTextToImageRequestsImages(GENERATOR_QUEUE_INPUT);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 

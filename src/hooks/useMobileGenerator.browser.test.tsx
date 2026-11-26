@@ -18,6 +18,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 type Cdp = { send: (method: string, params?: object) => Promise<unknown> };
 const client = () => cdp() as unknown as Cdp;
+const desktopUserAgent = navigator.userAgent;
 
 async function device(screen: [number, number], { touch = true } = {}) {
   await client().send('Emulation.setDeviceMetricsOverride', {
@@ -29,6 +30,17 @@ async function device(screen: [number, number], { touch = true } = {}) {
     screenHeight: screen[1],
   });
   await client().send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 5 });
+  // A phone's browser asks for the mobile site; `isPhoneScreen` reads that, not just the screen.
+  await client().send('Emulation.setUserAgentOverride', {
+    userAgent: desktopUserAgent,
+    userAgentMetadata: {
+      platform: 'Android',
+      platformVersion: '',
+      architecture: '',
+      model: '',
+      mobile: touch,
+    },
+  });
 }
 
 function Probe() {
@@ -72,6 +84,7 @@ async function show(viewport: [number, number]) {
 afterEach(async () => {
   await client().send('Emulation.clearDeviceMetricsOverride');
   await client().send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await client().send('Emulation.setUserAgentOverride', { userAgent: desktopUserAgent });
 });
 
 describe('useMobileGenerator on touch devices', () => {

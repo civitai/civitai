@@ -108,6 +108,39 @@ describe('runTurn', () => {
     expect((await run).toolCalls.map((c) => c.round)).toEqual([1, 1, 2]);
   });
 
+  it('records whether a lookup sent emails on its audit row, and not to the model', async () => {
+    lookup.mockImplementationOnce(async () => ({
+      data: { ok: 1 },
+      rows: 1,
+      truncated: false,
+      sources: [],
+      emailsShown: true,
+    }));
+    const { run, complete } = turn([reply(null, [call('lookup', { userId: 5 })]), reply('done')]);
+    const out = await run;
+    expect(out.toolCalls[0]).toMatchObject({ args: { userId: 5 }, emailsShown: true });
+    const second = (
+      complete.mock.calls[1] as unknown as [{ messages: { role: string; content: string }[] }]
+    )[0];
+    expect(second.messages.at(-1)?.content).not.toContain('emailsShown');
+  });
+
+  it('records a cut for size on the audit row, apart from the tool truncating itself', async () => {
+    lookup.mockImplementationOnce(async () => ({
+      data: { rows: Array.from({ length: 1000 }, (_, i) => `${i}`.padEnd(100, 'x')) },
+      rows: 1000,
+      truncated: false,
+      sources: [],
+    }));
+    const { run } = turn([reply(null, [call('lookup', { userId: 5 })]), reply('done')]);
+    const [logged] = (await run).toolCalls;
+    expect(logged.cutForSize).toEqual([
+      { at: 'data.rows', kept: expect.any(Number) as number, of: 1000 },
+    ]);
+    expect(logged.cutForSize![0].kept).toBeLessThan(1000);
+    expect(logged.truncated).toBe(true);
+  });
+
   describe('a tool with its own timeout', () => {
     const slow = (ms: number, timeoutMs?: number): AnyTool => ({
       name: 'slow',
@@ -410,10 +443,53 @@ describe('fitJson', () => {
     );
     expect(trimmed).toBe(true);
     expect(json.length).toBeLessThanOrEqual(2000);
-    expect(JSON.parse(json)).toMatchObject({ trimmedForSize: true });
+    const out = JSON.parse(json) as { trimmedForSize: unknown; result: { rows: unknown[] } };
+    expect(out.trimmedForSize).toEqual([{ at: 'rows', kept: out.result.rows.length, of: 1000 }]);
+  });
+
+  it('moves a paged list on to just after the last item kept', () => {
+    const accounts = Array.from({ length: 100 }, (_, i) => ({ userId: i, note: 'x'.repeat(150) }));
+    const { json, cuts } = fitJson(
+      {
+        data: {
+          matched: 195,
+          page: { list: 'accounts', offset: 40, nextOffset: 140 },
+          addresses: [{ cluster: 'a', accounts: 195 }],
+          accounts,
+        },
+      },
+      10_000
+    );
+    const out = JSON.parse(json) as {
+      result: { data: { page: { nextOffset: number }; accounts: { userId: number }[] } };
+    };
+    const kept = out.result.data.accounts.length;
+    expect(kept).toBeLessThan(100);
+    expect(cuts).toEqual([{ at: 'data.accounts', kept, of: 100 }]);
+    expect(out.result.data.page).toEqual({ list: 'accounts', offset: 40, nextOffset: 40 + kept });
+  });
+
+  it('leaves nextOffset alone when a different list is cut', () => {
+    const { json } = fitJson(
+      {
+        page: { list: 'accounts', offset: 0, nextOffset: null },
+        accounts: [{ userId: 1 }],
+        notes: Array.from({ length: 200 }, () => 'y'.repeat(40)),
+      },
+      2000
+    );
+    expect((JSON.parse(json) as { result: { page: unknown } }).result.page).toEqual({
+      list: 'accounts',
+      offset: 0,
+      nextOffset: null,
+    });
   });
 
   it('leaves a result that fits alone', () => {
-    expect(fitJson({ a: [1, 2] }, 100)).toEqual({ json: '{"a":[1,2]}', trimmed: false });
+    expect(fitJson({ a: [1, 2] }, 100)).toEqual({
+      json: '{"a":[1,2]}',
+      trimmed: false,
+      cuts: [],
+    });
   });
 });

@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 import {
+  checkFixedWindow,
   checkPublicApiRateLimit,
   resolveClientIp,
   PUBLIC_API_RATE_LIMIT_AUTH_MAX,
@@ -114,6 +115,27 @@ describe('checkPublicApiRateLimit', () => {
     expect(res).toEqual({ allowed: false, retryAfterSeconds: 9 });
   });
 
+  it('verify refuses an anonymous caller at its 11th request a minute, where articles still allows', async () => {
+    mockRedis.incrBy.mockResolvedValue(11);
+    mockRedis.ttl.mockResolvedValue(9);
+    const req = reqWith({ 'cf-connecting-ip': '203.0.113.7' });
+    expect(await checkPublicApiRateLimit({ req, family: 'verify' })).toEqual({
+      allowed: false,
+      retryAfterSeconds: 9,
+    });
+    expect(await checkPublicApiRateLimit({ req, family: 'articles' })).toEqual({ allowed: true });
+  });
+
+  it('a caller that asks to fail closed is refused when redis errors', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    const req = reqWith({ 'cf-connecting-ip': '203.0.113.7' });
+    expect(await checkPublicApiRateLimit({ req, family: 'verify', failOpen: false })).toMatchObject(
+      {
+        allowed: false,
+      }
+    );
+  });
+
   it('authed callers get the higher ceiling (still allowed at the unauth max + 1)', async () => {
     mockRedis.incrBy.mockResolvedValue(PUBLIC_API_RATE_LIMIT_UNAUTH_MAX + 1);
     const res = await checkPublicApiRateLimit({
@@ -132,5 +154,16 @@ describe('checkPublicApiRateLimit', () => {
       family: 'articles',
     });
     expect(res).toEqual({ allowed: true });
+  });
+});
+
+describe('checkFixedWindow', () => {
+  it('refuses on a redis error when the caller asks to fail closed', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkFixedWindow('k', 10, 60, { failOpen: false })).toEqual({
+      allowed: false,
+      retryAfterSeconds: 60,
+    });
+    expect(await checkFixedWindow('k', 10, 60)).toEqual({ allowed: true });
   });
 });

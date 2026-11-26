@@ -4,6 +4,7 @@ import type {
   EventPointLedgerRow,
   EventPointsDeps,
   EventPointsRedis,
+  EventPointsTurfRedis,
 } from '~/server/events/points/award';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
@@ -20,6 +21,7 @@ const {
   hatField,
   hatTopicId,
   liveBucket,
+  LIVE_BUCKET_TTL_S,
   previewTopicId,
 } = await import('~/server/events/points/keys');
 const { encodeTurfEntry, turfKeys } = await import('~/server/events/turf/turf-map');
@@ -289,7 +291,7 @@ describe('awardEventPoints', () => {
     expect(granted).toHaveLength(1);
     const keys = eventSeasonKeys(EVENT.name, 'live');
     const bucket = liveBucket(now);
-    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    const ttl = Math.floor(now.getTime() / 1000) + LIVE_BUCKET_TTL_S;
     for (const scope of ['hat', 'team', 'owner'] as const)
       expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
     expect(fake.ttls.has(keys.live(bucket, 'count'))).toBe(false);
@@ -431,7 +433,7 @@ describe('awardEventPoints', () => {
     expect(ledger).toHaveLength(1);
     const keys = eventSeasonKeys(EVENT.name, 'live');
     const bucket = liveBucket(now);
-    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    const ttl = Math.floor(now.getTime() / 1000) + LIVE_BUCKET_TTL_S;
     for (const scope of ['hat', 'team', 'owner', 'count'] as const)
       expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
   });
@@ -538,6 +540,58 @@ describe('what awardEventPoints returns', () => {
     await expect(engine.awardEventPoints([reaction(1), reaction(2)])).resolves.toBe(0);
     fail = false;
     await expect(engine.awardEventPoints([reaction(1), reaction(2)])).resolves.toBe(2);
+  });
+});
+
+describe('the grants awardEventPoints hands onGrants', () => {
+  it("is each first's live grant, with its event and team, before the ledger insert", async () => {
+    const order: string[] = [];
+    let heard: unknown;
+    build({ insertLedger: async (rows) => void (order.push('ledger'), ledger.push(...rows)) });
+    await engine.awardEventPoints([reaction(1)], (grants) => {
+      order.push('grants');
+      heard = grants;
+    });
+    expect(heard).toEqual([{ event: EVENT.name, team: 'Yellow', points: 5 }]);
+    expect(order).toEqual(['grants', 'ledger']);
+  });
+
+  it('is the capped grant, and nothing for a first the cap cut to 0', async () => {
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    await fake.redis.hIncrBy(keys.cap('2026-11-05', OWNER), '1', 48);
+    const heard: unknown[] = [];
+    await engine.awardEventPoints([reaction(1)], (g) => heard.push(g));
+    await engine.awardEventPoints([reaction(1, 101)], (g) => heard.push(g));
+    expect(heard[0]).toEqual([{ event: EVENT.name, team: 'Yellow', points: 2 }]);
+    // Image 101 has no hat: no first, so onGrants is not called at all.
+    expect(heard).toHaveLength(1);
+  });
+
+  it('is not called for a repeat', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    const onGrants = vi.fn();
+    await engine.awardEventPoints([reaction(1)], onGrants);
+    expect(onGrants).not.toHaveBeenCalled();
+  });
+
+  it("is the turf team's sum across credited players", async () => {
+    fake.setTurf(
+      EVENT.name,
+      'Image:200',
+      encodeTurfEntry({ team: 'Yellow', cosmeticId: 7, players: [21, 22, 23], lastAt: 0 })
+    );
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: 'live' as const }] });
+    let heard: unknown;
+    await engine.awardEventPoints([{ ...reaction(22, 200) }], (g) => (heard = g));
+    // 21 and 23 earn 5 each; the reactor (22) never earns.
+    expect(heard).toEqual([{ event: EVENT.name, team: 'Yellow', points: 10 }]);
+  });
+
+  it('a throwing onGrants still lets the ledger row through', async () => {
+    await engine.awardEventPoints([reaction(1)], () => {
+      throw new Error('listener broke');
+    });
+    expect(ledger).toHaveLength(1);
   });
 });
 
@@ -950,6 +1004,22 @@ describe('Hat Turf', () => {
   });
 
   beforeEach(() => fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry(TURF)));
+
+  it('🔴 reads the turf map from its own client (the cache cluster), not the hat store', async () => {
+    // The hat store holds no turf map; only the turf client does.
+    const turfStore = fakeRedis();
+    turfStore.setClock(() => now.getTime());
+    turfStore.setTurf(EVENT.name, 'Image:200', encodeTurfEntry(TURF));
+    fake = fakeRedis();
+    fake.setClock(() => now.getTime());
+    build({
+      turfRedis: turfStore.redis as unknown as EventPointsTurfRedis,
+      loadScoredEvents: async () => [turfEvent('live')],
+    });
+    await engine.awardEventPoints([view(22)]);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({ claimKey: 'turf', players: [21, 23] });
+  });
 
   it('live: one ledger row credits every listed player but the viewer, each as a hat owner', async () => {
     build({ loadScoredEvents: async () => [turfEvent('live')] });

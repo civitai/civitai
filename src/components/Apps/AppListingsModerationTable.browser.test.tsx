@@ -1,7 +1,10 @@
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -152,7 +155,11 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 
 const showError = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+// `importOriginal` SPREAD, not a hand-written object: the takedown warning toast imports
+// `showWarningNotification`, and a one-export factory failed this whole FILE at the browser's
+// ESM link step ("does not provide an export named 'showWarningNotification'").
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
@@ -166,14 +173,18 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   // A mutation mock: records (name, vars), then drives onSuccess/onError so the
-  // component's success + error paths both run.
+  // component's success + error paths both run. `onSuccess` gets `(data, variables)` like
+  // react-query's: the delist success handler reads which listing it took down from them.
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (data: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
-        else void opts?.onSuccess?.();
+        else void opts?.onSuccess?.(undefined, vars);
       },
       mutateAsync: vi.fn(),
       isPending: false,
@@ -287,6 +298,26 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // 50 tests across 2 files were failing in CI this way, invisibly, because this
         // tier was report-only AND could not run on the dev host.
         setListingVisibilityAsModerator: { useMutation: mutation('setVisibilityAsModerator') },
+        // The Official toggle's proc RESOLVES WITH A VALUE (`{ isOfficial }`) that its success
+        // handler reads, so — like `messageAppOwner` below — it cannot use the shared factory.
+        setListingOfficial: {
+          useMutation: (opts?: {
+            onSuccess?: (r: {
+              appListingId: string;
+              isOfficial: boolean;
+              changed: boolean;
+            }) => void;
+            onError?: (e: { message: string }) => void;
+          }) => ({
+            mutate: (vars: { appListingId: string; isOfficial: boolean }) => {
+              mocks.mutate('setListingOfficial', vars);
+              if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
+              else opts?.onSuccess?.({ ...vars, changed: true });
+            },
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
         // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
         // composer's success handler reads, so it cannot use the shared `mutation`
         // factory above — that one calls `onSuccess()` with no argument, which would
@@ -331,9 +362,22 @@ beforeEach(() => {
   showError.mockClear();
 });
 
+// The /apps/review page is moderator-only, and each row's "History" entry point is drawn for a
+// moderator (`moderationHistoryTarget`). The shared harness mounts no session, so each render
+// gets a fixed moderator session and the real `useCurrentUser` reads it.
+const asModerator = (ui: ReactElement) => (
+  <FixedSessionProvider user={{ id: 1, username: 'mod', isModerator: true }}>
+    {ui}
+  </FixedSessionProvider>
+);
+async function renderAsModerator(ui: ReactElement) {
+  const result = await renderWithProviders(asModerator(ui));
+  return { ...result, rerender: (next: ReactElement) => result.rerender(asModerator(next)) };
+}
+
 describe('AppListingsModerationTable — sections + kind-aware visibility', () => {
   test('renders the mixed-status dataset into status sections', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByTestId('apps-mod-listings-section-live')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-listings-section-pending')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-listings-section-removed')).toBeInTheDocument();
@@ -355,7 +399,7 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
    * reverting to `{row.category}`), which is what this assertion is for.
    */
   test('🔴 the Category column renders the display LABEL, never the stored value', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // 🔴 Await the render BEFORE reading `.elements()`, which is a synchronous
     // snapshot: without this the read runs against an empty DOM and every
     // assertion below passes or fails for reasons that have nothing to do with
@@ -373,7 +417,7 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
   });
 
   test('off-site-only actions are hidden on an on-site row (kind-aware)', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Off-site approved → BOTH reset-to-pending + hide.
     await expect
       .element(page.getByTestId('apps-mod-reset-to-pending-alpha-live'))
@@ -395,7 +439,7 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
   // mgmt table filters it out so it isn't a dead-end row. An OFF-SITE pending row (which
   // carries the Review action) still shows.
   test('an on-site + pending row is hidden from the table, while off-site pending shows', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Off-site pending still present (has the Review action).
     await expect.element(page.getByTestId('apps-mod-listing-row-pending-ext')).toBeInTheDocument();
     // On-site pending filtered out entirely (no row, no dead-end).
@@ -410,7 +454,7 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
 describe('AppListingsModerationTable — effective status (draft-with-pending → Pending)', () => {
   test('a draft-with-a-live-pending-request buckets under Pending; a true orphan draft stays Draft', async () => {
     mocks.draftPending = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
 
     const pendingSection = page.getByTestId('apps-mod-listings-section-pending');
     const draftSection = page.getByTestId('apps-mod-listings-section-draft');
@@ -439,7 +483,7 @@ describe('AppListingsModerationTable — effective status (draft-with-pending �
 
 describe('AppListingsModerationTable — sort + server-side filter', () => {
   test('the App column client-sort reorders the loaded rows (server order → A→Z on click)', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
     // Default = the server keyset order (Bravo precedes Alpha) — NOT a client A→Z.
     const before = page
@@ -460,7 +504,7 @@ describe('AppListingsModerationTable — sort + server-side filter', () => {
   // F — the search is DEBOUNCED: the typed value reaches the server query (eventually),
   // rather than firing one query per keystroke.
   test('typing in the filter forwards the (debounced) `search` to the server query', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-listings-filter').fill('cool');
     await vi.waitFor(() => {
       const lastInput = mocks.queryInput.mock.calls.at(-1)?.[0] as { search?: string };
@@ -472,7 +516,7 @@ describe('AppListingsModerationTable — sort + server-side filter', () => {
   // ever fires pairing the OLD cursor with the NEW filter (the stale-cursor window).
   test('changing a filter mid-pagination resets the cursor with no stale-cursor query', async () => {
     mocks.paged = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Page to cursor 'cur-2'.
     await page.getByTestId('apps-mod-load-more').click();
     await vi.waitFor(() => {
@@ -497,7 +541,7 @@ describe('AppListingsModerationTable — sort + server-side filter', () => {
 
 describe('AppListingsModerationTable — inline actions fire the right mutation', () => {
   test('Hide forwards {appListingId, reason} to delistListing (dual-kind)', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-hide-alpha-live').click();
     await page.getByTestId('apps-mod-action-reason').fill('spammy content');
     await page.getByTestId('apps-mod-action-confirm').click();
@@ -508,7 +552,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   });
 
   test('Reset to pending on an OFF-SITE row forwards {appListingId, reason} to the offsite proc', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-reset-to-pending-alpha-live').click();
     await page.getByTestId('apps-mod-action-reason').fill('needs re-review');
     await page.getByTestId('apps-mod-action-confirm').click();
@@ -521,7 +565,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   // Onsite reset UI wiring (#3165): an on-site approved row now offers Reset, and it
   // must route to the ON-SITE proc (resetOnsiteListingToPending), NOT the off-site one.
   test('Reset to pending on an ON-SITE row fires the ONSITE proc with {appListingId, reason}', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-reset-to-pending-onsite-live').click();
     await page.getByTestId('apps-mod-action-reason').fill('re-review this block');
     await page.getByTestId('apps-mod-action-confirm').click();
@@ -537,7 +581,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   // be restorable. The button's presence is covered above; here assert clicking it
   // through the reason gate actually FIRES relistListing with {appListingId, reason}.
   test('Relist on a removed row forwards {appListingId, reason} to relistListing', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-relist-gone-ext').click();
     await page.getByTestId('apps-mod-action-reason').fill('takedown was a mistake');
     await page.getByTestId('apps-mod-action-confirm').click();
@@ -548,7 +592,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   });
 
   test('Claim forwards the target owner id + reason', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-claim-gone-ext').click();
     await page.getByTestId('apps-mod-claim-target').fill('555');
     await page.getByTestId('apps-mod-action-reason').fill('verified owner');
@@ -561,7 +605,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   });
 
   test('Purge is typed-confirm gated: needs BOTH reason ≥3 AND the exact slug, then fires', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-purge-gone-ext').click();
     // Destructive warning + a disabled confirm while nothing is entered.
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
@@ -587,12 +631,12 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   });
 
   test('a reason under the 3-char floor keeps the confirm disabled + shows the live counter', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-hide-alpha-live').click();
     // The live counter is present from the empty state (matches the reject paths' UX).
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await page.getByTestId('apps-mod-action-reason').fill('ab');
-    await expect.element(page.getByText('2/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
     // The inline too-short error surfaces once something is typed.
     await expect.element(page.getByText('Enter at least 3 characters.')).toBeInTheDocument();
@@ -610,11 +654,9 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
   ])(
     'the %s action shows the counter and disables the confirm under the floor',
     async (action, slug) => {
-      renderWithProviders(
-        <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />
-      );
+      renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
       await page.getByTestId(`apps-mod-${action}-${slug}`).click();
-      await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+      await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
       await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
       await page.getByTestId('apps-mod-action-reason').fill('xy');
       await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
@@ -624,7 +666,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
 
   test('a mutation error surfaces via showErrorNotification', async () => {
     mocks.errorMode = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-hide-alpha-live').click();
     await page.getByTestId('apps-mod-action-reason').fill('spammy content');
     await page.getByTestId('apps-mod-action-confirm').click();
@@ -642,7 +684,7 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
 describe('AppListingsModerationTable — Message owner', () => {
   test('every row offers the action, including a rejected/draft row that has no lifecycle action', async () => {
     mocks.draftPending = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // A draft-with-a-pending-request (bucketed Pending) offers it…
     await expect
       .element(page.getByTestId('apps-mod-message-owner-draft-pending-ext'))
@@ -655,14 +697,14 @@ describe('AppListingsModerationTable — Message owner', () => {
   });
 
   test('it is offered on an ON-SITE row too (the proc is dual-kind)', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect
       .element(page.getByTestId('apps-mod-message-owner-onsite-live'))
       .toBeInTheDocument();
   });
 
   test('it opens the MESSAGE composer, not the reason-gated lifecycle modal', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-message-owner-alpha-live').click();
     await expect.element(page.getByTestId('apps-mod-message-subject')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-message-body')).toBeInTheDocument();
@@ -672,7 +714,7 @@ describe('AppListingsModerationTable — Message owner', () => {
   });
 
   test('sending forwards the row LISTING ID (never the slug) with the composed text', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-message-owner-alpha-live').click();
     await page.getByTestId('apps-mod-message-subject').fill('Your listing overstates a feature');
     await page
@@ -689,7 +731,7 @@ describe('AppListingsModerationTable — Message owner', () => {
 
 describe('AppListingsModerationTable — pending Review delegates to the page-owned modal', () => {
   test('Review calls openOffsiteReview with the row (pending request id, NOT the listing id) + a post-action callback', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByTestId('apps-mod-review-pending-ext').click();
     // The off-site review modal is now PAGE-OWNED: the table only routes to it. The
     // review row carries the PENDING REQUEST id (alpr_p) — never the listing id
@@ -707,7 +749,7 @@ describe('AppListingsModerationTable — pending Review delegates to the page-ow
 describe('AppListingsModerationTable — pagination, status filter + honest truncation', () => {
   test('Load more appends the next keyset page and hides once the cursor is exhausted', async () => {
     mocks.paged = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Page 1 only: alpha visible, zebra NOT yet, Load-more present.
     await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
     expect(page.getByTestId('apps-mod-listing-row-zebra-live').elements()).toHaveLength(0);
@@ -725,7 +767,7 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
   // page must not win the empty-state branch and strand the later (matching) pages.
   test('a fully-filtered page with a next cursor still renders Load-more (D does not strand later pages)', async () => {
     mocks.strandedD = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Load-more IS present (a next cursor exists), even though the page rendered no rows.
     await expect.element(page.getByTestId('apps-mod-load-more')).toBeInTheDocument();
     // Page 1: every row filtered out → NO rows, and the dead-end empty state must NOT show.
@@ -742,7 +784,7 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
 
   test('the truncation indicator shows a "+more" count + Load-more only while a next page exists', async () => {
     mocks.paged = true;
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Page 1 truncated → the count flags that more exist, and Load-more shows.
     await expect
       .element(page.getByTestId('apps-mod-listings-count'))
@@ -751,7 +793,7 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
   });
 
   test('the count reads a plain total (no "+", no Load-more) when nothing is truncated', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     const count = page.getByTestId('apps-mod-listings-count');
     await expect.element(count).toHaveTextContent('Showing 5');
     expect((count.element().textContent ?? '').includes('+')).toBe(false);
@@ -759,7 +801,7 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
   });
 
   test('selecting a status re-queries the server with that `status` arg', async () => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await page.getByRole('radio', { name: 'Removed' }).click();
     const lastInput = mocks.queryInput.mock.calls.at(-1)?.[0] as { status?: string };
     expect(lastInput.status).toBe('removed');
@@ -770,7 +812,7 @@ describe('AppListingsModerationTable — dark posture + error resilience (C)', (
   test('renders nothing on an AUTHZ error (non-mod / flag off)', async () => {
     mocks.queryError = true;
     mocks.queryErrorCode = 'FORBIDDEN';
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // The component returns null on an authz error → none of its surface renders.
     expect(page.getByTestId('apps-mod-listings-filter').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-mod-listing-row-alpha-live').elements()).toHaveLength(0);
@@ -783,7 +825,7 @@ describe('AppListingsModerationTable — dark posture + error resilience (C)', (
   test('a TRANSIENT (non-authz) error renders an Alert + a Retry that refetches', async () => {
     mocks.queryError = true;
     mocks.queryErrorCode = null; // → INTERNAL_SERVER_ERROR (non-authz)
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByTestId('apps-mod-listings-error')).toBeInTheDocument();
     // The intended dark surface (filter/rows) is NOT rendered under an error.
     expect(page.getByTestId('apps-mod-listings-filter').elements()).toHaveLength(0);
@@ -814,7 +856,7 @@ describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
         betaMessage: 'Payments are broken — do not buy yet.',
       }),
     ];
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByTestId('apps-listing-mod-beta')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-listing-mod-beta-message')).toBeInTheDocument();
     // The moderator can actually READ the unreviewed copy — that is the point.
@@ -825,7 +867,7 @@ describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
     mocks.rows = [
       offsite({ id: 'apl_n', slug: 'plain-app', name: 'Plain App', status: 'approved' }),
     ];
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Positive control first: the row really rendered.
     await expect.element(page.getByText('plain-app')).toBeInTheDocument();
     // Absence read off the DOM, never through `.not.toBeInTheDocument()` (inert here).
@@ -848,7 +890,7 @@ describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
         betaMessage: 'left over from before',
       }),
     ];
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByText('stale-app')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('left over from before');
   });
@@ -864,12 +906,146 @@ describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
         betaMessage: 'click [here](https://evil.example) **now**',
       }),
     ];
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     const cell = await vi.waitUntil(
       () => document.querySelector('[data-testid="apps-listing-mod-beta-message"]'),
       { timeout: 3000 }
     );
     expect(cell?.textContent).toContain('[here](https://evil.example)');
     expect(cell?.querySelectorAll('a, strong, img')).toHaveLength(0);
+  });
+});
+
+describe('the moderator Official toggle', () => {
+  function officialSwitch(slug: string) {
+    return document.querySelector<HTMLInputElement>(`[data-testid="apps-mod-official-${slug}"]`);
+  }
+
+  test('reflects the row flag: ON for an official listing, OFF for one that is not', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_on',
+        slug: 'on-app',
+        name: 'On App',
+        status: 'approved',
+        isOfficial: true,
+      }),
+      offsite({
+        id: 'apl_off',
+        slug: 'off-app',
+        name: 'Off App',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect.element(page.getByTestId('apps-mod-official-on-app')).toBeInTheDocument();
+    expect(officialSwitch('on-app')?.checked).toBe(true);
+    expect(officialSwitch('off-app')?.checked).toBe(false);
+  });
+
+  test('turning it ON calls setListingOfficial with that listing and true', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_t',
+        slug: 'toggle-app',
+        name: 'Toggle',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('setListingOfficial', {
+      appListingId: 'apl_t',
+      isOfficial: true,
+    });
+    await vi.waitUntil(() => officialSwitch('toggle-app')?.checked === true, { timeout: 3000 });
+  });
+
+  test('turning it OFF calls setListingOfficial with false', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_u',
+        slug: 'untoggle-app',
+        name: 'Untoggle',
+        status: 'approved',
+        isOfficial: true,
+      }),
+    ];
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('setListingOfficial', {
+      appListingId: 'apl_u',
+      isOfficial: false,
+    });
+    await vi.waitUntil(() => officialSwitch('untoggle-app')?.checked === false, { timeout: 3000 });
+  });
+
+  test('🔴 on → off, then a replica-lagged refetch delivering the stale `true` → stays OFF', async () => {
+    mocks.rows = [
+      offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: false }),
+    ];
+    // A FRESH element per render: React skips re-rendering an identical element object, so
+    // passing the same one to `rerender` would deliver no refetch at all.
+    const ui = () => <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderAsModerator(ui());
+    await page.getByRole('switch', { name: 'Official' }).click();
+    await vi.waitUntil(() => officialSwitch('lag-app')?.checked === true, { timeout: 3000 });
+    await page.getByRole('switch', { name: 'Official' }).click();
+    await vi.waitUntil(() => officialSwitch('lag-app')?.checked === false, { timeout: 3000 });
+    expect(mocks.mutate.mock.calls.filter((c) => c[0] === 'setListingOfficial')).toEqual([
+      ['setListingOfficial', { appListingId: 'apl_l', isOfficial: true }],
+      ['setListingOfficial', { appListingId: 'apl_l', isOfficial: false }],
+    ]);
+    // The refetch: the replica still serves the value from between the two writes.
+    mocks.rows = [
+      offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: true }),
+    ];
+    await rerender(ui());
+    // That this re-render DOES deliver new rows to the switch is the next test's positive
+    // control: the same rerender flips an untouched row's switch.
+    await expect.element(page.getByText('lag-app')).toBeInTheDocument();
+    expect(officialSwitch('lag-app')?.checked).toBe(false);
+  });
+
+  test('a row the moderator has NOT toggled still follows a refetch', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_f',
+        slug: 'follow-app',
+        name: 'Follow',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    // A FRESH element per render: React skips re-rendering an identical element object, so
+    // passing the same one to `rerender` would deliver no refetch at all.
+    const ui = () => <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderAsModerator(ui());
+    await expect.element(page.getByTestId('apps-mod-official-follow-app')).toBeInTheDocument();
+    expect(officialSwitch('follow-app')?.checked).toBe(false);
+    mocks.rows = [
+      offsite({
+        id: 'apl_f',
+        slug: 'follow-app',
+        name: 'Follow',
+        status: 'approved',
+        isOfficial: true,
+      }),
+    ];
+    await rerender(ui());
+    await vi.waitUntil(() => officialSwitch('follow-app')?.checked === true, { timeout: 3000 });
+  });
+
+  test('a failed update leaves the switch where it was and reports the error', async () => {
+    mocks.errorMode = true;
+    mocks.rows = [
+      offsite({ id: 'apl_e', slug: 'err-app', name: 'Err', status: 'approved', isOfficial: false }),
+    ];
+    renderAsModerator(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(showError).toHaveBeenCalled();
+    expect(officialSwitch('err-app')?.checked).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from '../db';
 import { getTimedMute } from '../user-actions.service';
 import { getIdentity } from '../user-lookup.service';
+import { latestPersonalDataExport } from '../personal-data-export.service';
 import { accountPanelFor } from '$lib/tickets/account-panel';
 import { supportAccountPanelFor } from '$lib/tickets/support-account-panel';
 import { unwiredRulingReason } from '$lib/restriction-types';
@@ -35,6 +36,8 @@ export type TicketAccount =
       /** Read-only (support) card only: how the user signs in and whether the address was ever verified. */
       email?: string | null;
       emailVerified?: string | null;
+      /** The latest personal-data export, when the read succeeded: undefined means unknown, null none. */
+      dataExport?: { id: number; status: string; createdAt: string } | null;
     };
 
 export type TicketAccountAppeal = { id: number; createdAt: string; message: string };
@@ -49,9 +52,12 @@ export type AccountReads = {
   pendingAppeal: (
     userId: number
   ) => Promise<{ id: number; createdAt: Date; appealMessage: string } | null>;
+  /** Optional so a read that predates exports still type-checks; a failure only hides the line. */
+  dataExport?: (userId: number) => Promise<{ id: number; status: string; createdAt: Date } | null>;
 };
 
 const liveReads: AccountReads = {
+  dataExport: latestPersonalDataExport,
   identity: getIdentity,
   timedMute: getTimedMute,
   restrictions: (userId) =>
@@ -122,11 +128,12 @@ export async function accountSectionFor(
 
   const userId = ticket.civitaiUserId;
   try {
-    const [identity, timed, restrictions, appeal] = await Promise.all([
+    const [identity, timed, restrictions, appeal, dataExport] = await Promise.all([
       reads.identity(userId),
       reads.timedMute(userId),
       reads.restrictions(userId),
       ticket.canAppeal && !readOnly ? pendingAppealOf(reads, userId) : undefined,
+      reads.dataExport?.(userId).catch(() => undefined),
     ]);
     if (!identity) return { status: 'unavailable', userId };
     return {
@@ -148,6 +155,15 @@ export async function accountSectionFor(
         rulable: !readOnly && r.status === 'Pending' && unwiredRulingReason(r.type) === null,
       })),
       ...(appeal === undefined ? {} : { pendingAppeal: appeal }),
+      ...(dataExport === undefined
+        ? {}
+        : {
+            dataExport: dataExport && {
+              id: dataExport.id,
+              status: dataExport.status,
+              createdAt: iso(dataExport.createdAt)!,
+            },
+          }),
       ...(readOnly
         ? {
             ...(canSeeEmail ? { email: identity.email ?? null } : {}),

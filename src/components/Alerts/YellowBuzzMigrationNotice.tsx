@@ -4,12 +4,11 @@ import { IconArrowRight } from '@tabler/icons-react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
-import { useServerDomains } from '~/providers/AppProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 
 /**
  * Floating popover card that wraps children (e.g. UserMenu) and shows
@@ -18,8 +17,7 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
 export function YellowBuzzMigrationNotice({ children }: { children: React.ReactNode }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const serverDomains = useServerDomains();
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
 
   const enabled = !!currentUser && !!features.isGreen && !!features.buzz;
   const ready = useFeatureFlagsReady();
@@ -43,8 +41,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
 
   if (!show) return <>{children}</>;
 
-  const redDomain = serverDomains.red;
-  const redUrl = syncAccount(`//${redDomain}/`);
+  const redUrl = redHref('/');
 
   return (
     <Popover

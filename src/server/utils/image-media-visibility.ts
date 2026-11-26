@@ -1,13 +1,20 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { blockLeavesMedia, ownerMediaAllowed } from '~/server/common/image-block-marker';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
-import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
+import {
+  requestDomainBrowsingLevelCap,
+  requestVerifiedCrawler,
+} from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 
 type MediaFields = {
   url: string;
@@ -17,27 +24,42 @@ type MediaFields = {
 };
 
 /**
+ * The request's credential, read by `isSessionOrFullUserKey`; a browser session carries none. Every
+ * key is required, so a viewer built without it is a type error rather than read as a session.
+ */
+type Credential = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>;
+
+export type MediaCredentialViewer = Pick<Context, 'user' | 'features' | 'req'> & Credential;
+
+/** A moderator on a session or a full-access key: the one viewer a block leaves the media to. */
+export const actsAsModerator = (ctx: Pick<Context, 'user'> & Credential) =>
+  credentialViews(ctx).asModerator;
+
+/**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
- * rating, always allowed for the owner and moderators (`viewerCanSeeImageMedia` adds collection
- * managers). Not identical to `Gated`: it ignores a contest's forced level and withholds mixed
- * ratings.
+ * rating, always allowed for the owner and moderators on a session or a full-access key
+ * (`viewerCanSeeImageMedia` adds collection managers). Not identical to `Gated`: it ignores a
+ * contest's forced level and withholds mixed ratings.
  */
 export function canViewImageMedia(
-  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  ctx: MediaCredentialViewer,
   image: Pick<MediaFields, 'nsfwLevel' | 'user'>
 ) {
-  if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.user.id)) return true;
+  if (
+    ctx.user &&
+    isSessionOrFullUserKey(ctx) &&
+    (ctx.user.isModerator || ctx.user.id === image.user.id)
+  )
+    return true;
   const cap = requestDomainBrowsingLevelCap(ctx);
-  // Under a cap, every bit of the rating must be inside it; unrated (0) and mixed ratings fail closed.
-  return cap === undefined || (image.nsfwLevel !== 0 && Flags.hasFlag(cap, image.nsfwLevel));
+  return cap === undefined || isRatingWithinCap(image.nsfwLevel, cap);
 }
 
 /** Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others. */
-function keepCrawlerAnswerOutOfEdgeCache(
+export function keepCrawlerAnswerOutOfEdgeCache(
   ctx: Pick<Context, 'user' | 'req'> & Partial<Pick<Context, 'cache'>>
 ) {
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  if (!ctx.user && verifiedBot !== null && ctx.cache) {
+  if (!ctx.user && requestVerifiedCrawler(ctx.req) !== null && ctx.cache) {
     ctx.cache.edgeTTL = 0;
     ctx.cache.browserTTL = 0;
     ctx.cache.staleWhileRevalidate = 0;
@@ -45,10 +67,29 @@ function keepCrawlerAnswerOutOfEdgeCache(
 }
 
 /** The image with `url` null and external video ids dropped; blur hash, size and rating stay. */
-export function withoutMedia<T extends MediaFields>(image: T): Omit<T, 'url'> & { url: null } {
-  if (!image.metadata) return { ...image, url: null };
+export function withoutMedia<T extends { url: string | null; metadata?: unknown }>(
+  image: T
+): Omit<T, 'url'> & { url: null } {
+  if (!image.metadata || typeof image.metadata !== 'object') return { ...image, url: null };
   const { youtubeVideoId, vimeoVideoId, ...metadata } = image.metadata as VideoMetadata;
-  return { ...image, url: null, metadata };
+  return { ...image, url: null, metadata: metadata as T['metadata'] };
+}
+
+/**
+ * The owner's view of their image when its block refuses them the media (`ownerMediaAllowed`):
+ * the row and its block notice (`blockedFor`, `ingestion`), with no media, blur hash or media
+ * references in its generation meta.
+ */
+export function ownerBlockedNotice<
+  T extends { url: string | null; hash?: string | null; metadata?: unknown; meta?: unknown }
+>(image: T): Omit<T, 'url' | 'hash'> & { url: null; hash: null } {
+  const meta = (
+    image.meta && typeof image.meta === 'object' ? withoutMediaReferences(image.meta) : image.meta
+  ) as T['meta'];
+  return { ...withoutMedia(image), hash: null, meta } as Omit<T, 'url' | 'hash'> & {
+    url: null;
+    hash: null;
+  };
 }
 
 /**
@@ -80,7 +121,8 @@ export async function managesPostCollection({
 }
 
 export type MediaViewer = Pick<Context, 'user' | 'features' | 'req'> &
-  Partial<Pick<Context, 'cache'>>;
+  Partial<Pick<Context, 'cache'>> &
+  Credential;
 
 /**
  * `canViewImageMedia` with the post-collection manager exemption `getImageHandler` grants, for an
@@ -88,12 +130,22 @@ export type MediaViewer = Pick<Context, 'user' | 'features' | 'req'> &
  */
 export async function viewerCanSeeImageMedia(
   ctx: MediaViewer,
-  image: { nsfwLevel: number; userId: number; postId: number | null }
+  image: {
+    nsfwLevel: number;
+    userId: number;
+    postId: number | null;
+    ingestion: string;
+    blockedFor: string | null;
+  }
 ) {
+  // A block refuses the media to everyone but a moderator and, for an exempt block, its owner
+  // (`ownerMediaAllowed`).
+  if (!actsAsModerator(ctx) && !ownerMediaAllowed(image)) return false;
   const media = { nsfwLevel: image.nsfwLevel, user: { id: image.userId } };
   const canSee =
     canViewImageMedia(ctx, media) ||
     (!!ctx.user &&
+      isSessionOrFullUserKey(ctx) &&
       !!image.postId &&
       (await managesPostCollection({
         postId: image.postId,
@@ -108,26 +160,39 @@ export async function viewerCanSeeImageMedia(
  * Whether the viewer may see the media an image was generated from, judged by each recorded
  * source on its own (`meta.extra.sourceImageIds`): an edit can be rated below its source. A
  * source the viewer could not open (`image.get`'s rules), that is gone, or that is rated Blocked
- * counts as unseen except by its owner and moderators. The
- * image's owner made it from those sources and is not asked again. Sources the meta does not
- * record (uploads) can only be judged by the image's own rating.
+ * counts as unseen except by its owner and moderators. The image's owner made it from those
+ * sources and is not asked their visibility again, but a block on one still refuses its media,
+ * owner included. Sources the meta does not record (uploads) can only be judged by the image's own
+ * rating.
  */
 export async function viewerCanSeeSourceMedia(
   ctx: MediaViewer,
   image: { id: number; userId: number },
   meta: unknown
 ) {
-  if (ctx.user && (ctx.user.isModerator || ctx.user.id === image.userId)) return true;
+  if (actsAsModerator(ctx)) return true;
+  const fullViewer = isSessionOrFullUserKey(ctx) ? ctx.user : undefined;
   const sourceIds = [...new Set(storedSourceImageIds(meta) ?? [])].filter((id) => id !== image.id);
   if (!sourceIds.length) return true;
-  const sources = await dbRead.$queryRaw<{ nsfwLevel: number; userId: number }[]>(Prisma.sql`
-    SELECT i."nsfwLevel", i."userId"
+  if (fullViewer && fullViewer.id === image.userId) {
+    const owned = await dbRead.$queryRaw<
+      { nsfwLevel: number; userId: number; ingestion: string; blockedFor: string | null }[]
+    >(Prisma.sql`
+      SELECT i."nsfwLevel", i."userId", i.ingestion::text AS ingestion, i."blockedFor"
+      FROM "Image" i WHERE i.id IN (${Prisma.join(sourceIds)})
+    `);
+    return owned.every((source) => blockLeavesMedia(source, fullViewer.id));
+  }
+  const sources = await dbRead.$queryRaw<
+    { nsfwLevel: number; userId: number; ingestion: string; blockedFor: string | null }[]
+  >(Prisma.sql`
+    SELECT i."nsfwLevel", i."userId", i.ingestion::text AS ingestion, i."blockedFor"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
       [
         Prisma.sql`i.id IN (${Prisma.join(sourceIds)})`,
-        ...imageVisibilityConditions({ userId: ctx.user?.id, isModerator: ctx.user?.isModerator }),
+        ...imageVisibilityConditions({ userId: ctx.user?.id, isModerator: actsAsModerator(ctx) }),
       ],
       ' AND '
     )}
@@ -142,11 +207,12 @@ export async function viewerCanSeeSourceMedia(
     for (const targetUserId of owners)
       if (await amIBlockedByUser({ userId: viewerId, targetUserId })) return false;
   }
-  return sources.every(
-    ({ nsfwLevel, userId }) =>
-      ctx.user?.id === userId ||
-      (nsfwLevel !== NsfwLevel.Blocked &&
-        canViewImageMedia(ctx, { nsfwLevel, user: { id: userId } }))
+  return sources.every(({ nsfwLevel, userId, ingestion, blockedFor }) =>
+    // A block leaves a source's owner its media only where `ownerMediaAllowed` says so.
+    fullViewer?.id === userId
+      ? ownerMediaAllowed({ ingestion, blockedFor })
+      : nsfwLevel !== NsfwLevel.Blocked &&
+        canViewImageMedia(ctx, { nsfwLevel, user: { id: userId } })
   );
 }
 

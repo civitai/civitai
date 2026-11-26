@@ -29,6 +29,7 @@ import type { DepositCardProps } from './DepositAddressCard';
 import {
   CurrencyBadges,
   MinDepositInfo,
+  MinDepositWarning,
   useCurrencySelection,
 } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
 import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -43,12 +44,16 @@ import {
 import { getChainDisplayName, getNetworkDisplayName } from '~/server/common/chain-config';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { DepositNetworkWarning } from '~/components/Buzz/CryptoDeposit/DepositNetworkWarning';
 import { BulkBonusNotice } from '~/components/Buzz/CryptoDeposit/BulkBonusNotice';
 
 const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeSVG), {
   ssr: false,
   loading: () => <div style={{ height: 150, width: 150 }} />,
 });
+
+const CBBTC_UNSUPPORTED = 'cbBTC (wrapped Bitcoin) is not supported.';
+const CBBTC_NETWORKS = ['base', 'eth'];
 
 export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
   const currentUser = useCurrentUser();
@@ -277,6 +282,13 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                     {chainLabel}
                   </Badge>
                 </Group>
+                {!isEmpty && currencyState.selectedCode && (
+                  <DepositNetworkWarning
+                    code={currencyState.selectedCode}
+                    ticker={currencyState.selectedGroup?.ticker}
+                    network={currencyState.selectedNetwork?.network}
+                  />
+                )}
                 {isEmpty && loading ? (
                   <Skeleton height={38} radius="md" />
                 ) : (
@@ -322,12 +334,7 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                 )}
                 {/* Minimum deposit — below address */}
                 <MinDepositInfo state={currencyState} />
-                <Group gap="xs" wrap="nowrap" align="flex-start">
-                  <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
-                  <Text size="xs" c="dimmed">
-                    Deposits below the minimum will be lost
-                  </Text>
-                </Group>
+                <MinDepositWarning />
                 {chain === 'btc' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
@@ -335,10 +342,19 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                       Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text>{' '}
                       only.
                       Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
-                      other networks. cbBTC (wrapped Bitcoin) is not supported.
+                      other networks. {CBBTC_UNSUPPORTED}
                     </Text>
                   </Group>
                 )}
+                {chain === 'evm' &&
+                  CBBTC_NETWORKS.includes(currencyState.selectedNetwork?.network?.toLowerCase() ?? '') && (
+                    <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
+                      <Text size="xs" c="dimmed">
+                        {CBBTC_UNSUPPORTED}
+                      </Text>
+                    </Group>
+                  )}
                 {chain === 'ltc' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
@@ -365,10 +381,10 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
+                      Send {currencyState.selectedTicker.toUpperCase()} on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
                       only.
-                      Coinbase users: select &quot;Solana&quot; as the network, not Base. SOL
-                      sent via Base is not supported.
+                      Coinbase users: select &quot;Solana&quot; as the network, not Base.{' '}
+                      {currencyState.selectedTicker.toUpperCase()} sent via Base is not supported.
                     </Text>
                   </Group>
                 )}

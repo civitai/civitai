@@ -1,21 +1,51 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import type { EventViewer } from '~/server/events/event-access';
 import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
-import { userWithProfileSelect } from '~/server/selectors/user.selector';
+import { getDbWithoutLag, kyselyMatching } from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readUserWithProfileAndPictureGateViaKysely,
+  readUserWithProfileViaPrisma,
+} from '~/server/services/hot-reads-9.reads';
 import type {
+  AddToShowcaseSectionSchema,
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
+  ShowcaseSectionSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
+import {
+  customShowcaseKey,
+  customShowcaseKeyPrefix,
+  showcaseSectionLimits,
+  showcaseSectionTypes,
+} from '~/server/schema/user-profile.schema';
+import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import {
+  ArticleIngestionStatus,
+  ArticleStatus,
+  Availability,
+  ImageIngestionStatus,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { publicMemorial } from '~/server/services/memorial.service';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
@@ -25,6 +55,7 @@ import {
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
@@ -36,6 +67,7 @@ import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
@@ -55,7 +87,7 @@ export const getUserContentOverview = async ({
   }
 
   if (!userId) {
-    const user = await dbWrite.user.findUnique({
+    const user = await dbRead.user.findUnique({
       where: { username },
       select: { id: true },
     });
@@ -86,41 +118,64 @@ export const getUserContentOverview = async ({
 export const getUserWithProfile = async ({
   username,
   id,
-  tx,
   isModerator,
   sessionUserId,
-  eventViewer = { id: sessionUserId, isModerator },
+  eventViewer = { id: sessionUserId },
   domain,
+  sessionUsername,
+  fromReplica = false,
 }: GetUserProfileSchema & {
-  tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
-  /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
+  sessionUsername?: string | null;
+  /**
+   * A visitor's page view, served from the replica (unless high-replication-lag mode is on). The
+   * owner and moderators read the primary, so their own edits show at once.
+   */
+  fromReplica?: boolean;
+  /**
+   * Who the event preview gate is asked about: the request's `eventViewerOf`. Without one it is the
+   * session user as a non-moderator, never `isModerator`, which a scoped token may carry.
+   */
   eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
-  const dbClient = tx ?? dbWrite;
-  // Use write to get the latest most accurate user here since we'll need to create the profile
-  // if it doesn't exist.
   if (!username && !id) {
     throwBadRequestError('Either username or id must be provided');
   }
-  const getUser = async () => {
-    const user = await dbClient.user.findUniqueOrThrow({
-      where: {
-        id,
-        username,
-        deletedAt: null,
-      },
-      select: {
-        ...userWithProfileSelect,
-        bannedAt: true,
-        meta: true,
-        publicSettings: true,
-        settings: true,
-      },
-    });
+  const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
+  const readRow = (db: typeof dbRead | typeof dbWrite) =>
+    viaKysely
+      ? readUserWithProfileAndPictureGateViaKysely(kyselyMatching(db), { id, username })
+      : // No blockedFor on the Prisma read: the servable-profile-picture extension already gated it.
+        readUserWithProfileViaPrisma(db, { id, username }).then((user) => ({
+          user,
+          pictureBlockedFor: null,
+        }));
 
+  const ownView =
+    (id !== undefined && id === sessionUserId) ||
+    (!!username && username.toLowerCase() === sessionUsername?.toLowerCase());
+  const visitorDb = fromReplica && !isModerator && !ownView ? await getDbWithoutLag() : dbWrite;
+  const readVisitorRow = async () => {
+    if (visitorDb === dbWrite) return readRow(dbWrite);
+    let row;
+    try {
+      row = await readRow(visitorDb);
+    } catch (error) {
+      // A signed-in viewer missing from the replica may be the owner just renamed or created.
+      const notFound =
+        error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+      if (notFound && sessionUserId !== undefined) return readRow(dbWrite);
+      throw error;
+    }
+    // A stale session username can hide an own view; a missing profile may only be lagging, and
+    // the primary decides whether to create it.
+    if (row.user.id === sessionUserId || !row.user.profile?.userId) return readRow(dbWrite);
+    return row;
+  };
+
+  const getUser = async ({ user, pictureBlockedFor }: Awaited<ReturnType<typeof readRow>>) => {
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
     const stats = await dbRead.userStat.findFirst({
@@ -144,9 +199,11 @@ export const getUserWithProfile = async ({
 
     const shapeCoverImage = (coverImage: NonNullable<typeof profile>['coverImage']) => {
       if (!coverImage) return null;
-      const needsReview =
-        coverImage.needsReview || coverImage.ingestion === ImageIngestionStatus.Blocked;
-      if (needsReview && !canEdit) return null;
+      const hidden = isModerator
+        ? isRestrictedImage(coverImage)
+        : !servableArticleImage(coverImage);
+      if (!sameUser && hidden) return null;
+      if (sameUser && !isModerator && !ownerMediaAllowed(coverImage)) return null;
 
       return {
         ...coverImage,
@@ -174,14 +231,39 @@ export const getUserWithProfile = async ({
     const stickerBookHidden =
       (user.settings as { hideStickerBook?: boolean } | null)?.hideStickerBook === true;
 
+    // The owner and moderators edit every section, so only other viewers lose the ones hidden on
+    // this site, and with them the rows that place them.
+    const showcaseSections = (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[];
+    const hiddenSectionKeys = new Set<string>(
+      canEdit
+        ? []
+        : showcaseSections
+            .filter((section) => isShowcaseHiddenOn(section.hiddenOn, domain))
+            .map((section) => customShowcaseKey(section.id))
+    );
+
     return {
       ...user,
+      profilePicture: canEdit
+        ? await withoutRestrictedPictureFor(
+            sameUser,
+            user.profilePicture ??
+              (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
+          )
+        : // A held picture is already dropped upstream for every viewer.
+          servableProfilePicture(
+            user.profilePicture,
+            null,
+            await isPictureModelRestricted(user.profilePicture),
+            pictureBlockedFor
+          ),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,
         claimKey: sameUser ? c.claimKey : null,
       })),
       meta: undefined,
+      memorial: publicMemorial(userMeta),
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
       creatorShopEnabled,
@@ -194,8 +276,13 @@ export const getUserWithProfile = async ({
       profile: {
         ...profile,
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
-        profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
+        profileSectionsSettings: (
+          (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[]
+        ).filter(({ key }) => !hiddenSectionKeys.has(key)),
         showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
+        showcaseSections: showcaseSections.filter(
+          (section) => !hiddenSectionKeys.has(customShowcaseKey(section.id))
+        ),
         bio: (useSfwBio ? profile?.sfwBio : profile?.bio) ?? null,
         message: (useSfwMessage ? profile?.sfwMessage : profile?.message) ?? null,
         messageAddedAt:
@@ -217,11 +304,11 @@ export const getUserWithProfile = async ({
     };
   };
 
-  const user = await getUser();
+  const user = await getUser(await readVisitorRow());
 
   if (!user.profile?.userId) {
     // First time visit to this user's profile. Create base profile:
-    await dbClient.userProfile.upsert({
+    await dbWrite.userProfile.upsert({
       where: { userId: user.id },
       create: {
         userId: user.id,
@@ -233,7 +320,7 @@ export const getUserWithProfile = async ({
       select: { userId: true },
     });
 
-    return getUser();
+    return getUser(await readRow(dbWrite));
   }
 
   return user;
@@ -249,21 +336,21 @@ export const assertShowcaseItemsOwned = async ({
   isModerator,
   showcaseItems,
   currentShowcaseItems,
+  allowedTypes = ['Model', 'Image'],
 }: {
   userId: number;
   isModerator?: boolean;
   showcaseItems: ShowcaseItemSchema[];
   currentShowcaseItems: ShowcaseItemSchema[];
+  allowedTypes?: ShowcaseItemSchema['entityType'][];
 }) => {
   const addedItems = showcaseItems.filter(
     (item) => !currentShowcaseItems.some((current) => isSameShowcaseItem(current, item))
   );
   if (!addedItems.length) return;
 
-  if (addedItems.some((item) => item.entityType !== 'Model' && item.entityType !== 'Image'))
-    throw throwBadRequestError('Only models and images can be added to a showcase');
-
-  if (isModerator) return;
+  if (addedItems.some((item) => !allowedTypes.includes(item.entityType)))
+    throw throwBadRequestError(`Only ${allowedTypes.join(', ')} items can be added to a showcase`);
 
   const idsOf = (entityType: ShowcaseItemSchema['entityType']) => [
     ...new Set(
@@ -272,19 +359,197 @@ export const assertShowcaseItemsOwned = async ({
   ];
   const imageIds = idsOf('Image');
   const modelIds = idsOf('Model');
+  const articleIds = idsOf('Article');
+
+  // Moderators included: a taken-down model is shown to no visitor, so it never joins a showcase.
+  if (
+    modelIds.length &&
+    // primary: a takedown moments ago must already be refused.
+    (await dbWrite.model.count({
+      where: { id: { in: modelIds }, mode: ModelModifier.TakenDown },
+    }))
+  )
+    throw throwBadRequestError('A taken-down model cannot be showcased');
+
+  if (isModerator) return assertNotDealFileImages(imageIds, 'used here');
 
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
-  const [ownedImages, ownedModels] = await Promise.all([
+  const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
     imageIds.length
-      ? dbWrite.image.findMany({ where: { id: { in: imageIds }, userId }, select: { id: true } })
+      ? dbWrite.image.findMany({
+          where: { id: { in: imageIds }, userId },
+          select: { id: true, ingestion: true, blockedFor: true },
+        })
       : [],
     modelIds.length
       ? dbWrite.model.findMany({ where: { id: { in: modelIds }, userId }, select: { id: true } })
       : [],
+    articleIds.length
+      ? dbWrite.article.findMany({
+          where: { id: { in: articleIds }, userId },
+          select: { id: true },
+        })
+      : [],
   ]);
 
-  if (ownedImages.length !== imageIds.length || ownedModels.length !== modelIds.length)
-    throw throwAuthorizationError('You can only add your own models and images to your showcase');
+  if (
+    ownedImages.length !== imageIds.length ||
+    ownedModels.length !== modelIds.length ||
+    ownedArticles.length !== articleIds.length
+  )
+    throw throwAuthorizationError('You can only add your own content to your showcase');
+  if (ownedImages.some((image) => !ownerMediaAllowed(image)))
+    throw throwBadRequestError('A blocked image cannot be added to your showcase');
+  await assertNotDealFileImages(imageIds, 'used here');
+};
+
+const toShowcaseItems = (sections: ShowcaseSectionSchema[]): ShowcaseItemSchema[] =>
+  sections.flatMap(({ type, items }) => items.map((entityId) => ({ entityType: type, entityId })));
+
+export const setShowcaseSections = async ({
+  userId,
+  sections,
+  ifUnchangedFrom,
+}: SetShowcaseSectionsSchema & {
+  userId: number;
+  /** Save only if the stored sections still equal these; refused as a conflict otherwise. */
+  ifUnchangedFrom?: ShowcaseSectionSchema[];
+}) => {
+  await throwOnBlockedUserContent(
+    sections.flatMap(({ title, button }) => [title, button?.label, button?.url]),
+    { surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
+  );
+
+  const current = await dbWrite.userProfile.upsert({
+    where: { userId },
+    create: { userId },
+    update: {},
+    select: { showcaseSections: true },
+  });
+
+  // No moderator exemption: every item a save adds must be the saver's own. An item already
+  // stored stays even if it has since changed owner.
+  await assertShowcaseItemsOwned({
+    userId,
+    showcaseItems: toShowcaseItems(sections),
+    currentShowcaseItems: toShowcaseItems(
+      (current.showcaseSections ?? []) as ShowcaseSectionSchema[]
+    ),
+    allowedTypes: [...showcaseSectionTypes],
+  });
+
+  let saved: ShowcaseSectionSchema[];
+  if (ifUnchangedFrom) {
+    const { count } = await dbWrite.userProfile.updateMany({
+      where: { userId, showcaseSections: { equals: ifUnchangedFrom } },
+      data: { showcaseSections: sections },
+    });
+    if (!count) throw throwConflictError('Your showcase changed while saving. Try again.');
+    saved = sections;
+  } else {
+    const updated = await dbWrite.userProfile.update({
+      where: { userId },
+      data: { showcaseSections: sections },
+      select: { showcaseSections: true },
+    });
+    saved = updated.showcaseSections as ShowcaseSectionSchema[];
+  }
+  // Every save. scanEntity skips the submit when the profile's combined text hashes the same as
+  // its last successful scan, or as one still in flight.
+  queueScamScan({ entityType: 'UserProfile', entityId: userId });
+
+  return saved;
+};
+
+// One answer for "not yours" and "can't be shown", so the reply says nothing about another user's
+// item.
+const isOwnServableItem = async ({
+  userId,
+  entityType,
+  entityId,
+}: Pick<AddToShowcaseSectionSchema, 'entityType' | 'entityId'> & { userId: number }) => {
+  const select = { id: true } as const;
+  switch (entityType) {
+    case 'Image':
+      // primary: an item published moments ago is the likeliest to be added.
+      return !!(await dbWrite.image.findFirst({
+        where: {
+          id: entityId,
+          userId,
+          ...publishedImageWhere(),
+          ingestion: { notIn: [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound] },
+        },
+        select,
+      }));
+    case 'Model':
+      // primary: an item published moments ago is the likeliest to be added.
+      return !!(await dbWrite.model.findFirst({
+        where: {
+          id: entityId,
+          userId,
+          status: ModelStatus.Published,
+          deletedAt: null,
+          tosViolation: false,
+          availability: { not: Availability.Private },
+          // No modifier: the section feed drops Archived, so one would take a slot and never show.
+          mode: null,
+        },
+        select,
+      }));
+    case 'Article':
+      // Pending/Rescan pass: the section's feed shows other viewers only Scanned articles.
+      // primary: an item published moments ago is the likeliest to be added.
+      return !!(await dbWrite.article.findFirst({
+        where: {
+          id: entityId,
+          userId,
+          status: ArticleStatus.Published,
+          publishedAt: { lte: new Date() },
+          tosViolation: false,
+          ingestion: { not: ArticleIngestionStatus.Blocked },
+          availability: { not: Availability.Private },
+        },
+        select,
+      }));
+  }
+};
+
+const notShowableMessage: Record<AddToShowcaseSectionSchema['entityType'], string> = {
+  Image: 'Only your own images in a published post can be showcased',
+  Model: 'Only your own published models can be showcased',
+  Article: 'Only your own published articles can be showcased',
+};
+
+/** Adds one of the caller's items to the front of one of their sections of its type. */
+export const addToShowcaseSection = async ({
+  userId,
+  sectionId,
+  entityType,
+  entityId,
+}: AddToShowcaseSectionSchema & { userId: number }) => {
+  // primary: the sections read here are written back whole below.
+  const profile = await dbWrite.userProfile.findUnique({
+    where: { userId },
+    select: { showcaseSections: true },
+  });
+  const sections = (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[];
+  const section = sections.find((s) => s.id === sectionId && s.type === entityType);
+  if (!section) throw throwNotFoundError('Showcase section not found');
+  if (section.items.includes(entityId)) return { added: false, sections };
+  if (section.items.length >= showcaseSectionLimits.items)
+    throw throwBadRequestError(
+      `This section is full: it holds up to ${showcaseSectionLimits.items} items`
+    );
+
+  if (!(await isOwnServableItem({ userId, entityType, entityId })))
+    throw throwBadRequestError(notShowableMessage[entityType]);
+
+  const updated = await setShowcaseSections({
+    userId,
+    sections: sections.map((s) => (s === section ? { ...s, items: [entityId, ...s.items] } : s)),
+    ifUnchangedFrom: sections,
+  });
+  return { added: true, sections: updated };
 };
 
 export const updateUserProfile = async ({
@@ -302,10 +567,13 @@ export const updateUserProfile = async ({
   creatorCardStatsPreferences,
   domain,
   sessionUserId,
+  asModerator = false,
   ...profile
 }: UserProfileUpdateSchema & {
   userId: number;
   isModerator?: boolean;
+  /** The moderator view the editor's profile read had (`actsAsModerator`). */
+  asModerator?: boolean;
   domain?: ColorDomain;
   /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
   sessionUserId: number;
@@ -329,7 +597,7 @@ export const updateUserProfile = async ({
       ...(socialLinks?.map((link) => link.url) ?? []),
       ...(sponsorshipLinks?.map((link) => link.url) ?? []),
     ],
-    { isModerator, surface: 'userProfile' }
+    { isModerator, surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
   );
 
   // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are
@@ -337,10 +605,24 @@ export const updateUserProfile = async ({
   // save looks like a changed announcement and re-stamps `messageAddedAt`.
   const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
 
+  // A `custom:<id>` row only places a section that exists. A user who never had the flag has
+  // none, so none of their rows survive.
+  if (profile.profileSectionsSettings) {
+    const sectionKeys = new Set(
+      ((current.profile?.showcaseSections ?? []) as ShowcaseSectionSchema[]).map((s) =>
+        customShowcaseKey(s.id)
+      )
+    );
+    profile.profileSectionsSettings = profile.profileSectionsSettings.filter(
+      ({ key }) => !key.startsWith(customShowcaseKeyPrefix) || sectionKeys.has(key as never)
+    );
+  }
+
   if (profile.showcaseItems)
     await assertShowcaseItemsOwned({
       userId,
-      isModerator,
+      // A moderator may curate another user's showcase, never fill their own with others' items.
+      isModerator: asModerator && sessionUserId !== userId,
       showcaseItems: profile.showcaseItems,
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });
@@ -375,6 +657,20 @@ export const updateUserProfile = async ({
         WHERE "id" = ${userId}`;
 
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
+  }
+
+  // A stored cover the editor's read withheld (`ownerMediaAllowed`) never reached the form, so the
+  // null it sends back keeps it.
+  const withheld = { coverImage: false, sfwCoverImage: false };
+  if (!asModerator && (coverImage === null || sfwCoverImage === null)) {
+    const coverBlock = { select: { ingestion: true, blockedFor: true } };
+    // primary: it decides what this save keeps.
+    const stored = await dbWrite.userProfile.findUnique({
+      where: { userId },
+      select: { coverImage: coverBlock, sfwCoverImage: coverBlock },
+    });
+    withheld.coverImage = !!stored?.coverImage && !ownerMediaAllowed(stored.coverImage);
+    withheld.sfwCoverImage = !!stored?.sfwCoverImage && !ownerMediaAllowed(stored.sfwCoverImage);
   }
 
   const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
@@ -478,7 +774,7 @@ export const updateUserProfile = async ({
             toUpdate.map(
               async (userLink) =>
                 await tx.userLink.updateMany({
-                  where: { id: userLink.id },
+                  where: { id: userLink.id, userId },
                   data: userLink,
                 })
             )
@@ -507,8 +803,14 @@ export const updateUserProfile = async ({
               : profile.sfwMessage
               ? new Date()
               : null,
-          coverImage: buildCoverImageUpdate(coverImage),
-          sfwCoverImage: buildCoverImageUpdate(sfwCoverImage),
+          coverImage:
+            coverImage === null && withheld.coverImage
+              ? undefined
+              : buildCoverImageUpdate(coverImage),
+          sfwCoverImage:
+            sfwCoverImage === null && withheld.sfwCoverImage
+              ? undefined
+              : buildCoverImageUpdate(sfwCoverImage),
         },
       });
 
@@ -551,3 +853,25 @@ export const updateUserProfile = async ({
 
   return getUserWithProfile({ id: userId, sessionUserId, domain });
 };
+
+/**
+ * A profile picture's `modelRestricted`, read only for a mature one: `profilePictureOf` drops the
+ * flag the Kysely row selects.
+ */
+async function isPictureModelRestricted(picture: { id: number; nsfwLevel: number } | null) {
+  if (!picture || (picture.nsfwLevel & nsfwBrowsingLevelsFlag) === 0) return false;
+  const image = await dbRead.image.findUnique({
+    where: { id: picture.id },
+    select: { modelRestricted: true },
+  });
+  return image?.modelRestricted ?? true;
+}
+
+/** Null for a restricted picture unless `sameUser`: a moderator never sees one. */
+async function withoutRestrictedPictureFor<T extends { id: number; nsfwLevel: number }>(
+  sameUser: boolean,
+  picture: T | null
+) {
+  if (sameUser || !(await isPictureModelRestricted(picture))) return picture;
+  return null;
+}

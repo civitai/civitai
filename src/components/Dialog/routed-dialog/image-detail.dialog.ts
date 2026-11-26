@@ -1,15 +1,11 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type ImageDetailModal from '~/components/Image/Detail/ImageDetailModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 import {
   parseIdListParam,
   STORYLINE_CHAPTER_PARAM,
   STORYLINE_VIA_PARAM,
   storylineReadHref,
 } from '~/components/Storyline/storyline-mode.utils';
-
-const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'), {
-  ssr: false,
-});
 
 // A history entry inherits the previous entry's state, so a detail opened from inside another
 // one (the remix card) would otherwise arrive with the first one's feed. Cleared unless named.
@@ -22,18 +18,19 @@ const FEED_STATE_RESET = {
   hideReactions: undefined,
 };
 
-const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
-  component: ImageDetailModal,
+export const imageDetailDialog = routedDialog<typeof ImageDetailModal>({
   target: '#main',
   resolve: (query, { imageId, storylineChapterId, storylineVia, ...state }) => {
     // An image opened from inside the reader (a remix, say) is not in the storyline: drop the
     // reader's params rather than carry them into a URL that no longer names them.
     // `active` is the opener's expanded info sheet; collapsing it is a history `back()`, so
-    // inheriting it would make that pop the new image instead.
+    // inheriting it would make that pop the new image instead. `highlight` is the opener's linked
+    // comment, and it opens the new image's info sheet as well.
     const {
       [STORYLINE_CHAPTER_PARAM]: _chapter,
       [STORYLINE_VIA_PARAM]: _via,
       active: _active,
+      highlight: _highlight,
       ...rest
     } = query as Record<string, unknown>;
     // Props come back from the query on a reload, where the list is a comma string.
@@ -54,5 +51,3 @@ const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
     };
   },
 });
-
-export type ImageDetailDialog = typeof imageDetailDialog;

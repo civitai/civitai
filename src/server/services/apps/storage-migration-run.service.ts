@@ -41,6 +41,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreMaintenance, MigrationCursor } from '~/server/services/apps/doc-store';
 import { getDocStoreMaintenance } from '~/server/services/apps/doc-store-maintenance.instance';
+import {
+  enforcedManifestOf,
+  resolveSchemaMajor,
+} from '~/server/services/apps/doc-store-schema-major';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import type { MigrationMutationOp } from '~/server/services/apps/storage-schema-migrations';
@@ -127,9 +131,7 @@ async function isRunsTableMissing(err: unknown): Promise<boolean> {
 }
 
 function log(type: 'info' | 'error', fields: Record<string, unknown>): void {
-  logToAxiom({ name: 'app-storage-migration-run', type, ...fields }, 'app-blocks').catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'app-storage-migration-run', type, ...fields }, 'app-blocks');
 }
 
 function toRun(r: Record<string, unknown>): StorageMigrationRun {
@@ -360,13 +362,15 @@ export async function loadStorageMigrationBaseline(args: {
    * not the documents' schema: the baseline is the latest approved request instead.
    */
   selfManifest?: unknown;
-}): Promise<{ prev: unknown | null; history: unknown[] }> {
+}): Promise<{ prev: unknown | null; history: unknown[]; approved: unknown[] }> {
   const block = await dbWrite.appBlock.findFirst({
     where: { blockId: args.slug },
     select: { id: true, manifest: true },
   });
-  if (!block) return { prev: null, history: [] };
-  const approved =
+  if (!block) return { prev: null, history: [], approved: [] };
+  // EVERY approval, uncapped: `keyedBy` is immutable against any version that ever declared a
+  // collection (`checkStorageMigrations`). The schema diff reads the newest `history` only.
+  const everApproved =
     (await dbWrite.appBlockPublishRequest.findMany({
       where: {
         slug: args.slug,
@@ -374,9 +378,10 @@ export async function loadStorageMigrationBaseline(args: {
         ...(args.excludePublishRequestId ? { NOT: { id: args.excludePublishRequestId } } : {}),
       },
       orderBy: { reviewedAt: 'desc' },
-      take: STORAGE_MIGRATION_HISTORY,
       select: { id: true, manifest: true },
     })) ?? [];
+  const approved = everApproved.slice(0, STORAGE_MIGRATION_HISTORY);
+  const allManifests = everApproved.map((r) => r.manifest);
   const storageOf = (m: unknown) =>
     JSON.stringify((m as { storage?: unknown } | null)?.storage ?? null);
   const latest = approved[0];
@@ -386,7 +391,11 @@ export async function loadStorageMigrationBaseline(args: {
     storageOf(block.manifest) === storageOf(args.selfManifest) &&
     storageOf(latest?.manifest) !== storageOf(args.selfManifest)
   ) {
-    return { prev: latest?.manifest ?? null, history: approved.map((r) => r.manifest) };
+    return {
+      prev: latest?.manifest ?? null,
+      history: approved.map((r) => r.manifest),
+      approved: allManifests,
+    };
   }
   if (block.manifest && latest && storageOf(latest.manifest) !== storageOf(block.manifest)) {
     log('error', {
@@ -400,6 +409,7 @@ export async function loadStorageMigrationBaseline(args: {
   return {
     prev: block.manifest ?? latest?.manifest ?? null,
     history: approved.map((r) => r.manifest),
+    approved: allManifests,
   };
 }
 
@@ -457,10 +467,12 @@ async function save(run: StorageMigrationRun, done: boolean): Promise<void> {
 /**
  * The collection as the approved request declares it; whether a newer approval superseded it; and
  * `awaitingApproval` while the request is still pending (reserved at approve, approval not written yet — or an
- * approve that failed and will be retried).
+ * approve that failed and will be retried). The collection carries its current schema major
+ * (`DocCollection.schemaMajor`, derived against the enforced manifest), which every document the
+ * run rewrites is stamped with, as a write is.
  */
 async function loadTarget(
-  run: Pick<StorageMigrationRun, 'publishRequestId' | 'collection'>
+  run: Pick<StorageMigrationRun, 'publishRequestId' | 'collection' | 'appBlockId'>
 ): Promise<{ collection: DocCollection | null; superseded: boolean; awaitingApproval?: boolean }> {
   const request = await dbWrite.appBlockPublishRequest.findUnique({
     where: { id: run.publishRequestId },
@@ -491,7 +503,17 @@ async function loadTarget(
   const config = parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).collections.get(
     run.collection
   );
-  return { collection: config ? { name: run.collection, config } : null, superseded: false };
+  if (!config) return { collection: null, superseded: false };
+  const head = await dbWrite.appBlock.findUnique({
+    where: { id: run.appBlockId },
+    select: { manifest: true, updatedAt: true },
+  });
+  const schemaMajor = await resolveSchemaMajor({
+    appBlockId: run.appBlockId,
+    head: enforcedManifestOf(head),
+    collection: run.collection,
+  });
+  return { collection: { name: run.collection, config, schemaMajor }, superseded: false };
 }
 
 /**

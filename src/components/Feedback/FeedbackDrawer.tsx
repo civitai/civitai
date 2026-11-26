@@ -2,6 +2,7 @@ import { Anchor, Button, Drawer, Stack, Text, Textarea, Title } from '@mantine/c
 import { IconCircleCheck } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { FeedbackAttachedDetails } from '~/components/Feedback/FeedbackAttachedDetails';
 import { FeedbackAttachments } from '~/components/Feedback/FeedbackAttachments';
 import { useFeedbackSubmission } from '~/components/Feedback/useFeedbackSubmission';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
@@ -50,18 +51,19 @@ export default function FeedbackDrawer({
   const mobile = useIsMobile({ type: 'media' });
   const router = useRouter();
 
+  // 🔴 THE ROUTE ONLY — the query string is cut off deliberately. This entry point
+  // is reachable from the footer on every route, including ones that carry a secret
+  // in the URL (`/redeem-code?code=…`, `/payment/coinbase?key=…`), and `context` is
+  // a JSONB column that triage reads. Storing `asPath` whole would write a live
+  // redeemable code into it, permanently, without ever telling the reporter. The
+  // inline /apps prompt already splits this way: it reports a bare pathname and
+  // sends its search term through the bounded `filters` field.
+  const reportContext = context ?? {
+    path: router.asPath.split(/[?#]/)[0].slice(0, FEEDBACK_PATH_MAX_LENGTH),
+  };
   const feedback = useFeedbackSubmission({
     area,
-    // 🔴 THE ROUTE ONLY — the query string is cut off deliberately. This entry point
-    // is reachable from the footer on every route, including ones that carry a secret
-    // in the URL (`/redeem-code?code=…`, `/payment/coinbase?key=…`), and `context` is
-    // a JSONB column that triage reads. Storing `asPath` whole would write a live
-    // redeemable code into it, permanently, without ever telling the reporter. The
-    // inline /apps prompt already splits this way: it reports a bare pathname and
-    // sends its search term through the bounded `filters` field.
-    context: context ?? {
-      path: router.asPath.split(/[?#]/)[0].slice(0, FEEDBACK_PATH_MAX_LENGTH),
-    },
+    context: reportContext,
   });
   const { sent, message, setMessage, busy, canSubmit, handleSubmit } = feedback;
 
@@ -146,6 +148,7 @@ export default function FeedbackDrawer({
             autoFocus
           />
           <FeedbackAttachments feedback={feedback} />
+          <FeedbackAttachedDetails path={reportContext.path} />
           <Button radius="xl" fullWidth disabled={!canSubmit} loading={busy} onClick={handleSubmit}>
             {submitLabel}
           </Button>

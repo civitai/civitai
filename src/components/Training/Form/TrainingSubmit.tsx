@@ -1,3 +1,4 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import {
   Accordion,
   Alert,
@@ -16,7 +17,6 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
@@ -34,6 +34,7 @@ import { capitalize, isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -46,18 +47,20 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
 import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
+import { isClassicTrainerRetired } from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvancedSettings';
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import {
+  isTrainingModelBlocked,
+  useTrainingServiceStatus,
+} from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useServerDomains } from '~/providers/AppProvider';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -81,6 +84,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -95,6 +99,7 @@ import {
   isValidRapid,
   rapidEta,
   type TrainingBaseModelType,
+  trainingLicenseEcosystem,
   trainingModelInfo,
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
@@ -104,6 +109,7 @@ import {
 } from '~/components/Training/Form/trainingSamplePrompts';
 import { isDefined } from '~/utils/type-guards';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const maxRuns = 5;
 
@@ -122,13 +128,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   } = useQueryBuzz(availableTypes);
   const { color: buzzColor } = useBuzzCurrencyConfig(selectedType);
   const features = useFeatureFlags();
-  const serverDomains = useServerDomains();
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   const yellowOnGreen = features.isGreen && selectedType === 'yellow';
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs, imageList, initialImageList } = useTrainingImageStore(
     (state) => state[model.id] ?? { ...getDefaultTrainingStateFor(thisMediaType) }
+  );
+  const license = useGenerationLicenseFor(
+    runs.map((run) => trainingLicenseEcosystem(run.base)).find(isDefined)
   );
 
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
@@ -256,7 +264,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   );
 
   const status = useTrainingServiceStatus();
-  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -360,6 +367,20 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         lr: selectedRun.params.unetLR,
         textEncoderLr: selectedRun.params.textEncoderLR || null,
         trainTextEncoder: !!selectedRun.params.textEncoderLR,
+        ...pickAiToolkitOptions(
+          {
+            engine: 'ai-toolkit',
+            ecosystem,
+            lrScheduler,
+            steps: features.trainingStepsPricing ? selectedRun.params.targetSteps : undefined,
+          },
+          {
+            lrWarmupSteps: selectedRun.params.lrWarmupSteps,
+            captionDropoutRate: selectedRun.params.captionDropoutRate,
+            rankDropout: selectedRun.params.rankDropout,
+            trainConv: selectedRun.params.trainConv,
+          }
+        ),
         lrScheduler: lrScheduler as any,
         optimizerType: optimizerType as any,
         networkDim: selectedRun.params.networkDim,
@@ -413,6 +434,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.numRepeats,
     selectedRun.params.unetLR,
     selectedRun.params.textEncoderLR,
+    selectedRun.params.lrWarmupSteps,
+    selectedRun.params.captionDropoutRate,
+    selectedRun.params.rankDropout,
+    selectedRun.params.trainConv,
     selectedRun.params.lrScheduler,
     selectedRun.params.optimizerType,
     selectedRun.params.networkDim,
@@ -532,6 +557,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         reason: error.message ?? 'An unexpected error occurred. Please try again later.',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
 
       if (idx > 0) {
@@ -584,7 +610,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      if (blockedModels.includes(r.base)) {
+      if (isTrainingModelBlocked(status, r.base)) {
         showErrorNotification({
           error: new Error('This model has been blocked from training - please try another one.'),
           autoClose: false,
@@ -684,9 +710,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       setConfirmOpen(true);
       let confirmed = false;
 
-      return openConfirmModal({
+      return openConfirm({
         title: 'Confirm Buzz Transaction',
-        children: (
+        message: (
           <Stack pt="md">
             <Group>
               <Text span inline>
@@ -723,7 +749,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </Stack>
         ),
         labels: { cancel: 'Cancel', confirm: 'Confirm' },
-        centered: true,
         onConfirm: () => {
           if (confirmed) return;
           confirmed = true;
@@ -818,6 +843,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         sampleCfgScale: _sampleCfgScale,
         sampleStrength: _sampleStrength,
         saveEvery: _saveEvery,
+        lrWarmupSteps: _warmup,
+        captionDropoutRate: _captionDropout,
+        rankDropout: _rankDropout,
+        trainConv: _trainConv,
         ...legacyEngineParams
       } = paramData;
       let finalParams: any = legacyEngineParams;
@@ -860,6 +889,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           lr: paramData.unetLR,
           textEncoderLr: paramData.textEncoderLR || null,
           trainTextEncoder: !!paramData.textEncoderLR,
+          ...pickAiToolkitOptions(
+            {
+              engine: 'ai-toolkit',
+              ecosystem,
+              lrScheduler,
+              steps: features.trainingStepsPricing ? paramData.targetSteps : undefined,
+            },
+            paramData
+          ),
           lrScheduler: lrScheduler as any,
           optimizerType: optimizerType as any,
           networkDim: paramData.networkDim,
@@ -1400,6 +1438,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
+              {dryRunResult.data?.warnings?.map((warning) => (
+                <Alert key={warning} color="yellow" title="Setting not applied">
+                  {warning}
+                </Alert>
+              ))}
               {(dryRunResult.isLoading || isDefined(dryRunResult.data?.precedingJobs)) && (
                 <>
                   <Badge>
@@ -1532,14 +1575,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <div className="mt-3 flex items-center gap-3">
             <Button
               component="a"
-              href={syncAccount(`//${serverDomains.red}${router.asPath}`)}
+              href={redHref()}
               onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                 e.preventDefault();
-                window.open(
-                  syncAccount(`//${serverDomains.red}${router.asPath}`),
-                  '_blank',
-                  'noopener,noreferrer'
-                );
+                window.open(redHref(), '_blank', 'noopener,noreferrer');
               }}
               target="_blank"
               rel="noreferrer nofollow"
@@ -1595,6 +1634,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Notification>
       ) : null}
 
+      {license.blocked && license.terms && (
+        <Text size="sm" c="dimmed" ta="right" mt="lg">
+          Accept the {license.terms.title} under the base model to submit.
+        </Text>
+      )}
       <Group mt="lg" justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
@@ -1603,16 +1647,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <Button
             loading={awaitInvalidate || dryRunResult.isLoading}
             disabled={
-              blockedModels.includes(formBaseModel ?? '') ||
+              isTrainingModelBlocked(status, formBaseModel ?? '') ||
               !!unacknowledgedRun ||
               !status.available ||
+              isClassicTrainerRetired() ||
               !allLabeled ||
               awaitInvalidate ||
               confirmOpen ||
               dryRunResult.isLoading ||
               clientInsufficientBuzz ||
               hasIssue ||
-              yellowOnGreen
+              yellowOnGreen ||
+              license.blocked
             }
             color={buzzColor}
             onClick={handleSubmit}

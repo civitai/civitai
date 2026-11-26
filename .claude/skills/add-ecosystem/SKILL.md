@@ -147,6 +147,7 @@ Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featu
   hidden?: boolean,      // true if not user-facing yet
   experimental?: boolean,
   disabled?: boolean,
+  matureRestricted?: ('generation' | 'models' | 'images')[], // when the terms of use restrict mature content; see docs/nsfw-license-restrictions.md
 }
 ```
 
@@ -167,7 +168,6 @@ Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featu
   url: '<canonical license URL>',
   notice?: string,              // Only if the license requires a copyright notice
   poweredBy?: string,           // Only if attribution is required
-  disableMature?: boolean,      // Only if the license prohibits NSFW
 }
 ```
 

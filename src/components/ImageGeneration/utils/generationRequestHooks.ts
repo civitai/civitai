@@ -23,6 +23,7 @@ type ClientStepMetadata = Omit<GeneratedImageStepMetadata, 'images'> & {
   output?: GeneratedImageStepMetadata['images'];
 };
 import type {
+  GeneratedImagesQuerySchema,
   PatchWorkflowParams,
   PatchWorkflowStepParams,
   TagsPatchSchema,
@@ -43,7 +44,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { watchUnratedOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 
@@ -68,13 +68,17 @@ export function useInvalidateWhatIf() {
   };
 }
 
+/** The generator Queue's own input: Queue, Feed, their lightbox and the queue counter share it. */
+export const GENERATOR_QUEUE_INPUT = {
+  excludeAppWorkflows: true,
+} satisfies GeneratedImagesQuerySchema;
+
 export function useGetTextToImageRequests(
-  input?: z.input<typeof workflowQuerySchema>,
+  input?: GeneratedImagesQuerySchema,
   options?: { enabled?: boolean; includeTags?: boolean; ignoreFilters?: boolean }
 ) {
   registerSignalGroup('generation');
   const { domain } = useAppContext();
-  const nsfwEnabled = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
 
   const globalFilters = useFiltersContext((state) => state.generation);
@@ -143,9 +147,9 @@ export function useGetTextToImageRequests(
               return false;
             return true;
           })
-          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled, holdUnrated: true }))
+          .map((workflow) => new WorkflowData(workflow, { domain, holdUnrated: true }))
       ) ?? [],
-    [data, nsfwEnabled, domain, markerTags]
+    [data, domain, markerTags]
   );
 
   // Unconditional: the watcher reads the raw cache, which includes outputs `flatData` hides
@@ -157,7 +161,7 @@ export function useGetTextToImageRequests(
   return { data: flatData, markerTags, ...rest };
 }
 
-export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
+export function useGetTextToImageRequestsImages(input?: GeneratedImagesQuerySchema) {
   const { data, markerTags, ...rest } = useGetTextToImageRequests(input);
 
   return { requests: data, markerTags, ...rest };
@@ -446,7 +450,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         }
 
         const clone = cloneDeep(metadata) as Record<string, unknown>;
-        applyPatch(clone, jsonPatch.operations);
+        applyPatch(clone, jsonPatch.operations as Parameters<typeof applyPatch>[1]);
         const patchedOutput =
           (clone.output as Record<string, TextToImageStepImageMetadata> | undefined) ?? {};
         // Per-id merge of legacy and patched state. Used for tag-sync checks and the

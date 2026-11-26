@@ -143,6 +143,38 @@ export async function readListingSourceRepoUrl(
   }
 }
 
+/** The many-listings read surface of {@link readListingSourceRepoUrls}. */
+export type SourceRepoManyReadClient = {
+  appListing: {
+    findMany: (args: {
+      where: { id: { in: string[] } };
+      select: { id: true; sourceRepoUrl: true };
+    }) => Promise<Array<{ id: string; sourceRepoUrl: string | null }>>;
+  };
+};
+
+/**
+ * {@link readListingSourceRepoUrl} for many listings in one query: listing id → its value. A
+ * missing column reads as an empty map (every value absent), like the single read's
+ * `available: false`; a listing id with no row is simply absent from the map.
+ */
+export async function readListingSourceRepoUrls(
+  listingIds: readonly string[],
+  db: SourceRepoManyReadClient
+): Promise<Map<string, string | null>> {
+  if (listingIds.length === 0) return new Map();
+  try {
+    const rows = await db.appListing.findMany({
+      where: { id: { in: [...listingIds] } },
+      select: { id: true, sourceRepoUrl: true },
+    });
+    return new Map(rows.map((r) => [r.id, r.sourceRepoUrl ?? null]));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
+  }
+}
+
 /**
  * A listing id that CANNOT exist, used to ask the database about the COLUMN without
  * caring about any row. `AppListing.id` is an `apl_<ULID>`, so nothing can collide

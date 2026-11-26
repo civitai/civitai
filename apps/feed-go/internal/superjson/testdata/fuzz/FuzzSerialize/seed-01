@@ -1,0 +1,6 @@
+go test fuzz v1
+string("a.b\\c")
+string("line\x0abreak")
+int64(-1)
+float64(1e+21)
+bool(false)

@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /** A `disabled` trainingModelInfo base (kept in the table so Training Studio runs on it can be
  *  published) is refused by the main-site submit before the version is claimed or a workflow is sent. */
 
+import type * as TrainingConstants from '~/shared/constants/training.constants';
+
+// The classic trainer's submit is date-gated; these cases cover a run it still accepts.
+vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingConstants>()),
+  isClassicTrainerRetired: () => false,
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),

@@ -32,6 +32,7 @@ const same = (a: DrawnMediaBox | null, b: DrawnMediaBox) =>
 export function useDrawnMediaBox(active: boolean) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [box, setBox] = useState<DrawnMediaBox | null>(null);
+  const [media, setMedia] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -107,11 +108,15 @@ export function useDrawnMediaBox(active: boolean) {
 
       unbind();
       bound = media;
+      setMedia(media);
       if (!media) return;
 
       observer = new ResizeObserver(measure);
       observer.observe(host);
       observer.observe(media);
+      // Media that moves without resizing (re-centred when the sticker timeline pads the
+      // container) fires nothing on itself or the host; the container's content box does change.
+      if (host.parentElement) observer.observe(host.parentElement);
       // The natural size arrives with the file, and no ResizeObserver fires for
       // it; it only matters if the media is ever cropped by `object-fit`.
       media.addEventListener('load', measure);
@@ -129,8 +134,9 @@ export function useDrawnMediaBox(active: boolean) {
     return () => {
       swaps.disconnect();
       unbind();
+      setMedia(null);
     };
   }, [active]);
 
-  return { hostRef, box };
+  return { hostRef, box, media };
 }

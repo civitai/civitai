@@ -13,6 +13,8 @@ import {
   orderedTeams,
   ringArcs,
   standingsLabel,
+  formatMultiplier,
+  formatRefillCadence,
 } from '~/components/HatTurf/hat-turf.utils';
 
 const counted = { blue: 6, pink: 4, green: 2, yellow: 1 };
@@ -210,5 +212,29 @@ describe('teamStandings', () => {
     expect(teamStandings({ counted: { pink: 3 }, leader: 'pink' }, 'pink').toTake).toBeNull();
     expect(teamStandings({ counted: { pink: 3 }, leader: 'pink' }, null).toTake).toBeNull();
     expect(teamStandings({ counted: {}, leader: null }, 'blue').toTake).toBeNull();
+  });
+});
+
+describe('formatRefillCadence', () => {
+  it.each([
+    [15, '4 min'],
+    [5, '12 min'],
+    [60, '1 min'],
+    [120, '30 s'],
+    [0.4, '2h 30m'],
+    [1, '1h'],
+    [0, null],
+    [Number.NaN, null],
+  ])('%s an hour is %s', (perHour, expected) => {
+    expect(formatRefillCadence(perHour)).toBe(expected);
+  });
+});
+
+describe('formatMultiplier', () => {
+  it('keeps at most two decimals and no trailing zeros', () => {
+    expect(formatMultiplier(1.5)).toBe('1.5');
+    expect(formatMultiplier(0.75)).toBe('0.75');
+    expect(formatMultiplier(2)).toBe('2');
+    expect(formatMultiplier(1.2345)).toBe('1.23');
   });
 });

@@ -1,12 +1,16 @@
 import { SignalTopic } from '~/server/common/enums';
-import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // Which team holds each turf image and whom an action on it credits. Built from the live stickers
-// (turf.service.ts), held in sysRedis, and followed into every app server's memory like the hat map,
-// so the view hot path never reads the database.
+// (turf.service.ts), held on the cache cluster, and followed into every app server's memory like the
+// hat map, so the view hot path never reads the database.
+//
+// Every key carries the event's `{<event>}` hash tag: the scripts that write the map, counts, stamps
+// and feed indexes together, and the one that sums team ranks, each run in one cluster slot. None
+// has a TTL; the every-5-minute reconcile (reconcileAllTurf) rebuilds them from Postgres.
 
 export function turfKeys(event: string) {
-  const root = `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:turf` as const;
+  const root = `${REDIS_KEYS.EVENT.TURF}:{${event}}` as const;
   return {
     // `Image:{id}` -> TurfEntry, only for images with a leader.
     map: `${root}:map` as const,
@@ -14,16 +18,31 @@ export function turfKeys(event: string) {
     log: `${root}:map-log` as const,
     // `Image:{id}` -> TurfCounts, for every image with a live sticker. Display only.
     counts: `${root}:counts` as const,
-    // A ticket each sync or reconcile batch takes before its read: a higher ticket read later.
-    // Reset only with `stamp`: alone, every later write would fall below the stored stamps.
-    seq: `${root}:seq` as const,
     // `Image:{id}` -> the ticket of the read last written for it, so an older read never overwrites a
     // newer one. Kept after an image empties: deleting it would let a stale read write the image back.
+    // Its `#ticket` field is the counter each sync or reconcile batch takes a ticket from before its
+    // read (TURF_TICKET_FIELD): one key, so the counter is never lost apart from the stamps.
     stamp: `${root}:stamp` as const,
     // Image ids on someone's screen -> when that lapses (ms): which counts to push (turf-watch.ts).
     watch: `${root}:watch` as const,
+    // Image ids showing any live sticker, contest entries left out: the feed's "Turf hats" filter.
+    hatted: `${root}:hatted` as const,
+    // Image id -> turfRankScore of its counted stickers, all teams: the "Most / Fewest hats" sorts.
+    rankTotal: `${root}:rank:total` as const,
+    // The same for one team's counted stickers.
+    rankTeam: (team: string) => `${root}:rank:team:${team}` as const,
+    // Several teams' ranks summed, rebuilt when it lapses (turf-feed.ts).
+    rankUnion: (teams: string[]) => `${root}:rank:union:${teams.join('+')}` as const,
   };
 }
+
+// Hats times 2^34 plus the image id: one image per score, ties on hats broken by id, and a union
+// of up to four team ranks adds at most 4 ids (under 2^33), never reaching the hats part.
+// Exact while hats < 2^19 and ids < 2^31.
+const RANK_HATS_UNIT = 2 ** 34;
+export const turfRankScore = (hats: number, imageId: number) => hats * RANK_HATS_UNIT + imageId;
+/** The lowest score an image with at least one counted sticker has. */
+export const TURF_RANK_MIN = RANK_HATS_UNIT;
 
 // One image's live counts. Image ids are public and so is what this carries, so no keyed id.
 export const eventTurfTopic = (event: string, imageId: number) =>
@@ -34,7 +53,7 @@ export type TurfEntry = {
   team: string;
   // The team's join cosmetic: the ledger names a turf credit as (player, this, 'turf').
   cosmeticId: number;
-  // The leading team's earliest eligible stickerers, at most the credited cap in force.
+  // The leading team's earliest eligible stickerers, at most that team's credited cap in force.
   players: number[];
   // When the newest live sticker went on; the map keeps the most recent images when full.
   lastAt: number;
@@ -69,7 +88,8 @@ export const TURF_CLAIM_KEY = 'turf';
  */
 export function computeImageTurf(
   rows: readonly TurfStickerRow[],
-  creditedPlayers: number,
+  // How many stickerers an action credits on an image the team leads (turfCreditedByTeam).
+  creditedPlayers: (team: string) => number,
   teamCosmetic: (team: string) => number | undefined
 ): { counts: TurfCounts; entry: TurfEntry | null } {
   const shown: Record<string, number> = {};
@@ -93,7 +113,7 @@ export function computeImageTurf(
   if (!leader || !cosmeticId) return { counts, entry: null };
   const players = rows
     .filter((r) => r.eligible && r.team === leader)
-    .slice(0, creditedPlayers)
+    .slice(0, creditedPlayers(leader))
     .map((r) => r.userId);
   // Not Math.max(...rows): spreading past ~125k arguments overflows the stack on a busy image.
   const lastAt = rows.reduce((max, r) => Math.max(max, r.createdAt.getTime()), 0);

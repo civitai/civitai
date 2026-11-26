@@ -1,16 +1,6 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type CommentEditModal from '~/components/Model/ModelDiscussion/CommentEditModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 
-const CommentEditModal = dynamic(
-  () => import('~/components/Model/ModelDiscussion/CommentEditModal'),
-  { ssr: false }
-);
-
-const commentEditDialog = routedDialogDictionary.addItem('commentEdit', {
-  component: CommentEditModal,
-  resolve: (query, { commentId }) => ({
-    query: { ...query, commentId },
-  }),
+export const commentEditDialog = routedDialog<typeof CommentEditModal>({
+  resolve: (query) => ({ query }),
 });
-
-export type CommentEditDialog = typeof commentEditDialog;

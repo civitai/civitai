@@ -114,8 +114,17 @@ A third such site has to make its own argument — see the note at the foot of
 | ~~`block:settings:read` / `:write`~~ | —                                       | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `apps:storage:read` / `:write`       | scope present on `claims.scopes` per op | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `posts:write:self`                   | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.previewPostFromApp` then `blocks.createPostFromApp`; both also require the viewer's signed-in session and refuse unless it is the token's `sub`), optionally attached to a model version's gallery. Outputs are workflow outputs or — page apps only — images uploaded from the app's own bytes (`OPEN_IMAGE_UPLOAD { bytes }` → the store upload, then `blocks.persistAppUploadImage`, which is gated by this scope); such an image is postable only by the app that uploaded it, only for its owner, only within the SFW ceiling (whatever the viewer's own browsing level allows; bytes uploads are SFW-only in v1), and is never readable through `blocks.getImagesByIds`. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
-| `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship in shared storage, the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship (a document in a shared `own`/`anyone` collection, or a legacy shared row for an app with none), the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `social:react:self`                  | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Set or clear the viewer's reaction on an IMAGE a block endpoint served this app (`SET_ENTITY_REACTION` → `blocks.setReactionFromApp`; read: `GET_ENTITY_REACTIONS` → `blocks.getReactionsForApp`). Both require the viewer's signed-in session to be the token's `sub`. Calls the site's own reaction handler, so rewards, metrics and notifications match a click on the site, and shares the site's per-user reaction quota (`sharedKey: 'reaction:toggle'`). Requires a provenance `reactTicket` the serving endpoint (`/api/v1/blocks/images`, `/api/v1/blocks/gated-images`, `/api/v1/blocks/collections/[id]`) signed for that image, app and viewer (24h). `Like`/`Heart`/`Laugh`/`Cry` only. Set semantics: a request that matches the current state writes nothing. No per-reaction confirm — the grant is the consent. `SKIP_OAUTH_CHECK` (not `SocialWrite`). Behind its own fail-closed flag (`app-blocks-app-reactions`). Revoking the scope does not remove reactions already made                                                                                                                                                                                               |
+
+**Shared viewer uploads on the grid.** A viewer-picked `OPEN_IMAGE_UPLOAD` the app opted in to
+share for that one upload (`share: true`), after the host's dialog told the viewer it will be
+visible to the app's other viewers, carries `blockSharedUploadAppId` = that app, and every reply to
+the request echoes `shared` (`true` exactly when that stamp was written). `blocks.getImagesByIds`
+returns it to any viewer of THAT app only, once it is terminally scanned, unflagged and within the
+viewer's and the SFW (PG / PG-13) ceiling; until then it is `hidden`, to its uploader too. Another
+app never reads it, and it is not postable. A viewer-picked upload without the opt-in stays private
+and unstamped, and an app's bytes upload (`blockUploadedAppId`) is never readable here.
 
 ⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
 from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
@@ -202,12 +211,12 @@ match. It is opt-in; a collection without one is not checked.
   backtrack catastrophically (`validateSubmission`). recheck analyses it with the
   `u` flag the store compiles it with (`APP_STORAGE_SCHEMA_PATTERN_FLAGS`; a setting's
   pattern has no flags), and each distinct pattern once. Not allowed on a
-  `write: "none"` collection, which has no document bodies.
+  `write: "none"` collection (read-only, see "removed tallies and publish" below).
 - **Enforcement:** the store checks every create and put (`writeDoc` in
   `doc-store.ts`), and the REST layer checks again before the ownership check, the
   trust gate, the write budget and moderation, so a refused write spends none of
   them. A put replaces the whole body, so the check always sees the resulting
-  document. Counters and marks are not checked. A refusal is 400
+  document. A refusal is 400
   `schema_violation`, and its message and `details.pointer` name the first failing
   JSON pointer into `data`.
 - **Semantics** (any other evaluator, the CLI's included, must match them):
@@ -225,6 +234,68 @@ Code: `src/shared/constants/block-storage.constants.ts` (`parseCollectionSchema`
 collection and schema text). The published shape is the `storage.collections.*.schema`
 property of `public/schemas/app-block/v1.json` (`$defs.storageCollectionSchema`).
 
+### Document store: viewer-keyed documents
+
+Plan: `docs/app-storage-generic-core.md` (#10203). A shared `write: "own"` collection may declare
+`keyedBy: "viewer"` or `"parent+viewer"`: the server derives each document's key from the
+verified viewer (and a client-named parent), so each viewer has at most one document per
+(parent) key. Served at `GET|PUT|DELETE /storage/:c/@me[/:parent]`, each run as the ordinary get,
+put or delete at the derived key; a create or a write by key to such a collection is `400`
+`viewer_keyed`, and every `@me` op by an anonymous viewer is `401 sign_in_required`.
+
+- **Three gates:** submit accepts `keyedBy` because `viewerKeyedDocs` is on in
+  `APP_STORAGE_ENABLED_FEATURES` (off, it is refused as not available yet); every `@me` op is
+  `503` while `APP_STORAGE_VIEWER_KEY_SECRET`
+  is unset (no fallback key; the secret must be byte-identical in every deployment writing the same
+  database and namespace); and in production writes need the Flipt flag
+  `app-blocks-storage-viewer-keyed-open` (per app, context `{ collection }`): created default on,
+  with a closed segment listing migration targets until each is verified. An absent flag or an
+  unreachable Flipt reads as closed. Closed, `@me` writes are `403 write_policy`; reads still work.
+  `open` in `GET /storage` reports both the switch and the secret.
+- **Immutable once approved:** submit and approve refuse adding, removing or changing `keyedBy` on
+  a collection any approved version declared (`keyedByChangeErrors`).
+- **Policies:** as any shared write (publish scope, trust gate, shared-write budget, schema,
+  hook, levels, moderation), except the content scan sees the parent, never the derived key, and
+  a hook is also given `parent`.
+
+Code: `src/server/services/apps/doc-store-viewer-keyed.ts` (derivation; golden vectors in its
+test), `viewerKeyedRoute` in `doc-store-api.ts`.
+
+### Document store: removed tallies and publish
+
+Rollout step 5 of `docs/app-storage-generic-core.md`. Marks, counters, their tallies, counter
+documents (`write: "none"`) and server-side publish are removed. Votes and per-viewer entries are
+viewer-keyed documents (above); reports go through the report API
+(`POST /api/v1/blocks/moderation/reports`).
+
+- **Routes:** the removed ones answer exactly as an unknown route: `PATCH /:c/:key` is `405
+  method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
+  `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`, except the
+  `report` mark (below). A list refuses
+  `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
+  sort field. No `Deprecation` header is sent any more; the preflight no longer allows PATCH.
+- **SDK compatibility:** every presented document still carries `counters: {}`, `marks: {}` and
+  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` up to 0.30 refuses a
+  document without them (`PresentedDoc` in `doc-store-api.ts`). Info lists every collection's
+  `counters` and `marks` as `[]` and keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
+  0.31 type it as a required number).
+- **The `report` mark alias:** `PUT /:c/:key/marks/report`, which SDKs older than 0.30 send for
+  `mark(key, 'report')`, stays. It files the report through the report API's own code
+  (`fileReport`: same gates, budget, row, dedupe and moderator queue) and answers `{marked: true}`;
+  `DELETE` on it answers `400 invalid_request` "a report cannot be withdrawn", as before. Every
+  other mark name is `404`. The report API is always on (its flag is no longer read).
+- **Approved manifests that still declare them** keep parsing (the parser is unchanged, so schema
+  majors replay as before) and serving: `marks` and `counters` are inert, and a `write: "none"`
+  collection is READ-ONLY (every viewer create, put and delete is `403 write_policy`), never
+  `own`. Submit and approve still refuse one the collection did not declare in the previous
+  approved version (`deprecatedPrimitiveErrors`), and still let a collection keep what it declares,
+  so such an app can ship an unrelated version or roll back.
+- **Data:** nothing reads or writes `appdata.doc_tally` or `appdata.mark_head`; `appdata.doc_mark`
+  holds only reports. The tables are dropped by a later hand-applied migration, not by code.
+- **Schema:** `public/schemas/app-block/v1.json` marks `counters` and `marks` `deprecated` and
+  describes them, and `write: "none"`, as removed (annotations only; what validates is unchanged,
+  pinned in `manifest-storage.schema-drift.test.ts`).
+
 ## Feature flag
 
 `appBlocks` (Flipt key: `app-blocks-enabled`) gates the BlockSlot mount
@@ -236,7 +307,7 @@ fine-grained tool for ops.
 Several capabilities also have their own fail-closed flag, independent of
 `app-blocks-enabled`, that ships OFF with no moderator floor (an absent flag is
 off for everyone): `app-blocks-post-creation` (`posts:write:self`),
-`app-blocks-training-kind`, `app-blocks-confirmed-step` and
+`app-blocks-training-kind`, `app-blocks-confirmed-step`, `app-confirmed-step-within-limit` and
 `app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
 procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
@@ -533,6 +604,38 @@ read that file. As of this writing the families are:
   answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
   `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
+- **Batch media upload** (page host only, no scope, behind the
+  `app-blocks-batch-media-upload` flag): `OPEN_MEDIA_UPLOAD_BATCH`
+  (→ `MEDIA_UPLOAD_BATCH_RESULT`) uploads many files the app already holds (a
+  dataset to caption, say) as private generation inputs, behind ONE confirm in
+  host chrome ("Upload 80 images (312 MB) for <app>?"). Request
+  `{ requestId, purpose: 'generationSource', items: [{ kind, bytes, mimeType? }] }`,
+  1 to 1,200 items and at most 10 GB in total. Each item is checked exactly as an
+  `OPEN_MEDIA_UPLOAD` bytes upload is, before the confirm, and a refused item is
+  answered for that item only; nothing uploads until the viewer confirms. There is
+  no per-minute window: the host uploads at most 3 files at a time, and the
+  server charges a per-viewer daily quota across all apps (1,200 files and 10 GB
+  per UTC day) when the batch starts. The byte half is charged on the sizes the
+  host declares (the bytes go straight to the orchestrator, whose own per-file
+  limits apply); the file count is enforced by the server, which mints at most
+  three upload URLs per declared file (a first try, one upload retry, and a
+  spare for a URL whose answer was lost); recording a file is idempotent. The host reads its current block token for
+  every call, so a batch can outlive the token it started with. Every upload URL is minted with the
+  viewer's own orchestrator token, so every file gets the orchestrator's content
+  scan, and a blocked file is answered as an error for that item. Each batch is
+  recorded for moderators (`app_block_upload_batches`: viewer, app, file count,
+  size, the blob keys, and an `expires_at` 30 days after it started; a file whose
+  record still fails after 3 attempts is answered as an error and can be missing
+  from the row), viewable in
+  the moderator app under Audit → App Upload Batches. The answer is
+  `{ requestId, results, expiresAt }` with one `{ index, selected }` or
+  `{ index, error }` per item, `{ requestId }` when the viewer declined (or in
+  review mode / not ready), or `{ requestId, error }` when the whole batch was
+  refused. The files keep the orchestrator's default consumer-blob retention,
+  so they are kept for at least 30 days (`expires_at` is that lower bound, not
+  a deletion time; nothing pins a file's expiry yet). Logic:
+  `src/components/AppBlocks/mediaUploadBatchLogic.ts` and
+  `src/server/services/blocks/media-upload-batch.service.ts`.
 - **Model file contents** (page host only, no scope, session-authed): the host
   resolves the file as the signed-in viewer through the site's download gate,
   fetches it in the viewer's tab and posts back only parsed content; the app never
@@ -688,11 +791,24 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   capability instead); that capability gate was removed from the runtime, and the
   user's own scope grant is the authority now. A token without the scope gets
   `block lacks buzz:read:self scope`.
-- **Choose the funding pool**: a workflow submit body may carry `accountType`
-  (`blue | green | yellow`). It is honored **preferred-first** while the maturity
-  policy clamp still applies (a SFW-domain block can't widen to a mature currency);
-  an out-of-set pick is rejected, absent → Auto (see
-  `resolveBlockCurrenciesForAccount`).
+- **Choose the funding pool**: a workflow body may carry `accountType`
+  (`blue | green | yellow`) — top-level on `textToImage`, on both `kind: 'step'`
+  arms (registered `step` id and pass-through `$type`) and once per
+  `kind: 'workflow'` body (the orchestrator takes one currency list per workflow,
+  so there is no per-step pick); under `params` on a `customComfy` recipe. It is
+  honored **preferred-first**: the picked pool goes first and the rest of the
+  app's allowed pools stay as fallback (an SFW app allows blue and green, a
+  mature app blue and yellow), so a pick never widens the maturity policy. An
+  out-of-set pick is a BAD_REQUEST on the estimate and the submit alike; absent →
+  Auto, blue first (see `resolveBlockCurrenciesForAccount`). The estimate prices
+  the same order the submit drains (the `customComfy` recipe estimate has no
+  price quote but refuses a disallowed pick the same way). A confirmed step quote
+  is bound to its pool: submitting it with a different `accountType` is refused
+  as a changed body, and its consent dialog names the order ("Paid from Yellow
+  Buzz first, then Blue."); with no pick the dialog has no pool line.
+  A pick does **not** guarantee an unrestricted output: when the picked pool
+  cannot cover the job the fallback pays, and a fallback to blue can still leave a
+  mature output restricted.
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
@@ -756,6 +872,127 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
+
+### Private and unpublished resources
+
+An app-built step or workflow that names a Private or unpublished (not Published) version has its
+output capped at PG-13 with mature content refused, as `kind: 'textToImage'` is for any private
+generation; `checkAppStepResources` returns that cap as `capOutput`.
+
+### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
+
+An image a generation input names must be an image stored on Civitai that has finished its
+scan and may be used as a source, the viewer's own uploads included. For `kind: 'textToImage'`
+that is each `sourceImage` / `sourceImages` entry.
+
+- **Still being scanned.** An upload whose scan has not finished is refused by the estimate
+  and the submit with a failed snapshot whose `errorCode` is `'source-scan-pending'`, before
+  anything is reserved. Retry once the upload's scan completes: with `OPEN_IMAGE_UPLOAD`
+  `asyncScan`, wait for the `scanned` verdict before using the image as a source.
+- **Not usable as a source.** An image the scan did not clear is refused with
+  `that image can’t be used as a generation source`. Choose a different image.
+- **External hosts.** Image urls on hosts outside Civitai are being phased out of
+  generation inputs; upload the image instead. Free text in a chat step's messages and tool
+  schemas is not an image input.
+
+### Prompt refusals (every generation `kind`)
+
+When the site's prompt check refuses a generation submit's prompt, on any `kind`, the submit
+returns the refusal as a failed snapshot an app can branch on, before anything is quoted or
+reserved. This is the same over the bridge and over `POST /api/v1/blocks/workflows/submit`, which
+answers `200` with the snapshot where it used to answer `400`:
+
+- `errorCode: 'prompt-policy-refused'`: the check refused the prompt. `error` is the refusal
+  reasons (`Your prompt was flagged: …`) and nothing else; show it and stop. Resubmitting the same
+  prompt, or retrying it on another model, is refused again.
+- `errorCode: 'prompt-check-unavailable'`: the check could not run. Nothing was submitted or
+  charged. Retry no sooner than 30 seconds later, at most 3 times.
+
+A stored refusal records the App Block that submitted it, so moderators reviewing it see that an
+app sent the prompt. The submit-failure metric counts these as `prompt_refused`.
+
+### Private generation sources (`PERSIST_GENERATION_SOURCE`)
+
+An app can keep one of its own finished generation outputs as a private, scanned source and
+feed it back into a later workflow (img2img, a reference image), the page host only.
+Request `PERSIST_GENERATION_SOURCE { requestId, workflowId, imageIndex }`; the answer is
+`GENERATION_SOURCE_PERSISTED { requestId, result?: { url, width, height, imageId, ready },
+error? }`, on every path. The server half is `blocks.persistGenerationSource`.
+
+- **No confirm, nothing shared.** No host dialog opens. The image is stored for the viewer
+  with no post and is stamped `blockGenerationSourceAppId`, which the app's shared grid
+  (`getImagesByIds`), the post-from-app `published` source and the "Published with" credit
+  do not accept. Use `PUBLISH_GENERATION_OUTPUTS` to put an output on the shared grid.
+- **Gates.** The app needs `ai:write:budgeted` and the signed-in viewer must be the token's
+  subject, as for publishing. The workflow must be the app's own (its `block_workflows` row
+  and app tag) and finished; unlike publishing, there is no stand-in for a missing row on a
+  dev-tunnel preview. `imageIndex` indexes the same output list
+  `queryAppWorkflows` returns; an index out of range, or an output that is not available,
+  is refused.
+- **Scanned.** The output is re-stored on Civitai (downscaled to fit 2048 px if larger; an
+  output under 64 px is refused) and goes through the normal image scan. The whole call has a
+  30-second budget: a fetch or store still running at the end of it is stopped and answered
+  with `the generation output took too long to save — try again`, and nothing is written. What
+  is left of the budget is spent waiting for the scan. Expect the reply within about 30 seconds
+  plus the workflow lookup; set the request timeout well above that. `ready: true` means a generation will accept `url` now;
+  `ready: false` means the scan has not finished yet: call again with the same
+  `workflowId` and `imageIndex`, which returns the same image without storing another, or
+  submit later (a submit before the scan finishes is refused with `'source-scan-pending'`).
+  An output the scan blocks, or holds for review, is answered with an error.
+- **`url`, `width`, `height`** are in the shape a workflow's source image takes
+  (`image.civitai.com`, 64..2048 px).
+- **Limits.** 60 per hour per viewer, moderators included, and at most 2 calls in flight per
+  viewer (a third is refused at once, and spends nothing of the hourly 60). The model slot
+  host answers with an error. Review
+  mode and a block that is not ready are answered with an error.
+- Not available on App Assistant dev-tunnel previews yet: they have no `block_workflows`
+  row, which this bridge requires.
+
+### Picked generation sources as scanned rows (`app-block-source-scanned-rows`)
+
+A source the viewer uploads through `OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`
+(`useImageUpload({ purpose: 'generationSource' })`) or a single `OPEN_MEDIA_UPLOAD` image is
+uploaded as a private consumer blob, as before. While the `app-block-source-scanned-rows`
+flag is on, the generation gate refuses an orchestrator url from an app, so the host then has
+`blocks.persistUploadedGenerationSource` copy that blob into a private, scanned row, through
+the same writer as `PERSIST_GENERATION_SOURCE`, and replies with that row instead:
+
+- **Reply.** The same `{ url, width, height }` (an `image.civitai.com` url, 64..2048 px), plus
+  `imageId` and `ready` with the same meaning as above. A scan that blocks or holds the image
+  is an upload error; the app gets no image. With the flag off the reply is the blob, as
+  before, with no `imageId` or `ready`. An SDK that predates the two fields passes them
+  through or ignores them; its source still works, and a submit before the scan finishes is
+  refused with `'source-scan-pending'`.
+- **Which path.** The host asks `blockImageUpload.generationSourceUsesScannedRows`, which reads
+  the gate's own flag, after the upload. If that query fails (a pod without it, mid-rollout),
+  the host asks for the copy anyway: the copy is refused while the flag is off, so a copy that
+  succeeds is the reply, and a refused one leaves the blob. The gate stays the authority, so
+  this never admits an unscanned source while the flag is on.
+- **Gates.** The app needs `ai:write:budgeted`, the signed-in viewer must be the token's subject
+  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag read as on, an
+  app without the scope gets an upload error (never the blob). When the query failed, any
+  refused copy (the scope, a limit) leaves the blob, which the gate refuses at submit if the
+  flag is on. The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
+  is the viewer's own, at a fresh key, not on the shared grid and not postable.
+- **Limits.** The same sizes as `PERSIST_GENERATION_SOURCE`'s, in buckets of its own: 60 per
+  hour per viewer and at most 2 in flight, plus the per-user 60/h request limit.
+- **Not covered.** `OPEN_MEDIA_UPLOAD_BATCH` images and `trainingData` uploads are still blobs.
+  Training data is not a generation input. Batch images are refused by the gate while the flag
+  is on.
+
+### Inline ComfyUI graphs (`kind: 'customComfy'`, `mode: 'inline'`)
+
+Some nodes are refused in an inline graph, by the estimate and the submit alike, with a
+failed snapshot whose `errorCode` is `'inline-node-refused'`, before anything is reserved.
+The check matches node class and input names and fails closed: a node whose name looks like
+a path, folder or loader node is treated as one.
+
+- a node that reads or writes a file path or directory, whatever the path's value;
+- a loader that takes an input from another node instead of a literal value. The model,
+  CLIP, LoRA, hook and strength inputs of the LoRA, hook, hypernetwork and diff-ControlNet
+  loaders may still be linked;
+- a loader input that names a local file or an upload key, or a URL that is not a public
+  `https` address. Upload the media and pass its URL.
 
 ### Training runs (`kind: 'training'`)
 
@@ -880,6 +1117,28 @@ same page host, so the owner sees the same confirm.
    private-run cap instead of the daily counters, so there the host's check before the
    confirm is the only daily-limit check.
 
+4. **"Don't ask me each job" (opt-in, per app).** Behind `app-confirmed-step-within-limit`
+   (off by default). The confirm offers an unchecked checkbox. A viewer with a daily limit for
+   the app ticks it as is; a viewer with none sets a limit in the same step (suggested
+   `max(1,000, the job's price)`, never below the job's price). The price of the job on screen
+   becomes the highest price that may run unasked. After that, `blocks.previewQuoteGrant`
+   returns `standing: true` when the flag is on, the job costs no more than that ceiling, it
+   fits what is left of the limit today, and it is not a private run. The host then shows no
+   dialog. It calls `blocks.consentQuoteGrantStanding` (session only), which checks every
+   condition again on the primary and takes a slot from a per-(viewer, app) burst bound of 5
+   per 60 seconds. That bound fails closed when its store is unreachable. Any error from that
+   call, including NOT_FOUND from an older server, makes the host draw the confirm instead. The
+   submit accepts such a quote only with the flag on, the opt-in still in place at that price,
+   a daily-limit reservation to bound it, and a slot from a second bucket of the same size
+   taken at submit: a consented quote can be submitted later, so only the submit-time slot
+   bounds how many jobs run in a minute. A pricier job asks again, and ticking the box on
+   it raises the ceiling to its price. Re-consenting to spending, any limit change on
+   `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
+   Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz
+   that fit within the new limit will run without asking." Each submit records `consentKind: 'click' |
+   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
+   counts both. The per-app aggregate cap and velocity limit still apply.
+
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
 minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is
 refused. Every other ceiling above still applies, and the job charges no author fee.
@@ -899,6 +1158,28 @@ only the one in front counts down; the others start their wait when they come to
 is the model's own format (`glb`, `fbx`, …) and `variant` the output field it came from
 (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
 `QUERY_APP_WORKFLOWS` items.
+
+**Queue position, ETA and progress.** A non-terminal snapshot carries
+`eta: { stepName, queuedAhead, startsAt, completesAt, progress, support }` for the step
+the viewer is waiting on: the first step the orchestrator reports as queued, else the
+first processing step. While queued, `queuedAhead` is the number of jobs ahead,
+`startsAt` / `completesAt` are the orchestrator's estimates (ISO-8601) and `support` is
+`available`, `unavailable` (no worker can take it right now) or `unsupported`; `progress`
+is null. While running those four are null and `progress` is 0..1. Each `steps[]` entry
+(`kind:'workflow'`) carries the same per step as `queue`, `progress`, `startedAt` and
+`completedAt`. `progress` is reported only for image and video generation steps
+(`textToImage`, `imageGen`, `videoGen`); other types, training among them, report a
+fraction that restarts at each phase, so they get none. A field with nothing to report
+is omitted, and a terminal snapshot has no `eta`; read absent as null. All of it is an
+estimate. A held poll (`waitSeconds`) returns as soon as the workflow or one of its steps
+changes, not only when it finishes, so the block re-polls to keep these current.
+
+**Throttled polls.** A poll the host could not serve — the poll rate limit refused it, or
+the host's request failed without an answer — is answered with
+`{ workflowId, status: 'processing', throttled: true }`: a poll the host could not serve;
+keep the previous snapshot's values (its `eta`, progress, images). The same placeholder
+answers a cancel the rate limit refused; the cancel was not issued. A real snapshot never
+carries `throttled`.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

@@ -1,11 +1,11 @@
 import { Checkbox, Stack, Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { IconSticker, IconBan } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * Moderator control over a user's ability to make placements, sitewide — both
@@ -81,9 +81,9 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
 
   const confirm = () => {
     removeExisting.current = false;
-    openConfirmModal({
+    openConfirm({
       title: 'Suspend placement',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             They will not be able to place stickers or submit to remix galleries on anyone&apos;s

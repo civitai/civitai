@@ -16,8 +16,18 @@ import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
-import { profileImageSelect } from '../selectors/image.selector';
+import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
+import {
+  bountyImageNsfwLevel,
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
+import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { publicBountyDetails } from '~/server/utils/bounty-details';
 
 const READ_BATCH_SIZE = 1000; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -99,6 +109,7 @@ type ImageProps = {
   meta: Prisma.JsonObject | null;
   generationProcess: ImageGenerationProcess;
   needsReview: string;
+  minor: boolean | null;
   metadata: ImageMetadata | null;
   entityId: number;
 } | null;
@@ -116,6 +127,9 @@ type BountyForSearchIndex = {
   details: Prisma.JsonObject | null;
   complete: boolean;
   nsfwLevel: number;
+  /** Marked mature by its creator; with the ratings below, it raises its images as the feed does. */
+  nsfw: boolean;
+  moderatorNsfwLevel: number | null;
   stats: {
     favoriteCountAllTime: number;
     trackCountAllTime: number;
@@ -126,9 +140,9 @@ type BountyForSearchIndex = {
   } | null;
   user: {
     id: number;
-    image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    image: null;
     profilePictureId: number | null;
     profilePicture: ImageModelWithIngestion | null;
   };
@@ -152,7 +166,7 @@ const WHERE = [
   Prisma.sql`b."availability" NOT IN ('Unsearchable'::"Availability", 'Private'::"Availability")`,
 ];
 
-const transformData = async ({
+export const transformData = async ({
   bounties,
   imageTags,
   profilePictures,
@@ -161,25 +175,36 @@ const transformData = async ({
   imageTags: ImageTag[];
   profilePictures: ProfileImage[];
 }) => {
+  const textRated = await getTextRatedBountyLevels(
+    bounties.filter(mayBeTextRated).map((bounty) => bounty.id)
+  );
   const records = bounties
-    .map(({ cosmetics, user, tags, images: bountyImages, nsfwLevel, ...bounty }) => {
+    .map(({ cosmetics, user, tags, images: bountyImages, moderatorNsfwLevel, ...bounty }) => {
       if (!bountyImages) {
         return null;
       }
+      const levels = { ...bounty, moderatorNsfwLevel };
+      const flagLevel = bountyNsfwFlagLevel(levels, textRated.get(bounty.id));
 
       const images = bountyImages
-        ? bountyImages.filter(isDefined).map((i) => ({
-            ...i,
-            tags: imageTags
-              .filter((t) => t.imageId === i.id)
-              .map((t) => ({ id: t.tagId, name: t.tag.name })),
-          }))
-        : [];
+        .filter(isDefined)
+        .map((i) => ({
+          ...i,
+          nsfwLevel: bountyImageNsfwLevel(levels, textRated.get(bounty.id), i.nsfwLevel),
+          tags: imageTags
+            .filter((t) => t.imageId === i.id)
+            .map((t) => ({ id: t.tagId, name: t.tag.name })),
+        }))
+        // The index has no viewer, so a restricted minor image is left out for everyone.
+        .filter((i) => !isMinorMatureImage(i))
+        .map(withoutMinorFlag);
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
+      const { nsfwLevel, nsfw: _nsfw, ...rest } = bounty;
       return {
-        ...bounty,
-        nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
+        ...rest,
+        details: rest.details && publicBountyDetails(rest.details, false),
+        nsfwLevel: parseBitwiseBrowsingLevel(flagLevel ?? nsfwLevel),
         tags: tags || [],
         images,
         stats: bounty.stats || null,
@@ -233,7 +258,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
+  pullData: async ({ db, logger, indexName }, batch) => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...WHERE,
@@ -257,7 +282,9 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
         b."expiresAt",
         b."type",
         b."details",
-        b."complete"
+        b."complete",
+        b."nsfw",
+        b."moderatorNsfwLevel"
         FROM "Bounty" b
         WHERE ${Prisma.join(where, ' AND ')}
       ), users AS MATERIALIZED (
@@ -267,7 +294,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
             'id', u.id,
             'username', u.username,
             'deletedAt', u."deletedAt",
-            'image', u.image,
+            'image', NULL,
             'profilePictureId', u."profilePictureId"
           ) user
         FROM "User" u
@@ -314,16 +341,17 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
               'mimeType', i."mimeType",
               'scannedAt', i."scannedAt",
               'type', i."type",
-              'meta', i."meta",
+              'meta', CASE WHEN i."hideMeta" THEN NULL ELSE i."meta" END,
               'generationProcess', i."generationProcess",
               'needsReview', i."needsReview",
+              'minor', i."minor",
               'entityId', ic."entityId"
             )
           ) images
         FROM "Image" i
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
-        WHERE i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
+        -- No viewer: the images a signed-out visitor is served on the bounty page.
+        WHERE ${Prisma.join(entityImageVisibilityConditions({ seesReportListed: false }), ' AND ')}
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT
@@ -362,6 +390,10 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       `;
     logger(`PullData :: Pulled bounties`);
 
+    // transformData leaves these out, which would leave their earlier documents in place.
+    const imageless = bounties.filter((b) => !b.images?.length).map((b) => b.id);
+    if (imageless.length) await onSearchIndexDocumentsCleanup({ indexName, ids: imageless });
+
     if (bounties.length === 0) {
       return {
         bounties: [],
@@ -375,11 +407,15 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       .filter(isDefined)
       .map((i) => i.id);
 
-    const imageTags = await dbRead.$queryRaw<{
-      imageId: number;
-      tagId: number;
-      tag: { name: string };
-    }>`
+    const imageTags = !imageIds.length
+      ? []
+      : await dbRead.$queryRaw<
+          {
+            imageId: number;
+            tagId: number;
+            tag: { name: string };
+          }[]
+        >`
       SELECT
       toi."imageId",
       toi."tagId",
@@ -395,10 +431,10 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       WHERE toi."imageId" IN (${Prisma.join(imageIds)}) AND NOT toi."disabled"
     `;
 
-    const profilePictures = await db.image.findMany({
-      where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },
-      select: profileImageSelect,
-    });
+    const profilePictures = await getServableProfilePictures(
+      db,
+      bounties.map((b) => b.user.profilePictureId).filter(isDefined)
+    );
 
     logger(`PullData :: Pulled tags & profile pics.`);
 

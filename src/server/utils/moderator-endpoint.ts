@@ -17,10 +17,7 @@ import {
 import type { SessionUser } from '~/types/session';
 
 // MODERATOR ENDPOINTS — one declaration per endpoint, carrying its own summary, input schema and
-// handler. Mirrors `apps/moderator/src/lib/server/api-endpoint.ts`, for the same reason: the spec is
-// built FROM the schema that validates the request, so a parameter cannot be documented and not
-// enforced, or enforced and not documented. `/moderator/api` renders these specs, and a docs page that
-// drifts from its API is worse than no docs page — it is a list of calls that used to work.
+// handler. Mirrors `apps/moderator/src/lib/server/api-endpoint.ts`.
 //
 // There is ONE actor rule: the caller is a signed-in moderator. No service token opens these, because
 // the privileged-permission gate, the per-actor rate limit and the audit row are all evaluated against
@@ -50,12 +47,16 @@ export type ModeratorCtx = {
   tracker: Tracker;
   req: NextApiRequest;
   res: NextApiResponse;
+  /** The personal API key that authenticated the call; null for a session. */
+  apiKeyId: number | null;
 };
 
 export type ModeratorMethod = 'GET' | 'POST';
 
 export type ModeratorSpec = {
   method: ModeratorMethod;
+  /** `summary`, `returns`, `notes` and the input's `.describe()` texts document the route for its
+   *  readers; no code reads them. */
   summary: string;
   /** Permission key required on top of the moderator role, from the `granted` feature-flag system. */
   privileged?: string;
@@ -104,7 +105,7 @@ export const moderatorBoolean = z.preprocess((v) => {
 }, z.boolean());
 
 type ActorResult =
-  | { actor: SessionUser; fullCredential: boolean }
+  | { actor: SessionUser; fullCredential: boolean; apiKeyId: number | null }
   | { status: number; error: string };
 
 async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<ActorResult> {
@@ -116,12 +117,17 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
     return {
       actor: session.user as SessionUser,
       fullCredential: isFullScopeUserKey(session as BearerCredential),
+      apiKeyId: (session as { apiKeyId?: number }).apiKeyId ?? null,
     };
   }
 
   const session = await getServerAuthSession({ req, res });
   if (!session?.user) return { status: 401, error: 'Not signed in' };
-  return { actor: session.user as SessionUser, fullCredential: isFullScopeSession(req) };
+  return {
+    actor: session.user as SessionUser,
+    fullCredential: isFullScopeSession(req),
+    apiKeyId: null,
+  };
 }
 
 function collectInput(req: NextApiRequest): Record<string, unknown> {
@@ -213,7 +219,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const resolved = await resolveActor(req, res);
     if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
 
-    const { actor, fullCredential } = resolved;
+    const { actor, fullCredential, apiKeyId } = resolved;
     if (
       !actor.isModerator ||
       actor.bannedAt ||
@@ -268,7 +274,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const auditPayload = auditablePayload(raw, input, Boolean(def.input), def.auditExclude);
     const tracker = new Tracker(req, res);
     try {
-      const result = await def.handler(input, { actor, tracker, req, res });
+      const result = await def.handler(input, { actor, tracker, req, res, apiKeyId });
       const { affected, response } = extractAffected(result);
       void tracker.retoolAudit({
         action: name,
@@ -292,9 +298,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     }
   });
 
-  // The catalog reads `spec` off the exported handler — same trick the spoke uses, so neither side has
-  // a documentation list that can disagree with the code.
-  return Object.assign(handle, { spec, endpointName: name });
+  return handle;
 }
 
 /**
@@ -305,73 +309,4 @@ export class CommittedRetryableError extends TRPCError {
   constructor(message: string, readonly affected?: Record<string, unknown>) {
     super({ code: 'SERVICE_UNAVAILABLE', message });
   }
-}
-
-export type ModeratorEndpointDoc = {
-  method: ModeratorMethod;
-  summary: string;
-  privileged?: string;
-  returns?: string;
-  notes?: string[];
-  rateLimit: { max: number; windowSeconds: number };
-  params: { name: string; type: string; required: boolean; description?: string }[];
-};
-
-/** A zod schema projected to JSON Schema. OpenAPI 3.1 uses JSON Schema for its own schema objects,
- *  so this drops into an OpenAPI document unchanged — which is why the document can be built from
- *  the same specs the reference page renders. */
-export type ProjectedSchema = {
-  properties?: Record<string, { type?: string; description?: string } & Record<string, unknown>>;
-  required?: string[];
-};
-
-/**
- * Zod's JSON-Schema projection cannot express every type it can validate, and its default is to THROW:
- * a single `z.coerce.date()` param took the whole reference page down, because the catalog builds all
- * 26 docs in one pass. Two guards, because they cover different things.
- *
- * `unrepresentable: 'any'` handles the known case — a Date projects as an untyped param rather than an
- * exception. The catch handles the ones nobody has hit yet: a schema this cannot project should cost
- * that endpoint its parameter table, not cost every other endpoint its entry.
- */
-export function projectSchema(input: z.ZodType): ProjectedSchema {
-  try {
-    return z.toJSONSchema(input, { io: 'input', unrepresentable: 'any' }) as ProjectedSchema;
-  } catch (e) {
-    console.error('[moderator-endpoint] could not project a schema for the docs page', e);
-    return {};
-  }
-}
-
-/**
- * Params come from the schema via zod's JSON-Schema projection, so the documented contract is the
- * enforced one.
- *
- * Optional fields are OMITTED rather than set to `undefined`. This is consumed by
- * `getServerSideProps`, and Next refuses to serialise `undefined` — an endpoint with no `privileged`
- * key took the whole page down with a 500 rather than rendering without that badge.
- */
-export function specToDoc(spec: ModeratorSpec): ModeratorEndpointDoc {
-  const base = {
-    method: spec.method,
-    summary: spec.summary,
-    rateLimit: spec.rateLimit,
-    ...(spec.privileged ? { privileged: spec.privileged } : {}),
-    ...(spec.returns ? { returns: spec.returns } : {}),
-    ...(spec.notes?.length ? { notes: spec.notes } : {}),
-  };
-  if (!spec.input) return { ...base, params: [] };
-
-  const schema = projectSchema(spec.input);
-  const required = new Set(schema.required ?? []);
-
-  return {
-    ...base,
-    params: Object.entries(schema.properties ?? {}).map(([name, prop]) => ({
-      name,
-      type: prop.type ?? 'unknown',
-      required: required.has(name),
-      ...(prop.description ? { description: prop.description } : {}),
-    })),
-  };
 }

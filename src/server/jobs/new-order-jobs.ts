@@ -18,6 +18,8 @@ import {
   recentlyGrantedBuzzCounter,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
+import { runLinkDetection } from '~/server/games/new-order/link-detection.service';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
@@ -25,7 +27,6 @@ import {
   calculateFervor,
   cleanseSmite,
   clearRatedImages,
-  processFinalRatings,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
 import { moderatorApp } from '~/server/services/moderator-app.service';
@@ -34,6 +35,7 @@ import {
   buildAbuseReport,
   type AbuseSuspect,
 } from '~/server/services/new-order-abuse-detection/report';
+import { loadV2AbuseSuspects } from '~/server/services/new-order-abuse-detection/v2-suspects';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -42,15 +44,136 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('new-order-jobs');
 
-const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * * *', async () => {
+type GrantCandidate = { userId: number; balance: number; totalExp: number };
+
+const isPayablePlayer = (p: { payoutBlockedAt: Date | null; user: { bannedAt: Date | null } }) =>
+  p.payoutBlockedAt == null && p.user.bannedAt == null;
+
+const playerPayoutSelect = {
+  userId: true,
+  payoutBlockedAt: true,
+  payoutReleaseFrom: true,
+  user: { select: { bannedAt: true } },
+} as const;
+
+async function grantBatches(grants: Array<GrantCandidate & { externalId: string }>) {
+  const batches = chunk(grants, 100);
+  let loopCount = 1;
+  for (const batch of batches) {
+    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
+
+    const transactions = batch
+      .filter((g) => g.balance > 0)
+      .map((g) => ({
+        fromAccountId: 0,
+        toAccountId: g.userId,
+        amount: g.balance,
+        type: TransactionType.Reward,
+        description: 'Content Moderation Correct Judgment',
+        externalTransactionId: g.externalId,
+      }));
+    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
+
+    const granted = new Map<number, number>();
+    for (const g of batch) {
+      if (g.balance > 0) granted.set(g.userId, (granted.get(g.userId) ?? 0) + g.totalExp);
+    }
+    await Promise.all(
+      [...granted].map(([userId, totalExp]) =>
+        Promise.all([
+          blessedBuzzCounter.decrement({ id: userId, value: totalExp }),
+          pendingBuzzCounter.reset({ id: userId }),
+          recentlyGrantedBuzzCounter.reset({ id: userId }),
+        ])
+      )
+    );
+    const ungranted = [...new Set(batch.map((g) => g.userId))].filter((id) => !granted.has(id));
+    if (ungranted.length > 0) {
+      await Promise.all(ungranted.map((id) => pendingBuzzCounter.reset({ id })));
+    }
+    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
+    loopCount++;
+  }
+}
+
+export const RELEASED_PAYOUT_CHUNK_SIZE = 500;
+
+async function grantReleasedPayouts(endDate: Date) {
+  if (!clickhouse) return;
+  const released = (
+    await dbRead.newOrderPlayer.findMany({
+      where: {
+        payoutReleaseFrom: { not: null },
+        payoutBlockedAt: null,
+        rankType: { not: NewOrderRankType.Acolyte },
+      },
+      select: { ...playerPayoutSelect, startAt: true },
+    })
+  ).filter(isPayablePlayer);
+  if (released.length === 0) return;
+
+  // Held days are paid from the release day, but judgments cast before a later career
+  // reset (startAt) stay forfeited, as in the regular grant.
+  const payFrom = released.map((p) => {
+    const releaseDay = startOfDay(p.payoutReleaseFrom!);
+    return { userId: p.userId, from: p.startAt > releaseDay ? p.startAt : releaseDay };
+  });
+  // The per-player OR-clause grows with every player; one query for all of them exceeds
+  // ClickHouse's max_query_size. A failed chunk keeps its markers and retries next run.
+  for (const payFromChunk of chunk(payFrom, RELEASED_PAYOUT_CHUNK_SIZE)) {
+    try {
+      await grantReleasedChunk(payFromChunk, endDate);
+    } catch (e) {
+      handleLogError(e as Error, 'new-order-grant:released-chunk-failed', {
+        players: payFromChunk.length,
+      });
+    }
+  }
+}
+
+async function grantReleasedChunk(payFrom: Array<{ userId: number; from: Date }>, endDate: Date) {
+  if (!clickhouse) return;
+  const earliest = payFrom.reduce((min, p) => (p.from < min ? p.from : min), payFrom[0].from);
+  const userConditions = payFrom
+    .map(
+      (p) =>
+        `(userId = ${p.userId} AND createdAt >= parseDateTimeBestEffort('${p.from.toISOString()}'))`
+    )
+    .join(' OR ');
+  const rows = await clickhouse.$query<GrantCandidate & { dayMs: number }>`
+    SELECT
+      userId,
+      toUnixTimestamp(toStartOfDay(createdAt)) * 1000 as dayMs,
+      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance,
+      SUM(grantedExp * multiplier) as totalExp
+    FROM knights_new_order_image_rating FINAL
+    WHERE createdAt >= ${earliest} AND createdAt < ${endDate}
+      AND (${userConditions})
+      AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+    GROUP BY userId, dayMs
+  `;
+  const grants = rows.map((r) => ({
+    ...r,
+    externalId: `new-order-${r.userId}-${new Date(Number(r.dayMs)).toISOString()}`,
+  }));
+  await grantBatches(grants);
+  await dbWrite.newOrderPlayer.updateMany({
+    where: { userId: { in: payFrom.map((p) => p.userId) }, payoutBlockedAt: null },
+    data: { payoutReleaseFrom: null },
+  });
+}
+
+const startOfDay = (d: Date) => dayjs(d).startOf('day').toDate();
+
+/** Pays one day of v1 judgments, by default the day 3 days ago. A paid day is never paid twice:
+ *  its transactions carry the same externalId, which the Buzz service rejects as a duplicate. */
+export async function runGrantBlessedBuzz(day: Date = dayjs().subtract(3, 'day').toDate()) {
   if (!clickhouse) return;
   log('BlessedBuzz :: Granting Blessed Buzz');
 
-  // date range is 3 days ago
-  const startDate = dayjs().subtract(3, 'day').startOf('day').toDate();
-  const endDate = dayjs().subtract(3, 'day').endOf('day').toDate();
+  const startDate = dayjs(day).startOf('day').toDate();
+  const endDate = dayjs(day).endOf('day').toDate();
 
-  // Get all judgments from exactly 3 days ago
   log(
     `BlessedBuzz :: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
@@ -69,14 +192,16 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   if (judgments.length) {
     log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
 
-    // Get current player data for knights and templars only
-    const players = await dbRead.newOrderPlayer.findMany({
-      where: {
-        userId: { in: judgments.map((j) => j.userId) },
-        rankType: { not: NewOrderRankType.Acolyte },
-      },
-      select: { userId: true, startAt: true },
-    });
+    // Knights and templars only; blocked and banned players keep their amounts pending
+    const players = (
+      await dbRead.newOrderPlayer.findMany({
+        where: {
+          userId: { in: judgments.map((j) => j.userId) },
+          rankType: { not: NewOrderRankType.Acolyte },
+        },
+        select: { ...playerPayoutSelect, startAt: true },
+      })
+    ).filter(isPayablePlayer);
     const startAtByUser = new Map(players.map((p) => [p.userId, p.startAt]));
 
     // Judgments cast before a player's last career reset (startAt) are forfeited.
@@ -117,58 +242,23 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       });
 
     if (validPlayers.length) {
-      // Create buzz transactions in batches
-      const batches = chunk(validPlayers, 100);
-      let loopCount = 1;
-      for (const batch of batches) {
-        log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-
-        const grantedPlayers = batch.filter((player) => player.balance > 0);
-        const ungrantedPlayers = batch.filter((player) => player.balance <= 0);
-
-        const transactions = grantedPlayers.map((validPlayer) => ({
-          fromAccountId: 0,
-          toAccountId: validPlayer.userId,
-          amount: validPlayer.balance,
-          type: TransactionType.Reward,
-          description: 'Content Moderation Correct Judgment',
-          externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-        }));
-
-        if (transactions.length > 0) await createBuzzTransactionMany(transactions);
-
-        // Deduct the actual EXP from the blessed buzz counter only for players who received buzz.
-        // Players with balance <= 0 (< 10 correct votes) keep their EXP so it rolls over
-        // and accumulates until the next payout threshold is reached.
-        // Counter stores EXP values, not converted buzz, so we deduct totalExp.
-        // Reset pending buzz counter so it recalculates the new day on next fetch.
-        await Promise.all(
-          grantedPlayers.map((player) => {
-            return Promise.all([
-              blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
-              pendingBuzzCounter.reset({ id: player.userId }),
-              recentlyGrantedBuzzCounter.reset({ id: player.userId }),
-            ]);
-          })
-        );
-
-        // For ungranted players, only reset the pending buzz counter
-        // so it recalculates next cycle — but preserve their blessed buzz EXP
-        if (ungrantedPlayers.length > 0) {
-          await Promise.all(
-            ungrantedPlayers.map((player) => pendingBuzzCounter.reset({ id: player.userId }))
-          );
-        }
-        log(
-          `BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`
-        );
-        loopCount++;
-      }
+      await grantBatches(
+        validPlayers.map((j) => ({
+          ...j,
+          externalId: `new-order-${j.userId}-${startDate.toISOString()}`,
+        }))
+      );
     } else {
       log('BlessedBuzz :: No valid players found');
     }
   } else {
     log('BlessedBuzz :: No correct judgments found');
+  }
+
+  try {
+    await grantReleasedPayouts(startDate);
+  } catch (error: unknown) {
+    log(`BlessedBuzz :: Released payout catch-up failed, will retry next run: ${error}`);
   }
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
@@ -230,7 +320,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   } catch (error: unknown) {
     log(`BlessedBuzz :: Stale counter reconciliation failed, will retry next run: ${error}`);
   }
-});
+}
 
 type DailyResetQueryResult = {
   userId: number;
@@ -244,6 +334,10 @@ type DailyResetQueryResult = {
 // Updated to sync PostgreSQL from Redis counters instead of ClickHouse
 // This is more efficient and respects the real-time counter updates
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
+  if (!(await isV1KnightsLive())) {
+    log('DailyReset:: v1 game retired, skipping');
+    return;
+  }
   log('DailyReset:: Starting fervor recalculation and PostgreSQL sync');
 
   // Get all players to sync their stats
@@ -347,6 +441,10 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
 
 // Cleanse smites that are older than 7 days
 const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *', async () => {
+  if (!(await isV1KnightsLive())) {
+    log('CleanseSmites :: v1 game retired, skipping');
+    return;
+  }
   log('CleanseSmites :: Cleansing smites');
   const smites = await dbRead.newOrderSmite.findMany({
     where: { cleansedAt: null, createdAt: { lte: dayjs().subtract(7, 'days').toDate() } },
@@ -431,6 +529,10 @@ const newOrderChangeFillTarget = createJob(
   'new-order-change-fill-target',
   '0 22 * * *',
   async () => {
+    if (!(await isV1KnightsLive())) {
+      log('ChangeFillTarget :: v1 game retired, skipping');
+      return;
+    }
     log('ChangeFillTarget :: Starting fill slot rotation');
 
     // Only Knight rank uses slot rotation; other ranks remain on a single slot
@@ -445,98 +547,6 @@ const newOrderChangeFillTarget = createJob(
     }
 
     log('ChangeFillTarget :: Fill slot rotation complete');
-  }
-);
-
-// Rotate rating slot and purge old slot at 00:00 UTC daily
-// Players will now rate from the new slot, old slot gets purged
-const newOrderChangeRateTarget = createJob(
-  'new-order-change-rate-target',
-  '0 0 * * *',
-  async () => {
-    if (!clickhouse) {
-      log('ChangeRateTarget :: ClickHouse not available, skipping');
-      return;
-    }
-
-    log('ChangeRateTarget :: Starting rate slot rotation and purge');
-
-    // Only Knight rank uses slot rotation; other ranks remain on a single slot
-    const ranksToRotate = [NewOrderRankType.Knight] as const;
-
-    for (const rank of ranksToRotate) {
-      const currentSlot = await getActiveSlot(rank, 'rating');
-      const newSlot = currentSlot === 'a' ? 'b' : 'a';
-
-      // Rotate to the new slot
-      await setActiveSlot(rank, 'rating', newSlot);
-      log(`ChangeRateTarget :: ${rank} rating slot rotated: ${currentSlot} → ${newSlot}`);
-
-      log(`ChangeRateTarget :: ${rank} - Purging old slot ${currentSlot} before rotation`);
-
-      // Get all image IDs from the current (soon to be old) rating slot
-      // No limit - process all images in the slot
-      const imagesToPurge = (
-        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.getAll()))
-      )
-        .flat()
-        .map((value) => Number(value));
-
-      if (imagesToPurge.length > 0) {
-        log(
-          `ChangeRateTarget :: ${rank} - Found ${imagesToPurge.length} images to purge from slot ${currentSlot}`
-        );
-
-        // Mark images as Inconclusive by inserting NULL ratings into buffer
-        // Images still in queue at purge time legitimately didn't reach consensus
-        // (images with consensus were already removed via removeImageFromQueue)
-        log(`ChangeRateTarget :: ${rank} - Inserting NULL ratings into buffer for processing`);
-
-        const batches = chunk(imagesToPurge, 10000);
-        for (const batch of batches) {
-          // Insert NULL ratings into buffer - these will be marked as Inconclusive by processFinalRatings
-          const bufferRecords = batch.map((imageId) => ({
-            imageId,
-            rating: null,
-          }));
-
-          await clickhouse.insert({
-            table: 'knights_rating_updates_buffer',
-            values: bufferRecords,
-            format: 'JSONEachRow',
-          });
-        }
-
-        log(
-          `ChangeRateTarget :: ${rank} - Inserted ${imagesToPurge.length} NULL ratings into buffer`
-        );
-
-        // Process the ratings through the standard pipeline
-        // This will mark them as Inconclusive using the same logic as regular ratings
-        const result = await processFinalRatings();
-        log(
-          `ChangeRateTarget :: ${rank} - processFinalRatings result: ${JSON.stringify(
-            result,
-            null,
-            2
-          )}`
-        );
-
-        log(
-          `ChangeRateTarget :: ${rank} - Processed ${imagesToPurge.length} images as Inconclusive`
-        );
-
-        // Clear all pools in the old slot
-        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.reset({ all: true })));
-        await clearImageRatings(imagesToPurge);
-
-        log(`ChangeRateTarget :: ${rank} - Cleared all pools in slot ${currentSlot}`);
-      } else {
-        log(`ChangeRateTarget :: ${rank} - No images to purge from slot ${currentSlot}`);
-      }
-    }
-
-    log('ChangeRateTarget :: Rate slot rotation and purge complete');
   }
 );
 
@@ -559,7 +569,6 @@ export async function runAbuseDetectionScan() {
   // Captured before the first await so the board's "when did this run" reading is
   // the producer's own start, not the instant the report happened to be built.
   const startedAt = new Date();
-  if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
 
   // All tunable thresholds live in Redis, so the live operational values are not
@@ -587,33 +596,63 @@ export async function runAbuseDetectionScan() {
   const smiteDominantPct = asFinite(det.smiteDominantPct, 100);
   const smiteMaxUniqueRatings = asFinite(det.smiteMaxUniqueRatings, 1);
 
-  const suspects = await clickhouse.$query<AbuseSuspect>`
-      WITH user_dominant AS (
+  // Two independent sources. v1 (ClickHouse) is the old game and stays through the payout tail;
+  // v2 (Postgres votes) is report-only. A failing source is logged and skipped so the other's
+  // suspects are still filed. When every source that ran failed, nothing is filed and the run fails;
+  // when one failed, the report says so and the run fails after filing, unless it already smited.
+  // No ClickHouse client means v1 did not run, which is not a failure.
+  const loadV1Suspects = async (): Promise<AbuseSuspect[]> => {
+    if (!clickhouse) return [];
+    return await clickhouse.$query<AbuseSuspect>`
+        WITH user_dominant AS (
+          SELECT
+            userId,
+            topK(1)(rating)[1] as dominantRating
+          FROM knights_new_order_image_rating FINAL
+          WHERE createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
+            AND rank != 'Acolyte'
+          GROUP BY userId
+        )
         SELECT
-          userId,
-          topK(1)(rating)[1] as dominantRating
-        FROM knights_new_order_image_rating FINAL
-        WHERE createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
-          AND rank != 'Acolyte'
-        GROUP BY userId
-      )
-      SELECT
-        r.userId,
-        count() as totalRatings,
-        uniq(r.rating) as uniqueRatings,
-        d.dominantRating,
-        countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
-        count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
-      FROM knights_new_order_image_rating r FINAL
-      JOIN user_dominant d ON r.userId = d.userId
-      WHERE r.createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
-        AND r.rank != 'Acolyte'
-      GROUP BY r.userId, d.dominantRating
-      HAVING totalRatings >= ${minTotalRatings}
-        AND (uniqueRatings <= ${smiteMaxUniqueRatings} OR dominantPct >= ${havingDominantPct} OR avgPerMinute > ${havingAvgPerMinute})
-      ORDER BY totalRatings DESC
-      LIMIT 50
+          r.userId,
+          count() as totalRatings,
+          uniq(r.rating) as uniqueRatings,
+          d.dominantRating,
+          countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
+          count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
+        FROM knights_new_order_image_rating r FINAL
+        JOIN user_dominant d ON r.userId = d.userId
+        WHERE r.createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
+          AND r.rank != 'Acolyte'
+        GROUP BY r.userId, d.dominantRating
+        HAVING totalRatings >= ${minTotalRatings}
+          AND (uniqueRatings <= ${smiteMaxUniqueRatings} OR dominantPct >= ${havingDominantPct} OR avgPerMinute > ${havingAvgPerMinute})
+        ORDER BY totalRatings DESC
+        LIMIT 50
     `;
+  };
+  const [v1Result, v2Result] = await Promise.allSettled([
+    clickhouse ? loadV1Suspects() : Promise.resolve([] as AbuseSuspect[]),
+    loadV2AbuseSuspects({
+      minTotalRatings,
+      havingDominantPct,
+      havingAvgPerMinute,
+      smiteMaxUniqueRatings,
+    }),
+  ]);
+  for (const [name, result] of [
+    ['new-order-abuse-detection:v1-scan-failed', v1Result],
+    ['new-order-abuse-detection:v2-scan-failed', v2Result],
+  ] as const) {
+    if (result.status === 'rejected') handleLogError(result.reason as Error, name);
+  }
+  const ranSources = clickhouse ? [v1Result, v2Result] : [v2Result];
+  const failed = ranSources.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed.length === ranSources.length) throw failed[0].reason;
+
+  const v1Suspects = v1Result.status === 'fulfilled' ? v1Result.value : [];
+  const v2Suspects = v2Result.status === 'fulfilled' ? v2Result.value : [];
+  const suspects = [...v1Suspects, ...v2Suspects];
 
   // The accounts this run wrote a smite ROW for — MEMBERSHIP, not selection, and keyed on the
   // durable write rather than on the smite call returning. The loop below swallows a per-player
@@ -624,7 +663,7 @@ export async function runAbuseDetectionScan() {
 
   if (suspects.length > 0) {
     log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'new-order-abuse-detection-scan',
       // AGGREGATE ONLY. This used to carry a per-account array, which neither precedent does — both
@@ -638,7 +677,7 @@ export async function runAbuseDetectionScan() {
         ratings: suspects.reduce((sum, s) => sum + s.totalRatings, 0),
       },
       message: `Abuse detection scan found ${suspects.length} suspicious users in the last ${ABUSE_SCAN_WINDOW_HOURS} hours`,
-    }).catch(() => null);
+    });
 
     // Auto-smite branch: gated by Redis config flag (off by default). Smite
     // filter applies the tighter `smite*` thresholds against the broader
@@ -647,10 +686,11 @@ export async function runAbuseDetectionScan() {
     // excluded from the smite filter — power users can spike during bursts.
     // The 3-active-smites rule in `smitePlayer` chains into the existing
     // `resetPlayer` flow on the third strike.
+    // v1 suspects only: v2 is report-only and never smited, whatever this flag says.
     if (config?.autoSmiteAbusers === true) {
-      const isStrictSignal = (s: (typeof suspects)[number]) =>
+      const isStrictSignal = (s: AbuseSuspect) =>
         s.uniqueRatings <= smiteMaxUniqueRatings || s.dominantPct >= smiteDominantPct;
-      const targets = suspects.filter(isStrictSignal);
+      const targets = v1Suspects.filter((s) => s.source !== 'v2' && isStrictSignal(s));
       log(`AbuseDetection :: Auto-smiting ${targets.length} strict-signal suspect(s)`);
 
       for (const s of targets) {
@@ -682,12 +722,12 @@ export async function runAbuseDetectionScan() {
               smitedUserIds.add(s.userId);
             },
           });
-          await logToAxiom({
+          logToAxiom({
             type: 'warning',
             name: 'new-order-auto-smite',
             details: { playerId: s.userId, source: 'detection-job', reason },
             message: `Auto-smite issued for player ${s.userId}`,
-          }).catch(() => null);
+          });
         } catch (e) {
           // 🔴 A STABLE KEY, WITH THE ID IN THE DETAILS. `handleLogError`'s second argument becomes
           // the Axiom `name`: an alert can match a key and cannot match a sentence, and an
@@ -733,7 +773,16 @@ export async function runAbuseDetectionScan() {
   // a sentence.
   try {
     await moderatorApp.abuseReport(
-      buildAbuseReport({ suspects, smitedUserIds, startedAt, finishedAt: new Date() })
+      buildAbuseReport({
+        suspects,
+        smitedUserIds,
+        startedAt,
+        finishedAt: new Date(),
+        coverage: {
+          v1: !clickhouse ? 'not-run' : v1Result.status === 'rejected' ? 'failed' : 'ok',
+          v2: v2Result.status === 'rejected' ? 'failed' : 'ok',
+        },
+      })
     );
     log(
       `AbuseDetection :: Filed ${suspects.length} finding(s) on the abuse board ` +
@@ -746,6 +795,11 @@ export async function runAbuseDetectionScan() {
       suspects: suspects.length,
     });
   }
+
+  // Report filed (it says which source is missing); now fail the run so the error still shows up.
+  // A null ClickHouse client is not a failure, only a source that ran and threw is. Once smites
+  // are written the run must not fail, as above: a retry would smite the same accounts again.
+  if (failed.length > 0 && smitedUserIds.size === 0) throw failed[0].reason;
 }
 
 const newOrderAbuseDetection = createJob(
@@ -780,12 +834,15 @@ const newOrderAbuseDetection = createJob(
   { lockExpiration: 10 * 60 }
 );
 
-export const newOrderJobs = [
-  newOrderGrantBlessedBuzz,
-  newOrderDailyReset,
-  newOrderCleanseSmites,
-  // newOrderCleanupQueues,
-  newOrderChangeFillTarget,
-  newOrderChangeRateTarget,
-  newOrderAbuseDetection,
-];
+const newOrderLinkDetection = createJob(
+  'new-order-link-detection',
+  '30 23 * * *',
+  async () => {
+    await runLinkDetection();
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+// The old game's jobs stay defined as a reference for checking v1 logic against v2, but are not
+// registered: v1 no longer runs.
+export const newOrderJobs = [newOrderAbuseDetection, newOrderLinkDetection];

@@ -14,7 +14,7 @@ describe('getRequestCredential', () => {
   });
 
   it('keeps a recorded scope of zero', () => {
-    expect(getRequestCredential({ context: { tokenScope: 0, apiKeyId: 17 } }).tokenScope).toBe(0);
+    expect(getRequestCredential({ context: { tokenScope: 0n, apiKeyId: 17 } }).tokenScope).toBe(0n);
   });
 
   it.each([

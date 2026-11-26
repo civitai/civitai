@@ -6,7 +6,10 @@ import { parseRetryAfter, RateLimiter } from './ratelimit';
 
 // The orchestration client has no type for this step yet; this is the subset we send and read.
 // One step embeds exactly one input; a workflow carries many steps.
-export type EmbedInput = { id: string; imageUrl?: string; videoUrl?: string };
+export type EmbedInput = { id: string; imageUrl?: string; videoUrl?: string; text?: string };
+type InputKind = 'image' | 'video' | 'text';
+const kindOf = (input: EmbedInput): InputKind =>
+  input.videoUrl ? 'video' : input.text !== undefined ? 'text' : 'image';
 type StepOutput = {
   model: string;
   modelRevision: string;
@@ -19,8 +22,39 @@ type StepOutput = {
 type Workflow = {
   id: string;
   status: string;
-  steps?: Array<{ name?: string; status?: string; output?: StepOutput }>;
+  steps?: Array<WorkflowStep>;
 };
+type WorkflowStep = {
+  name?: string;
+  status?: string;
+  output?: StepOutput;
+  [field: string]: unknown;
+};
+
+const MAX_DETAIL_CHARS = 600;
+// An outage fails a whole batch alike: a few of its steps say what the rest would.
+const MAX_DETAILED_STEPS = 10;
+/**
+ * What a failed step says about itself, for the log: everything but its input (the media URL) and
+ * the embedding. The step schema documents no error field, so nothing is picked by name.
+ */
+export function failedStepDetail(step: WorkflowStep | undefined): string {
+  if (!step) return 'no step in the workflow';
+  const without = (o: object, drop: string[]) =>
+    Object.fromEntries(Object.entries(o).filter(([key]) => !drop.includes(key)));
+  const { output } = step;
+  const kept = {
+    ...without(step, ['input', 'name', 'output']),
+    ...(output && { output: without(output, ['embedding']) }),
+  };
+  const detail = JSON.stringify(kept).replace(/https?:\/\/[^"\s]*/g, '<url>');
+  return detail.length > MAX_DETAIL_CHARS ? `${detail.slice(0, MAX_DETAIL_CHARS)}…` : detail;
+}
+
+const stepDetails = (ids: string[], steps: Map<string | undefined, WorkflowStep>) =>
+  ids
+    .slice(0, MAX_DETAILED_STEPS)
+    .map((id) => ({ id, detail: failedStepDetail(steps.get(stepName(id))) }));
 
 export const MAX_INPUTS_PER_WORKFLOW = 128;
 export const MAX_VIDEOS_PER_WORKFLOW = 8;
@@ -33,12 +67,16 @@ const MAX_VIDEO_SIDE = 4096;
 const EMBED_IMAGE_PARAMS = 'anim=false,width=800,optimized=true';
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
+/** The workflow ended without it being its inputs' fault. */
+function looksLikeOutage(workflow: Workflow) {
+  return workflow.status === 'expired' || workflow.status === 'canceled';
+}
+
 /**
- * The workflow ended without it being its inputs' fault: expired or canceled, or failed with no
- * step succeeding across several images. One failed image is that image's own failure.
+ * The orchestrator runs a batch as one job, so one input whose media cannot be downloaded fails
+ * every step in it. Splitting isolates that input; re-submitting the whole batch never would.
  */
-function looksLikeOutage(workflow: Workflow, inputs: number) {
-  if (workflow.status === 'expired' || workflow.status === 'canceled') return true;
+function failedAsOne(workflow: Workflow, inputs: number) {
   return (
     workflow.status === 'failed' &&
     inputs > 1 &&
@@ -62,29 +100,40 @@ function edgeUrl(base: string, key: string, params: string, ext: string) {
   return `${base}/${key}/${params}/${name}${ext}`;
 }
 
+/** The image variant every image embed is made from. */
+const imageEdgeUrl = (base: string, key: string) => edgeUrl(base, key, EMBED_IMAGE_PARAMS, '.jpeg');
+
 /** One builder per media type; a type without one is skipped, not failed. */
 const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOptions) => Built>> = {
   image: (row, { imageLocation }) => ({
     input: {
       id: String(row.id),
-      imageUrl: edgeUrl(imageLocation, row.url, EMBED_IMAGE_PARAMS, '.jpeg'),
+      imageUrl: imageEdgeUrl(imageLocation, row.url),
     },
   }),
   video: (row, { imageLocation, embedVideo }) => {
     if (!embedVideo) return { skip: 'video-disabled' };
-    if (row.duration != null && row.duration > MAX_VIDEO_SECONDS) return { skip: 'video-too-long' };
-    if (row.sizeKB != null && row.sizeKB > MAX_VIDEO_KB) return { skip: 'video-too-large' };
-    if ((row.width ?? 0) > MAX_VIDEO_SIDE || (row.height ?? 0) > MAX_VIDEO_SIDE) {
-      return { skip: 'video-too-large-dimensions' };
-    }
-    return {
-      input: {
-        id: String(row.id),
-        videoUrl: edgeUrl(imageLocation, row.url, 'original=true', '.mp4'),
-      },
-    };
+    const skip = videoLimitSkip(row);
+    if (skip) return { skip };
+    return { input: { id: String(row.id), videoUrl: videoEmbedUrl(row.url, imageLocation) } };
   },
 };
+
+/** The worker refuses clips past these limits outright, so they are never sent. */
+export function videoLimitSkip(
+  row: Pick<ImageRow, 'duration' | 'sizeKB' | 'width' | 'height'>
+): SkipReason | null {
+  if (row.duration != null && row.duration > MAX_VIDEO_SECONDS) return 'video-too-long';
+  if (row.sizeKB != null && row.sizeKB > MAX_VIDEO_KB) return 'video-too-large';
+  if ((row.width ?? 0) > MAX_VIDEO_SIDE || (row.height ?? 0) > MAX_VIDEO_SIDE)
+    return 'video-too-large-dimensions';
+  return null;
+}
+
+/** The original clip, the only form the worker embeds video from. */
+export function videoEmbedUrl(key: string, imageLocation = config.vectorSync.imageLocation) {
+  return edgeUrl(imageLocation, key, 'original=true', '.mp4');
+}
 
 export function buildEmbedInput(
   row: ImageRow,
@@ -97,6 +146,15 @@ export function buildEmbedInput(
   if (/^[a-z]+:/i.test(row.url)) return { skip: 'external-url' };
   const build = builders[row.type];
   return build ? build(row, opts) : { skip: 'unsupported-type' };
+}
+
+/**
+ * The edge URL an image stored as `key` is embedded from, the same variant the image sync sends;
+ * null for an absolute URL, which is not on our CDN.
+ */
+export function imageEmbedUrl(key: string, imageLocation = config.vectorSync.imageLocation) {
+  if (/^[a-z]+:/i.test(key)) return null;
+  return imageEdgeUrl(imageLocation, key);
 }
 
 /** Step names are how results map back to images. */
@@ -166,6 +224,12 @@ export type EmbedResult = {
   vectors: Map<number, number[]>;
   /** Ids whose step failed, or that a rejected workflow could not be split away from. */
   failed: number[];
+  /**
+   * The subset of `failed` the orchestrator refused on its own (a lone input rejected, or a step
+   * failing in a workflow that otherwise ran): the media is at fault, so resending it pays again for
+   * the same failure. Outage failures are not in it.
+   */
+  rejected?: number[];
   stamp: ModelStamp | null;
   /**
    * Set when a workflow failed in a way that is not the inputs' fault (retries exhausted, auth,
@@ -268,8 +332,8 @@ export type EmbedderOptions = {
 
 type EmbedCall = {
   result: EmbedResult;
-  /** The accepted stamp per media type: image and video steps report different profiles. */
-  stamps: Map<'image' | 'video', ModelStamp>;
+  /** The accepted stamp per input kind: image, video and text steps may report different profiles. */
+  stamps: Map<InputKind, ModelStamp>;
   /** Checked for every step's stamp before its vector is accepted; throwing rejects the workflow. */
   acceptStamp?: (stamp: ModelStamp) => Promise<void>;
   /** Given each workflow's accepted vectors as it returns, so they can be stored before the call ends. */
@@ -358,7 +422,7 @@ export class Embedder {
     { acceptStamp, onVectors }: Pick<EmbedCall, 'acceptStamp' | 'onVectors'> = {}
   ): Promise<EmbedResult> {
     const call: EmbedCall = {
-      result: { vectors: new Map(), failed: [], stamp: null },
+      result: { vectors: new Map(), failed: [], rejected: [], stamp: null },
       stamps: new Map(),
       acceptStamp,
       onVectors,
@@ -435,6 +499,7 @@ export class Embedder {
           'vector-sync: workflow rejected; inputs failed'
         );
         call.result.failed.push(...batch.map((b) => Number(b.id)));
+        if (batch.length === 1) call.result.rejected?.push(Number(batch[0].id));
         return;
       }
       const mid = Math.ceil(batch.length / 2);
@@ -446,8 +511,10 @@ export class Embedder {
 
     // Each step stands alone: a failed step fails only its own image.
     const steps = new Map((workflow.steps ?? []).map((step) => [step.name, step]));
-    const accepted: Array<[number, number[], ModelStamp, 'image' | 'video']> = [];
+    const accepted: Array<[number, number[], ModelStamp, InputKind]> = [];
     const failed: string[] = [];
+    // A step that reports success with an unusable output is the orchestrator's fault, not the media's.
+    const malformed = new Set<string>();
     for (const input of batch) {
       const out = steps.get(stepName(input.id));
       const output = out?.output;
@@ -461,9 +528,10 @@ export class Embedder {
         (output.precision && output.precision !== 'float32')
       ) {
         failed.push(input.id);
+        if (out?.status === 'succeeded') malformed.add(input.id);
         continue;
       }
-      const kind = input.videoUrl ? 'video' : 'image';
+      const kind = kindOf(input);
       const stamp: ModelStamp = {
         model: output.model,
         modelRevision: output.modelRevision,
@@ -472,10 +540,19 @@ export class Embedder {
       };
       accepted.push([Number(input.id), output.embedding, stamp, kind]);
     }
+    if (failedAsOne(workflow, batch.length)) {
+      // Ends at singletons, so it leaves `depth` (the 400 path's split budget) untouched.
+      // A real outage reported as 'failed' costs 2N-1 workflows and ends with all N failed;
+      // reconcile retries them.
+      const mid = Math.ceil(batch.length / 2);
+      await this.embedSplitting(batch.slice(0, mid), call, depth);
+      await this.embedSplitting(batch.slice(mid), call, depth);
+      return;
+    }
     // Retried here, not by the caller, so a batch that keeps failing ends as counted failures
     // (reconcile retries them) rather than a flush that never moves on. Only the unfinished
     // inputs go again; the steps that succeeded are kept below.
-    const outage = failed.length > 0 && looksLikeOutage(workflow, batch.length);
+    const outage = failed.length > 0 && looksLikeOutage(workflow);
     const backoff = Math.min(60_000, 1000 * 2 ** outageRetries) * (0.5 + Math.random() / 2);
     // Bounded by time as well as attempts: one expiry can take the whole 30-minute step timeout.
     const retryOutage =
@@ -489,17 +566,33 @@ export class Embedder {
       );
     } else if (outage) {
       logger.error(
-        { workflow: workflow.id, status: workflow.status, ids: failed },
+        {
+          workflow: workflow.id,
+          status: workflow.status,
+          ids: failed,
+          steps: stepDetails(failed, steps),
+        },
         'vector-sync: workflow kept failing after retries; inputs failed'
       );
       call.result.failed.push(...failed.map(Number));
     } else if (failed.length) {
-      logger.warn({ workflow: workflow.id, ids: failed }, 'vector-sync: steps failed to embed');
+      logger.warn(
+        // Alone in its workflow, a failed input is almost always media the orchestrator could not
+        // download (a 404 on an old image).
+        {
+          workflow: workflow.id,
+          ids: failed,
+          ...(batch.length === 1 && { reason: 'media-unavailable' }),
+          steps: stepDetails(failed, steps),
+        },
+        'vector-sync: steps failed to embed'
+      );
       call.result.failed.push(...failed.map(Number));
+      call.result.rejected?.push(...failed.filter((id) => !malformed.has(id)).map(Number));
     }
 
     // Every distinct stamp in this workflow is checked before any of its vectors is kept.
-    const distinct = new Map<string, [ModelStamp, 'image' | 'video']>();
+    const distinct = new Map<string, [ModelStamp, InputKind]>();
     for (const [, , stamp, kind] of accepted) distinct.set(JSON.stringify(stamp), [stamp, kind]);
     for (const [stamp, kind] of distinct.values()) {
       const seen = call.stamps.get(kind);
@@ -608,7 +701,11 @@ export class Embedder {
           model: EMBED_MODEL,
           dimensions: VECTOR_DIMENSIONS,
           precision: 'float32',
-          ...(input.videoUrl ? { videoUrl: input.videoUrl } : { imageUrl: input.imageUrl }),
+          ...(input.videoUrl
+            ? { videoUrl: input.videoUrl }
+            : input.text !== undefined
+            ? { text: input.text }
+            : { imageUrl: input.imageUrl }),
         },
       })),
       tier: 'paid',

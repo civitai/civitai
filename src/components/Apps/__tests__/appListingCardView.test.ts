@@ -118,13 +118,34 @@ describe('getListingBadge', () => {
 });
 
 describe('getRecommendLabel', () => {
-  it('null pct → "No reviews yet"', () => {
+  it('zero reviews → "No reviews yet"', () => {
     expect(getRecommendLabel(roll(0, 0, null), 0)).toBe('No reviews yet');
   });
   it('pct present → "N% recommend (M)" with rounding + count', () => {
     expect(getRecommendLabel(roll(9, 1, 0.9), 10)).toBe('90% recommend (10)');
-    expect(getRecommendLabel(roll(2, 1, 0.6666), 3)).toBe('67% recommend (3)');
-    expect(getRecommendLabel(roll(1, 0, 1), 1)).toBe('100% recommend (1)');
+    expect(getRecommendLabel(roll(6, 3, 0.6666), 9)).toBe('67% recommend (9)');
+  });
+
+  /**
+   * Below `LISTING_RECOMMEND_PCT_MIN_REVIEWS` the server sends `recommendPct: null`
+   * WITH reviews present, so "one review reads 100% recommend (1)" is gone. The label
+   * must then print the counts, and must not mistake those reviews for none.
+   * The rollups below are the shapes `recommendRollup` produces at 1, 4 and 5 reviews.
+   */
+  it('one positive review → counts, no percentage', () => {
+    expect(getRecommendLabel(roll(1, 0, null), 1)).toBe('1 review · 1 recommends');
+  });
+  it('one negative review → counts, no percentage', () => {
+    expect(getRecommendLabel(roll(0, 1, null), 1)).toBe('1 review · 0 recommend');
+  });
+  it('a below-threshold mix (3 reviews, 2 recommend) → plural counts', () => {
+    expect(getRecommendLabel(roll(2, 1, null), 3)).toBe('3 reviews · 2 recommend');
+  });
+  it('four reviews (one below the threshold) → still counts', () => {
+    expect(getRecommendLabel(roll(4, 0, null), 4)).toBe('4 reviews · 4 recommend');
+  });
+  it('five reviews (at the threshold) → the percentage returns', () => {
+    expect(getRecommendLabel(roll(5, 0, 1), 5)).toBe('100% recommend (5)');
   });
   it('formats large counts with locale separators', () => {
     expect(getRecommendLabel(roll(1200, 300, 0.8), 1500)).toBe('80% recommend (1,500)');

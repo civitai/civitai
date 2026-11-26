@@ -48,7 +48,7 @@ export const relabelBuildBatchJob = createJob(
       now: new Date(),
       send: (input) => moderatorApp.relabelBuildBatch(input),
       log: (data) =>
-        void logToAxiom({ name: 'relabel-build-batch-sent', ...data }).catch(() => undefined),
+        void logToAxiom({ name: 'relabel-build-batch-sent', ...data }),
     }),
   { lockExpiration: 10 * 60 }
 );

@@ -6,6 +6,11 @@ import type {
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  combineFrameAxes,
+  readRatingAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
+import {
   applyIngestionSideEffects,
   buildAndInsertScanTags,
   extractFailedSteps,
@@ -22,6 +27,8 @@ import { computePerceptualHash } from '~/server/services/orchestrator/orchestrat
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -56,6 +63,8 @@ export type ImageScanningResult = {
   aiRecognition?: Recognition;
   animeRecognition?: Recognition;
   perceptualHash?: string;
+  /** Rating axes, when the rater that produces them ran. */
+  axes?: RatingAxes;
 };
 
 type RawStep = { $type?: string; name?: string; status?: string; output?: unknown };
@@ -63,8 +72,8 @@ type RawStep = { $type?: string; name?: string; status?: string; output?: unknow
 // wdTagging only ever returned general tags; the other categories would write tags no image had before.
 const INGESTED_TAG_CATEGORIES = new Set(['general']);
 
-// The client package predates this field.
-type ScanningOutput = ImageScanningOutput & { blockedReason?: string | null };
+// The client package predates these fields.
+type ScanningOutput = ImageScanningOutput & { blockedReason?: string | null; ratingV2?: unknown };
 
 function readScan(output: ScanningOutput, workflowId: string): ImageScanningResult {
   const { tagging, jointAgeClassification } = output;
@@ -89,6 +98,7 @@ function readScan(output: ScanningOutput, workflowId: string): ImageScanningResu
     blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
     animeRecognition: output.animeRecognition,
+    axes: readRatingAxes(output.ratingV2),
   };
 }
 
@@ -96,7 +106,8 @@ const higher = (a?: Recognition, b?: Recognition) => (!a || (b && b.score > a.sc
 
 // Every result is kept (a max or an OR per field), so a frame can only raise what the video reports.
 function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
-  return frames.reduce((acc, frame) => {
+  const axes = combineFrameAxes(frames.map((frame) => frame.axes));
+  const combined = frames.reduce((acc, frame) => {
     const tags = { ...acc.tags };
     for (const [tag, score] of Object.entries(frame.tags))
       tags[tag] = Math.max(score, tags[tag] ?? 0);
@@ -114,6 +125,7 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       animeRecognition: higher(acc.animeRecognition, frame.animeRecognition),
     };
   });
+  return { ...combined, axes };
 }
 
 /**
@@ -199,7 +211,7 @@ async function failScan(
       retryCount,
     },
     'webhooks'
-  ).catch(() => null);
+  );
   await sendIngestionSignal({
     imageId: error.imageId,
     userId,
@@ -284,6 +296,7 @@ export async function processImageScanningWorkflow({
       workflowId,
       prompt,
       negativePrompt,
+      axes: scan.axes,
       log: IMAGE_SCANNING_LOG,
     });
   } catch (error) {
@@ -325,7 +338,12 @@ export async function processImageScanningWorkflow({
         ingestion: outcome.ingestion,
       },
       'webhooks'
-    ).catch(() => null);
+    );
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
+    // Likewise the home-block refresh, which never throws.
+    if (outcome.ingestion === ImageIngestionStatus.Blocked)
+      await evictHomeBlocksForImages({ imageIds: [image.id] });
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { RemixResultLine } from '~/components/Image/Remix/RemixResultLine';
 import { isRunningWorkflow, useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
 import { setCachedWorkflowTag } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -16,6 +17,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RemixRunState } from '~/server/services/remix-app-run.service';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer, RemixImage, RemixViewerAsk } from '~/shared/remix-apps/define';
+import { USER_REMIX_SLUG } from '~/shared/remix-apps/row.schema';
 import { REMIX_DONE_TAG } from '~/shared/remix-apps/tags';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import {
@@ -76,8 +78,9 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
     { imageId: imageId ?? 0 },
     { ...opts, enabled: enabled && isTeam && imageId != null }
   );
+  // A user app is priced alone, when its modal opens; a system app shares the menu's quote.
   const quote = trpc.remixApp.quote.useQuery(
-    { imageId: imageId ?? 0 },
+    { imageId: imageId ?? 0, ...(USER_REMIX_SLUG.test(slug) ? { slug } : {}) },
     { ...opts, enabled: enabled && !isTeam && imageId != null }
   );
   const price = isTeam
@@ -94,6 +97,55 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
         : undefined,
     loading: query.isLoading,
   };
+}
+
+/** One of the viewer's own images; the server checks it is theirs and may be used. */
+export function ImageAskStep({
+  ask,
+  pending,
+  onAnswer,
+}: {
+  ask: Extract<RemixViewerAsk, { kind: 'image' }>;
+  pending: boolean;
+  onAnswer: (answer: RemixAnswer) => void;
+}) {
+  const [picked, setPicked] = useState<{ id: number; url: string }>();
+  const choose = () =>
+    openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+      title: ask.prompt,
+      selectSource: 'uploaded' as const,
+      videoAllowed: false,
+      importedUrls: [],
+      onSelect: (selected: { url: string; imageId?: number }[]) => {
+        const [first] = selected;
+        if (first?.imageId) setPicked({ id: first.imageId, url: first.url });
+      },
+    });
+  return (
+    <div className="flex flex-col gap-2">
+      {picked && (
+        <EdgeMedia2
+          src={picked.url}
+          type="image"
+          alt=""
+          className="mx-auto max-h-72 w-auto rounded-md object-contain"
+        />
+      )}
+      <div className="flex gap-2">
+        <Button variant="default" disabled={pending} onClick={choose}>
+          {picked ? 'Choose another' : 'Choose one of your images'}
+        </Button>
+        {ask.optional && (
+          <Button variant="default" disabled={pending} onClick={() => onAnswer('')}>
+            Skip
+          </Button>
+        )}
+        <Button disabled={pending || !picked} onClick={() => picked && onAnswer(picked.id)}>
+          Continue
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function AskStep({
@@ -156,6 +208,7 @@ function AskStep({
           )}
         </div>
       )}
+      {ask.kind === 'image' && <ImageAskStep ask={ask} pending={pending} onAnswer={onAnswer} />}
       {ask.kind === 'text' && (
         <form
           className="flex gap-2"
@@ -166,10 +219,16 @@ function AskStep({
         >
           <TextInput
             className="flex-1"
+            aria-label={ask.prompt}
             value={text}
             maxLength={ask.maxLength}
             onChange={(e) => setText(e.currentTarget.value)}
           />
+          {ask.optional && (
+            <Button variant="default" disabled={pending} onClick={() => onAnswer('')}>
+              Skip
+            </Button>
+          )}
           <Button type="submit" disabled={pending || !text.trim()}>
             Continue
           </Button>
@@ -271,6 +330,11 @@ export function RemixAppModalContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase.kind, trackedFinished, retryTick]);
 
+  /** A tap that submitted a step collapses into the tray, which holds the run until it needs you. */
+  function toTray(state: RemixRunState) {
+    if (state.status === 'running') onClose();
+  }
+
   function runOffer(cost: number) {
     if (imageId == null) return;
     const input = { slug: app.slug, imageId, nonce };
@@ -282,18 +346,33 @@ export function RemixAppModalContent({
           onSuccess: (state) => {
             started();
             apply(state);
+            toTray(state);
           },
           onError,
         }
       );
     else
-      runOnce.mutate(input, {
-        onSuccess: ({ workflowId }) => {
-          started();
-          setPhase({ kind: 'running', workflowId: workflowId as string });
-        },
-        onError,
-      });
+      runOnce.mutate(
+        { ...input, quote: cost },
+        {
+          onSuccess: ({ workflowId }) => {
+            started();
+            setPhase({ kind: 'running', workflowId: workflowId as string });
+            onClose();
+          },
+          onError,
+        }
+      );
+  }
+
+  /** Advances the run; one with no workflow yet has nothing to advance, so it starts again with its answers. */
+  function step(
+    current: { runId: string; workflowId?: string },
+    input: { answers: RemixAnswer[]; quote?: number },
+    callbacks: { onSuccess: (state: RemixRunState) => void; onError: typeof onError }
+  ) {
+    if (current.workflowId) advance.mutate({ runId: current.runId, ...input }, callbacks);
+    else if (imageId != null) start.mutate({ slug: app.slug, imageId, nonce, ...input }, callbacks);
   }
 
   function answer(value: RemixAnswer) {
@@ -301,12 +380,16 @@ export function RemixAppModalContent({
     const answers = [...phase.answers, value];
     // A priced option's button showed its price: the tap agrees to it and submits.
     const quote = phase.prices?.[String(value)] || undefined;
-    advance.mutate(
-      { runId: phase.runId, answers, quote },
+    step(
+      phase,
+      { answers, quote },
       {
         onSuccess: (state) => {
-          if (quote) refetchQueue();
           apply(state, answers);
+          if (quote) {
+            refetchQueue();
+            toTray(state);
+          }
         },
         onError,
       }
@@ -315,13 +398,15 @@ export function RemixAppModalContent({
 
   function continuePriced() {
     if (phase.kind !== 'priced') return;
-    const { runId, answers, cost } = phase;
-    advance.mutate(
-      { runId, answers, quote: cost },
+    const { answers, cost } = phase;
+    step(
+      phase,
+      { answers, quote: cost },
       {
         onSuccess: (state) => {
           refetchQueue();
           apply(state, answers);
+          toTray(state);
         },
         onError,
       }
@@ -391,8 +476,8 @@ export function RemixAppModalContent({
       {phase.kind === 'offer' && (
         <div className="flex flex-col gap-3">
           <Text size="sm">
-            Runs {app.name} on this image and adds the result to your queue. You can close this
-            while it runs.
+            Runs {app.name} on this image and adds the result to your queue. It runs in the tray, so
+            you can keep browsing.
           </Text>
           {offer.refusal && (
             <Text size="sm" c="dimmed">

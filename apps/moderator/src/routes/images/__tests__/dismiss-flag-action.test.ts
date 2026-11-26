@@ -33,7 +33,7 @@ const dismiss = (
 ) =>
   actions.dismissFlag({
     request: request(fields),
-    locals: { user: { id: 7 } },
+    locals: { user: { id: 7, roles: ['moderator:admin'] } },
     params: { slug },
   } as never);
 

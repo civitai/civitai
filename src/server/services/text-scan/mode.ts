@@ -21,8 +21,6 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'BountyEntry',
   'Challenge',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'ResourceReview',
   'User',
@@ -31,7 +29,12 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'Collection',
   'Storyline',
   'ImageCaption',
+  'ServiceOffering',
+  'PostText',
   'ModelRules',
+  'AppDoc',
+  'ServiceDealReview',
+  'ServiceDealReviewReply',
 ] as const satisfies readonly TextScanEntityType[];
 
 /**
@@ -41,13 +44,6 @@ export const TEXT_SCAN_ENTITY_TYPES = [
  */
 export type TextScanRollout = { shadow: number; active: number };
 export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
-
-/**
- * An entity type's rollout. CommentV3 follows CommentV2's until it is given its own: a surface's
- * comments move from one type to the other when its writes flip, and their scanning must not lapse.
- */
-export const rolloutFor = (rollouts: TextScanRollouts, entityType: TextScanEntityType) =>
-  rollouts[entityType] ?? (entityType === 'CommentV3' ? rollouts.CommentV2 : undefined);
 
 export const ROLLOUT_CACHE_MS = 15_000;
 
@@ -111,6 +107,22 @@ export async function isTextScanEnabled() {
   }
 }
 
+const BUCKETS = Array.from({ length: 100 }, (_, bucket) => bucket);
+
+/** Whether any entity of this type can be in `mode`. Mirrors `getTextScanMode`: kill switch off or a failed read is unreachable. */
+export async function isTextScanModeReachable(
+  entityType: TextScanEntityType,
+  mode: Exclude<TextScanMode, 'off'>
+) {
+  try {
+    if (!(await isTextScanEnabled())) return false;
+    const rollout = (await getTextScanRollouts())[entityType];
+    return BUCKETS.some((bucket) => modeForBucket(rollout, bucket) === mode);
+  } catch {
+    return false;
+  }
+}
+
 export async function getTextScanMode(
   entityType: TextScanEntityType,
   entityId: number
@@ -118,7 +130,7 @@ export async function getTextScanMode(
   try {
     if (!(await isTextScanEnabled())) return 'off';
     const rollouts = await getTextScanRollouts();
-    return modeForBucket(rolloutFor(rollouts, entityType), textScanBucket(entityType, entityId));
+    return modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
   } catch {
     return 'off';
   }
@@ -172,9 +184,37 @@ export async function getTextScanWebSearchMode(
     if (main === 'off' || !(await isTextScanEnabled())) return 'off';
     const rollouts = await getTextScanWebSearchRollouts();
     const search = modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
-    return MODE_ORDER[search] < MODE_ORDER[main] ? search : main;
+    return lowerMode(search, main);
   } catch {
     return 'off';
+  }
+}
+
+function lowerMode(a: TextScanMode, b: TextScanMode) {
+  return MODE_ORDER[a] < MODE_ORDER[b] ? a : b;
+}
+
+/** `isTextScanModeReachable` for the web-search pass. Mirrors `getTextScanWebSearchMode`: kill switch off or a failed read is unreachable. */
+export async function isTextScanWebSearchModeReachable(
+  entityType: TextScanEntityType,
+  mode: Exclude<TextScanMode, 'off'>
+) {
+  if (!isTextScanWebSearchEntityType(entityType)) return false;
+  try {
+    if (!(await isTextScanEnabled())) return false;
+    const [main, search] = await Promise.all([
+      getTextScanRollouts(),
+      getTextScanWebSearchRollouts(),
+    ]);
+    return BUCKETS.some(
+      (bucket) =>
+        lowerMode(
+          modeForBucket(search[entityType], bucket),
+          modeForBucket(main[entityType], bucket)
+        ) === mode
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -224,9 +264,9 @@ function logLabelModeReadFailure(
       name: 'text-scan',
       type: 'error',
       message,
-      label,
+      payload: { label },
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
   } catch {
     // Logging must not undo the fallback.
   }

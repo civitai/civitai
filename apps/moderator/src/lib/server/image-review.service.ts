@@ -1,8 +1,10 @@
 import { sql } from '@civitai/db/kysely';
+import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
+import { listWithheldIds, withheldRow } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
-import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
+import { getFlagClearHolds, type FlagClearHoldLeg } from './csam-flag-clear';
 import {
   imagesVersion,
   imageVersion,
@@ -12,9 +14,15 @@ import {
   type SetAsideState,
 } from './csam-queue-set-aside';
 import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-queue';
+import { pendingDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import {
+  FEEDBACK_CAPTURE_METADATA_KEY,
+  FEEDBACK_CAPTURE_OWNER_ID,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -30,6 +38,7 @@ export type ImageReviewItem = {
   ingestion: string;
   minor: boolean;
   poi: boolean;
+  modelRestricted: boolean;
   acceptableMinor: boolean;
   ruleReason: string | null;
   ruleId: number | null;
@@ -39,7 +48,6 @@ export type ImageReviewItem = {
   createdAt: Date;
   userId: number;
   username: string | null;
-  userImage: string | null;
   postId: number | null;
   postTitle: string | null;
   entityType: string | null;
@@ -51,7 +59,22 @@ export type ImageReviewItem = {
   /** `imageVersion`: what a dismissal from the CSAM queue is taken against. */
   version: string;
   reviewTags: ReviewTag[];
+  /** Set on a feedback page capture: the report it came with and its reporter, never its subject. */
+  capture: FeedbackCaptureStamp | null;
 };
+
+export type FeedbackCaptureStamp = {
+  feedbackId: number | null;
+  reporterId: number | null;
+  reporterUsername: string | null;
+};
+
+const captureOwner = sql.lit(FEEDBACK_CAPTURE_OWNER_ID);
+/** A stamp field of a capture row aliased `i`; null on any other image. */
+const captureStampInt = (field: 'feedbackId' | 'reporterId') =>
+  sql<number | null>`case when i."userId" = ${captureOwner}
+    and (i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} ->> ${field}) ~ '^[1-9][0-9]{0,8}$'
+    then (i.metadata -> ${FEEDBACK_CAPTURE_METADATA_KEY} ->> ${field})::int end`;
 
 export async function getImageReviewQueue({
   needsReview,
@@ -59,6 +82,7 @@ export async function getImageReviewQueue({
   excludedTagIds,
   browsingLevel,
   userId,
+  capturesOnly,
   cursor,
   limit,
 }: {
@@ -68,6 +92,8 @@ export async function getImageReviewQueue({
   browsingLevel: number;
   /** One owner's images only. */
   userId?: number;
+  /** Feedback page captures only. */
+  capturesOnly?: boolean;
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
@@ -89,6 +115,9 @@ export async function getImageReviewQueue({
           .as('ic'),
       (join) => join.onTrue()
     )
+    .leftJoin('User as cr', (join) =>
+      join.on(sql<boolean>`cr.id = ${captureStampInt('reporterId')}`)
+    )
     .select([
       'i.id',
       'i.url',
@@ -101,6 +130,7 @@ export async function getImageReviewQueue({
       'i.ingestion',
       'i.minor',
       'i.poi',
+      'i.modelRestricted',
       'i.acceptableMinor',
       sql<string | null>`i.metadata ->> 'ruleReason'`.as('ruleReason'),
       sql<number | null>`(i.metadata ->> 'ruleId')::int`.as('ruleId'),
@@ -110,7 +140,6 @@ export async function getImageReviewQueue({
       'i.createdAt',
       'i.userId',
       'u.username',
-      'u.image as userImage',
       'i.postId',
       'p.title as postTitle',
       'ic.entityType',
@@ -119,6 +148,9 @@ export async function getImageReviewQueue({
       sql<string | null>`i.metadata ->> 'size'`.as('size'),
       sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
       imageVersion('i').as('version'),
+      captureStampInt('feedbackId').as('captureFeedbackId'),
+      captureStampInt('reporterId').as('captureReporterId'),
+      'cr.username as captureReporterUsername',
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
@@ -140,6 +172,7 @@ export async function getImageReviewQueue({
       )
     )
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
+    .$if(!!capturesOnly, (qb) => qb.where('i.userId', '=', FEEDBACK_CAPTURE_OWNER_ID))
     .$if(setAside != null, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
@@ -165,7 +198,17 @@ export async function getImageReviewQueue({
   }
 
   return {
-    items: rows.map((r) => ({ ...r, reviewTags: tagsByImage.get(r.id) ?? [] })),
+    items: rows.map(({ captureFeedbackId, captureReporterId, captureReporterUsername, ...r }) => ({
+      ...r,
+      reviewTags: tagsByImage.get(r.id) ?? [],
+      capture: isFeedbackCaptureOwner(r.userId)
+        ? {
+            feedbackId: captureFeedbackId,
+            reporterId: captureReporterId,
+            reporterUsername: captureReporterUsername,
+          }
+        : null,
+    })),
     nextCursor,
   };
 }
@@ -206,9 +249,7 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
-/** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
- *  the status is unknown rather than that this user is on a hold. */
-export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
+export type CsamQueueHoldReason = FlagClearHoldLeg;
 
 export type CsamQueueUser = {
   userId: number;
@@ -229,6 +270,8 @@ export type CsamQueueUser = {
   reported: boolean;
   /** The holds on the user's account; empty when there are none. */
   heldBy: CsamQueueHoldReason[];
+  /** A feedback page capture is a row of its own, never grouped under the capture account. */
+  capture: { imageId: number; feedbackId: number | null; removed: boolean } | null;
 };
 
 /** The CSAM review queue as one row per owning user, most pending first, at the browsing level of
@@ -239,10 +282,32 @@ export async function getCsamQueueByUser({
   browsingLevel: number;
 }): Promise<{ users: CsamQueueUser[]; truncated: boolean }> {
   const setAside = await setAsideState(dbRead);
+  // A capture shows someone else's content, so each is a group of its own, keyed by image.
+  const groupKey = sql`case when i."userId" = ${captureOwner} then 'c' || i.id::text else i."userId"::text end`;
   const groups = await dbRead
     .selectFrom('Image as i')
     .select([
-      'i.userId',
+      sql<number>`min(i."userId")`.as('userId'),
+      sql<number | null>`max(${captureStampInt('feedbackId')})`.as('captureFeedbackId'),
+      // A report on a capture names whatever subject the moderator picked, so a capture is reported
+      // when any report lists it. One image per capture group.
+      sql<Date | null>`max(case when i."userId" = ${captureOwner} then (
+        select max(r."reportSentAt") from "CsamReport" r
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+        ) e
+        where e ->> 'id' = i.id::text
+      ) end)`.as('captureReportSentAt'),
+      sql<boolean>`coalesce(bool_or(i."userId" = ${captureOwner} and exists (
+        select 1 from "CsamReport" r
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+        ) e
+        where e ->> 'id' = i.id::text
+      )), false)`.as('captureReported'),
+      sql<boolean>`bool_or(i.ingestion = 'Blocked' and not ${setAsideCounts('i', setAside)})`.as(
+        'removedNotDismissed'
+      ),
       sql<number>`count(*)::int`.as('flagged'),
       sql<number>`(count(*) filter (where not ${outOfPending('i', setAside)}))::int`.as('pending'),
       sql<number>`max(i.id)`.as('latestImageId'),
@@ -250,48 +315,61 @@ export async function getCsamQueueByUser({
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('i.ingestion', 'in', reviewQueueIngestion(FLAG_KEPT_THROUGH_BLOCK))
-    .groupBy('i.userId')
+    .groupBy(groupKey)
     .orderBy('pending', 'desc')
     .orderBy(sql`count(*)`, 'desc')
-    .orderBy('i.userId')
+    .orderBy(groupKey)
     .limit(CSAM_QUEUE_USER_LIMIT + 1)
     .execute();
 
   const truncated = groups.length > CSAM_QUEUE_USER_LIMIT;
   const page = groups.slice(0, CSAM_QUEUE_USER_LIMIT);
-  const userIds = page.map((g) => g.userId);
-  if (!userIds.length) return { users: [], truncated };
+  if (!page.length) return { users: [], truncated };
+  // Account-level lookups never cover the capture account: it is no one's account.
+  const userIds = [...new Set(page.map((g) => g.userId))].filter(
+    (id) => !isFeedbackCaptureOwner(id)
+  );
+  const capture = (g: (typeof page)[number]) =>
+    isFeedbackCaptureOwner(g.userId)
+      ? {
+          imageId: Number(g.latestImageId),
+          feedbackId: g.captureFeedbackId,
+          removed: g.removedNotDismissed,
+        }
+      : null;
 
-  const [users, reports, removed, holds, marker] = await Promise.all([
-    dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
-    dbRead
-      .selectFrom('CsamReport')
-      .select([
-        'userId',
-        sql<Date | null>`max("reportSentAt")`.as('reportSentAt'),
-        sql<number | null>`(array_agg(id order by "reportSentAt" desc) filter (
+  const none = userIds.length === 0;
+  const [users, reports, removed, holds] = await Promise.all([
+    none
+      ? []
+      : dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
+    none
+      ? []
+      : dbRead
+          .selectFrom('CsamReport')
+          .select([
+            'userId',
+            sql<Date | null>`max("reportSentAt")`.as('reportSentAt'),
+            sql<number | null>`(array_agg(id order by "reportSentAt" desc) filter (
           where type = 'Image' and "reportSentAt" is not null and "reportId" is not null
         ))[1]`.as('latestSentImageReportId'),
-      ])
-      .where('userId', 'in', userIds)
-      .groupBy('userId')
-      .execute(),
-    removedNotDismissed(dbRead, setAside)
-      .select([
-        'i.userId',
-        sql<number>`count(*)::int`.as('count'),
-        imagesVersion('i').as('version'),
-      ])
-      .where('i.userId', 'in', userIds)
-      .groupBy('i.userId')
-      .execute(),
+          ])
+          .where('userId', 'in', userIds)
+          .groupBy('userId')
+          .execute(),
+    none
+      ? []
+      : removedNotDismissed(dbRead, setAside)
+          .select([
+            'i.userId',
+            sql<number>`count(*)::int`.as('count'),
+            imagesVersion('i').as('version'),
+          ])
+          .where('i.userId', 'in', userIds)
+          .groupBy('i.userId')
+          .execute(),
     getFlagClearHolds(userIds),
-    holdMarkerState(dbRead),
   ]);
-  const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
-    marker === 'view'
-      ? legs
-      : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
   const removedByUser = new Map(removed.map((r) => [r.userId, r]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r]));
@@ -305,10 +383,13 @@ export async function getCsamQueueByUser({
       removed: Number(removedByUser.get(g.userId)?.count ?? 0),
       removedVersion: removedByUser.get(g.userId)?.version ?? null,
       latestImageId: Number(g.latestImageId),
-      reportSentAt: reportsByUser.get(g.userId)?.reportSentAt ?? null,
+      reportSentAt: isFeedbackCaptureOwner(g.userId)
+        ? g.captureReportSentAt
+        : reportsByUser.get(g.userId)?.reportSentAt ?? null,
       latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
-      reported: reportsByUser.has(g.userId),
-      heldBy: reasons(holds.get(g.userId)),
+      reported: isFeedbackCaptureOwner(g.userId) ? g.captureReported : reportsByUser.has(g.userId),
+      heldBy: holds.get(g.userId) ?? [],
+      capture: capture(g),
     })),
     truncated,
   };
@@ -349,8 +430,17 @@ export type ReportedImageItem = {
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
+  modelRestricted: boolean;
+  /** Removed already (`ingestion` Blocked): its report can only be closed, not acted on again. Not
+   *  `ingestion` itself, which the queue page reads as a review-queue card's. */
+  removed: boolean;
+  blockedFor: string | null;
+  /** Blocked by an automated moderation rule, which a report verdict may still lift. */
+  ruleBlocked: boolean;
   userId: number;
   username: string | null;
+  /** Its owner deleted it while a child-safety case held it; it goes once every such case closes. */
+  deleteRequested: boolean;
   report: {
     id: number;
     reason: string;
@@ -360,6 +450,7 @@ export type ReportedImageItem = {
     createdAt: Date;
     username: string | null;
     userId: number;
+    agentFiled: boolean;
   };
 };
 
@@ -370,56 +461,80 @@ export async function getReportedImageQueue({
   cursor,
   limit,
   reportId,
+  agents,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  /** Only, or all but, the reports agent accounts filed. Applied before the limit, so the cursor holds. */
+  agents?: AgentReportWhere;
   /** One report, whatever its status or rating — what `reportActionPath` links to from User Lookup and
    *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
   reportId?: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const fetched = await dbRead
-    .selectFrom('Image as i')
-    .innerJoin('User as u', 'u.id', 'i.userId')
-    .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
-    .innerJoin('Report as r', 'r.id', 'imgr.reportId')
-    .innerJoin('User as ru', 'ru.id', 'r.userId')
-    .select([
-      'i.id',
-      'i.url',
-      'i.nsfwLevel',
-      'i.width',
-      'i.height',
-      'i.type',
-      'i.needsReview',
-      'i.minor',
-      'i.poi',
-      'i.userId',
-      'u.username',
-      'r.id as reportId',
-      'r.reason as reportReason',
-      'r.status as reportStatus',
-      'r.details as reportDetails',
-      'r.createdAt as reportCreatedAt',
-      sql<number>`coalesce(array_length(r."alsoReportedBy", 1), 0)`.as('reportCount'),
-      'ru.username as reportUsername',
-      'ru.id as reportUserId',
-    ])
-    .$if(reportId != null, (qb) => qb.where('r.id', '=', reportId!))
-    .$if(reportId == null, (qb) =>
-      qb
-        .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
-        .where('r.status', '=', 'Pending')
-        // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
-        // number. Today it removes nothing: Automated reports are filed for other entity types.
-        .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
-    )
+  const deleteRequested = pendingDeleteQueued('Image', sql.ref('i.id'), { ownerAsked: true });
+  const base = () =>
+    dbRead
+      .selectFrom('Image as i')
+      .innerJoin('User as u', 'u.id', 'i.userId')
+      .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
+      .innerJoin('Report as r', 'r.id', 'imgr.reportId')
+      .innerJoin('User as ru', 'ru.id', 'r.userId')
+      .select([
+        'i.id',
+        'i.url',
+        'i.nsfwLevel',
+        'i.width',
+        'i.height',
+        'i.type',
+        'i.needsReview',
+        'i.minor',
+        'i.poi',
+        'i.modelRestricted',
+        'i.ingestion',
+        'i.blockedFor',
+        sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = i."metadata"->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
+          'ruleBlocked'
+        ),
+        'i.userId',
+        'u.username',
+        'r.id as reportId',
+        'r.reason as reportReason',
+        'r.status as reportStatus',
+        'r.details as reportDetails',
+        'r.createdAt as reportCreatedAt',
+        sql<number>`coalesce(array_length(r."alsoReportedBy", 1), 0)`.as('reportCount'),
+        'ru.username as reportUsername',
+        'ru.id as reportUserId',
+        deleteRequested.as('deleteRequested'),
+      ])
+      .$if(reportId != null, (qb) => qb.where('r.id', '=', reportId!))
+      .$if(reportId == null, (qb) =>
+        qb
+          .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
+          .where('r.status', '=', 'Pending')
+          // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
+          // number. Today it removes nothing: Automated reports are filed for other entity types.
+          .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
+      )
+      .$if(agents != null, (qb) =>
+        qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
+      )
+      .orderBy('r.id', 'asc');
+
+  // Reports on an image its owner deleted come first: it is kept only until its review is done. Up
+  // to `limit` of them head page one and are left out of every page, so the cursor still runs on
+  // report id alone and any beyond them stay in report order.
+  const first = reportId == null ? await base().where(deleteRequested).limit(limit).execute() : [];
+  const firstIds = first.map((r) => r.reportId);
+  const fetched = await base()
+    .$if(firstIds.length > 0, (qb) => qb.where('r.id', 'not in', firstIds))
     .$if(cursor != null, (qb) => qb.where('r.id', '>', cursor!))
-    .orderBy('r.id', 'asc')
     .limit(limit + 1)
     .execute();
 
-  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
+  const { items: page, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
+  const rows = cursor == null ? [...first, ...page] : page;
 
   const items: ReportedImageItem[] = rows.map((r) => ({
     id: r.id,
@@ -431,8 +546,13 @@ export async function getReportedImageQueue({
     needsReview: r.needsReview,
     minor: r.minor,
     poi: r.poi,
+    modelRestricted: r.modelRestricted,
+    removed: r.ingestion === 'Blocked',
+    blockedFor: r.blockedFor,
+    ruleBlocked: !!r.ruleBlocked,
     userId: r.userId,
     username: r.username,
+    deleteRequested: r.deleteRequested,
     report: {
       id: r.reportId,
       reason: String(r.reportReason),
@@ -442,6 +562,7 @@ export async function getReportedImageQueue({
       createdAt: r.reportCreatedAt,
       username: r.reportUsername,
       userId: r.reportUserId,
+      agentFiled: isAgentReporter(r.reportUserId),
     },
   }));
   return { items, nextCursor };
@@ -463,10 +584,14 @@ export type AppealImageItem = {
   nsfwLevel: number;
   width: number | null;
   height: number | null;
-  type: MediaType;
+  type: MediaType | null;
+  /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served with
+   *  `withheldRow` in place of its fields. */
+  restricted: boolean;
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
+  modelRestricted: boolean;
   blockedFor: string | null;
   userId: number;
   username: string | null;
@@ -482,10 +607,12 @@ export async function getAppealImageQueue({
   browsingLevel,
   cursor,
   limit,
+  csamReview,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  csamReview: boolean;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -536,6 +663,7 @@ export async function getAppealImageQueue({
       'i.needsReview',
       'i.minor',
       'i.poi',
+      'i.modelRestricted',
       'i.blockedFor',
       'i.userId',
       'u.username',
@@ -559,6 +687,7 @@ export async function getAppealImageQueue({
   const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
+  const restricted = await listWithheldIds(ids, { csamReview }, 'appeals');
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {
@@ -607,30 +736,35 @@ export async function getAppealImageQueue({
     }
   }
 
-  const items: AppealImageItem[] = rows.map((r) => ({
-    id: r.id,
-    url: r.url,
-    nsfwLevel: r.nsfwLevel,
-    width: r.width,
-    height: r.height,
-    type: r.type,
-    needsReview: r.needsReview,
-    minor: r.minor,
-    poi: r.poi,
-    blockedFor: r.blockedFor,
-    userId: r.userId,
-    username: r.username,
-    appeal: {
-      id: r.appealId,
-      message: r.appealMessage,
-      createdAt: r.appealCreatedAt,
-      username: r.appealUsername,
-      userId: r.appealUserId,
-    },
-    moderatorUsername: r.moderatorUsername,
-    removedAt: r.removedAt,
-    tosReason: tosByImage.get(r.id) ?? null,
-    reports: reportsByImage.get(r.id) ?? [],
-  }));
+  const items: AppealImageItem[] = rows.map((r) => {
+    const item = {
+      id: r.id,
+      url: r.url,
+      width: r.width,
+      height: r.height,
+      type: r.type,
+      restricted: false,
+      nsfwLevel: r.nsfwLevel,
+      needsReview: r.needsReview,
+      minor: r.minor,
+      poi: r.poi,
+      modelRestricted: r.modelRestricted,
+      blockedFor: r.blockedFor,
+      userId: r.userId,
+      username: r.username,
+      appeal: {
+        id: r.appealId,
+        message: r.appealMessage,
+        createdAt: r.appealCreatedAt,
+        username: r.appealUsername,
+        userId: r.appealUserId,
+      },
+      moderatorUsername: r.moderatorUsername,
+      removedAt: r.removedAt,
+      tosReason: tosByImage.get(r.id) ?? null,
+      reports: reportsByImage.get(r.id) ?? [],
+    };
+    return restricted.has(r.id) ? withheldRow(item) : item;
+  });
   return { items, nextCursor };
 }

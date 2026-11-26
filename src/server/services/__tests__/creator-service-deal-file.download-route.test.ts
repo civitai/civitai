@@ -1,16 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The download route is thin: it must send an allowed user to a signed URL, answer every refusal
  * with the same 404, and never let an edge cache keep a per-user redirect.
  */
 
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+});
 const service = vi.hoisted(() => ({
   resolveServiceDealFileDownload: vi.fn(),
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
 vi.mock('~/server/services/creator-service-deal-file.service', () => service);
+const flags = vi.hoisted(() => ({ getFeatureFlags: vi.fn(() => ({ csamReports: false })) }));
+vi.mock('~/server/services/feature-flags.service', () => flags);
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
@@ -56,9 +65,9 @@ const response = () => {
 };
 
 let lastReq: unknown;
-const call = (fileId: unknown, user = { id: 7, isModerator: false }) => {
+const call = (fileId: unknown, user = { id: 7, isModerator: false }, host?: string) => {
   const res = response();
-  lastReq = { query: { fileId }, headers: {} };
+  lastReq = { query: { fileId }, headers: host ? { host } : {} };
   return handler(lastReq, res, user).then(() => res);
 };
 
@@ -88,6 +97,8 @@ describe('download route', () => {
       fileId: 12,
       userId: 7,
       isModerator: false,
+      canReviewCsam: false,
+      servableLevels: sfwBrowsingLevelsFlag,
     });
   });
 
@@ -102,7 +113,18 @@ describe('download route', () => {
       fileId: 12,
       userId: 9,
       isModerator: true,
+      canReviewCsam: false,
+      servableLevels: sfwBrowsingLevelsFlag,
     });
+  });
+
+  it("passes the caller's csamReports permission through", async () => {
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    flags.getFeatureFlags.mockReturnValueOnce({ csamReports: true });
+    await call('12', { id: 9, isModerator: true });
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 9, canReviewCsam: true })
+    );
   });
 
   it('answers a refusal with the same 404 as a file that does not exist, and signs nothing', async () => {
@@ -122,4 +144,18 @@ describe('download route', () => {
       expect(service.resolveServiceDealFileDownload).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('what the domain may be sent', () => {
+  it.each([
+    ['civitai.red', allBrowsingLevelsFlag],
+    ['civitai.com', sfwBrowsingLevelsFlag],
+    [undefined, sfwBrowsingLevelsFlag],
+  ])('a request to %s may be sent the matching levels', async (host, levels) => {
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    await call('12', undefined, host);
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ servableLevels: levels })
+    );
+  });
 });

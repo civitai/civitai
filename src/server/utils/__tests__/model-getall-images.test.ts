@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGetAllModelImages,
   capGetAllModelImages,
+  filterImagesForViewer,
   GET_ALL_IMAGES_PER_MODEL,
   GET_ALL_IMAGES_PER_MODEL_SLIM,
   GETALL_DROPPED_IMAGE_FIELDS,
@@ -348,5 +349,70 @@ describe('model-getall-images — buildGetAllModelImages biased flag', () => {
     // shared cache untouched
     expect(imgs).toHaveLength(10);
     expect(imgs[0]).toHaveProperty('onSite');
+  });
+});
+
+describe('filterImagesForViewer', () => {
+  const OWNER = 7;
+  const img = (id: number, nsfwLevel: number, extra: { poi?: boolean; minor?: boolean } = {}) => ({
+    id,
+    nsfwLevel,
+    userId: OWNER,
+    ...extra,
+  });
+  const ids = (images: { id: number }[]) => images.map((i) => i.id);
+
+  // Level 5 (1|4) has a gap at 2: a plain model drops level 2, an nsfw one keeps it.
+  it('keeps an nsfw model up to the highest level, a plain one only intersecting levels', () => {
+    const images = [img(1, 1), img(2, 2), img(4, 4), img(8, 8)];
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 5, modelNsfw: true }))).toEqual([
+      1, 2, 4,
+    ]);
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 5 }))).toEqual([1, 4]);
+  });
+
+  it('keeps an unrated image only for its owner or a moderator', () => {
+    const images = [img(1, 1), img(0, 0)];
+    const run = (viewer?: { id: number; isModerator?: boolean }) =>
+      ids(filterImagesForViewer(images, { browsingLevel: 31, viewer }));
+    expect(run()).toEqual([1]);
+    expect(run({ id: 99 })).toEqual([1]);
+    expect(run({ id: OWNER })).toEqual([1, 0]);
+    expect(run({ id: 99, isModerator: true })).toEqual([1, 0]);
+    // The nsfw max-level rule would admit level 0; the unrated rule still decides.
+    expect(
+      ids(filterImagesForViewer(images, { browsingLevel: 31, modelNsfw: true, viewer: { id: 99 } }))
+    ).toEqual([1]);
+  });
+
+  it('hides poi and minor entries independently', () => {
+    const images = [img(1, 1), img(2, 1, { poi: true }), img(3, 1, { minor: true })];
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 1, disablePoi: true }))).toEqual([
+      1, 3,
+    ]);
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 1, disableMinor: true }))).toEqual([
+      1, 2,
+    ]);
+  });
+});
+
+describe('filterImagesForViewer — levels outside the browsing levels', () => {
+  const images = [
+    { id: 1, nsfwLevel: 32, userId: 7 },
+    { id: 2, nsfwLevel: 16, userId: 7 },
+  ];
+  const shown = (browsingLevel: number, modelNsfw = false) =>
+    filterImagesForViewer(images, { browsingLevel, modelNsfw, viewer: { id: 9 } }).map((i) => i.id);
+
+  it('keeps an XXX image at a full level (control)', () => {
+    expect(shown(31)).toEqual([2]);
+  });
+
+  it('ignores the Blocked bit in the requested level', () => {
+    expect(shown(63)).toEqual([2]);
+  });
+
+  it('ignores bits above the browsing levels on an nsfw model', () => {
+    expect(shown(64 | 16, true)).toEqual([2]);
   });
 });

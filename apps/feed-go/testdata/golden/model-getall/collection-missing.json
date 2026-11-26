@@ -1,0 +1,66 @@
+{
+  "name": "collection-missing",
+  "description": "A collection that does not exist reads for no one: an empty answer.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"collectionId\":49,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1001
+    }
+  },
+  "redis": {
+    "session:data2:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWraXNNb2RlcmF0b3LCqGJhbm5lZEF0wKR0aWVywA=="
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": [],
+    "collections": []
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "items": [],
+        "nextCursor": null
+      },
+      "meta": {
+        "values": {
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "writes": {}
+  }
+}

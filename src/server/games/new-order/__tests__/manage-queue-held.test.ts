@@ -12,7 +12,7 @@ vi.mock('~/server/services/games/new-order.service', () => ({
 }));
 vi.mock('~/server/games/new-order/utils', () => ({ poolCounters: {}, getActiveSlot: vi.fn() }));
 
-import handler from '~/pages/api/mod/new-order/manage-queue';
+import handler from '~/server/api-routes/mod/new-order/manage-queue';
 
 async function insert(imageIds: string) {
   const res = { status: vi.fn(), json: vi.fn() };
@@ -32,7 +32,7 @@ describe('manage-queue insert-in-queue', () => {
 
     expect(await insert('2')).toEqual({
       status: 200,
-      body: { message: 'Not inserted: held for review', heldImageIds: [2] },
+      body: { message: 'Not inserted: held for review or blocked', heldImageIds: [2] },
     });
   });
 

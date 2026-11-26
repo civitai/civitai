@@ -1,5 +1,5 @@
 import { Button, Text, ThemeIcon } from '@mantine/core';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -33,7 +33,7 @@ import { ownDomainCanonical } from '~/components/Meta/canonical';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
 import { useAdGate, useSetAdPageNsfwLevel } from '~/components/Ads/AdsProvider';
-import { useAppContext, useServerDomains } from '~/providers/AppProvider';
+import { useAppContext } from '~/providers/AppProvider';
 import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
@@ -241,10 +241,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
 }
 
 export function MatureContentRedirect() {
-  const router = useRouter();
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
-  const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
+  const redUrl = useRedHref()();
   const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
     size: 250,
     color: 'rgba(239,68,68,0.12)',

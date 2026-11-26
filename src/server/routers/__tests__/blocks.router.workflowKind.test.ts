@@ -15,6 +15,7 @@ import type * as DevTunnelModule from '~/server/services/blocks/dev-tunnel.servi
 import type * as BlockWorkflowsModule from '~/server/services/blocks/block-workflows.service';
 import type * as SurfaceModule from '~/server/services/blocks/user-app-surface.service';
 import type * as WorkflowsModule from '~/server/services/orchestrator/workflows';
+import type * as FliptModule from '~/server/flipt/client';
 
 /**
  * `kind:'workflow'` end to end through `blocksRouter`: estimate, submit, poll and
@@ -29,6 +30,14 @@ import type * as WorkflowsModule from '~/server/services/orchestrator/workflows'
  * 64 is above one budget (37) and below three; 110 + a fee of 5 is above three
  * and below four (148).
  */
+
+/** The external-host refusal flag; every other flag reads as it does unmocked. */
+const flags = vi.hoisted(() => ({
+  refuseExternal: false,
+  refuseExternalApp: true,
+  /** The step position rule's variant; null reads Flipt as unmocked. */
+  stepPositions: null as string | null,
+}));
 
 const h = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -63,6 +72,52 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksAuthorFeeEnabled: (...a: unknown[]) => h.authorFeeFlag(...(a as [])),
 }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptModule>();
+  const isFlipt = (async (flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS
+      ? flags.refuseExternal
+      : flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      ? flags.refuseExternalApp
+      : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(
+          flag,
+          ...rest
+        )) as typeof actual.isFlipt;
+  // The App Blocks source flags' read; scanned rows is pinned off so these cells stay about the
+  // workflow kind.
+  const isFliptSync = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      ? flags.refuseExternalApp
+      : flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? false
+      : (actual.isFliptSync as (...a: unknown[]) => boolean | null)(
+          flag,
+          ...rest
+        )) as typeof actual.isFliptSync;
+  const readFliptBoolean = (async (flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES ||
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? isFliptSync(flag, ...(rest as []))
+      : (actual.readFliptBoolean as (...a: unknown[]) => Promise<boolean | null>)(
+          flag,
+          ...rest
+        )) as typeof actual.readFliptBoolean;
+  const getFliptVariant = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_STEP_POSITIONS && flags.stepPositions !== null
+      ? Promise.resolve(flags.stepPositions)
+      : (actual.getFliptVariant as (...a: unknown[]) => Promise<unknown>)(
+          flag,
+          ...rest
+        )) as typeof actual.getFliptVariant;
+  return {
+    ...actual,
+    isFlipt,
+    isFliptSync,
+    readFliptBoolean,
+    getFliptVariant,
+    ensureFliptInitialized: async () => undefined,
+  };
+});
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
 }));
@@ -108,6 +163,10 @@ vi.mock('~/server/services/blocks/user-app-surface.service', async (importOrigin
   ...(await importOriginal<typeof SurfaceModule>()),
   recordScopeInvocation: (...a: unknown[]) => h.recordScopeInvocation(...(a as [])),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
@@ -135,8 +194,15 @@ import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
-import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
+import {
+  APP_SOURCE_UNUSABLE_MESSAGE,
+  GENERATION_EXTERNAL_IMAGE_MESSAGE,
+  GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/generation-input-urls';
+import * as z from 'zod';
+import { getBlockTool } from '~/server/services/blocks/tools/registry';
 import { ANON_SUBJECT } from '~/server/services/block-token-subject';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
@@ -214,7 +280,7 @@ function body(over: Record<string, unknown> = {}) {
     steps: [
       { name: 'gen', $type: 'imageGen', input: GEN_INPUT },
       { $type: 'imageUpscaler', input: UPSCALE_INPUT, suppressOutput: true },
-      { $type: 'transcode', input: CONVERT_INPUT },
+      { $type: 'imageBackgroundRemoval', input: CONVERT_INPUT },
     ],
     arguments: { strength: 0.4 },
     ...over,
@@ -236,6 +302,7 @@ type SubmitArgs = {
     metadata?: Record<string, unknown>;
     externalId?: string;
     allowMatureContent?: boolean;
+    nsfwLevel?: string;
   };
   query?: { whatif?: boolean };
 };
@@ -341,6 +408,7 @@ async function submit(b: Record<string, unknown> = body(), idempotencyKey?: stri
 }
 
 beforeEach(() => {
+  flags.refuseExternalApp = true;
   // Only the submit's account-restriction read gets a row; other user reads keep the default.
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;
@@ -368,6 +436,17 @@ beforeEach(() => {
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   // The fee's payee: an owner who is NOT the viewer (no self-dealing skip).
   dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ id: 'app_test', userId: APP_OWNER });
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'SDXL 1.0',
+    }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -397,7 +476,7 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(req.steps).toEqual([
       { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
       { $type: 'imageUpscaler', name: '$1', input: UPSCALE_INPUT },
-      { $type: 'transcode', name: '$2', input: CONVERT_INPUT },
+      { $type: 'imageBackgroundRemoval', name: '$2', input: CONVERT_INPUT },
     ]);
     expect(req.arguments).toEqual({ strength: 0.4 });
     // No app text in a tag: the type slot is the kind, the model slot a constant.
@@ -481,8 +560,106 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(whatifs()).toHaveLength(0);
   });
 
-  it('refuses an unquoted workflow that runs a TRAINING step, as the submit does', async () => {
-    whatifCost = undefined;
+  // Media inputs take references; nothing else does (app-step-positions.ts, #9955).
+  const refAtModel = { prompt: 'a cat', model: { $ref: 'gen', path: 'output.text' } };
+  it.each([
+    [
+      'workflow estimate',
+      () =>
+        estimate(
+          body({
+            steps: [
+              { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+              { $type: 'imageGen', name: '$1', input: refAtModel },
+            ],
+          })
+        ),
+    ],
+    [
+      'workflow submit',
+      () =>
+        submit(
+          body({
+            steps: [
+              { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+              { $type: 'imageGen', name: '$1', input: refAtModel },
+            ],
+          })
+        ),
+    ],
+    [
+      'step estimate',
+      () => estimate({ kind: 'step', $type: 'imageGen', input: refAtModel, maxBuzz: 30 }),
+    ],
+    [
+      'step submit',
+      () => submit({ kind: 'step', $type: 'imageGen', input: refAtModel, maxBuzz: 30 }),
+    ],
+  ])('refuses a reference at a model input on the %s path, before pricing', async (_n, run) => {
+    await expect(run()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining("'model'"),
+    });
+    expect(whatifs()).toHaveLength(0);
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('runs a chained workflow with a merge whole, under enforce', async () => {
+    await estimate(
+      body({
+        steps: [
+          { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+          { $type: 'imageUpscaler', name: '$1', input: UPSCALE_INPUT },
+          {
+            $type: 'merge',
+            name: 'all',
+            input: {
+              fields: {
+                captions: { $ref: 'gen', path: 'output.caption', reduce: 'concat' },
+                tags: { $ref: '$1', path: 'output.tags', reduce: 'push' },
+              },
+            },
+          },
+          { $type: 'imageBackgroundRemoval', input: CONVERT_INPUT },
+        ],
+      })
+    ).then((r) => expect(r.snapshot.status).not.toBe('failed'));
+    expect(whatifs()).toHaveLength(1);
+  });
+
+  // A value placed through `arguments` is a literal, so the literal resource check has to refuse
+  // another user's Private version there.
+  it("refuses another user's Private version placed through arguments", async () => {
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        baseModel: 'SDXL 1.0',
+        status: 'Published',
+        availability: 'Private',
+        usageControl: 'Download',
+        model: { userId: VIEWER + 1 },
+      }))) as never);
+    await expect(
+      estimate(
+        body({
+          steps: [
+            {
+              $type: 'imageGen',
+              name: 'gen',
+              input: { prompt: 'a cat', model: { $ref: '$arguments', path: 'model' } },
+            },
+          ],
+          arguments: { model: 'urn:air:sdxl:checkpoint:civitai:1@555' },
+        })
+      )
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(whatifs()).toHaveLength(0);
+  });
+
+  it('refuses a workflow that runs a TRAINING step before pricing it, as the submit does', async () => {
+    whatifCost = { total: 20, base: 20 };
     const { snapshot } = await estimate(
       body({
         steps: [
@@ -494,9 +671,11 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(snapshot).toEqual({
       workflowId: 'failed',
       status: 'failed',
-      errorCode: 'training-quote-unpriced',
-      error: 'Training needs a price quote and the orchestrator answered without one.',
+      errorCode: 'workflow_step_denied',
+      error:
+        "workflow step 1: a training step cannot run inside kind:'workflow' — use kind:'training'",
     });
+    expect(whatifs()).toHaveLength(0);
   });
 
   it('prices no fee on a cap-priced quote, and none when the fee flag is off', async () => {
@@ -514,6 +693,43 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     ['estimate', estimate],
     ['submit', submit],
   ] as const;
+
+  describe('a stored file placed through arguments, with the step position rule backed out', () => {
+    // The external-host gate is off too, so only the stored-file rule can refuse.
+    beforeEach(() => {
+      flags.stepPositions = 'off';
+      flags.refuseExternalApp = false;
+    });
+    afterEach(() => {
+      flags.stepPositions = null;
+      flags.refuseExternalApp = true;
+    });
+    const stored = 'https://acct.r2.cloudflarestorage.com/b/weights';
+    const placedAt = (key: string) =>
+      body({
+        steps: [
+          {
+            $type: 'imageGen',
+            name: 'gen',
+            input: { ...GEN_INPUT, [key]: { $ref: '$arguments', path: 'image' } },
+          },
+        ],
+        // Under a media-named argument, so only judging it where it lands can refuse it.
+        arguments: { image: stored },
+      });
+
+    it.each(paths)('🔴 %s: refuses it at a non-media input', async (_n, run) => {
+      await expect(run(placedAt('model'))).rejects.toThrow(
+        'a stored file URL is accepted only at a media input'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it.each(paths)('%s: accepts it at a media input', async (_n, run) => {
+      await run(placedAt('images'));
+      expect(h.submitWorkflow).toHaveBeenCalled();
+    });
+  });
 
   it.each(paths)(
     '🔴 %s: the DENYLIST runs on every step and names the step index',
@@ -544,12 +760,46 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     }
   );
 
+  it.each(paths)('🔴 %s: a raw customComfy step is denied', async (_n, run) => {
+    const graph = { '1': { class_type: 'LoadImage', inputs: { image: 'x.png' } } };
+    const { snapshot } = await run(
+      body({ steps: [{ $type: 'customComfy', input: { workflow: graph, resources: [] } }] })
+    );
+    expect(snapshot.errorCode).toBe('workflow_step_denied');
+    expect(snapshot.error).toContain("workflow step 0: orchestrator step type 'customComfy'");
+    expect(h.getOrchestratorToken).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
   it.each(paths)('%s: the denylist is case-folded, like the pass-through arm', async (_n, run) => {
     const { snapshot } = await run(body({ steps: [{ $type: 'MEDIAHASH', input: {} }] }));
     expect(snapshot.errorCode).toBe('workflow_step_denied');
     expect(snapshot.error).toContain('workflow step 0');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
+
+  it.each(paths)(
+    '%s: a repeat template $type outside ASCII letters and digits is denied',
+    async (_n, run) => {
+      const { snapshot } = await run(
+        body({
+          arguments: { frames: [{ url: 'a' }] },
+          steps: [
+            {
+              $type: 'repeat',
+              input: {
+                for: { $ref: '$arguments', path: 'frames', as: 'frame' },
+                template: { $type: 'cu\u017ftomComfy', input: { workflow: {} } },
+              },
+            },
+          ],
+        })
+      );
+      expect(snapshot.errorCode).toBe('workflow_step_denied');
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
 
   it.each(paths)('🔴 %s: the denylist covers the step a `repeat` runs', async (_n, run) => {
     const { snapshot } = await run(
@@ -561,7 +811,10 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
             $type: 'repeat',
             input: {
               for: { $ref: '$arguments', path: 'frames', as: 'frame' },
-              template: { $type: 'imageScanning', input: { url: { $ref: 'frame', path: 'url' } } },
+              template: {
+                $type: 'imageScanning',
+                input: { note: { $ref: 'frame', path: 'text' } },
+              },
             },
           },
         ],
@@ -600,9 +853,9 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
   );
 
   it.each(paths)(
-    '%s: an unquoted workflow that runs TRAINING inside a `repeat` is refused',
+    '%s: a workflow that runs TRAINING inside a `repeat` is refused, quoted or not',
     async (_n, run) => {
-      whatifCost = undefined;
+      whatifCost = { total: 20, base: 20 };
       const { snapshot } = await run(
         body({
           arguments: { sets: ['one'] },
@@ -618,7 +871,10 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
         })
       );
       expect(snapshot.status).toBe('failed');
-      expect(snapshot.errorCode).toBe('training-quote-unpriced');
+      expect(snapshot.errorCode).toBe('workflow_step_denied');
+      expect(snapshot.error).toBe(
+        "workflow step 0: a training step cannot run inside kind:'workflow' — use kind:'training'"
+      );
       expect(realSubmits()).toHaveLength(0);
       expect(counter(USER_CAP)).toBe(0);
     }
@@ -882,6 +1138,79 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     });
   });
 
+  describe('the resources a step names', () => {
+    const naming = (model: string) =>
+      body({ steps: [{ $type: 'echo', input: { model } }], arguments: undefined });
+
+    beforeEach(() => {
+      // Under one step's budget.
+      whatifCost = { total: 20, base: 20 };
+      h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
+        }))) as never);
+    });
+
+    it('holds the output to PG-13 when one is on a base model that restricts mature generation', async () => {
+      await submit(naming('urn:air:sdxl:checkpoint:civitai:1@11'));
+      expect(realSubmits()[0].body).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    });
+
+    it('leaves a mature ceiling alone for an unrestricted base model', async () => {
+      await submit(naming('urn:air:sdxl:checkpoint:civitai:1@10'));
+      expect(realSubmits()[0].body.nsfwLevel).toBeUndefined();
+      expect(realSubmits()[0].body.allowMatureContent).not.toBe(false);
+    });
+
+    it.each(paths)(
+      '%s refuses a Hugging Face resource before any orchestrator call',
+      async (_, run) => {
+        await expect(
+          run(naming('urn:air:sdxl:checkpoint:huggingface:org/repo@main/x.safetensors'))
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
+
+    // The check runs as the viewer, never the app owner: version 30 is the app owner's own.
+    const privateTo = (ownerId: number) =>
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async () => [
+        {
+          id: 30,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'SDXL 1.0',
+        },
+      ]) as never);
+
+    it.each(paths)(
+      "%s refuses a version the viewer may not generate with, even the app owner's",
+      async (_, run) => {
+        privateTo(APP_OWNER);
+        await expect(run(naming('urn:air:sdxl:lora:civitai:1@30'))).rejects.toThrow(
+          'model version 30 is not available for generation'
+        );
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
+
+    it('lets the viewer generate with their own Private version', async () => {
+      privateTo(VIEWER);
+      await submit(naming('urn:air:sdxl:lora:civitai:1@30'));
+      expect(realSubmits()).toHaveLength(1);
+    });
+  });
+
   it('🔴 the fee is ONE resolved value: estimate = reservation = charge, under one type', async () => {
     const shown = (await estimate()).snapshot.cost?.authorFee;
     expect(shown).toBe(FEE);
@@ -1077,7 +1406,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
             action: 'workflow.submit',
             amount: -64,
             outcome: 'ok',
-            steps: ['imageGen', 'imageUpscaler', 'transcode'],
+            steps: ['imageGen', 'imageUpscaler', 'imageBackgroundRemoval'],
             variant: 'workflow',
             workflowId: WORKFLOW_ID,
           },
@@ -1464,8 +1793,8 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     expect(counter(USER_CAP)).toBe(0);
   });
 
-  it('refuses an unquoted workflow that runs a TRAINING step, and releases the key', async () => {
-    whatifCost = undefined;
+  it('refuses a workflow that runs a TRAINING step, and takes no key', async () => {
+    whatifCost = { total: 20, base: 20 };
     const { snapshot } = await submit(
       body({
         steps: [
@@ -1476,58 +1805,23 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       'idem-key-0002'
     );
     expect(snapshot.status).toBe('failed');
-    expect(snapshot.errorCode).toBe('training-quote-unpriced');
+    expect(snapshot.errorCode).toBe('workflow_step_denied');
     expect(realSubmits()).toHaveLength(0);
     expect(counter(USER_CAP)).toBe(0);
     expect(idemKeys()).toEqual([]);
   });
 
-  it('tags a workflow that runs a training step for the training surfaces', async () => {
+  it('refuses a training step whatever its casing, and still submits a workflow without one', async () => {
     whatifCost = { total: 20, base: 20 };
-    await submit(body({ steps: [{ $type: 'training', input: {} }] }));
-    expect(realSubmits()[0].body.tags).toContain(TRAINING_WORKFLOW_TAG);
-    // …including one a `repeat` runs.
-    h.submitWorkflow.mockClear();
-    await submit(
-      body({
-        arguments: { sets: ['one'] },
-        steps: [
-          {
-            $type: 'repeat',
-            input: {
-              for: { $ref: '$arguments', path: 'sets', as: 'set' },
-              template: { $type: 'training', input: {} },
-            },
-          },
-        ],
-      })
-    );
-    expect(realSubmits()[0].body.tags).toContain(TRAINING_WORKFLOW_TAG);
-    whatifCost = { total: 64, base: 60 };
-    h.submitWorkflow.mockClear();
-    await submit();
-    expect(realSubmits()[0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
-  });
-
-  it('matches a training step type case-insensitively, consistent with the denylist', async () => {
-    // Tagged when quoted…
-    whatifCost = { total: 20, base: 20 };
-    await submit(body({ steps: [{ $type: 'Training', input: {} }] }));
-    expect(realSubmits()[0].body.tags).toContain(TRAINING_WORKFLOW_TAG);
-    // …and refused when not.
-    h.submitWorkflow.mockClear();
-    whatifCost = undefined;
-    const { snapshot } = await submit(
-      body({
-        steps: [
-          { $type: 'echo', input: {} },
-          { $type: 'TRAINING', input: {} },
-        ],
-      })
-    );
-    expect(snapshot.status).toBe('failed');
-    expect(snapshot.errorCode).toBe('training-quote-unpriced');
+    for (const $type of ['Training', 'TRAINING', 'imageResourceTraining']) {
+      const { snapshot } = await submit(body({ steps: [{ $type, input: {} }] }));
+      expect(snapshot.errorCode).toBe('workflow_step_denied');
+    }
     expect(realSubmits()).toHaveLength(0);
+    whatifCost = { total: 64, base: 60 };
+    await submit();
+    expect(realSubmits()).toHaveLength(1);
+    expect(realSubmits()[0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
   });
 });
 
@@ -1752,7 +2046,7 @@ describe("kind:'workflow' in a BATCH estimate", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("kind:'workflow' POLL / CANCEL", () => {
-  const blob = (url: string) => ({ id: url, url, available: true, type: 'image' });
+  const blob = (url: string) => ({ id: url, url, available: true, type: 'image', nsfwLevel: 'pg' });
   function terminalWorkflow(over: Record<string, unknown> = {}) {
     return {
       id: WORKFLOW_ID,
@@ -1798,7 +2092,13 @@ describe("kind:'workflow' POLL / CANCEL", () => {
     // The suppressed step's image is in neither place.
     expect(snapshot.imageUrls).toEqual(['https://img/gen.png']);
     expect(snapshot.steps).toEqual([
-      { name: 'gen', $type: 'imageGen', status: 'succeeded', imageUrls: ['https://img/gen.png'] },
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'succeeded',
+        imageUrls: ['https://img/gen.png'],
+        outputs: [{ url: 'https://img/gen.png', nsfwLevel: 'pg' }],
+      },
       { name: '$1', $type: 'imageUpscaler', status: 'succeeded', output: { scale: 2 } },
       {
         name: '$2',
@@ -1923,10 +2223,20 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
 
   /** The image row the gate reads for KEY: owner and visibility as given. */
-  function givenImage(owner: number, visible: boolean) {
+  function givenImage(owner: number, visible: boolean, scanComplete = true) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible,
+              blocked: false,
+              scanComplete,
+              scanPending: !scanComplete,
+              held: false,
+            },
+          ]
         : []) as never);
   }
   afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
@@ -1968,12 +2278,57 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   );
 
   it.each(ARMS.slice(0, 2))(
-    '%s: an external host is counted, not refused, while the external-host flag is off',
+    '%s: an external host is refused while the external-host flag is off',
     async (_, make) => {
-      await estimate(make('https://example.com/a.png')).catch(() => undefined);
-      expect(whatifs().length).toBeGreaterThan(0);
+      await expect(estimate(make('https://example.com/a.png'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('hosted outside Civitai'),
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
   );
+
+  describe('an external url in an argument that a chat step reads as text', () => {
+    const ARG_REF = { $ref: '$arguments', path: 'prompt' };
+    const chatAndImage = (prompt: string) =>
+      body({
+        steps: [
+          {
+            name: 'chat',
+            $type: 'chatCompletion',
+            input: { model: 'm', messages: [{ role: 'user', content: ARG_REF }] },
+          },
+          { $type: 'imageGen', input: { ...GEN_INPUT, images: [ARG_REF] } },
+        ],
+        arguments: { prompt },
+      });
+
+    beforeEach(() => {
+      flags.refuseExternal = true;
+      flags.refuseExternalApp = false;
+    });
+    afterEach(() => {
+      flags.refuseExternal = false;
+    });
+
+    // A chat step's free-text exemption must not reach `arguments`: any other step can bind the
+    // same value to a media input.
+    it('is refused on estimate AND submit, before any orchestrator call', async () => {
+      const b = chatAndImage('https://example.com/a.png');
+      for (const call of [estimate, submit]) {
+        await expect(call(b)).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: expect.stringContaining('hosted outside Civitai'),
+        });
+      }
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: the same workflow with plain text in the argument reaches the orchestrator', async () => {
+      await estimate(chatAndImage('a cat')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    });
+  });
 
   it.each(ARMS)(
     "POSITIVE CONTROL %s: the caller's own image and an orchestrator blob reach the orchestrator",
@@ -1994,10 +2349,28 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   };
 
-  it('refuses a url with a control byte inside, where the same url without it is counted', async () => {
-    await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
+  it.each(ARMS)(
+    '%s: an own upload still being scanned is a failed snapshot with a code to retry on, before any orchestrator call',
+    async (_, make) => {
+      givenImage(VIEWER, false, false);
+      for (const call of [estimate, submit]) {
+        await expect(call(make(CDN))).resolves.toMatchObject({
+          snapshot: { status: 'failed', errorCode: 'source-scan-pending' },
+        });
+      }
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it('an external host is allowed and counted while the app external-source refusal is off', async () => {
+    flags.refuseExternalApp = false;
     await estimate(passThroughWith('https://example.com/a.png')).catch(() => undefined);
     expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it('refuses a url with a control byte inside as unavailable, not as an external host', async () => {
+    await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
   });
 
   it("refuses another user's private image in a step input, not only in arguments", async () => {
@@ -2063,6 +2436,99 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'a captioning step’s media',
+      { $type: 'mediaCaptioning', input: { mediaUrl: 'https://example.com/a.png' } },
+    ],
+    [
+      'a transcription step’s media',
+      { $type: 'transcription', input: { mediaUrl: 'https://example.com/a.mp3' } },
+    ],
+    [
+      'an image part of a chat message',
+      {
+        $type: 'chatCompletion',
+        input: {
+          model: 'm',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'what is this?' },
+                { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  ])('refuses an external url in %s, which the orchestrator fetches', async (_, step) => {
+    await expect(estimate({ kind: 'step' as const, ...step, maxBuzz: 30 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same external link in a generation step input is refused', async () => {
+    await expect(
+      estimate({
+        kind: 'step' as const,
+        $type: 'videoGen',
+        input: { engine: 'wan', prompt: 'x', images: ['https://example.com/a.png'] },
+        maxBuzz: 30,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  const chatWithWholeUrls = () => ({
+    model: 'm',
+    messages: [
+      { role: 'user', content: 'https://example.com/page' },
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'c1', arguments: 'https://example.com/args' }],
+      },
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'f',
+          parameters: { $schema: 'https://json-schema.org/draft/2020-12/schema' },
+        },
+      },
+    ],
+  });
+
+  it('accepts whole external urls in a lone chat step’s message text, tool calls and tool schemas', async () => {
+    await estimate({
+      kind: 'step' as const,
+      $type: 'chatCompletion',
+      input: chatWithWholeUrls(),
+      maxBuzz: 30,
+    }).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it('CONTROL: the same chat input in a workflow is read whole, and refused', async () => {
+    await expect(
+      estimate({
+        kind: 'workflow' as const,
+        steps: [{ name: 'chat', $type: 'chatCompletion', input: chatWithWholeUrls() }],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('accepts a chat body whose text, tool schema and tool call ids mention urls and uuids', async () => {
     givenImage(OTHER_USER, false);
     await estimate({
@@ -2113,10 +2579,109 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
-  it('the registry step still refuses an external host (its own param schema)', async () => {
+  describe('a chat App Block (the registry chat-completion step)', () => {
+    const chatStep = (content: string) => ({
+      kind: 'step' as const,
+      step: 'chat-completion',
+      params: {
+        model: 'deepseek/deepseek-chat',
+        messages: [{ role: 'user', content }],
+        maxTokens: 128,
+      },
+    });
+
+    it('POSITIVE CONTROL: a plain message reaches the orchestrator', async () => {
+      await estimate(chatStep('hello')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    });
+
+    // A whole url with a control byte inside is refused as an image input anywhere else (see
+    // 'refuses a url with a control byte inside'). In message text it is words.
+    it('reads message text as text: a link in it is not refused as an image input', async () => {
+      await estimate(chatStep('https://example.com/a\u0001.png')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    });
+
+    it("still refuses another user's private image named in message text", async () => {
+      givenImage(OTHER_USER, false);
+      await refusedBeforeTheOrchestrator(chatStep(CDN));
+      await refusedBeforeTheOrchestrator(chatStep(`what is in this picture?\n${CDN}`));
+    });
+
+    describe('with the external-host refusal ON', () => {
+      beforeEach(() => {
+        flags.refuseExternal = true;
+      });
+      afterEach(() => {
+        flags.refuseExternal = false;
+      });
+
+      // 🔴 THE PRODUCTION REPRO: a chat block that declares a registry tool, with `parameters` as
+      // `z.toJSONSchema` emits it (the `$schema` dialect url included), saying "hello".
+      const zodParameters = () =>
+        z.toJSONSchema(getBlockTool('search_models')!.argsSchema, {
+          io: 'input',
+          unrepresentable: 'any',
+        });
+      const senseiBody = () => ({
+        kind: 'step' as const,
+        step: 'chat-completion',
+        params: {
+          model: 'deepseek/deepseek-chat',
+          messages: [{ role: 'user', content: 'hello' }],
+          maxTokens: 128,
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'search_models',
+                description: getBlockTool('search_models')!.description,
+                parameters: zodParameters(),
+              },
+            },
+          ],
+        },
+      });
+
+      it('accepts a plain message whose declared tool schema carries $schema', async () => {
+        expect(zodParameters().$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+        const error = await estimate(senseiBody()).then(
+          () => undefined,
+          (e: unknown) => e
+        );
+        expect(error).not.toMatchObject({ message: GENERATION_EXTERNAL_IMAGE_MESSAGE });
+        expect(whatifs().length).toBeGreaterThan(0);
+      });
+
+      it('POSITIVE CONTROL: the refusal is live — the same schema in a workflow, read whole, is refused', async () => {
+        const refusal = { code: 'BAD_REQUEST', message: GENERATION_EXTERNAL_IMAGE_MESSAGE };
+        const passThrough = {
+          kind: 'workflow' as const,
+          steps: [{ name: 'chat', $type: 'chatCompletion', input: senseiBody().params }],
+        };
+        await expect(estimate(passThrough)).rejects.toMatchObject(refusal);
+        await expect(submit(passThrough)).rejects.toMatchObject(refusal);
+        expect(h.submitWorkflow).not.toHaveBeenCalled();
+      });
+    });
+
+    it('a workflow still reads a link in a $ref-wired text field as an image input', async () => {
+      const [gen, , transcode] = body().steps;
+      const upscale = {
+        $type: 'imageUpscaler',
+        input: { image: { $ref: '$arguments', path: 'prompt' } },
+      };
+      const steps = [gen, upscale, transcode];
+      await refusedBeforeTheOrchestrator(
+        body({ steps, arguments: { prompt: 'https://example.com/a\u0001.png' } })
+      );
+    });
+  });
+
+  it('the registry step refuses an external host', async () => {
     const error = await estimate(registryWith('https://example.com/a.png')).catch((e) => e);
     expect(error).toMatchObject({ code: 'BAD_REQUEST' });
-    expect(String(error.message)).toContain('Civitai-hosted https image URL');
+    expect(String(error.message)).toContain('hosted outside Civitai');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -2125,5 +2690,330 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     givenImage(OTHER_USER, false);
     await expect(estimate(passThroughWith(CDN))).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('inline customComfy — the generation input gate', () => {
+  const OTHER_USER = 7;
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=true`;
+  const OWN_KEY = '11111111-2222-4333-8444-555555555555';
+
+  function givenImage(owner: number, row: { scanComplete?: boolean; held?: boolean } = {}) {
+    const scanComplete = row.scanComplete ?? true;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible: false,
+              blocked: false,
+              scanComplete,
+              scanPending: !scanComplete,
+              held: row.held ?? false,
+            },
+          ]
+        : []) as never);
+  }
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+  // The customComfy arm reads the session user, and the issue record from the in-memory store.
+  beforeEach(() => {
+    const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
+    dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
+    // The issue record lives in the cluster client; it shares the in-memory store.
+    redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
+      store.set(k, String(v));
+      return 'OK';
+    }) as never);
+    redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
+      keys.map((k) => store.get(k) ?? null)) as never);
+  });
+  afterEach(() => {
+    dbMock.dbRead.user.findUnique.mockReset();
+    redisMock.redis.set.mockReset().mockResolvedValue('OK' as never);
+    redisMock.redis.mGet.mockReset();
+  });
+
+  const inline = (inputs: Record<string, unknown> = {}) => ({
+    kind: 'customComfy' as const,
+    mode: 'inline' as const,
+    workflow: {
+      '1': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512, batch_size: 1 } },
+      '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a serene lake', clip: ['1', 1] } },
+      '3': { class_type: 'LoadImage', inputs },
+    },
+    resources: [],
+    maxBuzz: 60,
+  });
+
+  it("refuses another user's private image on estimate AND submit, before any orchestrator call", async () => {
+    givenImage(OTHER_USER);
+    const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
+    await expect(estimate(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    await expect(submit(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('refuses an own held image on estimate AND submit', async () => {
+    givenImage(VIEWER, { held: true });
+    const refusal = { code: 'BAD_REQUEST', message: APP_SOURCE_UNUSABLE_MESSAGE };
+    await expect(estimate(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    await expect(submit(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('an own upload still being scanned is a failed snapshot with a code to retry on', async () => {
+    givenImage(VIEWER, { scanComplete: false });
+    for (const call of [estimate, submit]) {
+      await expect(call(inline({ image: CDN }))).resolves.toMatchObject({
+        snapshot: { status: 'failed', errorCode: 'source-scan-pending' },
+      });
+    }
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('submit gates its own graph: an image swapped in after a passing estimate is refused', async () => {
+    givenImage(OTHER_USER);
+    const body = inline();
+    await expect(estimate(body)).resolves.toMatchObject({ snapshot: { status: 'pending' } });
+    (body.workflow['3'].inputs as Record<string, unknown>).image = CDN;
+    await expect(submit(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('reads the whole graph: an image url in a text field is checked too', async () => {
+    givenImage(OTHER_USER);
+    const body = inline();
+    body.workflow['2'].inputs.text = `restyle ${CDN}`;
+    await expect(submit(body)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unrowed', async () => recordUploadKeyOwner(OWN_KEY, VIEWER)],
+    [
+      'store-unreadable',
+      async () => {
+        await recordUploadKeyOwner(OWN_KEY, VIEWER);
+        redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
+      },
+    ],
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (_reason, given) => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
+    await given();
+    const body = inline();
+    (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
+    await expect(submit(body)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: APP_SOURCE_UNUSABLE_MESSAGE,
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses inline image bytes in a node input at the schema', async () => {
+    const png = `data:image/png;base64,${'iVBORw0KGgo'.repeat(40)}`;
+    await expect(submit(inline({ image: png }))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'nests too deeply',
+      () => {
+        let deep: unknown = 'x';
+        for (let i = 0; i < 80; i++) deep = { v: deep };
+        return deep;
+      },
+    ],
+    ['is too large to check', () => 'a\n'.repeat(70_000)],
+  ])('refuses a graph that %s, never passing it unscanned', async (what, text) => {
+    for (const call of [estimate, submit]) {
+      const body = inline();
+      (body.workflow['2'].inputs as Record<string, unknown>).text = text();
+      await expect(call(body)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `workflow graph ${what}`,
+      });
+    }
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('inline customComfy — nodes the host does not run inline', () => {
+  beforeEach(() => {
+    const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
+    dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
+  });
+  afterEach(() => dbMock.dbRead.user.findUnique.mockReset());
+
+  const AIR = 'urn:air:sdxl:lora:civitai:101@202';
+  type Node = { class_type: string; inputs: Record<string, unknown> };
+  const graphWith = (node: Node) => ({
+    kind: 'customComfy' as const,
+    mode: 'inline' as const,
+    workflow: {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: AIR } },
+      '2': { class_type: 'StringConcatenate', inputs: { string_a: 'a', string_b: 'b' } },
+      '3': node,
+    },
+    resources: [AIR],
+    maxBuzz: 60,
+  });
+  const refused = { snapshot: { status: 'failed', errorCode: 'inline-node-refused' } };
+
+  it.each([
+    ['a path node', { class_type: 'VHS_LoadImagePath', inputs: { image: '/x.png' } }],
+    ['a linked loader input', { class_type: 'LoadImage', inputs: { image: ['2', 0] } }],
+    ['a local file in a loader', { class_type: 'LoadImage', inputs: { image: 'x.png' } }],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_what, node) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(graphWith(node))).resolves.toMatchObject(refused);
+    }
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('estimates a LoRA loader with linked model, CLIP and strength', async () => {
+    const node = {
+      class_type: 'LoraLoader',
+      inputs: { model: ['1', 0], clip: ['1', 1], lora_name: AIR, strength_model: ['2', 0] },
+    };
+    await expect(estimate(graphWith(node))).resolves.toMatchObject({
+      snapshot: { status: 'pending' },
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `accountType` is PER WORKFLOW: the orchestrator takes one `currencies` list for
+// the whole workflow, so the pick sits on the body, not on a step. Asserted as the
+// literal `currencies` on the whatif AND the real submit. Each pick expects an
+// order the no-pick default cannot produce, so a path that drops it fails.
+describe("kind:'workflow' — accountType (the pool tried first)", () => {
+  const MATURE = { maxBrowsingLevel: 31 };
+  const SFW = { maxBrowsingLevel: 1 };
+  const currenciesOf = (args: SubmitArgs[]) =>
+    args.map((a) => (a.body as { currencies?: unknown }).currencies);
+  const withPick = (pick: string | undefined) =>
+    pick === undefined ? body() : body({ accountType: pick });
+  const PICKS = [
+    { name: 'a mature app, yellow pick', rating: MATURE, pick: 'yellow', want: ['yellow', 'blue'] },
+    { name: 'an SFW app, green pick', rating: SFW, pick: 'green', want: ['green', 'blue'] },
+    { name: 'an SFW app, no pick', rating: SFW, pick: undefined, want: ['blue', 'green'] },
+    { name: 'a mature app, no pick', rating: MATURE, pick: undefined, want: ['blue', 'yellow'] },
+  ] as const;
+
+  it.each(PICKS)('ESTIMATE — $name quotes with $want', async ({ rating, pick, want }) => {
+    h.authorize.mockImplementation(async () => claims(rating));
+    const { snapshot } = await estimate(withPick(pick));
+    expect(snapshot.status).toBe('pending');
+    expect(currenciesOf(whatifs())).toEqual([want]);
+  });
+
+  it.each(PICKS)(
+    'SUBMIT — $name sends $want on the quote AND the real submit',
+    async ({ rating, pick, want }) => {
+      h.authorize.mockImplementation(async () => claims(rating));
+      const { snapshot } = await submit(withPick(pick));
+      expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+      expect(currenciesOf(whatifs())).toEqual([want]);
+      expect(currenciesOf(realSubmits())).toEqual([want]);
+    }
+  );
+
+  it.each([
+    ['estimate', estimate],
+    ['submit', submit],
+  ] as const)(
+    '%s — a yellow pick on an SFW app is BAD_REQUEST, nothing quoted or reserved',
+    async (_name, call) => {
+      h.authorize.mockImplementation(async () => claims(SFW));
+      await expect(call(withPick('yellow'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: "buzz account 'yellow' is not spendable for this app's content rating",
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+});
+
+describe('host media urls as workflow inputs', () => {
+  // A ticket-shaped value: the guard matches the sealed-token wire form, never its contents.
+  const ticketOf = (user: string) =>
+    `bm1.${user.padEnd(16, 'a')}.${'c'.repeat(40)}.${'t'.repeat(22)}`;
+  const OTHER_VIEWERS_TICKET = `https://civitai.com/api/v1/blocks/media/${ticketOf('other')}`;
+  const OWN_TICKET = `https://civitai.com/api/v1/blocks/media/${ticketOf('own')}`;
+  const upscaleOf = (image: string) =>
+    body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: GEN_INPUT },
+        { $type: 'imageUpscaler', input: { image } },
+      ],
+    });
+
+  beforeEach(() => {
+    // Both external-source refusals off: the opaque path admits a plain Civitai page link.
+    flags.refuseExternal = false;
+    flags.refuseExternalApp = false;
+  });
+
+  it.each([
+    ["another viewer's ticket", OTHER_VIEWERS_TICKET],
+    ["the viewer's own ticket", OWN_TICKET],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_, url) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(upscaleOf(url))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('persistGenerationSource'),
+      });
+    }
+    expect(whatifs()).toHaveLength(0);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    const refusals = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'app-block-media-input-refused'
+    );
+    expect(refusals).toHaveLength(2);
+    // The log carries the app and phase, never the ticket.
+    expect(JSON.stringify(refusals)).not.toContain('bm1.');
+  });
+
+  it('CONTROL: with the same flags a plain Civitai page link reaches the orchestrator', async () => {
+    await estimate(upscaleOf('https://civitai.com/images/1')).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it("the way to chain: a persisted source (the viewer's own private image) upscales", async () => {
+    const key = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+    // What persistGenerationSource returns: the original of a private, scanned row the viewer owns.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [
+            {
+              url: key,
+              userId: VIEWER,
+              visible: false,
+              blocked: false,
+              scanComplete: true,
+              scanPending: false,
+              held: false,
+            },
+          ]
+        : []) as never);
+    try {
+      await submit(
+        upscaleOf(`https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${key}/original=true`)
+      ).catch(() => undefined);
+      expect(h.submitWorkflow).toHaveBeenCalled();
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockReset();
+    }
   });
 });

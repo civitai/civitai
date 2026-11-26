@@ -7,6 +7,7 @@ import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
 
 /**
  * The probe's submit path against real tables: the main database's "Image" (cut to the columns the
@@ -15,8 +16,8 @@ import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.har
  */
 
 const SYSTEM_CLIENT = { name: 'system-client' };
-const MODERATOR = 424242;
-const OTHER_MODERATOR = 515151;
+const MODERATOR = 990100011;
+const OTHER_MODERATOR = 990100012;
 const HELD_OWNER = 9001;
 
 const h = vi.hoisted(() => ({
@@ -77,17 +78,13 @@ const PROBE_DDL = executableSchemaSql(
   readFileSync(join(HERE, '../../../../scan-probe/schema.sql'), 'utf8')
 );
 
-// "Image" cut to what the eligibility read and the relabel exclusion touch, plus the report tables
-// that exclusion reads.
-const MAIN_DDL = `
-CREATE TABLE "Image" (
-  id int PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL, type text NOT NULL DEFAULT 'image',
-  "needsReview" text, "blockedFor" text
-);
-CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
+// The tables the eligibility read and the relabel exclusion touch: the shared withhold rule's, plus
+// the report tables that exclusion reads.
+const MAIN_DDL = `${INQUISITOR_IMAGE_SCHEMA}
+ALTER TABLE "CsamReport" ALTER COLUMN images SET DEFAULT '[]';
+CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL, status text, details jsonb, "userId" int);
 CREATE TABLE "ImageReport" ("reportId" int NOT NULL, "imageId" int NOT NULL);
 CREATE TABLE "UserReport" ("reportId" int NOT NULL, "userId" int NOT NULL);
-CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
 `;
 
 let mainPg: PGlite;
@@ -114,13 +111,13 @@ beforeEach(async () => {
   h.onSubmit = null;
   h.held.clear();
   await mainPg.exec(`INSERT INTO "Image" (id, "userId", url, type, "needsReview", "blockedFor") VALUES
-    (777001, 10, 'clean-key-1', 'image', NULL, NULL),
-    (777002, 10, 'clean-key-2', 'image', NULL, NULL),
-    (777003, 11, 'flagged-key', 'image', 'csam', NULL),
-    (777004, 12, 'blocked-key', 'image', NULL, 'CSAM'),
-    (777005, ${HELD_OWNER}, 'held-key', 'image', NULL, NULL),
-    (777006, 10, 'video-key', 'video', NULL, NULL),
-    (777007, 10, 'https://evil.example/x.png', 'image', NULL, NULL)`);
+    (990100014, 10, 'clean-key-1', 'image', NULL, NULL),
+    (990100015, 10, 'clean-key-2', 'image', NULL, NULL),
+    (990100016, 11, 'flagged-key', 'image', 'csam', NULL),
+    (990100017, 12, 'blocked-key', 'image', NULL, 'CSAM'),
+    (990100018, ${HELD_OWNER}, 'held-key', 'image', NULL, NULL),
+    (990100019, 10, 'video-key', 'video', NULL, NULL),
+    (990100020, 10, 'https://evil.example/x.png', 'image', NULL, NULL)`);
 });
 
 const rows = async () =>
@@ -155,7 +152,7 @@ describe('runProbe: the kill switch', () => {
     else process.env.SCAN_PROBE_ENABLED = value;
     try {
       h.nextIds = ['0-wf-1'];
-      expect(await runProbe(MODERATOR, [777001])).toEqual({
+      expect(await runProbe(MODERATOR, [990100014])).toEqual({
         ok: false,
         reason: 'disabled',
         refused: [],
@@ -183,7 +180,7 @@ describe('runProbe: the kill switch', () => {
 describe('runProbe: what reaches the orchestrator', () => {
   it('submits with the system client, and nothing in the request names the moderator or the image', async () => {
     h.nextIds = ['0-wf-1'];
-    const result = await runProbe(MODERATOR, [777001]);
+    const result = await runProbe(MODERATOR, [990100014]);
     expect(result).toEqual({ ok: true, submitted: 1, failed: 0, stopped: false, refused: [] });
     expect(h.submits).toHaveLength(1);
     const [args] = h.submits;
@@ -191,7 +188,7 @@ describe('runProbe: what reaches the orchestrator', () => {
     expect(Object.keys(args).sort()).toEqual(['body', 'client', 'signal']);
     const body = JSON.stringify(args.body);
     expect(body).not.toContain(String(MODERATOR));
-    expect(body).not.toContain('777001');
+    expect(body).not.toContain('990100014');
   });
 
   it('writes the audit row before the submit, and submits nothing when it cannot', async () => {
@@ -200,7 +197,7 @@ describe('runProbe: what reaches the orchestrator', () => {
       'ALTER TABLE image_scan_probe_run ADD CONSTRAINT refuse_insert CHECK (image_id < 0) NOT VALID'
     );
     try {
-      await expect(runProbe(MODERATOR, [777001])).rejects.toThrow(/refuse_insert/);
+      await expect(runProbe(MODERATOR, [990100014])).rejects.toThrow(/refuse_insert/);
       expect(h.submits).toHaveLength(0);
     } finally {
       await probePg.exec('ALTER TABLE image_scan_probe_run DROP CONSTRAINT refuse_insert');
@@ -209,11 +206,11 @@ describe('runProbe: what reaches the orchestrator', () => {
 
   it('records the workflow id on the run row', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     expect(await rows()).toMatchObject([
       {
         moderator_id: MODERATOR,
-        image_id: 777001,
+        image_id: 990100014,
         status: 'submitted',
         workflow_id: '0-wf-1',
         cached: 'unknown',
@@ -226,23 +223,23 @@ describe('runProbe: what reaches the orchestrator', () => {
 // copied outside the evidence path. Each leg is one way an image is known to be in that class.
 describe('runProbe: images it refuses, with no reason given', () => {
   it.each([
-    ['flagged for CSAM review', 777003],
-    ['blocked for CSAM', 777004],
-    ['owned by a held user', 777005],
+    ['flagged for CSAM review', 990100016],
+    ['blocked for CSAM', 990100017],
+    ['owned by a held user', 990100018],
   ])('refuses an image %s', async (_label, imageId) => {
-    h.held.set(HELD_OWNER, ['evidenceHold']);
+    h.held.set(HELD_OWNER, ['csamReport']);
     h.nextIds = ['0-wf-1'];
-    const result = await runProbe(MODERATOR, [777001, imageId]);
+    const result = await runProbe(MODERATOR, [990100014, imageId]);
     expect(result).toMatchObject({ ok: true, submitted: 1, refused: [imageId] });
-    expect((await rows()).map((r) => r.image_id)).toEqual([777001]);
+    expect((await rows()).map((r) => r.image_id)).toEqual([990100014]);
   });
 
   it('refuses a video, an absolute url and a missing image the same way', async () => {
-    const result = await runProbe(MODERATOR, [777006, 777007, 123]);
+    const result = await runProbe(MODERATOR, [990100019, 990100020, 123]);
     expect(result).toEqual({
       ok: false,
       reason: 'nothing-eligible',
-      refused: [777006, 777007, 123],
+      refused: [990100019, 990100020, 123],
     });
     expect(h.submits).toHaveLength(0);
     expect(await rows()).toEqual([]);
@@ -250,19 +247,33 @@ describe('runProbe: images it refuses, with no reason given', () => {
 
   it('refuses an image a CSAM report lists, though nothing on the image or its owner is flagged', async () => {
     await mainPg.exec(
-      `INSERT INTO "CsamReport" ("userId", images) VALUES (99, '[{"id": 777002}]')`
+      `INSERT INTO "CsamReport" ("userId", images) VALUES (99, '[{"id": 990100015}]')`
     );
     h.nextIds = ['0-wf-1'];
-    expect(await runProbe(MODERATOR, [777001, 777002])).toMatchObject({
+    expect(await runProbe(MODERATOR, [990100014, 990100015])).toMatchObject({
       ok: true,
-      refused: [777002],
+      refused: [990100015],
     });
   });
 
-  it('control: submits an image whose owner holds nothing while another owner is held', async () => {
-    h.held.set(4242, ['evidenceHold']);
+  // What the moderator views withhold without the CSAM grant is refused to every moderator, as a
+  // missing image is: no run and no labels.
+  it('refuses an image whose copy on its url, under another owner, is blocked for CSAM', async () => {
+    await mainPg.exec(
+      `INSERT INTO "Image" (id, "userId", url, "blockedFor") VALUES (990100021, 77, 'clean-key-2', 'CSAM')`
+    );
     h.nextIds = ['0-wf-1'];
-    expect(await runProbe(MODERATOR, [777005])).toMatchObject({
+    expect(await runProbe(MODERATOR, [990100014, 990100015])).toMatchObject({
+      ok: true,
+      refused: [990100015],
+    });
+    expect((await rows()).map((r) => r.image_id)).toEqual([990100014]);
+  });
+
+  it('control: submits an image whose owner holds nothing while another owner is held', async () => {
+    h.held.set(4242, ['csamReport']);
+    h.nextIds = ['0-wf-1'];
+    expect(await runProbe(MODERATOR, [990100018])).toMatchObject({
       ok: true,
       submitted: 1,
       refused: [],
@@ -273,20 +284,20 @@ describe('runProbe: images it refuses, with no reason given', () => {
 describe('runProbe: the breaker', () => {
   it('stops at the first workflow that is not the system account, and submits nothing after it', async () => {
     h.nextIds = ['7-wf-1', '0-wf-2'];
-    const result = await runProbe(MODERATOR, [777001, 777002]);
+    const result = await runProbe(MODERATOR, [990100014, 990100015]);
     expect(result).toMatchObject({ ok: false, reason: 'wrong-account' });
     expect(h.submits).toHaveLength(1);
     expect(await rows()).toMatchObject([
-      { image_id: 777001, workflow_status: 'wrong-account', tripped: true },
-      { image_id: 777002, status: 'submit-failed', tripped: false },
+      { image_id: 990100014, workflow_status: 'wrong-account', tripped: true },
+      { image_id: 990100015, status: 'submit-failed', tripped: false },
     ]);
   });
 
   it('refuses every later run while tripped, until an admin resets it', async () => {
     h.nextIds = ['7-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.nextIds = ['0-wf-2'];
-    expect(await runProbe(OTHER_MODERATOR, [777002])).toMatchObject({
+    expect(await runProbe(OTHER_MODERATOR, [990100015])).toMatchObject({
       ok: false,
       reason: 'breaker',
     });
@@ -294,18 +305,18 @@ describe('runProbe: the breaker', () => {
 
     const { resetBreaker } = await import('../scan-probe/runs');
     expect(await resetBreaker(h.probe as never, 1, ['1'])).toBe(1);
-    expect(await runProbe(OTHER_MODERATOR, [777002])).toMatchObject({ ok: true, submitted: 1 });
+    expect(await runProbe(OTHER_MODERATOR, [990100015])).toMatchObject({ ok: true, submitted: 1 });
   });
 
   it('brings in an unpolled verdict before the next run, and a block trips it', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.workflows.set(
       '0-wf-1',
       finished('succeeded', { nsfwLevel: 'x', csam: null, blockedReason: 'some reason' })
     );
     h.nextIds = ['0-wf-2'];
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: false, reason: 'breaker' });
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({ ok: false, reason: 'breaker' });
     expect(h.submits).toHaveLength(1);
     expect((await rows())[0]).toMatchObject({
       workflow_status: 'succeeded',
@@ -317,9 +328,9 @@ describe('runProbe: the breaker', () => {
 
   it('refuses a new batch while an earlier one is still running', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.workflows.set('0-wf-1', { status: 'processing', steps: [] });
-    expect(await runProbe(OTHER_MODERATOR, [777002])).toMatchObject({
+    expect(await runProbe(OTHER_MODERATOR, [990100015])).toMatchObject({
       ok: false,
       reason: 'in-flight',
     });
@@ -327,13 +338,13 @@ describe('runProbe: the breaker', () => {
 
   it('lets the next batch through once the last one finished clean', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.workflows.set(
       '0-wf-1',
       finished('succeeded', { nsfwLevel: 'pg', csam: false, blockedReason: null })
     );
     h.nextIds = ['0-wf-2'];
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: true, submitted: 1 });
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({ ok: true, submitted: 1 });
     expect((await rows())[0]).toMatchObject({ csam: false, tripped: false });
   });
 });
@@ -346,7 +357,7 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
     ['throws (a timeout)', 'THROW'],
   ])('trips when a submit %s, and sends nothing after it', async (_label, answer) => {
     h.nextIds = [answer, '0-wf-2'];
-    expect(await runProbe(MODERATOR, [777001, 777002])).toEqual({
+    expect(await runProbe(MODERATOR, [990100014, 990100015])).toEqual({
       ok: true,
       submitted: 0,
       failed: 2,
@@ -358,41 +369,50 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
       { status: 'submit-failed', workflow_status: 'unknown-submit', tripped: true },
       { status: 'submit-failed', workflow_status: null, tripped: false },
     ]);
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'breaker' });
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({ ok: false, reason: 'breaker' });
   });
 
   it('trips on a workflow the orchestrator says does not exist', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.gone.add('0-wf-1');
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: false, reason: 'breaker' });
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({ ok: false, reason: 'breaker' });
     expect((await rows())[0]).toMatchObject({ workflow_status: 'gone', tripped: true });
   });
 
   it('holds, without tripping, while the orchestrator cannot be asked — however old the run', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     await probePg.exec(`UPDATE image_scan_probe_run SET created_at = now() - interval '3 days'`);
     h.readThrows = true;
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: false, reason: 'in-flight' });
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({
+      ok: false,
+      reason: 'in-flight',
+    });
     expect((await rows())[0]).toMatchObject({ workflow_status: null, tripped: false });
   });
 
   it('holds, without tripping, when the orchestrator answers with an error that is not a 404', async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: false, reason: 'in-flight' });
+    await runProbe(MODERATOR, [990100014]);
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({
+      ok: false,
+      reason: 'in-flight',
+    });
     expect((await rows())[0]).toMatchObject({ workflow_status: null, tripped: false });
   });
 
   it('trips on a pending row nobody settled, and holds on a fresh one', async () => {
     await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, created_at)
       VALUES (1, 1, now() - interval '1 minute')`);
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'in-flight' });
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({
+      ok: false,
+      reason: 'in-flight',
+    });
     await probePg.exec(
       `UPDATE image_scan_probe_run SET created_at = now() - interval '11 minutes'`
     );
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'breaker' });
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({ ok: false, reason: 'breaker' });
     expect((await rows())[0]).toMatchObject({
       status: 'submit-failed',
       workflow_status: 'abandoned',
@@ -407,7 +427,7 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
         VALUES (1, 1, 'submit-failed', 'gone', true)`);
       h.onSubmit = null;
     };
-    expect(await runProbe(MODERATOR, [777001, 777002])).toMatchObject({
+    expect(await runProbe(MODERATOR, [990100014, 990100015])).toMatchObject({
       ok: true,
       submitted: 1,
       failed: 1,
@@ -422,7 +442,7 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
       await probePg.exec(`UPDATE image_scan_probe_run SET status = 'submit-failed',
         workflow_status = 'abandoned-by-admin', tripped = true, breaker_reset_at = now(), breaker_reset_by = 7`);
     };
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ stopped: true });
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({ stopped: true });
     const [row] = await probePg
       .query<Record<string, unknown>>(
         'SELECT tripped, breaker_reset_at, breaker_reset_by, workflow_id FROM image_scan_probe_run'
@@ -439,7 +459,7 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
 
   it('reports the batch stopped when the unknown outcome is its last image', async () => {
     h.nextIds = ['0-wf-1', null];
-    expect(await runProbe(MODERATOR, [777001, 777002])).toMatchObject({
+    expect(await runProbe(MODERATOR, [990100014, 990100015])).toMatchObject({
       submitted: 1,
       failed: 1,
       stopped: true,
@@ -450,7 +470,7 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
   // on PGlite's single connection; the mutant that splits the write is killed by the account tests.
   it('records a wrong-account trip in the same write as the id', async () => {
     h.nextIds = ['7-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     expect((await rows())[0]).toMatchObject({
       status: 'submitted',
       workflow_id: '7-wf-1',
@@ -466,7 +486,7 @@ describe('admin recovery', () => {
     await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_status, tripped) VALUES
       (1, 1, 'submit-failed', 'gone', true), (1, 2, 'submit-failed', 'gone', true)`);
     expect(await resetBreaker(h.probe as never, 7, ['1'])).toBe(1);
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'breaker' });
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({ ok: false, reason: 'breaker' });
   });
 
   it('settles a pending row it abandons, so the batch skips it and it never reads as pending', async () => {
@@ -476,7 +496,7 @@ describe('admin recovery', () => {
       await abandonInFlight(h.probe as never, 7, ['2']);
       h.onSubmit = null;
     };
-    await runProbe(MODERATOR, [777001, 777002]);
+    await runProbe(MODERATOR, [990100014, 990100015]);
     expect(h.submits).toHaveLength(1);
     expect((await rows())[1]).toMatchObject({
       status: 'submit-failed',
@@ -488,9 +508,12 @@ describe('admin recovery', () => {
   it('releases runs whose verdict will never arrive, recording the admin', async () => {
     const { abandonInFlight } = await import('../scan-probe/runs');
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.readThrows = true;
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: false, reason: 'in-flight' });
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({
+      ok: false,
+      reason: 'in-flight',
+    });
     expect(await abandonInFlight(h.probe as never, 7, ['1'])).toBe(1);
     expect((await rows())[0]).toMatchObject({
       workflow_status: 'abandoned-by-admin',
@@ -498,7 +521,7 @@ describe('admin recovery', () => {
     });
     h.readThrows = false;
     h.nextIds = ['0-wf-2'];
-    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: true, submitted: 1 });
+    expect(await runProbe(MODERATOR, [990100015])).toMatchObject({ ok: true, submitted: 1 });
   });
 });
 
@@ -511,13 +534,13 @@ describe('runProbe: rate limits', () => {
     await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_id, workflow_status, created_at)
       SELECT ${MODERATOR}, g, 'submitted', '0-z' || g, 'succeeded', now() - interval '61 minutes' FROM generate_series(1, 10) g`);
     h.nextIds = ['0-wf-1'];
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: true, submitted: 1 });
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({ ok: true, submitted: 1 });
   });
 
   it('refuses a batch that would pass the moderator hourly limit, writing nothing', async () => {
     await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_id, workflow_status)
       SELECT ${MODERATOR}, g, 'submitted', '0-x' || g, 'succeeded' FROM generate_series(1, 100) g`);
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({
       ok: false,
       reason: 'moderator-hourly',
     });
@@ -527,7 +550,7 @@ describe('runProbe: rate limits', () => {
   it('refuses a batch that would pass the global daily limit', async () => {
     await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_id, workflow_status, created_at)
       SELECT g, g, 'submitted', '0-x' || g, 'succeeded', now() - interval '2 hours' FROM generate_series(1, 500) g`);
-    expect(await runProbe(MODERATOR, [777001])).toMatchObject({
+    expect(await runProbe(MODERATOR, [990100014])).toMatchObject({
       ok: false,
       reason: 'global-daily',
     });
@@ -620,7 +643,7 @@ describe('readProbe', () => {
 
   it("reads a moderator's own run and never another's", async () => {
     h.nextIds = ['0-wf-1'];
-    await runProbe(MODERATOR, [777001]);
+    await runProbe(MODERATOR, [990100014]);
     h.workflows.set(
       '0-wf-1',
       finished('succeeded', { nsfwLevel: 'pg', csam: false, blockedReason: null })

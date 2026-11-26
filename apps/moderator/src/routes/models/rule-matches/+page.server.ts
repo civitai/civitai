@@ -24,6 +24,7 @@ import {
   type HoldModelFacts,
 } from '$lib/server/model-rule-holds.service';
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
+import { withheldCoverImages } from '$lib/server/retracted-media';
 import type { Actions, PageServerLoad } from './$types';
 
 const querySchema = z.object({
@@ -78,11 +79,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       return new Map<number, HoldModelFacts>();
     }),
   ]);
-  const items = queue.items.map((hold) => ({
-    ...hold,
-    coverImages: covers.get(hold.id)?.images ?? [],
-    facts: facts.get(hold.modelId) ?? NO_FACTS,
-  }));
+  const items = await withheldCoverImages(
+    queue.items.map((hold) => ({
+      ...hold,
+      coverImages: covers.get(hold.id)?.images ?? [],
+      facts: facts.get(hold.modelId) ?? NO_FACTS,
+    })),
+    locals.user,
+    'model-rule-matches'
+  );
   return {
     limit,
     page,

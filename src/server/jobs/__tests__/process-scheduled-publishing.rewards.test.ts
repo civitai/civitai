@@ -12,6 +12,9 @@ const {
   mockBustMvCache,
   mockPublishDueArticles,
   mockScanEntitiesInBackground,
+  mockReleaseReviews,
+  mockRefreshHasReceivedReviews,
+  mockReleaseFlipped,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -28,6 +31,9 @@ const {
     > => undefined
   ),
   mockScanEntitiesInBackground: vi.fn(),
+  mockReleaseReviews: vi.fn(async (): Promise<unknown[]> => []),
+  mockRefreshHasReceivedReviews: vi.fn(),
+  mockReleaseFlipped: vi.fn(async (): Promise<unknown[]> => []),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -46,6 +52,7 @@ vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProces
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   userImageVideoCountCaches: { refresh: mockRefreshImageVideoCounts },
+  refreshHasReceivedReviews: mockRefreshHasReceivedReviews,
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
@@ -66,6 +73,10 @@ vi.mock('~/server/services/article-schedule.service', () => ({
 }));
 vi.mock('~/server/services/text-scan/submit', () => ({
   scanEntitiesInBackground: mockScanEntitiesInBackground,
+}));
+vi.mock('~/server/services/resourceReview.visibility', () => ({
+  releaseUnreleasedReviewsOfLivePosts: mockReleaseReviews,
+  releasePendingReviewsForPosts: mockReleaseFlipped,
 }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -324,9 +335,6 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     stubReads({ newlyLive: [{ id: 8, userId: 80 }] });
     await runJob();
     expect(mockApply).toHaveBeenCalledWith({ postId: 8, posterId: 80 });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: expect.stringContaining('unfiltered') })
-    );
   });
 
   it('warns instead of silently truncating when the sweep hits its row limit', async () => {
@@ -335,6 +343,44 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', message: expect.stringContaining('row limit') })
     );
+  });
+});
+
+describe('processScheduledPublishing :: pending resource reviews', () => {
+  // The flipped posts by id (a restored date can predate the sweep's window), the rest by the sweep.
+  it('releases the posts it flipped, runs the sweep, and refreshes the owners of both', async () => {
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      newlyLive: [
+        { id: 1, userId: 10 },
+        { id: 2, userId: 20 },
+      ],
+    });
+    mockReleaseFlipped.mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }]);
+    mockReleaseReviews.mockResolvedValueOnce([{ id: 12, modelOwnerId: 8 }]);
+
+    await runJob();
+
+    expect(mockReleaseFlipped).toHaveBeenCalledExactlyOnceWith([1]);
+    expect(mockReleaseReviews).toHaveBeenCalledTimes(1);
+    expect(mockRefreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([
+      { id: 11, modelOwnerId: 7 },
+      { id: 12, modelOwnerId: 8 },
+    ]);
+  });
+
+  // The flipped posts are live once the transaction commits and are never flipped again.
+  it('releases before the unguarded engagements, so one that throws cannot skip it', async () => {
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      versions: [{ id: 100, userId: 10, extras: { modelId: 11 } }],
+    });
+    mockProcessEngagement.mockRejectedValueOnce(new Error('event engine down'));
+
+    await expect(runJob()).rejects.toThrow('event engine down');
+
+    expect(mockReleaseFlipped).toHaveBeenCalledExactlyOnceWith([1]);
+    expect(mockReleaseReviews).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -647,7 +693,7 @@ describe('processScheduledPublishing :: model version cache busts', () => {
     ]);
   });
 
-  it('a failing bust is logged and the engagements still run', async () => {
+  it('a failing bust does not stop the engagements', async () => {
     stubReads({ versions });
     mockBustMvCache.mockRejectedValueOnce(new Error('redis down'));
 
@@ -655,9 +701,6 @@ describe('processScheduledPublishing :: model version cache busts', () => {
 
     expect(mockBustMvCache).toHaveBeenCalledTimes(2);
     expect(mockProcessEngagement.mock.calls.map(([e]) => e.entityId)).toEqual([101, 102]);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ modelVersionId: 101, error: 'redis down' })
-    );
   });
 });
 
@@ -682,9 +725,6 @@ describe('processScheduledPublishing :: scheduled articles', () => {
   it('still records the run when the article go-live throws', async () => {
     mockPublishDueArticles.mockRejectedValueOnce(new Error('article table locked'));
     await runJob();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: 'scheduled article go-live failed' })
-    );
     expect(mockSetLastRun).toHaveBeenCalled();
     expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });

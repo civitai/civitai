@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { COVER_INDEX_NAME, coverIndexExists } from '~/server/services/collection-cover-index';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 
@@ -139,48 +140,10 @@ function logFailure(name: string, source: string, message: string, error: unknow
     message: `${source}: ${message}`,
     source,
     error: safeError(error),
-  }).catch(() => undefined);
+  });
 }
 
-export const COVER_INDEX_NAME = 'Collection_imageId_idx';
-
-/**
- * Is the cover leg's index present AND USABLE?
- *
- * 🔴 `pg_class` alone is NOT sufficient, and getting this wrong fails OPEN. A
- * `CREATE INDEX CONCURRENTLY` row appears in `pg_class` from the START of the build
- * and stays there permanently if the build fails — so a name-only check returns true
- * throughout a multi-minute build of a 2.8 GB heap, and forever after a failure. That
- * is precisely the window this gate exists to cover: the deploy-then-migrate ordering
- * would switch the cover leg on while the index is still being built, and every image
- * delete would pay the sequential scan concurrently with the build, on the primary,
- * up to five at a time (`deleteImages` runs `Limiter({ batchSize: 100 })`, whose
- * default concurrency is 5). `indisvalid AND indisready` is what makes the gate mean
- * "usable by the planner" rather than "someone started building this once".
- *
- * Schema-qualified because `relname` is not unique across schemas and this database
- * has a second one (`fk_remediation_backup`).
- *
- * A catalog lookup, not a cached flag: two index scans, cost 5.01 — far less than the
- * seven-leg query it guards — and re-reading it means the leg starts working the
- * moment the index becomes valid, with no deploy or restart.
- *
- * Once the index is valid in every environment, this gate and its branch can go.
- */
-async function coverIndexExists() {
-  const rows = await dbWrite.$queryRaw<{ present: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1 FROM pg_class c
-      JOIN pg_index x ON x.indexrelid = c.oid
-      WHERE c.relname = ${COVER_INDEX_NAME}
-        AND c.relkind = 'i'
-        AND c.relnamespace = 'public'::regnamespace
-        AND x.indisvalid
-        AND x.indisready
-    ) AS "present"
-  `;
-  return rows[0]?.present === true;
-}
+export { COVER_INDEX_NAME };
 
 /**
  * Collections whose document shows any of these images, by all seven routes.
@@ -195,14 +158,14 @@ async function coverIndexExists() {
  * bounded — the index is 7,712 kB — so it is kept rather than given one of its own.
  * The cover leg is included only when its index is valid; see `coverIndexExists`.
  */
-function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
+function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean, db: typeof dbWrite) {
   const ids = Prisma.join(imageIds);
   const coverLeg = includeCover
     ? Prisma.sql`
       UNION
       SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${ids})`
     : Prisma.empty;
-  return dbWrite.$queryRaw<{ collectionId: number }[]>`
+  return db.$queryRaw<{ collectionId: number }[]>`
     SELECT DISTINCT x."collectionId" FROM (
       SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${ids})
       ${coverLeg}
@@ -223,6 +186,9 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
         WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."coverId" IN (${ids}))
       UNION
       SELECT ci."collectionId" FROM "CollectionItem" ci
+        WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."bannerId" IN (${ids}))
+      UNION
+      SELECT ci."collectionId" FROM "CollectionItem" ci
         WHERE ci."model3dId" IN (
           SELECT m3.id FROM "Model3D" m3 WHERE m3."thumbnailImageId" IN (${ids}))
       UNION
@@ -237,19 +203,25 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
 /**
  * Resolve the collections whose documents show any of the given images.
  *
- * Reads through `dbWrite` so a just-committed transaction is visible — the replica may
- * still be behind, and a missed row here is a permanently stale document, not a late
- * one. Never throws: callers run this immediately before their delete, so an exception
- * would cancel the deletion the user actually asked for.
+ * Reads through `dbWrite` by default so a just-committed transaction is visible — the
+ * replica may still be behind, and a missed row here is a permanently stale document, not
+ * a late one. A bulk caller with no write of its own to see passes `dbRead`. Does not throw by
+ * default: callers run this immediately before their delete, so an exception would cancel the
+ * deletion the user actually asked for. A caller that must tell a partial or failed lookup from
+ * "no collections" passes `throwOnError`, which also throws when the cover leg cannot run.
  */
 export async function getCollectionIdsForImages({
   imageIds,
   source = 'unknown',
   cap = DEFAULT_COLLECTION_CAP,
+  db = dbWrite,
+  throwOnError = false,
 }: {
   imageIds: number[];
   source?: string;
   cap?: number;
+  db?: typeof dbWrite;
+  throwOnError?: boolean;
 }): Promise<CollectionsToRebuild> {
   const uniqueImageIds = [...new Set(imageIds)];
   if (!uniqueImageIds.length) return EMPTY;
@@ -268,7 +240,10 @@ export async function getCollectionIdsForImages({
       `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
       error
     );
+    if (throwOnError) throw error;
   }
+  if (!withCover && throwOnError)
+    throw new Error(`"${COVER_INDEX_NAME}" is not present and valid: the cover leg cannot run`);
 
   if (!withCover)
     logToAxiom({
@@ -276,10 +251,10 @@ export async function getCollectionIdsForImages({
       name: 'collection-media-index-cover-leg-skipped',
       message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is a removed image are not being re-indexed. Apply the migration that creates it.`,
       source,
-    }).catch(() => undefined);
+    });
 
   try {
-    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover), cap);
+    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover, db), cap);
   } catch (error) {
     logFailure(
       'collection-media-index-resolve-failed',
@@ -287,6 +262,7 @@ export async function getCollectionIdsForImages({
       'failed to resolve collections for removed images',
       error
     );
+    if (throwOnError) throw error;
     return EMPTY;
   }
 }
@@ -354,6 +330,103 @@ export async function getCollectionIdsForModelCascade({
   }
 }
 
+/** The ids of the images on any post of a model's versions, whoever posted them, as a subquery. */
+export function modelImageIdsSql(modelId: number) {
+  return Prisma.sql`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE mv."modelId" = ${modelId}`;
+}
+
+/**
+ * Collections whose document shows a model's images: its own item, and the items, article items and
+ * covers drawn from any post on its versions, whoever posted it. A taken-down model's images leave every
+ * collection cover, and a restored model's come back, so entering or leaving TakenDown rebuilds
+ * these.
+ *
+ * Read from the replica: the images predate the mode change. Never throws: it runs after the mode
+ * change has committed, and a failure only leaves covers stale.
+ */
+export async function getCollectionIdsForModelImages({
+  modelId,
+  source = 'model-mode-change',
+  cap = DEFAULT_COLLECTION_CAP,
+  withCover,
+}: {
+  modelId: number;
+  source?: string;
+  cap?: number;
+  /** Whether the cover leg may run, when the caller has already checked; checked here otherwise. */
+  withCover?: boolean;
+}): Promise<CollectionsToRebuild & { failed?: boolean }> {
+  withCover ??= await isCoverLegUsable(source);
+  const modelImagesSql = modelImageIdsSql(modelId);
+  const coverLeg = withCover
+    ? Prisma.sql`
+        UNION
+        SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${modelImagesSql})`
+    : Prisma.empty;
+  try {
+    const rows = await dbRead.$queryRaw<{ collectionId: number }[]>`
+      SELECT DISTINCT x."collectionId" FROM (
+        SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."modelId" = ${modelId}
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."postId" IN (
+            SELECT p.id FROM "Post" p
+            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+            WHERE mv."modelId" = ${modelId})
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${modelImagesSql})
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."coverId" IN (${modelImagesSql}))
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."bannerId" IN (${modelImagesSql}))
+        ${coverLeg}
+      ) x
+      LIMIT ${cap + 1}
+    `;
+    return applyCap(rows, cap);
+  } catch (error) {
+    logFailure(
+      'collection-media-index-resolve-failed',
+      source,
+      `failed to resolve collections for model ${modelId}`,
+      error
+    );
+    return { ...EMPTY, failed: true };
+  }
+}
+
+/**
+ * Whether the model-images lookup's cover leg may run. Never throws: a failed check leaves the leg
+ * out. Leaving it out is logged, since those collections then stay stale until a full reindex.
+ */
+export async function isCoverLegUsable(source: string) {
+  let usable = false;
+  try {
+    usable = await coverIndexExists();
+  } catch (error) {
+    logFailure(
+      'collection-media-index-cover-probe-failed',
+      source,
+      `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
+      error
+    );
+  }
+  if (!usable)
+    logToAxiom({
+      type: 'warning',
+      name: 'collection-media-index-cover-leg-skipped',
+      message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is one of the model's images are not being re-indexed. Apply the migration that creates it.`,
+      source,
+    });
+  return usable;
+}
+
 /**
  * Queue a rebuild of the given collections.
  *
@@ -400,7 +473,7 @@ export async function enqueueCollectionRebuild({
       message: `${source}: capped at ${cap} collections; an unknown number beyond the cap remain stale until a full reindex.`,
       source,
       cap,
-    }).catch(() => undefined);
+    });
 
   return { queued: collectionIds.length, truncated };
 }
@@ -408,9 +481,7 @@ export async function enqueueCollectionRebuild({
 /**
  * Collections whose document is affected by hard-deleting a post.
  *
- * Not just the post's own item row. `deletePost` raw-`DELETE`s the post's images inside
- * its transaction instead of calling `deleteImageById`, so the image-side enqueue never
- * fires for them; images it declines to delete survive with `postId` nulled
+ * Not just the post's own item row. Images `deletePost` declines to delete survive with `postId` nulled
  * (`Image.postId` is `ON DELETE SET NULL`), dropping them from the `postItemImage` and
  * `modelItemImage` CTEs.
  *
@@ -453,7 +524,7 @@ export async function getCollectionIdsForPostCascade({
             source,
             postId,
             cap: POST_IMAGE_LOOKUP_CAP,
-          }).catch(() => undefined);
+          });
         }
         return {
           ids: rows.slice(0, POST_IMAGE_LOOKUP_CAP).map((r) => r.id),
@@ -511,9 +582,9 @@ export async function getCollectionIdsForPostCascade({
  * involve no `CollectionItem` change, so the trigger cannot see them.)
  *
  * Only the one leg: the article's cover and content images are removed through
- * `deleteImageById`, which resolves and enqueues on its own. What nothing observes is
+ * `deleteImages`, which resolves and enqueues on its own. What nothing observes is
  * `CollectionItem.articleId` cascading when the Article row goes — and it goes FIRST,
- * so by the time `deleteImageById` runs, the image path's article leg
+ * so by the time `deleteImages` runs, the image path's article leg
  * (`WHERE a."coverId" IN (…)`) can no longer match. Resolve before the transaction.
  */
 export async function getCollectionIdsForArticle({

@@ -1,3 +1,5 @@
+import { json } from '@sveltejs/kit';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 
 // OAuth endpoint rate limits, ported from the main app's src/server/oauth/rate-limit.ts RATE_LIMITS.
@@ -45,6 +47,29 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                bound to an authenticated client before it is used as a key.
 //   - introspect-worker: per-client (1200/min) — `introspect` for a caller allowed to see Worker tokens,
 //                which checks each worker that registers.
+//   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user and
+//                block token exchanges (one budget per client), charged after client auth. One relay exchanges
+//                for many users from one IP, so the per-IP `token` limit never applies to it. A USER exchange
+//                is charged only once its subject token resolves (exists, unexpired, exchangeable) and the
+//                exchange is allowed (the token's app is listed for the resource, the caller is that app or
+//                a relay): a client whose budget is spent is still refused before any lookup, but a refused
+//                subject never spends it, so a flood of made-up tokens (or of real tokens minted for an
+//                unlisted app) sent through a relay cannot exhaust the relay's budget for every real user.
+//   - token-exchange-miss: per-(client, caller IP) (30/min) — user-exchange subject tokens that did NOT
+//                resolve, whose app the resource does not list, or that the caller may not exchange. Charged
+//                after the lookup, and only on a miss; a miss past the limit is answered 429. A subject the
+//                resource accepts never reads it, so a full bucket never refuses a valid token; any bad
+//                token sent on a full key is answered 429, whoever sends it. The IP is
+//                getClientIp's: a relay that sends the viewer's IP as x-forwarded-for on the internal path
+//                gets one bucket per viewer, so a flood from one viewer is refused without refusing the
+//                others; with no IP it is one bucket per client.
+//   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
+//                whose secret checks out is never charged or refused by it. With no resolvable IP the
+//                failures share one bucket, never one keyed on the claimed client id.
+//   - token-service: per-client (60/min) — service tokens (service-token.ts), charged after client auth. The
+//                per-IP `token` limit never applies to it.
+//   - introspect-jwt: per-client (1200/min) — introspection of any `at+jwt` (exchanged or service),
+//                charged after client auth.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.
 const OAUTH_RATE_LIMITS = {
@@ -63,9 +88,77 @@ const OAUTH_RATE_LIMITS = {
   'worker-token': { limit: 600, windowSeconds: 60 },
   'worker-device': { limit: 10, windowSeconds: 60 },
   'introspect-worker': { limit: 1200, windowSeconds: 60 },
+  'token-exchange': { limit: 600, windowSeconds: 60 },
+  'token-exchange-ip': { limit: 120, windowSeconds: 60 },
+  'token-exchange-miss': { limit: 30, windowSeconds: 60 },
+  'introspect-jwt': { limit: 1200, windowSeconds: 60 },
+  'token-service': { limit: 60, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
+
+// The only place the auth app writes this status: every 429 goes through rateLimitedResponse, and
+// rate-limited-response.test.ts fails on a 429 built anywhere else.
+export const RATE_LIMITED_STATUS = 429;
+
+/**
+ * A bucket's Retry-After: its static window, not the key's remaining TTL, so callers sharing one bucket
+ * (a worker pool behind one IP) spread their retries instead of all returning at the window edge.
+ */
+export function oauthRetryAfter(bucket: OAuthRateLimitBucket): number {
+  return OAUTH_RATE_LIMITS[bucket].windowSeconds;
+}
+
+/**
+ * The refusing limit a 429 names in its `rateLimit` meta: `oauth.<bucket>`, and `abuse` (these are anti-flood
+ * limits; their numbers are never sent). The meta is the main app's `RateLimitMeta`
+ * (`src/shared/utils/rate-limit-meta.ts`), so a client reads an auth refusal as it reads the site's.
+ */
+export type OAuthRateLimitRef = { id: `oauth.${OAuthRateLimitBucket}`; kind: 'abuse' };
+
+export function oauthRateLimitRef(bucket: OAuthRateLimitBucket): OAuthRateLimitRef {
+  return { id: `oauth.${bucket}`, kind: 'abuse' };
+}
+
+const waitText = (seconds: number) => {
+  if (seconds < 60) return seconds === 1 ? '1 second' : `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+};
+
+/**
+ * A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1), and in JSON the house `rateLimit`
+ * meta (`retryAfterSeconds`, `retryAt`, plus `options.limit`'s `id` and `kind` when the caller names the
+ * limit). Pass `request` on a route a browser navigates to: a request that accepts text/html gets a readable
+ * page instead of JSON.
+ */
+export function rateLimitedResponse(
+  retryAfter: number,
+  headers?: HeadersInit,
+  description = 'Too many requests',
+  options: { request?: Request; limit?: OAuthRateLimitRef } = {}
+): Response {
+  const seconds = Math.max(1, Math.ceil(retryAfter));
+  const out = new Headers(headers);
+  out.set('Retry-After', String(seconds));
+  if (options.request?.headers.get('accept')?.includes('text/html')) {
+    out.set('Content-Type', 'text/html; charset=utf-8');
+    const text = `${escapeHtml(description)}. Try again in ${waitText(seconds)}.`;
+    return new Response(
+      `<!doctype html><html lang="en"><meta charset="utf-8"><title>Too many requests</title><p>${text}</p></html>`,
+      { status: RATE_LIMITED_STATUS, headers: out }
+    );
+  }
+  const rateLimit = {
+    retryAfterSeconds: seconds,
+    retryAt: new Date(Date.now() + seconds * 1000).toISOString(),
+    ...options.limit,
+  };
+  return json(
+    { error: 'rate_limited', error_description: description, retry_after: seconds, rateLimit },
+    { status: RATE_LIMITED_STATUS, headers: out }
+  );
+}
 
 /**
  * Check an OAuth endpoint's rate limit for `identifier` (userId for /authorize, IP for /token, /revoke
@@ -80,6 +173,17 @@ export async function checkOAuthRateLimit(
   return checkRateLimit(`oauth:${bucket}`, identifier, cfg.limit, cfg.windowSeconds);
 }
 
+/**
+ * Whether an IP is past the per-IP `token` limit and has used up its `token-overflow` budget of failed
+ * secret checks, so the token route checks no more secrets for it (counts nothing).
+ */
+export async function tokenSecretChecksExhausted(ip: string | null | undefined): Promise<boolean> {
+  return (
+    (await isRateLimited('oauth:token', ip, OAUTH_RATE_LIMITS.token.limit)) &&
+    (await tokenOverflowExhausted(ip))
+  );
+}
+
 /** Whether an IP has used up its `token-overflow` budget of failed secret checks (counts nothing). */
 export async function tokenOverflowExhausted(ip: string | null | undefined): Promise<boolean> {
   return isRateLimited('oauth:token-overflow', ip, OAUTH_RATE_LIMITS['token-overflow'].limit);
@@ -87,5 +191,55 @@ export async function tokenOverflowExhausted(ip: string | null | undefined): Pro
 
 /** The `token-client` check: a client's own per-minute /oauth/token limit, as set by staff. */
 export async function checkClientTokenRateLimit(clientId: string, limit: number): Promise<boolean> {
-  return checkRateLimit('oauth:token-client', clientId, limit, 60);
+  // The token route answers this refusal with the `token` window.
+  return checkRateLimit(
+    'oauth:token-client',
+    clientId,
+    limit,
+    OAUTH_RATE_LIMITS.token.windowSeconds
+  );
+}
+
+/** The `token-exchange` check: per authenticated client, at its staff-set limit when it has one. */
+export async function checkTokenExchangeRateLimit(
+  clientId: string,
+  clientLimit: number | null
+): Promise<boolean> {
+  const cfg = OAUTH_RATE_LIMITS['token-exchange'];
+  return checkRateLimit(
+    'oauth:token-exchange',
+    clientId,
+    clientLimit ?? cfg.limit,
+    cfg.windowSeconds
+  );
+}
+
+/** Whether a client has already spent its `token-exchange` budget (counts nothing). */
+export async function tokenExchangeExhausted(
+  clientId: string,
+  clientLimit: number | null
+): Promise<boolean> {
+  return isRateLimited(
+    'oauth:token-exchange',
+    clientId,
+    clientLimit ?? OAUTH_RATE_LIMITS['token-exchange'].limit
+  );
+}
+
+/** The `token-exchange-miss` key: the client and the caller's IP, never the IP alone. */
+function tokenExchangeMissKey(clientId: string, ip: string | null): string {
+  return `${clientId}:${ip ?? 'no-ip'}`;
+}
+
+/** Count one user-exchange miss against its (client, IP); false once that key is past its limit. */
+export async function chargeTokenExchangeMiss(
+  clientId: string,
+  ip: string | null
+): Promise<boolean> {
+  return checkOAuthRateLimit('token-exchange-miss', tokenExchangeMissKey(clientId, ip));
+}
+
+/** Count one failed client-secret check on the user token exchange; false once the IP is past its limit. */
+export async function chargeTokenExchangeFailure(ip: string | null): Promise<boolean> {
+  return checkOAuthRateLimit('token-exchange-ip', ip ?? 'no-ip');
 }

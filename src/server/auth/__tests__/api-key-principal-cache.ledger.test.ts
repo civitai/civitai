@@ -46,7 +46,6 @@ vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async (id: number) => ({ id, bannedAt: null })) },
 }));
 vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({
@@ -80,6 +79,7 @@ const {
   deleteApiKey,
   deleteApiKeys,
   expireGenerationCredentials,
+  expireClientTokens,
   expireUserApiKeys,
   setApiKeyBuzzLimit,
 } = await import('~/server/services/api-key.service');
@@ -103,15 +103,19 @@ const NOT_CACHED =
 const WORKER_ONLY =
   'touches type Worker rows only; the bearer path never selects that type, so never caches one';
 const LEDGER: Record<string, { count: number; why: string }> = {
+  'src/server/services/blocks/app-block-token-revoke.service.ts': {
+    count: 1,
+    why: NOT_CACHED,
+  },
   'src/server/auth/bearer-token.ts': {
     count: 1,
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',
   },
   'src/server/services/api-key.service.ts': {
-    count: 7,
+    count: 8,
     why:
       'create: a new key, and misses are never cached. setApiKeyBuzzLimit update, and the ' +
-      'deleteApiKeys, expireUserApiKeys and expireGenerationCredentials helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
+      'deleteApiKeys, expireUserApiKeys, expireGenerationCredentials and expireClientTokens helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
       "caller's own rotated generation keys, not a revocation; the first only removes keys within " +
       '30 s of their own expiry (entries never outlive expiresAt), the second a legacy key name. ' +
       'Accepted: such a key can keep working for at most the cache TTL after the clean-up.',
@@ -119,7 +123,9 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   'src/server/routers/oauth-consent.router.ts': { count: 1, why: NOT_CACHED },
   'src/server/services/blocks/oauth-consent-sync.service.ts': { count: 1, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/model.ts': { count: 1, why: NOT_CACHED },
-  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 1, why: 'insert: OAuth rows' },
+  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 2, why: 'insert: OAuth rows' },
+  // Refresh-family revoke (Refresh + Access) and the offline-decline Refresh delete: OAuth rows.
+  'apps/auth/src/lib/server/oauth/offline-grant.ts': { count: 3, why: NOT_CACHED },
   'apps/auth/src/routes/api/auth/oauth/revoke/+server.ts': { count: 2, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 2, why: WORKER_ONLY },
   'apps/auth/src/lib/server/oauth/worker-admin.ts': { count: 1, why: WORKER_ONLY },
@@ -381,6 +387,41 @@ describe('writes that evict the bearer cache', () => {
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
   });
 
+  it('🔴 deleteApiKeys over many holders: each holder’s orchestrator auth expires once, never more than 10 at a time', async () => {
+    // A connect app's takedown deletes the client's refresh tokens for every user at once.
+    for (let i = 0; i < 25; i++) {
+      rows.push({
+        ...seed()[0],
+        id: 1000 + i,
+        key: `hash-of-refresh-${i}`,
+        userId: 7000 + i,
+        clientId: 'oc_takedown',
+        type: 'Refresh',
+      });
+    }
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(revokeCivitaiUserTokens).mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return true;
+    });
+    await expect(deleteApiKeys({ type: 'Refresh', clientId: 'oc_takedown' })).resolves.toEqual({
+      count: 25,
+    });
+    expect(
+      vi
+        .mocked(revokeCivitaiUserTokens)
+        .mock.calls.map((c) => c[0].userId)
+        .sort()
+    ).toEqual(Array.from({ length: 25 }, (_, i) => 7000 + i));
+    expect(peak).toBe(10);
+    expect(rows.some((r) => r.clientId === 'oc_takedown')).toBe(false);
+  });
+
   it('expireUserApiKeys stops every key of the user on the next request and keeps the rows', async () => {
     const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
     rows.push({ ...seed()[0], id: 53, key: 'hash-of-other-user', userId: 502 });
@@ -407,6 +448,24 @@ describe('writes that evict the bearer cache', () => {
     vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
     expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it("expireClientTokens stops that client's tokens on the next request, not another client's", async () => {
+    const token = (id: number, clientId: string) => ({
+      ...seed()[0],
+      id,
+      key: `hash-of-${clientId}-access`,
+      clientId,
+      type: 'Access',
+    });
+    rows.push(token(61, 'minter'), token(62, 'other-client'));
+    const opts = { allowClientCredentialsOnly: true };
+    expect((await getSessionFromBearerToken('minter-access', opts))?.apiKeyId).toBe(61); // control
+    await expect(expireClientTokens('minter')).resolves.toEqual({ expired: 1 });
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('minter-access', opts)).toBeNull();
+    expect((await getSessionFromBearerToken('other-client-access', opts))?.apiKeyId).toBe(62);
+    expect(rows.find((r) => r.id === 61)?.expiresAt).toEqual(T0);
   });
 
   it('expireGenerationCredentials retries the eviction of a key an earlier pass expired', async () => {

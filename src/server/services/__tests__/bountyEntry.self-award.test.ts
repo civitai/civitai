@@ -52,8 +52,9 @@ describe('awardBountyEntry', () => {
 });
 
 describe('upsertBountyEntryHandler', () => {
-  const ctxFor = (userId: number) => ({ user: { id: userId } } as unknown as ProtectedContext);
-  const input = { bountyId: BOUNTY_ID, files: [], images: [] } as unknown as Parameters<
+  const ctxFor = (userId: number) =>
+    ({ user: { id: userId }, features: { canViewNsfw: true } } as unknown as ProtectedContext);
+  const input = { bountyId: BOUNTY_ID, files: [] } as unknown as Parameters<
     typeof upsertBountyEntryHandler
   >[0]['input'];
 
@@ -130,9 +131,13 @@ describe('upsertBountyEntry images', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    redisMock.sysRedis.mGet.mockResolvedValue([String(ENTRANT_ID)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(ENTRANT_ID)] as never);
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    // A new entry first locks the Bounty row; everything else here reads nothing.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FOR UPDATE')
+        ? [{ entryLimit: 5, complete: false }]
+        : []) as never);
     dbMock.dbWrite.bountyEntry.update.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
     dbMock.dbWrite.bountyEntry.create.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
     dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
@@ -152,8 +157,8 @@ describe('upsertBountyEntry images', () => {
         userId: ENTRANT_ID,
       } as never);
 
-      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
-      expect(redisMock.sysRedis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.redis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
         dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]
       );
       expect(dbMock.dbWrite.image.createMany).toHaveBeenCalledTimes(1);

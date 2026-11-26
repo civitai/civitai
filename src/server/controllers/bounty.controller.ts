@@ -1,5 +1,7 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { TRPCError } from '@trpc/server';
 import type { Context, ProtectedContext } from '../createContext';
+import { reportListedViewerOf, seesReportListed } from '~/server/utils/report-listed-viewer';
 import type { GetByIdInput } from '../schema/base.schema';
 import {
   addBenefactorUnitAmount,
@@ -37,17 +39,57 @@ import {
 import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
-import { NsfwLevel } from '~/server/common/enums';
+import { publicBountyDetails } from '~/server/utils/bounty-details';
+import type { NsfwLevel } from '~/server/common/enums';
+import { minorMatureHidden, withoutMinorFlag } from '~/server/common/image-visibility';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
+import { capNestedImages } from '~/server/utils/browsing-level';
+import {
+  bountyImageNsfwLevel,
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
+
+/** Run after a bounty's flag raises an image's nsfwLevel: the SQL rule saw the stored level. */
+const keepsMinorRule =
+  (viewer: { id: number; isModerator?: boolean } | undefined) =>
+  (image: { minor?: boolean | null; nsfwLevel: number; userId: number }) =>
+    !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
+
+type ModerationFields = 'minor' | 'poi' | 'needsReview' | 'blockedFor' | 'ingestion';
+type ModerationState = {
+  userId: number;
+  minor?: boolean | null;
+  poi?: boolean | null;
+  needsReview?: string | null;
+  blockedFor?: string | null;
+  ingestion?: string | null;
+};
+/** An image's moderation state goes only to its uploader and moderators. */
+const withoutOthersModerationFields =
+  (viewer: { id: number; isModerator?: boolean } | undefined) =>
+  <T extends ModerationState>(image: T): Omit<T, ModerationFields> => {
+    if (viewer?.isModerator || image.userId === viewer?.id) return image;
+    const {
+      poi: _poi,
+      needsReview: _needsReview,
+      blockedFor: _blockedFor,
+      ingestion: _ingestion,
+      ...rest
+    } = image;
+    return withoutMinorFlag(rest as ModerationState) as unknown as Omit<T, ModerationFields>;
+  };
 
 export const getInfiniteBountiesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteBountySchema;
+  // ids: semantic search hydrates its ranked bounties through the feed's own query.
+  input: GetInfiniteBountySchema & { ids?: number[] };
   ctx: Context;
 }) => {
   const { user } = ctx;
@@ -68,6 +110,7 @@ export const getInfiniteBountiesHandler = async ({
         user: { select: userWithCosmeticsSelect },
         nsfw: true,
         nsfwLevel: true,
+        moderatorNsfwLevel: true,
         tags: {
           select: {
             tagId: true,
@@ -96,32 +139,51 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const images = await getImagesForBounties({
-      bountyIds: bountIds,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, textRated, showsImage] = await Promise.all([
+      getImagesForBounties({
+        bountyIds: bountIds,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+        ...reportListedViewerOf(ctx),
+      }),
+      getTextRatedBountyLevels(items.filter(mayBeTextRated).map((bounty) => bounty.id)),
+      getRequestImageFilter(ctx),
+    ]);
 
     return {
       nextCursor,
       items: items
-        .map((item) => {
-          const itemImages = images[item.id];
+        .map(({ moderatorNsfwLevel, ...item }) => {
           const tags = item.tags;
           const user = item.user;
+          const flagLevel = bountyNsfwFlagLevel(
+            { ...item, moderatorNsfwLevel },
+            textRated.get(item.id)
+          );
+          const itemImages = capNestedImages(
+            (images[item.id] ?? [])
+              .filter(showsImage)
+              .map((image) => ({
+                ...image,
+                tagIds: image.tags.map((x) => x.id),
+                nsfwLevel: bountyImageNsfwLevel(
+                  { ...item, moderatorNsfwLevel },
+                  textRated.get(item.id),
+                  image.nsfwLefel
+                ),
+              }))
+              .filter(keepsMinorRule(ctx.user))
+              .map(withoutOthersModerationFields(ctx.user)),
+            ctx
+          );
           // if there are no images, we don't want to show the bounty
-          if (!itemImages?.length || !user) return null;
+          if (!itemImages.length || !user) return null;
 
           return {
             ...item,
-            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
+            nsfwLevel: flagLevel ?? item.nsfwLevel,
             user,
-            images: itemImages.map((image) => ({
-              ...image,
-              tagIds: image.tags.map((x) => x.id),
-              // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
-              nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
-            })),
+            images: itemImages,
             tags: tags.map(({ tagId }) => tagId),
           };
         })
@@ -140,6 +202,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       select: {
         ...getBountyDetailsSelect,
         meta: true,
+        moderatorNsfwLevel: true,
         benefactors: {
           select: {
             user: {
@@ -176,30 +239,48 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             userId: user.id,
           })
         : null;
-    const { meta: _meta, ...publicBounty } = bounty;
+    const { meta: _meta, moderatorNsfwLevel: _moderatorNsfwLevel, ...publicBounty } = bounty;
 
-    const images = await getBountyImages({
-      id: bounty.id,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, textRated, showsImage] = await Promise.all([
+      getBountyImages({
+        id: bounty.id,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+        ...reportListedViewerOf(ctx),
+      }),
+      mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
+      getRequestImageFilter(ctx),
+    ]);
+    const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(bounty.id));
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
       ...publicBounty,
+      nsfwLevel: flagLevel ?? publicBounty.nsfwLevel,
       poiFlagged,
       poiAppeal,
       flagScanReasons: poiFlagged
         ? resolveFlagScanReasons({ isOwner, poi: bounty.poi, minor: false, meta: bounty.meta })
         : [],
       details: bounty.details
-        ? filterSensitiveProfanityData(
-            bounty.details as BountyDetailsSchema,
-            ctx?.user?.isModerator
-          )
+        ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
-      images: images.map((image) => ({
+      images: capNestedImages(
+        images
+          .filter(showsImage)
+          .map((image) => ({
+            ...image,
+            nsfwLevel: bountyImageNsfwLevel(
+              bounty,
+              textRated.get(bounty.id),
+              image.nsfwLevel
+            ) as NsfwLevel,
+          }))
+          .filter(keepsMinorRule(ctx.user))
+          .map(withoutOthersModerationFields(ctx.user)),
+        ctx
+      ).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
         metadata: image?.metadata as MixedObject,
@@ -265,14 +346,19 @@ export const getBountyEntriesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    const images = await getImagesByEntity({
-      ids: entries.map((entry) => entry.id),
-      type: 'BountyEntry',
-      imagesPerId: 4,
-      include: ['tags'],
-      isModerator: ctx.user?.isModerator,
-      userId: ctx.user?.id,
-    });
+    const [images, showsImage] = await Promise.all([
+      getImagesByEntity({
+        ids: entries.map((entry) => entry.id),
+        type: 'BountyEntry',
+        imagesPerId: 4,
+        include: ['tags'],
+        isModerator: ctx.user?.isModerator,
+        userId: ctx.user?.id,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        seesReportListed: seesReportListed(ctx),
+      }),
+      getRequestImageFilter(ctx),
+    ]);
 
     const files = await getFilesByEntity({
       ids: entries.map((entry) => entry.id),
@@ -297,13 +383,14 @@ export const getBountyEntriesHandler = async ({
           return {
             ...entry,
             user,
-            images: images
-              .filter((i) => i.entityId === entry.id)
-              .map((i) => ({
-                ...i,
-                tagIds: i.tags?.map((x) => x.id),
-                metadata: i.metadata as ImageMetaProps,
-              })),
+            images: capNestedImages(
+              images.filter((i) => i.entityId === entry.id && showsImage(i)),
+              ctx
+            ).map((i) => ({
+              ...i,
+              tagIds: i.tags?.map((x) => x.id),
+              metadata: i.metadata as ImageMetaProps,
+            })),
             // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
             fileUnlockAmount: Math.max(
               0,
@@ -369,7 +456,12 @@ export const upsertBountyHandler = async ({
     else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
 
     const { meta: _meta, ...publicBounty } = bounty;
-    return publicBounty;
+    return {
+      ...publicBounty,
+      details: publicBounty.details
+        ? publicBountyDetails(publicBounty.details as BountyDetailsSchema, ctx.user.isModerator)
+        : publicBounty.details,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

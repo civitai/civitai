@@ -23,7 +23,6 @@ const h = vi.hoisted(() => ({
   allowance: 1,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
 vi.mock('~/providers/AppProvider', async (orig) => ({
   ...(await orig<object>()),
   useAppContext: () => ({ domain: 'blue' }),
@@ -93,7 +92,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (_input: unknown, opts: { enabled: boolean }) => ({
             ...quoted(),
             data:
-              opts.enabled && h.price ? { prices: [{ slug: 'anime-it', ...h.price }] } : undefined,
+              opts.enabled && h.price
+                ? { prices: ['anime-it', 'restyle'].map((slug) => ({ slug, ...h.price })) }
+                : undefined,
           }),
         },
         'remixApp.teamQuote': {
@@ -132,7 +133,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 
 import { getQueryKey } from '@trpc/react-query';
+import { useState } from 'react';
 import { RemixAppModalContent } from '~/components/Image/Remix/RemixAppModal';
+import { RemixTray } from '~/components/Image/Remix/RemixTray';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
 import { queryClient, trpc } from '~/utils/trpc';
 
@@ -160,12 +163,15 @@ async function setStatus(id: string, status: string) {
 
 const runButton = () => page.getByRole('button', { name: /^Run/ });
 const onClose = vi.fn();
+const closeToTray = () => page.getByRole('button', { name: 'Close to tray' });
 
 beforeEach(() => {
   vi.clearAllMocks();
   queryClient.clear();
   h.items = [];
   h.price = { cost: 25, ready: true };
+  // A test that fails before taking its queued answers must not hand them to the next.
+  h.start.mockReset();
   h.start.mockImplementation(async () => {
     h.items = [workflow('wf-0', 'processing')];
     return { status: 'running', runId: RUN, workflowId: 'wf-0' };
@@ -185,9 +191,13 @@ async function finishedRun() {
     outputs: [{ url: 'https://example.com/out.png' }],
   });
   const screen = await renderWithProviders(
-    <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+    <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+    { user: { id: 9 } }
   );
   await runButton().click();
+  // Run closed it to the tray; from here it plays as the modal reopened from there.
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  onClose.mockClear();
   await setStatus('wf-0', 'succeeded');
   await expect.element(page.getByTestId('remix-result-line')).toBeVisible();
   return screen;
@@ -199,7 +209,8 @@ describe('RemixAppModal', () => {
   test('Run is held while the price loads, then starts the run capped at the price shown', async () => {
     h.price = undefined;
     const screen = await renderWithProviders(
-      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
     );
     await expect.element(runButton()).toBeDisabled();
     (runButton().element() as HTMLElement).click();
@@ -214,10 +225,36 @@ describe('RemixAppModal', () => {
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
   });
 
-  test('a team remix is held while it is quoting, and its run sends no team', async () => {
+  test('Run collapses the modal into the tray, which shows the run in progress', async () => {
+    function ModalOverTray() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          {open && (
+            <RemixAppModalContent app={animeIt} imageId={5} onClose={() => setOpen(false)} />
+          )}
+          <RemixTray />
+        </>
+      );
+    }
+    await renderWithProviders(<ModalOverTray />, { user: { id: 9 } });
+    // POSITIVE CONTROL: before Run, the modal is up and the tray has nothing to show.
+    await expect.element(closeToTray()).toBeVisible();
+    expect(document.querySelector('[data-testid="remix-tray-in-progress"]')).toBeNull();
+
+    await runButton().click();
+
+    await expect.element(page.getByTestId('remix-tray-in-progress')).toHaveTextContent('1');
+    // The modal is gone, not left showing its running step.
+    await expect.element(closeToTray()).not.toBeInTheDocument();
+    expect(h.start).toHaveBeenCalledTimes(1);
+  });
+
+  test('a team remix is held while it is quoting, and its run sends no team, capped at the price shown', async () => {
     h.price = undefined;
     const screen = await renderWithProviders(
-      <RemixAppModalContent app={team} imageId={5} onClose={onClose} />
+      <RemixAppModalContent app={team} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
     );
     await expect.element(runButton()).toBeDisabled();
     (runButton().element() as HTMLElement).click();
@@ -228,8 +265,14 @@ describe('RemixAppModal', () => {
     await expect.element(runButton()).toBeEnabled();
     await runButton().click();
     await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
-    expect(Object.keys(h.run.mock.calls[0][0]).sort()).toEqual(['imageId', 'nonce', 'slug']);
-    expect(h.run.mock.calls[0][0]).toMatchObject({ slug: TEAM_REMIX_SLUG, imageId: 5 });
+    // No team (the server reads it from the joins); the price shown is the cap.
+    expect(Object.keys(h.run.mock.calls[0][0]).sort()).toEqual([
+      'imageId',
+      'nonce',
+      'quote',
+      'slug',
+    ]);
+    expect(h.run.mock.calls[0][0]).toMatchObject({ slug: TEAM_REMIX_SLUG, imageId: 5, quote: 44 });
   });
 
   test('a started run refetches the queue, so the tray and the queue list it', async () => {
@@ -246,7 +289,10 @@ describe('RemixAppModal', () => {
     // POSITIVE CONTROL: the seeded list is live, so a refetch mark can only come from the run.
     expect(invalidated()).toBe(false);
 
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(invalidated()).toBe(true));
   });
@@ -258,7 +304,10 @@ describe('RemixAppModal', () => {
       workflowId: 'wf-0',
       outputs: [{ url: 'https://example.com/out.png' }],
     });
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await expect.element(page.getByTestId('remix-running')).toBeVisible();
     // Still running: nothing is asked yet.
@@ -277,7 +326,10 @@ describe('RemixAppModal', () => {
       workflowId: 'wf-0',
       reason: 'This step failed.',
     });
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await setStatus('wf-0', 'failed');
     await expect.element(page.getByText('This step failed.')).toBeVisible();
@@ -293,7 +345,10 @@ describe('RemixAppModal', () => {
 
   test('a retry after a failed Run repeats the same tap, so it can only make one run', async () => {
     h.start.mockRejectedValueOnce(new Error('network'));
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     // POSITIVE CONTROL: the failure left the offer on screen, ready to retry.
@@ -314,7 +369,10 @@ describe('RemixAppModal', () => {
       h.items = [workflow('wf-0', 'processing')];
       return { status: 'running', runId: RUN, workflowId: 'wf-0' };
     });
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     (runButton().element() as HTMLElement).click();
@@ -325,13 +383,17 @@ describe('RemixAppModal', () => {
 
   test('each opening of the modal is a new tap', async () => {
     const first = await renderWithProviders(
-      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
     );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
     await first.unmount();
 
-    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
     await runButton().click();
     await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(2));
     const [a, b] = h.start.mock.calls.map(([input]) => input.nonce);
@@ -360,17 +422,20 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
 
     await page.getByRole('button', { name: 'Cool' }).click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
     expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['cool'] });
+    // A free answer stays in the modal to show the next step's price.
+    expect(onClose).not.toHaveBeenCalled();
 
     await page.getByRole('button', { name: /^Continue/ }).click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(3));
     expect(h.advance.mock.calls[2][0]).toEqual({ runId: RUN, answers: ['cool'], quote: 30 });
-    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   test('a pick leaves out a take the viewer may not see, and the rest keep their index', async () => {
@@ -388,7 +453,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
 
     await expect.element(page.getByRole('button', { name: 'Pick image 3' })).toBeVisible();
@@ -422,7 +488,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
 
     const upscale = page.getByRole('button', { name: /^Upscale 2×/ });
@@ -437,7 +504,55 @@ describe('RemixAppModal', () => {
     await upscale.click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
     expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['upscale'], quote: 12 });
-    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  test('asks before the first step: a skip and a priced style go through start, then it collapses to the tray', async () => {
+    const restyle = { slug: 'restyle', name: 'Restyle', runtime: true };
+    const text = {
+      kind: 'text',
+      prompt: 'Add something to the scene (optional)',
+      maxLength: 120,
+      optional: true,
+    };
+    const choice = {
+      kind: 'choice',
+      prompt: 'Pick a style',
+      options: [
+        { value: 'watercolor', label: 'Watercolor' },
+        { value: 'ukiyo-e', label: 'Ukiyo-e' },
+      ],
+    };
+    h.start
+      .mockResolvedValueOnce({ status: 'ask', runId: RUN, ask: text })
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: choice,
+        prices: { watercolor: 25, 'ukiyo-e': 25 },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-0' });
+    await renderWithProviders(
+      <RemixAppModalContent app={restyle} imageId={5} onClose={onClose} />,
+      { user: { id: 9 } }
+    );
+
+    await runButton().click();
+    await page.getByRole('button', { name: 'Skip' }).click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(2));
+    expect(h.start.mock.calls[1][0]).toMatchObject({ slug: 'restyle', imageId: 5, answers: [''] });
+    // A free answer stays in the modal; the style's price is on its button.
+    expect(onClose).not.toHaveBeenCalled();
+    const ukiyoE = page.getByRole('button', { name: /^Ukiyo-e/ });
+    await expect.element(ukiyoE).toHaveTextContent('25');
+
+    await ukiyoE.click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(3));
+    expect(h.start.mock.calls[2][0]).toMatchObject({ answers: ['', 'ukiyo-e'], quote: 25 });
+    // The same tap each time: one nonce names one run.
+    expect(new Set(h.start.mock.calls.map(([input]) => input.nonce)).size).toBe(1);
+    expect(h.advance).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   test('⋯ Dismiss adds remix:dismissed to the run and closes', async () => {
@@ -447,7 +562,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     await page.getByRole('button', { name: 'More' }).click();
     await page.getByRole('menuitem', { name: 'Dismiss' }).click();
@@ -467,7 +583,8 @@ describe('RemixAppModal', () => {
         app={animeIt}
         run={{ runId: RUN, workflowId: 'wf-0' }}
         onClose={onClose}
-      />
+      />,
+      { user: { id: 9 } }
     );
     // POSITIVE CONTROL: the run is live, so its ⋯ menu is on screen.
     await expect.element(page.getByRole('button', { name: 'More' })).toBeVisible();

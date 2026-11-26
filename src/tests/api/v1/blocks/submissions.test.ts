@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Handler-level coverage for GET /api/v1/blocks/submissions — the token-auth,
@@ -64,6 +65,7 @@ const {
   mockIsAppBlocksAuthorEnabled,
   mockFindMany,
   mockFindFirst,
+  mockQueryRaw,
   mockSysRedis,
   mockMultiIncr,
 } = vi.hoisted(() => {
@@ -88,6 +90,7 @@ const {
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockFindMany: vi.fn(),
     mockFindFirst: vi.fn(),
+    mockQueryRaw: vi.fn(),
     mockSysRedis: {
       multi: vi.fn(multiFactory),
       ttl: vi.fn().mockResolvedValue(60),
@@ -104,7 +107,11 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findMany: mockFindMany, findFirst: mockFindFirst } },
+  dbRead: {
+    appBlockPublishRequest: { findMany: mockFindMany, findFirst: mockFindFirst },
+    // The `actions_run_*` columns are no-type, so they are read with raw SQL.
+    $queryRaw: mockQueryRaw,
+  },
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
@@ -112,7 +119,16 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 
+const { mockFliptVariant } = vi.hoisted(() => ({
+  mockFliptVariant: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten' },
+  getFliptVariant: mockFliptVariant,
+}));
+
 import handler from '~/pages/api/v1/blocks/submissions';
+import { Prisma } from '@prisma/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const OWNER_ID = 7;
@@ -181,9 +197,13 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author capability defaults to the mod-floor (mirrors isAppBlocksAuthorEnabled
   // when the app-blocks-author Flipt flag is absent): mods pass, non-mods don't.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
   mockFindMany.mockResolvedValue([dbRow()]);
   mockFindFirst.mockResolvedValue(dbRow());
+  // No Actions run recorded for any row unless a test says otherwise.
+  mockQueryRaw.mockResolvedValue([]);
 });
 
 function authGet(query: Record<string, string> = {}) {
@@ -345,6 +365,8 @@ describe('GET /api/v1/blocks/submissions', () => {
       updatedAt: '2026-06-22T00:00:00.000Z',
       createdAt: '2026-06-20T00:00:00.000Z',
       liveUrl: 'https://my-page-app.civit.ai/',
+      // No Actions run recorded: present as a key, and null.
+      actionsRunSource: null,
     });
     // No internal-only columns leaked.
     expect(s).not.toHaveProperty('bundleKey');
@@ -564,6 +586,114 @@ describe('GET /api/v1/blocks/submissions', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // The GitHub Actions run that sent the submit (`actions_run_*`), for
+  // `civitai app status`. Shown under the SAME rule as the public store page:
+  // public repositories and tag refs only.
+  // ---------------------------------------------------------------------------
+  describe('actionsRunSource', () => {
+    const RUN_SHA = '177445b0c9d2e8f1a3b5c7d9e1f2a4b6c8d0e2f4';
+    const CLAIMED_SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+    function runRow(over: Record<string, unknown> = {}) {
+      return {
+        id: 'pubreq_01',
+        repository: 'harbor-tools/knot-tier',
+        repositoryId: '880011',
+        repositoryOwnerId: '770022',
+        sha: RUN_SHA,
+        ref: 'refs/tags/v0.9.1',
+        workflowRef: 'harbor-tools/knot-tier/.github/workflows/release.yml@refs/tags/v0.9.1',
+        repositoryVisibility: 'public',
+        runId: '9900112233',
+        ...over,
+      };
+    }
+
+    it('returns a recorded public run as { repository, tag, sha }, only on its own row', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindMany.mockResolvedValueOnce([
+        dbRow({ id: 'pubreq_01', sourceCommit: CLAIMED_SHA, sourceDirty: false }),
+        dbRow({ id: 'pubreq_02', version: '0.0.9' }),
+      ]);
+      mockQueryRaw.mockResolvedValueOnce([runRow()]);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+      expect(out.submissions[0].actionsRunSource).toEqual({
+        repository: 'harbor-tools/knot-tier',
+        tag: 'v0.9.1',
+        sha: '177445b0c9d2e8f1a3b5c7d9e1f2a4b6c8d0e2f4',
+      });
+      // A different trust level from the client claim: neither replaces the other.
+      expect(out.submissions[0].sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+      // The row with no recorded run gets null, not its neighbour's run.
+      expect(out.submissions[1].actionsRunSource).toBeNull();
+      // The read is scoped to the rows this response returns.
+      const [strings, ...values] = mockQueryRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        ...unknown[]
+      ];
+      expect(Prisma.sql(strings, ...(values as Prisma.Sql[])).values).toEqual([
+        'pubreq_01',
+        'pubreq_02',
+      ]);
+    });
+
+    it('the ?id= single-item read returns the recorded public run too', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockQueryRaw.mockResolvedValueOnce([runRow()]);
+      const { req, res } = authGet({ id: 'pubreq_01' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as { submission: Record<string, unknown> };
+      expect(out.submission.actionsRunSource).toEqual({
+        repository: 'harbor-tools/knot-tier',
+        tag: 'v0.9.1',
+        sha: '177445b0c9d2e8f1a3b5c7d9e1f2a4b6c8d0e2f4',
+      });
+    });
+
+    it('a private or internal repository run is null, as on the public store page', async () => {
+      for (const repositoryVisibility of ['private', 'internal']) {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockQueryRaw.mockResolvedValueOnce([runRow({ repositoryVisibility })]);
+        const { req, res } = authGet();
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+        expect(out.submissions[0].actionsRunSource).toBeNull();
+      }
+    });
+
+    it('a run whose stored ref is not a tag, or whose sha is malformed, is null', async () => {
+      for (const over of [{ ref: 'refs/heads/main' }, { sha: 'not-a-sha' }]) {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockQueryRaw.mockResolvedValueOnce([runRow(over)]);
+        const { req, res } = authGet();
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+        expect(out.submissions[0].actionsRunSource).toBeNull();
+      }
+    });
+
+    it('a failed run read (columns not applied yet) still answers 200 with null', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockQueryRaw.mockRejectedValueOnce(
+        Object.assign(new Error('column "actions_run_sha" does not exist'), {
+          code: 'P2010',
+          meta: { code: '42703' },
+        })
+      );
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as { submissions: Array<Record<string, unknown>> };
+      expect(out.submissions[0].actionsRunSource).toBeNull();
+    });
+  });
+
   it('429 when the per-user rate limit is exceeded', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockMultiIncr.value = 61; // > RATE_LIMIT.max (60)
@@ -571,6 +701,27 @@ describe('GET /api/v1/blocks/submissions', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    // An abuse limit: the house meta names it and the wait, and carries no counts. The body
+    // keeps only the envelope, the route's own top-level `retryAfterSeconds` and the meta:
+    // the old top-level `limit` / `windowSeconds` are gone (`rateLimit` is what clients read).
+    expect(res._getJSONData()).toMatchObject({
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: { retryAfterSeconds: 60, id: 'apps.listing-submissions', kind: 'abuse' },
+    });
+    expect(Object.keys((res._getJSONData() as { rateLimit: object }).rateLimit).sort()).toEqual([
+      'id',
+      'kind',
+      'retryAfterSeconds',
+      'retryAt',
+    ]);
+    expect(Object.keys(res._getJSONData() as object).sort()).toEqual([
+      'code',
+      'error',
+      'message',
+      'rateLimit',
+      'retryAfterSeconds',
+    ]);
     expect(mockFindMany).not.toHaveBeenCalled();
   });
 
@@ -603,5 +754,162 @@ describe('GET /api/v1/blocks/submissions', () => {
       'system:blocks:submissions-rate-limit:u:7',
       60
     );
+  });
+});
+
+/**
+ * 🔴 Authors should not see raw boot-check output. A review boot check stores text the app itself
+ * produced (`messagesSeen`, `firstError`, and `firstError` quoted in the failed preview's
+ * `error`); this exit must return only the fixed author reason. The marker is a value no constant
+ * in the code can equal, so a hardcoded reason cannot hide it and its absence is meaningful.
+ */
+describe('GET /api/v1/blocks/submissions — boot-check author redaction', () => {
+  const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+  const failedPreviewDetail = (firstError: string | null) =>
+    JSON.stringify({
+      sha: 'a'.repeat(40),
+      host: 'review-x.civit.ai',
+      url: 'https://review-x.civit.ai/my-page-app',
+      bootCheck: {
+        result: 'failed',
+        ms: 6123,
+        messagesSeen: ['BLOCK_HELLO', `${MARKER}-msg`],
+        firstError,
+        checkedAt: '2026-06-22T00:00:00.000Z',
+        mode: 'enforce',
+      },
+      error: `Boot check: the app loaded but never sent BLOCK_READY within 10s. First error: ${
+        firstError ?? ''
+      }. Fix and resubmit.`,
+    });
+  const pendingRow = (deployDetail: string) =>
+    dbRow({ status: 'pending', deployState: 'preview-failed', deployDetail });
+
+  it('the list exit: no marker anywhere in the response, the fixed reason present', async () => {
+    mockFindMany.mockResolvedValueOnce([pendingRow(failedPreviewDetail(`${MARKER}-err`))]);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+
+    expect(res._getStatusCode()).toBe(200);
+    const body = JSON.stringify(res._getJSONData());
+    expect(body).not.toContain(MARKER);
+    const s = (res._getJSONData() as { submissions: Array<{ deployDetail: string }> })
+      .submissions[0];
+    const detail = JSON.parse(s.deployDetail);
+    expect(detail.bootCheck).toEqual({
+      result: 'failed',
+      mode: 'enforce',
+      reason: 'page-error',
+    });
+    expect(detail.error).toBe(
+      'Boot check: the app loaded but never sent BLOCK_READY within 10s. An error was reported while it loaded (a console error, or a script served with a non-JavaScript type): open the app and check the browser console. Fix and resubmit.'
+    );
+    // The rest of the preview detail is untouched.
+    expect(detail.sha).toBe('a'.repeat(40));
+  });
+
+  it('the single-item exit (?id=): no marker, the fixed reason present', async () => {
+    mockFindFirst.mockResolvedValueOnce(pendingRow(failedPreviewDetail(null)));
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = authGet({ id: 'pubreq_01' });
+    await handler(req as never, res as never);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(JSON.stringify(res._getJSONData())).not.toContain(MARKER);
+    const s = (res._getJSONData() as { submission: { deployDetail: string } }).submission;
+    expect(JSON.parse(s.deployDetail).bootCheck.reason).toBe('no-ready-signal');
+  });
+
+  it('a plain-text build failure detail is passed through unchanged', async () => {
+    const plain = 'Build Failed\n\nnpm ERR! missing script: build';
+    mockFindMany.mockResolvedValueOnce([dbRow({ deployState: 'failed', deployDetail: plain })]);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    const s = (res._getJSONData() as { submissions: Array<{ deployDetail: string }> })
+      .submissions[0];
+    expect(s.deployDetail).toBe(plain);
+  });
+});
+
+describe('/api/v1/blocks/submissions under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // A personal key narrower than Full.
+  const NARROW_KEY_SESSION = {
+    ...MOD_SESSION,
+    apiKeyType: 'User',
+    tokenScope: TokenScope.UserRead | TokenScope.ModelsRead,
+  };
+  const FULL_KEY_SESSION = { ...MOD_SESSION, apiKeyType: 'User' };
+
+  it('enforce: 403s a narrow personal key before any other work', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect((res._getJSONData() as { message: string }).message).toContain('Full Access');
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(mockFliptVariant).toHaveBeenCalledWith('bearer-scope-tighten');
+  });
+
+  it('log: lets a narrow personal key through and logs it', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFindMany).toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          mode: 'log',
+          route: '/api/v1/blocks/submissions',
+          credentialKind: 'apiKey',
+          apiKeyId: NARROW_KEY_SESSION.apiKeyId,
+        }),
+      })
+    );
+  });
+
+  it('off (any unknown variant): lets a narrow personal key through without logging', async () => {
+    mockFliptVariant.mockResolvedValue('bogus');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'bearer-scope-refused' })
+    );
+  });
+
+  it('off when the flag read fails', async () => {
+    mockFliptVariant.mockRejectedValue(new Error('flipt down'));
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+  });
+
+  it('enforce: a Full Access personal key passes without reading the flag', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(FULL_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFliptVariant).not.toHaveBeenCalled();
+  });
+
+  it('enforce: an OAuth token carrying AppBlocksSubmit passes', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(OAUTH_SCOPED_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
   });
 });

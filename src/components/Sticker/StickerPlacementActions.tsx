@@ -63,7 +63,7 @@ export function StickerPlacementActions({
   const utils = trpc.useUtils();
 
   const act = trpc.placement.actOnStickers.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: (result) => {
       showSuccessNotification({
         // Deliberately does not promise a retry. Nothing retries a failed owner
         // action; the placement stays pending and reaches expiry, which refunds
@@ -73,13 +73,15 @@ export function StickerPlacementActions({
           ? `Actioned ${result.settled}. ${result.failed.length} didn't go through — try those again.`
           : `Actioned ${result.settled}.`,
       });
-      await utils.placement.invalidate();
+      // Not awaited: the buttons stay disabled while this callback runs, and the
+      // refetches have nothing to do with whether the action went through.
+      void utils.placement.invalidate();
       // The user-menu badge counts these, and it rides on `checkNotifications`,
       // which is `staleTime: Infinity` with no invalidation anywhere — so
       // without this an owner who just cleared their whole queue keeps a badge
       // advertising the number they started the session with, pointing at
       // nothing. Answering a placement is the one event that changes it.
-      await utils.user.checkNotifications.invalidate();
+      void utils.user.checkNotifications.invalidate();
       setConfirming(false);
       setApproving(false);
       onDone?.();
@@ -107,6 +109,7 @@ export function StickerPlacementActions({
       color="green"
       disabled={disabled}
       fullWidth={stacked}
+      className={stacked ? 'max-sm:min-h-9 max-sm:flex-1' : undefined}
       onClick={() => (asksAboutNote ? setApproving((open) => !open) : approve())}
     >
       Approve{placementIds.length > 1 ? ` ${placementIds.length}` : ''}
@@ -114,7 +117,11 @@ export function StickerPlacementActions({
   );
 
   return (
-    <Group gap={4} wrap="nowrap" className={clsx(stacked && 'flex-col items-stretch')}>
+    <Group
+      gap={4}
+      wrap="nowrap"
+      className={clsx(stacked && 'flex-col items-stretch max-sm:basis-full max-sm:flex-row')}
+    >
       {asksAboutNote ? (
         <Popover opened={approving} onChange={setApproving} withArrow position="top" width={280}>
           <Popover.Target>{approveButton}</Popover.Target>
@@ -140,6 +147,7 @@ export function StickerPlacementActions({
             size={size}
             color="red"
             fullWidth={stacked}
+            className={stacked ? 'max-sm:min-h-9 max-sm:flex-1' : undefined}
             // Filled, not light. `light` is a tinted background at low contrast,
             // which sits on top of arbitrary artwork on the image overlay and
             // becomes unreadable against anything busy or red.

@@ -1,0 +1,335 @@
+/**
+ * The HTTP binding of the registry protocol (the registry spec, "Bindings" → "HTTP"):
+ * `GET /subscribe?schema=&cursor=&urn=&filter=&meta=` streaming `text/event-stream`, plus
+ * `/healthz` for a process supervisor. Everything between request and events is the shared core
+ * (`subscription.ts`); this file only maps the request in and the events and errors out.
+ *
+ *   - Each event is an SSE event of its type; one with a cursor field also carries it as the SSE
+ *     `id`, an empty `id` when the cursor is empty, so a client may resume with `Last-Event-ID`
+ *     instead of `cursor`. When a request has both,
+ *     `Last-Event-ID` wins: an `EventSource` reconnects to its original URL, `cursor` and all,
+ *     and sets the header to the last event it received, which is always the later position.
+ *   - An error before the stream starts is its HTTP status with `{ "error", "message" }`; after,
+ *     an `error` event with the same data.
+ *   - An idle stream gets an SSE comment line every {@link HEARTBEAT_MS}, which proxies count as
+ *     traffic.
+ *   - A consumer that keeps the socket's buffer full for {@link SLOW_CONSUMER_MS} is ended with
+ *     `slow_consumer`.
+ *   - A subscription over a cap on open subscriptions (`limits.ts`) is 503 `unavailable`.
+ *   - Auth (`auth.ts`): the token is the `Authorization: Bearer` header; without one the request
+ *     is anonymous. `invalid_token` before the stream is 401 with its JSON body and a
+ *     `WWW-Authenticate: Bearer error=…` header; after, an `error` event, at the token's expiry or
+ *     when a re-check finds it revoked (or `cursor_expired` when the user's ratings changed). `/.well-known/oauth-protected-resource` is served when a
+ *     resource is configured.
+ *
+ * Served as HTTP/1.1, which the spec allows ("HTTP/1.1 works"); see `grpc.ts` for why the gRPC
+ * binding has its own port.
+ */
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
+import type { ResourceConfig, VerifyToken } from '~/server/registry-adapter/auth';
+import {
+  PROTECTED_RESOURCE_PATH,
+  authenticate,
+  isAuthError,
+  protectedResourceMetadata,
+  resourceMetadataUrl,
+  watchPrincipal,
+  wwwAuthenticate,
+} from '~/server/registry-adapter/auth';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
+import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
+import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
+import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
+import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  regionRestricted,
+  subscriptionRegionLine,
+} from '~/server/registry-adapter/request-origin';
+import type { EventSink } from '~/server/registry-adapter/subscription';
+import {
+  SLOW_CONSUMER_MS,
+  createSubscriber,
+  drained,
+} from '~/server/registry-adapter/subscription';
+
+const HEARTBEAT_MS = 15_000;
+const CORS = { 'access-control-allow-origin': '*' };
+
+/**
+ * One SSE frame: the event name, then for an event with a cursor field its cursor as the `id`,
+ * then its fields. An empty cursor (a snapshot upsert: a snapshot cannot be continued) is an
+ * empty `id:` line, not an omitted one, so the client's `Last-Event-ID` resets rather than
+ * keeping an older cursor that would miss deletes. `end` has no cursor field, and no `id`.
+ */
+export function sseFrame(event: StreamEvent): string {
+  const { type, ...data } = event;
+  const id = 'cursor' in event ? (event.cursor === '' ? 'id:\n' : `id: ${event.cursor}\n`) : '';
+  return `event: ${type}\n${id}data: ${JSON.stringify(data)}\n\n`;
+}
+
+function sendJson(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {}
+) {
+  res.writeHead(status, { 'content-type': 'application/json', ...CORS, ...headers });
+  res.end(JSON.stringify(body));
+}
+
+/**
+ * A `ProtocolError` is sent as is. Anything else is `unavailable` with a fixed message: its own
+ * text can name a database or a host, and this endpoint is public.
+ */
+function sendError(
+  res: ServerResponse,
+  err: unknown,
+  onError?: (err: unknown) => void,
+  resourceMetadata?: string
+) {
+  let code: ErrorCode = 'unavailable';
+  let message = 'unavailable';
+  if (err instanceof ProtocolError) {
+    code = err.code;
+    message = err.message;
+  } else {
+    onError?.(err);
+  }
+  if (res.writableEnded || res.destroyed) return;
+  if (res.headersSent) {
+    res.end(`event: error\ndata: ${JSON.stringify({ error: code, message })}\n\n`);
+    // A consumer that stopped reading would hold the socket (and the error frame) forever:
+    // `slow_consumer` frees it. Its consumer reconnects from its cursor either way.
+    if (code === 'slow_consumer') res.destroy();
+  } else {
+    // An auth error before the stream starts names the metadata document too (auth extension,
+    // "Errors"; RFC 6750 and RFC 9728).
+    const headers: Record<string, string> = isAuthError(code)
+      ? { 'www-authenticate': wwwAuthenticate(code, message, resourceMetadata) }
+      : {};
+    sendJson(res, HTTP_STATUS[code], { error: code, message }, headers);
+  }
+}
+
+/**
+ * The stream's sink, and `stop`, which every path that ends the response calls FIRST (an `end`
+ * event, an error, `slow_consumer`, the consumer going away). The heartbeat timer is cleared
+ * there, not on `close`: a consumer that stopped reading delays `close` indefinitely, and a
+ * heartbeat written after the response ended would be a write after end.
+ */
+function openStream(
+  res: ServerResponse,
+  slowConsumerMs: number,
+  /**
+   * The subscription carries a token. Its stream belongs to that one consumer (auth extension,
+   * relay rule 2), so no cache on the way may store or share it.
+   */
+  authorized: boolean
+): { sink: EventSink; stop: () => void } {
+  const abort = new AbortController();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  const stop = () => {
+    clearInterval(heartbeat);
+    heartbeat = undefined;
+    abort.abort();
+  };
+  if (res.closed) {
+    stop();
+    return { sink: { signal: abort.signal, send: async () => undefined }, stop };
+  }
+  const ended = () => res.writableEnded || res.destroyed;
+  res.on('close', stop);
+  // A socket error (a reset mid-write) must never be unhandled: the stream just stops.
+  res.on('error', stop);
+  let started = false;
+  const sink: EventSink = {
+    signal: abort.signal,
+    async send(event) {
+      if (abort.signal.aborted || ended()) return;
+      if (!started) {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': authorized ? 'private, no-store' : 'no-cache',
+          ...(authorized ? { vary: 'Authorization' } : {}),
+          ...CORS,
+        });
+        started = true;
+        // Armed only once the head is written: a heartbeat before it would send default
+        // headers, and the writeHead above would then throw.
+        heartbeat = setInterval(() => {
+          if (ended()) stop();
+          else res.write(': heartbeat\n\n');
+        }, HEARTBEAT_MS);
+      }
+      const flushed = res.write(sseFrame(event));
+      if (event.type === 'end') {
+        stop();
+        res.end();
+      } else if (!flushed) {
+        await drained(res, abort.signal, slowConsumerMs);
+      }
+    },
+  };
+  return { sink, stop };
+}
+
+/**
+ * The cursor a request resumes from: `Last-Event-ID` when set (see the file comment), else
+ * `cursor`. An empty `Last-Event-ID` is the empty cursor the client stored (a snapshot it must
+ * start over), so it falls through to `cursor`, which such a client does not send either.
+ */
+function resumeCursor(req: IncomingMessage, params: URLSearchParams): string | null {
+  const header = req.headers['last-event-id'];
+  const lastEventId = Array.isArray(header) ? header[header.length - 1] : header;
+  return lastEventId || params.get('cursor');
+}
+
+/** The last value of a header a client may have sent more than once. */
+function lastHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[value.length - 1] : value;
+}
+
+export type ServeOptions = {
+  onError?: (err: unknown) => void;
+  slowConsumerMs?: number;
+  /** The site's token verification (`auth.live.ts`). Without it, any token is `invalid_token`. */
+  verifyToken?: VerifyToken;
+  /** Advertised as protected resource metadata, and named by every auth error. */
+  resource?: ResourceConfig;
+  /** How often an open stream's token is re-verified (`auth.ts`). */
+  tokenRecheckMs?: number;
+  /**
+   * The caps on open subscriptions (`limits.ts`), shared with the gRPC binding. Without it, none.
+   */
+  limiter?: SubscriptionLimiter;
+  /**
+   * Whether a request is held to SFW content (a region the site restricts or blocks, or no
+   * region at all): the site's own rule (`request-origin.ts`) unless replaced.
+   */
+  regionRestricted?: (origin: RequestOrigin) => boolean;
+  /**
+   * Called with one line per subscription once its token is accepted: its region decision
+   * (`regionLine`).
+   */
+  onRegion?: (line: string) => void;
+  /**
+   * Compares each subscription's decision with the content-policy service's, without waiting for
+   * it and without changing it (`policy-shadow.ts`). Without it, nothing is compared.
+   */
+  policyShadow?: PolicyShadow;
+  /**
+   * Decides each signed-in subscription's audience from the content-policy service, falling back
+   * to this source's own on any failure (`policy-enforce.ts`). Set, it replaces `policyShadow`
+   * (it runs the same comparison). Without it, nothing is enforced.
+   */
+  policyEnforce?: PolicyEnforcer;
+};
+
+export function handleRequest(
+  adapter: Adapter,
+  opts: ServeOptions = {}
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const subscribe = createSubscriber(adapter);
+  const metadataUrl = resourceMetadataUrl(opts.resource);
+  return async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/healthz') return sendJson(res, 200, { ok: true });
+    if (url.pathname === PROTECTED_RESOURCE_PATH && opts.resource) {
+      return sendJson(res, 200, protectedResourceMetadata(opts.resource));
+    }
+    if (url.pathname !== '/subscribe') {
+      return sendError(res, new ProtocolError('bad_request', `no route ${url.pathname}`));
+    }
+    let stream: ReturnType<typeof openStream> | undefined;
+    let unwatch: (() => void) | undefined;
+    let slot: SubscriptionSlot | undefined;
+    try {
+      const request = subscribeRequest({
+        schema: url.searchParams.get('schema'),
+        cursor: resumeCursor(req, url.searchParams),
+        urns: url.searchParams.getAll('urn'),
+        filter: url.searchParams.get('filter'),
+        meta: url.searchParams.get('meta'),
+      });
+      const origin: RequestOrigin = {
+        headers: req.headers,
+        meta: request.meta,
+        // Optional: a request handed to `handleRequest` directly need not carry a socket.
+        remoteAddress: req.socket?.remoteAddress,
+      };
+      // The total and per-address caps before the token is verified; per token once it is.
+      slot = opts.limiter?.acquire(clientAddress(origin));
+      const restricted = opts.regionRestricted ?? regionRestricted;
+      const authenticated = await authenticate(
+        lastHeader(req.headers.authorization),
+        opts.verifyToken,
+        {
+          regionRestricted: () => restricted(origin),
+        }
+      );
+      slot?.claim(authenticated.subject);
+      const principal = await decidePrincipal(opts, {
+        origin,
+        principal: authenticated,
+        held: restricted(origin),
+      });
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
+      const open = openStream(
+        res,
+        opts.slowConsumerMs ?? SLOW_CONSUMER_MS,
+        principal.subject !== null
+      );
+      stream = open;
+      // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
+      unwatch = watchPrincipal(
+        principal,
+        (err) => {
+          open.stop();
+          sendError(res, err, opts.onError, metadataUrl);
+        },
+        { recheckMs: opts.tokenRecheckMs }
+      );
+      await subscribe(request, open.sink, principal);
+    } catch (err) {
+      stream?.stop();
+      sendError(res, err, opts.onError, metadataUrl);
+    } finally {
+      unwatch?.();
+      slot?.release();
+    }
+  };
+}
+
+/**
+ * How long an idle keep-alive connection is held open, in ms. Above the 90 s a reverse proxy in
+ * front holds its idle upstream connections: were it shorter (Node's default is 5 s), the proxy
+ * could reuse a socket this server had just closed and answer 502.
+ */
+export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 100_000;
+
+/**
+ * `KEEP_ALIVE_TIMEOUT` in ms (same env var as `scripts/trpc-server/server.cjs`). An unset, zero,
+ * negative or non-numeric value is the default above, never Node's 5 s.
+ */
+export function keepAliveTimeoutFromEnv(env: Record<string, string | undefined>): number {
+  const ms = parseInt(env.KEEP_ALIVE_TIMEOUT ?? '', 10);
+  if (Number.isNaN(ms) || !Number.isFinite(ms) || ms <= 0) return DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  return ms;
+}
+
+export function createRegistryServer(
+  adapter: Adapter,
+  opts: ServeOptions & { keepAliveTimeoutMs?: number } = {}
+): Server {
+  const handle = handleRequest(adapter, opts);
+  const server = createServer((req, res) => void handle(req, res));
+  server.keepAliveTimeout = opts.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  // Strictly above keepAliveTimeout, so a request arriving on a connection about to idle out
+  // is not cut off by the headers timeout first.
+  server.headersTimeout = server.keepAliveTimeout + 1000;
+  return server;
+}

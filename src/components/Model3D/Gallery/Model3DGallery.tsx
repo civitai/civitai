@@ -5,10 +5,7 @@ import { ImagesAsPostsInfinite } from '~/components/Image/AsPosts/ImagesAsPostsI
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { forcedMinorModelBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Model3DGallery
@@ -38,8 +35,7 @@ export function Model3DGallery({
   // post card menu + the show/hide-hidden eye toggle) when the viewer is the
   // creator or a moderator. Mirrors ModelGallery's `showModerationOptions`.
   const showModerationOptions =
-    !!currentUser &&
-    (currentUser.id === model3d.userId || currentUser.isModerator === true);
+    !!currentUser && (currentUser.id === model3d.userId || currentUser.isModerator === true);
 
   const content = inView && (
     <ImagesAsPostsInfinite
@@ -48,7 +44,7 @@ export function Model3DGallery({
     />
   );
   const forceMinorLevel = !!model3d.minor && !currentUser?.isModerator;
-  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  const minorBrowsingLevel = forcedMinorModelBrowsingLevel(!!currentUser);
 
   return (
     <div ref={ref} className="min-h-80 w-full">

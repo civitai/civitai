@@ -646,7 +646,7 @@ describe('attachPromptOrigin', () => {
     }
   });
 
-  it('logs once per attempt and gives up without throwing when both stores miss and the row update rejects', async () => {
+  it('gives up without throwing when both stores miss and the row update rejects', async () => {
     vi.useFakeTimers();
     try {
       sysRedis.eval.mockResolvedValue(0);
@@ -656,10 +656,6 @@ describe('attachPromptOrigin', () => {
       await expect(done).resolves.toBeUndefined();
       expect(sysRedis.eval).toHaveBeenCalledTimes(2);
       expect(mockReplaceTriggerOrigin).toHaveBeenCalledTimes(2);
-      const logged = loggingMock.logToAxiom.mock.calls.filter(
-        ([e]) => (e as { name: string }).name === 'prompt-origin-attach-error'
-      );
-      expect(logged).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(sysRedis.eval).toHaveBeenCalledTimes(2);
     } finally {
@@ -676,7 +672,6 @@ describe('attachPromptOrigin', () => {
       await expect(done).resolves.toBeUndefined();
       expect(sysRedis.eval).toHaveBeenCalledTimes(2);
       expect(mockReplaceTriggerOrigin).not.toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

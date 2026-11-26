@@ -476,7 +476,10 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     rpc: { rejects: networkFailure },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
-    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true },
+    },
   },
   {
     scenario: 'rpc rejects with tRPC FORBIDDEN → terminal failure snapshot',
@@ -494,7 +497,10 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     rpc: { rejects: boom },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
-    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true },
+    },
   },
   {
     scenario: 'rpc rejects with tRPC SERVICE_UNAVAILABLE → "processing" placeholder',
@@ -503,7 +509,10 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     rpc: { rejects: trpcError('SERVICE_UNAVAILABLE', 503, 'upstream down') },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
-    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true },
+    },
   },
   {
     scenario: 'rpc rejects with tRPC NOT_FOUND → terminal failure snapshot',
@@ -678,13 +687,13 @@ const QUERY_APP = rowsFor('QUERY_APP_WORKFLOWS', 'blocks.queryAppWorkflows', APP
     reply: { requestId: 'rq_1', error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC error → message only',
+    scenario: 'rpc rejects with tRPC error → message and rateLimit meta',
     hosts: PBH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', params: { limit: 10 } },
     call: [{ limit: 10, blockToken: TOKEN }],
-    reply: { requestId: 'rq_1', error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     // current behaviour; candidate fix D3
@@ -867,6 +876,15 @@ const BUZZ_BALANCE = rowsFor('GET_BUZZ_BALANCE', 'blocks.getMyBuzzBalance', BALA
     reply: { requestId: 'rq_1', error: 'missing scope' },
   },
   {
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { rejects: rateLimited },
+    payload: { requestId: 'rq_1' },
+    call: [{ blockToken: TOKEN }],
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
+  },
+  {
     // current behaviour; candidate fix D3
     scenario: 'rpc rejects with a non-Error → "unknown"',
     hosts: BOTH,
@@ -966,6 +984,15 @@ function buzzReadRows(
       reply: { requestId: 'rq_1', error: 'missing scope' },
     },
     {
+      scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+      hosts: PBH,
+      mode: 'default',
+      rpc: { rejects: rateLimited },
+      payload: { requestId: 'rq_1' },
+      call: [{ blockToken: TOKEN }],
+      reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
+    },
+    {
       scenario: 'no requestId → dropped',
       hosts: PBH,
       mode: 'default',
@@ -1048,6 +1075,15 @@ const VIEWER = rowsFor('GET_VIEWER', 'blocks.getMyViewer', VIEWER_RESULT, [
     payload: { requestId: 'rq_1' },
     call: [{ blockToken: TOKEN }],
     reply: { requestId: 'rq_1', error: 'missing scope' },
+  },
+  {
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+    hosts: PBH,
+    mode: 'default',
+    rpc: { rejects: rateLimited },
+    payload: { requestId: 'rq_1' },
+    call: [{ blockToken: TOKEN }],
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1204,6 +1240,15 @@ const S_GET = rowsFor('APP_STORAGE_GET', 'apps.storage.get', { value: { note: 'h
     reply: { requestId: 'rq_1', value: null, error: 'feature disabled' },
   },
   {
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { rejects: rateLimited },
+    payload: { requestId: 'rq_1', key: 'draft' },
+    call: [{ blockToken: TOKEN, key: 'draft' }, READ_OPTS],
+    reply: { requestId: 'rq_1', value: null, error: RL_MESSAGE, rateLimit: RATE_LIMIT },
+  },
+  {
     // current behaviour; candidate fix D3
     scenario: 'rpc rejects with a non-Error → storage fallback text',
     hosts: BOTH,
@@ -1298,13 +1343,13 @@ const S_SET = rowsFor('APP_STORAGE_SET', 'apps.storage.set', { sizeBytes: 17 }, 
     reply: { requestId: 'rq_1', ok: false, error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC error (rateLimit) → message only, no rateLimit',
+    scenario: 'rpc rejects with tRPC error (rateLimit) → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'draft', value: 1 },
     call: [{ blockToken: TOKEN, key: 'draft', value: 1 }],
-    reply: { requestId: 'rq_1', ok: false, error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', ok: false, error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1392,13 +1437,19 @@ const S_DEL = rowsFor('APP_STORAGE_DELETE', 'apps.storage.delete', { deleted: tr
     reply: { requestId: 'rq_1', ok: false, deleted: false, error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC error → message only',
+    scenario: 'rpc rejects with tRPC error → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'draft' },
     call: [{ blockToken: TOKEN, key: 'draft' }],
-    reply: { requestId: 'rq_1', ok: false, deleted: false, error: RL_MESSAGE },
+    reply: {
+      requestId: 'rq_1',
+      ok: false,
+      deleted: false,
+      error: RL_MESSAGE,
+      rateLimit: RATE_LIMIT,
+    },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1495,13 +1546,13 @@ const S_LIST = rowsFor('APP_STORAGE_LIST', 'apps.storage.list', LIST_RESULT, [
     reply: { requestId: 'rq_1', keys: [], error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC error → message only',
+    scenario: 'rpc rejects with tRPC error → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1' },
     call: [{ blockToken: TOKEN, prefix: undefined, limit: 50, cursor: undefined }, READ_OPTS],
-    reply: { requestId: 'rq_1', keys: [], error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', keys: [], error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1566,7 +1617,7 @@ const S_QUOTA = rowsFor('APP_STORAGE_QUOTA', 'apps.storage.getQuota', { ...QUOTA
     },
   },
   {
-    scenario: 'rpc rejects with tRPC error → message only',
+    scenario: 'rpc rejects with tRPC error → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
@@ -1579,6 +1630,7 @@ const S_QUOTA = rowsFor('APP_STORAGE_QUOTA', 'apps.storage.getQuota', { ...QUOTA
       limitBytes: 0,
       limitRows: 0,
       error: RL_MESSAGE,
+      rateLimit: RATE_LIMIT,
     },
   },
   {
@@ -1711,7 +1763,7 @@ const SH_LIST = rowsFor('SHARED_LIST', 'apps.shared.list', { items: [ITEM], next
     reply: { requestId: 'rq_1', error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC rateLimit error → a READ drops the rateLimit meta',
+    scenario: 'rpc rejects with tRPC rateLimit error → a READ carries the rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
@@ -1720,7 +1772,7 @@ const SH_LIST = rowsFor('SHARED_LIST', 'apps.shared.list', { items: [ITEM], next
       { blockToken: TOKEN, prefix: undefined, limit: 50, cursor: undefined, mine: undefined },
       READ_OPTS,
     ],
-    reply: { requestId: 'rq_1', error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1799,13 +1851,13 @@ const SH_GET = rowsFor('SHARED_GET', 'apps.shared.get', { item: ITEM }, [
     reply: { requestId: 'rq_1', item: null, error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC rateLimit error → message only',
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'k1' },
     call: [{ blockToken: TOKEN, key: 'k1' }, READ_OPTS],
-    reply: { requestId: 'rq_1', item: null, error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', item: null, error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1882,13 +1934,13 @@ const SH_COUNT = rowsFor('SHARED_GET_COUNT', 'apps.shared.getCount', { count: 9,
     reply: { requestId: 'rq_1', error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC error → message only',
+    scenario: 'rpc rejects with tRPC error → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', key: 'k1' },
     call: [{ blockToken: TOKEN, key: 'k1' }, READ_OPTS],
-    reply: { requestId: 'rq_1', error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',
@@ -1961,13 +2013,13 @@ const SH_COUNTS = rowsFor('SHARED_GET_COUNTS', 'apps.shared.getCounts', { counts
     reply: { requestId: 'rq_1', error: 'boom' },
   },
   {
-    scenario: 'rpc rejects with tRPC error → message only',
+    scenario: 'rpc rejects with tRPC error → message and rateLimit meta',
     hosts: BOTH,
     mode: 'default',
     rpc: { rejects: rateLimited },
     payload: { requestId: 'rq_1', keys: ['a'] },
     call: [{ blockToken: TOKEN, keys: ['a'] }, READ_OPTS],
-    reply: { requestId: 'rq_1', error: RL_MESSAGE },
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     scenario: 'no requestId → dropped',

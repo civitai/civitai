@@ -8,12 +8,14 @@ import {
 } from '~/components/Apps/appListingScreenshotNav';
 import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsView';
+import { ReviewImageRatingPicker } from '~/components/Apps/ReviewImageRatingPicker';
 import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
 import { reviewMediaNeedsReveal } from '~/components/Apps/reviewMediaRevealRule';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ListingReviewImage,
   ListingReviewMedia,
+  ListingReviewPreviewMedia,
 } from '~/server/services/blocks/app-listing.service';
 import { ListingAudienceBadge } from '~/components/Apps/ListingAudienceBadge';
 import { listingRatingAssetLabel } from '~/shared/utils/listing-rating-display';
@@ -81,6 +83,8 @@ export function ReviewListingMedia({
   coverUrl,
   reviewMedia,
   rating,
+  screenshots = [],
+  rerateListingIds,
 }: {
   slug: string;
   /** Display name for the viewer's captions and the thumbnails' accessible names. */
@@ -95,6 +99,17 @@ export function ReviewListingMedia({
   reviewMedia?: ListingReviewMedia | null;
   /** The listing rating the audience badges are judged against (see `ReviewMediaAudienceBadge`). */
   rating?: string | null;
+  /**
+   * The listing's screenshots, each with its level. Given only on the review page
+   * (`ReviewListingMediaLive`), which reads them; every other caller shows none here.
+   */
+  screenshots?: ListingReviewPreviewMedia['screenshots'];
+  /**
+   * Put a moderator's rating picker (`ReviewImageRatingPicker`) beside every image, naming the
+   * listings whose cached reads a re-rate updates. Only the review page sets it
+   * (`ReviewListingMediaLive`), and only with levels it reads from those same queries.
+   */
+  rerateListingIds?: readonly string[];
 }) {
   const [index, setIndex] = useState<number | null>(null);
   const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
@@ -149,6 +164,15 @@ export function ReviewListingMedia({
               rating={rating}
               testId={`apps-review-listing-icon-audience-${slug}`}
             />
+            {rerateListingIds && reviewMedia?.icon && (
+              <ReviewImageRatingPicker
+                imageId={reviewMedia.icon.imageId}
+                nsfwLevel={reviewMedia.icon.nsfwLevel}
+                label="Icon"
+                listingIds={rerateListingIds}
+                testId={`apps-review-listing-icon-rate-${slug}`}
+              />
+            )}
             {!iconUrl && (
               <Text size="xs" c="orange" data-testid={`apps-review-listing-no-icon-${slug}`}>
                 No icon
@@ -187,6 +211,15 @@ export function ReviewListingMedia({
               rating={rating}
               testId={`apps-review-listing-cover-audience-${slug}`}
             />
+            {rerateListingIds && reviewMedia?.cover && (
+              <ReviewImageRatingPicker
+                imageId={reviewMedia.cover.imageId}
+                nsfwLevel={reviewMedia.cover.nsfwLevel}
+                label="Cover"
+                listingIds={rerateListingIds}
+                testId={`apps-review-listing-cover-rate-${slug}`}
+              />
+            )}
             {!coverUrl && (
               <Text size="xs" c="orange" data-testid={`apps-review-listing-no-cover-${slug}`}>
                 No cover
@@ -217,6 +250,15 @@ export function ReviewListingMedia({
                 redSlot
                 testId={`apps-review-listing-red-icon-audience-${slug}`}
               />
+              {rerateListingIds && (
+                <ReviewImageRatingPicker
+                  imageId={reviewMedia.redIcon.imageId}
+                  nsfwLevel={reviewMedia.redIcon.nsfwLevel}
+                  label={listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })}
+                  listingIds={rerateListingIds}
+                  testId={`apps-review-listing-red-icon-rate-${slug}`}
+                />
+              )}
             </Stack>
           )}
           {reviewMedia?.redCover && (
@@ -241,9 +283,71 @@ export function ReviewListingMedia({
                 redSlot
                 testId={`apps-review-listing-red-cover-audience-${slug}`}
               />
+              {rerateListingIds && (
+                <ReviewImageRatingPicker
+                  imageId={reviewMedia.redCover.imageId}
+                  nsfwLevel={reviewMedia.redCover.nsfwLevel}
+                  label={listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })}
+                  listingIds={rerateListingIds}
+                  testId={`apps-review-listing-red-cover-rate-${slug}`}
+                />
+              )}
             </Stack>
           )}
         </Group>
+        {/* The listing's screenshots (review page only): each behind the same reveal, with
+            where it shows and, for a moderator, its rating picker. */}
+        {screenshots.length > 0 && (
+          <Group
+            gap="lg"
+            align="flex-start"
+            wrap="wrap"
+            data-testid="apps-review-listing-screenshots"
+          >
+            {screenshots.map((shot, i) => {
+              const label = listingRatingAssetLabel({
+                kind: 'screenshot',
+                position: i + 1,
+                nsfwLevel: null,
+              });
+              return (
+                <Stack key={shot.imageId} gap={4} style={{ minWidth: 0 }}>
+                  <Text size="xs" c="dimmed">
+                    {label}
+                  </Text>
+                  <ReviewMediaReveal
+                    image={shot}
+                    testId={`apps-review-listing-screenshot-reveal-${slug}-${i + 1}`}
+                  >
+                    <ListingCoverThumb
+                      size="review"
+                      url={shot.url}
+                      name={shot.caption ?? `${name} ${label}`}
+                      imgTestId={`apps-review-listing-screenshot-${slug}-${i + 1}`}
+                      placeholderTestId={`apps-review-listing-screenshot-placeholder-${slug}-${
+                        i + 1
+                      }`}
+                    />
+                  </ReviewMediaReveal>
+                  <ReviewMediaAudienceBadge
+                    image={shot}
+                    rating={rating}
+                    testId={`apps-review-listing-screenshot-audience-${slug}-${i + 1}`}
+                  />
+                  {rerateListingIds && (
+                    <ReviewImageRatingPicker
+                      imageId={shot.imageId}
+                      nsfwLevel={shot.nsfwLevel}
+                      label={label}
+                      listingIds={rerateListingIds}
+                      testId={`apps-review-listing-screenshot-rate-${slug}-${i + 1}`}
+                    />
+                  )}
+                </Stack>
+              );
+            })}
+          </Group>
+        )}
       </Stack>
 
       {/* The same viewer the queue opens. */}

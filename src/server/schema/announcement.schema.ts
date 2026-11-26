@@ -30,6 +30,8 @@ export const announcementMetaSchema = z
     type: announcementTypeSchema.default('site'),
     targetAudience: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
     dismissible: z.boolean().default(true),
+    // Opt-in: the default must stay false.
+    statusPage: z.boolean().default(false),
     colSpan: z.number().default(6),
     // A bare media object key — NOT an `Image` row id and NOT a URL.
     //

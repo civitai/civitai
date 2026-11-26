@@ -23,7 +23,6 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -67,6 +66,7 @@ import {
   IconDotsVertical,
   IconFilter,
   IconFlag,
+  IconGavel,
   IconGift,
   IconPencil,
   IconPhoto,
@@ -114,7 +114,7 @@ import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
 import { trpc } from '~/utils/trpc';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSubmitModal } from '~/components/Challenge/ChallengeSubmitModal';
@@ -257,6 +257,8 @@ const DEEP_LINK_TARGETS: Record<string, string[]> = {
   winners: ['winners', 'entries'],
 };
 
+const DELETE_OWN_CHALLENGE_DIALOG_ID = 'delete-own-challenge';
+
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
@@ -298,6 +300,17 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     onError: handleMutationError,
   });
 
+  const rejudgeMutation = trpc.challenge.rejudge.useMutation({
+    onSuccess: ({ entries }) => {
+      showSuccessNotification({
+        message: entries
+          ? `${entries} entries queued for judging again.`
+          : 'No judged entries to re-judge.',
+      });
+    },
+    onError: handleMutationError,
+  });
+
   const deleteMutation = trpc.challenge.delete.useMutation({
     onSuccess: () => {
       showSuccessNotification({ message: 'Challenge deleted' });
@@ -308,48 +321,42 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
   const handleEndAndPickWinners = () => {
     if (!challenge) return;
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'End & Pick Winners',
-        message: (
-          <Stack gap="xs">
-            <Text>
-              Are you sure you want to end <strong>&ldquo;{challenge.title}&rdquo;</strong> and pick
-              winners now?
-            </Text>
-            <Text size="sm" c="dimmed">
-              This will close the collection, run the winner selection process, and award prizes.
-            </Text>
-          </Stack>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
-        onConfirm: () => endAndPickWinnersMutation.mutateAsync({ id }),
-      },
+    openConfirm({
+      title: 'End & Pick Winners',
+      message: (
+        <Stack gap="xs">
+          <Text>
+            Are you sure you want to end <strong>&ldquo;{challenge.title}&rdquo;</strong> and pick
+            winners now?
+          </Text>
+          <Text size="sm" c="dimmed">
+            This will close the collection, run the winner selection process, and award prizes.
+          </Text>
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
+      onConfirm: () => endAndPickWinnersMutation.mutateAsync({ id }),
     });
   };
 
   const handleVoidChallenge = () => {
     if (!challenge) return;
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Void Challenge',
-        message: (
-          <Stack gap="xs">
-            <Text>
-              Are you sure you want to void <strong>&ldquo;{challenge.title}&rdquo;</strong>?
-            </Text>
-            <Text size="sm" c="dimmed">
-              This will cancel the challenge without picking winners. Users will keep their entry
-              prizes (if any were awarded).
-            </Text>
-          </Stack>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => voidChallengeMutation.mutateAsync({ id }),
-      },
+    openConfirm({
+      title: 'Void Challenge',
+      message: (
+        <Stack gap="xs">
+          <Text>
+            Are you sure you want to void <strong>&ldquo;{challenge.title}&rdquo;</strong>?
+          </Text>
+          <Text size="sm" c="dimmed">
+            This will cancel the challenge without picking winners. Users will keep their entry
+            prizes (if any were awarded).
+          </Text>
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => voidChallengeMutation.mutateAsync({ id }),
     });
   };
 
@@ -361,44 +368,62 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       challenge.status === ChallengeStatus.Active &&
       challenge.source === ChallengeSource.User &&
       challenge.buzzType === 'green';
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Rescan Content',
-        message: (
-          <Stack gap="xs">
-            <Text>
-              Re-run the content scan for <strong>&ldquo;{challenge.title}&rdquo;</strong>?
+    openConfirm({
+      title: 'Rescan Content',
+      message: (
+        <Stack gap="xs">
+          <Text>
+            Re-run the content scan for <strong>&ldquo;{challenge.title}&rdquo;</strong>?
+          </Text>
+          <Text size="sm" c="dimmed">
+            Resubmits the challenge text and re-queues the cover image, ignoring the previous
+            verdict. The challenge stays visible while the scan runs.
+          </Text>
+          {warnOnNsfw && (
+            <Text size="sm" c="yellow.6">
+              This challenge is live. If the rescan comes back NSFW, it will be cancelled and hidden
+              — entrants are refunded their prize-pool contribution and notified, and the
+              creator&apos;s escrowed prize is returned.
             </Text>
-            <Text size="sm" c="dimmed">
-              Resubmits the challenge text and re-queues the cover image, ignoring the previous
-              verdict. The challenge stays visible while the scan runs.
-            </Text>
-            {warnOnNsfw && (
-              <Text size="sm" c="yellow.6">
-                This challenge is live. If the rescan comes back NSFW, it will be cancelled and
-                hidden — entrants are refunded their prize-pool contribution and notified, and the
-                creator&apos;s escrowed prize is returned.
-              </Text>
-            )}
-          </Stack>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Rescan' },
-        onConfirm: () => rescanMutation.mutateAsync({ id }),
-      },
+          )}
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Rescan' },
+      onConfirm: () => rescanMutation.mutateAsync({ id }),
+    });
+  };
+
+  const handleRejudge = () => {
+    if (!challenge) return;
+    openConfirm({
+      title: 'Re-judge Entries',
+      message: (
+        <Stack gap="xs">
+          <Text>
+            Have the judge review every judged entry in{' '}
+            <strong>&ldquo;{challenge.title}&rdquo;</strong> again?
+          </Text>
+          <Text size="sm" c="dimmed">
+            Deletes the judge&apos;s comments, reactions and scores on those entries and resets the
+            rankings. The review job then judges each entry again over its next runs (about one
+            judge call per entry, plus ranking comparisons), and entrants get new comments. An entry
+            whose review keeps failing is dropped after 3 attempts.
+          </Text>
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Re-judge' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => rejudgeMutation.mutateAsync({ id }),
     });
   };
 
   const handleDelete = () => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete Challenge',
-        message: <Text>Are you sure you want to delete this challenge?</Text>,
-        labels: { cancel: 'Cancel', confirm: 'Delete' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => deleteMutation.mutateAsync({ id }),
-      },
+    openConfirm({
+      title: 'Delete Challenge',
+      message: <Text>Are you sure you want to delete this challenge?</Text>,
+      labels: { cancel: 'Cancel', confirm: 'Delete' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => deleteMutation.mutateAsync({ id }),
     });
   };
 
@@ -454,13 +479,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     features.userChallenges && isOwner && !currentUser?.isModerator && (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
-    openConfirmModal({
+    openConfirm({
+      id: DELETE_OWN_CHALLENGE_DIALOG_ID,
       title: 'Delete challenge',
       // A Cancelled challenge was already refunded by the void, so don't promise another refund.
-      children: isCancelled
+      message: isCancelled
         ? 'Delete this cancelled challenge? This cannot be undone.'
         : 'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
-      centered: true,
       closeOnConfirm: false,
       labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
       confirmProps: { color: 'red' },
@@ -469,7 +494,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         deletingOwnRef.current = true;
         try {
           await deleteOwnChallenge(challenge.id);
-          closeAllModals();
+          dialogStore.closeById(DELETE_OWN_CHALLENGE_DIALOG_ID);
           await router.push('/challenges');
         } catch {
           // notification surfaced by the mutation
@@ -583,6 +608,19 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                               onClick={handleEndAndPickWinners}
                             >
                               End & Pick Winners
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={
+                                rejudgeMutation.isPending ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconGavel size={14} />
+                                )
+                              }
+                              onClick={handleRejudge}
+                              disabled={rejudgeMutation.isPending}
+                            >
+                              Re-judge Entries
                             </Menu.Item>
                             <Menu.Item
                               leftSection={<IconX size={14} />}

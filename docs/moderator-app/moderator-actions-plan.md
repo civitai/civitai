@@ -69,7 +69,7 @@ faithful choice (no callback, no query/packed-write duplication).
   - `rewardReportReporters` builds the `buzzEvents` row inline (field set + `pending` status + ip/transactionDetails normalization mirror `base.reward.ts`; `awardAmount=50` mirrors `reportAccepted.reward.ts`) and inserts via `getClickhouse()`. Kept in sync by doc-comments — it's a faithful copy of the main-app shapes, not a shared package (a spoke-only recorder needs no cross-app contract; the row shape is enforced by the CH table DDL both apps write to).
   - Multiplier is resolved spoke-side: base supporter multiplier read from the **shared** `MULTIPLIERS_FOR_USER` cache the main app populates (cold miss → 1), × the active global bonus event (`RewardsBonusEvent`, `multiplier/10` clamped to `[1, 5]`) — a faithful port of `getMultipliersForUser`.
   - Wired into `setReportStatus` via `UPDATE … RETURNING userId, alsoReportedBy` so only a real transition to Actioned rewards (re-actioning can't double-reward). Page action threads the moderator `ip` via `getClientAddress()`.
-- **No cutover** (`bulkSetReportStatus` stays): its 3 callers — `pages/api/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow), `image.service.ts` (image-TOS flow) — are internal/external **server** flows, **not** the migrated reports page (which uses the spoke's own `setReportStatus`). Exactly like `handleBlockImages` + the KoNO game, these keep the main-app primitive; repointing internal flows to HTTP-call the spoke isn't warranted. `bulkSetReportStatus` retires when *those* slices migrate. See Deliverable 2 below.
+- **No cutover** (`bulkSetReportStatus` stays): its 3 callers — `server/api-routes/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow), `image.service.ts` (image-TOS flow) — are internal/external **server** flows, **not** the migrated reports page (which uses the spoke's own `setReportStatus`). Exactly like `handleBlockImages` + the KoNO game, these keep the main-app primitive; repointing internal flows to HTTP-call the spoke isn't warranted. `bulkSetReportStatus` retires when *those* slices migrate. See Deliverable 2 below.
 
 ### Article restore — `restoreArticle`  ·  (articles) — ✅ complete
 - [x] Recompute ingestion state (`recomputeArticleIngestionInTx` — image/text scan-state → Blocked/Error/Scanned/Pending) — **DB**
@@ -77,7 +77,7 @@ faithful choice (no callback, no query/packed-write duplication).
 - [n/a] Owner ingestion notifications — the legacy's `article-published`/`article-images-blocked` are gated on `status='Processing'`; restore sets `status='Published'` first, so they don't fire on the restore path (they belong to the scan pipeline). Replication-lag guards omitted (lag routing off by default).
 
 ### Article delete — `deleteArticle`  ·  (articles) — ✅ complete
-- [x] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN** — done via the spoke's storage client; see `docs/moderator-app/side-effect-parity-checklist.md`
+- [x] Delete cover image + orphaned content images (the moderator app's `deleteImages`, which shares `deleteImageRows` with the main app) — **DB + storage + CDN** — storage queued for the main app's `image-storage-deletes` job; see `docs/moderator-app/side-effect-parity-checklist.md`
 - [x] Comments go with the article, as in the main app's delete: `CommentTopic` delete first, for lock order
 
 ### Article rating resolve — `resolveArticleRatingReview`  ·  (article-rating-review) — ✅ complete
@@ -105,7 +105,7 @@ main-app procedure deleted. Everything else stays spoke-owned (no endpoint).
 
 ### ❎ NOT AN ENDPOINT — `report-set-status` (no cutover)
 - Re-scoped after inspecting the callers. `bulkSetReportStatus`'s only callers are internal/external **server**
-  flows — `pages/api/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow),
+  flows — `server/api-routes/mod/action-report.ts` (retool webhook), `csam.controller.ts` (CSAM flow),
   `image.service.ts` (image-TOS flow) — **not** the migrated reports page. The reports page uses the spoke's
   own `setReportStatus` directly, so there is no duplicated *page* mutation to lift into an endpoint.
 - This is the same call as `handleBlockImages` + the KoNO game: an internal main-app primitive with non-page
@@ -136,7 +136,7 @@ are now orphaned and remove them** (no live callers found) — a cleanup, not an
 ```
 packages/civitai-moderation/                 # SHARED contract + client (dep of both apps)
   src/schema.ts        # action input zod schemas + MOD_ACTION names (the wire contract)
-  src/client.ts        # createModeratorClient({endpoint, token}) → typed methods (imageModerate, …); no retry
+  src/client.ts        # createModeratorClient({endpoint, token}) → typed methods (imageModerate, caseIntake, …); no retry; case calls time out at 5s
 apps/moderator/src/lib/server/mod-actions/
   registry.ts          # action -> { schema (from @civitai/moderation), handler }
 apps/moderator/src/routes/api/mod/[action]/+server.ts   # cross-app entry (main app -> spoke)
@@ -149,8 +149,9 @@ src/server/services/moderator-app.service.ts # main app's configured `moderatorA
   client method here, then a handler in the spoke registry.
 - **Handlers** own the complete operation against the spoke's wired infra (call the same services the
   moderator pages use). **Registry** is the spoke-side catalog.
-- **`/api/mod/[action]`** — POST, shared-`WEBHOOK_TOKEN` auth (mirror of `syncSearchIndex`, reverse
-  direction), `Object.hasOwn` action lookup, validate body against its `schema`, run the handler, return
+- **`/api/mod/[action]`** — POST. Two inbound credentials (`MOD_INBOUND_TOKEN` → moderation actions;
+  `MOD_CASES_TOKEN` → `CASE_ACTIONS` only, the public takedown intake), each refused on the other's
+  actions with 403; `Object.hasOwn` action lookup, validate body against its `schema`, run the handler, return
   JSON. `userId` is asserted by the trusted caller. `/api/mod/*` bypasses the session guard in
   `hooks.server.ts` (self-authenticates via token).
 - **Main app** calls via the `moderatorApp` client singleton (`moderatorApp.imageModerate(…)`); the thin

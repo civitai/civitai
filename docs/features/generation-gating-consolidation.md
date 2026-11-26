@@ -75,7 +75,7 @@ Every gate threads the same value through these layers:
     `useDisabledWorkflows` (all near-identical one-liners over `useGenerationConfig`).
 11. **Graph node consumption** — `output` `.refine()` (+ `meta`) on the ecosystem /
     workflow node, with the meta-as-function gotcha.
-12. **Picker UI** — `BaseModelInput` / `WorkflowInput` re-implement the
+12. **Picker UI** — `BaseModelInput` / `WorkflowPicker` re-implement the
     badge + grey-out + block-selection branch.
 13. **Mod UI** — a form field + `TagsInput`/`MultiSelect` + save in
     [generation-config.tsx](../../src/pages/moderator/generation-config.tsx) (or a card for the toggle).
@@ -110,8 +110,10 @@ These remove literal duplication with no architectural change:
   (`workflowOutput` in `src/shared/form-graph/generation/hub.graph.ts`), so there is nothing
   to share.
 - **Picker "disabled option" primitive** — `BaseModelInput.renderItem` and
-  `WorkflowInput.WorkflowMenuItem` both implement: grey + `cursor-not-allowed`,
-  block `onClick`, `<Badge>Disabled</Badge>`, tooltip. Extract a shared
+  `WorkflowPicker.tsx`'s `WorkflowMenuItem` both draw a gated option dimmed, with a state
+  `<Badge>` (Disabled) and a tooltip, and both leave a `disabled` option selectable so the form
+  can explain the block. `BaseModelInput` blocks the click only for `memberOnly`;
+  `WorkflowMenuItem` shows the membership upsell instead. Extract a shared
   `DisabledOptionBadge` + a `useDisabledSet(list, keyFn)` helper.
 - **Collapse the client hooks** — `useGatedEcosystems` / `useGatedVersionIds` /
   `useSelfHostedDisabledEcosystems` / `useDisabledWorkflows` are identical

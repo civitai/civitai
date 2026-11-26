@@ -1,5 +1,5 @@
 import { Code, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /** Asks before forgetting an import whose stored parts or object could not be removed. */
 export function confirmForce({
@@ -13,12 +13,11 @@ export function confirmForce({
   message: string;
   onConfirm: () => void;
 }) {
-  openConfirmModal({
+  openConfirm({
     title: `${action} without cleaning up storage?`,
-    centered: true,
     labels: { confirm: `${action} anyway`, cancel: 'Keep it' },
     confirmProps: { color: 'red' },
-    children: (
+    message: (
       <Stack gap="xs">
         <Text size="sm">
           We tried to remove what {what} already stored, and the storage service refused:

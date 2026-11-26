@@ -16,8 +16,9 @@ import {
   useNestedHoverCard,
 } from '~/components/UserAvatar/UserHoverCard';
 import { useStickerAttribution } from '~/components/Sticker/sticker-attribution.util';
+import { ViewportAnchor } from '~/components/UserAvatar/ViewportAnchor';
 
-type Hovered = { cosmeticId: number; rect: DOMRect };
+type Hovered = { cosmeticId: number; rect: DOMRect; el: HTMLElement };
 
 /**
  * Who made the sticker in a comment, and where to buy it.
@@ -83,7 +84,7 @@ export function StickerAttributionHoverCard({
         // an element captured a delay ago may be detached — and a detached
         // element measures as all zeros, pinning the card to the viewport corner.
         if (!el.isConnected) return;
-        setHovered({ cosmeticId, rect: el.getBoundingClientRect() });
+        setHovered({ cosmeticId, rect: el.getBoundingClientRect(), el });
       }, HOVER_DELAY_MS);
     };
 
@@ -123,6 +124,29 @@ export function StickerAttributionHoverCard({
     window.addEventListener('scroll', onScroll, true);
     return () => window.removeEventListener('scroll', onScroll, true);
   }, [hovered]);
+
+  // The rect was read once at hover; content above the sticker can move it while the card is held open.
+  const openEl = hovered?.el;
+  useEffect(() => {
+    if (!openEl) return;
+    const follow = () => {
+      if (!openEl.isConnected) return setHovered(null);
+      const rect = openEl.getBoundingClientRect();
+      setHovered((h) =>
+        !h ||
+        (h.rect.top === rect.top &&
+          h.rect.left === rect.left &&
+          h.rect.width === rect.width &&
+          h.rect.height === rect.height)
+          ? h
+          : { ...h, rect }
+      );
+    };
+    const observer = new ResizeObserver(follow);
+    // Anything above the sticker that grows resizes one of its ancestors.
+    for (let n: HTMLElement | null = openEl; n; n = n.parentElement) observer.observe(n);
+    return () => observer.disconnect();
+  }, [openEl]);
 
   if (!hovered) return null;
 
@@ -165,8 +189,7 @@ function StickerAttributionCard({
       offset={4}
     >
       <Popover.Target>
-        <div
-          className="pointer-events-none fixed"
+        <ViewportAnchor
           style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
         />
       </Popover.Target>

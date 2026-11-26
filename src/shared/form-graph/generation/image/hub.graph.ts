@@ -19,6 +19,8 @@ import { mossImage } from './moss-image.graph';
 import { boogu } from './boogu.graph';
 import { krea2 } from './krea2.graph';
 import { krea3 } from './krea3.graph';
+import { minimaxH3Image } from './minimax-h3-image.graph';
+import { fibo2 } from './fibo2.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
 import { ming } from './ming.graph';
@@ -63,12 +65,7 @@ export const imageHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'SDXL';
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
-        usableEcosystems
-      ),
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
       default: defaultValue,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'image',
@@ -97,6 +94,8 @@ export const imageHub = defineGraph<RootCtx>()
       [['Boogu'], boogu],
       [['Krea2'], krea2],
       [['Krea3'], krea3],
+      [['MiniMaxH3Image'], minimaxH3Image],
+      [['Fibo2'], fibo2],
       [['PonyV7'], ponyV7],
       [['Reve'], reve],
       [['MuseImage'], museImage],

@@ -2,6 +2,7 @@ import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconBox,
   IconBriefcase,
+  IconGift,
   IconShirt,
   IconSparkles,
   IconStar,
@@ -9,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
+import { slugit } from '~/utils/string-helpers';
 import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
@@ -23,10 +25,12 @@ export const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
   services: IconBriefcase,
   merch: IconShirt,
   models: IconBox,
+  mysteryPacks: IconGift,
 };
 
 const sectionFlags: Partial<Record<CreatorShopSectionKey, keyof FeatureAccess>> = {
   services: 'creatorServices',
+  mysteryPacks: 'creatorMysteryPacks',
 };
 
 export const isSectionAvailable = (key: CreatorShopSectionKey, features: FeatureAccess) => {
@@ -58,3 +62,25 @@ export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`
 
 /** A service card's element id; the moderator reports link to it as `/shop#service-<id>`. */
 export const serviceCardId = (offeringId: number) => `service-${offeringId}`;
+
+/** An offering's card on its seller's storefront. */
+export const serviceStorefrontHref = (username: string, offeringId: number) =>
+  `/user/${username}/shop#${serviceCardId(offeringId)}`;
+
+/** An offering's own page. */
+export const servicePageHref = (offeringId: number, title: string) =>
+  `/services/${offeringId}/${slugit(title)}`;
+
+/** Where a card links: the offering's page behind `creatorServicesNext`, else its storefront card. */
+export const serviceHref = ({
+  username,
+  offering,
+  next,
+}: {
+  username: string;
+  offering: { id: number; title: string };
+  next: boolean;
+}) =>
+  next
+    ? servicePageHref(offering.id, offering.title)
+    : serviceStorefrontHref(username, offering.id);

@@ -5,7 +5,7 @@ import {
   compiledCreatorScoreUnlockInputs,
   UNLOCK_LISTED_PLACEMENT_SURFACES,
 } from '~/server/services/creator-score-unlocks.service';
-import { dailyArticleTiers } from '~/server/schema/article.schema';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 import { placementSurfaceLabel, placementSurfaces } from '~/shared/utils/placement';
@@ -62,6 +62,7 @@ describe('buildCreatorScoreLadder', () => {
     expect(keysAt('Spark')).toEqual(['crucible-judge']);
     expect(keysAt('Flame')).toContain('challenge-create');
     expect(keysAt('Blaze')).toContain('monetize-pricing');
+    expect(keysAt('Blaze')).toContain('creator-shop');
     expect(keysAt('Beacon')).toContain('creator-program');
     expect(keysAt('Legend')).toEqual([]);
 
@@ -81,7 +82,7 @@ describe('buildCreatorScoreLadder', () => {
 
     expect([...placed].sort()).toEqual(unlocks.map((u) => u.key).sort());
     expect(placed.filter((key) => key.startsWith('daily-articles:'))).toHaveLength(
-      dailyArticleTiers.length
+      getUsageLimitDef('articles.daily').byScore?.length ?? 0
     );
   });
 

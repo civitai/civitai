@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { EVENT_POINT_POPS } from '~/shared/constants/event-point-pops.constants';
 import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
@@ -27,6 +28,8 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { remixAppSlugSchema } from '~/shared/remix-apps/row.schema';
+import { REMIX_PINS_MAX } from '~/shared/remix-apps/menu';
 import {
   commaDelimitedEnumArray,
   commaDelimitedNumberArray,
@@ -354,6 +357,14 @@ export const userMenuSettingsSchema = z.object({
     .optional(),
 });
 
+/** An object for the same reason as `userMenuSettingsSchema`: an empty pin list must survive. */
+export const remixAppsSettingsSchema = z.object({
+  pinned: z
+    .array(remixAppSlugSchema)
+    .max(REMIX_PINS_MAX)
+    .refine((slugs) => new Set(slugs).size === slugs.length, 'An app cannot be pinned twice'),
+});
+
 /** `hiddenApps` — see the key in `userSettingsSchema`. */
 export const hiddenAppsSettingSchema = z
   .record(z.string().min(1).max(HIDDEN_APP_SLUG_MAX), z.iso.datetime())
@@ -362,9 +373,14 @@ export const hiddenAppsSettingSchema = z
   });
 
 export const userSettingsSchema = z.object({
+  /** Off hides every event cosmetic (worn hats) and all of Hat Turf, for this viewer only. */
+  showEventCosmetics: z.boolean().optional(),
+  /** Which event-point pops this viewer sees: from their own actions only, or all their points. */
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional(),
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
   userMenu: userMenuSettingsSchema.optional(),
+  remixApps: remixAppsSettingsSchema.optional(),
   features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
@@ -372,6 +388,11 @@ export const userSettingsSchema = z.object({
   assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
+  // Generation licences accepted, by terms key. Written only by `acceptGenerationLicense`, which
+  // stamps the server's time; see `generation-license.constants.ts`.
+  generationLicenseAcceptances: z
+    .record(z.string(), z.object({ version: z.number(), acceptedAt: z.coerce.date() }))
+    .optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
@@ -395,6 +416,8 @@ export const userSettingsSchema = z.object({
   hideBlueBuzzInHeader: z.boolean().optional(),
   fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  // Opt-out: creators can't feature my images in their model version showcases.
+  hideFromVersionShowcases: z.boolean().optional(),
   // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
   // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
   hideFromReactionLists: z.boolean().optional(),
@@ -498,6 +521,7 @@ export const setUserSettingsInput = z.object({
   hideBlueBuzzInHeader: z.boolean().optional(),
   fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
+  hideFromVersionShowcases: z.boolean().optional(),
   hideFromReactionLists: z.boolean().optional(),
   showPreLaunchReactions: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
@@ -513,6 +537,8 @@ export const setUserSettingsInput = z.object({
   navigation: navigationSettingsSchema.optional(),
   // Whole-object writes, like `navigation`: the menu always sends the full pin order and muted counts.
   userMenu: userMenuSettingsSchema.optional(),
+  // Whole-object writes: the Remix menu sends every pin.
+  remixApps: remixAppsSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),
@@ -539,7 +565,8 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
     username: usernameInputSchema,
     // `.email()`, not a bare string: this is the only writer of `User.email` that was unvalidated,
     // so a tRPC caller could post `x@!!!` and have it stored verbatim.
-    email: z.string().email(),
+    // Required only when the account has no address yet; the handler enforces that.
+    email: z.string().email().optional(),
   }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
@@ -627,10 +654,19 @@ export type UpdateContentSettingsInput = z.infer<typeof updateContentSettingsSch
 export const updateContentSettingsSchema = z.object({
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().optional(),
+  // Masked rather than capped: some saved levels carry bits outside the browsing levels, and the
+  // client toggles from the saved value, so rejecting them would refuse every toggle those users make.
+  browsingLevel: z
+    .number()
+    .int()
+    .min(0)
+    .transform((level) => level & allBrowsingLevelsFlag)
+    .optional(),
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+  showEventCosmetics: z.boolean().optional(),
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional(),
 });
 
 /** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */
@@ -648,6 +684,15 @@ export const toggleBanUserSchema = z.object({
   removeMedia: z.boolean().optional(),
   removeModels: z.boolean().optional(),
   removeComments: z.boolean().optional(),
+  /** The state to end in. Absent flips; already in it, nothing is written. */
+  setTo: z.boolean().optional(),
+});
+
+export type ToggleMuteInput = z.infer<typeof toggleMuteSchema>;
+export const toggleMuteSchema = z.object({
+  id: z.number(),
+  /** The state to end in. Absent flips; already in it, nothing is written. */
+  setTo: z.boolean().optional(),
 });
 
 export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;

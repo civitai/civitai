@@ -1,4 +1,5 @@
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // The seam test renders TWO trees in one test and has to tear the first one down —
@@ -137,7 +138,12 @@ const m = vi.hoisted(() => ({
   /** Every `revokeScopes.mutate` payload, in order. The confirm gate is measured on its LENGTH. */
   revokeCalls: [] as { appBlockId: string; scopes: string[] }[],
   /** Set to drive the error arms. `null` = the mutation succeeds. */
-  revokeError: null as null | { code: string; message: string },
+  /**
+   * `recorded` sets the server's `data.consentRevokeRecorded` flag, which `errorFormatter` lifts off
+   * the post-write marker-failure throw. A 503 WITHOUT it is the database being unreachable before
+   * anything was written (`mapDbUnavailable`), so the two must be driveable separately.
+   */
+  revokeError: null as null | { code: string; message: string; recorded?: boolean },
   invalidateSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   /**
    * 🔴 HOLDS THE MUTATION OPEN so the PENDING state is observable. Without it the promise settles
@@ -244,7 +250,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       m.revokeCalls.push(vars);
       const settle = () =>
         m.revokeError
-          ? Promise.reject({ data: { code: m.revokeError.code }, message: m.revokeError.message })
+          ? Promise.reject({
+              data: {
+                code: m.revokeError.code,
+                ...(m.revokeError.recorded ? { consentRevokeRecorded: true } : {}),
+              },
+              message: m.revokeError.message,
+            })
           : Promise.resolve({ ok: true });
       // Gated: return a promise that does not settle until the arm calls `release()`, so the
       // PENDING window is observable. See `m.gated`.
@@ -301,8 +313,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 /**
  * 🔴 EACH SURFACE EXPOSES ITS ELEMENT AS WELL AS A `render()`, SO AN ARM CAN FORCE A GENUINE
  * RE-RENDER WITH THE NEW FIXTURE. Nothing else in this file needed it, and its absence made one
- * assertion VACUOUS: `ModalsProvider` receives `children` as a prop, so toggling a modal re-renders
- * the provider but React bails out on the SAME child element and the permissions subtree never
+ * assertion VACUOUS: a dialog renders in the `DialogProvider` beside the surface, so toggling one
+ * re-renders only that provider and the permissions subtree never
  * re-reads `listMyScopeGrants`. An arm that changed `m.grants` and then opened/cancelled a dialog to
  * "force a render" therefore measured the PREVIOUS payload — and passed, because the local override
  * happened to produce the same mark count. `rerender(element())` is the only thing here that really
@@ -312,22 +324,24 @@ const SURFACES = [
   {
     name: 'drawer',
     element: () => (
-      <ModalsProvider>
+      <>
         <AppPermissionsActivityDrawer
           appBlockId={GRANT.appBlockId}
           appName={GRANT.name}
           opened
           onClose={vi.fn()}
         />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     ),
   },
   {
     name: 'activity page',
     element: () => (
-      <ModalsProvider>
+      <>
         <ScopeGrantsPanel defaultOpened />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     ),
   },
 ].map((surface) => ({ ...surface, render: () => renderWithProviders(surface.element()) }));
@@ -340,6 +354,8 @@ function revokableScopesOnScreen(): string[] {
 }
 
 beforeEach(() => {
+  // The dialog store is global; each test renders a fresh DialogProvider.
+  dialogStore.closeAll();
   m.grants = [GRANT];
   m.revokeCalls = [];
   m.revokeError = null;
@@ -387,12 +403,8 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     // the page the app is mounted on", i.e. exactly the mis-description the notes exist to prevent.
     // Found by the test-review lane.
     for (const scope of EXEMPT_IN_FIXTURE) {
-      const id = Array.from(
-        document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-      ).find((el) => el.textContent === scope);
-      expect(id, `${name}: no row rendered for ${scope}`).toBeTruthy();
-      const row = id!.closest('[data-testid="block-scope-list"] > *');
-      expect(row, `${name}: ${scope}'s id is not inside a scope row`).toBeTruthy();
+      const row = document.querySelector(`[data-permission-row="${scope}"]`);
+      expect(row, `${name}: no row rendered for ${scope}`).toBeTruthy();
       const note = row!.querySelector('[data-testid="scope-fixed-note"]');
       expect(note, `${name}: no note in ${scope}'s OWN row`).toBeTruthy();
       // The row carries the map's sentence for THIS scope…
@@ -460,32 +472,20 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     const [revokedScope] = GRANT.revokedScopes;
     // It is present AT ALL — this scope is deliberately absent from `scopes`, so a surface that
     // rendered the manifest intersection alone would have forgotten the withdrawal entirely.
-    const ids = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-    ).map((el) => el.textContent);
+    const ids = Array.from(document.querySelectorAll<HTMLElement>('[data-permission-row]')).map(
+      (el) => el.dataset.permissionRow
+    );
     expect(ids, `${name}: the withdrawn scope vanished from the list`).toContain(revokedScope);
-    // …marked, not merely present. TWO independent marks, because either alone is weak: the
-    // `data-revoked` hook on the Badge ROOT, and the strike on its LABEL.
-    //
-    // ⚠️ THE STRIKE CLASS IS ON THE LABEL, NOT THE ROOT — this arm asserted the root first and
-    // went red on `'m_347db0ec mantine-Badge-root'`. `BlockScopeList` passes it through Mantine's
-    // `classNames={{ label: … }}`, which is also where phase 1's `whitespace-normal break-all
-    // text-start` live, so reading the root would have been a guard on the wrong box.
-    const marked = document.querySelector<HTMLElement>('[data-revoked="true"]');
-    expect(marked?.textContent, name).toBe(revokedScope);
-    const markedLabel = marked?.querySelector<HTMLElement>('.mantine-Badge-label');
-    expect(markedLabel, `${name}: the revoked badge has no Mantine label box`).toBeTruthy();
-    expect(markedLabel!.className, name).toContain('line-through');
-    // 🔴 AND PHASE 1'S THREE UTILITIES SURVIVE ON THAT SAME LABEL. `line-through` is APPENDED to
-    // the truncation fix, not substituted for it, and a revoked row is the one row where a
-    // careless rewrite of that template string would drop them — silently, since only an
-    // over-long id at 408px shows the difference.
-    for (const util of ['whitespace-normal', 'break-all', 'text-start']) {
-      expect(
-        markedLabel!.className,
-        `${name}: phase-1 utility ${util} lost on a revoked row`
-      ).toContain(util);
-    }
+    // …marked, not merely present: ONLY that row carries `data-revoked`, and its title is struck.
+    const marked = Array.from(document.querySelectorAll<HTMLElement>('[data-revoked="true"]'));
+    expect(
+      marked.map((el) => el.dataset.permissionRow),
+      name
+    ).toEqual([revokedScope]);
+    const title = marked[0].querySelector<HTMLElement>('[data-testid="permission-title"]');
+    expect(title?.style.textDecoration, `${name}: the withdrawn title is not struck`).toContain(
+      'line-through'
+    );
     await expect.element(page.getByTestId('scope-revoked-mark')).toBeVisible();
     // 🔴 THE "WHEN" IS APP-LEVEL AND APPEARS EXACTLY ONCE. `scopesRevokedAt` is ONE timestamp per
     // (user, app) — `revoked_scopes` is a TEXT[] with nowhere to hold per-entry times — so a
@@ -541,6 +541,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     // when the half governing every future mint was.
     m.revokeError = {
       code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
       message:
         'The permission was removed and will not be granted again, but an already-open app ' +
         'session may keep using it for a few more minutes. Reload the app to be sure.',
@@ -589,6 +590,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
      */
     m.revokeError = {
       code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
       message: 'removed, but an open session may keep using it briefly',
     };
     render();
@@ -624,6 +626,69 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       (m.grants[0] as { revokedScopes: string[] }).revokedScopes,
       'the fixture mutated — this arm no longer proves the latch did the work'
     ).toEqual(['collections:read:private']);
+  });
+
+  /**
+   * 🔴 A BARE 503 IS NOT A REMOVAL. `mapDbUnavailable` (`src/server/trpc.ts`) answers an unreachable
+   * database with a 503 — including on `revokeScopes`' reads BEFORE it writes (the app lookup, the
+   * held-scopes read, the service's own read), where nothing was removed. The hook used to read every
+   * 503 as "recorded, only the marker lagged": the viewer was told "Permission removed" and lost the
+   * Remove control while the grant stayed live. Only the server's `consentRevokeRecorded` flag, set
+   * by the post-write throw alone, means the row moved.
+   *
+   * MUTATION THAT MUST KILL IT: `isRevokeRecordedButLagging` back to `code === 'SERVICE_UNAVAILABLE'`.
+   */
+  test('🔴 a 503 WITHOUT the recorded flag (database unreachable) is NOT reported as removed', async () => {
+    m.revokeError = {
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'This service is temporarily unavailable. Please try again.',
+    };
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const scope = revokableScopesOnScreen()[0];
+    expect(scope, 'the fixture has no revokable scope').toBeTruthy();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    const notice = page.getByTestId('scope-revoke-failure');
+    await expect.element(notice).toBeVisible();
+    await expect.element(notice).toHaveTextContent(m.revokeError.message);
+    expect(
+      document.querySelector('[data-testid="scope-revoke-failure"]')?.getAttribute('data-degraded'),
+      `${name}: an unreachable-database 503 was rendered as "removed, enforcement lagging"`
+    ).toBe('false');
+    expect(
+      m.notify.warning,
+      `${name}: announced "Permission removed" for a revoke that wrote nothing`
+    ).not.toHaveBeenCalled();
+    expect(m.notify.success, name).not.toHaveBeenCalled();
+    // The control stays, so the viewer can retry — the grant is still live.
+    expect(
+      revokableScopesOnScreen(),
+      `${name}: hid the Remove control on ${scope} while the grant is still live`
+    ).toContain(scope);
+    expect(
+      document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
+      `${name}: marked ${scope} removed`
+    ).toBe(GRANT.revokedScopes.length);
+    // Ambiguous about the row, like any non-412 failure, so the list is re-read.
+    expect(m.invalidateSpy, name).toHaveBeenCalled();
+  });
+
+  test('🔴 the recorded flag on a code other than 503 is NOT reported as removed', async () => {
+    // Both halves of `isRevokeRecordedButLagging` are required. This arm kills the mutant that
+    // drops the code check and reads the flag alone.
+    m.revokeError = { code: 'BAD_REQUEST', recorded: true, message: 'cannot revoke: …' };
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    await expect.element(page.getByTestId('scope-revoke-failure')).toBeVisible();
+    expect(
+      document.querySelector('[data-testid="scope-revoke-failure"]')?.getAttribute('data-degraded'),
+      name
+    ).toBe('false');
+    expect(m.notify.warning, name).not.toHaveBeenCalled();
+    expect(revokableScopesOnScreen(), name).toContain(GRANT.revokableScopes[0]);
   });
 
   test('🔴 a SUSPENDED app can still be revoked from — there is no status gate in the UI either', async () => {
@@ -884,8 +949,15 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       m.notify.warning,
       `${name}: a clean success was announced as a warning`
     ).not.toHaveBeenCalled();
-    // The message names the scope that was actually removed, not the app's whole set.
-    expect(String(m.notify.success.mock.calls[0][0].message), name).toContain(scope);
+    // The message names the permission that was actually removed, in plain language, not the
+    // app's whole set and not the raw id.
+    const removedTitle: Record<string, string> = {
+      'posts:write:self': 'Publish posts to your profile',
+      'ai:write:budgeted': 'Run AI work with your Buzz',
+    };
+    const message = String(m.notify.success.mock.calls[0][0].message);
+    expect(message, name).toContain(removedTitle[scope] ?? '\u0000');
+    expect(message, name).not.toContain(scope);
     // …and no inline failure notice on a success.
     expect(document.querySelector('[data-testid="scope-revoke-failure"]'), name).toBeNull();
   });
@@ -911,7 +983,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
      * The inline declaration is what the component sets, and it is readable here because it is an
      * attribute rather than a resolved value.
      */
-    const read = async (err: { code: string; message: string }) => {
+    const read = async (err: { code: string; message: string; recorded?: boolean }) => {
       m.revokeError = err;
       render();
       await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
@@ -923,7 +995,11 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       await cleanup();
       return colour;
     };
-    const degradedColour = await read({ code: 'SERVICE_UNAVAILABLE', message: 'removed, lagging' });
+    const degradedColour = await read({
+      code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
+      message: 'removed, lagging',
+    });
     const refusedColour = await read({ code: 'PRECONDITION_FAILED', message: 'nothing changed' });
     // A POSITIVE CONTROL FIRST: both must carry a real declaration, or comparing them is comparing
     // two empty strings — the reassuring-zero shape in a style read, which is exactly what the
@@ -1124,10 +1200,11 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     // The rows are still disclosed — the viewer must still see what the app may use.
-    const ids = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-    ).map((el) => el.textContent);
-    expect(ids, name).toEqual(GRANT.scopes);
+    const ids = Array.from(document.querySelectorAll<HTMLElement>('[data-permission-row]')).map(
+      (el) => el.dataset.permissionRow
+    );
+    // Sorted: the list groups sensitive scopes first, and this arm is about presence, not order.
+    expect([...ids].sort(), name).toEqual([...GRANT.scopes].sort());
     // No control — the server did not say any of these is withdrawable.
     expect(revokeButtons(), `${name}: offered a control the server never authorised`).toHaveLength(
       0
@@ -1198,9 +1275,9 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     // The row is still DISCLOSED — the app really does declare this permission.
-    const ids = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-    ).map((el) => el.textContent);
+    const ids = Array.from(document.querySelectorAll<HTMLElement>('[data-permission-row]')).map(
+      (el) => el.dataset.permissionRow
+    );
     expect(ids, name).toContain(UNGRANTED);
     expect(
       revokableScopesOnScreen(),
@@ -1215,9 +1292,7 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
   test('🔴 says so, and does NOT use the "granted by platform policy" note', async () => {
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
-    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]'))
-      .find((el) => el.textContent === UNGRANTED)
-      ?.closest('[data-testid="block-scope-list"] > *');
+    const row = document.querySelector(`[data-permission-row="${UNGRANTED}"]`);
     if (!row) throw new Error(`${name}: no row for ${UNGRANTED}`);
     // Silence is the rejected option: a row with no affordance and no explanation, next to rows
     // that have one, reads as an oversight rather than as a statement.
@@ -1386,32 +1461,28 @@ test('🔴 the drawer and the activity page render ONE consent ledger from one f
   const ledger = (): string[] => {
     const list = document.querySelector('[data-testid="scope-consent-list"]');
     if (!list) throw new Error('no scope-consent-list rendered');
-    return Array.from(list.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')).map(
-      (id) => {
-        const row = id.closest('[data-testid="block-scope-list"] > *');
-        if (!row) throw new Error(`scope id ${id.textContent} is not inside a scope row`);
-        const control = row.querySelector('[data-testid="scope-revoke-button"]');
-        const note = row.querySelector('[data-testid="scope-fixed-note"]');
-        const mark = row.querySelector('[data-testid="scope-revoked-mark"]');
-        // `not-granted` is enumerated here rather than collapsing into `NOTHING`: the positive
-        // control below asserts NO row is in the `NOTHING` state, and that assertion is only about
-        // "no affordance and no explanation" if every state that DOES carry an explanation is
-        // named. A not-granted row carries one.
-        const notGranted = row.querySelector('[data-testid="scope-not-granted-note"]');
-        const state = control
-          ? 'revokable'
-          : mark
-          ? 'revoked'
-          : note
-          ? 'fixed'
-          : notGranted
-          ? 'not-granted'
-          : 'NOTHING';
-        // The note text is part of the pair, so a surface rendering the right STATE with the wrong
-        // sentence is still a divergence.
-        return `${id.textContent}|${state}|${(note ?? notGranted)?.textContent ?? ''}`;
-      }
-    );
+    return Array.from(list.querySelectorAll<HTMLElement>('[data-permission-row]')).map((row) => {
+      const control = row.querySelector('[data-testid="scope-revoke-button"]');
+      const note = row.querySelector('[data-testid="scope-fixed-note"]');
+      const mark = row.querySelector('[data-testid="scope-revoked-mark"]');
+      // `not-granted` is enumerated here rather than collapsing into `NOTHING`: the positive
+      // control below asserts NO row is in the `NOTHING` state, and that assertion is only about
+      // "no affordance and no explanation" if every state that DOES carry an explanation is
+      // named. A not-granted row carries one.
+      const notGranted = row.querySelector('[data-testid="scope-not-granted-note"]');
+      const state = control
+        ? 'revokable'
+        : mark
+        ? 'revoked'
+        : note
+        ? 'fixed'
+        : notGranted
+        ? 'not-granted'
+        : 'NOTHING';
+      // The note text is part of the pair, so a surface rendering the right STATE with the wrong
+      // sentence is still a divergence.
+      return `${row.dataset.permissionRow}|${state}|${(note ?? notGranted)?.textContent ?? ''}`;
+    });
   };
 
   SURFACES[0].render();

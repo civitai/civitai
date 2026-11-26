@@ -33,7 +33,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockCreateBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
   mockCreateNotification.mockResolvedValue(undefined);
-  dbMock.dbRead.$queryRaw.mockResolvedValue([{ userId: 1 }, { userId: 2 }]);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ userId: 1 }, { userId: 2 }]);
 });
 
 // Product decision (2026-10-04): winner prizes are claimed; entry (participation) prizes are not — the daily

@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   classifyGatedImageForViewer,
@@ -9,6 +11,7 @@ import {
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
   listingIconUrl,
+  listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
 import {
   allBrowsingLevelsFlag,
@@ -18,6 +21,7 @@ import {
   nsfwLevelFromContentRating,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 /**
  * App Store listing media — the PER-IMAGE, PER-REQUEST visibility rule for every PUBLIC surface
@@ -88,25 +92,15 @@ export const listingMediaImageSelect = {
   tosViolation: true,
   acceptableMinor: true,
   blockedFor: true,
+  modelRestricted: true,
 } as const;
 
 /** One listing image as {@link listingMediaImageSelect} reads it. */
-export type ListingMediaImage = {
-  url: string | null;
-  nsfwLevel: number;
-  ingestion: string;
-  needsReview: string | null;
-  poi: boolean;
-  minor: boolean;
-  tosViolation: boolean;
-  acceptableMinor: boolean;
-  blockedFor: string | null;
-};
+export type ListingMediaImage = Pick<Selectable<DB['Image']>, keyof typeof listingMediaImageSelect>;
 
 /**
- * A moderation flag read from an untyped or raw-SQL row counts as SET unless it is literally
- * `false` or absent — fail-closed, so a malformed value can only ever hide an image. The one rule
- * for every reader that builds a {@link ListingMediaImage} from such a row.
+ * A moderation flag from a nullable raw-SQL column (a LEFT JOIN) counts as SET unless it is
+ * literally `false` or absent, so an unexpected value can only ever hide an image.
  */
 export function isModerationFlagSet(value: unknown): boolean {
   return value != null && value !== false;
@@ -169,21 +163,36 @@ export function listingMediaCeiling(
   return redHostMediaCeiling(audience, sfwBrowsingLevelsFlag & ratingLevels);
 }
 
+/**
+ * A listing's own `content_rating` as a media ceiling: every level up to it, with nothing added
+ * for a host or a viewer. For a surface that publishes media under the listing's rating tag (the
+ * registry adapter, which publishes each app tagged with its rating, to the tokens that may read
+ * it), so no image it carries can be rated above that tag. Unlike {@link listingMediaCeiling} it
+ * is not held to SFW: an `x` listing's X icon is within its own tag.
+ */
+export function listingRatingMediaCeiling(contentRating: string | null | undefined): number {
+  const ratingMax = nsfwLevelFromContentRating(contentRating);
+  return flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
+}
+
 /** The gate's level comparison, for labels that describe where an image shows. */
 export { isLevelWithinCeiling };
 
-/** The fields `classifyGatedImageForViewer` reads. */
-type GatedFields = Parameters<typeof classifyGatedImageForViewer>[0];
+/** The fields `classifyGatedImageForViewer` reads, plus the restricted base model flag. */
+type GatedFields = Parameters<typeof classifyGatedImageForViewer>[0] &
+  Pick<ListingMediaImage, 'modelRestricted'>;
 
 /**
- * True only when `image` is `visible` under `ceiling`. The single predicate every listing-media
- * surface uses; `pending` (not yet rated) is a refusal, the same as `hidden`.
+ * True only when `image` is `visible` under `ceiling` and not a restricted mature image. The single
+ * predicate every listing-media surface uses; `pending` (not yet rated) is a refusal, the same as
+ * `hidden`.
  */
 export function isListingImageVisible(
   image: GatedFields | null | undefined,
   ceiling: number
 ): boolean {
   if (!image) return false;
+  if (isRestrictedImage(image)) return false;
   if (classifyGatedImageForViewer(image, ceiling).status !== 'visible') return false;
   return true;
 }
@@ -219,7 +228,7 @@ export function gatedListingScreenshots(
     const url = visibleUrl(s.image, ceiling);
     if (!url) continue;
     out.push({
-      url: getEdgeUrl(url, { width: LISTING_SCREENSHOT_WIDTH }),
+      url: listingMediaEdgeUrl(url, LISTING_SCREENSHOT_WIDTH),
       caption: s.caption ?? null,
     });
   }
@@ -242,7 +251,7 @@ export function gatedListingCoverUrl(
   if (coverUrl) return listingCoverUrl({ url: coverUrl }, null);
   for (const s of screenshots) {
     const url = visibleUrl(s.image, ceiling);
-    if (url) return getEdgeUrl(url, { width: LISTING_COVER_WIDTH });
+    if (url) return listingMediaEdgeUrl(url, LISTING_COVER_WIDTH);
   }
   return null;
 }
@@ -311,7 +320,7 @@ export function projectListingMedia(
       for (const s of row.screenshots) {
         if (!s.image?.url) continue;
         screenshots.push({
-          url: getEdgeUrl(s.image.url, { width: LISTING_SCREENSHOT_WIDTH }),
+          url: listingMediaEdgeUrl(s.image.url, LISTING_SCREENSHOT_WIDTH),
           caption: s.caption ?? null,
         });
       }
@@ -320,7 +329,7 @@ export function projectListingMedia(
       iconUrl: listingIconUrl(row.icon),
       coverUrl: listingCoverUrl(
         row.cover,
-        firstShot ? getEdgeUrl(firstShot, { width: LISTING_COVER_WIDTH }) : null
+        firstShot ? listingMediaEdgeUrl(firstShot, LISTING_COVER_WIDTH) : null
       ),
       screenshots,
     };
@@ -362,6 +371,10 @@ export type ListingSocialImage = { url: string; nsfwLevel: number };
  *
  * The level travels with the url so the page's `Meta` can apply its own, host-independent
  * safe-level check as a second belt (`Meta`'s `imageNsfwLevel`).
+ *
+ * 🔴 JPEG ON PURPOSE: these urls are built WITHOUT `optimized`, unlike every on-page listing
+ * image (`listingMediaEdgeUrl`). Link-preview scrapers are not all WebP-capable, and a social
+ * card has no card background for a lost alpha channel to show through.
  */
 export function listingSocialImage(
   row: ListingMediaRow,

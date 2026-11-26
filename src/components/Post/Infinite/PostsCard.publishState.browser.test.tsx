@@ -37,7 +37,6 @@ vi.mock('~/components/Reaction/Reactions', async (importOriginal) => ({
   ...(await importOriginal<typeof Reactions>()),
   PostReactions: () => null,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 
 function makePost(publishedAt: Date | null): PostsInfiniteModel {
   return {
@@ -60,7 +59,8 @@ describe('post card publish state', () => {
     renderWithProviders(
       <IsClientProvider>
         <PostsCard data={makePost(inThreeDays)} />
-      </IsClientProvider>
+      </IsClientProvider>,
+      { user: { id: 1 } }
     );
 
     await vi.waitFor(() => expect(badgeText()).toBeTruthy());
@@ -72,7 +72,8 @@ describe('post card publish state', () => {
     renderWithProviders(
       <IsClientProvider>
         <PostsCard data={makePost(null)} />
-      </IsClientProvider>
+      </IsClientProvider>,
+      { user: { id: 1 } }
     );
 
     await vi.waitFor(() => expect(badgeText()).toBeTruthy());
@@ -84,7 +85,8 @@ describe('post card publish state', () => {
     renderWithProviders(
       <IsClientProvider>
         <PostsCard data={makePost(lastWeek)} />
-      </IsClientProvider>
+      </IsClientProvider>,
+      { user: { id: 1 } }
     );
 
     // Wait for the card itself, so this is "the badge is absent", not "nothing rendered yet".

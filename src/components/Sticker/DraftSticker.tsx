@@ -18,12 +18,12 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
-import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
+import { KNOB_OFFSET, knobBelowFor, rotate } from '~/components/Sticker/draft-gesture';
 import { placeButtonPosition } from '~/components/Sticker/place-button-position';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
@@ -44,6 +44,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
+import { stickerKeysRefusal, stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -146,6 +147,16 @@ const CORNERS = [
  * and the pair never settles. Selection raises z-order so the one last touched
  * is on top and reachable; beyond that, moving the stickers apart is the fix.
  */
+/**
+ * A sticker in Movement drawn at its key opacity, as `filter` because the treatments own
+ * `opacity`. Never fainter than a ghost, so a sticker on a hidden key can still be picked up.
+ */
+const keyFade = (shown: number | undefined) =>
+  shown == null || shown >= 1
+    ? undefined
+    : { filter: `opacity(${Math.max(shown, KEY_GHOST_OPACITY)})` };
+const KEY_GHOST_OPACITY = 0.2;
+
 export function DraftSticker({
   draft,
   art,
@@ -162,6 +173,8 @@ export function DraftSticker({
   commit,
   artwork,
   opaque,
+  liftOverTray,
+  knobFlips,
 }: {
   draft: StickerDraft;
   /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
@@ -207,6 +220,10 @@ export function DraftSticker({
   artwork?: ReactNode;
   /** No opacity control: the draft stays fully opaque (a Hat Turf hat). */
   opaque?: boolean;
+  /** Pull the cluster over the draft when the tray covers it, not only past the clip (a Hat Turf hat). */
+  liftOverTray?: boolean;
+  /** Hang the rotate knob below when above would put it past the clipping edge (a Hat Turf hat). */
+  knobFlips?: boolean;
 }) {
   const useStore = useDraftStoreHook();
   const markPurchased = useStore((state) => state.markPurchased);
@@ -361,22 +378,31 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the cluster,
   // so it moves above the sticker when that is the better of the two positions.
-  // The two standoffs ride along because they come from the same measurement,
-  // and because the side they apply to is decided in the same breath — see the
-  // note above `setPosition` in `measure`.
-  const [{ flipped, below, above }, setPosition] = useState({
+  // The two standoffs and the lift ride along because they come from the same
+  // measurement, and because the side they apply to is decided in the same
+  // breath — see the note above `setPosition` in `measure`.
+  const [{ flipped, below, above, lift, knobBelow }, setPosition] = useState({
     flipped: false,
+    lift: 0,
     below: 0,
     above: 0,
+    knobBelow: false,
   });
   const trayElement = useStore((state) => state.tray);
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
-  // back on the pointermove path, which is the whole problem. It reads the two
+  // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, rotation: draft.rotation });
-  frame.current = { flipped, rotation: draft.rotation };
+  const frame = useRef({
+    flipped,
+    lift,
+    liftOverTray,
+    knobFlips,
+    knobBelow,
+    rotation: draft.rotation,
+  });
+  frame.current = { flipped, lift, liftOverTray, knobFlips, knobBelow, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -385,8 +411,31 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, rotation } = frame.current;
-    const tray = useStore.getState().tray;
+    const { flipped, lift, liftOverTray, knobFlips, rotation } = frame.current;
+    const { tray, interaction } = useStore.getState();
+    const clipBox = clip.current?.getBoundingClientRect() ?? null;
+    // Decided here, with the standoffs that depend on it, and held still through a rotate drag:
+    // the drag reads the side it started on, so a swap mid-turn would spin the sticker half a turn.
+    let knobBelow = false;
+    if (knobFlips) {
+      const rect = element.getBoundingClientRect();
+      knobBelow =
+        interaction === 'rotate'
+          ? frame.current.knobBelow
+          : knobBelowFor({
+              centre: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+              height: rect.height,
+              rotation,
+              knobOffset: KNOB_OFFSET,
+              clip: clipBox ?? {
+                top: 0,
+                left: 0,
+                right: window.innerWidth,
+                bottom: window.innerHeight,
+              },
+              current: frame.current.knobBelow,
+            });
+    }
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
@@ -397,10 +446,13 @@ export function DraftSticker({
       sticker: element,
       cluster: button,
       tray: tray?.getBoundingClientRect() ?? null,
-      clip: clip.current?.getBoundingClientRect() ?? null,
+      clip: clipBox,
       flipped,
+      lift,
+      liftOverTray,
       rotation,
       knobOffset: KNOB_OFFSET,
+      knobBelow,
       outset: HANDLE_OUTSET,
       gap: BUY_BUTTON_GAP,
     });
@@ -411,9 +463,11 @@ export function DraftSticker({
     setPosition((current) =>
       current.flipped === next.flipped &&
       current.below === next.below &&
-      current.above === next.above
+      current.above === next.above &&
+      current.lift === next.lift &&
+      current.knobBelow === knobBelow
         ? current
-        : next
+        : { ...next, knobBelow }
     );
   }, [useStore]);
 
@@ -469,9 +523,11 @@ export function DraftSticker({
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
   // sticker's own transform, so none of these deps can change it.
+  // Ending a turn re-decides the knob's side, which the turn held still.
+  const rotating = useStore((state) => state.interaction === 'rotate');
   useLayoutEffect(() => {
     measure();
-  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped]);
+  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped, rotating]);
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
@@ -560,6 +616,7 @@ export function DraftSticker({
           draftId: draft.id,
           pointerId: event.pointerId,
           mode: 'rotate',
+          knobBelow,
         });
       }
     };
@@ -578,22 +635,81 @@ export function DraftSticker({
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
-  const placementInput = () => ({
-    imageId: draft.imageId,
-    free: placingFree,
-    data: {
-      cosmeticId: draft.cosmeticId,
-      x: draft.x,
-      y: draft.y,
-      scale: snapScaleOvershoot(draft.scale, creatorMaxScale),
-      rotation: draft.rotation,
-      flip: draft.flip,
-      opacity: draft.opacity,
-      // Sent only when there is something to send, so an opened-then-abandoned
-      // field is the same as never opening it.
-      ...(note.trim() ? { comment: note } : {}),
-    },
-  });
+  // Label of this draft's pay button; the editor's floating Place presses that button.
+  const primaryLabel = commit
+    ? null
+    : purchase && effectiveMode === 'pack' && purchase.pack
+    ? purchase.refill
+      ? 'Buy another pack'
+      : 'Purchase sticker'
+    : purchase
+    ? 'Buy a use'
+    : placingFree
+    ? 'Place free'
+    : `Place · ${numberWithCommas(price)} Buzz`;
+  const setPrimaryLabel = useStore((state) => state.setPrimaryLabel);
+  useEffect(() => {
+    setPrimaryLabel(draft.id, primaryLabel);
+    return () => setPrimaryLabel(draft.id, null);
+  }, [draft.id, primaryLabel, setPrimaryLabel]);
+
+  // Disabled only; StickerMotionEditor shows the reason.
+  const motionRefused =
+    !!draft.motion?.on &&
+    draft.motion.keys.length > 0 &&
+    stickerKeysRefusal(draft.motion.keys, draft.opacity) != null;
+
+  const placementInput = () => {
+    const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
+    const track =
+      draft.motion?.on && draft.motion.keys.length
+        ? (() => {
+            const keys = stickerKeysTrack(draft.motion.keys);
+            return {
+              ...keys,
+              keys: keys.keys.map((key) => ({
+                ...key,
+                s: snapScaleOvershoot(key.s, creatorMaxScale),
+              })),
+            };
+          })()
+        : null;
+    const first = track?.keys[0];
+    return {
+      imageId: draft.imageId,
+      free: placingFree,
+      ...(track ? { track } : {}),
+      data: {
+        cosmeticId: draft.cosmeticId,
+        // A moving sticker's own pose is its first key, so anything that ignores tracks draws
+        // it where it starts.
+        x: first?.x ?? draft.x,
+        y: first?.y ?? draft.y,
+        scale: first ? snapScaleOvershoot(first.s, creatorMaxScale) : scale,
+        rotation: first?.r ?? draft.rotation,
+        flip: draft.flip,
+        opacity: draft.opacity,
+        // Sent only when there is something to send, so an opened-then-abandoned
+        // field is the same as never opening it.
+        ...(note.trim() ? { comment: note } : {}),
+      },
+    };
+  };
+
+  // Must mirror when this draft's own Place button would place it.
+  const latestInput = useRef(placementInput);
+  latestInput.current = placementInput;
+  // Not while its own placement is in flight, or Place all would place it a second time.
+  const readyToPlace = !commit && !purchase && !motionRefused && !place.isPending;
+  const setReadyPlacement = useStore((state) => state.setReadyPlacement);
+  const placingAll = useStore((state) => state.placingAll);
+  useEffect(() => {
+    setReadyPlacement(
+      draft.id,
+      readyToPlace ? { free: placingFree, input: () => latestInput.current() } : null
+    );
+    return () => setReadyPlacement(draft.id, null);
+  }, [draft.id, readyToPlace, placingFree, setReadyPlacement]);
 
   /**
    * A second copy of this sticker, already arranged.
@@ -788,11 +904,13 @@ export function DraftSticker({
             die-cut edge and a plate both grow the sticker's apparent bounds — so
             positioning against the undressed version means moving it again after
             paying. */}
-        {dressed.animationClassName ? (
-          <div className={dressed.animationClassName}>{artworkImage}</div>
-        ) : (
-          artworkImage
-        )}
+        <div style={keyFade(draft.shown)}>
+          {dressed.animationClassName ? (
+            <div className={dressed.animationClassName}>{artworkImage}</div>
+          ) : (
+            artworkImage
+          )}
+        </div>
 
         {/* Hidden rather than unmounted: the chrome keeps its box, so the buy
             button's measured side is still right when it comes back. */}
@@ -809,8 +927,15 @@ export function DraftSticker({
 
           <span
             onPointerDown={begin('rotate')}
-            className={`absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} before:-translate-y-2.5`}
-            style={{ top: `-${KNOB_OFFSET * 100}%` }}
+            data-testid="draft-rotate-knob"
+            data-knob-below={knobBelow || undefined}
+            className={clsx(
+              `absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA}`,
+              knobBelow ? 'before:translate-y-2.5' : 'before:-translate-y-2.5'
+            )}
+            style={
+              knobBelow ? { bottom: `-${KNOB_OFFSET * 100}%` } : { top: `-${KNOB_OFFSET * 100}%` }
+            }
           />
         </div>
       </div>
@@ -837,7 +962,7 @@ export function DraftSticker({
           // no constant is right at both ends of the scale range or at both ends
           // of the rotation range. Set from the same state as the class above,
           // never written to the node separately.
-          ...(flipped ? { marginBottom: above } : { marginTop: below }),
+          ...(flipped ? { marginBottom: above - lift } : { marginTop: below - lift }),
         }}
         // Outside the rotated body but still inside the draft, and the layer
         // starts a move from a press anywhere on it, so without this every press
@@ -961,6 +1086,7 @@ export function DraftSticker({
                 buzzAmount={purchase.pack.unitAmount}
                 accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
                 label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+                data-draft-primary={draft.id}
                 loading={purchasingShopItem}
                 onPerformTransaction={buySticker}
               />
@@ -973,6 +1099,7 @@ export function DraftSticker({
                 buzzAmount={purchase.perUse ?? 0}
                 accountTypes={spendTypes}
                 label="Buy a use"
+                data-draft-primary={draft.id}
                 loading={buyUses.isPending}
                 // A sticker sold before per-use pricing existed has no price to
                 // charge, and the listing price is not a stand-in for one. Says so
@@ -997,7 +1124,9 @@ export function DraftSticker({
                 color="yellow"
                 style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
                 loading={place.isPending}
+                disabled={motionRefused || placingAll}
                 onClick={() => place.mutate(placementInput())}
+                data-draft-primary={draft.id}
               >
                 Place free
               </Button>
@@ -1008,7 +1137,9 @@ export function DraftSticker({
                 buzzAmount={price}
                 accountTypes={spendTypes}
                 label="Place"
+                data-draft-primary={draft.id}
                 loading={place.isPending}
+                disabled={motionRefused || placingAll}
                 onPerformTransaction={() => place.mutate(placementInput())}
               />
             )}

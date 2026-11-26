@@ -24,7 +24,7 @@ const build = (
       metadata: {},
       steps: [{ $type: 'comfy', name: '$0', status: 'succeeded', metadata: stepMetadata, output }],
     } as any,
-    { domain: { green: false } as any, nsfwEnabled: true, holdUnrated }
+    { domain: { green: false } as any, holdUnrated }
   );
 
 describe('WorkflowData unrated outputs', () => {
@@ -110,7 +110,7 @@ describe('WorkflowData unrated outputs', () => {
           },
         ],
       } as any,
-      { domain: { green: true } as any, nsfwEnabled: false, holdUnrated: true }
+      { domain: { green: true } as any, holdUnrated: true }
     );
 
     expect(wf.steps[0].output[0].blockedReason).toBeFalsy();
@@ -134,17 +134,20 @@ describe('WorkflowData unrated outputs', () => {
             { $type, name: '$0', status: 'succeeded', metadata: stepMetadata, output: [output] },
           ],
         } as any,
-        { domain: { green: true } as any, nsfwEnabled: true, holdUnrated: true }
+        { domain: { green: true } as any, holdUnrated: true }
       );
     const held = (wf: WorkflowData) => wf.steps[0].output[0].pendingRating;
     const video = blob({ type: 'video' });
 
-    it.each(['Grok', 'Kling', 'Veo3', 'Vidu'])('shows %s video unrated', (ecosystem) => {
-      const wf = buildStep('videoGen', video, { params: { ecosystem } });
+    it.each(['GeminiOmni', 'Grok', 'Kling', 'Veo3', 'Vidu'])(
+      'shows %s video unrated',
+      (ecosystem) => {
+        const wf = buildStep('videoGen', video, { params: { ecosystem } });
 
-      expect(held(wf)).toBe(false);
-      expect(wf.succeededOutput.map((x) => x.id)).toEqual(['blob-1']);
-    });
+        expect(held(wf)).toBe(false);
+        expect(wf.succeededOutput.map((x) => x.id)).toEqual(['blob-1']);
+      }
+    );
 
     it('reads the ecosystem from the workflow when the step has no params', () => {
       expect(held(buildStep('videoGen', video, {}, { ecosystem: 'Kling' }))).toBe(false);

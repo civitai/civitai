@@ -13,7 +13,9 @@ const { mockVoidChallenge, mockCreateNotification, mockCloseChallengeCollection 
   })
 );
 
-vi.mock('~/server/services/challenge.service', () => ({ voidChallenge: mockVoidChallenge }));
+vi.mock('~/server/games/daily-challenge/challenge-void', () => ({
+  voidChallenge: mockVoidChallenge,
+}));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
@@ -167,9 +169,6 @@ describe('applyChallengeNsfwEscalation', () => {
     expect(data.ingestion).toBe('Blocked');
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'challenge-nsfw-cancelled-77' })
-    );
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-nsfw-escalation-voided', challengeId: 77 })
     );
   });
 

@@ -25,6 +25,6 @@ export function showStudioAudioNotice({
 
 export function disabledMediaTooltip(mediaType: TrainingMediaType) {
   return mediaType === 'audio'
-    ? 'Audio training is part of the new Training Studio (Beta)'
+    ? 'Audio training is part of the new Training Studio'
     : 'Temporarily disabled - check back soon!';
 }

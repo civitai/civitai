@@ -3,8 +3,10 @@ import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   getCurrentImpressionSurface,
+  impressionTelemetryOn,
   recordImpression,
 } from '~/components/TrackView/impressionBuffer';
+import { recordFeedItemClick, recordFeedItemSeen } from '~/utils/feed-events';
 import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
@@ -29,6 +31,12 @@ const DWELL_MS = 1000;
 // observer with no margin.
 type ElementState = {
   targets: ImpressionTarget[];
+  /**
+   * Called INSTEAD of recording `targets` when set — the hook for a surface that records its
+   * impression through another event (`useDwellImpression`). Same visibility rule, same dwell,
+   * same hidden-tab re-arm, same kill switch.
+   */
+  onSeen?: () => void;
   timer: ReturnType<typeof setTimeout> | null;
   // Where the card was first seen. Kept across a tab-hide re-arm, which can
   // happen with the image-detail dialog open over the feed.
@@ -52,8 +60,12 @@ function armDwell(registry: Registry, element: Element, state: ElementState) {
   const surface = (state.surface ??= getCurrentImpressionSurface());
   state.timer = setTimeout(() => {
     state.timer = null;
-    for (const target of state.targets)
-      recordImpression(target.entityType, target.entityId, surface);
+    if (state.onSeen) state.onSeen();
+    else {
+      for (const target of state.targets)
+        recordImpression(target.entityType, target.entityId, surface);
+      recordFeedItemSeen(state.targets);
+    }
     // Recorded — stop watching. The session-level dedupe in the buffer would drop
     // a repeat anyway; this just avoids re-arming the timer on every scroll.
     registry.observer.unobserve(element);
@@ -135,17 +147,48 @@ function getRegistry(root: Element | null): Registry {
 export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
   targets: ImpressionTarget[] | undefined
 ) {
+  // Identity of the entities, not of the array — callers rebuild the array every
+  // render, and re-observing on that would be constant churn. This is the effect's
+  // real dependency; `targets` is read inside it and deliberately not a dep.
+  const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
+  // Read from this render's closure, never from a ref written during render.
+  return useImpressionObserver<T>(!!targets?.length, key, () => ({ targets: targets ?? [] }));
+}
+
+/**
+ * The same "half visible for a continuous second" rule as `useTrackImpression`, with the same
+ * `feedImpressions` kill switch and hidden-tab re-arm, for a surface that records its impression
+ * through its OWN event rather than the feed impression pipeline (the app store's
+ * `AppStore_Action`). `onSeen` runs once when the dwell matures; the element is then unobserved.
+ * `key` identifies what is being watched (re-observes when it changes); `undefined` watches nothing.
+ *
+ * De-duplication beyond "once per mount" is the caller's: the feed path de-dupes in its buffer,
+ * the store in `claimImpression`.
+ */
+export function useDwellImpression<T extends HTMLElement = HTMLDivElement>(
+  key: string | undefined,
+  onSeen: () => void
+) {
+  // The latest callback, read when the dwell matures — never a stale closure, and not a dep.
+  const latest = useRef(onSeen);
+  latest.current = onSeen;
+  return useImpressionObserver<T>(!!key, key ?? '', () => ({
+    targets: [],
+    onSeen: () => latest.current(),
+  }));
+}
+
+function useImpressionObserver<T extends HTMLElement>(
+  wanted: boolean,
+  key: string,
+  buildState: () => Pick<ElementState, 'targets' | 'onSeen'>
+) {
   const ref = useRef<T>(null);
   // Optional, not `useFeatureFlags`: ElementInView calls this for every caller,
   // tracked or not, and must not throw outside a FeatureFlagsProvider. No flags
   // means off.
   const features = useOptionalFeatureFlags();
-  const enabled = !!features?.feedImpressions && !!targets?.length;
-
-  // Identity of the entities, not of the array — callers rebuild the array every
-  // render, and re-observing on that would be constant churn. This is the effect's
-  // real dependency; `targets` is read inside it and deliberately not a dep.
-  const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
+  const enabled = impressionTelemetryOn(features) && wanted;
 
   // 🔴 `useContext(ScrollAreaContext)`, NOT `useScrollAreaRef()`. That hook looks
   // like a plain context read but unconditionally registers a `scroll` listener on
@@ -168,14 +211,28 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
 
     bindVisibility();
     const registry = getRegistry(root);
-    // Read here rather than through a ref written during render: a render that
-    // React abandons would leave such a ref pointing at a value that was never
-    // committed. `key` changes whenever these ids do, so the effect re-runs.
-    const state: ElementState = { targets: targets ?? [], timer: null };
+    // Built here rather than from a value captured during render: a render that
+    // React abandons would leave such a value pointing at something never
+    // committed. `key` changes whenever the watched ids do, so the effect re-runs.
+    const state: ElementState = { ...buildState(), timer: null };
     registry.elements.set(element, state);
     registry.observer.observe(element);
 
+    const onClick = (event: MouseEvent) => {
+      if (event.type === 'auxclick' && event.button !== 1) return;
+      if (isLinkClick(event.target)) recordFeedItemClick(state.targets);
+    };
+    const tracksClicks = state.targets.length > 0;
+    if (tracksClicks) {
+      element.addEventListener('click', onClick);
+      element.addEventListener('auxclick', onClick);
+    }
+
     return () => {
+      if (tracksClicks) {
+        element.removeEventListener('click', onClick);
+        element.removeEventListener('auxclick', onClick);
+      }
       disarmDwell(state);
       registry.observer.unobserve(element);
       registry.elements.delete(element);
@@ -191,14 +248,20 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
         registries.delete(root);
       }
     };
-    // `targets` is deliberately absent: `key` is derived from the entity ids
-    // inside it and changes exactly when they do, while the array's identity
-    // changes on every render of every card. Depending on the array would
+    // `buildState` is deliberately absent: it is rebuilt every render, and `key`
+    // changes exactly when what it would build changes. Depending on it would
     // re-observe hundreds of cards per render for no change in meaning.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, key, root]);
 
   return ref;
+}
+
+// A button inside a link (e.g. a card menu) is not a click through, so the nearest control must be the link.
+const CONTROLS =
+  'a[href], button, [role="button"], [role="menuitem"], input, select, textarea, label';
+export function isLinkClick(target: EventTarget | null) {
+  return target instanceof Element && target.closest(CONTROLS)?.tagName === 'A';
 }
 
 // Test-only, mirroring impressionBuffer's hooks. Not part of the runtime contract.

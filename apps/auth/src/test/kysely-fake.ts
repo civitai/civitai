@@ -40,6 +40,27 @@ function addWhere(clauses: Clause[], a: unknown, op?: string, value?: unknown) {
   );
 }
 
+// `doUpdateSet((eb) => ...)` for the expressions the routes use: `eb.val`, `eb.ref` and
+// `eb.fn.coalesce`, evaluated against the conflicting row as Postgres would.
+type Expr = { expr: (existing: Row) => unknown };
+const isExpr = (v: unknown): v is Expr =>
+  typeof v === 'object' && v !== null && typeof (v as Expr).expr === 'function';
+const resolveValue = (v: unknown, existing: Row): unknown => (isExpr(v) ? v.expr(existing) : v);
+const conflictEb = {
+  val: (value: unknown): Expr => ({ expr: () => value }),
+  ref: (column: string): Expr => ({ expr: (r) => r[column.slice(column.indexOf('.') + 1)] }),
+  fn: {
+    coalesce: (...args: unknown[]): Expr => ({
+      expr: (r) =>
+        args
+          .map((a) => (typeof a === 'string' ? conflictEb.ref(a) : a))
+          .map((a) => resolveValue(a, r))
+          .find((v) => v != null) ?? null,
+    }),
+  },
+};
+type UpdateSet = Row | ((eb: typeof conflictEb) => Row);
+
 export type TableDefaults = Record<string, (row: Row) => Row>;
 
 export function createKyselyFake(tables: Record<string, Row[]>, defaults: TableDefaults = {}) {
@@ -122,12 +143,15 @@ export function createKyselyFake(tables: Record<string, Row[]>, defaults: TableD
       },
       onConflict(
         cb: (oc: {
-          columns: (c: string[]) => { doUpdateSet: (s: Row) => unknown };
+          columns: (c: string[]) => { doUpdateSet: (s: UpdateSet) => unknown };
           column: (c: string) => { doNothing: () => unknown };
         }) => unknown
       ) {
         cb({
-          columns: (c) => ({ doUpdateSet: (set) => (conflict = { columns: c, set }) }),
+          columns: (c) => ({
+            doUpdateSet: (set) =>
+              (conflict = { columns: c, set: typeof set === 'function' ? set(conflictEb) : set }),
+          }),
           column: (c) => ({ doNothing: () => (conflict = { columns: [c], set: {} }) }),
         });
         return qb;
@@ -144,7 +168,10 @@ export function createKyselyFake(tables: Record<string, Row[]>, defaults: TableD
             : undefined;
           let row: Row;
           if (existing) {
-            Object.assign(existing, conflict!.set);
+            const set = Object.fromEntries(
+              Object.entries(conflict!.set).map(([k, v]) => [k, resolveValue(v, existing)])
+            );
+            Object.assign(existing, set);
             row = existing;
           } else {
             row = { ...(defaults[table]?.(v) ?? {}), ...v };
@@ -209,6 +236,7 @@ export function createKyselyFake(tables: Record<string, Row[]>, defaults: TableD
   }
 
   const db = {
+    withTables: () => db,
     selectFrom,
     insertInto,
     updateTable,

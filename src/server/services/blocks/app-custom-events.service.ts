@@ -304,7 +304,7 @@ export async function getAppCustomEvents({
         error: (error as Error)?.message,
       },
       'clickhouse'
-    ).catch(() => undefined);
+    );
     return unavailableCustomEvents(declared, includeOwner);
   } finally {
     clearTimeout(timer);

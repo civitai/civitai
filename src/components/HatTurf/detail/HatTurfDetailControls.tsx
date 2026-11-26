@@ -1,9 +1,13 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import { Button } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { FlagBadge } from '~/components/HatTurf/FlagRace/FlagBadge';
+import { FlagHatButton } from '~/components/HatTurf/FlagRace/FlagHatButton';
+import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
 import buttonClasses from '~/components/HatTurf/HatTurfButton.module.css';
 import { HatButtonFace, HatTurfGear } from '~/components/HatTurf/HatTurfButton';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
@@ -25,11 +29,27 @@ const COVER_HATS = [
 ];
 
 /** The hat button for the picture on screen. Nothing when Hat Turf is off or the picture is a contest entry. */
-export function HatTurfDetailControls({ imageId }: { imageId: number }) {
+export function HatTurfDetailControls({
+  imageId,
+  large,
+}: {
+  imageId: number;
+  /** A 36px circle, as the phone bottom bar's other buttons are. */
+  large?: boolean;
+}) {
   const feed = useTurfFeed();
-  return feed && !feed.hidden?.[imageId] ? (
-    <div className={classes.group} data-testid="hat-turf-detail-controls">
-      <HatButton imageId={imageId} />
+  const flag = useFlag(imageId);
+  // Today's flags are hidden from Hat Turf, but they take flag hats.
+  return feed && (flag || !feed.hidden?.[imageId]) ? (
+    <div
+      className={clsx(classes.group, large && classes.large)}
+      data-testid="hat-turf-detail-controls"
+    >
+      {flag ? (
+        <FlagHatButton imageId={imageId} faceClassName={classes.hat} />
+      ) : (
+        <HatButton imageId={imageId} />
+      )}
     </div>
   ) : null;
 }
@@ -96,6 +116,7 @@ function HatButton({ imageId }: { imageId: number }) {
             empty={empty}
             active={!!card.draft}
             placed={placed}
+            stock={stock}
             className={classes.hat}
             data-testid="hat-turf-detail-hat"
             aria-label={joined ? 'Place your cap' : 'Join Hat Turf'}
@@ -153,6 +174,12 @@ function HatButton({ imageId }: { imageId: number }) {
 
 /** The feed's badge, in the picture's action row after Tip; a tap opens the Hat Turf panel. */
 export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
+  // One of today's flags shows its flag badge to everyone, joined or not, as on the home row.
+  if (useFlag(imageId)) return <FlagBadge imageId={imageId} className={classes.rowBadge} />;
+  return <TurfDetailBadge imageId={imageId} />;
+}
+
+function TurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();

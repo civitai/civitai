@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
-import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 import type * as ApiKeyService from '~/server/services/api-key.service';
+
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
 
 // A ban and an unban must reach the account-standing cache, or block submits and comic generation
 // keep answering from the standing cached before it.
@@ -19,11 +28,6 @@ vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Revocation>()),
   revokeUserTokens,
-}));
-
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  assertAccountNotUnderLegalHold: vi.fn(async () => ({ legs: [], markerView: false })),
 }));
 
 // event-engine-common is a git submodule and is not checked out by default; user.service's graph
@@ -66,7 +70,7 @@ beforeEach(() => {
   installFakeCacheRedis();
   vi.useFakeTimers({ toFake: ['setTimeout'] });
   revokeUserTokens.mockResolvedValue(true);
-  for (const model of ['userLink', 'model', 'comment', 'commentV2', 'post', 'article'] as const) {
+  for (const model of ['userLink', 'model', 'post', 'article'] as const) {
     dbMock.dbWrite[model].deleteMany?.mockResolvedValue({ count: 0 } as never);
     dbMock.dbWrite[model].updateMany?.mockResolvedValue({ count: 0 } as never);
   }

@@ -143,6 +143,7 @@ const LISTING_PREVIEW = {
     // the real `projectListingDetail` always supplies them; the fixture is a stand-in
     // for that projection and must not be thinner than it.
     installCount: 0,
+    openCount: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
     // 🔴 REQUIRED, and `[]` is not cosmetic here. `AppListingDetailBody` reads
@@ -158,6 +159,7 @@ const LISTING_PREVIEW = {
     // the `satisfies` below reachable, not because this modal reads them.
     collaborators: [],
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     isBeta: false,
     betaMessage: null,
     forkable: false,
@@ -212,7 +214,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAgenticReview: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // Keep the code section's heavy sub-graphs light (their own behaviour is covered
 // elsewhere): the review host bridge + the agent chat.
@@ -261,6 +262,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       getReviewStatus: inert,
       listActivePreviews: inert,
       getAgentReview: inert,
+      listAgentReviews: inert,
       getMarketplaceMeta: inert,
       getFeaturedBlocks: inert,
       listAvailable: inert,

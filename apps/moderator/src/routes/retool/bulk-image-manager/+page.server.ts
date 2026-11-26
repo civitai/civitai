@@ -2,6 +2,8 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { denied } from '$lib/server/access';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { withheldAccountRefusal, withheldRefusal } from '$lib/server/retracted-media';
 import type { PermissionId } from '$lib/permissions';
 import { parseForm, parseIdList, parseQuery, checkboxField } from '$lib/server/query';
 import { BULK_SOURCES, REMOVED_FILTERS } from './sources';
@@ -17,6 +19,8 @@ import {
 import { sendModNotification } from '$lib/server/moderation-memory.service';
 import {
   countImagesForUser,
+  capturesSkippedNote,
+  reviewImagesSkippedNote,
   getBatchOwners,
   getImagesByIds,
   getImagesForCollection,
@@ -27,6 +31,7 @@ import {
   countBlockedImages,
   removeImagesWithFollowUps,
   type BulkBatch,
+  withholdBatchMedia,
 } from '$lib/server/bulk-image.service';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 import { HELD_FOLLOW_UPS_NOTE, heldRemovalMessage } from '$lib/server/removal-hold';
@@ -80,7 +85,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // column from a spreadsheet arrives that way, so both separators are accepted.
   if (source === 'imageIds') {
     const ids = parseIdList(q.replace(/[\s\n]+/g, ','));
-    const batch = await getImagesByIds(ids, window);
+    const batch = await withholdBatchMedia(await getImagesByIds(ids, window), {
+      csamReview: holdsCsamReview(locals.user),
+    });
     const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
     const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
     return {
@@ -117,7 +124,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       subjectImageTotal: null,
     };
 
-  const batch: BulkBatch =
+  const read: BulkBatch =
     source === 'post'
       ? await getImagesForPost(id, window)
       : source === 'model'
@@ -127,6 +134,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : source === 'collection'
       ? await getImagesForCollection(id, window)
       : await getImagesForUser(id, window, source === 'userRemoved');
+  const batch = await withholdBatchMedia(read, {
+    csamReview: holdsCsamReview(locals.user),
+  });
 
   // Whose content this batch actually is. A model's images belong to whoever posted them, which is
   // often not the model's owner — so a removal here can touch accounts the moderator did not look up.
@@ -149,6 +159,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 };
 
 const actionFail = (message: string) => fail(400, { error: message });
+/** A batch with an image withheld from this moderator (`withheldRefusal`) is refused whole. */
+const refuseWithheld = async (user: App.Locals['user'], imageIds: number[]) => {
+  const error = await withheldRefusal(user, imageIds);
+  return error ? fail(403, { error }) : null;
+};
 // The action grants every page that makes these writes checks — User Reports, the report queues, Image
 // Lookup — so a selection here is no way round them.
 const refuse = (id: PermissionId) => fail(403, { error: denied(id) });
@@ -176,6 +191,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
+    const withheldRemove = await refuseWithheld(locals.user, input.imageIds);
+    if (withheldRemove) return withheldRemove;
     // Striking the owners rides on the removal, so it needs the strike grant as a strike does anywhere.
     if (input.strikeOwners && !locals.grants['user.strike']) return refuse('user.strike');
 
@@ -190,9 +207,16 @@ export const actions: Actions = {
       result.flag && !result.flag.applied
         ? `The ${result.flag.flag} flag was NOT applied: ${result.flag.error}`
         : undefined;
-    const strikeWarning = result.struck?.error
-      ? `Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
-      : undefined;
+    const strikeWarning =
+      [
+        result.struck?.error
+          ? `Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
+          : '',
+        capturesSkippedNote(result.struck?.capturesSkipped ?? 0),
+        reviewImagesSkippedNote(result.struck?.reviewImagesSkipped ?? 0),
+      ]
+        .filter(Boolean)
+        .join(' ') || undefined;
 
     return {
       success: true,
@@ -238,6 +262,8 @@ export const actions: Actions = {
     const expected = account.username ?? String(input.userId);
     if (input.confirm.toLowerCase() !== expected.toLowerCase())
       return actionFail(`Type ${expected} exactly to confirm — nothing was removed.`);
+    const withheld = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheld) return fail(403, { error: withheld });
 
     const result = await removeAllImagesForUser({
       userId: input.userId,
@@ -253,6 +279,8 @@ export const actions: Actions = {
     if (!locals.grants['image.moderate']) return refuse('image.moderate');
     const input = parseForm(idsSchema, await request.formData());
     if (typeof input === 'string') return actionFail(input);
+    const withheldRestore = await refuseWithheld(locals.user, input.imageIds);
+    if (withheldRestore) return withheldRestore;
 
     const blocked = await countBlockedImages(input.imageIds);
 
@@ -276,6 +304,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
+    const withheldFlag = await refuseWithheld(locals.user, input.imageIds);
+    if (withheldFlag) return withheldFlag;
 
     const result = await setImageFlag({
       ...splitImageFlagValue(input.flagValue),
@@ -296,8 +326,13 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
 
-    const owners = await getBatchOwners(input.imageIds);
-    if (!owners.length) return actionFail('Those images have no resolvable owners.');
+    const { owners, capturesSkipped } = await getBatchOwners(input.imageIds);
+    if (!owners.length)
+      return actionFail(
+        capturesSkipped
+          ? capturesSkippedNote(capturesSkipped)
+          : 'Those images have no resolvable owners.'
+      );
 
     const results = await Promise.all(
       owners.map((userId) =>
@@ -312,7 +347,13 @@ export const actions: Actions = {
       notified: owners.length - failed,
       // A partial failure is reported rather than swallowed: the moderator has to know which of the
       // affected accounts were actually told.
-      warning: failed ? `${failed} of ${owners.length} owners could not be notified.` : undefined,
+      warning:
+        [
+          failed ? `${failed} of ${owners.length} owners could not be notified.` : '',
+          capturesSkippedNote(capturesSkipped),
+        ]
+          .filter(Boolean)
+          .join(' ') || undefined,
     };
   },
 };

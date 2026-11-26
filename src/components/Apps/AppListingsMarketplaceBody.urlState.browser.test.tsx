@@ -70,8 +70,6 @@ const mocks = vi.hoisted(() => ({
   lastArgs: null as null | Record<string, unknown>,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 // Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
 // a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
@@ -117,14 +115,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 
@@ -217,6 +216,7 @@ function navigateTo(next: Record<string, string>) {
 const currentQuery = () => router.query as Record<string, string>;
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
   // The store lives at `/apps/store` (`/apps` became the viewer's "My apps" home), so every
@@ -381,6 +381,19 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await expect
       .element(page.getByRole('checkbox', { name: 'Generation', exact: true }))
       .toBeChecked();
+  });
+
+  test('🔴 choosing Newest then Most popular through the menu leaves Most popular remembered and out of the URL', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ sort: 'newest' }));
+    expect(JSON.parse(localStorage.getItem('apps-store-filters') ?? '{}').sort).toBe('newest');
+
+    await userEvent.click(page.getByRole('button', { name: 'Newest' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Most popular' }));
+    await vi.waitFor(() => expect(currentQuery()).not.toHaveProperty('sort'));
+    expect(JSON.parse(localStorage.getItem('apps-store-filters') ?? '{}').sort).toBe('popular');
   });
 
   test('a sort change racing a kind change keeps both', async () => {

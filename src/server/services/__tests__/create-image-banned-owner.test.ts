@@ -10,7 +10,9 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createImage } from '~/server/services/image.service';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
 const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
@@ -62,5 +64,42 @@ describe('createImage for an owner', () => {
     expect(createdData().blockedFor).toBeUndefined();
     expect(createdData().nsfwLevel).toBeUndefined();
     expect(createImageIngestionRequest).toHaveBeenCalledOnce();
+  });
+});
+
+describe('createImage from a client', () => {
+  it.each([
+    ['case 0', 'https://example.test/picture.png'],
+    ['case 1', `https://example.test/${KEY}/picture.png`],
+    ['case 2', `//example.test/${KEY}`],
+    ['case 3', `data:image/png;base64,${KEY}`],
+    ['case 4', KEY.toUpperCase()],
+    ['case 5', ` ${KEY}`],
+    ['case 6', ''],
+    ['case 7', KEY.replace(/-/g, '%2D')],
+  ])('refuses case %# before any read or write', async (_, url) => {
+    await expect(create({ url, clientUrl: true })).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+
+    expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+    expect(createImageIngestionRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses for a caller acting for another uploader too', async () => {
+    await expect(
+      create({ url: 'https://example.test/picture.png', clientUrl: { alsoIssuedTo: 9 } })
+    ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+  });
+
+  it('stores an accepted value', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null } as never);
+    // The key was issued to this uploader.
+    redisMock.redis.mGet.mockResolvedValue(['7'] as never);
+
+    await create({ clientUrl: true });
+
+    expect(createdData().url).toBe(KEY);
   });
 });

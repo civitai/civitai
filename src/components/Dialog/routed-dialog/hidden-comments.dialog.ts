@@ -1,15 +1,6 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type HiddenCommentsModal from '~/components/Model/ModelDiscussion/HiddenCommentsModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 
-const HiddenCommentsModal = dynamic(() => import('~/components/Model/ModelDiscussion/HiddenCommentsModal'), {
-  ssr: false,
+export const hiddenCommentsDialog = routedDialog<typeof HiddenCommentsModal>({
+  resolve: (query, { modelId }) => ({ query: { ...query, modelId } }),
 });
-
-const hiddenCommentsDialog = routedDialogDictionary.addItem('hiddenComments', {
-  component: HiddenCommentsModal,
-  resolve: (query, { entityType, entityId }) => ({
-    query: { ...query, entityType, entityId },
-  }),
-});
-
-export type HiddenCommentsDialog = typeof hiddenCommentsDialog;

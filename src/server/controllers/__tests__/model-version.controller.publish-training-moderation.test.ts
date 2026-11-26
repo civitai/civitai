@@ -17,12 +17,14 @@ const {
   mockUpdateModelVersionById,
   mockGetToken,
   mockGetWorkflow,
+  mockUpdateWorkflow,
 } = vi.hoisted(() => ({
   mockGetVersionById: vi.fn(),
   mockPublishModelVersionById: vi.fn(),
   mockUpdateModelVersionById: vi.fn(),
   mockGetToken: vi.fn(),
   mockGetWorkflow: vi.fn(),
+  mockUpdateWorkflow: vi.fn(),
 }));
 
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
@@ -41,6 +43,7 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
   getWorkflow: mockGetWorkflow,
+  updateWorkflow: mockUpdateWorkflow,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof Caches>()),
@@ -126,6 +129,76 @@ describe('publishModelVersionHandler — training moderation gate', () => {
     expect(mockGetToken.mock.calls).toEqual([
       [OWNER_ID, undefined, { bypassCache: true, allowRestricted: true }],
     ]);
+  });
+});
+
+describe('publishModelVersionHandler — a version added from a run to a non-Studio model', () => {
+  // The model never came from the Studio, so only the version names the run.
+  const ADDED_META = { trainingStudioWorkflowId: 'wf-added' };
+  const run = () =>
+    publishModelVersionHandler({
+      input: { id: VERSION_ID },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelVersionEvent: vi.fn().mockResolvedValue(undefined) },
+      },
+    } as never);
+
+  beforeEach(() => {
+    mockGetVersionById.mockResolvedValue({
+      meta: ADDED_META,
+      status: 'Draft',
+      modelId: MODEL_ID,
+      baseModel: 'SDXL 1.0',
+      model: { userId: OWNER_ID, nsfw: false, status: 'Published', meta: null },
+    });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: VERSION_ID, meta: ADDED_META },
+    ] as never);
+    mockPublishModelVersionById.mockResolvedValue({
+      id: VERSION_ID,
+      modelId: MODEL_ID,
+      model: { userId: OWNER_ID, nsfw: false },
+    });
+    mockUpdateWorkflow.mockResolvedValue({});
+  });
+
+  it.each(STATUSES_REFUSED)('refuses, without publishing, when its run is %s', async (s) => {
+    mockGetWorkflow.mockResolvedValue(trainingRun(s));
+    await expect(run()).rejects.toThrow(NOT_APPROVED);
+    expect(mockGetWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-added' } })
+    );
+    expect(mockPublishModelVersionById).not.toHaveBeenCalled();
+  });
+
+  it('publishes when its run is approved, and back-links the run to the version once', async () => {
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(run()).resolves.toMatchObject({ id: VERSION_ID });
+    expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
+    expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: 'wf-added',
+        metadata: expect.objectContaining({
+          published: true,
+          modelId: MODEL_ID,
+          modelVersionId: VERSION_ID,
+        }),
+      })
+    );
+  });
+
+  it('does not back-link a scheduled publish', async () => {
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await publishModelVersionHandler({
+      input: { id: VERSION_ID, publishedAt: new Date(Date.now() + 86_400_000) },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelVersionEvent: vi.fn().mockResolvedValue(undefined) },
+      },
+    } as never);
+    expect(mockUpdateWorkflow).not.toHaveBeenCalled();
   });
 });
 

@@ -9,8 +9,10 @@ import {
   type ProfileMedia,
 } from '$lib/server/user-lookup.service';
 import type { HoldContext, HoldParent, HoldProfile } from './hold-context';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { blankCover, listWithheldIds } from '$lib/server/retracted-media';
 
-type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId' | 'commentModelId'>;
+type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId'>;
 
 const toTile = (media: ProfileMedia, caption: string): AppealCoverImage | null =>
   media.id === undefined
@@ -96,6 +98,7 @@ async function parentDetails(refs: ParentRef[]): Promise<Map<string, HoldParent>
       ? dbRead
           .selectFrom('Article as a')
           .leftJoin('Image as i', 'i.id', 'a.coverId')
+          .leftJoin('Image as b', 'b.id', 'a.bannerId')
           .select([
             'a.id',
             'a.title',
@@ -105,6 +108,12 @@ async function parentDetails(refs: ParentRef[]): Promise<Map<string, HoldParent>
             sql<string | null>`i.type::text`.as('type'),
             'i.minor',
             'i.acceptableMinor',
+            'b.id as bannerId',
+            'b.url as bannerUrl',
+            'b.nsfwLevel as bannerNsfwLevel',
+            sql<string | null>`b.type::text`.as('bannerType'),
+            'b.minor as bannerMinor',
+            'b.acceptableMinor as bannerAcceptableMinor',
           ])
           .where('a.id', 'in', articleIds)
           .execute()
@@ -141,25 +150,34 @@ async function parentDetails(refs: ParentRef[]): Promise<Map<string, HoldParent>
       imageTotal: 1,
     });
   for (const a of articles) {
-    const cover =
+    const own = [
       a.coverId !== null && a.url
-        ? [
-            {
-              id: a.coverId,
-              url: a.url,
-              nsfwLevel: a.nsfwLevel ?? 0,
-              type: a.type ?? undefined,
-              minor: a.minor ?? false,
-              acceptableMinor: a.acceptableMinor ?? false,
-            },
-          ]
-        : [];
+        ? {
+            id: a.coverId,
+            url: a.url,
+            nsfwLevel: a.nsfwLevel ?? 0,
+            type: a.type ?? undefined,
+            minor: a.minor ?? false,
+            acceptableMinor: a.acceptableMinor ?? false,
+          }
+        : null,
+      a.bannerId !== null && a.bannerId !== a.coverId && a.bannerUrl
+        ? {
+            id: a.bannerId,
+            url: a.bannerUrl,
+            nsfwLevel: a.bannerNsfwLevel ?? 0,
+            type: a.bannerType ?? undefined,
+            minor: a.bannerMinor ?? false,
+            acceptableMinor: a.bannerAcceptableMinor ?? false,
+          }
+        : null,
+    ].filter((image) => image !== null);
     found.set(parentKey({ type: 'article', id: a.id }), {
       type: 'article',
       id: a.id,
       title: a.title,
-      images: cover,
-      imageTotal: cover.length,
+      images: own,
+      imageTotal: own.length,
     });
   }
   return found;
@@ -175,17 +193,8 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 });
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
-  // `commentParents` reads `CommentV3`, which shares its ids with `CommentV2`, so it answers both.
-  const isThreadComment = (hold: HoldRef) =>
-    hold.entityType === 'CommentV2' || hold.entityType === 'CommentV3';
-  const threadIds = holds.filter(isThreadComment).map((h) => h.entityId);
-  const threads = threadIds.length ? await commentParents(threadIds) : new Map<number, ParentRef>();
-  const refOf = (hold: HoldRef): ParentRef | null =>
-    isThreadComment(hold)
-      ? threads.get(hold.entityId) ?? null
-      : hold.entityType === 'Comment' && hold.commentModelId
-      ? { type: 'model', id: hold.commentModelId }
-      : null;
+  const threads = await commentParents(holds.map((h) => h.entityId));
+  const refOf = (hold: HoldRef): ParentRef | null => threads.get(hold.entityId) ?? null;
 
   const refs = holds.flatMap((h) => refOf(h) ?? []);
   if (!refs.length) return new Map();
@@ -201,10 +210,7 @@ async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>
 /** Profile images and text, or a comment's parent, batched per type. Decoration: a failing read drops that context, not the page. */
 export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, HoldContext>> {
   const profileHolds = holds.filter((h) => h.entityType === 'UserProfile');
-  const commentHolds = holds.filter(
-    (h) =>
-      h.entityType === 'Comment' || h.entityType === 'CommentV2' || h.entityType === 'CommentV3'
-  );
+  const commentHolds = holds.filter((h) => h.entityType === 'CommentV3');
   const [profiles, parents] = await Promise.all([
     profileHolds.length
       ? profileContexts([...new Set(profileHolds.map((h) => h.entityId))]).catch((err) => {
@@ -225,4 +231,29 @@ export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, Hol
   for (const h of commentHolds)
     contexts.set(h.id, { profile: null, parent: parents.get(h.id) ?? null });
   return contexts;
+}
+
+/** The holds with every image withheld from `viewer` sent without its key: the entity's media, the
+ *  profile tiles and the comment parent's. The page's grant is not the CSAM review grant. */
+export async function withheldHoldMedia<
+  T extends { coverImages: AppealCoverImage[] } & HoldContext
+>(holds: T[], viewer: App.Locals['user'] | undefined): Promise<T[]> {
+  const media = (hold: T) => [
+    ...hold.coverImages,
+    ...(hold.profile?.images ?? []),
+    ...(hold.parent?.images ?? []),
+  ];
+  const withheld = await listWithheldIds(
+    holds.flatMap((hold) => media(hold).map((image) => image.id)),
+    { csamReview: holdsCsamReview(viewer) },
+    'csam-text-holds'
+  );
+  const shown = (images: AppealCoverImage[]): AppealCoverImage[] =>
+    images.map((image) => (withheld.has(image.id) ? blankCover(image) : image));
+  return holds.map((hold) => ({
+    ...hold,
+    coverImages: shown(hold.coverImages),
+    profile: hold.profile && { ...hold.profile, images: shown(hold.profile.images) },
+    parent: hold.parent && { ...hold.parent, images: shown(hold.parent.images) },
+  }));
 }

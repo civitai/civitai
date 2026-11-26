@@ -67,7 +67,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -103,12 +102,17 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
+// Its own suite covers the image documents; here only that the fan-out runs is under test.
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
   bustPublicModelResponseCache: vi.fn(),
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
+  purgePublicModelShowcaseEdgeCache: vi.fn(),
 }));
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: mockTrackModActivity,
@@ -169,9 +173,11 @@ function mockBefore(overrides: Partial<typeof baseModelRow> & { meta?: unknown }
 }
 
 const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
-/** The fan-out's raw reads, without the row lock the setter takes first. */
+/** The fan-out's raw reads, without the row lock the setter takes first or the collection reindex's cover-index probe. */
 const fanOutQueries = () =>
-  mockDbWrite.$queryRaw.mock.calls.filter((call) => !sqlOf(call).includes('FOR NO KEY UPDATE'));
+  mockDbWrite.$queryRaw.mock.calls.filter(
+    (call) => !sqlOf(call).includes('FOR NO KEY UPDATE') && !sqlOf(call).includes('pg_index')
+  );
 
 function mockTracker() {
   return { entityChanges: vi.fn().mockResolvedValue(undefined) };
@@ -1536,8 +1542,12 @@ describe('setModelMinor — lift restore on a real row', () => {
         mode text, meta jsonb, "lockedProperties" text[] NOT NULL DEFAULT '{}',
         nsfw bool NOT NULL DEFAULT false, minor bool NOT NULL DEFAULT false,
         "sfwOnly" bool NOT NULL DEFAULT false, poi bool NOT NULL DEFAULT false,
-        "gallerySettings" jsonb, "nsfwLevel" int NOT NULL DEFAULT 1);
+        "gallerySettings" jsonb, "nsfwLevel" int NOT NULL DEFAULT 1,
+        "sfwName" text, "sfwCoverImageId" int);
       CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
+      CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL,
+        "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb, "contentHash" text,
+        "nsfwLevel" int, UNIQUE ("entityType", "entityId"));
       CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
       CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor bool NOT NULL DEFAULT false);
       CREATE TABLE "ModActivity" (id serial, "userId" int, activity text, "entityType" text,
@@ -1888,9 +1898,10 @@ describe('setModelMinor — lift restore on a real row', () => {
       );
       await flag();
       expect(await row()).toMatchObject({ minor: true, nsfw: false });
-      const { resolveRestrictedNsfwVerdict } = await import(
+      const { currentRestrictedLeadRevision, resolveRestrictedNsfwVerdict } = await import(
         '~/server/services/text-scan/actions/restricted-nsfw-verdict'
       );
+      const revision = (await currentRestrictedLeadRevision(client(pg) as never, MODEL_ID)) ?? '';
       // The ruling logs inside its transaction: through it, or PGlite's one connection waits on itself.
       mockTrackModActivity.mockImplementationOnce(
         async (userId: number, { activity }: Record<string, unknown>, tx: unknown) => {
@@ -1903,6 +1914,7 @@ describe('setModelMinor — lift restore on a real row', () => {
         modelId: MODEL_ID,
         ruling: 'keep',
         userId: MODERATOR_ID,
+        revision,
       });
 
       await liftMinor();

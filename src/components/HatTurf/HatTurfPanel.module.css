@@ -5,6 +5,8 @@
 
 .sheet {
   flex: 0 0 auto;
+  /* Without it the sheet is as wide as its content, short of the screen when the content is short. */
+  width: 100%;
   height: auto;
   max-height: 85dvh;
   border-radius: 16px 16px 0 0;
@@ -20,6 +22,22 @@
 
 .pad {
   padding: 12px 14px;
+}
+
+.showHats {
+  align-items: center;
+}
+
+@media (max-width: $mantine-breakpoint-sm) {
+  /* A tap row taller than the switch, centred in a slimmer pad: at 44px in the 12px pad the row
+     read as too much padding around one switch. */
+  .showHatsPad {
+    padding-block: 6px;
+  }
+
+  .showHats {
+    min-height: 36px;
+  }
 }
 
 .divider {

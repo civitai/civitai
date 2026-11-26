@@ -23,6 +23,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 
+import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 
@@ -36,7 +37,7 @@ const deal = (previewKind = 'Image') =>
   } as unknown as ServiceDealView);
 
 let nextId = 1;
-const file = (kind: 'Preview' | 'Final', over: Record<string, unknown> = {}) => ({
+const file = (kind: 'Preview' | 'Final' | 'Attachment', over: Record<string, unknown> = {}) => ({
   id: nextId++,
   round: 0,
   kind,
@@ -116,5 +117,43 @@ describe('Deliver on the seller panel', () => {
     mocks.files = [file('Final')];
     renderWithProviders(<DealFilesPanel deal={deal('None')} />);
     await expect.element(deliver()).toBeEnabled();
+  });
+});
+
+describe('the deletion notice', () => {
+  const closed = (status: string) =>
+    ({
+      id: 7,
+      status,
+      viewerRole: 'seller',
+      revisionsUsed: 0,
+      previewKind: 'Image',
+    } as unknown as ServiceDealView);
+
+  test('shows on a cancelled deal that still has files', async () => {
+    mocks.files = [file('Final')];
+    renderWithProviders(<DealFilesPanel deal={closed('Cancelled')} />);
+    await expect.element(page.getByText(/Deal files are deleted/)).toBeInTheDocument();
+  });
+
+  test('is absent while the deal is still open', async () => {
+    mocks.files = [file('Final')];
+    renderWithProviders(<DealFilesPanel deal={closed('Accepted')} />);
+    await expect.element(page.getByText('Delivery')).toBeInTheDocument();
+    await expect.element(page.getByText(/Deal files are deleted/)).not.toBeInTheDocument();
+  });
+
+  test("shows beside the buyer's attachments on a completed deal", async () => {
+    mocks.files = [file('Attachment')];
+    renderWithProviders(<DealAttachmentsPanel deal={closed('Completed')} />);
+    await expect.element(page.getByText('Files from the buyer')).toBeInTheDocument();
+    await expect.element(page.getByText(/Deal files are deleted/)).toBeInTheDocument();
+  });
+
+  test('is absent beside the attachments while the deal is still open', async () => {
+    mocks.files = [file('Attachment')];
+    renderWithProviders(<DealAttachmentsPanel deal={closed('Accepted')} />);
+    await expect.element(page.getByText('Files from the buyer')).toBeInTheDocument();
+    await expect.element(page.getByText(/Deal files are deleted/)).not.toBeInTheDocument();
   });
 });

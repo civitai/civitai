@@ -172,14 +172,14 @@ describe('Approved tab — the Retrigger control follows the server gate', () =>
     expect((btn.element() as HTMLButtonElement).disabled).toBe(false);
   });
 
-  test('DISABLED for a live deploy — nothing to recover', async () => {
+  test('ABSENT for a live deploy — nothing to recover, so no greyed control either', async () => {
     renderApproved({
       row: onsiteRow({ deployState: 'live', deployUpdatedAt: LONG_AGO }),
       onRetrigger: vi.fn(),
     });
-    const btn = page.getByTestId(RETRIGGER);
-    await expect.element(btn).toBeInTheDocument();
-    expect((btn.element() as HTMLButtonElement).disabled).toBe(true);
+    // Positive control: the row and its deploy chip rendered, so the absence is real.
+    await expect.element(page.getByTestId(DEPLOY_CHIP)).toHaveTextContent('live');
+    expect(page.getByTestId(RETRIGGER).elements()).toHaveLength(0);
   });
 
   test('DISABLED for a build that is still genuinely in flight', async () => {

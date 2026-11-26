@@ -2,9 +2,10 @@
 // workflow, and stream results back per tile via `onResult`. Mirrors the main app's poll loop (5s in
 // prod; a touch faster here). Results are keyed by the `key` the caller sends, which must be unique per run.
 
-import { backend } from '$lib/host';
-import { abortableDelay } from '$lib/pool';
+import { autoLabelAvailable, backend } from '$lib/host';
+import { abortableDelay, pool } from '$lib/pool';
 import { isAbort } from '$lib/upload';
+import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import type { Media } from '$lib/data/trainingModels';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend';
 
@@ -13,13 +14,28 @@ export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend
 const BATCH_SIZE = 16;
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_BATCHES_IN_FLIGHT = 2;
+/** Waits before each resend of a failed item; its length bounds the resends. */
+export const RESEND_DELAYS_MS = [15_000, 45_000, 120_000];
+export const RESEND_GAVE_UP =
+  "Auto-labeling didn't finish for this image. Try again in a few minutes.";
 
 // Every submitted item is a charged orchestrator job. However a caller asks — the drain, a format
-// switch, the editor's Re-run — one media URL is sent at most this many times per page session, so a
-// caller that keeps re-selecting the same tiles stops after a bounded spend instead of draining the
-// user's Buzz (the earlier auto-label loop recurred after its fix with the same signature).
+// switch, the editor's Re-run — one media URL gets at most this many runs per page session (a run's
+// resends of a failed item share its one slot), so a caller that keeps re-selecting the same tiles
+// stops after a bounded spend instead of draining the user's Buzz (the earlier auto-label loop
+// recurred after its fix with the same signature).
 export const MAX_SUBMITS_PER_MEDIA = 3;
 const submitsByMedia = new Map<string, number>();
+const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
+/** Whether a label-failed tile offers Retry: never over a label the user typed (Retry clears it
+ *  first), nor once the image is over the cap, where Retry would send nothing. */
+export function offersLabelRetry(tile: { tags: string[]; caption: string; labelError?: string }) {
+  return (
+    !!tile.labelError && tile.labelError !== CAP_REFUSAL && tile.tags.length === 0 && !tile.caption
+  );
+}
+export const CAP_REFUSAL = `Auto-labeled ${MAX_SUBMITS_PER_MEDIA} times already this session — edit this label by hand.`;
 
 // Counted per blob, not per URL string: a re-signed URL for the same blob must not reset its count.
 function mediaKey(mediaUrl: string): string {
@@ -49,6 +65,17 @@ export function claimSubmits(ledger: Map<string, number>, items: AutoLabelItem[]
   return { allowed, refused };
 }
 
+/** Return the slots `claimSubmits` took for `items` — only for a submit that was refused before any
+ *  orchestrator work (see `AutoLabelRefusedError`); a failure that may have been charged keeps them. */
+export function releaseSubmits(ledger: Map<string, number>, items: AutoLabelItem[]) {
+  for (const item of items) {
+    const key = mediaKey(item.mediaUrl);
+    const count = ledger.get(key) ?? 0;
+    if (count <= 1) ledger.delete(key);
+    else ledger.set(key, count - 1);
+  }
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -71,17 +98,21 @@ function pollOnce(
   return backend().autoLabelPoll(workflowId, signal);
 }
 
+/** Runs one workflow; resolves with the items whose step failed retryably, which got no result. */
 async function runBatch(
   mode: AutoLabelMode,
   media: Media,
   batch: AutoLabelItem[],
   onResult: (r: AutoLabelResult) => void,
   signal: AbortSignal
-): Promise<void> {
+): Promise<AutoLabelItem[]> {
+  const byKey = new Map(batch.map((item) => [item.key, item]));
+  const failed: AutoLabelItem[] = [];
   const applied = new Set<string>();
   let submitError: string | undefined;
   try {
     const workflowId = await submitBatch(mode, media, batch).catch((err) => {
+      if (err instanceof AutoLabelRefusedError) releaseSubmits(submitsByMedia, batch);
       if (!isAbort(err) && err instanceof Error) submitError = err.message;
       throw err;
     });
@@ -92,7 +123,9 @@ async function runBatch(
         for (const r of results) {
           if (r.status !== 'pending' && !applied.has(r.key)) {
             applied.add(r.key);
-            onResult(r);
+            const item = byKey.get(r.key);
+            if (r.status === 'failed' && r.retryable && item) failed.push(item);
+            else onResult(r);
           }
         }
         if (done) break;
@@ -113,6 +146,7 @@ async function runBatch(
       }
     }
   }
+  return failed;
 }
 
 /** Auto-label every item, batched. `onResult` fires at most once per key as each image resolves;
@@ -125,15 +159,38 @@ export async function runAutoLabel(
   onResult: (r: AutoLabelResult) => void,
   signal: AbortSignal
 ): Promise<number> {
+  if (!autoLabelAvailable()) {
+    for (const item of items)
+      onResult({ key: item.key, status: 'failed', error: AUTO_LABEL_UNAVAILABLE });
+    return 0;
+  }
   const { allowed, refused } = claimSubmits(submitsByMedia, items, MAX_SUBMITS_PER_MEDIA);
   if (refused.length) {
     console.warn(
       `[training-studio] auto-label refused ${refused.length} item(s) over the per-image cap`
     );
-    for (const item of refused) onResult({ key: item.key, status: 'failed' });
+    for (const item of refused) onResult({ key: item.key, status: 'failed', error: CAP_REFUSAL });
   }
-  await Promise.all(
-    chunk(allowed, BATCH_SIZE).map((batch) => runBatch(mode, media, batch, onResult, signal))
-  );
+  // Failures are mostly capacity refusals in bursts, which the poll can't tell from a real failure,
+  // so failed items are resent within the run. The slot is kept even when it gives up, so the tile's
+  // Retry can't resend it without end.
+  let pending = allowed;
+  for (let attempt = 0; pending.length > 0; attempt++) {
+    if (attempt > 0) {
+      // Jittered so clients turned away in the same wave don't come back in step.
+      const wait = RESEND_DELAYS_MS[attempt - 1]! * (0.75 + Math.random() * 0.5);
+      await abortableDelay(wait, signal);
+    }
+    const failed: AutoLabelItem[] = [];
+    await pool(chunk(pending, BATCH_SIZE), MAX_BATCHES_IN_FLIGHT, async (batch) => {
+      failed.push(...(await runBatch(mode, media, batch, onResult, signal)));
+    });
+    if (attempt >= RESEND_DELAYS_MS.length) {
+      for (const item of failed)
+        onResult({ key: item.key, status: 'failed', error: RESEND_GAVE_UP });
+      break;
+    }
+    pending = failed;
+  }
   return allowed.length;
 }

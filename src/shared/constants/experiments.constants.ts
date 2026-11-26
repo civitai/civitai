@@ -12,11 +12,6 @@ type ExperimentDef = {
 };
 
 export const experiments = {
-  hatTurfImageDetail: {
-    fliptKey: 'exp-hat-turf-image-detail',
-    variants: ['control', 'invite-inline'],
-    defaultVariant: 'control',
-  },
   hatTurfFeedCard: {
     fliptKey: 'exp-hat-turf-feed-card',
     variants: ['control', 'badge-popover'],
@@ -69,7 +64,7 @@ export const HAT_TURF_FEED_SOURCE = 'feed';
 
 export const EXPERIMENT_PIN_SEGMENT_PREFIX = 'exp-pin-';
 
-/** Moderator-only preview: `civ-exp=hatTurfFeedCard:badge-popover,hatTurfImageDetail:control`. */
+/** Moderator-only preview: `civ-exp=hatTurfFeedCard:badge-popover`. */
 export const EXPERIMENT_OVERRIDE_COOKIE = 'civ-exp';
 
 export function isExperimentVariant<K extends ExperimentKey>(

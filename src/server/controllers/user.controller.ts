@@ -1,4 +1,7 @@
+import { showcaseOptOutChanged } from '~/shared/constants/version-showcase.constants';
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -8,7 +11,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -18,7 +23,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
@@ -46,6 +51,7 @@ import type {
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBanUser,
+  ToggleMuteInput,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -58,6 +64,7 @@ import type {
   GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import type {
   BadgeCosmetic,
   CardDecorationCosmetic,
@@ -92,6 +99,7 @@ import {
   claimCosmetic,
   createUserReferral,
   deleteUser,
+  deleteBasicDataForUser,
   deleteUserProfilePictureCache,
   equipCosmetic,
   getCreators,
@@ -115,6 +123,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setEventPointsExclusion,
   setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
@@ -176,6 +185,8 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -235,7 +246,11 @@ export const getUserCreatorHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
     if (!user) throw throwNotFoundError('Could not find user');
-    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
+    if (!ctx.user?.isModerator) {
+      // Mask from non-moderators
+      user.excludeFromLeaderboards = false;
+      user.excludeFromEventPoints = false;
+    }
 
     return user;
   } catch (error) {
@@ -324,7 +339,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       ? countUnclaimedPrizes(id).catch(() => 0)
       : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
-    // notifications service over HTTP (with its own retries) and the main
+    // notifications service over HTTP (1.5 s per attempt, one retry) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
@@ -479,7 +494,14 @@ export const completeOnboardingHandler = async ({
         // address, and treating it as a change would revoke a verification the user already earned.
         const emailChanged =
           !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
-        if (emailChanged) await assertEmailAllowed(input.email);
+        // This step only sets a first address. Replacing one goes through `requestEmailChange`, which
+        // proves the new address before writing it.
+        if (!input.email && !current?.email) throw throwBadRequestError('Please provide an email');
+        if (emailChanged && current?.email)
+          throw throwBadRequestError(
+            'Your account already has an email address. Use Change email in your account settings to change it.'
+          );
+        if (emailChanged && input.email) await assertEmailAllowed(input.email);
 
         // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
         // vouching for an address nobody proved, and would hand the gate a free bypass: sign in with a
@@ -493,7 +515,7 @@ export const completeOnboardingHandler = async ({
         // left to re-stamp it. Stamped first, the same failure commits nothing and the retry is clean.
         //
         // Only when this step is genuinely ESTABLISHING the address — the first time it completes, or
-        // when it changes the address. A bare re-submit must not stamp: `onboarding` is caller-supplied
+        // when it sets a first address. A bare re-submit must not stamp: `onboarding` is caller-supplied
         // input, so without that condition any account could mark itself, including one that predates
         // the rule and has been posting for years.
         if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
@@ -503,34 +525,40 @@ export const completeOnboardingHandler = async ({
           data: {
             onboarding,
             username: input.username,
-            email: input.email,
-            ...(emailChanged ? { emailVerified: null } : {}),
+            ...(emailChanged ? { email: input.email, emailVerified: null } : {}),
           },
         });
-        if (input.username && input.username !== current?.username)
+        if (input.username && input.username !== current?.username) {
           queueScamScan({ entityType: 'User', entityId: id });
+          // The user index already holds this account from signup, and its incremental sync scans
+          // on `createdAt`, so without the enqueue search keeps the pre-onboarding username.
+          // Best-effort: the row is committed, and a cache/Redis blip must not fail the step.
+          await Promise.all([
+            deleteBasicDataForUser(id).catch(handleLogError),
+            usersSearchIndex
+              .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+              .catch(handleLogError),
+            bustUserCreator(id, { usernames: current?.username ? [current.username] : [] }),
+          ]);
+          void queueOwnedContentUpdate(id);
+        }
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
         // Civitai's sending domain: alternate two addresses and loop. `changed` can be true at most
         // once per account, so this path sends at most once. A user who mistypes their address
-        // corrects it and uses the banner's resend.
-        //
-        // That does not close the primitive, only this path's unmetered version of it. Nothing binds
-        // `User.email` to the account holder — this step rewrites it without the immutability check in
-        // `updateUserById` — so `resendEmailVerification` still mails a caller-chosen address, at its
-        // 3/hour. Against `requestEmailChange`'s 2/day that is the residual, and it is a rate limit
-        // rather than a bound on WHO can be mailed.
+        // corrects it through Change email, which mails the corrected address.
         //
         // The address is passed rather than re-read: a replica read right after this write can still
         // hold the OLD row, and a token minted for the old address silently reverts the change when
         // its link is clicked — `confirmEmailChange` writes the address the TOKEN carries, not the one
         // the mail reached. Best-effort: the step is committed above, and a mail failure must not
         // report a step the user then re-submits.
-        if (changed && !verified && input.email)
+        const address = input.email ?? current?.email;
+        if (changed && !verified && address)
           await issueEmailVerification(
             id,
-            input.email,
+            address,
             input.username ?? current?.username ?? null
           ).catch(handleLogError);
         break;
@@ -591,7 +619,7 @@ export const completeOnboardingHandler = async ({
     // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
     //
     // 🔴 Gating on `changed` ALONE is narrower than what this handler WRITES. The Profile step writes
-    // `username`/`email` unconditionally (see the switch above), and both are carried on the session shape — so a
+    // `username` unconditionally and a first `email` (see the switch above), and both are carried on the session shape — so a
     // re-submit of a step whose bit is already set advanced nothing, skipped the bust, and left the new username
     // in the database with the old one in the session for the rest of its 4h TTL. Bust on either condition.
     const wroteSessionIdentity =
@@ -640,6 +668,8 @@ export const updateUserHandler = async ({
   } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+  // An address is only ever set from a signed-in session, as in `completeOnboardingStep`.
+  if (ctx.apiKeyId != null) delete data.email;
   if (username && !(await isUsernamePermitted(username)))
     throw throwBadRequestError('Invalid username');
 
@@ -657,8 +687,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,
@@ -668,15 +700,28 @@ export const updateUserHandler = async ({
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
-    // so any other picture is always created as a new row.
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload.
+    // The edit form fills a missing picture with `{ url: user.image }`; re-sent unchanged, that is
+    // no new upload. A picture withheld from its owner's read must not be replaced by it.
+    const isImageFallback =
+      !!profilePicture && !profilePicture.id && !!user.image && profilePicture.url === user.image;
     const newPicture =
-      profilePicture && profilePicture.id !== user.profilePictureId
+      profilePicture && profilePicture.id !== user.profilePictureId && !isImageFallback
         ? { ...profilePicture, id: undefined }
         : undefined;
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -710,10 +755,20 @@ export const updateUserHandler = async ({
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
 
+    // An unchanged image stays out of the write, so a moderation clear committed since the read stands.
+    // A new picture replaces an upload key left in `User.image`: only the profile picture may carry one.
+    const imageChanged = data.image !== undefined && data.image !== user.image;
+    const image = imageChanged
+      ? data.image
+      : newPicture && keysIn(user.image).length
+      ? null
+      : undefined;
+
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
+        image,
         username,
         profilePicture: newPicture
           ? {
@@ -738,7 +793,7 @@ export const updateUserHandler = async ({
 
     // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
     //
-    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // This used to be an inline image delete, which destroyed the row and the stored
     // object the instant the new picture saved. The write is instant; the references are
     // not — the image CDN caches its redirect for 24h, the account-switcher roster in
     // localStorage is durable by design, and other surfaces hold rendered avatar urls. None
@@ -764,10 +819,8 @@ export const updateUserHandler = async ({
 
     // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
     // The modal sends the field on every user-level save, so this recomputes on cosmetic
-    // saves too. That is deliberate: comparing against the stored value would have to read
-    // it back, and the only cheap read is the replica — an A->B->A save inside the
-    // replication window would then compare equal and skip the recompute it needs. The
-    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    // saves too. That is deliberate: the upsert is cheap and idempotent, cheaper than
+    // reading the stored value back to compare.
     if (input.leaderboardShowcase !== undefined)
       postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
 
@@ -829,7 +882,7 @@ export const deleteUserHandler = async ({
     throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
 
   try {
-    const user = await deleteUser(input);
+    const user = await deleteUser({ ...input, actorId: currentUser.id });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     await ctx.track.userActivity({
@@ -840,7 +893,7 @@ export const deleteUserHandler = async ({
     return user;
   } catch (error) {
     // The same refusal as a restricted account, so the two cannot be told apart.
-    if (error instanceof LegalHoldError)
+    if (error instanceof MemorializedAccountError)
       throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -943,11 +996,15 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
         // model id per creator just to take `.length`. The only consumer
         // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
         _count: { select: { models: { where: { status: 'Published' } } } },
-        image: true,
+        profilePicture: { select: { url: true, nsfwLevel: true, type: true } },
       },
     });
+    const items = results.items.map((item) => ({
+      ...item,
+      profilePicture: avatarAtLevel(item.profilePicture, publicBrowsingLevelsFlag),
+    }));
 
-    return getPagingData(results, take, page);
+    return getPagingData({ ...results, items }, take, page);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1096,6 +1153,15 @@ export async function toggleFavoriteHandler({
   const { id: userId, muted } = ctx.user;
   if (muted) return false;
 
+  // Before the review and notify writes, so a refused favorite leaves nothing half-saved.
+  if (setTo)
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: 'modelId',
+      ids: [modelId],
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
+
   // Toggle review (on/off)
   const reviewResult = await toggleReview({
     modelId,
@@ -1119,6 +1185,7 @@ export async function toggleFavoriteHandler({
       type: 'Model',
       entityId: modelId,
       userId,
+      isModerator: ctx.user.isModerator,
       setTo,
     });
   } else {
@@ -1193,6 +1260,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         image: true,
         username: true,
         links: {
+          where: { user: { bannedAt: null } },
           select: {
             url: true,
             type: true,
@@ -1263,14 +1331,17 @@ export const toggleMuteHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: ToggleMuteInput;
   ctx: ProtectedContext;
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const { id } = input;
-  const user = await getUserById({ id, select: { muted: true } });
+  const { id, setTo } = input;
+  // The primary decides the direction: a replica behind the last mute or unmute would flip it back.
+  const user = await getUserById({ id, select: { muted: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (setTo === user.muted)
+    return { id, muted: user.muted, changed: false as const, sessionInvalidated: undefined };
 
   const updatedUser = user.muted
     ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
@@ -1286,10 +1357,10 @@ export const toggleMuteHandler = async ({
       type: 'error',
       message: (error as Error).message,
       details: { userId: id },
-    }).catch(() => undefined);
+    });
   }
 
-  return updatedUser;
+  return { ...updatedUser, changed: true as const };
 };
 
 export const toggleBanHandler = async ({
@@ -1309,10 +1380,11 @@ export const toggleBanHandler = async ({
 
   const updatedUser = await toggleBan({ ...input, userId: ctx.user.id, isModerator: true });
 
-  await ctx.track.userActivity({
-    type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
-    targetUserId: updatedUser.id,
-  });
+  if (updatedUser.changed)
+    await ctx.track.userActivity({
+      type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
+      targetUserId: updatedUser.id,
+    });
 
   return updatedUser;
 };
@@ -1350,7 +1422,7 @@ export const getUserCosmeticsHandler = async ({
       .filter(isDefined);
     const coverImages = await getEntityCoverImage({
       entities: inUseCosmeticEntities,
-      viewer: ctx.user,
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
     });
     const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
@@ -1683,6 +1755,12 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+    if (showcaseOptOutChanged(restSettings, restInput)) {
+      const { bustVersionShowcasesForUser } = await import(
+        '~/server/services/version-showcase.service'
+      );
+      await bustVersionShowcasesForUser(id);
+    }
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
     // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and
@@ -1778,6 +1856,14 @@ export const getUserPurchasedRewardsHandler = async ({ ctx }: { ctx: ProtectedCo
     throw throwDbError(error);
   }
 };
+
+export async function setEventPointsExclusionHandler({
+  input,
+}: {
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setEventPointsExclusion(input);
+}
 
 export async function setLeaderboardEligibilityHandler({
   ctx,

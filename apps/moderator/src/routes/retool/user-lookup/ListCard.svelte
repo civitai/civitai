@@ -9,16 +9,20 @@
   let {
     title,
     total,
+    count = total,
     hint,
     empty = 'None.',
     shown = 5,
     capped = false,
     action,
     controls,
+    footer,
     children,
   }: {
     title: string;
     total: number;
+    /** The heading's number, for a paged list whose `total` is only the loaded page. */
+    count?: number;
     hint?: string;
     empty?: string;
     shown?: number;
@@ -30,6 +34,8 @@
      *  `total` is 0, so a filter bar placed there disappears the moment it matches nothing — taking
      *  with it the only way to clear the filter that emptied the list. */
     controls?: Snippet;
+    /** After the list, and rendered even when it is empty. */
+    footer?: Snippet;
     /** Receives how many rows to render — the card owns the expand toggle. */
     children: Snippet<[number]>;
   } = $props();
@@ -45,7 +51,7 @@
     class:mb-3={!hint}
   >
     <h3 class="text-sm font-semibold text-white">
-      {title} ({total}{capped ? '+' : ''})
+      {title} ({count}{capped ? '+' : ''})
     </h3>
     {@render action?.()}
   </div>
@@ -61,4 +67,6 @@
     {@render children(limit)}
     <ShowMoreButton {total} {shown} {expanded} {capped} onToggle={() => (expanded = !expanded)} />
   {/if}
+
+  {@render footer?.()}
 </div>

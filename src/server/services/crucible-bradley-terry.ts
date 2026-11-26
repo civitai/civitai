@@ -224,7 +224,7 @@ export async function fitCrucibleScoresForPrizes(
       message: `Crucible ${crucibleId} ranks by Elo: could not read its votes`,
       crucibleId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch();
+    });
     return null;
   }
   const lagging =
@@ -241,6 +241,6 @@ export async function fitCrucibleScoresForPrizes(
     crucibleId,
     clickhouseVotes,
     redisVotes,
-  }).catch();
+  });
   return null;
 }

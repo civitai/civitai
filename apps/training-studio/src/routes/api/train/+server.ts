@@ -1,48 +1,103 @@
-import { error, json } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { logToAxiom } from '$lib/server/axiom';
 import { requireToken } from '$lib/server/token';
 import { submitTrainingBatch, type TrainingRunInput } from '$lib/server/train';
 import {
-  MatureAckRequiredError,
+  DatasetUnreadableError,
+  MatureRepriceError,
   TrainingBatchValidationError,
   TrainingSubmitError,
   type SubmittedBatch,
 } from '$lib/train-core';
+import { DATASET_TOO_LARGE_MESSAGE } from '$lib/submit-limits';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
+import { datasetRatingFor } from '$lib/server/dataset-rating';
+import { isKohyaAllowed } from '$lib/server/flipt';
+import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
+
+export const POST: RequestHandler = async (event) => {
+  try {
+    return await submit(event);
+  } catch (err) {
+    // A refusal's reason otherwise reaches only the browser.
+    if (isHttpError(err) && err.status >= 400 && err.status < 500) {
+      const body = err.body as { message: string; code?: string };
+      void logToAxiom({
+        name: 'training-studio-train-refused',
+        type: 'warning',
+        userId: event.locals.user?.id,
+        status: err.status,
+        message: body.message,
+        code: body.code,
+      });
+    }
+    throw err;
+  }
+};
 
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
 // the single write in the whole flow. HTTP mapping over core.submitTrainingBatch: a batch refused by us or
 // by the orchestrator (a non-transient 4xx) is a 400 carrying the reason, since a retry would be refused
-// the same way; a batch where nothing landed otherwise is a 502 (safe to retry whole); a partial batch
-// returns the landed ids and the failure's reason with 200, so the client navigates to them instead of
-// re-submitting — and re-charging — them.
-export const POST: RequestHandler = async ({ locals, request }) => {
+// the same way — except dataset files still processing, a 400 with `code: FILES_PROCESSING_CODE` that
+// clears on its own, so the client offers a retry; a batch where nothing landed otherwise is a 502 (safe
+// to retry whole); a partial batch returns the landed ids and the failure's reason with 200, so the
+// client navigates to them instead of re-submitting — and re-charging — them.
+async function submit({ locals, request }: Parameters<RequestHandler>[0]) {
   const token = await requireToken(
     locals,
     'Training is unavailable right now — no orchestrator token.'
   );
 
-  const body = (await request.json().catch(() => null)) as { runs?: TrainingRunInput[] } | null;
+  let body: { runs?: TrainingRunInput[] } | null = null;
+  try {
+    body = (await request.json()) as { runs?: TrainingRunInput[] } | null;
+  } catch (err) {
+    // Over BODY_SIZE_LIMIT the server errors the body, and an empty batch would be the wrong reason.
+    if ((err as { status?: number } | null)?.status === 413) error(413, DATASET_TOO_LARGE_MESSAGE);
+  }
   const runs = body?.runs;
+  // A continuation starts only through /api/continue-training, which checks its source run.
+  if (Array.isArray(runs) && runs.some((r) => r && typeof r === 'object' && 'continueFrom' in r))
+    error(400, 'Keep training from a checkpoint on the run itself.');
   let batch: SubmittedBatch;
   try {
     batch = await submitTrainingBatch(
       token,
       runs,
       locals.user.id,
-      textCheckCookie(locals, request)
+      textCheckCookie(locals, request),
+      await datasetRatingFor(locals.user),
+      await isKohyaAllowed(locals)
     );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
-    if (err instanceof MatureAckRequiredError)
+    if (err instanceof MatureRepriceError)
       error(409, { message: err.message, matureCount: err.matureCount });
+    if (err instanceof DatasetUnreadableError) {
+      void logToAxiom({
+        name: 'training-studio-dataset-unreadable',
+        type: 'warning',
+        userId: locals.user.id,
+        payload: { unreadable: err.unreadable },
+      });
+      error(503, err.message);
+    }
     throwTextCheckHttpError(err);
+    if (err instanceof FilesProcessingError)
+      error(400, { message: err.message, code: FILES_PROCESSING_CODE });
     if (err instanceof TrainingSubmitError && err.isRefusal)
       error(400, `Training could not start: ${err.reason}`);
     if (err instanceof TrainingSubmitError && err.status !== undefined && err.status < 500)
       error(502, `Could not start training: ${err.reason}. Try again.`);
-    error(502, 'Could not start training. Try again.');
+    // Not "try again": the run may have started and charged anyway. The server already looked for
+    // it by the batch's submit key; a Start of the same batch reuses that key, so it returns a run
+    // that landed instead of charging twice, but the user should look before starting over.
+    error(
+      502,
+      "We couldn't confirm your training started. Check your runs before starting it again; starting this same batch again won't charge twice."
+    );
   }
 
   return json({ ...batch, requested: runs?.length ?? 0 });
-};
+}

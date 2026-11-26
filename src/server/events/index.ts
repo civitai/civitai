@@ -1,6 +1,8 @@
 import dayjs from '~/shared/utils/dayjs';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
 import type { EventAccess, EventViewer } from '~/server/events/event-access';
 import {
@@ -13,7 +15,9 @@ import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
-import { runEventPointsReferee } from '~/server/events/points/referee';
+import { readFlagRaceJson } from '~/server/events/scoring/award-results';
+import { awardEventPrizes } from '~/server/events/scoring/event-prizes';
+import { REFEREE_CLICKHOUSE_BUDGET_S, runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
 import { pointTypesFor } from '~/server/events/points/types';
 import {
@@ -187,6 +191,21 @@ export const eventEngine = {
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
 
+        if (eventDef.scoring) {
+          const prizes = await readFlagRaceJson(eventDef.name)
+            .then((json) => awardEventPrizes(eventDef, winner, json))
+            .catch((error) => {
+              logToAxiom({
+                type: 'error',
+                name: 'event-prizes',
+                event: eventDef.name,
+                message: (error as Error).message,
+              });
+              return { pending: true };
+            });
+          if (prizes.pending) continue;
+        }
+
         // Mark cleanup as complete, only after every step succeeded so a failure retries tomorrow.
         await redis.set(cleanupKey, `true`, { EX: CLEANUP_MARKER_TTL_S });
       } else {
@@ -203,6 +222,7 @@ export const eventEngine = {
   },
   async updateLeaderboard(now = new Date()) {
     let updated = false;
+    const refereeDeadline = Date.now() + REFEREE_CLICKHOUSE_BUDGET_S * 1000;
     for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
@@ -232,21 +252,21 @@ export const eventEngine = {
           const season = eventPointSeason(eventDef.startDate, now);
           // A failed settle must not also freeze the standings snapshot or stop the other events.
           try {
-            const result = await runEventPointsReferee(scored, season, now);
+            const result = await runEventPointsReferee(scored, season, now, refereeDeadline);
             final = result.final;
             logToAxiom({
               type: 'info',
               name: 'event-points-referee',
               event: eventDef.name,
               ...result,
-            }).catch(() => undefined);
+            });
           } catch (error) {
             logToAxiom({
               type: 'error',
               name: 'event-points-referee',
               event: eventDef.name,
               message: (error as Error).message,
-            }).catch(() => undefined);
+            });
           }
         }
         const standings = await refreshStandings(standingsEvent, dbWrite);
@@ -411,6 +431,7 @@ export const eventEngine = {
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"
         WHERE c."userId" = -1 AND c.name = ${eventDef.coverImageCollection}
+          AND ${imageNotRestrictedSql()}
         ORDER BY ci."createdAt" DESC
         LIMIT 1
       `;
@@ -618,9 +639,18 @@ export const eventEngine = {
 
     return eventDef.getRewards();
   },
-  async donate(event: string, { userId, amount }: { userId: number; amount: number }) {
+  async donate(
+    event: string,
+    { userId, amount }: { userId: number; amount: number },
+    now = new Date()
+  ) {
     const eventDef = getEventDef(event);
-    if (eventDef.bankIndex === undefined) throw new Error('This event does not take donations');
+    // Refused before any Buzz moves, as a 400 the client shows as is. A finished event's page no
+    // longer offers donating, but the route stays callable, and a donation charged after the end
+    // counts toward no result.
+    if (eventDef.bankIndex === undefined)
+      throw throwBadRequestError('This event does not take donations');
+    if (now >= eventDef.endDate) throw throwBadRequestError('This event has ended');
 
     const { team, accountId } = await this.getUserData({ event, userId });
     if (!team || !accountId) throw new Error("You don't have a team for this event");

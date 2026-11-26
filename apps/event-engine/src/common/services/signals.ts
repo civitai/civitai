@@ -1,3 +1,5 @@
+import { isTransientConnectionError } from '../utils/connection-errors';
+
 // Bound every send so a truly hung signals endpoint can never stall the
 // (best-effort) caller — this also caps the awaited hot-path `sendDelta`.
 // NOTE: set generously (10s) — the signals endpoint's normal response time
@@ -5,16 +7,6 @@
 // normal-but-slow sends and turns them into failures (a 2s value regressed
 // the failure rate 0.13% -> ~1%); 10s only catches a genuine hang.
 const REQUEST_TIMEOUT_MS = 10000;
-
-// Connection-level failure codes we retry once (on a fresh connection). The
-// dominant one here is the undici keep-alive race: a pooled idle socket the
-// server has already closed gets reused, surfacing as `read ECONNRESET`.
-const TRANSIENT_CONNECTION_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'UND_ERR_SOCKET']);
-
-function isTransientConnectionError(error: unknown): boolean {
-  const code = (error as { cause?: { code?: unknown } } | null | undefined)?.cause?.code;
-  return typeof code === 'string' && TRANSIENT_CONNECTION_CODES.has(code);
-}
 
 export class SignalsService {
   private signalsApiUrl: string;
@@ -33,7 +25,7 @@ export class SignalsService {
    * Send a signal to a specific topic.
    *
    * Best-effort telemetry: bounded by a short timeout and retried once on a
-   * transient connection-level error (see the undici keep-alive race above).
+   * transient connection-level error (see connection-errors).
    * On final failure it logs and rethrows so the caller
    * (`MetricSignals.sendDelta`) records the failure metric and swallows it —
    * the fire-and-forget contract is unchanged.

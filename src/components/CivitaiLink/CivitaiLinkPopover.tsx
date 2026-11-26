@@ -45,7 +45,6 @@ import {
   IconRefresh,
 } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
   civitaiLinkStatusColors,
@@ -53,18 +52,18 @@ import {
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CivitaiLinkNavSwitch } from '~/components/CivitaiLink/CivitaiLinkNavSwitch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
-const CivitaiLinkWizardModal = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'), {
-  ssr: false,
-});
-const openCivitaiLinkWizardModal = createDialogTrigger(CivitaiLinkWizardModal);
+const openCivitaiLinkWizardModal = () =>
+  openDialog(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
 
 export function CivitaiLinkPopover() {
   const [opened, setOpened] = useState(false);
@@ -95,7 +94,7 @@ function CivitaiLinkDialog() {
     </Modal>
   );
 }
-export const openCivitaiLinkDialog = createDialogTrigger(CivitaiLinkDialog);
+export const openCivitaiLinkDialog = () => dialogStore.trigger({ component: CivitaiLinkDialog });
 
 type HelpStatus = 'pending' | 'processing' | 'complete';
 function SupporterHelp() {
@@ -395,6 +394,7 @@ function LinkDropdown({ onClose }: { onClose: () => void }) {
           'link-ready': <ActivityList />,
         }[status]
       )}
+      <CivitaiLinkNavSwitch />
     </Paper>
   );
 }

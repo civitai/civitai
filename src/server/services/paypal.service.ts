@@ -10,7 +10,7 @@ const Authorization = `Basic ${Buffer.from(`${env.PAYPAL_CLIENT_ID}:${env.PAYPAL
   'base64'
 )}`;
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'paypal-service', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'paypal-service', type: 'error', ...data });
 };
 
 export const createBuzzOrder = async ({

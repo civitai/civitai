@@ -34,7 +34,7 @@ function caller() {
 
 const written = () => dbMock.dbWrite.oauthClient.update.mock.calls[0][0].data;
 
-function existing(allowedScopes: number) {
+function existing(allowedScopes: bigint) {
   dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
     id: 'game-frame',
     userId: OWNER.id,
@@ -62,7 +62,7 @@ describe('oauthClient.update scopes', () => {
     existing(
       TokenScope.UserRead | TokenScope.AIServicesWrite | CATALOG | TokenScope.AppBlocksSubmit
     );
-    await caller().update({ id: 'game-frame', allowedScopes: TokenScope.UserRead });
+    await caller().update({ id: 'game-frame', allowedScopes: Number(TokenScope.UserRead) });
     expect(written().allowedScopes).toBe(
       TokenScope.UserRead | CATALOG | TokenScope.AppBlocksSubmit
     );
@@ -71,11 +71,34 @@ describe('oauthClient.update scopes', () => {
   it('a scope edit cannot add an opt-in bit', async () => {
     existing(TokenScope.UserRead);
     await expect(
-      caller().update({ id: 'game-frame', allowedScopes: TokenScope.UserRead | CATALOG })
+      caller().update({ id: 'game-frame', allowedScopes: Number(TokenScope.UserRead | CATALOG) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.oauthClient.update).not.toHaveBeenCalled();
 
-    await caller().update({ id: 'game-frame', allowedScopes: TokenScope.Full });
+    await caller().update({ id: 'game-frame', allowedScopes: Number(TokenScope.Full) });
     expect(written().allowedScopes).toBe(TokenScope.Full);
+  });
+});
+
+/**
+ * The owner of an App Assistant client (`appassist-<their id>`) cannot edit it here: a rename, a
+ * redirect URI, origins or scopes would turn the platform's client into one they control.
+ */
+describe('oauthClient.update on an App Assistant client', () => {
+  it.each([
+    ['a rename', { name: 'Totally Official App' }],
+    ['a redirect URI', { redirectUris: ['https://attacker.example/cb'] }],
+    ['allowed origins', { allowedOrigins: ['https://attacker.example'] }],
+    ['wider scopes', { allowedScopes: Number(TokenScope.Full) }],
+  ])('🔴 refuses %s and writes nothing', async (_what, change) => {
+    dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
+      id: 'appassist-7',
+      userId: OWNER.id,
+      allowedScopes: TokenScope.UserRead,
+    });
+    await expect(caller().update({ id: 'appassist-7', ...change })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(dbMock.dbWrite.oauthClient.update).not.toHaveBeenCalled();
   });
 });

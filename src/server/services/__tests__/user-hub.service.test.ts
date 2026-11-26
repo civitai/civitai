@@ -9,13 +9,28 @@ import type * as SystemCache from '~/server/services/system-cache';
 //     without its content-rating cap (forcedBrowsingLevel).
 // Neither shows up as an error at any layer, so only a test pins them.
 
-const { permissionsMock, replacedTagIdsMock, heldLevelMock } = vi.hoisted(() => ({
+const {
+  permissionsMock,
+  replacedTagIdsMock,
+  heldLevelMock,
+  withheldVersionsMock,
+  deletedVersionsMock,
+  modelsOfVersionsMock,
+} = vi.hoisted(() => ({
   permissionsMock: vi.fn(),
   replacedTagIdsMock: vi.fn(),
   heldLevelMock: vi.fn(),
+  withheldVersionsMock: vi.fn(),
+  deletedVersionsMock: vi.fn(),
+  modelsOfVersionsMock: vi.fn(),
 }));
 
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: heldLevelMock }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: heldLevelMock,
+  getWithheldVersionIds: withheldVersionsMock,
+  getDeletedModelVersionIds: deletedVersionsMock,
+  getModelIdsOfVersions: modelsOfVersionsMock,
+}));
 
 vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsByIds: permissionsMock,
@@ -95,6 +110,9 @@ beforeEach(() => {
   // "nothing is replaced" rather than from whatever ran before it.
   replacedTagIdsMock.mockResolvedValue([]);
   heldLevelMock.mockResolvedValue(undefined);
+  withheldVersionsMock.mockResolvedValue(new Set());
+  deletedVersionsMock.mockResolvedValue(new Set());
+  modelsOfVersionsMock.mockResolvedValue(new Map());
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
@@ -534,6 +552,51 @@ describe('resolveHubSources source expansion', () => {
     expect(result?.heldBrowsingLevel).toBe(1);
   });
 
+  // #317: a deleted, never-published SFW-only model held a hub for days after it was deleted.
+  describe('a deleted model', () => {
+    beforeEach(() => {
+      findFirstHub.mockResolvedValue({
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10 },
+          { type: UserHubSourceType.Model, targetId: 20 },
+        ],
+      });
+      stubVersions({ 20: [30] });
+      heldLevelMock.mockResolvedValue(1);
+    });
+
+    it('neither serves the hub nor holds it', async () => {
+      deletedVersionsMock.mockResolvedValue(new Set([30]));
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(deletedVersionsMock).toHaveBeenCalledWith([30], new Map([[30, 20]]));
+      expect(result?.modelVersionIds).toEqual([]);
+      expect(result?.heldBrowsingLevel).toBeUndefined();
+      expect(result?.userIds).toEqual([10]);
+    });
+
+    it('still holds the hub while the model is not deleted (control)', async () => {
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.modelVersionIds).toEqual([30]);
+      expect(result?.heldBrowsingLevel).toBe(1);
+    });
+
+    it('serves nothing from it to a viewer exempt from the hold either', async () => {
+      deletedVersionsMock.mockResolvedValue(new Set([30]));
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        isModerator: true,
+        holdExempt: true,
+      });
+
+      expect(result?.modelVersionIds).toEqual([]);
+    });
+  });
+
   it('expands a model source into its versions alongside explicit versions', async () => {
     findFirstHub.mockResolvedValue({
       sources: [
@@ -569,6 +632,42 @@ describe('resolveHubSources source expansion', () => {
 
     expect(heldLevelMock).not.toHaveBeenCalled();
     expect(result?.heldBrowsingLevel).toBeUndefined();
+  });
+
+  it("drops a taken-down model's versions from the hub", async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [
+        { type: UserHubSourceType.Model, targetId: 20 },
+        { type: UserHubSourceType.ModelVersion, targetId: 41 },
+      ],
+    });
+    stubVersions({ 20: [30, 31] });
+    withheldVersionsMock.mockResolvedValue(new Set([30, 31]));
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5, galleryOwnerId: 5 });
+
+    // The viewer is passed on, so the model's owner keeps it.
+    expect(withheldVersionsMock).toHaveBeenCalledWith(expect.arrayContaining([30, 31, 41]), 5);
+    expect(result?.modelVersionIds).toEqual([41]);
+    // The hold is read alongside, over every version the hub named.
+    expect(heldLevelMock).toHaveBeenCalledWith({ modelIds: [20], modelVersionIds: [41] });
+  });
+
+  it("keeps a taken-down model's versions for a viewer the caller exempts", async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [{ type: UserHubSourceType.ModelVersion, targetId: 41 }],
+    });
+    withheldVersionsMock.mockResolvedValue(new Set([41]));
+
+    const result = await resolveHubSources({
+      hubId: 1,
+      userId: 5,
+      isModerator: true,
+      holdExempt: true,
+    });
+
+    expect(withheldVersionsMock).not.toHaveBeenCalled();
+    expect(result?.modelVersionIds).toEqual([41]);
   });
 
   it('holds a moderator the caller does not exempt', async () => {
@@ -2129,6 +2228,64 @@ describe('getUserHubById', () => {
     const hub = await getUserHubById({ id: 1 });
 
     expect(hub.isOwner).toBe(false);
+  });
+
+  // #317: the owner could not tell which source no longer served.
+  describe('sources whose model is no longer published', () => {
+    // Hub owner 5. Model 20 and 23 are theirs; 21 and 22 are another user's.
+    const models = [
+      { id: 20, userId: 5, status: ModelStatus.Deleted },
+      { id: 21, userId: 8, status: ModelStatus.Deleted },
+      { id: 22, userId: 8, status: ModelStatus.UnpublishedViolation },
+      { id: 23, userId: 5, status: ModelStatus.Unpublished },
+      { id: 24, userId: 8, status: ModelStatus.Published },
+    ];
+    beforeEach(() => {
+      findFirstHub.mockResolvedValue({
+        id: 1,
+        userId: 5,
+        metadata: {},
+        sources: [
+          ...[20, 21, 22, 23, 24].map((targetId) => ({
+            type: UserHubSourceType.Model as UserHubSourceType,
+            targetId,
+          })),
+          { type: UserHubSourceType.ModelVersion, targetId: 41 },
+        ].map((source) => ({ ...source, enabled: true, exclude: false })),
+      });
+      modelsOfVersionsMock.mockResolvedValue(new Map([[41, 22]]));
+      // Answers the status filter the query sends, so a query without it returns every model.
+      dbMock.dbRead.model.findMany.mockImplementation((async ({
+        where,
+      }: {
+        where: { id: { in: number[] }; status?: { not: ModelStatus } };
+      }) =>
+        models.filter(
+          (m) => where.id.in.includes(m.id) && (!where.status || m.status !== where.status.not)
+        )) as never);
+    });
+
+    it("labels another user's deleted and unpublished models the same, and only the owner's own as deleted", async () => {
+      const owner = await getUserHubById({ id: 1, userId: 5 });
+      const state = Object.fromEntries(owner.sources.map((s) => [s.targetId, s.modelState]));
+
+      expect(state[21]).toBe(state[22]);
+      expect(state).toEqual({
+        20: 'deleted',
+        21: 'unavailable',
+        22: 'unavailable',
+        23: undefined,
+        24: undefined,
+        41: 'unavailable',
+      });
+    });
+
+    it('tells no one but the owner, and reads nothing for them', async () => {
+      const stranger = await getUserHubById({ id: 1, userId: 999 });
+
+      expect(stranger.sources.some((s) => s.modelState)).toBe(false);
+      expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+    });
   });
 });
 

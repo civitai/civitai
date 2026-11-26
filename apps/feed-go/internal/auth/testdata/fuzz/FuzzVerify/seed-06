@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("{\"alg\":\"ES256\",\"kid\":\"unknown\"}")
+[]byte("{\"sub\":\"42\"}")
+string("e30.e30.AAAA")

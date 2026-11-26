@@ -1,13 +1,13 @@
 import { mintAppToken } from '@civitai/auth';
+import { DEV_TUNNEL_CLIENT_PREFIX as DEV_CLIENT_PREFIX } from '@civitai/auth/self-only-client';
 import { dbWrite } from '~/server/db/client';
 import { simpleBuzzLimitToBudgets } from '~/server/schema/api-key.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import { DEV_TUNNEL_SESSION_BUZZ_CAP } from '~/server/services/blocks/dev-tunnel-session';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
+import { reopenBanDisabledClient } from '~/server/services/oauth-ban-marker';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
-
-const DEV_CLIENT_PREFIX = 'appdev-';
 
 /** The OAuth client a never-submitted app borrows in its author's tunnel; a submitted app has its own. */
 export function devTunnelClientId(userId: number, slug: string): string {
@@ -24,10 +24,10 @@ export function parseDevTunnelClientId(clientId: string): { userId: number; slug
 }
 
 /** Which of `scopes` a consent bitmask covers; block-only scopes have no bit and pass through. */
-export function scopesCoveredByConsent(scopes: readonly string[], consentScope: number): string[] {
+export function scopesCoveredByConsent(scopes: readonly string[], consentScope: bigint): string[] {
   return scopes.filter((scope) => {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
-    return typeof bit !== 'number' || (consentScope & bit) === bit;
+    return typeof bit !== 'bigint' || (consentScope & bit) === bit;
   });
 }
 
@@ -44,8 +44,9 @@ export async function mintDevTunnelOauthToken(opts: {
   userId: number;
   clientId: string;
   scopes: readonly string[];
+  impersonatedBy: number | null;
 }): Promise<DevTunnelOauthMint> {
-  const { userId, clientId, scopes } = opts;
+  const { userId, clientId, scopes, impersonatedBy } = opts;
   const scope = oauthScopeBitsFor([...scopes]);
 
   const dev = parseDevTunnelClientId(clientId);
@@ -68,6 +69,7 @@ export async function mintDevTunnelOauthToken(opts: {
       update: { allowedScopes: scope },
       select: { id: true },
     });
+    await reopenBanDisabledClient(clientId);
   }
 
   const buzzLimit = scopes.includes('ai:write:budgeted')
@@ -75,6 +77,6 @@ export async function mintDevTunnelOauthToken(opts: {
     : null;
   await writeOauthConsent({ userId, clientId, scope, buzzLimit });
 
-  const minted = await mintAppToken({ userId, clientId, scope });
+  const minted = await mintAppToken({ userId, clientId, scope, impersonatedBy });
   return { token: minted.accessToken, expiresAt: minted.expiresAt };
 }

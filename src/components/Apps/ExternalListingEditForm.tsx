@@ -33,6 +33,7 @@ import {
   SOURCE_REPO_HOSTS_LABEL,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
+  setOfflineAccessDeclared,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { FadeIn } from '~/components/Apps/wizardMotion';
@@ -47,6 +48,10 @@ import {
   isApprovedEdit,
   isOwnerEdit,
   listingEditHeaderCopy,
+  listingFieldsFromManifest,
+  onsiteCategoryEditableByModerator,
+  MANIFEST_COPY_FIELD_NOTE,
+  MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
   type ListingEditContext,
@@ -117,10 +122,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
    */
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
-  // See `scopeDisclosureLockedForEdit`: a DRIFTED scope mask makes every save material, so
-  // the justification boxes are unsaveable too and must not stay live. Not implied by
-  // `materialBlocked` — while the masks agree, a justification edit is trivial and saves.
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
+  // On-site: name, tagline, description, category and both links come from the app and
+  // render read-only here.
+  const fromManifest = listingFieldsFromManifest(edit);
+  // …except the category, which a moderator may still set on the listing itself.
+  const categoryReadOnly = fromManifest && !onsiteCategoryEditableByModerator(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -249,6 +256,16 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     // Client mirror of the server validation (URL/name/slug/bounds) before the
     // round-trip; the server stays the source of truth.
     const nextErrors = validateOffsiteSubmitForm(values);
+    // A read-only link is never sent, so a stored value the current rules reject must not
+    // block saving the fields the author CAN change.
+    if (fromManifest) {
+      delete nextErrors.sourceRepoUrl;
+      delete nextErrors.issueTrackerUrl;
+      delete nextErrors.name;
+      delete nextErrors.tagline;
+      delete nextErrors.description;
+    }
+    if (categoryReadOnly) delete nextErrors.category;
     // SENSITIVE-only justification model (parity with create): every sensitive scope
     // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
     // read-only + never required. No connect client → no scopes → nothing to check.
@@ -501,18 +518,37 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         >
           <FadeIn>
             <Stack gap="md" mt="md">
-              <TextInput
-                label="Name"
-                value={values.name}
-                onChange={(e) => setField('name', e.currentTarget.value)}
-                error={errors.name}
-                maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
-                required
-                data-testid="apps-offsite-edit-name"
-                // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
-                data-material-field="name"
-                disabled={materialBlocked}
-              />
+              {/* 🔴 ON-SITE: name, tagline and description are MANIFEST-GOVERNED (minted at submit,
+                re-synced on every block-version approve), so they are shown read-only with where
+                they come from, like the links below, rather than offered as an edit the next
+                approve would overwrite (or, on a live listing, the assets-only revision apply
+                would drop). The server refuses the keys too. `data-material-field` stays on the
+                name so the repair-state ledger still sees every material field as disabled. */}
+              {fromManifest ? (
+                <TextInput
+                  label="Name"
+                  description={MANIFEST_COPY_FIELD_NOTE.name}
+                  value={values.name}
+                  readOnly
+                  disabled
+                  rightSection={<IconLock size={14} />}
+                  data-testid="apps-offsite-edit-name-manifest"
+                  data-material-field="name"
+                />
+              ) : (
+                <TextInput
+                  label="Name"
+                  value={values.name}
+                  onChange={(e) => setField('name', e.currentTarget.value)}
+                  error={errors.name}
+                  maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
+                  required
+                  data-testid="apps-offsite-edit-name"
+                  // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
+                  data-material-field="name"
+                  disabled={materialBlocked}
+                />
+              )}
 
               <TextInput
                 label="Slug"
@@ -524,46 +560,125 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 data-testid="apps-offsite-edit-slug"
               />
 
-              <TextInput
-                label="Tagline"
-                description="A short one-liner (optional)."
-                value={values.tagline}
-                onChange={(e) => setField('tagline', e.currentTarget.value)}
-                error={errors.tagline}
-                maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
-              />
+              {fromManifest ? (
+                <>
+                  <TextInput
+                    label="Tagline"
+                    description={MANIFEST_COPY_FIELD_NOTE.tagline}
+                    value={values.tagline}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-tagline-manifest"
+                  />
+                  <Textarea
+                    label="Description"
+                    description={MANIFEST_COPY_FIELD_NOTE.description}
+                    autosize
+                    minRows={3}
+                    maxRows={8}
+                    value={values.description}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    data-testid="apps-offsite-edit-description-manifest"
+                  />
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    label="Tagline"
+                    description="A short one-liner (optional)."
+                    value={values.tagline}
+                    onChange={(e) => setField('tagline', e.currentTarget.value)}
+                    error={errors.tagline}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
+                  />
 
-              <Textarea
-                label="Description"
-                description="What the app does (optional)."
-                autosize
-                minRows={3}
-                maxRows={8}
-                value={values.description}
-                onChange={(e) => setField('description', e.currentTarget.value)}
-                error={errors.description}
-                maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
-              />
+                  <Textarea
+                    label="Description"
+                    description="What the app does (optional)."
+                    autosize
+                    minRows={3}
+                    maxRows={8}
+                    value={values.description}
+                    onChange={(e) => setField('description', e.currentTarget.value)}
+                    error={errors.description}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+                  />
+                </>
+              )}
 
-              {/* Public source repository. The copy states the re-review consequence
-                up front: this is a MATERIAL field, so on an approved listing changing
-                it stages a shadow revision and the change does not go live until a
-                moderator approves it. An author who is not told that reads the
-                unchanged live page afterwards as a bug. */}
-              <TextInput
-                label="Source repository"
-                description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
-                placeholder="https://github.com/your-org/your-app"
-                value={values.sourceRepoUrl}
-                onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
-                error={errors.sourceRepoUrl}
-                maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
-                data-testid="apps-offsite-edit-source-repo"
-                // 🔴 MATERIAL — a public outbound link a moderator approved. See
-                // `materialBlockedReason`.
-                data-material-field="sourceRepoUrl"
-                disabled={materialBlocked}
-              />
+              {fromManifest ? (
+                <>
+                  {/* 🔴 ON-SITE: both links are MANIFEST-GOVERNED (minted at submit, re-synced
+                    on every approve from `repository` / `bugs`), so they are shown read-only
+                    with where they come from — the same answer the CLI gives — rather than
+                    offered as an edit the next approve would overwrite. The server refuses the
+                    keys too. `data-material-field` stays so the repair-state ledger still
+                    sees every material field as disabled. */}
+                  <TextInput
+                    label="Source repository"
+                    description={MANIFEST_LINK_FIELD_NOTE.sourceRepoUrl}
+                    value={values.sourceRepoUrl}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-source-repo-manifest"
+                    data-material-field="sourceRepoUrl"
+                  />
+                  <TextInput
+                    label="Issue tracker"
+                    description={MANIFEST_LINK_FIELD_NOTE.issueTrackerUrl}
+                    value={values.issueTrackerUrl}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-issue-tracker-manifest"
+                    data-material-field="issueTrackerUrl"
+                  />
+                </>
+              ) : (
+                <>
+                  {/* Public source repository. The copy states the re-review consequence
+                    up front: this is a MATERIAL field, so on an approved listing changing
+                    it stages a shadow revision and the change does not go live until a
+                    moderator approves it. An author who is not told that reads the
+                    unchanged live page afterwards as a bug. */}
+                  <TextInput
+                    label="Source repository"
+                    description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
+                    placeholder="https://github.com/your-org/your-app"
+                    value={values.sourceRepoUrl}
+                    onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
+                    error={errors.sourceRepoUrl}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
+                    data-testid="apps-offsite-edit-source-repo"
+                    // 🔴 MATERIAL — a public outbound link a moderator approved. See
+                    // `materialBlockedReason`.
+                    data-material-field="sourceRepoUrl"
+                    disabled={materialBlocked}
+                  />
+
+                  {/* Public issue-tracker / support link. MATERIAL like the source link, and the
+                    copy says so for the same reason. */}
+                  <TextInput
+                    label="Issue tracker"
+                    description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link. Changing this needs moderator re-review before it goes live."
+                    placeholder="https://github.com/your-org/your-app/issues"
+                    value={values.issueTrackerUrl}
+                    onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                    error={errors.issueTrackerUrl}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                    data-testid="apps-offsite-edit-issue-tracker"
+                    data-material-field="issueTrackerUrl"
+                    disabled={materialBlocked}
+                  />
+                </>
+              )}
 
               {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
                 🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.
@@ -607,18 +722,33 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               )}
 
               <Group grow align="flex-start">
-                <Select
-                  label="Category"
-                  placeholder="No category"
-                  data={OFFSITE_CATEGORY_OPTIONS}
-                  value={values.category}
-                  onChange={(v: string | null) =>
-                    setField('category', (v as MarketplaceCategory) || null)
-                  }
-                  error={errors.category}
-                  clearable
-                  data-testid="apps-offsite-edit-category"
-                />
+                {categoryReadOnly ? (
+                  // 🔴 ON-SITE: the listing takes the app's category on every approve, so it is
+                  // read-only here like the name and links; the note says where it comes from.
+                  <Select
+                    label="Category"
+                    description={MANIFEST_COPY_FIELD_NOTE.category}
+                    placeholder="Not set"
+                    data={OFFSITE_CATEGORY_OPTIONS}
+                    value={values.category}
+                    readOnly
+                    disabled
+                    data-testid="apps-offsite-edit-category-manifest"
+                  />
+                ) : (
+                  <Select
+                    label="Category"
+                    placeholder="No category"
+                    data={OFFSITE_CATEGORY_OPTIONS}
+                    value={values.category}
+                    onChange={(v: string | null) =>
+                      setField('category', (v as MarketplaceCategory) || null)
+                    }
+                    error={errors.category}
+                    clearable
+                    data-testid="apps-offsite-edit-category"
+                  />
+                )}
                 <Select
                   label="Content rating"
                   data={OFFSITE_CONTENT_RATING_OPTIONS}
@@ -645,11 +775,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   requestedScopes={values.requestedScopes}
                   justifications={values.scopeJustifications}
                   onJustificationChange={handleJustificationChange}
-                  // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
-                  // A justification edit is trivial and saves fine on an unpublished listing
-                  // while the scope masks agree; it is only unsaveable once they have DRIFTED,
-                  // because the drifted mask then rides along on every patch and the server
-                  // counts it as material.
+                  onOfflineAccessDeclaredChange={(declared) =>
+                    setValues((v) => setOfflineAccessDeclared(v, declared))
+                  }
                   disabled={saving || scopeLocked}
                   forceShowErrors={showScopeErrors}
                   intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."

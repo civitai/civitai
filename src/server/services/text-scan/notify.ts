@@ -35,7 +35,7 @@ export function logRatingNoticeDecision(entry: {
       name: 'text-scan',
       message: 'rating notice decision',
       ...entry,
-    }).catch(() => undefined);
+    });
   } catch {
     // Logging never changes a notice decision.
   }

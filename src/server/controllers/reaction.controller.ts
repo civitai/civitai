@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
@@ -9,12 +10,20 @@ import {
   imageReactionMilestones,
 } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
-import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import type {
+  ToggleReactionInput,
+  ToggleReactionWithPointsInput,
+} from '~/server/schema/reaction.schema';
 import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -31,9 +40,12 @@ import {
   readImagePostIdViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
+import type { EventPointGrant } from '~/server/events/points/award';
+import { loadEvents } from '~/server/events/load-events';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { assertCommentActionable } from '~/server/controllers/commentv2.controller';
-
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
+import { getJudgingCrucibleIdsForImage } from '~/server/services/crucible.service';
 /**
  * The exact payload `Tracker.reaction` accepts.
  *
@@ -117,38 +129,16 @@ async function getTrackerEvent(
         };
       }
       break;
-    case 'commentOld':
-      const commentOld = await dbRead.comment.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (commentOld) {
-        return {
-          type: `Comment_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: commentOld.userId,
-          ...shared,
-        };
-      }
-      break;
     case 'comment':
-      // A comment on a surface that writes CommentV3 may have no CommentV2 row. The event type stays
-      // `CommentV2_*` either way: the id is the same in both tables.
-      const commentV2 =
-        (await dbRead.commentV2.findFirst({
-          where: { id: input.entityId },
-          select: { userId: true },
-        })) ??
-        (
-          await dbRead.$queryRaw<{ userId: number }[]>`
-            SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
-          `
-        )[0];
-      if (commentV2) {
+      // Still `CommentV2_*`: ClickHouse's `reactions.type` enum has no CommentV3 value.
+      const [comment] = await dbRead.$queryRaw<{ userId: number }[]>`
+        SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
+      `;
+      if (comment) {
         return {
           type: `CommentV2_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          ownerId: commentV2.userId,
+          ownerId: comment.userId,
           ...shared,
         };
       }
@@ -201,10 +191,11 @@ async function holdsReaction({
   // The return annotation makes a missing entity type a compile error rather than a refusal.
   const count = await ((): Promise<number> => {
     switch (entityType) {
-      case 'commentOld':
-        return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
       case 'comment':
-        return dbWrite.commentV2Reaction.count({ where: { ...where, commentId: entityId } });
+        return dbWrite.$queryRaw<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM "CommentV3Reaction"
+          WHERE "commentId" = ${entityId} AND "userId" = ${userId} AND reaction = ${reaction}::"ReviewReactions"
+        `.then(([row]) => row?.n ?? 0);
       case 'image':
         return dbWrite.imageReaction.count({ where: { ...where, imageId: entityId } });
       case 'post':
@@ -230,9 +221,11 @@ const reactionMetricMap: { [p in ReviewReactions]?: EntityMetric_MetricType_Type
 export const toggleReactionHandler = async ({
   ctx,
   input,
+  onEventPoints,
 }: {
   ctx: ProtectedContext;
   input: ToggleReactionInput;
+  onEventPoints?: (grants: Promise<EventPointGrant[]>) => void;
 }) => {
   try {
     // A value no longer allowed is still accepted when the user holds it, so it can be removed.
@@ -245,9 +238,35 @@ export const toggleReactionHandler = async ({
       );
     }
 
-    if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
+    if (input.entityType === 'comment') {
+      const comment = await assertCommentActionable(input.entityId, ctx);
+      // Feature Pages comments take no reactions.
+      if (comment?.entityType === 'featurePage') throw throwNotFoundError('Comment not found');
+    }
 
     if (input.entityType === 'image') {
+      const viewer = {
+        id: input.entityId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      };
+      await assertImageVisibleToViewer(viewer).catch(async (error: unknown) => {
+        const hidden = error instanceof TRPCError && error.code === 'NOT_FOUND';
+        if (!hidden) throw error;
+        // A reaction the user already holds stays removable on an image hidden from them since.
+        if (await holdsReaction({ ...input, userId: ctx.user.id })) return;
+        // A crucible entry made from a draft post is scheduled to publish at the crucible's end;
+        // its judges react to it before then.
+        if (!ctx.features?.crucible) throw error;
+        const judgingCrucibleIds = await getJudgingCrucibleIdsForImage({
+          imageId: input.entityId,
+          viewerId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+          isGreen: !!ctx.features?.isGreen,
+        });
+        if (!judgingCrucibleIds.length) throw error;
+        await assertImageVisibleToViewer({ ...viewer, judgingCrucibleIds });
+      });
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
       const contests = await getContestsFromEntity({
@@ -299,6 +318,7 @@ export const toggleReactionHandler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      onEventPoints,
     });
     // Positive checks: 'noop' and 'ignored' wrote nothing, so they emit nothing.
     const changed = result === 'created' || result === 'removed';
@@ -359,6 +379,68 @@ export const toggleReactionHandler = async ({
   }
 };
 
+// How long a toggle waits for its event points. Past it the toggle answers without them and the
+// award carries on, so a slow Redis costs the pop, never the reaction.
+export const EVENT_POINTS_WAIT_MS = 300;
+
+/**
+ * The site's own reaction button: the toggle, plus what it earned the viewer's own team if that is
+ * known in time. The reactor never earns themself, so the points are always the team's.
+ */
+export const toggleReactionWithPointsHandler = async ({
+  ctx,
+  input: { waitForPoints = true, ...input },
+}: {
+  ctx: ProtectedContext;
+  input: ToggleReactionWithPointsInput;
+}): Promise<{ result: ToggleReactionResult; eventPoints?: EventPointGrant[] }> => {
+  let pending: Promise<EventPointGrant[]> | undefined;
+  const result = await toggleReactionHandler({
+    ctx,
+    input,
+    onEventPoints: waitForPoints ? (grants) => (pending = grants) : undefined,
+  });
+  if (!pending) return { result };
+  const userId = ctx.user.id;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const grants = await Promise.race([
+    pending.then((all) => viewerTeamGrants(all, userId)).catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), EVENT_POINTS_WAIT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  return grants?.length ? { result, eventPoints: grants } : { result };
+};
+type ToggleReactionResult = Awaited<ReturnType<typeof toggleReactionHandler>>;
+
+// Grants for the viewer's own team, summed per event. Another team's are dropped: the pop is for
+// points that help the viewer's side, so a viewer who holds none of an event's team hats (joined
+// or bought) has none there. getUserTeam alone would not say so: it seeds a team for anyone.
+async function viewerTeamGrants(grants: EventPointGrant[], userId: number) {
+  const byEvent = new Map<string, EventPointGrant>();
+  if (!grants.length) return [];
+  const names = [...new Set(grants.map((g) => g.event))];
+  const held = await dbRead.$queryRaw<{ event: string }[]>`
+    SELECT DISTINCT c.data->>'event' AS event FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    WHERE uc."userId" = ${userId}
+      AND c.data->>'event' IN (${Prisma.join(names)})
+      AND c.data->>'team' IS NOT NULL
+  `;
+  const joined = new Set(held.map((h) => h.event));
+  const events = await loadEvents();
+  for (const name of names) {
+    if (!joined.has(name)) continue;
+    const team = await events.find((e) => e.name === name)?.getUserTeam(userId);
+    if (!team) continue;
+    const points = grants
+      .filter((g) => g.event === name && g.team === team)
+      .reduce((n, g) => n + g.points, 0);
+    if (points > 0) byEvent.set(name, { event: name, team, points });
+  }
+  return [...byEvent.values()];
+}
+
 // Exported for tests: the property that matters is that an unavailable exclusion
 // list still produces a notification, and that is only observable here.
 export const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
@@ -418,7 +500,7 @@ export const createReactionNotification = async ({ entityType, entityId }: Toggl
           message: 'Could not find resource',
         },
         'notifications'
-      ).catch();
+      );
       return;
     }
 

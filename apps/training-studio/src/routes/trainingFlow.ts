@@ -1,16 +1,40 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
+import { findTrigger, withTrigger } from '$lib/training-trigger';
+import {
+  asNsfwRating,
+  isMatureNsfwLevel,
+  nsfwLevelLabel,
+  ratingBreakdown,
+  type NsfwRating,
+  type RatingCount,
+} from '$lib/nsfw-rating';
+export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
+import {
+  KOHYA_PARAM_FIELDS,
+  kohyaClipSkip,
+  kohyaDefaults,
+  kohyaFieldSupported,
+  kohyaFamily,
+  isKohyaFlow,
+} from '$lib/data/kohya';
 import {
   EXTRA_PARAM_FIELDS,
   LORA_TYPES,
   MODEL_CARDS,
-  TE_TRAINING_UNSUPPORTED,
   allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
   isProdigy,
+  teTrainingUnsupportedReason,
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  findByAir,
+  isCardVisible,
+  mediaCount,
+  visibleVersions,
+  versionPriceKey,
   ecosystemTakesSampleImages,
   versionStepDefault,
   versionSuffix,
@@ -22,9 +46,17 @@ import {
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 import type { TrainingItem } from '$lib/train-core';
+import { engineTakesRepeats, MAX_REPEATS } from '$lib/repeats';
+import { extOfAir, mediaOfExt } from '$lib/media';
+import {
+  blockedRunMessage,
+  modelUnavailability,
+  type TrainingServiceStatus,
+} from '$lib/service-status-core';
+import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
-export const MAX_RUNS = 5;
+export { MAX_RUNS } from '$lib/submit-limits';
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate
@@ -36,6 +68,7 @@ export interface Run {
   id: number;
   cardType: string;
   versionKey: string;
+  engine?: string;
   /** For the `Custom…` version: the AIR of a Civitai model to train on, pasted by the user. */
   customAir?: string;
   /** The picked model's display name when `customAir` came from the host's model picker; cleared
@@ -58,6 +91,19 @@ export function labelNoun(card: ModelCard): 'tags' | 'captions' {
  *  else just its single `label`. `card.label` is always the default (first). */
 export function labelOptions(card: ModelCard): LabelType[] {
   return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
+}
+
+/** The label mode to carry into the Data step. The flow's `labelMode` starts as 'tag', so a first pick of a
+ *  caption-default `bothLabels` card must not inherit it; but labels already typed in the current mode, or a
+ *  pick on the same model, are kept. */
+export function labelModeForCard(
+  previous: ModelCard | null,
+  card: ModelCard,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType {
+  if (!labelOptions(card).includes(current)) return card.label;
+  return previous?.type === card.type || datasetLabeled ? current : card.label;
 }
 
 // Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
@@ -84,21 +130,6 @@ export function captionTriggerHit(
   };
 }
 
-/** Where the trigger word occurs in a text — case-insensitive, as a whole term (a trigger `art` is
- *  not inside `portrait`). The ONE matcher behind the caption highlight and the sample-prompt check,
- *  so the Data step and the Review step can't disagree about whether a text carries the trigger. */
-export function findTrigger(
-  trigger: string,
-  text: string
-): { index: number; length: number } | null {
-  const t = trigger.trim();
-  if (!t) return null;
-  const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m = new RegExp(`(^|[^\\p{L}\\p{N}_])(${escaped})(?=$|[^\\p{L}\\p{N}_])`, 'iu').exec(text);
-  return m ? { index: m.index + m[1]!.length, length: m[2]!.length } : null;
-}
-
-/** Client-side selection carried across the flow. Nothing here is persisted until Start. */
 export interface Selection {
   media: Media;
   loraType: string;
@@ -127,6 +158,63 @@ export function runVersion(run: Run): ModelVersionInfo {
   return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
 }
 
+export const runEngine = (run: Run): string => run.engine ?? runVersion(run).engine ?? 'ai-toolkit';
+export const runSupportsKohya = (run: Run): boolean => !!kohyaFamily(runVersion(run).ecosystem);
+/** A card's versions share one ecosystem, so its first decides whether the card trains on Kohya. */
+export const cardSupportsKohya = (card: ModelCard): boolean =>
+  !!kohyaFamily(card.versions[0]!.ecosystem);
+
+/** The run on `engine`, moved to the card's first version when its pick isn't offered there (Custom
+ *  exists for some cards only under Kohya). */
+export function withEngine(run: Run, engine: string, enabledFlags?: ReadonlySet<string>): Run {
+  const options = versionOptions(runCard(run), enabledFlags, engine);
+  return options.some((v) => v.key === run.versionKey)
+    ? { ...run, engine }
+    : { ...run, engine, versionKey: options[0]!.key, customAir: undefined, customName: undefined };
+}
+
+/** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
+ *  a base's checkpoint under its own key). */
+export const versionStatusKey = (v: ModelVersionInfo): string =>
+  findByAir(v.air)?.version.key ?? v.key;
+
+/** A card is unavailable when every version this viewer can see is blocked; the note is the first one's. */
+export function cardUnavailability(
+  card: ModelCard,
+  enabledFlags: ReadonlySet<string>,
+  status: TrainingServiceStatus | null | undefined
+): { reason: string | null } | null {
+  if (!isCardVisible(card, enabledFlags)) return null;
+  const downs = visibleVersions(card, enabledFlags).map((v) =>
+    modelUnavailability(status, versionStatusKey(v))
+  );
+  return downs.length > 0 && downs.every((d) => d !== null) ? downs[0]! : null;
+}
+
+/** Why the selection can't start: the first run whose model is blocked (a stale tab or restored draft
+ *  can still hold one), or null. */
+export function blockedSelectionMessage(
+  runs: Run[],
+  status: TrainingServiceStatus | null | undefined
+): string | null {
+  for (const run of runs) {
+    const v = runVersion(run);
+    // The same model fields the submit sends: a custom run still names the base it was picked under.
+    const message = blockedRunMessage(
+      {
+        ecosystem: v.ecosystem,
+        modelVariant: v.modelVariant,
+        version: v.version,
+        model: v.air,
+        customModel: isCustom(run) ? run.customAir?.trim() || undefined : undefined,
+      },
+      status
+    );
+    if (message) return message;
+  }
+  return null;
+}
+
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
   const card = runCard(run);
@@ -135,16 +223,30 @@ export function runVersionLabel(run: Run): string {
 }
 
 /** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
-export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+export function versionOptions(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>,
+  engine?: string
+): { key: string; label: string }[] {
   return [
-    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
-    ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
+    ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
+    ...(allowsCustomBase(card) || (engine === 'kohya' && cardSupportsKohya(card))
+      ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }]
+      : []),
   ];
 }
 
-export function newRun(card: ModelCard): Run {
-  const first = card.versions[0];
-  if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
+/** A run on the card's first version the viewer can see (`enabledFlags` omitted → `versions[0]`),
+ *  skipping a version that is down when `status` is given and another one is up. */
+export function newRun(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): Run {
+  const visible = visibleVersions(card, enabledFlags);
+  const first =
+    visible.find((v) => !modelUnavailability(status, versionStatusKey(v))) ?? visible[0];
+  if (!first) throw new Error(`Base-model card ${card.type} has no version this viewer can pick`);
   return { id: nextRunId(), cardType: card.type, versionKey: first.key };
 }
 
@@ -167,9 +269,102 @@ export function recommendedCardFor(
   );
 }
 
+/** The card a Kohya run starts on for a LoRA type + media: the recommended card when Kohya trains it,
+ *  else the first available Kohya card. Undefined when no Kohya card for the media is available. */
+export function kohyaSeedCard(
+  loraTypeId: string,
+  media: Media,
+  enabledFlags: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): ModelCard | undefined {
+  return [
+    recommendedCardFor(loraTypeId, media, enabledFlags),
+    ...cardsForMedia(media, enabledFlags),
+  ].find((c) => cardSupportsKohya(c) && !cardUnavailability(c, enabledFlags, status));
+}
+
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+const STATUS_FILTERS = [
+  'all',
+  'labeled',
+  'unlabeled',
+  'mature',
+  'not-mature',
+  'not-rated',
+  'failed',
+] as const;
+/** `rating:<level>` shows the images the upload scan gave that one rating. `not-mature` and `not-rated`
+ *  are by the v2 verdict. */
+export type DatasetFilter = (typeof STATUS_FILTERS)[number] | `rating:${NsfwRating}`;
+
+export function asDatasetFilter(value: string): DatasetFilter | undefined {
+  if ((STATUS_FILTERS as readonly string[]).includes(value)) return value as DatasetFilter;
+  const rating = value.startsWith('rating:')
+    ? asNsfwRating(value.slice('rating:'.length))
+    : undefined;
+  return rating && `rating:${rating}`;
+}
+
+const ratingOfFilter = (filter: DatasetFilter) =>
+  filter.startsWith('rating:') ? asNsfwRating(filter.slice('rating:'.length)) : undefined;
+
+/** Under a `rating:` filter, whether a trainable image has that rating; undefined for any other filter. */
+export function matchesRatingFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  const rating = ratingOfFilter(filter);
+  if (!rating) return undefined;
+  return isTrainable(img) && asNsfwRating(img.nsfwLevel) === rating;
+}
+
+/** Mature by the v2 verdict when the image has one, else by its upload rating. */
+export function isImgMature(img: Img): boolean {
+  return isTrainable(img) && (img.v2Mature ?? isMatureNsfwLevel(img.nsfwLevel));
+}
+
+/** A tile's rating label: the v2 verdict when the image has one, else its upload rating. */
+export function imgRatingLabel(img: Img): string | undefined {
+  if (img.v2Mature !== undefined) return img.v2Mature ? 'Mature' : 'Not mature';
+  return nsfwLevelLabel(img.nsfwLevel);
+}
+
+/** Under a v2 filter, whether a trainable image matches it; undefined for any other filter. */
+export function matchesVerdictFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  if (filter === 'not-mature') return isTrainable(img) && img.v2Mature === false;
+  if (filter === 'not-rated') return isTrainable(img) && img.v2Mature === undefined;
+  return undefined;
+}
+
+/** Set each verdict on the image it names, in place: the Data step's label passes hold these same
+ *  objects, so a copy would orphan their results. Whether any image changed. */
+export function setVerdicts(images: Img[], verdicts: Record<string, boolean> | undefined): boolean {
+  let changed = false;
+  for (const img of images) {
+    const verdict = img.blobId !== undefined ? verdicts?.[img.blobId] : undefined;
+    if (typeof verdict !== 'boolean' || verdict === img.v2Mature) continue;
+    img.v2Mature = verdict;
+    changed = true;
+  }
+  return changed;
+}
+
+/** Apply a v2 rating answer: set its verdicts on `images` in place, and return Review's count unless
+ *  the answer says Review should keep its own (null). */
+export function applyRatingAnswer(
+  images: Img[],
+  answer: { matureCount: number | null; verdicts?: Record<string, boolean> }
+): number | undefined {
+  setVerdicts(images, answer.verdicts);
+  return answer.matureCount ?? undefined;
+}
+
+/** The rating filters to offer: each rating among the trainable images, plus the selected one at 0
+ *  once the dataset no longer has it, so the selection stays visible. */
+export function ratingChoices(images: Img[], filter: DatasetFilter): RatingCount[] {
+  const totals = ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel));
+  const selected = ratingOfFilter(filter);
+  if (!selected || totals.some((r) => r.rating === selected)) return totals;
+  return [...totals, ...ratingBreakdown([selected]).map((r) => ({ ...r, count: 0 }))];
+}
 
 /** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
  *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
@@ -204,6 +399,8 @@ export interface Img {
   blobUrl?: string;
   /** The scan's rating, when known — a mature one means Blue Buzz can't pay for a non-member's run. */
   nsfwLevel?: string;
+  /** The v2 verdict, once the server has one: it decides mature over `nsfwLevel`. */
+  v2Mature?: boolean;
   /** A block reason or upload error, shown on the tile. */
   message?: string;
   /** True while an auto-label workflow step for this image is in flight. */
@@ -224,7 +421,73 @@ export interface Img {
   sourceWorkflowId?: string;
   tags: string[];
   caption: string;
+  /** Per-image repeats: how many times this image goes into the dataset. Absent means once. */
+  repeats?: number;
+  /** The add this image came in with, so Manage tags can scope an edit to it. */
+  batch?: ImgBatch;
 }
+
+export type BatchSource = 'upload' | 'zip' | 'reuse' | 'generations';
+
+/** One add to the dataset: a drop or pick, one zip, one reused dataset, one generations pick. */
+export interface ImgBatch {
+  /** Unique and increasing, also across page loads: seeded from the clock rather than a counter, so
+   *  a batch kept in a saved draft can't share an id with one added later. */
+  id: number;
+  source: BatchSource;
+  addedAt: number;
+}
+
+let lastBatchId = 0;
+export function newBatch(source: BatchSource, now = Date.now()): ImgBatch {
+  lastBatchId = Math.max(now, lastBatchId + 1);
+  return { id: lastBatchId, source, addedAt: now };
+}
+
+const BATCH_SOURCE_NAMES: Record<BatchSource, string> = {
+  upload: 'Upload',
+  zip: 'Zip import',
+  reuse: 'Reused dataset',
+  generations: 'Generations',
+};
+
+export interface BatchOption {
+  id: number;
+  label: string;
+}
+
+/** The batches still in the dataset, oldest first, each named "Upload 2 · 14 images · 3:41 PM": the
+ *  number counts that source's batches, and the time tells same-source batches apart. */
+export function datasetBatches(images: Pick<Img, 'batch'>[], media: Media): BatchOption[] {
+  const byId = new Map<number, { batch: ImgBatch; count: number }>();
+  for (const img of images) {
+    if (!img.batch) continue;
+    const entry = byId.get(img.batch.id);
+    if (entry) entry.count++;
+    else byId.set(img.batch.id, { batch: img.batch, count: 1 });
+  }
+  const perSource = new Map<BatchSource, number>();
+  return [...byId.values()]
+    .sort((a, b) => a.batch.id - b.batch.id)
+    .map(({ batch, count }) => {
+      const n = (perSource.get(batch.source) ?? 0) + 1;
+      perSource.set(batch.source, n);
+      const time = new Date(batch.addedAt).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return {
+        id: batch.id,
+        label: `${BATCH_SOURCE_NAMES[batch.source]} ${n} · ${mediaCount(count, media)} · ${time}`,
+      };
+    });
+}
+
+/** The images a Manage-tags edit applies to: one batch's, or the whole dataset's when `batchId` is null. */
+export const imagesInScope = <T extends Pick<Img, 'batch'>>(
+  images: T[],
+  batchId: number | null
+): T[] => (batchId === null ? images : images.filter((i) => i.batch?.id === batchId));
 
 /** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
  *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
@@ -237,10 +500,61 @@ export function startLabelPass(targets: Img[]) {
   return { byKey, items };
 }
 
+/** Whether every run in the selection can train per-image repeats (not edit pairs, not Flux.2). */
+export const selectionTakesRepeats = (selection: Selection): boolean =>
+  selection.runs.every((run) => engineTakesRepeats(runEngine(run), runTrainsPairs(run)));
+
+export const repeatsOf = (img: Pick<Img, 'repeats'>): number => img.repeats ?? 1;
+
+/** A typed repeat count as one the submit accepts: a whole number from 1 to MAX_REPEATS. */
+export const clampRepeats = (n: number): number =>
+  Number.isFinite(n) ? Math.min(MAX_REPEATS, Math.max(1, Math.round(n))) : 1;
+
+/** How many items the dataset sends, counting each repeat. */
+export const expandedCount = (images: Img[]): number =>
+  images.reduce((sum, img) => sum + (isTrainable(img) ? repeatsOf(img) : 0), 0);
+
+const DEFAULT_EXT: Record<Media, string> = { image: 'png', video: 'mp4', audio: 'mp3' };
+
+/** The extension a repeat copy is staged under: its file name's, else its blob's, else its media's. */
+export function repeatExt(img: Pick<Img, 'name' | 'blobId' | 'mediaType'>): string {
+  for (const ext of [img.name.split('.').pop(), img.blobId && extOfAir(img.blobId)])
+    if (ext && mediaOfExt(ext)) return ext.toLowerCase();
+  return DEFAULT_EXT[img.mediaType];
+}
+
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
 }
+
+export const isLabeled = (img: Img) => img.tags.length > 0 || img.caption.trim().length > 0;
+
+/** Whether auto-label can read this image's media. A reused run's items (Train again, Reuse a dataset)
+ *  only hold a browser-local `blob:` preview URL, which the labeler can't fetch and the submit refuses. */
+export const canAutoLabelImage = (img: Pick<Img, 'blobUrl'>) =>
+  !!img.blobUrl?.startsWith('https://');
+
+/** Trainable images an auto-label pass may send. `skipTried` leaves out images auto-label already
+ *  attempted (the drain); `focusId` is the card whose inline editor is open. */
+export function autoLabelTargets(
+  images: Img[],
+  opts: { skipLabeled: boolean; skipTried: boolean; focusId: number | null }
+): Img[] {
+  return images.filter(
+    (i) =>
+      isTrainable(i) &&
+      canAutoLabelImage(i) &&
+      !i.labeling &&
+      i.id !== opts.focusId &&
+      !(opts.skipTried && i.labelTried) &&
+      !(opts.skipLabeled && isLabeled(i))
+  );
+}
+
+/** Trainable images auto-label can't read, which keep the manual editor. */
+export const handLabelOnlyCount = (images: Img[]) =>
+  images.filter((i) => isTrainable(i) && !canAutoLabelImage(i)).length;
 
 export function isFailed(img: Img): boolean {
   return img.status === 'blocked' || img.status === 'error';
@@ -277,6 +591,20 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
 export interface RunParams {
+  negativePrompt: string;
+  numRepeats: NumericInput;
+  enableBucket: boolean;
+  clipSkip: NumericInput;
+  lrSchedulerNumCycles: NumericInput;
+  seed: NumericInput;
+  fp8Base: boolean;
+  blocksToSwap: NumericInput;
+  vParameterization: string;
+  zeroTerminalSnr: string;
+  lrWarmupSteps: NumericInput;
+  captionDropoutRate: NumericInput;
+  rankDropout: NumericInput;
+  trainConv: boolean;
   steps: number;
   epochs: number;
   unetLr: NumericInput;
@@ -294,16 +622,41 @@ export interface RunParams {
   flipAugmentation: boolean;
 }
 
+/** Review-step params editable without the refund-forfeit acknowledgement: Checkpoints (a price knob) and
+ *  the negative prompt, which only shapes the preview samples. The seed also seeds training, so it stays locked. */
+const ACK_FREE_PARAMS: ReadonlySet<keyof RunParams> = new Set(['epochs', 'negativePrompt']);
+export const paramNeedsRefundAck = (field: keyof RunParams) => !ACK_FREE_PARAMS.has(field);
+
 /** What a `type="number"` input's binding hands back: the number, or '' when cleared. Stored as-is —
  *  round-tripping through `String()` makes Svelte rewrite the field on every keystroke, and a
  *  decimal being typed (`0.0`) collapses to `0` before the next digit lands. */
 export type NumericInput = string | number;
 
+/** A `NumericInput` as a `type="number"` binding's getter: blank reads as `null`, which is what Svelte
+ *  reads back from the element while it holds text that isn't a number yet (`1e`, `1e-` on the way to
+ *  `1e-4`). Returning `''` there makes Svelte think the value changed and clear what is being typed. */
+export const numberInputValue = (value: NumericInput): number | string | null =>
+  value === '' ? null : value;
+
 /** Human label per param — typed against `RunParams` so a new field without one fails typecheck
  *  instead of rendering its key. */
 export const PARAM_LABELS: Record<keyof RunParams, string> = {
+  negativePrompt: 'Sample negative prompt',
+  numRepeats: 'Repeats',
+  enableBucket: 'Aspect-ratio buckets',
+  clipSkip: 'CLIP skip',
+  lrSchedulerNumCycles: 'Scheduler cycles',
+  seed: 'Seed',
+  fp8Base: 'FP8 base weights',
+  blocksToSwap: 'Blocks to swap',
+  vParameterization: 'V-prediction',
+  zeroTerminalSnr: 'Zero terminal SNR',
+  lrWarmupSteps: 'LR warmup steps',
+  captionDropoutRate: 'Caption dropout',
+  rankDropout: 'Rank dropout',
+  trainConv: 'Train convolution layers',
   steps: 'Steps',
-  epochs: 'Checkpoints (epochs)',
+  epochs: 'Checkpoints',
   batchSize: 'Batch size',
   unetLr: 'UNet LR',
   textEncoderLr: 'Text encoder LR',
@@ -322,10 +675,34 @@ export const PARAM_LABELS: Record<keyof RunParams, string> = {
 /** Help text per param, written for someone doing their first LoRA. `{recommended}` is replaced
  *  with the model's own default at render time so the explanation names a number. */
 export const PARAM_HELP: Record<keyof RunParams, string> = {
+  negativePrompt: 'What to avoid in the preview images generated during training. Optional.',
+  numRepeats:
+    'Repeats each image within a dataset epoch. The Steps field still sets the total training budget.',
+  enableBucket: 'Groups images with similar aspect ratios to reduce cropping.',
+  clipSkip:
+    'Text encoder layer skip. SD 1.5 defaults to 1 (anime 2); SDXL-family models default to 2, where 1 trains on the last layer and usually looks wrong.',
+  lrSchedulerNumCycles:
+    'Number of cycles for cosine_with_restarts. Other schedulers ignore this value.',
+  seed: 'Random seed for training and preview samples.',
+  fp8Base: 'Stores the frozen base weights in FP8 to reduce GPU memory use.',
+  blocksToSwap:
+    'Transformer blocks moved between CPU and GPU to reduce GPU memory use. More swapping can be slower.',
+  vParameterization:
+    'Auto detects checkpoint metadata, including compatible NoobAI checkpoints. Override only if you know how the checkpoint was trained.',
+  zeroTerminalSnr:
+    'Auto detects the checkpoint training schedule. Override only if required by your checkpoint.',
+  lrWarmupSteps:
+    'Gradually raise the learning rate at the start. Available with constant learning rate. Leave blank to keep the scheduler default.',
+  captionDropoutRate:
+    'Chance of training without a caption, from 0 to 1. Leave blank to keep the model default (0.05).',
+  rankDropout:
+    'Randomly skip part of the LoRA during training to help reduce overfitting. Leave blank or use 0 to keep it off.',
+  trainConv:
+    'Train additional image-detail layers. Uses more memory. Available for SD 1.5 and SDXL-family models only; off by default.',
   steps:
     'How many optimisation steps the run makes. More steps means each image is seen more often; too many and the model memorises the dataset instead of learning it. The recommended budget for this model is {recommended}.',
   epochs:
-    'How many checkpoints are saved, evenly spread over the run. Each becomes a downloadable, testable version — more checkpoints make it easier to pick the best point without changing how long training takes. Recommended: {recommended}.',
+    'How many checkpoints are saved, evenly spread over the run. Each becomes a downloadable, testable version — more checkpoints make it easier to pick the best point without changing how long training takes. This is not the number of passes over your dataset, which the raw training log calls epochs. Recommended: {recommended}.',
   batchSize:
     'How many images are trained on at once. Larger batches smooth out each update and use more VRAM; the ceiling is fixed per model. Recommended: {recommended}.',
   unetLr:
@@ -337,7 +714,7 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
   networkAlpha:
     'Scales the LoRA weights: the effective strength is alpha ÷ dim. Alpha equal to dim applies the learning rate as-is; a smaller alpha dampens it. Recommended: {recommended}.',
   resolution:
-    'The longest edge images are scaled to for training. Higher costs VRAM and time; the range is fixed per model family. Recommended: {recommended}.',
+    'Training resolution. With aspect-ratio buckets enabled, images can have different widths and heights. Higher values use more VRAM and time. Recommended: {recommended}.',
   lrScheduler:
     'How the learning rate changes over the run: constant holds it, cosine eases it down towards the end, linear ramps it down evenly. Recommended: {recommended}.',
   optimizer:
@@ -405,20 +782,38 @@ function cardBaseQuote(prices: Record<string, number>, cardType: string): number
 /** The "from" Buzz quote for one model card; null when unpriced (callers show a muted em-dash).
  *  Single source of truth for the "from" floor shown on Select. A custom base costs the same as the
  *  card's own (whatif-verified — the orchestrator has no custom-model surcharge). */
-export function cardFromPrice(prices: Record<string, number>, cardType: string): number | null {
+export function cardFromPrice(
+  prices: Record<string, number>,
+  cardType: string,
+  enabledFlags?: ReadonlySet<string>
+): number | null {
+  const card = cardByType(cardType);
+  const first = card && visibleVersions(card, enabledFlags)[0];
+  if (card && first && first !== card.versions[0])
+    return prices[versionPriceKey(cardType, first.key)] ?? null;
   return cardBaseQuote(prices, cardType) ?? null;
 }
 
+/** One run's "from" quote: its own version's, where the sweep quoted it, else the card's. */
+export function runFromPrice(prices: Record<string, number>, run: Run): number | null {
+  if (runEngine(run) === 'kohya') return prices[`kohya:${run.cardType}`] ?? null;
+  const card = cardByType(run.cardType);
+  const own =
+    card && run.versionKey !== card.versions[0]?.key
+      ? prices[versionPriceKey(run.cardType, run.versionKey)]
+      : undefined;
+  return own ?? cardFromPrice(prices, run.cardType);
+}
+
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced (callers show "—").
- *  The pre-Review estimate on Select AND Data: the "from" quote is a whatif with no `steps`, so the
- *  orchestrator already priced each card at its own default budget — which is exactly what the
- *  Review step seeds (`defaultStepsForRun`). COARSE: Review replaces this with real per-config
+ *  The pre-Review estimate on Select AND Data: the "from" quote is a whatif at the steps the Review
+ *  step seeds (`versionStepDefault`, as `defaultStepsForRun`). COARSE: Review replaces this with real per-config
  *  whatif quotes (`quoteRun`); sample images are not billed separately (the quote covers them);
  *  no custom-model surcharge (whatif-verified). */
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
-    const runPrice = cardFromPrice(prices, run.cardType);
+    const runPrice = runFromPrice(prices, run);
     if (runPrice == null) return null;
     sum += runPrice;
   }
@@ -433,10 +828,28 @@ export function defaultStepsForRun(run: Run): number {
 }
 
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
-export function defaultRunParams(run: Run, trigger = ''): RunParams {
-  const d = paramsForVersion(runCard(run), run.versionKey);
+export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunParams {
+  const kohya = runEngine(run) === 'kohya';
+  const version = runVersion(run);
+  const d = kohya
+    ? kohyaDefaults(version)
+    : paramsForVersion(runCard(run), run.versionKey, loraType);
   const x = extraParamDefaults(runCard(run), run.versionKey, !!trigger.trim());
   return {
+    negativePrompt: '',
+    numRepeats: '1',
+    enableBucket: true,
+    clipSkip: String(version.key === 'anime' ? 2 : kohyaClipSkip(version.ecosystem)?.default ?? 1),
+    lrSchedulerNumCycles: '3',
+    seed: '42',
+    fp8Base: true,
+    blocksToSwap: '18',
+    vParameterization: 'auto',
+    zeroTerminalSnr: 'auto',
+    lrWarmupSteps: '',
+    captionDropoutRate: '',
+    rankDropout: '',
+    trainConv: false,
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
     unetLr: String(d.unetLr),
@@ -449,31 +862,73 @@ export function defaultRunParams(run: Run, trigger = ''): RunParams {
     batchSize: String(d.batchSize),
     shuffleTokens: x.shuffleTokens,
     keepTokens: String(x.keepTokens),
-    minSnrGamma: String(x.minSnrGamma),
-    noiseOffset: String(x.noiseOffset),
+    minSnrGamma: String(
+      kohya && (version.key === 'pony' || isKohyaFlow(version.ecosystem)) ? 0 : x.minSnrGamma
+    ),
+    noiseOffset: String(kohya ? d.noiseOffset : x.noiseOffset),
     flipAugmentation: x.flipAugmentation,
   };
 }
 
 /** Which of the extra AI-Toolkit fields a run can actually use, given the dataset's label mode. */
-export function runExtraCapabilities(run: Run, labelMode: LabelType) {
-  return extraParamCapabilities(runCard(run), runVersion(run), labelMode);
+export function runExtraCapabilities(
+  run: Run,
+  labelMode: LabelType,
+  params = defaultRunParams(run)
+) {
+  const caps = extraParamCapabilities(runCard(run), runVersion(run), labelMode, {
+    engine: runEngine(run),
+    lrScheduler: params.lrScheduler,
+    steps: params.steps,
+  });
+  if (runEngine(run) === 'kohya' && isKohyaFlow(runVersion(run).ecosystem))
+    caps.noiseOffset = {
+      supported: false,
+      reason: 'Flux, Chroma and Anima do not use noise offset.',
+    };
+  return caps;
 }
 
-/** The text-encoder rate is locked at 0 for models whose backend can't train it. */
-export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+/** Why the run's text-encoder rate is locked at 0, or undefined when its model can train it. */
+export const teLockReason = (run: Run): string | undefined =>
+  runEngine(run) === 'kohya'
+    ? runVersion(run).ecosystem === 'chroma'
+      ? 'Chroma cannot train the text encoder.'
+      : undefined
+    : teTrainingUnsupportedReason(runVersion(run).ecosystem, runCard(run).name);
+export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
+
+// The orchestrator's AI-Toolkit input has no `resolution` and drops the one we send.
+const RESOLUTION_LOCK_REASON =
+  "AI-Toolkit doesn't accept a training resolution, so this setting has no effect.";
+
+/** Why a param can't be edited for a run, or undefined when it can. */
+export const paramLockReason = (run: Run, field: keyof RunParams): string | undefined =>
+  field === 'textEncoderLr'
+    ? teLockReason(run)
+    : field === 'resolution' && runEngine(run) !== 'kohya'
+    ? RESOLUTION_LOCK_REASON
+    : undefined;
 
 /** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
- *  1 (the text encoder too, unless the model can't train it); switching away puts a Prodigy-level
- *  rate back to the model's recommendation and leaves a rate the user picked alone. */
+ *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
+ *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
+ *  model's recommendation and leaves a rate the user picked alone. */
 export function optimizerLrParams(
   run: Run,
   params: RunParams
 ): Pick<RunParams, 'unetLr' | 'textEncoderLr'> {
   const { unetLr, textEncoderLr } = params;
   if (isProdigy(params.optimizer))
-    return { unetLr: '1', textEncoderLr: teLocked(run) ? textEncoderLr : '1' };
+    return {
+      unetLr: '1',
+      textEncoderLr: teLocked(run) ? '0' : Number(textEncoderLr) > 0 ? '1' : textEncoderLr,
+    };
   const defaults = defaultRunParams(run);
+  if (isProdigy(defaults.optimizer)) {
+    defaults.unetLr = '0.0005';
+    defaults.textEncoderLr = teLocked(run) ? '0' : '0.00005';
+  }
   const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);
   return {
     unetLr: reset(unetLr, defaults.unetLr),
@@ -490,7 +945,13 @@ export interface ParamDeviation {
 
 /** Display form of one param value — numbers as typed, booleans as On/Off. */
 export function paramDisplay(value: NumericInput | boolean): string {
-  return typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value);
+  return typeof value === 'boolean'
+    ? value
+      ? 'On'
+      : 'Off'
+    : value === ''
+    ? 'Model default'
+    : String(value);
 }
 
 /** Two param values agree when they read as the same number (so `0.00005` equals `5e-5`), else as
@@ -504,18 +965,24 @@ function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): bool
 }
 
 /** Fields where the run's params differ from the model's recommendation, in form order. Fields the
- *  run can't use (a locked TE rate, an unsupported extra) never count. */
+ *  run can't use (a locked param, an unsupported extra) never count. */
 export function paramDeviations(
   run: Run,
   params: RunParams,
   labelMode: LabelType,
-  trigger = ''
+  trigger = '',
+  loraType = ''
 ): ParamDeviation[] {
-  const defaults = defaultRunParams(run, trigger);
-  const caps = runExtraCapabilities(run, labelMode);
+  const defaults = defaultRunParams(run, trigger, loraType);
+  const caps = runExtraCapabilities(run, labelMode, params);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
-    if (field === 'textEncoderLr' && teLocked(run)) continue;
+    if (
+      (KOHYA_PARAM_FIELDS as readonly string[]).includes(field) &&
+      (runEngine(run) !== 'kohya' || !kohyaFieldSupported(field, runVersion(run).ecosystem))
+    )
+      continue;
+    if (paramLockReason(run, field)) continue;
     if (
       EXTRA_PARAM_FIELDS.includes(field as ExtraParamField) &&
       !caps[field as ExtraParamField].supported
@@ -534,7 +1001,8 @@ export function paramDeviations(
 
 /** Identity of a run's Review params: a run whose base or version changed on Select gets fresh model
  *  defaults instead of carrying another model's numbers. */
-export const runParamsKey = (run: Run): string => `${run.id}:${run.cardType}:${run.versionKey}`;
+export const runParamsKey = (run: Run): string =>
+  `${run.id}:${run.cardType}:${run.versionKey}:${runEngine(run)}`;
 
 export interface SamplePrompt {
   id: number;
@@ -578,10 +1046,17 @@ export function submittedPrompts(texts: string[]): string[] {
  *  Select step won't mix them, since the two datasets don't share a shape. */
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
-/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
- *  its label format and on whether it is pairs. */
-export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
-  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+/** The label mode one dataset can use for every run in `cards`, or null when they can't share one. */
+export function sweepLabelMode(
+  cards: ModelCard[],
+  previous: ModelCard | null,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType | null {
+  const lead = cards[0];
+  if (!lead || cards.some((c) => !!c.pairs !== !!lead.pairs)) return null;
+  const mode = labelModeForCard(previous, lead, current, datasetLabeled);
+  return cards.every((c) => labelOptions(c).includes(mode)) ? mode : null;
 }
 
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
@@ -619,21 +1094,6 @@ export function submittedSampleImages(run: Run, prompts: SamplePrompt[]): string
   return urls.length ? urls : undefined;
 }
 
-/** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
- *  is no trigger, so callers can use it directly as "nothing to warn about". */
-export function promptHasTrigger(trigger: string, text: string): boolean {
-  return trigger.trim().length === 0 || findTrigger(trigger, text) !== null;
-}
-
-/** The prompt with the trigger word leading it, unless it is already present. Tags and captions both
- *  take it as a leading comma-separated term — the same place the dataset's own labels carry it. */
-export function withTrigger(trigger: string, text: string): string {
-  const t = trigger.trim();
-  if (!t || promptHasTrigger(t, text)) return text;
-  const rest = text.trim();
-  return rest ? `${t}, ${rest}` : t;
-}
-
 /** Sample prompts seeded from the dataset itself — 3 random labels — so the test images generated during
  *  training reflect what the model is learning. A generic prompt when the dataset carries no labels. Every
  *  seed carries the trigger word: a sample that omits it never tests whether the LoRA learned it. */
@@ -649,10 +1109,23 @@ export function seedPrompts(labels: string[], trigger = ''): SamplePrompt[] {
   }));
 }
 
-/** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption
- *  models. The trigger word is applied server-side (triggerWord), so it isn't included here. */
+/** Raw labels stay engine-neutral; the submit builder applies each engine's trigger handling. */
 export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
+}
+
+/** The label text a format switch leaves on an image. The current text comes first (it carries
+ *  hand-edits); the imported source label is only the fallback for a cleared field. 'relabel' clears
+ *  the text for auto-label to refill, except on source-labeled items (the dialog promises they survive)
+ *  and on tiles auto-label can't read, which nothing would re-label. */
+export function labelTextAfterSwitch(
+  img: Img,
+  prev: LabelType,
+  choice: 'convert' | 'relabel'
+): string {
+  const source = img.sourceLabel?.trim();
+  const kept = labelString(img, prev) || source || '';
+  return choice === 'relabel' && !source && canAutoLabelImage(img) ? '' : kept;
 }
 
 /** Tag-text splitting, shared by every tag-entry path (parseLabel, the label editor, the exclude
@@ -670,35 +1143,184 @@ export function splitTags(text: string): string[] {
   ];
 }
 
+/** The Data step's tag filter: an image matches when it carries every `include` tag and none of the
+ *  `exclude` tags, compared case-insensitively so a typed `Dress` finds the tagger's `dress`. */
+export type TagFilter = { include: string[]; exclude: string[] };
+export function matchesTagFilter(tags: string[], { include, exclude }: TagFilter): boolean {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  return (
+    include.every((t) => have.has(t.toLowerCase())) &&
+    !exclude.some((t) => have.has(t.toLowerCase()))
+  );
+}
+/** `filter` with the tags in `text` added to one side. A tag lives on one side only, so adding it to
+ *  one takes it off the other. */
+export function withFilterTags(filter: TagFilter, text: string, side: keyof TagFilter): TagFilter {
+  const added = splitTags(text);
+  const keys = new Set(added.map((t) => t.toLowerCase()));
+  const other = side === 'include' ? 'exclude' : 'include';
+  const kept = filter[side].filter((t) => !keys.has(t.toLowerCase()));
+  return {
+    [side]: [...kept, ...added],
+    [other]: filter[other].filter((t) => !keys.has(t.toLowerCase())),
+  } as TagFilter;
+}
+
+/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present in any casing. */
+export function withTags(tags: string[], text: string): string[] {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const additions = splitTags(text).filter((t) => {
+    const key = t.toLowerCase();
+    if (have.has(key)) return false;
+    have.add(key);
+    return true;
+  });
+  return additions.length ? [...tags, ...additions] : tags;
+}
+
+/** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
+ *  like a comma), and a fresh Backspace press in an empty box removes the last tag. Auto-repeat is ignored so
+ *  holding Backspace to clear the draft stops at the empty box instead of eating the assigned tags. */
+export function tagEntryKey(
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode' | 'repeat'>,
+  draft: string,
+  tagCount: number
+): 'commit' | 'removeLast' | null {
+  // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
+  if (e.key === 'Backspace' && !e.repeat && draft === '' && tagCount > 0) return 'removeLast';
+  return null;
+}
+
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();
   return mode === 'tag' ? { tags: splitTags(t), caption: '' } : { tags: [], caption: t };
 }
 
-// Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
-// NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
-// (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
-function num(value: NumericInput, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+/** Where an auto-label result goes relative to the label an image already has. */
+export type LabelPosition = 'after' | 'before' | 'replace';
+
+/** An image's label after an auto-label result lands. Only the dataset format's field reaches
+ *  training (labelString), so a tagger result on a caption dataset — or a caption on a tag dataset —
+ *  is written into that field, which is how one .txt ends up holding both. `exclude` filters tagger
+ *  output only. An empty result keeps the label. */
+export function mergeAutoLabel(
+  img: Pick<Img, 'tags' | 'caption'>,
+  result: { tags?: string[]; caption?: string },
+  format: LabelType,
+  position: LabelPosition,
+  exclude: TagExcluder
+): { tags: string[]; caption: string } {
+  const newTags = [...new Set(result.tags ?? [])].filter((t) => !exclude(t));
+  const newCaption = result.caption?.trim() ?? '';
+
+  if (format === 'tag') {
+    const incoming = newTags.length ? newTags : splitTags(newCaption);
+    if (!incoming.length) return { tags: img.tags, caption: img.caption };
+    if (position === 'replace') return { tags: incoming, caption: img.caption };
+    const [first, second] = position === 'after' ? [img.tags, incoming] : [incoming, img.tags];
+    return { tags: [...new Set([...first, ...second])], caption: img.caption };
+  }
+
+  const incoming = newTags.length ? newTags.join(', ') : newCaption;
+  const existing = img.caption.trim();
+  if (!incoming) return { tags: img.tags, caption: img.caption };
+  if (position === 'replace' || !existing) return { tags: img.tags, caption: incoming };
+  // A retry must not stack a second copy. Whole lines: a new result may be a substring of an old one.
+  if (`\n${existing}\n`.includes(`\n${incoming}\n`))
+    return { tags: img.tags, caption: img.caption };
+  const caption = position === 'after' ? `${existing}\n${incoming}` : `${incoming}\n${existing}`;
+  return { tags: img.tags, caption };
 }
 
-/** Assemble the Start payload: one run per training run, each carrying the shared uploaded-blob dataset
- *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
- *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. An
- *  edit LoRA passes its pairs as path-placed `items` (`pairItems`), which replace the image list. */
-/** One confirm covers every run of a sweep: they train on the same dataset. */
-export function stampMature(
-  runs: TrainingRunPayload[],
-  matureAck: boolean,
-  matureCount: number
-): TrainingRunPayload[] {
-  return runs.map((run) => ({
-    ...run,
-    ...(matureAck ? { matureAck: true } : {}),
-    meta: { ...run.meta, matureCount },
-  }));
+// Number('') is 0, not NaN, so a cleared field needs its own check or a cleared LR would train at 0.
+function num(value: NumericInput, fallback: NumericInput): number {
+  const n = typeof value === 'string' && !value.trim() ? NaN : Number(value);
+  return Number.isFinite(n) ? n : Number(fallback);
+}
+
+/** Every run of a sweep trains on the same dataset, so each carries its mature count. */
+export function stampMature(runs: TrainingRunPayload[], matureCount: number): TrainingRunPayload[] {
+  return runs.map((run) => ({ ...run, meta: { ...run.meta, matureCount } }));
+}
+
+export function runTrainingParams(
+  run: Run,
+  params: RunParams,
+  labelMode: LabelType,
+  trigger = '',
+  loraType = ''
+) {
+  const version = runVersion(run);
+  const caps = runExtraCapabilities(run, labelMode, params);
+  const tags = caps.shuffleTokens.supported;
+  const defaults = defaultRunParams(run, trigger, loraType);
+  const d = {
+    ...defaults,
+    ...optimizerLrParams(run, { ...defaults, optimizer: params.optimizer }),
+  };
+  return {
+    ecosystem: version.ecosystem,
+    modelVariant: version.modelVariant,
+    version: version.version,
+    engine: runEngine(run),
+    model: version.air,
+    customModel: isCustom(run) ? run.customAir?.trim() : undefined,
+    steps: params.steps,
+    epochs: params.epochs,
+    unetLr: num(params.unetLr, d.unetLr),
+    textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, d.textEncoderLr),
+    networkDim: num(params.networkDim, d.networkDim),
+    networkAlpha: num(params.networkAlpha, d.networkAlpha),
+    resolution: num(params.resolution, d.resolution),
+    batchSize: num(params.batchSize, d.batchSize),
+    lrScheduler: params.lrScheduler,
+    optimizer: params.optimizer,
+    shuffleTokens: tags && params.shuffleTokens,
+    keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, d.keepTokens))) : 0,
+    minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, d.minSnrGamma) : undefined,
+    noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, d.noiseOffset) : 0,
+    flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
+    ...(runEngine(run) === 'kohya'
+      ? {
+          negativePrompt: kohyaFieldSupported('negativePrompt', version.ecosystem)
+            ? params.negativePrompt
+            : undefined,
+          kohya: {
+            numRepeats: num(params.numRepeats, d.numRepeats),
+            enableBucket: params.enableBucket,
+            clipSkip: num(params.clipSkip, d.clipSkip),
+            lrSchedulerNumCycles: num(params.lrSchedulerNumCycles, d.lrSchedulerNumCycles),
+            seed: num(params.seed, d.seed),
+            fp8Base: params.fp8Base,
+            blocksToSwap: num(params.blocksToSwap, d.blocksToSwap),
+            vParameterization:
+              params.vParameterization === 'auto' ? undefined : params.vParameterization === 'true',
+            zeroTerminalSnr:
+              params.zeroTerminalSnr === 'auto' ? undefined : params.zeroTerminalSnr === 'true',
+          },
+        }
+      : {}),
+    ...pickAiToolkitOptions(
+      {
+        engine: runEngine(run),
+        ecosystem: version.ecosystem,
+        lrScheduler: params.lrScheduler,
+        steps: params.steps,
+      },
+      {
+        lrWarmupSteps: optionalNumber(params.lrWarmupSteps),
+        captionDropoutRate: optionalNumber(params.captionDropoutRate),
+        rankDropout: optionalNumber(params.rankDropout),
+        trainConv: params.trainConv,
+      }
+    ),
+  };
+}
+
+function optionalNumber(value: NumericInput | undefined): number | undefined {
+  return value === undefined || value === '' ? undefined : Number(value);
 }
 
 export function buildTrainingRuns(
@@ -713,42 +1335,21 @@ export function buildTrainingRuns(
   edit?: { items: TrainingItem[]; pairs: number }
 ): TrainingRunPayload[] {
   const mode = labelMode;
-  const items = edit
+  const repeats = selectionTakesRepeats(selection);
+  const items: TrainingItem[] = edit
     ? edit.items
     : images
         .filter((i) => i.status === 'uploaded' && !!i.blobId)
-        .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
+        .map((i) => ({
+          air: i.blobId!,
+          caption: labelString(i, mode),
+          ...(repeats && repeatsOf(i) > 1 ? { repeats: repeatsOf(i), ext: repeatExt(i) } : {}),
+        }));
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
-    const version = runVersion(run);
-    const caps = runExtraCapabilities(run, labelMode);
-    // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
-    // ones on video — go out as 0/off whatever the form holds: a value edited before a model or
-    // label-mode switch must not ride into a run that hangs on it or misreads it.
-    const tags = caps.shuffleTokens.supported;
     return {
-      ecosystem: version.ecosystem,
-      modelVariant: version.modelVariant,
-      version: version.version,
-      engine: version.engine,
-      model: version.air,
-      customModel: isCustom(run) ? run.customAir?.trim() : undefined,
-      steps: params.steps,
-      epochs: params.epochs,
-      unetLr: num(params.unetLr, 0.0004),
-      textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, 0.00005),
-      networkDim: num(params.networkDim, 32),
-      networkAlpha: num(params.networkAlpha, 16),
-      resolution: num(params.resolution, 1024),
-      batchSize: num(params.batchSize, 2),
-      lrScheduler: params.lrScheduler,
-      optimizer: params.optimizer,
-      shuffleTokens: tags && params.shuffleTokens,
-      keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, 0))) : 0,
-      minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, 0) : undefined,
-      noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, 0) : 0,
-      flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
+      ...runTrainingParams(run, params, labelMode, t, selection.loraType),
       trigger: t,
       items,
       ...(edit ? { editTraining: true } : {}),
@@ -761,7 +1362,7 @@ export function buildTrainingRuns(
         loraType: selection.loraType,
         cardType: run.cardType,
         versionKey: run.versionKey,
-        imageCount: edit?.pairs ?? items.length,
+        imageCount: edit?.pairs ?? items.reduce((sum, i) => sum + (i.repeats ?? 1), 0),
         trigger: t,
       },
     };

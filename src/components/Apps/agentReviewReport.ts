@@ -180,6 +180,27 @@ export function formatCostUsd(costUsd: unknown): string | null {
   return `$${n.toFixed(4)}`;
 }
 
+/**
+ * Do these iframe sandbox grants include the classic escape pair? `allow-scripts` together with
+ * `allow-same-origin` lets a framed document remove its own sandbox. One predicate for the full
+ * report's callout and the Overview's summary.
+ */
+export function isSandboxEscapeCombo(grants: readonly string[]): boolean {
+  return (
+    grants.some((g) => /allow-scripts/i.test(g)) && grants.some((g) => /allow-same-origin/i.test(g))
+  );
+}
+
+/**
+ * Severities the Overview lists finding by finding; everything else (`low`, `info`) collapses
+ * to a count. A finding with an unknown or missing severity is LISTED, not collapsed: the agent
+ * did not say it was minor.
+ */
+const COLLAPSED_SEVERITIES = new Set(['low', 'info']);
+export function isCollapsedSeverity(severity?: string): boolean {
+  return COLLAPSED_SEVERITIES.has((severity ?? '').toLowerCase());
+}
+
 /** A `file:line` display string from a finding — tolerant of missing parts. */
 export function fileLineLabel(file?: string, line?: number | string): string | null {
   if (!file) return null;
@@ -471,4 +492,29 @@ export function degradedReportSummary(
     );
   }
   return `${parts.join(', and ')}. What did complete is shown below.`;
+}
+
+/** One run of a review, as the report picker lists it. */
+export type AgentReportRunSummary = {
+  id: string;
+  model: string | null;
+  status: string;
+  startedAt: Date | string;
+  costUsd?: unknown;
+};
+
+/**
+ * The picker's line for one run: model, status, start time (UTC, so two moderators reading the
+ * same run see the same time) and cost. `model` is shown as stored — it is what the review agent
+ * says it ran — and a run that has not reported a model yet says so rather than guessing.
+ */
+export function agentReportRunLabel(run: AgentReportRunSummary): string {
+  const started = new Date(run.startedAt);
+  const when = Number.isNaN(started.getTime())
+    ? null
+    : `${started.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  const cost = formatCostUsd(run.costUsd);
+  return [run.model ?? 'model not reported', run.status, when, cost]
+    .filter((p): p is string => !!p)
+    .join(' · ');
 }

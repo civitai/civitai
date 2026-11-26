@@ -1,5 +1,6 @@
 import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 import { CacheTTL, constants } from '~/server/common/constants';
 import { ArticleSort, NsfwLevel } from '~/server/common/enums';
@@ -14,43 +15,16 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
-import { isBetweenToday } from '~/utils/date-helpers';
 import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
   ArticleUnpublishReason,
   ...ArticleUnpublishReason[]
 ];
 
-export const dailyArticleTiers = [
-  { minScore: 1000, limit: 5 },
-  { minScore: 5000, limit: 10 },
-  { minScore: 10000, limit: 20 },
-];
-
-export const articleRateLimits: RateLimit[] = [
-  {
-    limit: 0,
-    period: CacheTTL.hour,
-    // Users can't create articles if they were created less than 24hrs ago
-    userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
-    errorMessage: 'You need to wait 24 hours after creating your account to create articles.',
-  },
-  {
-    limit: 3,
-    period: CacheTTL.day,
-  },
-  ...dailyArticleTiers.map(
-    ({ minScore, limit }): RateLimit => ({
-      limit,
-      period: CacheTTL.day,
-      userReq: (user) => creatorScoreFromMeta(user.meta) >= minScore,
-    })
-  ),
-];
+export const articleRateLimits = usageLimits('articles.first-day', 'articles.daily');
 
 export const userPreferencesForArticlesSchema = z.object({
   excludedIds: z.array(z.number()).optional(),
@@ -93,14 +67,24 @@ export const getInfiniteArticlesSchema = infiniteQuerySchema
   .merge(userPreferencesForArticlesSchema)
   .merge(articleWhereSchema);
 
+/** An article body, sanitized on the way in. */
+export const articleContentSchema = getSanitizedStringSchema({ allowBlurbs: true }).refine(
+  (data) => data && data.length > 0 && data !== '<p></p>',
+  'Cannot be empty'
+);
+
 export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  // Omitted on an update keeps the stored body (the article page's Publish sends none).
+  content: articleContentSchema.optional(),
+  // The save comes from the edit form, whose placeholders are the only way to remove a body
+  // image the saver may not see. It guards against losing one by accident, not as authorization.
+  editForm: z.boolean().optional(),
   coverImage: imageReferenceInputSchema.nullish(),
+  // Omitted leaves the banner as it is; null removes it.
+  bannerImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
@@ -147,9 +131,13 @@ export type ArticleMetadata = {
   challengeType?: string;
   entryPrizeRequirements?: number;
   unpublishedReason?: string;
+  /** `ArticleIngestionErrorState`, as far as the article page reads it. */
+  ingestionError?: { rounds: number; exhaustedAt?: number };
   customMessage?: string;
   unpublishedAt?: string;
   unpublishedBy?: number;
+  /** Set when a block moves a draft to UnpublishedViolation; a restore returns it here. */
+  statusBeforeViolation?: 'Draft' | 'Unpublished' | 'Published';
 };
 
 export const unpublishArticleSchema = z.object({
@@ -167,3 +155,20 @@ export const setArticleOfficialSchema = z.object({
   id: z.number(),
   isOfficial: z.boolean(),
 });
+
+export const articleShareExpiryDays = [1, 7, 30] as const;
+export const createArticleShareLinkSchema = z.object({
+  articleId: z.number(),
+  expiresInDays: z.union([z.literal(1), z.literal(7), z.literal(30)]).default(7),
+});
+export const getArticleShareLinksSchema = z.object({ articleId: z.number() });
+// 32 random bytes in base64url is 43 characters; anything else cannot be a token.
+export const shareTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const openShareLinkSchema = z.object({ shareToken: shareTokenSchema });
+export const getSharedArticleSchema = z.object({ articleId: z.number().int().positive() });
+export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
+// Each create submits the draft text for a scan, so this bounds scan load.
+export const articleShareCreateRateLimits: RateLimit[] = [{ limit: 10, period: CacheTTL.hour }];
+
+/** `edit`: the read the edit form opens, where a body image the editor may not see is a placeholder. */
+export const getArticleByIdSchema = z.object({ id: z.number(), edit: z.boolean().optional() });

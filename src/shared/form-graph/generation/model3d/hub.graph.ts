@@ -4,7 +4,6 @@ import { ecosystemFieldSchemas, type RootCtx } from '../shared';
 
 import { polygen } from './polygen.graph';
 import { tripo } from './tripo.graph';
-import { hunyuan3d } from './hunyuan3d.graph';
 import { pixal3d, trellis2 } from './trellis-family.graph';
 
 /**
@@ -30,12 +29,7 @@ export const model3dHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'PolyGen';
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
-        usableEcosystems
-      ),
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
       default: defaultValue,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'model3d',
@@ -51,7 +45,6 @@ export const model3dHub = defineGraph<RootCtx>()
     branch('ecosystem', [
       [['PolyGen'], polygen],
       [['Tripo'], tripo],
-      [['Hunyuan3D'], hunyuan3d],
       [['Pixal3D'], pixal3d],
       [['Trellis2'], trellis2],
     ] as const)

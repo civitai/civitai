@@ -1,6 +1,5 @@
 import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
@@ -8,6 +7,10 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import { AppBuzzCapNotice } from './AppBuzzCapNotice';
+import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   APP_STORAGE_BASE_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
@@ -21,9 +24,11 @@ import {
 import type { GuestFrameCounts, GuestFrameEvent } from './devTunnelGuestReload';
 import {
   blockInitFragmentEnabled,
+  blockInitAppData,
   blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
+  BLOCK_HOST_SHARE_LINK,
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
@@ -43,8 +48,10 @@ import {
   readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
+  resolveGetWorkflowMediaRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
+  resolvePersistGenerationSourceRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
@@ -52,7 +59,15 @@ import {
   shouldEmitMidSessionLossBeacon,
   toHostGateStatus,
 } from './pageBlockHostLogic';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  createShareLinkLimiter,
+  navigateWantsReplace,
+  performShareLink,
+  resolveBridgeLocation,
+  resolveShareLinkRequest,
+  SHARE_LINK_RATE_LIMITED_ERROR,
+} from './deepLinkLogic';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
@@ -71,6 +86,7 @@ import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
@@ -87,6 +103,7 @@ import { TrainingConsentBody } from './TrainingConsentBody';
 import {
   buildConfirmedStepConsentCopy,
   buildConfirmedStepDailyLimitCopy,
+  buildConfirmedStepStandingOfferCopy,
   CONFIRMED_STEP_UNCONFIRMED_NOTICE,
   confirmedStepReplyFromResult,
   isDailyLimitRefusal,
@@ -97,14 +114,16 @@ import {
   ConfirmedStepConsentBody,
   ConfirmedStepDailyLimitBody,
   ConfirmedStepNoticeBody,
+  type ConfirmedStepStandingChoice,
 } from './ConfirmedStepConsentBody';
-import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { openAlert } from '~/components/Dialog/Common/AlertDialog';
 import GuardedConfirmDialog from './GuardedConfirmDialog';
 import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import type { ScannedRowsPath } from './generationSourceScannedRows';
 import type { TrainingDataUpload } from './trainingDataUpload';
 import { trainingBlobKeyIdentity } from '~/server/schema/blocks/training-dataset.schema';
 import {
@@ -123,14 +142,35 @@ import {
   UPLOAD_BYTES_NO_TOKEN_ERROR,
 } from './imageUploadBytes';
 import {
+  MEDIA_UPLOAD_BUSY_ERROR,
   MEDIA_UPLOAD_FAILED_ERROR,
   MEDIA_UPLOAD_NO_TOKEN_ERROR,
   processMediaUploadBytes,
   resolveMediaUploadRequest,
   type BlockMediaUploadInfo,
 } from './mediaUploadLogic';
-import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
+import {
+  buildMediaUploadBatchConfirmCopy,
+  buildMediaUploadBatchResults,
+  callWithCurrentToken,
+  mediaUploadBatchStartError,
+  resolveMediaUploadBatchRequest,
+  retryMediaUploadBatchRecord,
+  runWithConcurrency,
+  type MediaUploadBatchItemResult,
+} from './mediaUploadBatchLogic';
+import { MEDIA_UPLOAD_BATCH_CONCURRENCY } from '~/shared/constants/media-upload-batch.constants';
+import {
+  pageHostCapabilities,
+  projectBlockInitMaturity,
+  withSignedInFlag,
+} from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import {
+  reportAppSubmitError,
+  reportAppSubmitResult,
+  useAppSessionTelemetry,
+} from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -157,7 +197,11 @@ import {
   withDeadline,
 } from './resourceFileParse';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveSourcePublishConsentRequest,
@@ -172,7 +216,12 @@ import {
   downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  isZipSaveCandidate,
   processSaveBytes,
+  SAVE_BYTES_BUSY_ERROR,
+  SAVE_BYTES_ZIP_MAX_BYTES,
+  SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT,
+  verifySaveBytesBeforeDownload,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -182,20 +231,23 @@ import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
+import { hostRefusal, navigateDiagnostic } from './appFeedbackDiagnostics';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
-import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { COARSE_POINTER_QUERY } from '~/utils/phone-layout';
 import { trpc } from '~/utils/trpc';
 import {
   sharedStorageErrorReply,
   storageErrorMessage,
 } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -206,36 +258,6 @@ import {
 // IframeHost. Both now go through `openBlockConsentModal`, which owns the lazy
 // component reference alongside the dedupe id and the props shape — the three
 // things the two surfaces must agree on.
-
-// Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
-// insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-
-// Host-mediated image-upload modal for the OPEN_IMAGE_UPLOAD bridge. A block asks
-// the host to let the user upload an image; the bytes flow through civitai's
-// session-authed upload + REAL scan, and the iframe only ever gets back a
-// moderated, SFW-ceiling'd, unflagged image id.
-const BlockImageUploadModal = dynamic(() => import('./BlockImageUploadModal'), {
-  ssr: false,
-});
-
-// Sibling of BlockImageUploadModal for the OPEN_IMAGE_UPLOAD bridge's
-// `purpose: 'generationSource'` mode: an UNSCANNED private generation input (an
-// img2img source), uploaded through the SAME consumer-blob util the generator
-// uses (uploadConsumerBlob) — no createImage/scan/gate. The orchestrator scans
-// the generation OUTPUT. Returns only { url, width, height }.
-const BlockGenerationSourceUploadModal = dynamic(
-  () => import('./BlockGenerationSourceUploadModal'),
-  { ssr: false }
-);
-
-const BlockTrainingDataUploadModal = dynamic(() => import('./BlockTrainingDataUploadModal'), {
-  ssr: false,
-});
-
-const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
-
-const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), { ssr: false });
 
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
@@ -757,6 +779,10 @@ export interface PageBlockHostProps {
    *  `projectBlockInitMaturity`). Absent → the block falls back to
    *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel?: number;
+  /** The app-data service this app's document store moved to, as the token mint decided it
+   *  (server-side, per app). Forwarded as BLOCK_INIT.appData through `blockInitAppData`, which
+   *  drops it on any surface but `page-run`. Absent on every other caller. */
+  appData?: { url: string; slug: string };
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -789,11 +815,19 @@ export interface PageBlockHostProps {
    */
   onRefreshEntryUrl?: () => Promise<string>;
   /**
-   * DEV-TUNNEL ONLY: every `BLOCK_ERROR` payload the block posts (unvalidated), for the dev host
-   * to keep for App Assistant's app activity (`useDevPreviewErrorReporter`). Unset on every other
-   * surface, so a production block's errors go nowhere new.
+   * DEV-TUNNEL AND REVIEW-PREVIEW ONLY: every `BLOCK_ERROR` payload the block posts
+   * (unvalidated). The dev host keeps them for App Assistant's app activity
+   * (`useDevPreviewErrorReporter`); the review preview shows them, in memory only, in the review
+   * page's console (`ReviewConsole`). Unset on every other surface, so a production block's
+   * errors go nowhere new.
    */
   onBlockError?: (payload: unknown) => void;
+  /**
+   * REVIEW-PREVIEW ONLY: the block's `BLOCK_READY` payload (unvalidated), which names the SDK
+   * that sent it (`sdkName`, `sdkVersion`). The review console reads it to tell an SDK too old to
+   * forward non-fatal errors from an app that simply has none.
+   */
+  onBlockReady?: (payload: unknown) => void;
   /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
@@ -950,6 +984,7 @@ export function PageBlockHost({
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
+  appData,
   viewer,
   theme,
   onConsentGranted,
@@ -957,6 +992,7 @@ export function PageBlockHost({
   onGuestReloaded,
   onRefreshEntryUrl,
   onBlockError,
+  onBlockReady,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -997,7 +1033,10 @@ export function PageBlockHost({
    * `key`, the run page renders `<PageBlockHost` unkeyed, and
    * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
    */
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  //
+  // The dismissal also ends early when the app has a request refused for a permission
+  // the viewer can still grant — `reviveConsentNoticeOnRefusal` below.
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1376,12 +1415,21 @@ export function PageBlockHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage, nack, reportNoToken } = usePostMessage({
+  // App_Session: one row per host session. Off on a review mount, whose app id is a synthetic
+  // request id.
+  const { countSubmit: countAppSubmit, countMessage: countAppMessage } = useAppSessionTelemetry({
+    appBlockId,
+    host: 'page',
+    enabled: !reviewMode,
+  });
+
+  const { send, onMessage, nack, reportNoToken, recentFailures, noteHostEvent } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
     host: 'PageBlockHost',
     appBlockId,
+    onInbound: countAppMessage,
   });
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
@@ -1415,6 +1463,33 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  const { search: routeSearch, hash: routeHash } = useMemo(
+    () => resolveBridgeLocation(router.asPath ?? ''),
+    [router.asPath]
+  );
+
+  // The href the host page is AT, for NAVIGATE's "already showing" check. 🔴 Written
+  // SYNCHRONOUSLY when the host pushes or replaces, because `router.asPath` lags an async
+  // push (two NAVIGATEs in one tick would compare the second against the pre-push path);
+  // resynced from `window.location` on `hashchange` / `popstate`, because a hash-only
+  // address-bar edit never reaches the router.
+  const currentHrefRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentHrefRef.current = router.asPath ?? null;
+  }, [router.asPath]);
+  useEffect(() => {
+    const sync = () => {
+      const { pathname, search, hash } = window.location;
+      currentHrefRef.current = `${pathname}${search}${hash}`;
+    };
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+
   // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
   // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
   // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
@@ -1437,11 +1512,13 @@ export function PageBlockHost({
       entityType: 'none',
       slug,
       subPath,
+      search: routeSearch,
+      hash: routeHash,
       viewerUserId: viewer?.id ?? null,
       viewerUsername: viewer?.username ?? null,
       theme,
     }),
-    [slug, subPath, viewer, theme]
+    [slug, subPath, routeSearch, routeHash, viewer, theme]
   );
 
   const buildInitPayload = useCallback(
@@ -1481,6 +1558,11 @@ export function PageBlockHost({
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
       // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
       ...blockInitStorageMode(surface),
+      // The mint's per-app decision, forwarded only on `page-run` with a block token; the key is
+      // ABSENT otherwise. See `blockInitAppData`.
+      ...blockInitAppData({ surface, tokenKind, blockId, appData }),
+      // Keyed on `surface` too: `blockErrors:v1` only where the host collects non-fatal errors.
+      capabilities: pageHostCapabilities(surface),
     }),
     [
       surface,
@@ -1497,6 +1579,7 @@ export function PageBlockHost({
       domain,
       maxBrowsingLevel,
       effectiveBrowsingLevel,
+      appData,
     ]
   );
   buildInitPayloadRef.current = buildInitPayload;
@@ -1830,9 +1913,12 @@ export function PageBlockHost({
     return off;
   }, [onMessage, noteGuestFrame]);
 
-  // BLOCK_READY → ready.
+  // BLOCK_READY → ready. The payload also reaches `onBlockReady` (review preview only).
+  const onBlockReadyRef = useRef(onBlockReady);
+  onBlockReadyRef.current = onBlockReady;
   useEffect(() => {
-    const off = onMessage<unknown>('BLOCK_READY', () => {
+    const off = onMessage<unknown>('BLOCK_READY', (raw) => {
+      onBlockReadyRef.current?.(raw);
       // Launch mark: stamped HERE, in the message handler, not in the beacon
       // effect. The beacon fires on the committed `status`, which is a React
       // commit later — timing it there would fold an arbitrary amount of React
@@ -1898,7 +1984,8 @@ export function PageBlockHost({
     });
   }, [status, appBlockId, blockInstanceId]);
 
-  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel only).
+  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel and
+  // review preview only).
   const onBlockErrorRef = useRef(onBlockError);
   onBlockErrorRef.current = onBlockError;
   useEffect(() => {
@@ -1984,6 +2071,30 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
+
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with IframeHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [appBlockId]
+  );
+
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -2232,12 +2343,18 @@ export function PageBlockHost({
       // stake on that coupling enough to make it structural instead: a future
       // mount that forgets `reviewMode` would otherwise let UNREVIEWED code move a
       // moderator's tab anywhere on the site.
-      if (reviewMode) return;
+      if (reviewMode) {
+        noteHostEvent(hostRefusal('NAVIGATE', 'review_mode', Date.now()));
+        return;
+      }
       // FIFTH status-gated handler (the four money/permission gates are the
       // others) — it reads the same render-body mirror for the same reason. No
       // NACK: NAVIGATE is fire-and-forget with no requestId, so a drop is
       // incapable of hanging the block.
-      if (readGateStatus() !== 'ready') return; // pre-handshake blocks can't drive nav
+      if (readGateStatus() !== 'ready') {
+        noteHostEvent(hostRefusal('NAVIGATE', 'not_ready', Date.now())); // pre-handshake blocks can't drive nav
+        return;
+      }
       // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — the total record is
       // what makes a NEW surface a compile error rather than a silent inheritance of the
       // public base.
@@ -2289,6 +2406,7 @@ export function PageBlockHost({
         // the block's own path (see `resolveNavigateRequest`).
         launchOrigin,
       });
+      noteHostEvent(navigateDiagnostic(raw, req, Date.now()));
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
       // SYNCHRONOUS CALL BELOW IS LOAD-BEARING. Three facts, all MEASURED in
@@ -2332,19 +2450,83 @@ export function PageBlockHost({
         window.open(req.href, '_blank', 'noopener');
         return;
       }
+      // `scroll: false`: an app's `#hash` names an element in the APP's document, and must
+      // not scroll the host page to a host element with that id.
+      if (req.scope === 'app') {
+        if (req.href === currentHrefRef.current) return;
+        currentHrefRef.current = req.href;
+        if (navigateWantsReplace(raw)) {
+          void router.replace(req.href, undefined, { shallow: true, scroll: false });
+          return;
+        }
+        void router.push(req.href, undefined, { shallow: true, scroll: false });
+        return;
+      }
       void router.push(req.href, undefined, req.shallow ? { shallow: true } : undefined);
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin, noteHostEvent]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
-  // subPath changes AFTER init.
+  // subPath, search or hash changes AFTER init — a search-only (`?take=2`) or
+  // hash-only move is a route change to a block that deep-links into its own state.
   useEffect(() => {
     if (!initSentRef.current || status !== 'ready') return;
-    send('ROUTE_CHANGED', { subPath });
-  }, [subPath, status, send]);
+    send('ROUTE_CHANGED', { subPath, search: routeSearch, hash: routeHash });
+  }, [subPath, routeSearch, routeHash, status, send]);
+
+  // 🔴 `performShareLink` IS CALLED SYNCHRONOUSLY IN THE HANDLER — no `await` before
+  // it. The clipboard and the share sheet need the transient user activation of the
+  // click inside the iframe, which an `await` can lose.
+  const shareLimiterRef = useRef<ReturnType<typeof createShareLinkLimiter> | null>(null);
+  useEffect(() => {
+    const off = onMessage<unknown>('SHARE_LINK', (raw) => {
+      const decision = resolveShareLinkRequest(raw, {
+        base: BLOCK_HOST_DEEP_LINK_BASE[surface],
+        slug,
+        origin: window.location.origin,
+        ready: readGateStatus() === 'ready',
+        reviewMode,
+        shareable: BLOCK_HOST_SHARE_LINK[surface],
+      });
+      if (decision.kind === 'drop') return;
+      if (decision.kind === 'refuse') {
+        send('SHARE_LINK_RESULT', { requestId: decision.requestId, error: decision.error });
+        return;
+      }
+      const limiter = (shareLimiterRef.current ??= createShareLinkLimiter());
+      if (!limiter.admit()) {
+        send('SHARE_LINK_RESULT', {
+          requestId: decision.requestId,
+          error: SHARE_LINK_RATE_LIMITED_ERROR,
+        });
+        return;
+      }
+      const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+      const activation = (nav as { userActivation?: { isActive?: boolean } } | undefined)
+        ?.userActivation;
+      void performShareLink(decision.url, {
+        userActivation: activation ? activation.isActive === true : null,
+        // Activation is page-wide (a click on host chrome counts); focus on THIS frame is
+        // what ties it to a click inside the app. See `performShareLink`.
+        frameHasFocus: iframeRef.current != null && document.activeElement === iframeRef.current,
+        coarsePointer:
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia(COARSE_POINTER_QUERY).matches,
+        clipboardWriteText: nav?.clipboard?.writeText
+          ? (text) => nav.clipboard.writeText(text)
+          : undefined,
+        share: typeof nav?.share === 'function' ? (data) => nav.share(data) : undefined,
+        canShare: typeof nav?.canShare === 'function' ? (data) => nav.canShare(data) : undefined,
+      }).then((result) => {
+        limiter.settle();
+        send('SHARE_LINK_RESULT', { requestId: decision.requestId, result });
+      });
+    });
+    return off;
+  }, [onMessage, send, readGateStatus, surface, slug, reviewMode]);
 
   // #5: page-visibility SUSPEND / RESUME — tell the block to pause work when its
   // tab is hidden and resume when shown (mirrors IframeHost). Only wired once the
@@ -2394,6 +2576,19 @@ export function PageBlockHost({
   // path surfaces no_token/error terminal states above). A missing requestId is
   // likewise dropped without replying — mirrors IframeHost.
   const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
+  // The paused-at-the-daily-cap notice re-reads after every submit (`AppBuzzCapNotice`).
+  const buzzCapUtils = trpc.useUtils();
+  // Non-throwing: the host also renders outside a flags provider, where this is off.
+  const showBuzzCapNotice = useOptionalFeatureFlags()?.appLimitsUpgradePrompt === true;
+  const refreshBuzzCapNotice = useCallback(() => {
+    if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
+  }, [showBuzzCapNotice, buzzCapUtils]);
+  const dailyLimitRaise = useDailyLimitRaiseBridge({ appBlockId, appName, disabled: reviewMode });
+  const outputUnlock = useOutputUnlockBridge({
+    appName,
+    disabled: reviewMode,
+    linkOut: slug ? { slug, subPath } : null,
+  });
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2430,6 +2625,7 @@ export function PageBlockHost({
   // same bearer-token-in-URL reason as the other block-token bridges.
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
+  const getWorkflowMediaMutation = trpc.blocks.getWorkflowMedia.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
   // consent payload server-side, then the write. Both take the block token and
   // both require the viewer's signed-in session.
@@ -2496,6 +2692,7 @@ export function PageBlockHost({
         typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
           ? raw.idempotencyKey
           : undefined;
+      if (!reviewMode) countAppSubmit();
       try {
         const { snapshot } = await submitWorkflowMutation.mutateAsync({
           blockToken: token,
@@ -2503,13 +2700,85 @@ export function PageBlockHost({
           body: raw.body as never,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        if (!reviewMode) reportAppSubmitResult(appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        dailyLimitRaise.onRelayedSnapshot(snapshot);
       } catch (err) {
+        if (!reviewMode) reportAppSubmitError(appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
+      } finally {
+        // Any submit can move the daily cap state — a refusal pauses, a charge brings the cap
+        // closer: re-read the paused notice whatever the result.
+        refreshBuzzCapNotice();
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, reviewNack, nack]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    reviewNack,
+    nack,
+    reviewMode,
+    appBlockId,
+    countAppSubmit,
+    refreshBuzzCapNotice,
+    dailyLimitRaise,
+  ]);
+
+  // REQUEST_DAILY_LIMIT_RAISE → DAILY_LIMIT_RAISE_ACK, then DAILY_LIMIT_RAISE_RESULT. The app asks
+  // the host to offer the viewer a higher daily limit for it; see `useDailyLimitRaiseBridge` for
+  // when the dialog may open. The app learns only two booleans.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'REQUEST_DAILY_LIMIT_RAISE',
+      (raw) => {
+        const requestId = raw?.requestId;
+        if (typeof requestId !== 'string' || requestId.length === 0) return;
+        void dailyLimitRaise.onRaiseRequest({
+          ack: (opened) => send('DAILY_LIMIT_RAISE_ACK', { requestId, opened }),
+          result: (raised) => send('DAILY_LIMIT_RAISE_RESULT', { requestId, raised }),
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -2672,6 +2941,7 @@ export function PageBlockHost({
           send('APP_WORKFLOWS_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2718,6 +2988,7 @@ export function PageBlockHost({
           send('CANCEL_APP_WORKFLOW_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2755,31 +3026,31 @@ export function PageBlockHost({
         };
         const count = imageIndexes?.length;
         const noun = count == null ? 'these results' : `${count} result${count === 1 ? '' : 's'}`;
-        dialogStore.trigger({
-          component: ConfirmDialog,
-          props: {
-            title: 'Publish to the shared grid?',
-            message: `Publish ${noun} to ${
-              appName ? `“${appName}”` : 'this app'
-            }’s shared grid? Published images are scanned and become visible to other viewers of this app.`,
-            labels: { confirm: 'Publish', cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              try {
-                const result = await publishGenerationOutputsMutation.mutateAsync({
-                  blockToken: token,
-                  workflowId,
-                  ...(imageIndexes ? { imageIndexes } : {}),
-                });
-                reply({ result });
-              } catch (err) {
-                reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape) = consent declined → settle the
-            // block's promise with an explicit signal rather than leaving it to time out.
-            onCancel: () => reply({ error: 'publish canceled' }),
+        openConfirm({
+          title: 'Publish to the shared grid?',
+          message: `Publish ${noun} to ${
+            appName ? `“${appName}”` : 'this app'
+          }’s shared grid? Published images are scanned and become visible to other viewers of this app.`,
+          labels: { confirm: 'Publish', cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            try {
+              const result = await publishGenerationOutputsMutation.mutateAsync({
+                blockToken: token,
+                workflowId,
+                ...(imageIndexes ? { imageIndexes } : {}),
+              });
+              reply({ result });
+            } catch (err) {
+              reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape) = consent declined → settle the
+          // block's promise with an explicit signal rather than leaving it to time out.
+          onCancel: () => reply({ error: 'publish canceled' }),
         });
       }
     );
@@ -2818,12 +3089,46 @@ export function PageBlockHost({
           send('IMAGES_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
     );
     return off;
   }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
+
+  // GET_WORKFLOW_MEDIA → blocks.getWorkflowMedia → WORKFLOW_MEDIA_RESULT. Stored media refs →
+  // viewer-bound media URLs; the server judges each for this token's viewer.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; refs?: unknown } | undefined>(
+      'GET_WORKFLOW_MEDIA',
+      async (raw) => {
+        const req = resolveGetWorkflowMediaRequest(raw);
+        if (!req) return;
+        const { requestId, refs } = req;
+        if (refs.length === 0) {
+          send('WORKFLOW_MEDIA_RESULT', { requestId, result: { media: [] } });
+          return;
+        }
+        if (!token) {
+          reportNoToken('GET_WORKFLOW_MEDIA');
+          send('WORKFLOW_MEDIA_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getWorkflowMediaMutation.mutateAsync({ blockToken: token, refs });
+          send('WORKFLOW_MEDIA_RESULT', { requestId, result });
+        } catch (err) {
+          send('WORKFLOW_MEDIA_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getWorkflowMediaMutation, reportNoToken]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK
@@ -2862,6 +3167,7 @@ export function PageBlockHost({
         send('BUZZ_BALANCE_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2904,6 +3210,7 @@ export function PageBlockHost({
           send('BUZZ_TRANSACTIONS_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2934,6 +3241,7 @@ export function PageBlockHost({
         send('BUZZ_ACCOUNTS_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2970,6 +3278,7 @@ export function PageBlockHost({
           send('DAILY_COMPENSATION_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3006,6 +3315,7 @@ export function PageBlockHost({
         send('VIEWER_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3086,24 +3396,24 @@ export function PageBlockHost({
             }
           : undefined;
         let purchased = false;
-        dialogStore.trigger<BuyBuzzModalProps>({
-          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
-          // against each other in the dialog store's exists-check.
-          id: `block-buy-buzz-${requestId}`,
-          component: BuyBuzzModal,
-          props: {
+        openDialog(
+          () => import('~/components/Modals/BuyBuzzModal'),
+          {
             minBuzzAmount: amount,
             attribution,
             onPurchaseSuccess: () => {
               purchased = true;
             },
           },
-          options: {
+          {
+            // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+            // against each other in the dialog store's exists-check.
+            id: `block-buy-buzz-${requestId}`,
             onClose: () => {
               send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
             },
-          },
-        });
+          }
+        );
       }
     );
     return off;
@@ -3209,6 +3519,7 @@ export function PageBlockHost({
             requestId,
             value: null,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3256,6 +3567,7 @@ export function PageBlockHost({
             requestId,
             ok: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3304,6 +3616,7 @@ export function PageBlockHost({
             ok: false,
             deleted: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3368,6 +3681,7 @@ export function PageBlockHost({
           requestId,
           keys: [],
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3416,6 +3730,7 @@ export function PageBlockHost({
           limitBytes: 0,
           limitRows: 0,
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3511,7 +3826,10 @@ export function PageBlockHost({
           nextCursor: result.nextCursor,
         });
       } catch (err) {
-        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          ...sharedStorageErrorReply(err),
+        });
       }
     });
     return off;
@@ -3538,7 +3856,10 @@ export function PageBlockHost({
           );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNT_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3566,7 +3887,10 @@ export function PageBlockHost({
           );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
-          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNTS_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3828,7 +4152,11 @@ export function PageBlockHost({
               : null,
           });
         } catch (err) {
-          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: null,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3885,9 +4213,16 @@ export function PageBlockHost({
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
   // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
-  // they never await, so the in-flight count above would be released before the
-  // next message and bound nothing. Same ref-not-state reasoning.
+  // a non-zip save's content check resolves at once, so the in-flight count above
+  // would be released before the next message and bound nothing. Only a ZIP save
+  // holds a slot while it is checked (saveZipVerifyInFlightRef, below), and it is
+  // recorded in the window synchronously BEFORE that await too. Same ref-not-state
+  // reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // Zip content checks in flight (SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT): a zip's verify DOES await
+  // (it inflates up to 1 GiB declared), so unlike the rest of the bytes path it needs an in-flight
+  // cap. Same ref-not-state reasoning.
+  const saveZipVerifyInFlightRef = useRef<number>(0);
   // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
   const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
@@ -3902,6 +4237,44 @@ export function PageBlockHost({
   // The same two guards for OPEN_MEDIA_UPLOAD's `bytes` mode, with its own limits (mediaUploadLogic.ts).
   const mediaUploadWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   const mediaUploadInFlightRef = useRef<Set<string>>(new Set());
+  // OPEN_MEDIA_UPLOAD_BATCH: the requestId of the one batch this host is confirming or running, or
+  // null. One at a time per page: a second is refused `busy`, and its id gets no reply while the
+  // first is unanswered, as a reused single-upload id does.
+  const mediaUploadBatchRef = useRef<string | null>(null);
+  // The CURRENT block token, for a batch that outlives the one it started with: the host refreshes
+  // a page token before it expires, and every batch call reads this at the moment it is made.
+  const blockTokenRef = useRef(token);
+  useEffect(() => {
+    blockTokenRef.current = token;
+  }, [token]);
+
+  // A generation source the viewer uploads (the `generationSource` picker, a single
+  // OPEN_MEDIA_UPLOAD image) lands as a consumer blob. While `app-block-source-scanned-rows` is on
+  // for this app the generation gate refuses that blob, so the server copies it into a private
+  // scanned row and the app gets that instead (`toGenerationSource`). The flag is evaluated per
+  // app, for the app the block token names, so the path query sends the token too. The token is
+  // read when each call is made, as a batch reads it.
+  const scannedSourcePath = useMemo<ScannedRowsPath>(
+    () => ({
+      usesScannedRows: async () =>
+        (
+          await callWithCurrentToken(
+            () => blockTokenRef.current,
+            (blockToken) =>
+              trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query({
+                blockToken,
+              })
+          )
+        )?.scannedRows === true,
+      persist: (url) =>
+        callWithCurrentToken(
+          () => blockTokenRef.current,
+          (blockToken) =>
+            trpcUtils.client.blocks.persistUploadedGenerationSource.mutate({ blockToken, url })
+        ),
+    }),
+    [trpcUtils]
+  );
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -3915,13 +4288,28 @@ export function PageBlockHost({
   //            can NEVER be saved.
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
   //            is classified from the content (processSaveBytes) and only
-  //            image/JSON/text can be saved, under the classified extension.
+  //            image/JSON/text — or a validated .zip (@civitai/app-sdk/save-zip: structure,
+  //            local headers, entry names/types, declared sizes, then an inflate
+  //            check before the download), or a structurally checked binary glTF
+  //            (.glb) / binary FBX (.fbx) 3D model (@civitai/app-sdk/save-model3d) — can be
+  //            saved, under the classified extension. Per-file caps: 50 MB, a 3D
+  //            model 100 MB (SAVE_BYTES_MODEL_3D_MAX_BYTES), a zip 256 MB.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
-  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes (a zip:
+  //            SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW) per rolling window; past
   //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
+  // Aborted when the host UNMOUNTS (not on a dependency change — a token refresh mid-check must not
+  // drop the reply): a zip check still running stops, and nothing is downloaded for it afterwards.
+  // A fresh controller per mount, so StrictMode's mount → unmount → mount leaves a live one.
+  const saveBytesUnmountRef = useRef<AbortController>(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    saveBytesUnmountRef.current = controller;
+    return () => controller.abort();
+  }, []);
   useEffect(() => {
     const off = onMessage<unknown>('SAVE_IMAGE', async (raw) => {
       const req = resolveSaveImageRequest(raw);
@@ -3932,6 +4320,19 @@ export function PageBlockHost({
         return;
       }
       if (req.kind === 'bytes') {
+        // ONE zip content check at a time per host. Checked before processSaveBytes so a busy zip is
+        // not recorded in the window; an over-cap zip falls through to its too-large refusal (an
+        // over-cap file is never `busy`, see processSaveBytes).
+        if (
+          isZipSaveCandidate(req.bytes) &&
+          req.bytes.byteLength <= SAVE_BYTES_ZIP_MAX_BYTES &&
+          saveZipVerifyInFlightRef.current >= SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT
+        ) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: SAVE_BYTES_BUSY_ERROR });
+          return;
+        }
+        const unmounted = saveBytesUnmountRef.current.signal;
+        let holdsZipSlot = false;
         try {
           // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
           // record: a refused save is never decoded/parsed on this main thread, and an over-cap
@@ -3942,10 +4343,34 @@ export function PageBlockHost({
             send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
             return;
           }
-          downloadBytesAsBlob(req.bytes, result.type, result.filename);
+          // Taken synchronously, before the first await, so two zips cannot both pass the gate.
+          if (result.type === 'application/zip') {
+            saveZipVerifyInFlightRef.current += 1;
+            holdsZipSlot = true;
+          }
+          // A zip's deflated entries must inflate to their declared sizes and CRCs BEFORE the
+          // download (a no-op for every other type), under a deadline below the SDK's request
+          // timeout. The window already counted this save. Only a verified save can be downloaded.
+          const verified = await verifySaveBytesBeforeDownload(req.bytes, result, {
+            signal: unmounted,
+          });
+          if (unmounted.aborted) return; // host gone: no download, nobody to reply to
+          if (!verified.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: verified.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, verified.save);
           send('SAVE_IMAGE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          if (unmounted.aborted) return;
+          send('SAVE_IMAGE_RESULT', {
+            requestId,
+            ok: false,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
+        } finally {
+          if (holdsZipSlot) saveZipVerifyInFlightRef.current -= 1;
         }
         return;
       }
@@ -3992,7 +4417,12 @@ export function PageBlockHost({
         await downloadUrlAsBlob(image.url, sanitizeDownloadFilename(req.filename, image.url));
         send('SAVE_IMAGE_RESULT', { requestId, ok: true });
       } catch (err) {
-        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        send('SAVE_IMAGE_RESULT', {
+          requestId,
+          ok: false,
+          error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         // Release the slot on EVERY exit that acquired one (success / refusal /
         // error) so the gate can't leak slots and wedge shut.
@@ -4260,11 +4690,13 @@ export function PageBlockHost({
   // 'display', so this stays byte-compatible with an SDK that sends none) selects
   // the mode:
   //
-  //   • 'display' (DEFAULT — PUBLIC image, e.g. a cosmetic background): the upload
+  //   • 'display' (DEFAULT — a moderated image, e.g. a cosmetic background): the upload
   //     routes through civitai's SESSION-AUTHED path → REAL createImage +
   //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
   //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
-  //     and unflagged is returned. UNCHANGED behavior.
+  //     and unflagged is returned. PRIVATE by default: only `share: true` (exactly) shares
+  //     it with the app's other viewers, and only replies to a share request carry `shared`.
+  //     Read rules: BLOCK_SHARED_UPLOAD_APP_ID_META_KEY.
   //
   //   • 'generationSource' (PRIVATE generation input — an img2img source): the
   //     upload routes through the SAME lightweight consumer-blob util the generator
@@ -4277,7 +4709,8 @@ export function PageBlockHost({
   //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
   //   • `bytes` (an ArrayBuffer the block made — no picker, display only): see imageUploadBytes.ts.
-  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else.
+  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else: it
+  //     is never readable cross-user through the gated read. (`share` does not apply.)
   //     Always BLOCKING: `asyncScan` is ignored, so the app never holds the id or a CDN url of
   //     bytes the scan refused (the SDK already treats a blocking reply to an async request as
   //     an immediately-scanned image).
@@ -4373,10 +4806,9 @@ export function PageBlockHost({
 
       if (purpose === 'trainingData') {
         let resolvedImages: TrainingDataUpload[] | null = null;
-        dialogStore.trigger({
-          id: `block-training-data-upload-${requestId}`,
-          component: BlockTrainingDataUploadModal,
-          props: {
+        openDialog(
+          () => import('./BlockTrainingDataUploadModal'),
+          {
             onResolved: (images: TrainingDataUpload[]) => {
               resolvedImages = images;
               for (const image of images) {
@@ -4384,7 +4816,8 @@ export function PageBlockHost({
               }
             },
           },
-          options: {
+          {
+            id: `block-training-data-upload-${requestId}`,
             onClose: () => {
               const images = resolvedImages as TrainingDataUpload[] | null;
               send(
@@ -4397,8 +4830,8 @@ export function PageBlockHost({
                   : { requestId }
               );
             },
-          },
-        });
+          }
+        );
         return;
       }
 
@@ -4407,15 +4840,16 @@ export function PageBlockHost({
       // moderated 'display' branch below is untouched.
       if (purpose === 'generationSource') {
         let resolvedSource: BlockSourceImageInfo | null = null;
-        dialogStore.trigger({
-          id: `block-generation-source-upload-${requestId}`,
-          component: BlockGenerationSourceUploadModal,
-          props: {
+        openDialog(
+          () => import('./BlockGenerationSourceUploadModal'),
+          {
+            scannedRows: scannedSourcePath,
             onResolved: (result: BlockSourceImageInfo) => {
               resolvedSource = result;
             },
           },
-          options: {
+          {
+            id: `block-generation-source-upload-${requestId}`,
             onClose: () => {
               if (resolvedSource) {
                 send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolvedSource });
@@ -4423,10 +4857,28 @@ export function PageBlockHost({
                 send('IMAGE_UPLOAD_RESULT', { requestId });
               }
             },
-          },
+          }
+        );
+        return;
+      }
+
+      // Read off the RAW payload: a share needs the block token the server verifies, so a share
+      // request with none is refused rather than stored private.
+      const shareRequested = (raw as { share?: unknown } | undefined)?.share === true;
+      const echo = (shared: boolean) => (shareRequested ? { shared } : {});
+      if (shareRequested && !token) {
+        reportNoToken('OPEN_IMAGE_UPLOAD');
+        send('IMAGE_UPLOAD_RESULT', {
+          requestId,
+          error: UPLOAD_BYTES_NO_TOKEN_ERROR,
+          ...echo(false),
         });
         return;
       }
+      const shareWith =
+        shareRequested && token
+          ? { blockToken: token, appName: sanitizeAppChromeName(appName) || 'this app' }
+          : undefined;
 
       // display + asyncScan: NON-BLOCKING moderated path. The host modal resolves
       // EARLY on persist (returning a PENDING handle — the author's own preview
@@ -4438,14 +4890,22 @@ export function PageBlockHost({
       // moderated projection on Scanned + within-SFW-ceiling + unflagged.
       if (asyncScan) {
         let accepted = false;
-        dialogStore.trigger({
-          id: `block-image-upload-${requestId}`,
-          component: BlockImageUploadModal,
-          props: {
+        openDialog(
+          () => import('./BlockImageUploadModal'),
+          {
+            share: shareWith,
             // BLOCKING-mode callback — unused in async mode (onAccepted drives the
             // early resolve); a no-op that satisfies the modal's required prop.
             onResolved: () => undefined,
-            onAccepted: ({ imageId, url }: { imageId: number; url: string }) => {
+            onAccepted: ({
+              imageId,
+              url,
+              shared,
+            }: {
+              imageId: number;
+              url: string;
+              shared?: boolean;
+            }) => {
               accepted = true;
               // Early-resolve: the upload is accepted (image persisted, scan still
               // in-flight). Hand the block the PENDING handle and register the
@@ -4453,6 +4913,7 @@ export function PageBlockHost({
               send('IMAGE_UPLOAD_RESULT', {
                 requestId,
                 selected: { status: 'pending', imageId, url },
+                ...echo(shared === true),
               });
               setImageScanPollers((prev) =>
                 prev.some((p) => p.requestId === requestId && !p.replyOnScan)
@@ -4461,46 +4922,64 @@ export function PageBlockHost({
               );
             },
           },
-          options: {
+          {
+            id: `block-image-upload-${requestId}`,
             onClose: () => {
               // Dismissed WITHOUT accepting → bare (cancelled) result, no poller.
               // On accept, onClose fires AFTER onAccepted set `accepted`, so the
               // early-resolve reply is not followed by a spurious cancel.
-              if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId });
+              if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId, ...echo(false) });
             },
-          },
-        });
+          }
+        );
         return;
       }
 
-      // display (default): moderated public-image path — UNCHANGED.
+      // display (default): moderated image path, private to the viewer. Shared with the
+      // app's other viewers only when the app asked (`shareWith`, above).
       let resolved: BlockUploadedImageInfo | null = null;
-      dialogStore.trigger({
-        // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
-        // each other in the dialog store's exists-check.
-        id: `block-image-upload-${requestId}`,
-        component: BlockImageUploadModal,
-        props: {
-          onResolved: (result: BlockUploadedImageInfo) => {
+      let resolvedShared = false;
+      openDialog(
+        () => import('./BlockImageUploadModal'),
+        {
+          share: shareWith,
+          onResolved: (result: BlockUploadedImageInfo, meta?: { shared: boolean }) => {
             resolved = result;
+            resolvedShared = meta?.shared === true;
           },
         },
-        options: {
+        {
+          // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
+          // each other in the dialog store's exists-check.
+          id: `block-image-upload-${requestId}`,
           onClose: () => {
             // A successful upload set `resolved` before the modal closed itself;
             // otherwise the user cancelled → reply with a bare (cancelled) result.
             if (resolved) {
-              send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+              send('IMAGE_UPLOAD_RESULT', {
+                requestId,
+                selected: resolved,
+                ...echo(resolvedShared),
+              });
             } else {
-              send('IMAGE_UPLOAD_RESULT', { requestId });
+              send('IMAGE_UPLOAD_RESULT', { requestId, ...echo(false) });
             }
           },
-        },
-      });
+        }
+      );
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    reviewMode,
+    token,
+    reportNoToken,
+    scannedSourcePath,
+    appName,
+  ]);
 
   // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
   // silent return strands the block until its picker timeout.
@@ -4522,10 +5001,9 @@ export function PageBlockHost({
       }
 
       let picked: BlockPickedImageInfo[] = [];
-      dialogStore.trigger({
-        id: `block-image-picker-${request.requestId}`,
-        component: BlockImagePickerModal,
-        props: {
+      openDialog(
+        () => import('./BlockImagePickerModal'),
+        {
           sources: request.sources,
           max: request.max,
           publicOnly: request.publicOnly,
@@ -4533,10 +5011,11 @@ export function PageBlockHost({
             picked = result;
           },
         },
-        options: {
+        {
+          id: `block-image-picker-${request.requestId}`,
           onClose: () => send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked)),
-        },
-      });
+        }
+      );
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
@@ -4588,13 +5067,23 @@ export function PageBlockHost({
             const run = await import('./mediaUploadRun');
             try {
               const blob = new Blob([bytes], { type: contentType });
-              const selected = await run.uploadGenerationMedia(kind, blob, contentType);
+              const selected = await run.uploadGenerationMedia(
+                kind,
+                blob,
+                contentType,
+                undefined,
+                scannedSourcePath
+              );
               send(
                 'MEDIA_UPLOAD_RESULT',
                 selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
               );
             } catch (err) {
-              send('MEDIA_UPLOAD_RESULT', { requestId, error: run.mediaUploadErrorMessage(err) });
+              send('MEDIA_UPLOAD_RESULT', {
+                requestId,
+                error: run.mediaUploadErrorMessage(err),
+                ...rateLimitReplyFields(err),
+              });
             }
           } catch {
             send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_FAILED_ERROR });
@@ -4606,27 +5095,176 @@ export function PageBlockHost({
       }
 
       let uploaded: BlockMediaUploadInfo | null = null;
-      dialogStore.trigger({
-        id: `block-media-upload-${requestId}`,
-        component: BlockMediaUploadModal,
-        props: {
+      openDialog(
+        () => import('./BlockMediaUploadModal'),
+        {
           kind,
+          scannedRows: scannedSourcePath,
           onResolved: (result: BlockMediaUploadInfo) => {
             uploaded = result;
           },
         },
-        options: {
+        {
+          id: `block-media-upload-${requestId}`,
           onClose: () =>
             send(
               'MEDIA_UPLOAD_RESULT',
               uploaded ? { requestId, selected: uploaded } : { requestId }
             ),
+        }
+      );
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, scannedSourcePath]);
+
+  // OPEN_MEDIA_UPLOAD_BATCH → MEDIA_UPLOAD_BATCH_RESULT: many files the block holds, uploaded as
+  // PRIVATE generation inputs behind ONE host-chrome confirm (`mediaUploadBatchLogic.ts`). Every
+  // item is checked as a single bytes upload is, BEFORE the confirm, and refused per item; nothing
+  // is uploaded until the viewer confirms, and a declined confirm is the bare `{ requestId }`.
+  // There is no per-minute window here: the confirm gates the batch, and the server's daily quota
+  // (charged by `blocks.startMediaUploadBatch`) bounds it. At most MEDIA_UPLOAD_BATCH_CONCURRENCY
+  // files upload at once. Review mode and a pre-handshake block get the bare reply, as
+  // OPEN_MEDIA_UPLOAD does.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_MEDIA_UPLOAD_BATCH', (raw) => {
+      const decision = resolveMediaUploadBatchRequest(raw);
+      if (decision.kind === 'drop') return;
+      const requestId = decision.kind === 'ok' ? decision.plan.requestId : decision.requestId;
+      // The running batch's own id gets no second reply: it would settle that batch.
+      if (mediaUploadBatchRef.current === requestId) return;
+      const reply = (payload: Record<string, unknown>) =>
+        send('MEDIA_UPLOAD_BATCH_RESULT', { requestId, ...payload });
+      if (reviewMode || readGateStatus() !== 'ready') {
+        reply({});
+        return;
+      }
+      if (decision.kind === 'refuse') {
+        reply({ error: decision.error });
+        return;
+      }
+      if (!token) {
+        reportNoToken('OPEN_MEDIA_UPLOAD_BATCH');
+        reply({ error: MEDIA_UPLOAD_NO_TOKEN_ERROR });
+        return;
+      }
+      if (mediaUploadBatchRef.current !== null) {
+        reply({ error: MEDIA_UPLOAD_BUSY_ERROR });
+        return;
+      }
+      const { plan } = decision;
+      // Nothing would upload, so there is nothing to ask the viewer about.
+      if (plan.files.length === 0) {
+        reply({ results: buildMediaUploadBatchResults(plan, new Map()) });
+        return;
+      }
+      mediaUploadBatchRef.current = requestId;
+      const release = () => {
+        if (mediaUploadBatchRef.current === requestId) mediaUploadBatchRef.current = null;
+      };
+      const readToken = () => blockTokenRef.current;
+      const run = async () => {
+        let started: { batchId: number; expiresAt: string };
+        try {
+          started = await callWithCurrentToken(readToken, (blockToken) =>
+            trpcUtils.client.blocks.startMediaUploadBatch.mutate({
+              blockToken,
+              items: plan.files.map((f) => ({ kind: f.kind, sizeBytes: f.bytes.byteLength })),
+            })
+          );
+        } catch (err) {
+          release();
+          reply({ error: mediaUploadBatchStartError(err), ...rateLimitReplyFields(err) });
+          return;
+        }
+        const { batchId, expiresAt } = started;
+        const uploaded = new Map<number, MediaUploadBatchItemResult>();
+        try {
+          // Loaded on use: the image path reaches the workflow schema, too heavy for every page load.
+          const media = await import('./mediaUploadRun');
+          // Each file's position among the files the server was told about (`plan.files` order),
+          // which the server bounds its upload URLs by.
+          const positions = new Map(plan.files.map((f, position) => [f.index, position]));
+          await runWithConcurrency(plan.files, MEDIA_UPLOAD_BATCH_CONCURRENCY, async (file) => {
+            try {
+              const index = positions.get(file.index)!;
+              const presign = media.batchPresigner(() =>
+                callWithCurrentToken(readToken, (blockToken) =>
+                  trpcUtils.client.blocks.presignMediaUploadBatchItem.mutate({
+                    blockToken,
+                    batchId,
+                    index,
+                  })
+                )
+              );
+              const blob = new Blob([file.bytes], { type: file.contentType });
+              const item = await media.uploadBatchMediaItem(
+                file.kind,
+                blob,
+                file.contentType,
+                presign
+              );
+              // Recorded before the app is told: a file the audit row does not name is never
+              // handed over. A record that still fails after its retries is an error for that
+              // item (and the file is then missing from the audit row).
+              try {
+                await retryMediaUploadBatchRecord(() =>
+                  callWithCurrentToken(readToken, (blockToken) =>
+                    trpcUtils.client.blocks.recordMediaUploadBatchItem.mutate({
+                      blockToken,
+                      batchId,
+                      blobKey: item.blobKey,
+                    })
+                  )
+                );
+              } catch {
+                uploaded.set(file.index, { index: file.index, error: MEDIA_UPLOAD_FAILED_ERROR });
+                return;
+              }
+              uploaded.set(file.index, { index: file.index, selected: item.selected });
+            } catch (err) {
+              uploaded.set(file.index, {
+                index: file.index,
+                error: media.mediaUploadErrorMessage(err),
+              });
+            }
+          });
+        } catch {
+          // The upload module failed to load: every file not answered is a failure, below.
+        } finally {
+          release();
+        }
+        reply({ results: buildMediaUploadBatchResults(plan, uploaded), expiresAt });
+      };
+      let confirmed = false;
+      const copy = buildMediaUploadBatchConfirmCopy({ appName, files: plan.files });
+      dialogStore.trigger({
+        // Per-request id — a deduped dialog would be a request that never replies.
+        id: `block-media-upload-batch-${requestId}`,
+        // Puts up to a day's quota of files into the viewer's account: disabled briefly after it
+        // appears, like the spend confirms.
+        component: GuardedConfirmDialog,
+        props: {
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          // Not awaited: the dialog closes at once and the batch runs behind it.
+          onConfirm: () => {
+            confirmed = true;
+            void run();
+          },
+          onCancel: () => {
+            if (confirmed) return;
+            release();
+            reply({});
+          },
         },
       });
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, appName, trpcUtils]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //
@@ -4757,7 +5395,11 @@ export function PageBlockHost({
       } catch (err) {
         // NOT_FOUND / FORBIDDEN (proc) · too-large · parse-failed (fetch/unzip/
         // abort) — a single error discriminant, never a hang.
-        send('WILDCARD_PACK_RESULT', { requestId, error: classifyWildcardPackError(err) });
+        send('WILDCARD_PACK_RESULT', {
+          requestId,
+          error: classifyWildcardPackError(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         // Release the in-flight slot on EVERY exit (success, too-large early
         // return, or error) so the concurrency gate can't leak slots and wedge
@@ -4804,7 +5446,11 @@ export function PageBlockHost({
         }, RESOURCE_FILE_DEADLINE_MS);
         send('RESOURCE_FILE_RESULT', { requestId, file });
       } catch (err) {
-        send('RESOURCE_FILE_RESULT', { requestId, error: classifyResourceFileError(err) });
+        send('RESOURCE_FILE_RESULT', {
+          requestId,
+          error: classifyResourceFileError(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         resourceFileInFlightRef.current -= 1;
       }
@@ -4896,42 +5542,42 @@ export function PageBlockHost({
           collectionId,
           collection: identity.identity,
         });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
           // not reproducible, since rendering a Mantine modal costs >1 ms.)
           id: `block-collection-follow-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: copy.message,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a write that is under way.
-              settlement.markConsented();
-              try {
-                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
-                // actor and target, so `collectionId` is the ONLY thing the block
-                // influences.
-                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
-                else await unfollowCollectionMutation.mutateAsync({ collectionId });
-                settlement.reply({ result: { collectionId, followed: follow } });
-              } catch (err) {
-                // FORBIDDEN from the collection services (e.g. a private
-                // collection this viewer may not follow) lands here as a message,
-                // never as a hang.
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a write that is under way.
+            settlement.markConsented();
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              settlement.reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op.
+          onCancel: settlement.decline,
         });
       })();
     });
@@ -4975,6 +5621,10 @@ export function PageBlockHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -4996,7 +5646,9 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error, ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -5011,6 +5663,7 @@ export function PageBlockHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -5045,7 +5698,7 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          latch.reply({ error: classifyEntityReactionError(err), ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -5061,6 +5714,58 @@ export function PageBlockHost({
     trpcUtils,
     reportNoToken,
   ]);
+
+  // ── PERSIST_GENERATION_SOURCE → GENERATION_SOURCE_PERSISTED ────────────────
+  //
+  // The app keeps ONE output of one of its OWN finished workflows as a PRIVATE,
+  // scanned generation source (`blocks.persistGenerationSource`). NO DIALOG, unlike
+  // PUBLISH_GENERATION_OUTPUTS: nothing reaches anyone else — the row is the
+  // viewer's, has no post and is on no shared grid — and the server owns every
+  // guard (ownership, app tag, finished workflow, scan). The block sends a
+  // workflowId + index, never a url.
+  //
+  // Refused here in review mode (the mod's real session would gain a row) and
+  // before the handshake, as OPEN_IMAGE_UPLOAD is. REQUEST-style ⇒ every path with
+  // a requestId replies exactly once. `trpcUtils.client` rather than a
+  // `useMutation` so no render-time hook is added to a component tests mock by hand.
+  useEffect(() => {
+    const off = onMessage<unknown>('PERSIST_GENERATION_SOURCE', (raw) => {
+      const gate = resolvePersistGenerationSourceRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        reviewMode,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('GENERATION_SOURCE_PERSISTED', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, workflowId, imageIndex } = gate.request;
+      if (!token) {
+        reportNoToken('PERSIST_GENERATION_SOURCE');
+        send('GENERATION_SOURCE_PERSISTED', { requestId, error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.persistGenerationSource.mutate({
+            blockToken: token,
+            workflowId,
+            imageIndex,
+          });
+          send('GENERATION_SOURCE_PERSISTED', { requestId, result });
+        } catch (err) {
+          send('GENERATION_SOURCE_PERSISTED', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
+        }
+      })();
+    });
+    return off;
+  }, [onMessage, send, token, readGateStatus, reviewMode, trpcUtils, reportNoToken]);
 
   // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────
   //
@@ -5137,7 +5842,10 @@ export function PageBlockHost({
           // here as a legible message rather than a wedged button. The server's
           // refusals are deliberately uniform where they would otherwise be an
           // existence oracle.
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         if (preview.images.length === 0) {
@@ -5145,48 +5853,48 @@ export function PageBlockHost({
           return;
         }
         const copy = buildCreatePostConsentCopy({ appName, preview });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two CREATE_POST_FROM_APP calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           id: `block-create-post-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: <CreatePostConsentBody copy={copy} preview={preview} />,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            size: 'lg',
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a post that is being created.
-              settlement.markConsented();
-              try {
-                const result = await createPostFromAppMutation.mutateAsync({
-                  blockToken: token,
-                  sources: sources as never,
-                  ...(title != null ? { title } : {}),
-                  ...(detail != null ? { detail } : {}),
-                  ...(tags ? { tags } : {}),
-                  ...(modelVersionId != null ? { modelVersionId } : {}),
-                  // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
-                  // SERVER'S OWN preview — never from the block. Preview and
-                  // write resolve `sources` independently, so a workflow that
-                  // gains an output between them would publish more images than
-                  // the dialog displayed. The server refuses on a mismatch.
-                  confirmedImageCount: preview.images.length,
-                });
-                settlement.reply({ result });
-              } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op and
-            // the confirm path settles it.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: <CreatePostConsentBody copy={copy} preview={preview} />,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          size: 'lg',
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a post that is being created.
+            settlement.markConsented();
+            try {
+              const result = await createPostFromAppMutation.mutateAsync({
+                blockToken: token,
+                sources: sources as never,
+                ...(title != null ? { title } : {}),
+                ...(detail != null ? { detail } : {}),
+                ...(tags ? { tags } : {}),
+                ...(modelVersionId != null ? { modelVersionId } : {}),
+                // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
+                // SERVER'S OWN preview — never from the block. Preview and
+                // write resolve `sources` independently, so a workflow that
+                // gains an output between them would publish more images than
+                // the dialog displayed. The server refuses on a mismatch.
+                confirmedImageCount: preview.images.length,
+              });
+              settlement.reply({ result });
+            } catch (err) {
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op and
+          // the confirm path settles it.
+          onCancel: settlement.decline,
         });
       })();
     });
@@ -5240,7 +5948,10 @@ export function PageBlockHost({
             quoteId,
           })) as TrainingQuotePreview;
         } catch (err) {
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         const thumbnails = resolveTrainingConsentThumbnails(preview, trainingUploadsRef.current);
@@ -5252,11 +5963,11 @@ export function PageBlockHost({
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
             ? () =>
-                dialogStore.trigger<BuyBuzzModalProps>({
-                  id: `block-training-buy-buzz-${requestId}`,
-                  component: BuyBuzzModal,
-                  props: { minBuzzAmount: preview.shortfall ?? undefined },
-                })
+                openDialog(
+                  () => import('~/components/Modals/BuyBuzzModal'),
+                  { minBuzzAmount: preview.shortfall ?? undefined },
+                  { id: `block-training-buy-buzz-${requestId}` }
+                )
             : undefined;
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
@@ -5294,13 +6005,22 @@ export function PageBlockHost({
                     body: body as never,
                   });
                 } catch (err) {
+                  if (!reviewMode) reportAppSubmitError(appBlockId, 'training_submit', err);
                   // Never resent: the quote is spent once. See runTrainingGate.ts.
-                  settlement.reply(trainingSubmitReplyFromError(err));
+                  settlement.reply({
+                    ...trainingSubmitReplyFromError(err),
+                    ...rateLimitReplyFields(err),
+                  });
                   return;
                 }
+                if (!reviewMode) reportAppSubmitResult(appBlockId, 'training_submit', result);
                 settlement.reply(trainingSubmitReplyFromResult(result));
+                refreshBuzzCapNotice();
               } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+                settlement.reply({
+                  error: err instanceof Error ? err.message : 'unknown',
+                  ...rateLimitReplyFields(err),
+                });
               }
             },
             onCancel: settlement.decline,
@@ -5320,6 +6040,9 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    reviewMode,
+    appBlockId,
+    refreshBuzzCapNotice,
   ]);
 
   // ── RUN_CONFIRMED_STEP → CONFIRMED_STEP_RESULT ────────────────────────────
@@ -5335,34 +6058,30 @@ export function PageBlockHost({
       dailyLimit: ConfirmedStepQuotePreview['dailyLimit']
     ) => {
       const copy = buildConfirmedStepDailyLimitCopy({ appName, total, dailyLimit });
-      dialogStore.trigger({
-        id: `block-confirmed-step-limit-${requestId}`,
-        component: AlertDialog,
-        props: {
+      dailyLimitRaise.onConfirmedStepRefusal(() =>
+        openAlert({
+          id: `block-confirmed-step-limit-${requestId}`,
           type: 'info',
           title: copy.title,
           size: 'md',
           children: ({ handleClose }: { handleClose: () => void }) => (
             <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
           ),
-        },
-      });
+        })
+      );
     };
     const showUnconfirmedNotice = (requestId: string) => {
-      dialogStore.trigger({
+      openAlert({
         id: `block-confirmed-step-unconfirmed-${requestId}`,
-        component: AlertDialog,
-        props: {
-          type: 'info',
-          title: CONFIRMED_STEP_UNCONFIRMED_NOTICE.title,
-          size: 'md',
-          children: ({ handleClose }: { handleClose: () => void }) => (
-            <ConfirmedStepNoticeBody
-              text={CONFIRMED_STEP_UNCONFIRMED_NOTICE.body}
-              onClose={handleClose}
-            />
-          ),
-        },
+        type: 'info',
+        title: CONFIRMED_STEP_UNCONFIRMED_NOTICE.title,
+        size: 'md',
+        children: ({ handleClose }: { handleClose: () => void }) => (
+          <ConfirmedStepNoticeBody
+            text={CONFIRMED_STEP_UNCONFIRMED_NOTICE.body}
+            onClose={handleClose}
+          />
+        ),
       });
     };
     const off = onMessage<unknown>('RUN_CONFIRMED_STEP', (raw) => {
@@ -5397,7 +6116,10 @@ export function PageBlockHost({
             quoteId,
           })) as ConfirmedStepQuotePreview;
         } catch (err) {
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         // The viewer's own limit binds and the confirm cannot override it: explain,
@@ -5407,15 +6129,80 @@ export function PageBlockHost({
           showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
           return;
         }
+        // After a consent (click or standing): submit once and relay the outcome.
+        const submitConsented = async () => {
+          let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+          try {
+            result = await submitWorkflowMutation.mutateAsync({
+              blockToken: token,
+              // Schema-validated server-side and checked against the quote's
+              // body hash; the host never renders or trusts it.
+              body: body as never,
+            });
+          } catch (err) {
+            if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
+            // Never resent: the quote is spent once.
+            const failed = trainingSubmitReplyFromError(err);
+            settlement.reply({ ...failed, ...rateLimitReplyFields(err) });
+            if ('error' in failed && failed.error === 'submission-unconfirmed') {
+              showUnconfirmedNotice(requestId);
+            }
+            return;
+          }
+          if (!reviewMode) {
+            reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
+          }
+          const reply = confirmedStepReplyFromResult(result);
+          settlement.reply(reply);
+          refreshBuzzCapNotice();
+          // The outcome is unknown and a retry would be a new, separately charged
+          // job: say so in host chrome, not only to the block.
+          if ('error' in reply && reply.error === 'submission-unconfirmed') {
+            showUnconfirmedNotice(requestId);
+          }
+          // The day's spend moved between preview and submit: tell the viewer
+          // the same thing the preview would have.
+          if (isDailyLimitRefusal(result.snapshot)) {
+            showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+          }
+        };
+
+        if (preview.standing) {
+          let consented = false;
+          try {
+            await trpcUtils.client.blocks.consentQuoteGrantStanding.mutate({
+              blockToken: token,
+              quoteId,
+            });
+            consented = true;
+          } catch {
+            // Any refusal (limit moved, burst bound, flag off, an older server): ask instead.
+          }
+          if (consented) {
+            settlement.markConsented();
+            try {
+              await submitConsented();
+            } catch (err) {
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
+            return;
+          }
+        }
+
         const copy = buildConfirmedStepConsentCopy({ appName, preview });
+        const standingOffer = buildConfirmedStepStandingOfferCopy({ appName, preview });
+        let standingChoice: ConfirmedStepStandingChoice = { checked: false };
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
             ? () =>
-                dialogStore.trigger<BuyBuzzModalProps>({
-                  id: `block-confirmed-step-buy-buzz-${requestId}`,
-                  component: BuyBuzzModal,
-                  props: { minBuzzAmount: preview.shortfall ?? undefined },
-                })
+                openDialog(
+                  () => import('~/components/Modals/BuyBuzzModal'),
+                  { minBuzzAmount: preview.shortfall ?? undefined },
+                  { id: `block-confirmed-step-buy-buzz-${requestId}` }
+                )
             : undefined;
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
@@ -5425,7 +6212,15 @@ export function PageBlockHost({
           props: {
             title: copy.title,
             message: (
-              <ConfirmedStepConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />
+              <ConfirmedStepConsentBody
+                copy={copy}
+                preview={preview}
+                onBuyBuzz={openBuyBuzz}
+                standingOffer={standingOffer}
+                onStandingChange={(choice) => {
+                  standingChoice = choice;
+                }}
+              />
             ),
             labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
             confirmProps: { color: 'blue' },
@@ -5435,42 +6230,28 @@ export function PageBlockHost({
               // able to claim `declined` for a job that is being submitted.
               settlement.markConsented();
               try {
+                if (standingChoice.checked) {
+                  // The opt-in is a preference: if it does not save, this job still runs
+                  // on the click, and the next one asks again.
+                  await trpcUtils.client.blocks.optInConfirmWithinLimit
+                    .mutate({
+                      appBlockId,
+                      maxJobBuzz: preview.total,
+                      buzzBudgetPerDay: standingChoice.limit,
+                    })
+                    .catch(() => undefined);
+                }
                 await trpcUtils.client.blocks.consentQuoteGrant.mutate({
                   kind: 'step',
                   blockToken: token,
                   quoteId,
                 });
-                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
-                try {
-                  result = await submitWorkflowMutation.mutateAsync({
-                    blockToken: token,
-                    // Schema-validated server-side and checked against the quote's
-                    // body hash; the host never renders or trusts it.
-                    body: body as never,
-                  });
-                } catch (err) {
-                  // Never resent: the quote is spent once.
-                  const failed = trainingSubmitReplyFromError(err);
-                  settlement.reply(failed);
-                  if ('error' in failed && failed.error === 'submission-unconfirmed') {
-                    showUnconfirmedNotice(requestId);
-                  }
-                  return;
-                }
-                const reply = confirmedStepReplyFromResult(result);
-                settlement.reply(reply);
-                // The outcome is unknown and a retry would be a new, separately charged
-                // job: say so in host chrome, not only to the block.
-                if ('error' in reply && reply.error === 'submission-unconfirmed') {
-                  showUnconfirmedNotice(requestId);
-                }
-                // The day's spend moved between preview and submit: tell the viewer
-                // the same thing the preview would have.
-                if (isDailyLimitRefusal(result.snapshot)) {
-                  showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
-                }
+                await submitConsented();
               } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+                settlement.reply({
+                  error: err instanceof Error ? err.message : 'unknown',
+                  ...rateLimitReplyFields(err),
+                });
               }
             },
             onCancel: settlement.decline,
@@ -5490,6 +6271,10 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    reviewMode,
+    appBlockId,
+    refreshBuzzCapNotice,
+    dailyLimitRaise,
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
@@ -5702,6 +6487,17 @@ export function PageBlockHost({
     return () => clearTimeout(t);
   }, [autoRetry]);
 
+  // The missing-permissions notice's scopes for this render, or null for no notice —
+  // see the comment where it renders below.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status: toHostGateStatus(status),
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId,
+    suppressed: reviewMode,
+  });
+
   return (
     <Box
       style={{
@@ -5825,6 +6621,8 @@ export function PageBlockHost({
         hostSurface={surface}
         canOpenPage={canOpenPage}
         launchOrigin={launchOrigin}
+        getRecentFailures={recentFailures}
+        appRoute={subPath ? `/${subPath}` : '/'}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`
@@ -5858,16 +6656,11 @@ export function PageBlockHost({
           decides how it maps. A cast here would have compiled and silently
           disagreed with every other gate. (`pnpm typecheck` caught exactly that —
           the first version of this passed `status` raw.) */}
-      {resolveHostConsentNotice({
-        status: toHostGateStatus(status),
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId,
-        suppressed: reviewMode,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={appName}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -5875,7 +6668,8 @@ export function PageBlockHost({
             const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
+          onDismiss={() => setConsentNotice((current) => dismissConsentNotice(current, appBlockId))}
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when
@@ -5888,6 +6682,13 @@ export function PageBlockHost({
         declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
           <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
         )}
+      {/* Paused at the plan's daily app Buzz limit, with the upgrade and the continue-on-own-Buzz
+          opt-in (`AppBuzzCapNotice`). Live runs only, behind `appLimitsUpgradePrompt`. */}
+      {showBuzzCapNotice &&
+        !reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' && <AppBuzzCapNotice />}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

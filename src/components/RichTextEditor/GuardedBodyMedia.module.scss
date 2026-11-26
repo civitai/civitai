@@ -1,0 +1,26 @@
+@use './image-layout' as layout;
+
+// The guard's overlay is positioned against this box, so it takes the size the bare img had:
+// the article's data-width moves here from the img (RichTextEditorComponent.module.scss).
+.root {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+
+  // Block, so the box the overlay is positioned against has no line-box gap under the image.
+  img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  @include layout.image-layout;
+}
+
+.placeholder {
+  position: relative;
+  overflow: hidden;
+  max-width: 100%;
+  border-radius: var(--mantine-radius-md);
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-5));
+}

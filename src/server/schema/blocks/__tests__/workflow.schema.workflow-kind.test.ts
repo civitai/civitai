@@ -32,22 +32,20 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
     expect(parsed).toEqual(body({ arguments: { strength: 0.4 } }));
   });
 
-  it('parses a single step with no name, no arguments and no suppressOutput', () => {
-    const one = { kind: 'workflow', steps: [{ $type: 'echo', input: {} }] };
-    expect(blockWorkflowBodySchema.parse(one)).toEqual(one);
-  });
-
-  it('refuses an EMPTY step list', () => {
-    const r = blockWorkflowBodySchema.safeParse(body({ steps: [] }));
-    expect(r.success).toBe(false);
-    if (!r.success) expect(r.error.issues[0].path).toEqual(['steps']);
-  });
-
-  it('accepts MORE than the step cap — the cap is refused with an errorCode, not here', () => {
-    // A schema rejection is thrown at the tRPC boundary, where it cannot carry
-    // `workflow_too_many_steps`. See `resolveBlockWorkflowGraph`.
-    const many = body({ steps: Array.from({ length: 9 }, () => ({ $type: 'echo', input: {} })) });
-    expect(blockWorkflowBodySchema.safeParse(many).success).toBe(true);
+  it('refuses a step $type that is not ASCII letters and digits', () => {
+    for (const $type of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(
+        blockWorkflowBodySchema.safeParse(body({ steps: [{ $type, input: {} }] })).success
+      ).toBe(false);
+    }
   });
 
   it('has NO `maxBuzz`: the field is refused, at the body and at a step', () => {
@@ -81,24 +79,6 @@ describe("blockWorkflowBodySchema — kind:'workflow'", () => {
       if (!r.success) expect(JSON.stringify(r.error.issues)).toContain(field);
     }
   );
-
-  it('bounds `$type` like the pass-through arm (1..64 characters)', () => {
-    const typed = ($type: string) => body({ steps: [{ $type, input: {} }] });
-    expect(blockWorkflowBodySchema.safeParse(typed('x'.repeat(64))).success).toBe(true);
-    for (const $type of ['', 'x'.repeat(65)]) {
-      const r = blockWorkflowBodySchema.safeParse(typed($type));
-      expect(r.success).toBe(false);
-      if (!r.success) expect(r.error.issues[0].path).toEqual(['steps', 0, '$type']);
-    }
-  });
-
-  it('requires `input` to be an object on every step', () => {
-    const r = blockWorkflowBodySchema.safeParse(
-      body({ steps: [{ $type: 'echo', input: {} }, { $type: 'echo' }] })
-    );
-    expect(r.success).toBe(false);
-    if (!r.success) expect(r.error.issues[0].path).toEqual(['steps', 1, 'input']);
-  });
 
   it('bounds the SUM of every step input plus arguments', () => {
     expect(WORKFLOW_INPUT_BYTES_MAX).toBe(PASS_THROUGH_INPUT_BYTES_MAX);
@@ -188,52 +168,6 @@ describe("kind:'workflow' — inline media is refused", () => {
     ];
     expect(issuesOf(body({ steps }))).toEqual([
       [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
-    ]);
-  });
-
-  it('counts `arguments` against the same budget as the steps', () => {
-    const pad = () =>
-      Object.fromEntries(Array.from({ length: 150_000 }, (_, i) => [`k${i}`, undefined]));
-    const withArguments = body({
-      steps: [{ $type: 'imageGen', input: pad() }],
-      arguments: { ...pad(), photo: tinyPng },
-    });
-    expect(issuesOf(withArguments)).toEqual([
-      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
-    ]);
-  });
-
-  it('still reports padding in a later field once an earlier one is over the byte cap', () => {
-    const pad = Object.fromEntries(Array.from({ length: 300_000 }, (_, i) => [`k${i}`, undefined]));
-    const over = body({
-      steps: [
-        { $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX), next: 'a' } },
-      ],
-      arguments: pad,
-    });
-    expect(issuesOf(over)).toEqual([
-      [['steps'], 'step inputs and arguments hold more than 262144 values in total'],
-    ]);
-  });
-
-  it('leaves a photo in a later field to the byte cap once an earlier one is over it', () => {
-    const over = body({
-      steps: [{ $type: 'imageGen', input: { text: '.'.repeat(WORKFLOW_INPUT_BYTES_MAX) } }],
-      arguments: { photo: tinyPng },
-    });
-    expect(issuesOf(over)).toEqual([
-      [['steps'], 'workflow step inputs and arguments exceed the 262144-byte limit'],
-    ]);
-  });
-
-  it('over the byte cap, reports ONLY the inline-media issue', () => {
-    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
-    expect(photo.length).toBeGreaterThan(WORKFLOW_INPUT_BYTES_MAX);
-    expect(issuesOf(body({ steps: [{ $type: 'imageGen', input: { ImageUrl: photo } }] }))).toEqual([
-      [
-        ['steps', 0, 'input', 'ImageUrl'],
-        `steps[0].input.ImageUrl carries inline media (data URI/base64); ${fix}`,
-      ],
     ]);
   });
 

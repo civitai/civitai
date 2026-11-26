@@ -7,6 +7,7 @@
 
 import { UnstyledButton } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
+import { choiceIdleClass } from '~/libs/form/components/choice-styles';
 import { IconBolt, IconDiamond, IconRocket } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
@@ -99,11 +100,7 @@ export function PriorityInput({
     <UnstyledButton
       aria-label={`Request Priority: ${selected?.label ?? 'Standard'}`}
       data-tap-target
-      className={clsx(
-        'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
-        'bg-gray-1 hover:bg-gray-2',
-        'dark:bg-dark-5 dark:hover:bg-dark-4'
-      )}
+      className={clsx('flex items-center gap-1.5 rounded-md px-2 py-1 text-sm', choiceIdleClass)}
     >
       <IconRocket size={16} className="text-gray-6 dark:text-dark-2" />
       <span className="font-medium">{selected?.label ?? 'Standard'}</span>

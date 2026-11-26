@@ -38,6 +38,7 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import type { MatureLockAttribution } from '~/shared/constants/mature-lock-reason.constants';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import {
   SFW_DESCRIPTION_MAX_LENGTH,
@@ -148,6 +149,13 @@ export const getAllModelsSchema = z.object({
   minorOnly: z.boolean().optional(),
 });
 
+/**
+ * `model.getAll`'s input: the listing filters, with `page` refused (that procedure pages by cursor).
+ * The router and scripts/feed-go-input-schemas.ts both read this one object, so feed-go's generated
+ * allow-list follows a change to it.
+ */
+export const getAllModelsInputSchema = getAllModelsSchema.extend({ page: z.never().optional() });
+
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
@@ -220,7 +228,7 @@ export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.record(z.string(), z.number().array()).optional(),
-  level: z.number().optional(),
+  level: z.number().int().min(0).optional(),
   pinnedPosts: z
     .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
     .optional(),
@@ -405,6 +413,8 @@ export type RestrictedNsfwVerdict = {
   source: string;
   at: string;
   restriction: 'minor' | 'poi' | 'sfwOnly';
+  /** The level the scan read, where the lead came from a verdict it held for a clean .com face. */
+  level?: number;
   /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
   applied?: { at: string; prior: RestrictedNsfwPrior };
   /** The flag was lifted other than by the owner's save; the lead waits for a moderator's ruling. */
@@ -425,6 +435,19 @@ export type RestrictedNsfwVerdictRulingRecord = {
 
 export type ComFaceRemovedReason = 'detected' | 'recheck-unverified';
 
+export type ComFaceIntentRecord = {
+  detected: boolean;
+  reason?: string;
+  promptId?: number;
+  textHash: string;
+  at: string;
+  overturnedAt?: string;
+  /** The scan's rating marker the intent lock replaced, put back when that lock is lifted. */
+  priorSystemNsfwLock?: { source: string; at: string };
+  /** A system rating verdict that landed while the intent lock was on. */
+  laterVerdict?: { source: string; at: string };
+};
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -442,10 +465,6 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
-  /** Written by a content wipe on a model it kept and hid; see model-removed-with-owner.service. */
-  removedWithOwner: boolean;
-  statusBeforeRemoval: string;
-  versionsUnpublishedByRemoval: { id: number; status: string }[];
   bountyId: number;
   unpublishedBy: number;
   declinedReason: string;
@@ -495,12 +514,40 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
-  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
-  systemNsfwLock: { source: string; at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. The save-time text
+   *  filter also records which field set it off, for the owner's explanation. */
+  systemNsfwLock: { source: string; at: string } & Partial<MatureLockAttribution>;
+  /** The listing intent check's verdict at .com-face time, kept while the listing text it read
+   *  (`textHash`) is unchanged so a repeat attempt is not re-judged. `overturnedAt`: a dispute or a
+   *  moderator lifted the lock it set. `reason` is for moderators only. Server-owned. */
+  comFaceIntent: ComFaceIntentRecord;
+  /** A moderator lifted an nsfw lock that was not the intent check's: the check still gates the
+   *  face, but does not lock this listing text (`textHash`) again. Server-owned. */
+  comFaceIntentRelockSuppressed: { textHash: string; at: string };
+  /** The .com face text passed the face check. `hash` covers everything the check read (see
+   *  `sfwFaceStampHash`), so any edit to it makes the stamp stale. Server-owned. */
+  sfwFaceCheckedAt: { at: string; promptId: number | null; hash: string };
+  /** The text scan read the listing as R+ (`level`) and left the model unrated because of its .com
+   *  face. A write that takes the face away applies it in the same transaction. Server-owned. */
+  comFaceHeldVerdict: { at: string; level: number };
+  /** The one-off nsfw lock backfill lifted the text scan's lock (`priorLockedProperties` is what it
+   *  replaced), and `revertedAt` when a revert put it back. Server-owned and hidden from clients. */
+  nsfwLockBackfill: {
+    at: string;
+    bucket: string;
+    priorLockedProperties: string[] | null;
+    revertedAt?: string;
+  };
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
-   *  verdict. A save that sets a .com cover clears it. Server-owned. */
-  comFaceRemoved: { at: string; sfwCoverImageId: number; reason: ComFaceRemovedReason };
+   *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com
+   *  cover clears it. Server-owned. */
+  comFaceRemoved: {
+    at: string;
+    sfwCoverImageId: number;
+    reason: ComFaceRemovedReason;
+    detail?: string;
+  };
   /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
    *  in Needs review. Server-owned, moderator-only. */
   restrictedNsfwVerdict: RestrictedNsfwVerdict;

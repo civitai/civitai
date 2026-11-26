@@ -90,10 +90,17 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
   createRepoFromTemplate: vi.fn(),
   ensurePushWebhook: vi.fn(),
 }));
+const { mockOpenHolds } = vi.hoisted(() => ({
+  mockOpenHolds: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+}));
+vi.mock('~/server/services/blocks/publish-request-holds.service', () => ({
+  getOpenHoldsBySlug: mockOpenHolds,
+}));
 vi.mock('~/server/utils/blocks-retrigger-rate-limit', () => ({
   acquireRetriggerLock: limiter.acquire,
   releaseRetriggerLock: limiter.release,
   checkRetriggerModeratorQuota: limiter.quota,
+  RETRIGGER_LOCK_TTL_SECONDS: 60,
 }));
 
 const SHA = 'a'.repeat(40);
@@ -160,6 +167,7 @@ beforeEach(() => {
   mockRedis.nxResult = true;
   mockRedis.quotaAllowed = true;
   mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-1' });
+  mockOpenHolds.mockImplementation(async () => []);
 });
 
 describe('retriggerBuild — happy path', () => {
@@ -313,6 +321,33 @@ describe('retriggerBuild — guard 5: superseded by a newer approved version', (
     await expect(
       callRetrigger({ appBlock: { id: APB, currentVersionSha: null } })
     ).resolves.toBeTruthy();
+  });
+});
+
+describe('retriggerBuild — an open review hold refuses the rebuild', () => {
+  // A version approved over a late hold is never built; a first version has no current sha to
+  // supersede it, so only the hold check keeps its build from running.
+  it('🔴 refuses while the app has an open hold, with no build', async () => {
+    mockOpenHolds.mockImplementation(async () => [{ id: 12 }]);
+    await expectRejectCode(
+      callRetrigger({ appBlock: { id: APB, currentVersionSha: null } }),
+      'NOT_RETRIGGERABLE'
+    );
+    expect(mockOpenHolds).toHaveBeenCalledWith(expect.anything(), ['my-app']);
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the holds cannot be read', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockOpenHolds.mockImplementation(async () => {
+      throw new Error('relation "app_publish_request_holds" does not exist');
+    });
+    try {
+      await expectRejectCode(callRetrigger(), 'NOT_RETRIGGERABLE');
+      expect(mockTriggerBuild).not.toHaveBeenCalled();
+    } finally {
+      quiet.mockRestore();
+    }
   });
 });
 
@@ -483,7 +518,15 @@ describe('retriggerBuild — guard 6: deploy-state gate', () => {
 describe('retriggerBuild — guard 7: rate limit + double-click idempotency', () => {
   it('refuses when the per-moderator quota is exhausted', async () => {
     mockRedis.quotaAllowed = false;
-    await expectRejectCode(callRetrigger(), 'RATE_LIMITED');
+    const refused = await callRetrigger().catch((e: unknown) => e);
+    await expectRejectCode(Promise.reject(refused), 'RATE_LIMITED');
+    // The refusal carries its meta: the quota window's wait and the abuse id, no counts.
+    expect((refused as { rateLimit?: unknown }).rateLimit).toEqual({
+      retryAfterSeconds: 1800,
+      retryAt: expect.any(String),
+      id: 'apps.build-retrigger',
+      kind: 'abuse',
+    });
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
@@ -498,7 +541,13 @@ describe('retriggerBuild — guard 7: rate limit + double-click idempotency', ()
     expect(mockTriggerBuild).toHaveBeenCalledTimes(1);
     // Second call: the NX lock is already held.
     mockRedis.nxResult = false;
-    await expectRejectCode(callRetrigger(), 'RATE_LIMITED');
+    const refused = await callRetrigger().catch((e: unknown) => e);
+    await expectRejectCode(Promise.reject(refused), 'RATE_LIMITED');
+    // The lock lapses by its TTL at the latest: that is the wait the refusal names.
+    expect((refused as { rateLimit?: { retryAfterSeconds?: number } }).rateLimit).toMatchObject({
+      retryAfterSeconds: 60,
+      id: 'apps.build-retrigger',
+    });
     expect(mockTriggerBuild).toHaveBeenCalledTimes(1); // still ONE
   });
 

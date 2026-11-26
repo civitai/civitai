@@ -42,7 +42,6 @@ import { norm, renderTag } from './sql-shape.test-utils';
 // The index module reaches for the search client at import time; none of it is needed to page ids.
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: null,
-  metricsSearchClient: null,
   updateDocs: vi.fn(async () => undefined),
 }));
 

@@ -33,7 +33,7 @@ async function seedItem(over: Record<string, unknown> = {}): Promise<string> {
       report_id: reportId,
       tag: 'CSAM',
       wave: 1,
-      entity_type: 'commentV2',
+      entity_type: 'commentV3',
       entity_id: reportId * 10,
       author_id: reportId * 100,
       visibility: 'public',
@@ -208,7 +208,7 @@ describe('ownHandOffs', () => {
     expect(handOffs.find((h) => h.token === csam)).toMatchObject({
       tag: 'CSAM',
       reportId: 1,
-      entityType: 'commentV2',
+      entityType: 'commentV3',
       entityId: 10,
       authorId: 100,
     });

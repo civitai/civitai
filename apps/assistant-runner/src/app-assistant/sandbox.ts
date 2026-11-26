@@ -1,5 +1,6 @@
 import {
   NO_SANDBOX_FEATURES,
+  PREVIEW_ID,
   SANDBOX_RESULT_LIMIT,
   SANDBOX_SERVER_ID,
   SANDBOX_SERVER_LABEL,
@@ -76,6 +77,12 @@ export interface AppSandboxDeps {
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
   wakePollMs?: number;
+  /**
+   * How a paused app is started (`openApp` unless set). App hibernate sets `startOrWakeApp`, which
+   * resumes a listed app with a plain open and wakes one put to sleep since it was listed, rather
+   * than leave it new and empty.
+   */
+  open?(app: string): Promise<{ sandbox: Sandbox; created: boolean }>;
 }
 
 /**
@@ -208,6 +215,27 @@ export class AppSandbox {
     return { text: mcpResultToText(result, Infinity), isError: result.isError === true };
   }
 
+  /**
+   * The open app's current preview id, as the sandbox service reports it now (a stopped preview
+   * session changes it, so the id read as the reply started may be stale); `null` when no app is
+   * open or the service gives it none.
+   */
+  async previewId(): Promise<string | null> {
+    const active = this.#active;
+    if (!active) return null;
+    const sandbox = await this.#deps.client.get(active.name);
+    const id = sandbox?.previewId;
+    return typeof id === 'string' && PREVIEW_ID.test(id) ? id : null;
+  }
+
+  /** Gives the open app a new preview id, and answers it (`SandboxClient.rotatePreviewId`). */
+  async rotatePreviewId(): Promise<string> {
+    const active = this.#active;
+    const rotate = this.#deps.client.rotatePreviewId;
+    if (!active || !rotate) throw new Error('Your app is not running.');
+    return rotate.call(this.#deps.client, active.name);
+  }
+
   async close(): Promise<void> {
     this.#closed = true;
     const connection = this.#connection;
@@ -288,7 +316,7 @@ export class AppSandbox {
     const { client, signal } = this.#deps;
     let opened: { sandbox: Sandbox; created: boolean };
     try {
-      opened = await openApp(client, app);
+      opened = await (this.#deps.open?.(app) ?? openApp(client, app));
     } catch (error) {
       this.#deps.log.warn(
         { err: (error as Error)?.name, runId: this.#deps.runId },

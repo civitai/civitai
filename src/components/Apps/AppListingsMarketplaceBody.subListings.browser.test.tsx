@@ -17,7 +17,6 @@ const mocks = vi.hoisted(() => ({
   input: null as null | Record<string, unknown>,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({
@@ -46,7 +45,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
     <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
   ),
 }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useIsMobile: () => false,
@@ -113,7 +111,8 @@ describe('store grid with sub-listings', () => {
         .querySelector('[data-testid="apps-sub-listing-cta"]')
         ?.closest('a')
         ?.getAttribute('href')
-    ).toBe(CHILD.runHref);
+      // The grid tags the launch with its acquisition surface (`App_Open.surface`).
+    ).toBe(`${CHILD.runHref}&src=sub_listing`);
   });
 
   test('client-side search matches a sub-listing by its own title', async () => {

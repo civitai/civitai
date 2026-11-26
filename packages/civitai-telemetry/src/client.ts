@@ -514,12 +514,16 @@ export const redisCommandsInflight = registerGaugeWithLabels({
   help: 'In-flight node-redis commands by client (cluster vs sys); climbs toward the queue ceiling during a half-open stall',
   labelNames: ['client'] as const,
 });
+// Up to 30s to capture the parked-command tail that maps onto the Traefik 30s ceiling → 504.
+// Exported so the batched handle in ./redis-command-metrics accumulates into the same buckets.
+export const REDIS_COMMAND_DURATION_BUCKETS = [
+  0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30,
+] as const;
 export const redisCommandDuration = registerHistogram({
   name: 'redis_command_duration_seconds',
   help: 'node-redis command wall-clock duration by client; the long tail (~30s bucket) is the half-open command-queue park',
   labelNames: ['client'] as const,
-  // Up to 30s to capture the parked-command tail that maps onto the Traefik 30s ceiling → 504.
-  buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
+  buckets: REDIS_COMMAND_DURATION_BUCKETS,
 });
 
 // Duration of the brotli codec on the opt-in compressed `redis.packed` paths, by `op`
@@ -643,6 +647,13 @@ export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
 export const redisRoutingRetryCounter = registerCounterWithLabels({
   name: 'redis_routing_retry_total',
   help: 'Cluster commands that hit a transient routing throw and were retried after a rediscover (recovered) or exhausted retries (exhausted, original error re-thrown)',
+  labelNames: ['result'] as const,
+});
+
+// sysRedis READONLY retry outcome (see @civitai/redis sys-readonly-retry).
+export const redisSysReadonlyRetryCounter = registerCounterWithLabels({
+  name: 'redis_sys_readonly_retry_total',
+  help: 'sysRedis commands rejected with READONLY and retried with backoff, by outcome (recovered, or exhausted with the original error re-thrown)',
   labelNames: ['result'] as const,
 });
 

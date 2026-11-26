@@ -6,6 +6,8 @@ import { paginationSchema } from '~/server/schema/base.schema';
 import {
   createCsamReportSchema,
   createExternalCsamReportSchema,
+  getCsamContextCandidatesSchema,
+  readHeldCsamContextTextSchema,
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
   approveGeneratorEvidenceSchema,
@@ -26,6 +28,11 @@ import {
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
+import {
+  getCsamContextCandidates,
+  readHeldCsamContextText,
+} from '~/server/services/csam-context-text';
+import { assertSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { clearUnconfirmedOpens } from '~/server/services/csam-unconfirmed-open';
 import {
   getCsamReportStats,
@@ -41,6 +48,15 @@ export const csamRouter = router({
   getImageResources: moderatorProcedure
     .input(getImageResourcesSchema)
     .query(({ input }) => getImageResources(input)),
+  getContextCandidates: moderatorProcedure
+    .input(getCsamContextCandidatesSchema)
+    .query(({ input }) => getCsamContextCandidates(input)),
+  readHeldContextText: moderatorProcedure
+    .input(readHeldCsamContextTextSchema)
+    .mutation(({ input, ctx }) => {
+      assertSessionOrFullUserKey(ctx);
+      return readHeldCsamContextText({ ...input, moderatorId: ctx.user.id });
+    }),
   createReport: moderatorProcedure.input(createCsamReportSchema).mutation(createCsamReportHandler),
   getSupplementalPreview: moderatorProcedure
     .input(getCsamSupplementalPreviewSchema)

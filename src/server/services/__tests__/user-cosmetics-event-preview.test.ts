@@ -171,8 +171,11 @@ describe('the profile shows event hats only to viewers the event is open to', ()
     dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
   });
 
-  const profileHats = async (viewer: { sessionUserId?: number; isModerator?: boolean }) =>
-    hatsIn((await getUserWithProfile({ id: OWNER, ...viewer })).cosmetics);
+  const profileHats = async (viewer: {
+    sessionUserId?: number;
+    isModerator?: boolean;
+    eventViewer?: { id?: number; isModerator?: boolean };
+  }) => hatsIn((await getUserWithProfile({ id: OWNER, ...viewer })).cosmetics);
 
   it('hides them before launch from a signed-out viewer and a viewer the flag is off for', async () => {
     expect(await profileHats({})).toHaveLength(0);
@@ -186,7 +189,15 @@ describe('the profile shows event hats only to viewers the event is open to', ()
 
   it('shows them to a tester and a moderator', async () => {
     expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(2);
-    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(2);
+    expect(
+      await profileHats({ sessionUserId: 99, eventViewer: { id: 99, isModerator: true } })
+    ).toHaveLength(2);
+  });
+
+  // `isModerator` decides only what the profile itself shows; whether a moderator counts for the
+  // event is the caller's eventViewerOf, which a scoped token can lose.
+  it('does not take the profile moderator flag as the event viewer', async () => {
+    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(0);
   });
 
   it("gives the owner no exception: their own hats follow the flag like anyone else's", async () => {
@@ -263,5 +274,48 @@ describe('userProfile.get stays per-viewer', () => {
     const route = router.slice(start, end);
     expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
     expect(route).not.toMatch(/\.use\(/);
+  });
+});
+
+// Not an event read: the same handler, for a moderator's own blocked profile cover.
+describe("a moderator's own blocked profile cover", () => {
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({
+      id: OWNER,
+      meta: {},
+      settings: null,
+      cosmetics: [],
+      profile: {
+        userId: OWNER,
+        coverImageId: 1,
+        coverImage: {
+          id: 1,
+          url: 'cover-blocked',
+          nsfwLevel: 1,
+          type: 'image',
+          needsReview: null,
+          ingestion: 'Blocked',
+          blockedFor: 'tos',
+          meta: null,
+          metadata: {},
+          tags: [],
+        },
+      },
+    } as never);
+    dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
+  });
+
+  const coverFor = async (bearer: object) =>
+    (
+      (await getUserProfileHandler({
+        input: { username: 'owner' },
+        ctx: { user: { id: OWNER, isModerator: true }, ...bearer },
+      } as never)) as { profile: { coverImage: { url: string } | null } }
+    ).profile.coverImage?.url ?? null;
+
+  it('is withheld on a scoped key, and served on a session', async () => {
+    const key = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+    expect(await coverFor({ ...key, tokenScope: TokenScope.UserRead })).toBeNull();
+    expect(await coverFor({})).toBe('cover-blocked');
   });
 });

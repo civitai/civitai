@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
+// Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
+// this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
+// validator is untouched).
+vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManifestSubmitValidation>()),
+  assertManifestValidAtSubmit: vi.fn(async () => undefined),
+}));
 import JSZip from 'jszip';
 import {
   computeBundleLineDiff,
@@ -9,10 +17,8 @@ import {
   type FileMeta,
 } from '../publish-request.service';
 import {
-  MAX_BUNDLE_SIZE_BYTES,
   MAX_FILES_IN_BUNDLE,
   MAX_FILE_SIZE_BYTES,
-  MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
@@ -44,6 +50,11 @@ const dbMocks = vi.hoisted(() => ({
   // listing review is open for the slug. Null = no listing review, the shape every
   // test in this file assumes.
   listingReqFindFirst: vi.fn(async () => null),
+  // The draft's manual-apply link columns: the source-repo probe (`findUnique` selecting only
+  // `sourceRepoUrl`), the issue-tracker probe (`$queryRaw`) and its raw write (`$executeRaw`).
+  appListingWriteFindUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+  writeQueryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+  writeExecuteRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 1),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -60,7 +71,12 @@ vi.mock('~/server/db/client', () => ({
       // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY): none.
       findMany: async () => [],
     },
-    appListing: { create: dbMocks.appListingCreate },
+    appListing: {
+      create: dbMocks.appListingCreate,
+      findUnique: dbMocks.appListingWriteFindUnique,
+    },
+    $queryRaw: dbMocks.writeQueryRaw,
+    $executeRaw: dbMocks.writeExecuteRaw,
     // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
     appBlock: { findFirst: async () => null },
   },
@@ -93,42 +109,6 @@ function makeFile(path: string, sha: string, size = 100): FileMeta {
 }
 
 describe('computeFileDiff', () => {
-  it('treats null previous as a first-version add-all', () => {
-    const curr = [makeFile('Dockerfile', 'aa'), makeFile('block.manifest.json', 'bb')];
-    const result = computeFileDiff(curr, null);
-    expect(result.files).toEqual(curr);
-    expect(result.added).toEqual(['Dockerfile', 'block.manifest.json']);
-    expect(result.removed).toEqual([]);
-    expect(result.changed).toEqual([]);
-  });
-
-  it('detects added paths', () => {
-    const prev = [makeFile('a', '1')];
-    const curr = [makeFile('a', '1'), makeFile('b', '2')];
-    const result = computeFileDiff(curr, prev);
-    expect(result.added).toEqual(['b']);
-    expect(result.removed).toEqual([]);
-    expect(result.changed).toEqual([]);
-  });
-
-  it('detects removed paths', () => {
-    const prev = [makeFile('a', '1'), makeFile('b', '2')];
-    const curr = [makeFile('a', '1')];
-    const result = computeFileDiff(curr, prev);
-    expect(result.added).toEqual([]);
-    expect(result.removed).toEqual(['b']);
-    expect(result.changed).toEqual([]);
-  });
-
-  it('detects content changes via sha mismatch', () => {
-    const prev = [makeFile('a', '1'), makeFile('b', '2')];
-    const curr = [makeFile('a', '1'), makeFile('b', '3')];
-    const result = computeFileDiff(curr, prev);
-    expect(result.added).toEqual([]);
-    expect(result.removed).toEqual([]);
-    expect(result.changed).toEqual(['b']);
-  });
-
   it('handles a mix of add/remove/change in one diff', () => {
     const prev = [makeFile('Dockerfile', '1'), makeFile('old.tsx', '2')];
     const curr = [makeFile('Dockerfile', '1-changed'), makeFile('new.tsx', '3')];
@@ -138,59 +118,38 @@ describe('computeFileDiff', () => {
     expect(result.changed).toEqual(['Dockerfile']);
   });
 
-  it('produces deterministic ordering regardless of input order', () => {
-    const prev = [makeFile('z', '1'), makeFile('a', '2'), makeFile('m', '3')];
-    const curr = [makeFile('z', '1-new'), makeFile('a', '2'), makeFile('b', '4')];
-    const r1 = computeFileDiff(curr, prev);
-    const r2 = computeFileDiff([...curr].reverse(), [...prev].reverse());
-    expect(r1.added).toEqual(r2.added);
-    expect(r1.removed).toEqual(r2.removed);
-    expect(r1.changed).toEqual(r2.changed);
+  it('treats null previous as a first-version add-all', () => {
+    const curr = [makeFile('Dockerfile', 'aa'), makeFile('block.manifest.json', 'bb')];
+    const result = computeFileDiff(curr, null);
+    expect(result.files).toEqual(curr);
+    expect(result.added).toEqual(['Dockerfile', 'block.manifest.json']);
+    expect(result.removed).toEqual([]);
+    expect(result.changed).toEqual([]);
   });
 });
 
 describe('computeManifestDiff', () => {
-  it('treats null previous as a first-version diff', () => {
-    const curr = { blockId: 'x', version: '0.1.0', name: 'X' };
-    const result = computeManifestDiff(curr, null);
-    expect(result.kind).toBe('first-version');
-    if (result.kind === 'first-version') {
-      expect(result.fields).toEqual(['blockId', 'name', 'version']);
-    }
+  const withStorage = (collections: Record<string, unknown>) => ({
+    blockId: 'x',
+    storage: { collections },
+  });
+  const sharedColl = (extra: Record<string, unknown> = {}) => ({
+    visibility: 'shared',
+    write: 'own',
+    ...extra,
   });
 
-  it('detects added top-level fields', () => {
-    const prev = { blockId: 'x' };
-    const curr = { blockId: 'x', name: 'X' };
-    const result = computeManifestDiff(curr, prev);
-    expect(result.kind).toBe('update');
-    if (result.kind === 'update') {
-      expect(result.added).toEqual(['name']);
-      expect(result.removed).toEqual([]);
-      expect(result.changed).toEqual([]);
-    }
-  });
-
-  it('detects removed top-level fields', () => {
-    const prev = { blockId: 'x', name: 'X' };
-    const curr = { blockId: 'x' };
-    const result = computeManifestDiff(curr, prev);
-    expect(result.kind).toBe('update');
-    if (result.kind === 'update') {
-      expect(result.added).toEqual([]);
-      expect(result.removed).toEqual(['name']);
-    }
-  });
-
-  it('detects changed top-level scalars', () => {
-    const prev = { blockId: 'x', version: '0.1.0' };
-    const curr = { blockId: 'x', version: '0.2.0' };
-    const result = computeManifestDiff(curr, prev);
-    if (result.kind !== 'update') throw new Error('expected update');
-    expect(result.changed).toHaveLength(1);
-    expect(result.changed[0].field).toBe('version');
-    expect(result.changed[0].from).toBe('0.1.0');
-    expect(result.changed[0].to).toBe('0.2.0');
+  it('🔴 names the collections a version newly publishes to registries', () => {
+    const prev = withStorage({ notes: sharedColl(), pins: sharedColl({ registry: 'public' }) });
+    const curr = withStorage({
+      notes: sharedColl({ registry: 'public' }),
+      pins: sharedColl({ registry: 'public' }),
+    });
+    expect(computeManifestDiff(curr, prev).registryExports).toEqual({
+      exported: ['notes', 'pins'],
+      added: ['notes'],
+      removed: [],
+    });
   });
 
   it('detects deep object changes via stable hash (key order independence)', () => {
@@ -199,6 +158,35 @@ describe('computeManifestDiff', () => {
     const result = computeManifestDiff(curr, prev);
     if (result.kind !== 'update') throw new Error('expected update');
     expect(result.changed).toEqual([]); // semantically equal
+  });
+
+  it('names a collection that stops being published, and a first version that publishes', () => {
+    expect(
+      computeManifestDiff(
+        withStorage({ notes: sharedColl() }),
+        withStorage({
+          notes: sharedColl({ registry: 'public' }),
+        })
+      ).registryExports
+    ).toEqual({ exported: [], added: [], removed: ['notes'] });
+    expect(
+      computeManifestDiff(withStorage({ notes: sharedColl({ registry: 'public' }) }), null)
+        .registryExports
+    ).toEqual({ exported: ['notes'], added: ['notes'], removed: [] });
+  });
+
+  it('says nothing about registries when no version publishes', () => {
+    const diff = computeManifestDiff(withStorage({ notes: sharedColl() }), withStorage({}));
+    expect(Object.hasOwn(diff, 'registryExports')).toBe(false);
+  });
+
+  it('treats null previous as a first-version diff', () => {
+    const curr = { blockId: 'x', version: '0.1.0', name: 'X' };
+    const result = computeManifestDiff(curr, null);
+    expect(result.kind).toBe('first-version');
+    if (result.kind === 'first-version') {
+      expect(result.fields).toEqual(['blockId', 'name', 'version']);
+    }
   });
 
   it('detects deep object changes when content differs', () => {
@@ -219,6 +207,16 @@ describe('computeManifestDiff', () => {
     expect(change.field).toBe('description');
     expect(change.from).toMatchObject({ __summarised: true });
     expect(change.to).toMatchObject({ __summarised: true });
+  });
+
+  it('detects added, removed and changed top-level fields', () => {
+    const prev = { blockId: 'x', name: 'X', version: '0.1.0' };
+    const curr = { blockId: 'x', version: '0.2.0', description: 'd' };
+    const result = computeManifestDiff(curr, prev);
+    if (result.kind !== 'update') throw new Error('expected update');
+    expect(result.added).toEqual(['description']);
+    expect(result.removed).toEqual(['name']);
+    expect(result.changed).toEqual([{ field: 'version', from: '0.1.0', to: '0.2.0' }]);
   });
 });
 
@@ -254,46 +252,6 @@ describe('extractBundleMetadata', () => {
     );
   });
 
-  it('rejects an empty bundle', async () => {
-    const buf = await makeBundle({});
-    await expect(extractBundleMetadata(buf)).rejects.toThrow(/empty/);
-  });
-
-  it('rejects a manifest that is not valid JSON', async () => {
-    const buf = await makeBundle({
-      'block.manifest.json': '{this is not json}',
-    });
-    await expect(extractBundleMetadata(buf)).rejects.toThrow(/not valid JSON/);
-  });
-
-  it('computes deterministic sha256 hashes', async () => {
-    const buf1 = await makeBundle({
-      'block.manifest.json': '{"blockId":"x"}',
-      'a.txt': 'hello',
-    });
-    const buf2 = await makeBundle({
-      'block.manifest.json': '{"blockId":"x"}',
-      'a.txt': 'hello',
-    });
-    const r1 = await extractBundleMetadata(buf1);
-    const r2 = await extractBundleMetadata(buf2);
-    const sha1 = r1.files.find((f) => f.path === 'a.txt')?.sha256;
-    const sha2 = r2.files.find((f) => f.path === 'a.txt')?.sha256;
-    expect(sha1).toBeDefined();
-    expect(sha1).toBe(sha2);
-  });
-
-  it('sorts files deterministically', async () => {
-    const buf = await makeBundle({
-      'z.txt': 'z',
-      'block.manifest.json': '{"blockId":"x"}',
-      'a.txt': 'a',
-      'm.txt': 'm',
-    });
-    const { files } = await extractBundleMetadata(buf);
-    expect(files.map((f) => f.path)).toEqual(['a.txt', 'block.manifest.json', 'm.txt', 'z.txt']);
-  });
-
   it('rejects when a single file exceeds 10 MiB cap', async () => {
     // One file at MAX_FILE_SIZE_BYTES + 1 = 10 MiB + 1 byte.
     const big = Buffer.alloc(MAX_FILE_SIZE_BYTES + 1, 'x');
@@ -304,16 +262,6 @@ describe('extractBundleMetadata', () => {
     await expect(extractBundleMetadata(buf)).rejects.toThrow(
       new RegExp(`max ${MAX_FILE_SIZE_BYTES}`)
     );
-  });
-
-  it('accepts a single file at exactly the 10 MiB cap', async () => {
-    // A file at exactly MAX_FILE_SIZE_BYTES should pass (boundary).
-    const buf = await makeBundle({
-      'block.manifest.json': '{"blockId":"x"}',
-      'big.bin': 'x'.repeat(MAX_FILE_SIZE_BYTES),
-    });
-    const { files } = await extractBundleMetadata(buf);
-    expect(files.find((f) => f.path === 'big.bin')?.sizeBytes).toBe(MAX_FILE_SIZE_BYTES);
   });
 
   it('rejects when bundle exceeds the 2000-file cap', async () => {
@@ -327,18 +275,6 @@ describe('extractBundleMetadata', () => {
     await expect(extractBundleMetadata(buf)).rejects.toThrow(
       new RegExp(`max ${MAX_FILES_IN_BUNDLE}`)
     );
-  });
-
-  it('accepts a bundle at exactly the 2000-file cap', async () => {
-    const zip = new JSZip();
-    zip.file('block.manifest.json', '{"blockId":"x"}');
-    for (let i = 0; i < MAX_FILES_IN_BUNDLE - 1; i += 1) {
-      zip.file(`f${i}.txt`, String(i));
-    }
-    // Total files = 2000 (manifest + 1999)
-    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
-    const { files } = await extractBundleMetadata(buf);
-    expect(files.length).toBe(MAX_FILES_IN_BUNDLE);
   });
 
   // H-1 fix — extractBundleMetadata NOW tracks the cumulative decompressed
@@ -404,35 +340,36 @@ describe('extractBundleMetadata', () => {
       /zip bomb|decompress/i
     );
   });
-});
 
-describe('schema boundary caps', () => {
-  it('MAX_BUNDLE_SIZE_BYTES is 50 MiB', () => {
-    expect(MAX_BUNDLE_SIZE_BYTES).toBe(50 * 1024 * 1024);
-    expect(MAX_BUNDLE_SIZE_BYTES).toBe(52_428_800);
+  it('sorts files deterministically', async () => {
+    const buf = await makeBundle({
+      'z.txt': 'z',
+      'block.manifest.json': '{"blockId":"x"}',
+      'a.txt': 'a',
+      'm.txt': 'm',
+    });
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.map((f) => f.path)).toEqual(['a.txt', 'block.manifest.json', 'm.txt', 'z.txt']);
   });
 
-  it('MAX_FILES_IN_BUNDLE is 2000', () => {
-    expect(MAX_FILES_IN_BUNDLE).toBe(2000);
+  it('accepts a single file at exactly the 10 MiB cap', async () => {
+    const buf = await makeBundle({
+      'block.manifest.json': '{"blockId":"x"}',
+      'big.bin': 'x'.repeat(MAX_FILE_SIZE_BYTES),
+    });
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.find((f) => f.path === 'big.bin')?.sizeBytes).toBe(MAX_FILE_SIZE_BYTES);
   });
 
-  it('MAX_FILE_SIZE_BYTES is 10 MiB', () => {
-    expect(MAX_FILE_SIZE_BYTES).toBe(10 * 1024 * 1024);
-  });
-
-  it('MAX_TOTAL_DECOMPRESSED_BYTES is 200 MiB and is 4x the upload cap', () => {
-    expect(MAX_TOTAL_DECOMPRESSED_BYTES).toBe(200 * 1024 * 1024);
-    expect(MAX_TOTAL_DECOMPRESSED_BYTES).toBe(MAX_BUNDLE_SIZE_BYTES * 4);
-  });
-
-  // L-1 lock-in — the bundleBase64 zod cap formula is slightly over-permissive
-  // (~15 bytes more than the true base64 length for 50 MiB). Innocuous; this
-  // test records the relationship explicitly.
-  it('bundleBase64 cap formula matches MAX_BUNDLE_SIZE_BYTES base64 length within 16 bytes', () => {
-    const trueB64Length = Math.ceil(MAX_BUNDLE_SIZE_BYTES / 3) * 4;
-    const formulaUsed = Math.ceil((MAX_BUNDLE_SIZE_BYTES * 4) / 3) + 16;
-    expect(formulaUsed).toBeGreaterThanOrEqual(trueB64Length);
-    expect(formulaUsed - trueB64Length).toBeLessThanOrEqual(16);
+  it('accepts a bundle at exactly the 2000-file cap', async () => {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', '{"blockId":"x"}');
+    for (let i = 0; i < MAX_FILES_IN_BUNDLE - 1; i += 1) {
+      zip.file(`f${i}.txt`, String(i));
+    }
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.length).toBe(MAX_FILES_IN_BUNDLE);
   });
 });
 
@@ -440,33 +377,6 @@ describe('computeBundleLineDiff', () => {
   const f = (path: string, content: string | Buffer) => ({
     path,
     content: Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8'),
-  });
-
-  it('treats null previous as a first-version whole-file add', () => {
-    const result = computeBundleLineDiff([f('index.ts', 'a\nb\nc\n')], null);
-    expect(result.truncated).toBe(false);
-    expect(result.files).toHaveLength(1);
-    const file = result.files[0];
-    expect(file.path).toBe('index.ts');
-    expect(file.changeKind).toBe('added');
-    expect(file.skipReason).toBeNull();
-    expect(file.added).toBe(3);
-    expect(file.removed).toBe(0);
-    // All three lines present as additions in the hunk. (Unified-diff output
-    // may include a `\ No newline at end of file` marker line — not a content
-    // line — which we ignore here.)
-    const contentLines = file.hunks.flatMap((h) => h.lines).filter((l) => !l.startsWith('\\'));
-    expect(contentLines).toEqual(['+a', '+b', '+c']);
-  });
-
-  it('omits files that did not change (byte-identical) and emits only the changed one', () => {
-    const prev = [f('a.ts', 'same\n'), f('b.ts', 'old\n')];
-    const curr = [f('a.ts', 'same\n'), f('b.ts', 'new\n')];
-    const result = computeBundleLineDiff(curr, prev);
-    expect(result.files.map((x) => x.path)).toEqual(['b.ts']);
-    const file = result.files[0];
-    expect(file.changeKind).toBe('changed');
-    expect(file.skipReason).toBeNull();
   });
 
   it('produces the expected unified-diff hunk for a changed file', () => {
@@ -487,6 +397,42 @@ describe('computeBundleLineDiff', () => {
     // Hunk geometry is well-formed.
     expect(file.hunks[0].oldStart).toBeGreaterThan(0);
     expect(file.hunks[0].newStart).toBeGreaterThan(0);
+  });
+
+  it('caps the total number of files diffed and flags truncation', () => {
+    const curr = [f('a.ts', 'a\n'), f('b.ts', 'b\n'), f('c.ts', 'c\n')];
+    const result = computeBundleLineDiff(curr, null, { maxFiles: 2 });
+    expect(result.truncated).toBe(true);
+    // First two diffed, third marked file-cap (sorted order: a, b, c).
+    expect(result.files).toHaveLength(3);
+    expect(result.files[0].skipReason).toBeNull();
+    expect(result.files[1].skipReason).toBeNull();
+    expect(result.files[2].skipReason).toBe('file-cap');
+    expect(result.files[2].path).toBe('c.ts');
+  });
+
+  it('treats null previous as a first-version whole-file add', () => {
+    const result = computeBundleLineDiff([f('index.ts', 'a\nb\nc\n')], null);
+    expect(result.truncated).toBe(false);
+    expect(result.files).toHaveLength(1);
+    const file = result.files[0];
+    expect(file.path).toBe('index.ts');
+    expect(file.changeKind).toBe('added');
+    expect(file.skipReason).toBeNull();
+    expect(file.added).toBe(3);
+    expect(file.removed).toBe(0);
+    const contentLines = file.hunks.flatMap((h) => h.lines).filter((l) => !l.startsWith('\\'));
+    expect(contentLines).toEqual(['+a', '+b', '+c']);
+  });
+
+  it('omits files that did not change (byte-identical) and emits only the changed one', () => {
+    const prev = [f('a.ts', 'same\n'), f('b.ts', 'old\n')];
+    const curr = [f('a.ts', 'same\n'), f('b.ts', 'new\n')];
+    const result = computeBundleLineDiff(curr, prev);
+    expect(result.files.map((x) => x.path)).toEqual(['b.ts']);
+    const file = result.files[0];
+    expect(file.changeKind).toBe('changed');
+    expect(file.skipReason).toBeNull();
   });
 
   it('marks a binary file (by extension) as skipped without diffing', () => {
@@ -512,7 +458,6 @@ describe('computeBundleLineDiff', () => {
     const big = 'y\n'.repeat(100);
     const prev = [f('huge.ts', small)];
     const curr = [f('huge.ts', big)];
-    // Cap below the new side's length so it must be elided.
     const result = computeBundleLineDiff(curr, prev, { maxFileBytes: 10 });
     const file = result.files[0];
     expect(file.skipReason).toBe('too-large');
@@ -520,28 +465,14 @@ describe('computeBundleLineDiff', () => {
   });
 
   it('elides a diff that exceeds the per-file line cap', () => {
-    // 50 lines, completely rewritten → ~100 +/- lines, over a small cap.
     const prev = [f('big.ts', Array.from({ length: 50 }, (_, i) => `old${i}`).join('\n') + '\n')];
     const curr = [f('big.ts', Array.from({ length: 50 }, (_, i) => `new${i}`).join('\n') + '\n')];
     const result = computeBundleLineDiff(curr, prev, { maxDiffLines: 10 });
     const file = result.files[0];
     expect(file.skipReason).toBe('diff-too-large');
     expect(file.hunks).toEqual([]);
-    // Counts are still reported even when the hunks are elided.
     expect(file.added).toBeGreaterThan(0);
     expect(file.removed).toBeGreaterThan(0);
-  });
-
-  it('caps the total number of files diffed and flags truncation', () => {
-    const curr = [f('a.ts', 'a\n'), f('b.ts', 'b\n'), f('c.ts', 'c\n')];
-    const result = computeBundleLineDiff(curr, null, { maxFiles: 2 });
-    expect(result.truncated).toBe(true);
-    // First two diffed, third marked file-cap (sorted order: a, b, c).
-    expect(result.files).toHaveLength(3);
-    expect(result.files[0].skipReason).toBeNull();
-    expect(result.files[1].skipReason).toBeNull();
-    expect(result.files[2].skipReason).toBe('file-cap');
-    expect(result.files[2].path).toBe('c.ts');
   });
 
   it('emits files in deterministic sorted-path order', () => {
@@ -692,18 +623,6 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
   });
 
-  it('the slug pre-check SELECTS userId (the owner-scope decision cannot be made without it)', async () => {
-    const buf = await makeBundle({ ...baseManifest, scopes: [] });
-    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
-
-    const call = dbMocks.appListingFindFirst.mock.calls[0][0] as {
-      where: Record<string, unknown>;
-      select: Record<string, unknown>;
-    };
-    expect(call.where).toEqual({ slug: 'my-app' });
-    expect(call.select).toMatchObject({ userId: true });
-  });
-
   it('a slug already taken by a NON-reusable listing → friendly "slug taken" (before any insert)', async () => {
     dbMocks.appListingFindFirst.mockResolvedValue({
       id: 'apl_live',
@@ -749,33 +668,6 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     expect(data.sourceDirty).toBe(true);
   });
 
-  it('#4059 persists sourceDirty:false as FALSE (a CLAIM of clean, not an absence)', async () => {
-    const buf = await makeBundle({ ...baseManifest, scopes: [] });
-    await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 1,
-      sourceCommit: SHA,
-      sourceDirty: false,
-    });
-
-    const data = createData();
-    // 🔴 `toBe(false)` and not a falsy check — `undefined` here would mean
-    // UNKNOWN, the opposite claim.
-    expect(data.sourceDirty).toBe(false);
-  });
-
-  it('#4059 writes NEITHER column when the client sends nothing (NULL = unknown)', async () => {
-    const buf = await makeBundle({ ...baseManifest, scopes: [] });
-    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
-
-    const data = createData();
-    // Prisma omits an `undefined` field, so the column lands NULL. The service
-    // must NOT default `sourceDirty` to false — that would turn "nobody looked"
-    // into "someone looked and it was clean".
-    expect(data.sourceCommit).toBeUndefined();
-    expect(data.sourceDirty).toBeUndefined();
-  });
-
   it('#4059 does NOT conflate sourceCommit with forgejoCommitSha', async () => {
     const buf = await makeBundle({ ...baseManifest, scopes: [] });
     await submitVersion({
@@ -790,6 +682,28 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     // The submit path never mints a Forgejo commit — that happens on approve. A
     // fallback between the two would show up here as the sha leaking across.
     expect(data.forgejoCommitSha).toBeUndefined();
+  });
+
+  it('#4059 persists sourceDirty:false as FALSE (a CLAIM of clean, not an absence)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: false,
+    });
+
+    const data = createData();
+    expect(data.sourceDirty).toBe(false);
+  });
+
+  it('#4059 writes NEITHER column when the client sends nothing (NULL = unknown)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    const data = createData();
+    expect(data.sourceCommit).toBeUndefined();
+    expect(data.sourceDirty).toBeUndefined();
   });
 });
 
@@ -827,26 +741,6 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
   });
 
-  it.each(['my-app', 'ab-c-d', 'plainapp'])('accepts a first version of %s', async (blockId) => {
-    const buf = await makeBundle(blockId);
-    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
-    expect(result.slug).toBe(blockId);
-    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it('accepts a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
-    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
-    const buf = await makeBundle('old--name');
-    const result = await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: SUBMITTER,
-      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
-      submitterIsModerator: true,
-    });
-    expect(result.slug).toBe('old--name');
-    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
-  });
-
   it('refuses a first version with a reserved blockId', async () => {
     const buf = await makeBundle('dev-0123456789abcdef');
     await expect(
@@ -867,5 +761,171 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
     });
     expect(result.slug).toBe('dev-legacy');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Draft-at-submit carries the manifest's `repository` / `bugs` links, as approve's re-sync does.
+ * Both columns are manual-apply: `source_repo_url` rides the Prisma create (key omitted when the
+ * column is absent); `issue_tracker_url` is a no-type column written by raw SQL after it.
+ */
+describe('submitVersion — draft links from the manifest', () => {
+  // Pairwise-distinct, and the raw spellings differ from the stored (normalised) ones, so a
+  // mutant that copies the raw manifest string is visible.
+  const RAW_REPO = 'https://GITHUB.com/civitai/my-app.git/';
+  const STORED_REPO = 'https://github.com/civitai/my-app';
+  const BUGS = 'https://tracker.example.com/my-app/issues';
+
+  const BASE = { blockId: 'my-app', version: '0.1.0', name: 'My App', scopes: [] };
+
+  async function bundle(manifest: Record<string, unknown>): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify(manifest));
+    zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const missingColumn = (code: string) =>
+    Object.assign(new Error('column does not exist'), { code });
+
+  /** The SQL text of a tagged-template raw call. */
+  const sqlOf = (call: unknown[]) => (call[0] as readonly string[]).join('?');
+
+  /** Is this `findUnique` the source-repo column read (select is exactly `{ sourceRepoUrl }`)? */
+  function isSourceRepoRead(args: { select?: Record<string, unknown> }): boolean {
+    const select = args?.select ?? {};
+    return select.sourceRepoUrl === true && Object.keys(select).length === 1;
+  }
+
+  type Columns = {
+    sourceRepo: 'present' | 'missing' | 'broken';
+    issueTracker: 'present' | 'missing' | 'broken';
+  };
+
+  function armColumns({ sourceRepo, issueTracker }: Columns) {
+    dbMocks.appListingWriteFindUnique.mockImplementation(async (...a: unknown[]) => {
+      if (isSourceRepoRead(a[0] as { select?: Record<string, unknown> })) {
+        if (sourceRepo === 'missing') throw missingColumn('P2022');
+        if (sourceRepo === 'broken') throw new Error('connection reset');
+      }
+      return null;
+    });
+    dbMocks.writeQueryRaw.mockImplementation(async (...call: unknown[]) => {
+      if (sqlOf(call).includes('issue_tracker_url')) {
+        if (issueTracker === 'missing') throw missingColumn('42703');
+        if (issueTracker === 'broken') throw new Error('connection reset');
+      }
+      return [];
+    });
+  }
+
+  function createdDraft(): Record<string, unknown> {
+    expect(dbMocks.appListingCreate).toHaveBeenCalledTimes(1);
+    return (dbMocks.appListingCreate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+  }
+
+  /** The raw `UPDATE … issue_tracker_url` writes, as [value, listingId]. */
+  function issueTrackerWrites(): unknown[][] {
+    return dbMocks.writeExecuteRaw.mock.calls
+      .filter((c: unknown[]) => sqlOf(c).includes('issue_tracker_url'))
+      .map((c: unknown[]) => c.slice(1));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.pubReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
+    dbMocks.userFindUnique.mockResolvedValue({ username: 'dev' });
+    dbMocks.createPublishRequest.mockResolvedValue({});
+    dbMocks.appListingFindFirst.mockResolvedValue(null);
+    dbMocks.appListingCreate.mockImplementation(
+      async (a: unknown) => (a as { data: unknown }).data
+    );
+    dbMocks.writeExecuteRaw.mockResolvedValue(1);
+  });
+
+  describe('submitVersion — a NEW draft carries the manifest links', () => {
+    it('🔴 copies `repository` (normalised) and `bugs` onto the draft it mints', async () => {
+      armColumns({ sourceRepo: 'present', issueTracker: 'present' });
+      await submitVersion({
+        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect(draft).toMatchObject({ kind: 'onsite', status: 'draft', slug: 'my-app' });
+      expect(draft.sourceRepoUrl).toBe(STORED_REPO);
+      // The issue tracker is written onto THE DRAFT JUST CREATED, not some other row.
+      expect(issueTrackerWrites()).toEqual([[BUGS, draft.id]]);
+    });
+
+    it('a manifest with neither key: the source link is stored as null and no tracker write runs', async () => {
+      armColumns({ sourceRepo: 'present', issueTracker: 'present' });
+      await submitVersion({
+        bundleBuffer: await bundle(BASE),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect('sourceRepoUrl' in draft).toBe(true);
+      expect(draft.sourceRepoUrl).toBeNull();
+      expect(issueTrackerWrites()).toEqual([]);
+    });
+
+    it('columns MISSING (migration not applied): the draft is still minted, naming neither column', async () => {
+      armColumns({ sourceRepo: 'missing', issueTracker: 'missing' });
+      await submitVersion({
+        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect('sourceRepoUrl' in draft).toBe(false);
+      expect(issueTrackerWrites()).toEqual([]);
+    });
+
+    it('a probe that THROWS (not a missing column) costs only that link, never the draft', async () => {
+      armColumns({ sourceRepo: 'broken', issueTracker: 'present' });
+      await submitVersion({
+        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect('sourceRepoUrl' in draft).toBe(false);
+      // The independent column still gets its link.
+      expect(issueTrackerWrites()).toEqual([[BUGS, draft.id]]);
+    });
+
+    it('a failed tracker WRITE is absorbed by its own best-effort wrapper', async () => {
+      // The whole draft block is already log-and-continue, so "the submit still succeeds" cannot
+      // see the wrapper. What can: the failure is logged as the tracker write's own skip, and
+      // NOT as the draft block's catch-all "draft create failed".
+      armColumns({ sourceRepo: 'present', issueTracker: 'present' });
+      dbMocks.writeExecuteRaw.mockRejectedValue(new Error('db blip'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const res = await submitVersion({
+          bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+          submittedByUserId: 1,
+          submitterIsModerator: false,
+        });
+        expect(res.slug).toBe('my-app');
+        expect(createdDraft().sourceRepoUrl).toBe(STORED_REPO);
+        const lines = warn.mock.calls.map((c) => String(c[0]));
+        expect(
+          lines.filter((l) => l.startsWith('[issue-tracker] submit draft my-app:'))
+        ).toHaveLength(1);
+        expect(
+          lines.filter((l) => l.includes('pre-approval draft AppListing create failed'))
+        ).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

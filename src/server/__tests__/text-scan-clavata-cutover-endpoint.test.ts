@@ -26,7 +26,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   getTextScanMode: vi.fn(),
 }));
 
-const handler = (await import('~/pages/api/admin/temp/text-scan-clavata-cutover')).default;
+const handler = (await import('~/server/api-routes/admin/temp/text-scan-clavata-cutover')).default;
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 
 function run(body: unknown) {
@@ -86,6 +86,6 @@ describe('text-scan-clavata-cutover endpoint', () => {
   it('returns the status rows under targets', async () => {
     const res = await run({ action: 'status' });
     expect(res.status).toBe(200);
-    expect(res.body.targets).toHaveLength(13);
+    expect(res.body.targets).toHaveLength(11);
   });
 });

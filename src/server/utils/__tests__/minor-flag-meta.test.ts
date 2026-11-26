@@ -101,6 +101,18 @@ describe('stripMinorHashMeta', () => {
     ).toEqual({});
   });
 
+  it('hides the nsfw lock backfill record', () => {
+    expect(
+      stripMinorHashMeta({
+        nsfwLockBackfill: {
+          at: '2026-11-25T00:00:00Z',
+          bucket: 'scan-locks',
+          priorLockedProperties: ['nsfw'],
+        },
+      })
+    ).toEqual({});
+  });
+
   it('hides a restricted-verdict lead and its rulings from every client', () => {
     expect(
       stripMinorHashMeta({
@@ -137,6 +149,10 @@ describe('filterModelMetaForClient', () => {
     minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
     minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
     profanityMatches: ['badword'],
+    profanityEvaluation: {
+      reason: 'test reason',
+      metrics: { matchCount: 1, uniqueWords: 1, totalWords: 10, density: 0.1 },
+    },
   };
 
   it('strips all three minor-hash keys for a normal user', () => {
@@ -158,9 +174,13 @@ describe('filterModelMetaForClient', () => {
     expect(filterModelMetaForClient(full, false).unpublishedReason).toBe('other');
   });
 
-  it('still applies profanity filtering: hidden for users, kept for moderators', () => {
-    expect(filterModelMetaForClient(full, false).profanityMatches).toBeUndefined();
-    expect(filterModelMetaForClient(full, true).profanityMatches).toEqual(['badword']);
+  it('hides both profanity keys from users and keeps them for moderators', () => {
+    const user = filterModelMetaForClient(full, false);
+    expect(user).not.toHaveProperty('profanityMatches');
+    expect(user).not.toHaveProperty('profanityEvaluation');
+    const mod = filterModelMetaForClient(full, true);
+    expect(mod.profanityMatches).toEqual(['badword']);
+    expect(mod.profanityEvaluation).toEqual(full.profanityEvaluation);
   });
 
   it('does not mutate the input', () => {
@@ -351,17 +371,20 @@ describe('server-only keys', () => {
   const meta = {
     trainingStudioWorkflowId: 'wf',
     restoreCannotPromote: true,
+    comFaceIntentRelockSuppressed: { textHash: 'h', at: 'x' },
     commentsLocked: true,
   } as ModelMeta;
 
-  it('strips the cannotPromote restore marker from client meta, moderators included', () => {
+  // An owner who could send the suppression marker would stop the intent re-lock on their own text.
+  it('strips the cannotPromote restore marker and the intent relock suppression from client meta', () => {
     expect(stripServerOwnedMeta(meta)).toEqual({ commentsLocked: true });
   });
 
-  it('carries the restore marker across a wholesale meta write', () => {
+  it('carries the restore marker and the intent relock suppression across a wholesale meta write', () => {
     expect(pickServerOwnedMeta(meta)).toEqual({
       trainingStudioWorkflowId: 'wf',
       restoreCannotPromote: true,
+      comFaceIntentRelockSuppressed: { textHash: 'h', at: 'x' },
     });
   });
 });

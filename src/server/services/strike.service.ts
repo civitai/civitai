@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
@@ -54,10 +58,14 @@ export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
 // ============================================================================
 
 /**
- * Get the sum of active strike points for a user.
+ * Get the sum of active strike points for a user. Pass `dbWrite` where a strike issued moments ago
+ * must count.
  */
-export async function getActiveStrikePoints(userId: number): Promise<number> {
-  const [result] = await dbRead.$queryRaw<[{ sum: bigint | null }]>`
+export async function getActiveStrikePoints(
+  userId: number,
+  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
+): Promise<number> {
+  const [result] = await db.$queryRaw<[{ sum: bigint | null }]>`
     SELECT SUM(points) as sum
     FROM "UserStrike"
     WHERE "userId" = ${userId}
@@ -489,7 +497,7 @@ export async function evaluateStrikeEscalation(
           message: `Kept moderator mute on user ${userId} — strike de-escalation does not lift it`,
           userId,
           totalPoints,
-          muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null,
+          payload: { muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null },
         });
       }
 
@@ -691,6 +699,8 @@ export async function createStrike(
     notifyUser = true,
     onCreated,
   } = input;
+  if (isFeedbackCaptureOwner(userId))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: FEEDBACK_CAPTURE_OWNER_REFUSAL });
 
   const userArgs = { where: { id: userId }, select: { id: true } } as const;
   // An automated strike can land seconds after the account was created, ahead of the replica.

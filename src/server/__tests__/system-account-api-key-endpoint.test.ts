@@ -39,7 +39,7 @@ vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
 }));
 
 const logToAxiom = loggingMock.logToAxiom;
-const handler = (await import('~/pages/api/admin/system-account-api-key')).default;
+const handler = (await import('~/server/api-routes/admin/system-account-api-key')).default;
 
 type UserRow = {
   id: number;
@@ -57,6 +57,7 @@ type KeyRow = {
   userId: number;
   type: string;
   tokenScope: number;
+  tokenScopeWide?: bigint | null;
   expiresAt: Date | null;
 };
 type AccessRow = { app: string; path: string; roles: string[] };
@@ -68,7 +69,7 @@ let access: AccessRow[];
 const SYSTEM_ID = 1001;
 // Every single-bit scope inside Full except VaultWrite: OR'd with VaultWrite they make Full.
 const ALL_BUT_VAULT_WRITE = Object.entries(TokenScope)
-  .filter(([name, bit]) => bit !== 0 && name !== 'Full' && name !== 'VaultWrite')
+  .filter(([name, bit]) => bit !== 0n && name !== 'Full' && name !== 'VaultWrite')
   .filter(([, bit]) => (TokenScope.Full & bit) === bit)
   .map(([name]) => name);
 const systemUser = (overrides: Partial<UserRow> = {}): UserRow => ({
@@ -239,7 +240,14 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
   });
 
-  it.each(['WEBHOOK_TOKEN', 'JOB_TOKEN'])('is closed while its token repeats %s', async (other) => {
+  it.each([
+    'SYSTEM_ACCOUNT_PROFILE_TOKEN',
+    'PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN',
+    'WEBHOOK_TOKEN',
+    'WEBHOOK_TOKEN_PREVIOUS',
+    'PROBE_TOKEN',
+    'JOB_TOKEN',
+  ])('is closed while its token repeats %s', async (other) => {
     // Distinct per row: env overrides persist across tests in a file.
     const shared = `shared-${other}`.padEnd(40, 's');
     setEnv({ SYSTEM_ACCOUNT_KEY_TOKEN: shared, [other]: shared });
@@ -260,7 +268,9 @@ describe('POST /api/admin/system-account-api-key', () => {
         type: 'User',
         name: 'system',
         key: 'fake-hash-of-fake-plaintext-1',
-        tokenScope: TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead,
+        // UserRead | ModelsRead | MediaRead = 37, in both scope columns.
+        tokenScope: 37,
+        tokenScopeWide: 37n,
       }),
     ]);
     const expiresIn = apiKeys[0].expiresAt!.getTime() - before;
@@ -274,9 +284,12 @@ describe('POST /api/admin/system-account-api-key', () => {
       userId: SYSTEM_ID,
       scopes: ['UserRead', 'AIServicesRead', 'AIServicesWrite'],
     });
-    const mask = TokenScope.UserRead | TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
+    // UserRead | AIServicesRead | AIServicesWrite = 49153.
+    const mask = 49153;
     expect(status).toBe(201);
     expect(apiKeys[0].tokenScope).toBe(mask);
+    expect(apiKeys[0].tokenScopeWide).toBe(49153n);
+    // The response and the log line carry it as a JSON number.
     expect(body.tokenScope).toBe(mask);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -296,7 +309,8 @@ describe('POST /api/admin/system-account-api-key', () => {
   ])('grants %s', async (_label, scopes, mask) => {
     const { status } = await call({ userId: SYSTEM_ID, scopes });
     expect(status).toBe(201);
-    expect(apiKeys[0].tokenScope).toBe(mask);
+    expect(apiKeys[0].tokenScopeWide).toBe(mask);
+    expect(apiKeys[0].tokenScope).toBe(Number(mask));
   });
 
   it.each([

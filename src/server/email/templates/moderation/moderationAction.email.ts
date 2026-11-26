@@ -1,7 +1,8 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { lockReviewRulingMessage } from '@civitai/shared/lock-review';
 
 export type ModerationActionKind =
   | 'account-banned'
@@ -9,13 +10,16 @@ export type ModerationActionKind =
   | 'restriction-upheld'
   | 'restriction-overturned'
   | 'appeal-rejected'
-  | 'appeal-approved';
+  | 'appeal-approved'
+  | 'lock-review-rejected'
+  | 'lock-review-approved';
 
 export type ModerationActionEmailData = {
   to: string | null;
   username: string;
   kind: ModerationActionKind;
   reason?: string; // brief explanation; rendered only when present
+  intro?: string; // replaces the kind's intro, for copy that names what changed
   ctaUrl?: string; // optional override; negative kinds default to the support site
   // Affected content (used by appeal kinds): rendered as a list after the intro,
   // each linked when a public `url` is available. `label` is always shown.
@@ -75,10 +79,21 @@ export const moderationActionConfig: Record<ModerationActionKind, ModerationActi
       'We have reviewed your appeal and approved it. Any affected content and your account standing have been restored.',
     positive: true,
   },
+  'lock-review-rejected': {
+    subject: 'Civitai - Locked settings review',
+    heading: 'Locked Settings Review',
+    intro: lockReviewRulingMessage(false),
+    positive: false,
+  },
+  'lock-review-approved': {
+    subject: 'Civitai - Locked settings review',
+    heading: 'Locked Settings Review',
+    intro: lockReviewRulingMessage(true),
+    positive: true,
+  },
 };
 
-const SUPPORT_LINE =
-  'If you believe this was a mistake, contact our support team.';
+const SUPPORT_LINE = 'If you believe this was a mistake, contact our support team.';
 
 // Closing signature appended to every moderation email.
 const SIGNATURE = 'The Civitai Moderation Team';
@@ -88,12 +103,15 @@ const itemsLeadIn = (positive: boolean) =>
   positive ? 'This applies to the following:' : 'This decision applies to the following:';
 
 export const moderationActionEmail = createEmail({
+  template: 'moderationAction',
+  mailClass: 'transactional',
   header: ({ to, kind }: ModerationActionEmailData) => ({
     subject: moderationActionConfig[kind].subject,
     to,
   }),
-  html({ username, kind, reason, ctaUrl, items }: ModerationActionEmailData) {
-    const { heading, intro, positive } = moderationActionConfig[kind];
+  html({ username, kind, reason, ctaUrl, items, intro: introOverride }: ModerationActionEmailData) {
+    const { heading, positive } = moderationActionConfig[kind];
+    const intro = introOverride ? escapeHtml(introOverride) : moderationActionConfig[kind].intro;
 
     // Escape user/moderator-supplied text before interpolating into HTML —
     // prevents markup injection and stray characters (e.g. `<`, `&`) from
@@ -102,7 +120,9 @@ export const moderationActionEmail = createEmail({
     // never carry a reason — suppress the block even if a caller passes one.
     const reasonBlock =
       !positive && reason
-        ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>`
+        ? renderEmailCallout(`<strong>Reason:</strong><br/>${escapeHtml(reason)}`, {
+            accent: 'red',
+          })
         : '';
     // Negative outcomes link to the Terms of Service for a non-explicit policy
     // reference (positive outcomes are good news and get no policy link).
@@ -135,6 +155,9 @@ export const moderationActionEmail = createEmail({
     `;
 
     return simpleEmailWithTemplate({
+      icon: positive ? '✅' : '🛡️',
+      accent: positive ? 'green' : 'red',
+      eyebrow: 'Moderation',
       header: heading,
       body,
       ...(positive
@@ -144,8 +167,9 @@ export const moderationActionEmail = createEmail({
   },
 
   /** Plain-text fallback for clients that don't render HTML. */
-  text({ username, kind, reason, items }: ModerationActionEmailData) {
-    const { heading, intro, positive } = moderationActionConfig[kind];
+  text({ username, kind, reason, ctaUrl, items, intro: introOverride }: ModerationActionEmailData) {
+    const { heading, positive } = moderationActionConfig[kind];
+    const intro = introOverride ?? moderationActionConfig[kind].intro;
 
     const lines = [heading, '', `Hi ${username},`, '', intro];
     if (items?.length) {
@@ -154,8 +178,12 @@ export const moderationActionEmail = createEmail({
     }
     if (!positive && reason) lines.push('', `Reason:`, reason);
     if (!positive)
-      lines.push('', `For more information, review our Terms of Service: ${getBaseUrl()}/content/tos`);
-    if (!positive) lines.push('', SUPPORT_LINE);
+      lines.push(
+        '',
+        `For more information, review our Terms of Service: ${getBaseUrl()}/content/tos`
+      );
+    // The HTML's Contact Support button, so a plain-text reader gets its link too.
+    if (!positive) lines.push('', SUPPORT_LINE, `Contact Support: ${ctaUrl ?? SUPPORT_URL}`);
     lines.push('', `— ${SIGNATURE}`);
 
     return lines.join('\n') + '\n';
@@ -177,7 +205,12 @@ export const moderationActionEmail = createEmail({
       kind,
       reason: input.reason ?? 'Repeated violations of our Terms of Service.',
       ctaUrl: input.ctaUrl,
-      items: isAppeal
+      ...(kind === 'lock-review-approved' && {
+        intro: lockReviewRulingMessage(true, ['nsfw', 'tags']),
+      }),
+      items: kind.startsWith('lock-review-')
+        ? [{ url: 'https://civitai.com/models/12345', label: 'Model #12345' }]
+        : isAppeal
         ? [
             { url: 'https://civitai.com/images/12345', label: 'Image #12345' },
             { url: 'https://civitai.com/images/12346', label: 'Image #12346' },

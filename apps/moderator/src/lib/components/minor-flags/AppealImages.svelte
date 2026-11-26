@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
 
@@ -20,6 +21,13 @@
 {#if images.length}
   <div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
     {#each images as image, i (image.id)}
+      {#if image.restricted}
+        <div
+          class="grid aspect-[4/5] place-items-center rounded-lg border border-dark-4 bg-dark-6 p-2 text-center text-xs text-dark-2"
+        >
+          {RETRACTED_REFUSED}
+        </div>
+      {:else}
       <svelte:element
         this={blurred ? 'div' : 'a'}
         href={blurred ? undefined : getEdgeUrl(image.url, { type: mediaType(image), original: true })}
@@ -31,12 +39,12 @@
         role={blurred ? 'img' : undefined}
         class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
-        <EdgeMedia
-          src={image.url}
-          type={mediaType(image)}
+        <CdnOrRetractedMedia
+          item={{ id: image.id, url: image.url, type: mediaType(image) }}
           width={450}
           anim={false}
           hoverPlay={!blurred}
+          controls={!blurred}
           class={blurred
             ? 'size-full scale-110 object-cover object-top blur-xl'
             : 'size-full object-cover object-top'}
@@ -61,6 +69,7 @@
           {/if}
         </span>
       </svelte:element>
+      {/if}
     {/each}
   </div>
 {:else}

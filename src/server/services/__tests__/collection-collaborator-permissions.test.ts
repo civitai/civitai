@@ -16,6 +16,7 @@ function arrange({
   write = 'Private',
   contributorPermissions = null,
   collaborationDisabledAt = null,
+  archivedAt = null,
   hasAcceptedSeat = false,
   ownerId = OWNER_ID,
   mode = null,
@@ -24,6 +25,7 @@ function arrange({
   write?: 'Public' | 'Review' | 'Private';
   contributorPermissions?: string[] | null;
   collaborationDisabledAt?: Date | null;
+  archivedAt?: Date | null;
   hasAcceptedSeat?: boolean;
   ownerId?: number;
   mode?: string | null;
@@ -39,6 +41,7 @@ function arrange({
       mode,
       contributorPermissions,
       collaborationDisabledAt,
+      archivedAt,
       hasAcceptedSeat,
     },
   ]);
@@ -189,6 +192,58 @@ describe('collection collaborator permissions', () => {
     });
     expect(permissions.isCollaborator).toBe(false);
     expect(permissions.writeReview).toBe(false);
+  });
+
+  // Archive differs from collaboration-disable: it blocks the OWNER too, so no new entries land
+  // from anyone until it's unarchived.
+  it('blocks the owner from adding to an archived collection but keeps manage and read', async () => {
+    arrange({ write: 'Public', archivedAt: new Date('2026-08-31') });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OWNER_ID,
+    });
+    expect(permissions.archived).toBe(true);
+    expect(permissions.write).toBe(false);
+    expect(permissions.writeReview).toBe(false);
+    expect(permissions.manage).toBe(true);
+    expect(permissions.read).toBe(true);
+  });
+
+  it('blocks a moderator from adding to an archived collection', async () => {
+    arrange({ write: 'Public', archivedAt: new Date('2026-08-31') });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+      isModerator: true,
+    });
+    expect(permissions.write).toBe(false);
+    expect(permissions.writeReview).toBe(false);
+  });
+
+  it('blocks a collaborator from adding to an archived collection', async () => {
+    arrange({
+      write: 'Review',
+      contributorPermissions: ['VIEW', 'ADD', 'MANAGE'],
+      archivedAt: new Date('2026-08-31'),
+    });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OTHER_ID,
+    });
+    expect(permissions.write).toBe(false);
+    expect(permissions.writeReview).toBe(false);
+    // Manage is untouched, so an invited manager could still unarchive it.
+    expect(permissions.manage).toBe(true);
+  });
+
+  it('leaves write intact once a collection is unarchived', async () => {
+    arrange({ write: 'Public', archivedAt: null });
+    const permissions = await getUserCollectionPermissionsById({
+      id: COLLECTION_ID,
+      userId: OWNER_ID,
+    });
+    expect(permissions.archived).toBe(false);
+    expect(permissions.write).toBe(true);
   });
 });
 

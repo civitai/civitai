@@ -10,18 +10,16 @@
 // /api/metrics), same as trpc_procedure_duration etc. Cardinality-safe: only bounded `leg` / `outcome` labels,
 // NEVER per-user. The package emits the raw timings via injected callbacks (it stays infra-dep-free); this
 // module owns the prom-client wiring.
-import type { RefreshFailure } from '@civitai/auth';
-import {
-  registerCounter,
-  registerCounterWithLabels,
-  registerHistogram,
-} from '~/server/prom/client';
+import type { CookieSlot, RefreshFailure, RevocationDegradedVerdict } from '@civitai/auth';
+import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import { isHostForColor } from '~/server/utils/server-domain';
 
-// `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth/legacy by-userId read
+// `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth by-userId read
 // (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
 // key fetch; `revocation` = sysRedis TOKEN_STATE/ALL read.
 export type SessionLeg = 'identity' | 'identity-by-id' | 'hub-write' | 'jwks' | 'revocation';
-export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'error';
+// `breaker-open`: only the revocation leg, when the sys read breaker refused the read without waiting.
+export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'breaker-open' | 'error';
 
 // Sub-ms (cache/crypto) → ~30s (a fully-stalled hairpin, the incident tail). Covers the whole span so a
 // 40-90s stall lands in the +Inf bucket and the p99 is unmistakable.
@@ -33,7 +31,7 @@ const durationHistogram = registerHistogram({
     'Duration (seconds) of each session-resolution leg as seen by the CALLING app — the app→hub identity ' +
     'fetch (cookie + by-userId API-key/OAuth), the hub invalidate/refresh writes, the JWKS verify/refetch, ' +
     'and the sysRedis revocation read. The hub cannot observe these hops. Labeled by leg ' +
-    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|error).',
+    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|breaker-open|error).',
   labelNames: ['leg', 'outcome'] as const,
   buckets: [...SESSION_RESOLUTION_BUCKETS],
 });
@@ -61,48 +59,19 @@ export function observeSessionLeg(
   if (outcome === 'timeout') timeoutsCounter.inc({ leg });
 }
 
-// --- Session-token MINT rate ------------------------------------------------------------------------------
-// The store records only LAST TOUCH: `trackToken` writes the field value AND re-arms the field TTL on every
-// call, including the rolling refresh, so neither the value nor `30d - HTTL` is a creation time. No query
-// against session:user-tokens2 can recover a mint rate for any account — this counter is the only instrument
-// that can. See _local/docs/plans/session-system-audit-2026-08-08.md.
-
-// UNLABELLED on purpose, and this is the whole point of it. A labelled counter registers each child lazily
-// at the first `.inc()`, so an empty result is indistinguishable from "the build isn't deployed" or "the
-// module was never imported" — which is exactly the ambiguity this exists to resolve. An unlabelled counter
-// registers one series at module load and emits `0`, so:
-//   observable 0  -> deployed, loaded, and the legacy path genuinely has not run
-//   series absent -> the build or the import is the problem, and you know which
-// See .claude/skills/manage-alerts/reference/silent-failure-modes.md.
-//
-// `session_legacy_upgrade_total` below is labelled and therefore cannot answer that question on its own;
-// the two are meant to be read together.
-const legacyDecodeCounter = registerCounter({
-  name: 'session_legacy_decode_total',
+const revocationDegradedCounter = registerCounterWithLabels({
+  name: 'session_revocation_degraded_total',
   help:
-    'Requests whose session resolved from the LEGACY next-auth cookie rather than the hub token. A steady ' +
-    'observable 0 means the legacy path is genuinely dead; an ABSENT series means this instrument is not ' +
-    'loaded and no conclusion should be drawn from the upgrade counter either.',
+    'Session revocation checks answered without sysRedis because the read failed, timed out or was refused by ' +
+    'the read breaker, by verdict: deny_cached (a revocation marker this process had already read applied) or ' +
+    'allow_unknown (no known marker applied, so the session was allowed).',
+  labelNames: ['verdict'] as const,
 });
+for (const verdict of ['deny_cached', 'allow_unknown'] as const)
+  revocationDegradedCounter.inc({ verdict }, 0);
 
-/** Call on every request that resolved via the legacy decode, before any upgrade attempt. */
-export function observeLegacyDecode(): void {
-  legacyDecodeCounter.inc();
-}
-
-export type LegacyUpgradeOutcome = 'minted' | 'deduped' | 'no-token' | 'failed';
-
-const legacyUpgradeCounter = registerCounterWithLabels({
-  name: 'session_legacy_upgrade_total',
-  help:
-    'Legacy next-auth cookie → civ-token upgrade-on-read attempts. Each `minted` is a NEW jti tracked in ' +
-    'session:user-tokens2, so a sustained rate means clients are re-minting rather than persisting the ' +
-    'returned cookie. Bounded outcome label only — per-user attribution goes to the Axiom event.',
-  labelNames: ['outcome'] as const,
-});
-
-export function observeLegacyUpgrade(outcome: LegacyUpgradeOutcome): void {
-  legacyUpgradeCounter.inc({ outcome });
+export function observeRevocationDegraded(verdict: RevocationDegradedVerdict): void {
+  revocationDegradedCounter.inc({ verdict });
 }
 
 // --- Session-state fan-out (refreshSession / invalidateSession) -------------------------------------------
@@ -178,12 +147,34 @@ export function observeSessionStateUpdate(
 const rollFailedCounter = registerCounterWithLabels({
   name: 'session_roll_failed_total',
   help:
-    'Rolling session refreshes that did not return a fresh token: declined (the hub refused) or unreachable. ' +
+    'Rolling session refreshes that did not return a fresh token: declined (the hub refused), unavailable ' +
+    '(the hub answered 503 and asked for a retry) or unreachable. ' +
     'The user keeps the current token, so nothing else shows these.',
   labelNames: ['reason'] as const,
 });
-for (const reason of ['declined', 'unreachable'] as const) rollFailedCounter.inc({ reason }, 0);
+for (const reason of ['declined', 'unavailable', 'unreachable'] as const)
+  rollFailedCounter.inc({ reason }, 0);
 
 export function observeSessionRollFailed(reason: RefreshFailure): void {
   rollFailedCounter.inc({ reason });
+}
+
+// --- Session cookie slot ------------------------------------------------------------------------------------
+
+const SITE_COLORS = ['green', 'blue', 'red'] as const;
+
+const cookieSlotCounter = registerCounterWithLabels({
+  name: 'session_cookie_slot_total',
+  help:
+    'Requests whose hub session was read from the session cookie, by site (the domain color, or other) and ' +
+    'the cookie slot it was read from (host | shared).',
+  labelNames: ['site', 'slot'] as const,
+});
+for (const site of [...SITE_COLORS, 'other'])
+  for (const slot of ['host', 'shared'] as const) cookieSlotCounter.inc({ site, slot }, 0);
+
+export function observeSessionCookieSlot(host: string | undefined, slot: CookieSlot): void {
+  const h = host?.toLowerCase();
+  const site = (h && SITE_COLORS.find((color) => isHostForColor(h, color))) || 'other';
+  cookieSlotCounter.inc({ site, slot });
 }

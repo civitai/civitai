@@ -29,7 +29,7 @@ import {
 /**
  * MiniMax H3. Four builds behind one version picker: MiniMax's API build
  * (Standard, Highspeed or Lite tiers), the comfy build (LoRAs, seed, a turbo toggle that
- * reshapes the steps range), H3 Max through FAL (Max or Max Turbo, resolution, seed) and
+ * reshapes the steps range; also runs custom H3 checkpoints), H3 Max through FAL (Max or Max Turbo, resolution, seed) and
  * HeyGen Video 1 (resolution, seed; first frame only). Prompt is required even
  * with images (H3 rejects text-less requests). No negative prompt.
  */
@@ -74,14 +74,17 @@ const heygenResolutions = [
   { label: '2K', value: '2K' },
 ] as const;
 
-/** One lookup for the graph AND the handler — the lanes cannot drift. */
+/**
+ * One lookup for the graph AND the handler — the lanes cannot drift. Any other
+ * version is a custom H3 checkpoint, which runs on the comfy build.
+ */
 export const minimaxVariantOf = versionModeOf(
   {
-    comfy: minimaxVersionIds.comfy,
+    api: minimaxVersionIds['v1.0'],
     max: minimaxVersionIds.max,
     heygen: minimaxVersionIds.heygen,
   } as Record<MinimaxVariant, number>,
-  'api'
+  'comfy'
 );
 
 /** The orchestrator's lower duration bound per build; all four cap at 15. */
@@ -214,9 +217,7 @@ export const minimax = defineGraph<FamilyExt>({ scope: familyScope })
     _ext.workflow === 'txt2vid' || _ext.workflow === 'img2vid:ref2vid'
       ? aspectRatioDef({
           options:
-            modelIdOf(model) === minimaxVersionIds.comfy
-              ? minimaxComfyAspectRatios
-              : minimaxAspectRatios,
+            minimaxVariantOf(model) === 'comfy' ? minimaxComfyAspectRatios : minimaxAspectRatios,
           default: MINIMAX_DEFAULT_ASPECT_RATIO,
         })
       : null

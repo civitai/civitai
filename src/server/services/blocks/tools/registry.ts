@@ -66,7 +66,7 @@ import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
 // INHERITED FROM THE `/api/v1/blocks/*` PREFIX. `withBlockScope` gives a route
 // the JWT gate, the opaque-origin CORS, the rate limit and the audit row. It
 // does NOT give it the clamp — `blocks/models.ts` says so in its own words, that
-// `resolveCatalogBrowsingLevel` "remains the whole authority surface". A new
+// `resolveCatalogViewerBrowsingLevel` "remains the whole authority surface". A new
 // route under that prefix that forgets to call it is unclamped while looking
 // exactly as protected as its neighbours.
 //
@@ -435,8 +435,8 @@ export function boundToolResult(items: ProjectedModel[]): {
 // `parameters` object handed to the model is `z.toJSONSchema(argsSchema)`, not a
 // hand-written twin. That makes "the model was shown a contract the route does
 // not enforce" structurally impossible rather than test-enforced: there is only
-// one definition, and the served document is a projection of it. (The repo
-// already uses `z.toJSONSchema` this way in `~/server/utils/moderator-endpoint`.)
+// one definition, and the served document is a projection of it. (The moderator
+// app uses `z.toJSONSchema` this way in `apps/moderator/src/lib/server/api-endpoint.ts`.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const searchModelsArgs = z
@@ -635,9 +635,24 @@ export function blockToolDeclarations(): Array<{
     function: {
       name: tool.name,
       description: tool.description,
-      // `io: 'input'` because this describes what the model SENDS; matches the
-      // call form already used elsewhere in the repo.
-      parameters: z.toJSONSchema(tool.argsSchema, { io: 'input', unrepresentable: 'any' }),
+      parameters: toolParameters(tool.argsSchema),
     },
   }));
+}
+
+/**
+ * The JSON Schema a tool's `parameters` carries: `z.toJSONSchema` of its `argsSchema`, without
+ * the `$schema` key. `io: 'input'` because this describes what the model SENDS.
+ *
+ * 🔴 `$schema` is dropped because it is a url: a block echoes these declarations into its chat
+ * step's `tools[]`, and the generation input gate reads a whole url in step params as an image
+ * input.
+ */
+export function toolParameters(argsSchema: z.ZodType): Record<string, unknown> {
+  const schema: Record<string, unknown> = z.toJSONSchema(argsSchema, {
+    io: 'input',
+    unrepresentable: 'any',
+  });
+  delete schema.$schema;
+  return schema;
 }

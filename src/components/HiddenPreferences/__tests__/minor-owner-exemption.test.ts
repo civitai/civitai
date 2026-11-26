@@ -15,6 +15,7 @@ const emptyPrefs = (): HiddenPreferencesState => ({
   hiddenLoading: false,
   moderatedTags: [],
   systemHiddenTags: new Map(),
+  moderatedHiddenImages: new Map(),
 });
 
 function run<T extends 'models' | 'images' | 'collections' | 'posts' | 'bounties' | 'model3d'>(

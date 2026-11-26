@@ -17,11 +17,14 @@ type Harness = {
 };
 
 const TOKEN = 'test-watchdog-token';
-const THRESHOLD_MS = 300;
+const PROBE = 'test-watchdog-probe';
+const THRESHOLD_MS = 200;
 
 const harnesses: Harness[] = [];
 
-async function startWorker(opts: { thresholdMs?: number; token?: string } = {}): Promise<Harness> {
+async function startWorker(
+  opts: { thresholdMs?: number; token?: string; previousToken?: string; probeToken?: string } = {}
+): Promise<Harness> {
   const sab = new SharedArrayBuffer(8);
   const beat = new BigInt64Array(sab);
   Atomics.store(beat, 0, BigInt(Date.now()));
@@ -35,6 +38,8 @@ async function startWorker(opts: { thresholdMs?: number; token?: string } = {}):
       // concurrent test files can never collide on a fixed port.
       port: 0,
       token: opts.token ?? TOKEN,
+      previousToken: opts.previousToken,
+      probeToken: opts.probeToken,
       heartbeatIntervalMs: 50,
       pollMs: 25,
     },
@@ -110,36 +115,25 @@ describe('event-loop watchdog worker', () => {
     expect(metric(body, 'civitai_app_watchdog_heartbeat_age_ms')).toBeLessThan(THRESHOLD_MS);
   });
 
-  it('reports a wedge while the main thread is still stalled', async () => {
+  it('reports a wedge while the main thread is stalled, then closes it out on recovery dated from the last beat', async () => {
     const h = await startWorker();
 
-    // Withholding beats is an ABSORBING state: nothing can end the wedge except this
-    // test resuming the heartbeat, so there is no window to lose. Asserting the
-    // wedge while it is still in progress is the whole point — the duration
-    // histogram only observes on recovery, so a pod killed mid-wedge would never
-    // report one.
-    await sleep(THRESHOLD_MS * 3);
-
-    const { body } = await h.scrape();
-
-    expect(metric(body, 'civitai_app_watchdog_wedged')).toBe(1);
-    expect(metric(body, 'civitai_app_watchdog_heartbeat_age_ms')).toBeGreaterThanOrEqual(
-      THRESHOLD_MS
-    );
-    expect(metric(body, 'civitai_app_watchdog_current_wedge_seconds')).toBeGreaterThan(0);
-    // Not yet recovered, so nothing has been observed into the histogram.
-    expect(metric(body, 'civitai_app_watchdog_wedge_total')).toBe(0);
-    expect(metric(body, 'civitai_app_watchdog_wedge_duration_seconds_count')).toBe(0);
-  });
-
-  it('closes out the wedge on recovery and dates it from the last beat', async () => {
-    const h = await startWorker();
-
+    // Withholding beats is absorbing: only resuming the heartbeat ends the wedge. The duration
+    // histogram only observes on recovery, so a pod killed mid-wedge must still report one.
     const stalledFor = THRESHOLD_MS * 3;
     await sleep(stalledFor);
+
+    const stalled = (await h.scrape()).body;
+    expect(metric(stalled, 'civitai_app_watchdog_wedged')).toBe(1);
+    expect(metric(stalled, 'civitai_app_watchdog_heartbeat_age_ms')).toBeGreaterThanOrEqual(
+      THRESHOLD_MS
+    );
+    expect(metric(stalled, 'civitai_app_watchdog_current_wedge_seconds')).toBeGreaterThan(0);
+    expect(metric(stalled, 'civitai_app_watchdog_wedge_total')).toBe(0);
+    expect(metric(stalled, 'civitai_app_watchdog_wedge_duration_seconds_count')).toBe(0);
+
     h.beat.set([BigInt(Date.now())]);
-    // One poll interval is enough for the worker to see the fresh beat.
-    await sleep(150);
+    await sleep(THRESHOLD_MS / 2);
 
     const { body } = await h.scrape();
 
@@ -148,8 +142,7 @@ describe('event-loop watchdog worker', () => {
     expect(metric(body, 'civitai_app_watchdog_wedge_total')).toBe(1);
     expect(metric(body, 'civitai_app_watchdog_wedge_duration_seconds_count')).toBe(1);
 
-    // Dated from the last beat, not from detection: the recorded duration must cover
-    // the whole stall including the threshold, not just the part after we noticed.
+    // Dated from the last beat, not from detection, so the duration covers the threshold too.
     const observed = metric(body, 'civitai_app_watchdog_wedge_duration_seconds_sum') ?? 0;
     expect(observed).toBeGreaterThanOrEqual((stalledFor / 1000) * 0.9);
     expect(metric(body, 'civitai_app_watchdog_wedge_longest_seconds')).toBeCloseTo(observed, 5);
@@ -174,6 +167,61 @@ describe('event-loop watchdog worker', () => {
     // than the length short-circuit.
     expect((await h.scrape('x'.repeat(TOKEN.length))).status).toBe(401);
     expect((await h.scrape()).status).toBe(200);
+  });
+
+  it('accepts the previous token as well as the current one', async () => {
+    const h = await startWorker({ previousToken: 'test-watchdog-previous' });
+
+    expect((await h.scrape('test-watchdog-previous')).status).toBe(200);
+    expect((await h.scrape('nope')).status).toBe(401);
+    const { status, body } = await h.scrape(TOKEN);
+    expect(status).toBe(200);
+    // Counted by slot, so the previous value's last user on this port is visible.
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="current"} 1');
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="previous"} 1');
+  });
+
+  it('accepts the token as Authorization: Bearer, and refuses a wrong Bearer', async () => {
+    const h = await startWorker({ previousToken: 'test-watchdog-previous' });
+    const bearer = async (value: string) =>
+      (await fetch(`http://127.0.0.1:${h.port}/metrics`, { headers: { authorization: value } }))
+        .status;
+
+    expect(await bearer(`Bearer ${TOKEN}`)).toBe(200);
+    expect(await bearer('Bearer test-watchdog-previous')).toBe(200);
+    expect(await bearer(`Bearer ${'x'.repeat(TOKEN.length)}`)).toBe(401);
+    expect(await bearer(TOKEN)).toBe(401);
+    expect(await bearer('Bearer ')).toBe(401);
+  });
+
+  it('accepts PROBE_TOKEN as Bearer or ?token=, counted as slot probe', async () => {
+    const h = await startWorker({ probeToken: PROBE });
+    const bearer = async (value: string) =>
+      (await fetch(`http://127.0.0.1:${h.port}/metrics`, { headers: { authorization: value } }))
+        .status;
+
+    expect(await bearer(`Bearer ${PROBE}`)).toBe(200);
+    expect((await h.scrape(PROBE)).status).toBe(200);
+    expect(await bearer(`Bearer ${'x'.repeat(PROBE.length)}`)).toBe(401);
+    const { status, body } = await h.scrape(TOKEN);
+    expect(status).toBe(200);
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="current"} 1');
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="probe"} 2');
+  });
+
+  it('refuses the probe value while PROBE_TOKEN is unset or blank', async () => {
+    for (const probeToken of [undefined, '', '   ']) {
+      const h = await startWorker({ probeToken });
+      expect((await h.scrape(PROBE)).status).toBe(401);
+      expect((await h.scrape(probeToken ?? '')).status).toBe(401);
+      expect((await h.scrape(TOKEN)).status).toBe(200);
+    }
+  });
+
+  it('a blank previous token never lets an empty token through', async () => {
+    const h = await startWorker({ previousToken: '' });
+
+    expect((await h.scrape('')).status).toBe(401);
   });
 
   it('FAILS CLOSED: refuses to listen at all when no token is configured', async () => {

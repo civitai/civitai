@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { isProd } from '~/env/other';
 import { isWarm, getWarmState, getWarmDurationMs, didFailOpenTimeout } from '~/server/warmup';
 import { runHealthChecks } from '~/pages/api/health';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { ProbeEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
 // Warmup-gated readiness probe.
@@ -26,8 +26,8 @@ import { getRandomInt } from '~/utils/number-helpers';
 // Probes (startup + readiness) point HERE; liveness stays on /api/live. The
 // manifest probe-path change is a SEPARATE follow-up — this route must exist in
 // the running image BEFORE any probe is repointed at it, or every pod fails
-// startup. Same WebhookEndpoint `?token` gate as /api/health.
-export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse) => {
+// startup. Same ProbeEndpoint token gate as /api/health.
+export default ProbeEndpoint(async (_req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
   const warm = isWarm();
   // Surface warm observability in the body so an operator can tell a pod that

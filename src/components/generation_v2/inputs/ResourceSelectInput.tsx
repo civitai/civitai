@@ -13,10 +13,12 @@
  * switching between model versions (e.g., Flux Dev/Schnell, Wan 2.1/2.2).
  */
 
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import React, { useEffect, useMemo } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
-import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
+import { IconPlus, IconRotate, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { clampStrength } from '~/shared/constants/generation.constants';
 import { asResourceValue, defaultStrength } from '~/shared/utils/resource.utils';
@@ -27,7 +29,6 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useResourceDataContext, useResourceData } from './ResourceDataProvider';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import {
   ResourceItemContent,
   getResourceStatus,
@@ -127,15 +128,16 @@ function ResourceCard({
   const status = getResourceStatus(resource, options);
   const statusClasses = getStatusClasses(status);
   const resourceIsDisabled = isResourceDisabled(status);
+  // Flush in the model card, its buttons sit on the card without a fill of their own.
+  const buttonVariant = flush ? 'subtle' : 'light';
 
   return (
     <div
       className={clsx(
-        !flush && 'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
-        'bg-gray-0 dark:bg-dark-6',
-        'p-2',
-        statusClasses.border,
-        statusClasses.background
+        !flush && 'rounded-lg border border-solid',
+        !flush && (statusClasses.border ?? 'border-[var(--mantine-color-default-border)]'),
+        statusClasses.background ?? 'bg-[var(--mantine-color-body)]',
+        'p-2'
       )}
     >
       <ResourceItemContent
@@ -154,7 +156,7 @@ function ResourceCard({
             {/* Show Use Substitute button when resource has an available substitute */}
             {resourceIsDisabled && resource.substitute?.canGenerate && onChange && (
               <Button
-                variant="light"
+                variant={buttonVariant}
                 color="blue"
                 radius="xl"
                 size="compact-xs"
@@ -174,7 +176,7 @@ function ResourceCard({
             {/* Show Revert to Default button when resource is disabled and no substitute */}
             {resourceIsDisabled && !resource.substitute?.canGenerate && onRevertToDefault && (
               <Button
-                variant="light"
+                variant={buttonVariant}
                 radius="xl"
                 size="compact-xs"
                 onClick={onRevertToDefault}
@@ -186,7 +188,7 @@ function ResourceCard({
             {/* Show Swap button (even for disabled resources so user can swap to compatible one) */}
             {allowSwap && (
               <Button
-                variant="light"
+                variant={buttonVariant}
                 radius="xl"
                 size="compact-xs"
                 onClick={onSwap}
@@ -200,10 +202,11 @@ function ResourceCard({
                 aria-label="Remove resource"
                 size="sm"
                 variant="subtle"
+                color="red"
                 onClick={onRemove}
                 disabled={disabled}
               >
-                <IconX size={16} />
+                <IconTrash size={16} />
               </LegacyActionIcon>
             )}
           </>
@@ -233,6 +236,8 @@ export function ResourceSelectInput({
   versions,
   ...inputWrapperProps
 }: ResourceSelectInputProps) {
+  // On a phone the version is always a dropdown, one row instead of a row of chips.
+  const mobile = useGeneratorLayout() === 'mobile';
   const { registerResourceId, unregisterResourceId, getResourceData } = useResourceDataContext();
 
   // Fetch resource data for display (registration handled by form provider)
@@ -287,7 +292,7 @@ export function ResourceSelectInput({
     return (
       <Input.Wrapper {...inputWrapperProps}>
         <Button
-          variant="light"
+          variant={flush ? 'subtle' : 'light'}
           leftSection={<IconPlus size={18} />}
           fullWidth
           onClick={handleOpenResourceSearch}
@@ -329,7 +334,7 @@ export function ResourceSelectInput({
       {/* Version selector for models with multiple versions */}
       {showVersionSelector && versions && (
         <div className="mt-1">
-          {versions.length > MAX_VERSION_BUTTONS ? (
+          {versions.length > MAX_VERSION_BUTTONS || mobile ? (
             <SheetSelect
               aria-label="Version"
               sheetTitle="Version"
@@ -351,7 +356,7 @@ export function ResourceSelectInput({
               )}
             />
           ) : (
-            <ButtonGroupInput
+            <ChoiceGroup
               value={value?.id?.toString() ?? ''}
               onChange={handleVersionChange}
               data={versions.map(({ label, value: versionValue }) => ({

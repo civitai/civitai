@@ -9,6 +9,7 @@ import {
 } from '~/server/services/app-assistant/app-assistant.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
@@ -38,8 +39,9 @@ const query = z.object({
  *   GET ?conversationId=&idempotencyKey=[&purpose=preview] → `{ grant, expiresAt }`, or 403
  *   `consent_required` / `runner_off`
  */
-export default AuthedEndpoint(async (req, res, user) => {
+export default AuthedEndpoint(async (req, res, user, session) => {
   if (!requireFullScopeSession(req, res)) return;
+  if (refuseWhileImpersonating(session, res)) return;
   const refusal = await getAppAssistantRefusal({ user, req });
   if (refusal) return res.status(refusal.status).json({ error: refusal.error });
   const parsed = query.safeParse(req.query);
@@ -73,7 +75,7 @@ export default AuthedEndpoint(async (req, res, user) => {
       type: 'app-assistant.run-grant.failed',
       message: `App Assistant run grant failed for user ${user.id}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'Could not start an App Assistant reply right now' });
   }
 });

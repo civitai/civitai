@@ -92,6 +92,7 @@ const held = (overrides: Partial<HeldMysteryBox> = {}): HeldMysteryBox => ({
   team: 'Pink',
   art: null,
   listing: null,
+  packListing: null,
   tiers: [{ id: 7, key: 'common', name: 'Common', color: null, weight: 1, sortOrder: 0 }],
   contents: [content(1), content(2)],
   heldBoxItemIds: ['501', '502'],

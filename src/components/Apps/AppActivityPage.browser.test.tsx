@@ -108,17 +108,11 @@ const mocks = vi.hoisted(() => ({
 // eslint-disable-next-line react-hooks/rules-of-hooks -- see above
 const router = useRouter();
 
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => mocks.flags,
   useOptionalFeatureFlags: () => mocks.flags,
   useFeatureFlagsReady: () => true,
   FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
-}));
-
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'viewer', isModerator: false }),
 }));
 
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock).
@@ -393,7 +387,9 @@ beforeEach(() => {
 
 describe('the page opens on Recent activity', () => {
   test('🔴 with no ?tab, Recent activity is the selected tab', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(selectedPageTab()?.textContent?.trim()).toBe('Recent activity');
   });
@@ -403,20 +399,26 @@ describe('the page opens on Recent activity', () => {
     // entirely and happens to default to the right tab — which is half of what
     // `origin/main` did.
     router.query = { tab: 'permissions' };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(selectedPageTab()?.textContent?.trim()).toBe('Apps & permissions');
   });
 
   test('🔴 a repeated / unknown ?tab falls back rather than selecting nothing', async () => {
     router.query = { tab: 'no-such-tab' };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(selectedPageTab()?.textContent?.trim()).toBe('Recent activity');
   });
 
   test('🔴 switching a tab REWRITES the URL (replace, not push)', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Apps & permissions/ })).toBeInTheDocument();
     await page.getByRole('tab', { name: /Apps & permissions/ }).click();
     expect(router.replace).toHaveBeenCalledTimes(1);
@@ -434,7 +436,9 @@ describe('the page opens on Recent activity', () => {
 
   test('…and switching BACK to the default drops the key rather than writing it', async () => {
     router.query = { tab: 'permissions' };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     await page.getByRole('tab', { name: /Recent activity/ }).click();
     const [url] = vi.mocked(router.replace).mock.calls[0] as unknown as [
@@ -447,7 +451,9 @@ describe('the page opens on Recent activity', () => {
 describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
   test('present for a viewer WITH appBlocks', async () => {
     mocks.flags = { appBlocks: true, appBlocksPages: false, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(pageTab('Installs'), 'a slot-flag viewer must get the Installs tab').toBeDefined();
     expect(pageTab('Hidden'), 'a slot-flag viewer must get the Hidden tab').toBeDefined();
@@ -458,7 +464,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // install, so those tabs' own content — subscriptions, per-model installs, and the
     // per-model installs they have HIDDEN — is exactly what they cannot have.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(
       pageTab('Installs'),
@@ -492,7 +500,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // blank page with no error and no console warning.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
     router.query = { tab: 'hidden' };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     // 🔴 ASSERTED ON THE PANEL, NOT THE TAB. This viewer's bar now collapses (one visible
     // tab), so there is no `role="tab"` to select — the symptom this guards against is
     // "a blank page", and the panel's own copy is what proves a page rendered. Falling
@@ -506,7 +516,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // entirely, or one that hard-coded the default, would pass that test.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
     router.query = { tab: 'hidden' };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(selectedPageTab()?.textContent?.trim()).toBe('Hidden');
   });
@@ -518,7 +530,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // offering no choice. `appsActivityTabs.test.ts` holds the unit-tier tripwire that
     // `visibleActivityTabs(SLOTLESS).length === 1`.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(pageTabs().length, 'a one-tab bar must not render at all').toBe(0);
   });
@@ -527,7 +541,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // Without this, the collapse above is satisfied by a page that never renders a bar.
     // Same component, one flag flipped: four tabs survive, so the list is present.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(pageTabs().map((el) => el.textContent?.trim())).toEqual([
       'Recent activity',
@@ -543,7 +559,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // is what makes the collapse test above non-vacuous rather than a test of a 404.
     // Asserted on the PANEL, since this viewer's bar is collapsed by design.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(document.querySelector('[data-testid="mock-notfound"]')).toBeNull();
   });
@@ -554,7 +572,9 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     // unique to the 404, so this arm asserts the 404 MARKER, and the case above asserts
     // the marker's ABSENCE. Neither is inferable from the tab count any more.
     mocks.flags = { appBlocks: false, appBlocksPages: false, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByTestId('mock-notfound')).toBeInTheDocument();
     expect(pageTabs()).toHaveLength(0);
   });
@@ -566,7 +586,9 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // page body on this tab: the `AppsPageLayout` `actions` button AND `EmptyActivity`'s
     // anchor. One survives. Counting them is what makes this fail if the button comes
     // back under different words.
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     // TWO, not one: Mantine's `Tabs.Panel` is `keepMounted` by default, so every panel's
     // children are in the DOM regardless of which tab is selected. That is what makes ONE
@@ -608,7 +630,9 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // The exact cohort criterion 2 admitted: the PAGE gate passes on `appBlocksPages`,
     // the STORE gate passes on nothing.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: false };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     // The bar is collapsed for this viewer (one visible tab), so wait on the PANEL.
     await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(
@@ -625,7 +649,9 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // Same runtime flags, one store flag added. Without this the assertion above would
     // also be satisfied by empty states that lost their CTA for everyone.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     // Bar collapsed for this viewer — wait on the panel.
     await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(bodyMarketplaceLinks().length).toBeGreaterThan(0);
@@ -636,7 +662,9 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // `AppsPageLayout` `actions` button, whose text is `Browse marketplace` (no "the").
     // So the assertion above is red there on both the length AND the extra member, and
     // neither half is a copy match against a string this test invented.
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(bodyMarketplaceLinks().length).toBeGreaterThan(0);
     expect(
@@ -672,7 +700,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('renders the stored limit for an app the viewer granted the spend scope', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByTestId('app-budget-value')).toBeInTheDocument();
     // The whole line, not a keyword: "750" alone would pass on copy that said the
     // opposite of what the number means.
@@ -688,7 +718,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   // fixture was — twice a claim staled by the same commit that added the card. The count is
   // re-derived from `apps-grant-surface-line` below rather than restated a fourth time.)
   test('renders NO limit control for an app without the granted spend scope', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
     // Positive control: EVERY fixture app really rendered, so "one control" is a fact about
     // the grant and not about a panel that only drew one card.
@@ -757,7 +789,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     expect(ACTIVITY_EMPTY_LABEL.length).toBeGreaterThan(40);
     expect(ACTIVITY_LINE).not.toBe(CONSENT_LINE);
 
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
 
     const lines = Array.from(
@@ -776,7 +810,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
     expect(gridText).toContain(ACTIVITY_EMPTY_LABEL);
     expect(gridText.split(ACTIVITY_EMPTY_LABEL)).toHaveLength(2);
-    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: `BlockScopeList`'s own
+    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: the generic
     // fallback tells the viewer the app requests no permissions, which is false by construction
     // for a row minted from the app's scope-gated calls.
     expect(gridText).not.toContain("doesn't request any permissions");
@@ -796,7 +830,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
    */
   test('🔴 a query ERROR shows a read failure, not a claim about installs and consents', async () => {
     mocks.scopeGrantsError = true;
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect
       .element(page.getByText(/couldn't load your apps and permissions just now/))
       .toBeInTheDocument();
@@ -825,7 +861,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
    */
   test('🔴 a failed REFETCH keeps the list it already has — `isError` alone would discard it', async () => {
     mocks.scopeGrantsRefetchError = true;
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     // The rows the client still holds are rendered, not replaced.
     await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
     const gridText =
@@ -863,7 +901,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
    */
   test('🔴 an offline PAUSED first fetch shows the read failure, not a claim about the viewer', async () => {
     mocks.scopeGrantsPaused = true;
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect
       .element(page.getByText(/couldn't load your apps and permissions just now/))
       .toBeInTheDocument();
@@ -891,7 +931,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
    */
   test('⚠️ RESIDUAL: a refetch failure retaining an EMPTY list still reaches the empty state', async () => {
     mocks.scopeGrantsEmptyRefetchError = true;
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect
       .element(page.getByText(/No app has made a recorded API call on your account/))
       .toBeInTheDocument();
@@ -902,7 +944,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('Save sends the new limit for THAT app, and widens no scope', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await page.getByTestId('app-budget-edit').click();
     const input = page.getByTestId('app-budget-input');
     await input.clear();
@@ -921,7 +965,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('Remove limit sends an EXPLICIT null (the clear branch), not an omitted key', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await page.getByTestId('app-budget-edit').click();
     await page.getByTestId('app-budget-clear').click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
@@ -939,7 +985,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('an out-of-range value disables Save rather than sending one the server refuses', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await page.getByTestId('app-budget-edit').click();
     const input = page.getByTestId('app-budget-input');
     await input.clear();
@@ -949,7 +997,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   });
 
   test('warns when the entered limit is too low to fund a generation', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await page.getByTestId('app-budget-edit').click();
     // 750 (the stored value the editor opens on) is fundable → no warning.
     expect(page.getByTestId('app-budget-low-warning').elements()).toHaveLength(0);
@@ -1084,7 +1134,9 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the
     // DOM without a click — the same property the marketplace-anchor count above relies on.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
   });
 
@@ -1093,7 +1145,9 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     // resolution) rather than at a reword — the pin above is what covers rewording. Kept
     // because the two fail with very different messages, and this one names the defect.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     // 🔴 WAIT ON A STABLE ANCHOR, NOT ON THE COPY UNDER TEST — and the distinction is the
     // whole fix here. `renderWithProviders` is async and is not awaited, so an absence
     // check placed first runs against an EMPTY body and passes vacuously. This tripwire
@@ -1134,7 +1188,9 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     // all — the reassuring-zero shape. Assert a string the page MUST carry, taken from a
     // different panel so it cannot be satisfied by the copy under test.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
     expect(document.body.textContent ?? '').toContain(ACTIVITY_PANEL_ANCHOR);
   });
@@ -1146,7 +1202,9 @@ describe('Apps & permissions — each app is a collapsible row', () => {
   });
 
   test('starts collapsed with a permission count, and the toggle opens the plain-language list', async () => {
-    renderWithProviders(<AppActivityPage />);
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     // Spender is the fixture app holding a described, titled scope (`ai:write:budgeted`).
     const toggle = page.getByTestId('apps-grant-toggle').nth(1);
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -1160,20 +1218,20 @@ describe('Apps & permissions — each app is a collapsible row', () => {
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect.poll(() => panel.offsetHeight).toBeGreaterThan(0);
-    expect(panel.querySelector('[data-testid="block-scope-title"]')?.textContent).toBe(
+    expect(panel.querySelector('[data-testid="permission-title"]')?.textContent).toBe(
       'Run AI work with your Buzz'
     );
-    expect(panel.querySelector('[data-testid="block-scope-id"]')?.textContent).toBe(
-      'ai:write:budgeted'
-    );
+    expect(panel.textContent).not.toContain('ai:write:budgeted');
 
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(panel.offsetHeight).toBe(0);
   });
 
-  test('rows open independently, and an untitled scope falls back to its id alone', async () => {
-    renderWithProviders(<AppActivityPage />);
+  test('rows open independently, and an untitled scope falls back to a humanised title', async () => {
+    renderWithProviders(<AppActivityPage />, {
+      user: { id: 1, username: 'viewer', isModerator: false },
+    });
     const toggles = page.getByTestId('apps-grant-toggle');
     await toggles.nth(0).click();
     await toggles.nth(1).click();
@@ -1181,10 +1239,14 @@ describe('Apps & permissions — each app is a collapsible row', () => {
     await expect.element(toggles.nth(1)).toHaveAttribute('aria-expanded', 'true');
     // Demo App's `read:profile` has no plain title; Spender's scope does.
     const titlesIn = (toggle: HTMLElement) =>
-      document
-        .getElementById(toggle.getAttribute('aria-controls') ?? 'missing')
-        ?.querySelectorAll('[data-testid="block-scope-title"]').length;
-    expect(titlesIn(toggles.nth(0).element() as HTMLElement)).toBe(0);
-    expect(titlesIn(toggles.nth(1).element() as HTMLElement)).toBe(1);
+      Array.from(
+        document
+          .getElementById(toggle.getAttribute('aria-controls') ?? 'missing')
+          ?.querySelectorAll('[data-testid="permission-title"]') ?? []
+      ).map((t) => t.textContent);
+    expect(titlesIn(toggles.nth(0).element() as HTMLElement)).toEqual(['Read profile']);
+    expect(titlesIn(toggles.nth(1).element() as HTMLElement)).toEqual([
+      'Run AI work with your Buzz',
+    ]);
   });
 });

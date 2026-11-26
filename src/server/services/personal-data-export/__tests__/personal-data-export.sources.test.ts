@@ -1,0 +1,578 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import type { ExportWriter } from '../output';
+import { PG_FETCH_SIZE, exportPostgres, planPostgresExport } from '../sources/postgres';
+import {
+  MONGO_BATCH_SIZE,
+  MONGO_DOC_CAP,
+  MONGO_MAX_TIME_MS,
+  exportWorkflows,
+  USER_STEP_TYPES,
+  isUserGeneration,
+  reduceWorkflow,
+  workflowRange,
+  type WorkflowCollection,
+} from '../sources/mongo';
+
+const SUBJECT = 777;
+
+/** Collects every file in memory, the way the zip would receive them. */
+function memoryWriter() {
+  const files = new Map<string, string>();
+  const writer: ExportWriter = {
+    async addFile(name, content) {
+      let text = '';
+      if (typeof content === 'string') text = content;
+      else for await (const chunk of content) text += chunk;
+      files.set(name, text);
+    },
+  };
+  return { files, writer };
+}
+
+/**
+ * A pg client whose cursor serves `rowsFor(table)` in FETCH-sized pages. Tables named in `failOn`
+ * fail at DECLARE. Bounded: a FETCH past the data returns an empty page, and the number of FETCHes is
+ * capped so a paging bug reads as a count, not a hang.
+ */
+function fakeClient(opts: {
+  rowsFor: (table: string) => Record<string, unknown>[];
+  failOn?: Set<string>;
+  failMidStream?: string;
+  /** Catalog rows for the index check: (table, leading column | null, estimated rows). */
+  catalog?: { table: string; column: string | null; est: string }[];
+}) {
+  let current: { rows: Record<string, unknown>[]; offset: number; table: string } | null = null;
+  let fetches = 0;
+  let released = 0;
+  // Like Postgres: after an error, everything but ROLLBACK fails until the transaction ends.
+  let aborted = false;
+  const statements: string[] = [];
+  const client = {
+    async query(sql: string) {
+      statements.push(sql);
+      if (sql === 'ROLLBACK' || sql === 'COMMIT') {
+        aborted = false;
+        current = null;
+        return { rows: [] };
+      }
+      if (aborted) throw new Error('current transaction is aborted');
+      if (sql.startsWith('SELECT cl.relname')) return { rows: opts.catalog ?? [] };
+      const declare =
+        /^DECLARE export_cursor NO SCROLL CURSOR FOR SELECT .*? FROM "([^"]+)" WHERE/s.exec(sql);
+      if (declare) {
+        if (opts.failOn?.has(declare[1])) {
+          aborted = true;
+          throw new Error(`boom ${declare[1]}`);
+        }
+        current = { rows: opts.rowsFor(declare[1]), offset: 0, table: declare[1] };
+        return { rows: [] };
+      }
+      if (sql.startsWith('FETCH')) {
+        if (++fetches > 10_000) throw new Error('too many FETCHes');
+        if (!current) throw new Error('FETCH with no cursor');
+        if (current.table === opts.failMidStream && current.offset > 0)
+          throw new Error('mid-stream');
+        const page = current.rows.slice(current.offset, current.offset + PG_FETCH_SIZE);
+        current.offset += page.length;
+        return { rows: page };
+      }
+      return { rows: [] };
+    },
+    release: () => {
+      released++;
+    },
+  };
+  return { client, statements, fetches: () => fetches, released: () => released };
+}
+
+describe('exportPostgres', () => {
+  const comments = Array.from({ length: PG_FETCH_SIZE * 2 + 3 }, (_, i) => ({
+    id: i + 1,
+    userId: SUBJECT,
+    content: `c${i}`,
+  }));
+
+  it('writes every row across pages, and the manifest counts what was written', async () => {
+    const { files, writer } = memoryWriter();
+    const { client, statements, released } = fakeClient({
+      rowsFor: (t) => (t === 'CommentV3' ? comments : []),
+    });
+    const result = await exportPostgres({
+      userId: SUBJECT,
+      writer,
+      connect: async () => client as never,
+      onNote: () => undefined,
+      onError: () => undefined,
+    });
+    const entry = result.files.find((f) => f.file === 'data/postgres/CommentV3.csv');
+    const csv = files.get('data/postgres/CommentV3.csv') ?? '';
+    const dataLines = csv.split('\r\n').filter(Boolean).length - 1;
+    expect(dataLines).toBe(comments.length);
+    expect(entry?.rows).toBe(comments.length);
+    expect(entry?.status).toBe('complete');
+    // Each table is read in its own read-only transaction with a statement limit scoped to it, and
+    // the pooled connection goes back.
+    const begins = statements.filter((q) => q === 'BEGIN READ ONLY').length;
+    expect(begins).toBe(result.files.length);
+    expect(statements.filter((q) => q.startsWith('SET LOCAL statement_timeout')).length).toBe(
+      begins
+    );
+    expect(statements.some((q) => /^SET statement_timeout/.test(q))).toBe(false);
+    expect(released()).toBe(1);
+  });
+
+  it('skips, as unavailable, a large table whose subject column leads no index', async () => {
+    const { writer } = memoryWriter();
+    const { client, statements } = fakeClient({
+      rowsFor: () => [],
+      catalog: [
+        { table: 'CommentV3', column: null, est: '90000000' },
+        { table: 'CommentV3', column: 'id', est: '90000000' },
+        { table: 'Article', column: null, est: '90000000' },
+        { table: 'Article', column: 'userId', est: '90000000' },
+      ],
+    });
+    const result = await exportPostgres({
+      userId: SUBJECT,
+      writer,
+      connect: async () => client as never,
+      onNote: () => undefined,
+      onError: () => undefined,
+    });
+    const status = (t: string) =>
+      result.files.find((f) => f.file === `data/postgres/${t}.csv`)?.status;
+    expect(status('CommentV3')).toBe('not-included');
+    expect(status('Article')).toBe('complete');
+    expect(statements.some((q) => /CURSOR FOR SELECT .*? FROM "CommentV3" WHERE/s.test(q))).toBe(
+      false
+    );
+  });
+
+  it('writes no file for an empty table but still lists it with zero rows', async () => {
+    const { files, writer } = memoryWriter();
+    const { client } = fakeClient({ rowsFor: () => [] });
+    const result = await exportPostgres({
+      userId: SUBJECT,
+      writer,
+      connect: async () => client as never,
+      onNote: () => undefined,
+      onError: () => undefined,
+    });
+    expect(files.size).toBe(0);
+    expect(result.files.length).toBe(planPostgresExport(SUBJECT).length);
+    expect(result.files.every((f) => f.rows === 0)).toBe(true);
+  });
+
+  it('marks a table that fails before its file starts unavailable, and goes on', async () => {
+    const { files, writer } = memoryWriter();
+    const errors: string[] = [];
+    const { client } = fakeClient({
+      rowsFor: (t) => (t === 'CommentV3' ? comments.slice(0, 2) : []),
+      failOn: new Set(['Article']),
+    });
+    const result = await exportPostgres({
+      userId: SUBJECT,
+      writer,
+      connect: async () => client as never,
+      onNote: () => undefined,
+      onError: (t) => errors.push(t),
+    });
+    expect(result.files.find((f) => f.file === 'data/postgres/Article.csv')?.status).toBe(
+      'unavailable'
+    );
+    expect(errors).toEqual(['Article']);
+    expect(files.has('data/postgres/CommentV3.csv')).toBe(true);
+  });
+
+  it('fails the whole attempt when a table fails after its file started', async () => {
+    const { writer } = memoryWriter();
+    const { client } = fakeClient({
+      rowsFor: (t) => (t === 'CommentV3' ? comments : []),
+      failMidStream: 'CommentV3',
+    });
+    await expect(
+      exportPostgres({
+        userId: SUBJECT,
+        writer,
+        connect: async () => client as never,
+        onNote: () => undefined,
+        onError: () => undefined,
+      })
+    ).rejects.toThrow('mid-stream');
+  });
+
+  it('counts internal notes and hands them over without writing them into the data file', async () => {
+    const { files, writer } = memoryWriter();
+    const notes: string[] = [];
+    const { client } = fakeClient({
+      rowsFor: (t) =>
+        t === 'Appeal'
+          ? [
+              { id: 1, userId: SUBJECT, internalNotes: 'secret note', resolvedReason: 'mod text' },
+              { id: 2, userId: SUBJECT, internalNotes: null },
+            ]
+          : [],
+    });
+    const result = await exportPostgres({
+      userId: SUBJECT,
+      writer,
+      connect: async () => client as never,
+      onNote: (n) => notes.push(n.text),
+      onError: () => undefined,
+    });
+    expect(result.noteCount).toBe(2);
+    expect(notes.sort()).toEqual(['mod text', 'secret note']);
+    expect(files.get('data/postgres/Appeal.csv')).not.toContain('secret note');
+    expect(files.get('data/postgres/Appeal.csv')).not.toContain('mod text');
+  });
+});
+
+describe('exportWorkflows', () => {
+  it('reads the id range for the user, by _id, with the batch, time and cap limits', async () => {
+    let seen: unknown[] = [];
+    const collection: WorkflowCollection = {
+      find(filter, options) {
+        seen = [filter, options];
+        return Object.assign(
+          (async function* () {
+            yield* [];
+          })(),
+          { close: async () => undefined }
+        );
+      },
+    };
+    await exportWorkflows({ userId: SUBJECT, writer: memoryWriter().writer, collection });
+    expect(seen).toEqual([
+      { _id: { $gte: '777-', $lt: '777.' } },
+      {
+        sort: { _id: 1 },
+        hint: '_id_',
+        batchSize: MONGO_BATCH_SIZE,
+        maxTimeMS: MONGO_MAX_TIME_MS,
+        limit: MONGO_DOC_CAP + 1,
+      },
+    ]);
+  });
+
+  it('marks the file partial past the cap, and stops reading', async () => {
+    let yielded = 0;
+    const collection: WorkflowCollection = {
+      find() {
+        return Object.assign(
+          (async function* () {
+            for (let i = 0; i < MONGO_DOC_CAP + 50; i++) {
+              yielded++;
+              yield { _id: `777-${i}`, Steps: [{ _t: 'imageGen' }] };
+            }
+          })(),
+          { close: async () => undefined }
+        );
+      },
+    };
+    const entry = await exportWorkflows({
+      userId: SUBJECT,
+      writer: memoryWriter().writer,
+      collection,
+    });
+    expect(entry.status).toBe('partial');
+    expect(entry.rows).toBe(MONGO_DOC_CAP);
+    expect(yielded).toBeLessThan(MONGO_DOC_CAP + 2);
+  });
+
+  /** Stored shape: PascalCase keys, except inside Metadata, which keeps the site's own camelCase. */
+  const storedDoc = () => ({
+    _id: '777-1',
+    Status: 3,
+    CreatedAt: new Date('2026-11-06T00:00:00Z'),
+    Tags: ['gen'],
+    CallbackUrl: 'https://x/cb?token=1',
+    AccessToken: 'abc',
+    PromptScan: { ScanContract: 'c', Scores: { A: 0.9 }, TriggeredLabels: ['x'] },
+    TraceContext: { TraceParent: '00-abc-def-01' },
+    Metadata: { params: { _v: { prompt: 'meta cat', seed: 1 } }, purpose: 'internal' },
+    Steps: [
+      {
+        _t: 'textToImage',
+        Name: '0',
+        Input: { Prompt: 'a cat', NegativePrompt: 'blurry', Seed: 5, User: 'u', Trace: 1 },
+        Output: {
+          Images: [
+            { _id: 'ok', Url: 'https://blob/ok', Width: 512, JobId: 'j', BlockedReason: null },
+            { _id: 'bad', Url: 'https://blob/bad', BlockedReason: 'policy' },
+          ],
+          ModerationStatus: 1,
+          Rating: { general: 0.9 },
+        },
+        State: { DestinationBlobKey: 'k', JobImageHashes: { j: ['h'] }, Errors: ['e'] },
+        Metadata: { requested_model: 'm' },
+      },
+    ],
+  });
+
+  it("keeps the user's own prompt and settings and the outputs not blocked", () => {
+    const out = reduceWorkflow(storedDoc()) as Record<string, any>;
+    expect(out.Steps[0].Input).toEqual({ Prompt: 'a cat', NegativePrompt: 'blurry', Seed: 5 });
+    expect(out.Metadata.params).toEqual({ _v: { prompt: 'meta cat', seed: 1 } });
+    expect(out.Steps[0].Output.Images).toEqual([{ _id: 'ok', Url: 'https://blob/ok', Width: 512 }]);
+    expect(out).toMatchObject({ _id: '777-1', Status: 3 });
+    expect(out.CreatedAt).toBe('2026-11-06T00:00:00.000Z');
+  });
+
+  it('writes only listed keys: no prompt check, credentials, storage keys, trace or state', () => {
+    const out = reduceWorkflow(storedDoc()) as Record<string, any>;
+    for (const k of ['PromptScan', 'TraceContext', 'CallbackUrl', 'AccessToken'])
+      expect(out, k).not.toHaveProperty(k);
+    expect(out.Metadata).not.toHaveProperty('purpose');
+    expect(Object.keys(out.Steps[0]).sort()).toEqual(['Input', 'Name', 'Output', '_t']);
+    expect(Object.keys(out.Steps[0].Output)).toEqual(['Images']);
+    const text = JSON.stringify(out);
+    for (const s of ['Scores', 'TriggeredLabels', 'ScanContract', 'https://blob/bad', '00-abc'])
+      expect(text, s).not.toContain(s);
+  });
+
+  it('writes no workflow tags, so a pipeline-naming tag on a kept generation stays out', () => {
+    const out = reduceWorkflow({ ...storedDoc(), Tags: ['gen', 'textScan', 'moderation-x'] });
+    expect(out).not.toHaveProperty('Tags');
+    const text = JSON.stringify(out);
+    for (const s of ['textScan', 'moderation-x']) expect(text, s).not.toContain(s);
+  });
+
+  it('drops an unknown key the orchestrator adds later, at the top and inside a step', () => {
+    const doc = { ...storedDoc(), NewInternalThing: { x: 1 } };
+    doc.Steps[0] = { ...doc.Steps[0], NewStepThing: 'y' } as (typeof doc.Steps)[0];
+    const out = reduceWorkflow(doc) as Record<string, any>;
+    expect(out).not.toHaveProperty('NewInternalThing');
+    expect(out.Steps[0]).not.toHaveProperty('NewStepThing');
+  });
+
+  describe('which workflows are written', () => {
+    const step = (
+      _t: string,
+      Name: string,
+      Input: object = { MediaUrl: 'https://other/u.png' }
+    ) => ({
+      _t,
+      Name,
+      Input,
+    });
+    // Shapes the site's own checks submit, most with no purpose set, so the step types alone must
+    // exclude them.
+    const siteChecks: Record<string, object> = {
+      'text moderation': {
+        Metadata: { mode: 'text', entityType: 'Article', entityId: 1 },
+        Steps: [step('XGuardModerationStep', 'textModeration', { Mode: 'text', Text: 'OTHER' })],
+      },
+      'prompt moderation': {
+        Metadata: {},
+        Steps: [step('xGuardModeration', 'promptModeration', { PositivePrompt: 'OTHER' })],
+      },
+      'image scan': {
+        Metadata: { imageId: 1 },
+        Steps: [
+          step('WdTaggingStep', 'tags', { MediaUrl: 'https://other/u.png', Threshold: 0.3 }),
+          step('MediaRatingStep', 'rating'),
+          step('mediaHash', 'hash'),
+        ],
+      },
+      'perceptual hash': { Metadata: {}, Steps: [step('mediaHash', '')] },
+      'audio moderation': {
+        Metadata: { scan: 'audio' },
+        Steps: [step('audioCaptioning', 'audio')],
+      },
+      'video scan': {
+        Metadata: { imageId: 1 },
+        Steps: [
+          step('videoFrameExtraction', 'frames'),
+          step('repeat', 'r', { Template: { $type: 'wdTagging', Name: 'tags' } }),
+        ],
+      },
+      'language model check': {
+        Metadata: { purpose: 'text-scan-preview' },
+        Steps: [
+          step('ChatCompletionStep', 'textScan', {
+            Messages: [{ _t: 'SystemMessage', Content: 'SYSTEM-TEXT' }],
+          }),
+        ],
+      },
+      'unknown future step type': { Metadata: {}, Steps: [step('someNewInternalStep', '0')] },
+      'a step with no type': { Metadata: {}, Steps: [{ Name: '0', Input: {} }] },
+      'a step that is not an object': { Metadata: {}, Steps: [step('imageGen', '0'), null] },
+      'a scan marker on a generation step': {
+        Metadata: { scan: 'audio' },
+        Steps: [step('imageGen', '0')],
+      },
+      'no steps': { Metadata: {}, Steps: [] },
+      'a site purpose on a generation step': {
+        Metadata: { purpose: 'moderation-review' },
+        Steps: [step('imageGen', '0')],
+      },
+      'a generation followed by a check step': {
+        Metadata: {},
+        Steps: [step('imageGen', '0'), step('wdTagging', 'tags')],
+      },
+      'a generation step named as a scan': {
+        Metadata: {},
+        Steps: [step('textToImage', '0'), step('textToImage', 'promptScan')],
+      },
+    };
+
+    for (const [name, doc] of Object.entries(siteChecks))
+      it(`leaves out ${name}`, () =>
+        expect(isUserGeneration({ _id: '777-9', ...doc })).toBe(false));
+
+    it('keeps generations, whichever way the step type is stored', () => {
+      expect(isUserGeneration(storedDoc())).toBe(true);
+      for (const purpose of [
+        'checkpoint-merge',
+        'preview-style',
+        'generationSource',
+        'trainingData',
+      ])
+        expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(true);
+      for (const purpose of [
+        'text-scan-preview',
+        'moderation-review',
+        'audit',
+        'textScan',
+        'imageReview',
+        'promptAudit',
+        'scanning',
+        'checks',
+        'reviewed',
+        'scanned',
+        'classifierRun',
+        'HTMLScan',
+      ])
+        expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(false);
+      for (const t of [...USER_STEP_TYPES, 'ImageGenStep', 'VideoGenStep'])
+        expect(isUserGeneration({ Steps: [step(t, '0'), step('textToImage', '1')] }), t).toBe(true);
+    });
+
+    /**
+     * The generator's own list of what a user sees: `normalizeStepOutput`'s switch, read as text
+     * (step type -> the output keys it reads). A type or output key added there and not here would
+     * silently drop those generations or their files from the export.
+     */
+    const generatorOutputs = () => {
+      const src = readFileSync(
+        resolve(__dirname, '../../orchestrator/orchestration-new.service.ts'),
+        'utf8'
+      );
+      const start = src.indexOf('export function normalizeStepOutput');
+      const end = src.indexOf('\n}\n', start);
+      if (start < 0 || end < 0 || !src.slice(start, end).includes('switch (step.$type)'))
+        throw new Error(
+          'normalizeStepOutput is no longer a switch on step.$type: update this test'
+        );
+      const parts = src.slice(start, end).split(/case '(\w+)':/);
+      const out = new Map<string, string[]>();
+      let next: string[] = [];
+      for (let i = parts.length - 2; i >= 1; i -= 2) {
+        const keys = [...parts[i + 1].matchAll(/output\.(\w+)/g)].map((m) => m[1]);
+        // A case with no body of its own falls through to the next one.
+        if (keys.length) next = [...new Set(keys)];
+        out.set(parts[i], next);
+      }
+      // polyGen's primary model is read through a helper (getPolyGenPrimaryModel).
+      out.get('polyGen')?.push('model');
+      return out;
+    };
+
+    it('keeps every step type whose output the generator shows the user', () => {
+      const types = [...generatorOutputs().keys()];
+      expect(types.length).toBeGreaterThan(10);
+      for (const c of types) expect(USER_STEP_TYPES.has(c.toLowerCase()), c).toBe(true);
+    });
+
+    it('writes every output file the generator shows the user, as a link', () => {
+      const pascal = (k: string) => k[0].toUpperCase() + k.slice(1);
+      for (const [type, keys] of generatorOutputs()) {
+        expect(keys.length, `${type} reads no output keys`).toBeGreaterThan(0);
+        for (const key of keys) {
+          const url = `https://blob/${type}-${key}`;
+          const file = { Url: url, Width: 1, JobId: 'j' };
+          const value =
+            key === 'basicAnimations' ? { WalkingModel: file } : key.endsWith('s') ? [file] : file;
+          const doc = {
+            ...storedDoc(),
+            Steps: [{ _t: type, Name: '0', Output: { [pascal(key)]: value } }],
+          };
+          const text = JSON.stringify(reduceWorkflow(doc));
+          expect(text, `${type}.${key}`).toContain(url);
+          expect(text, `${type}.${key}`).not.toContain('JobId');
+        }
+      }
+    });
+
+    it('writes none of the check workflows into the file', async () => {
+      const collection: WorkflowCollection = {
+        find() {
+          return Object.assign(
+            (async function* () {
+              yield storedDoc();
+              for (const d of Object.values(siteChecks)) yield { _id: '777-9', ...d };
+            })(),
+            { close: async () => undefined }
+          );
+        },
+      };
+      const { files, writer } = memoryWriter();
+      const entry = await exportWorkflows({ userId: SUBJECT, writer, collection });
+      const text = files.get(entry.file)!;
+      expect(entry.rows).toBe(1);
+      for (const s of ['777-9', 'OTHER', 'https://other', 'SYSTEM-TEXT'])
+        expect(text, s).not.toContain(s);
+    });
+  });
+
+  it("inside the user's settings, still drops credential and check-shaped keys", () => {
+    // One key per term, so dropping any term from the deny lists turns this red.
+    const denied = {
+      ApiKey: 'k',
+      SafetyScore: 0.2,
+      Messages: [{ Content: 'x' }],
+      XGuardResult: { A: 1 },
+      Clavata: 'c',
+      PHash: 'p',
+      Scores: [1],
+      Threshold: 0.3,
+      Flagged: true,
+      BlockedReason: 'policy',
+      Reason: 'r',
+      MatchedTerms: ['t'],
+      MatchedRegex: 'x',
+      Policy: 'p',
+      Rating: 'r',
+      Category: 'c',
+      Verdict: 'v',
+      AuditNote: 'a',
+      ModerationResult: 'm',
+      ClassifierOut: 'c',
+      OnCallback: 'https://x/cb',
+      TraceId: 't',
+      BlobKey: 'b',
+      Labels: ['l'],
+      ScanResult: 's',
+      SafetyLevel: 1,
+      WasBlocked: true,
+      ResponseFormat: 'json',
+      ChatTemplate: 't',
+      User: 'u',
+    };
+    for (const [k, v] of Object.entries(denied)) {
+      const doc = storedDoc();
+      doc.Steps[0].Input = { ...doc.Steps[0].Input, Nested: { [k]: v } } as never;
+      const input = (reduceWorkflow(doc) as Record<string, any>).Steps[0].Input;
+      // A blocked marker drops the whole object; either way the key is gone.
+      expect(input.Nested ?? {}, k).toEqual({});
+      expect(input.Prompt).toBe('a cat');
+    }
+  });
+
+  it('refuses a user id that is not a positive integer', () => {
+    expect(() => workflowRange(0)).toThrow();
+    expect(() => workflowRange(-1)).toThrow();
+  });
+});

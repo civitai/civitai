@@ -4,17 +4,17 @@ import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
 import { sampleImageRender } from '~/server/logging/image-render-sample';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
-import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
+import { measureRenderCpu, ssrPrefetchCohort, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
 import { shellPageDataPrefetchScript } from '~/components/Shell/shell-page-data';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { applyShellEdgeHeaders } from '~/server/shell/shell-response';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache';
 import {
-  applyBotCacheEdgeHeaders,
-  BOT_CACHE_ROUTES,
+  applyBotCachePrivateHeaders,
   botCacheResponseRefusal,
 } from '~/server/bot-cache/bot-cache';
+import { captureBotCacheRender } from '~/server/bot-cache/bot-cache-origin';
 
 export default class _Document extends Document {
   // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
@@ -22,8 +22,11 @@ export default class _Document extends Document {
   // getServerSideProps page never do. A `/_next/data` request for any other page renders here.
   static async getInitialProps(ctx: DocumentContext) {
     if (!ctx.req) return Document.getInitialProps(ctx);
-    const initialProps = await measureRenderCpu(ctx.pathname, ssrRequestKind(ctx.req), () =>
-      Document.getInitialProps(ctx)
+    const initialProps = await measureRenderCpu(
+      ctx.pathname,
+      ssrRequestKind(ctx.req),
+      () => Document.getInitialProps(ctx),
+      ssrPrefetchCohort(ctx.req)
     );
     recordPageRender(ctx.pathname, ctx.req as never);
     // Reached only once the page rendered, so a shell render that throws never carries these; and
@@ -36,7 +39,8 @@ export default class _Document extends Document {
     if (shellRoute && marks[SHELL_RENDERED_REQ_KEY] === shellRoute && ctx.res) {
       applyShellEdgeHeaders(ctx.res, shellRoute);
     } else if (ctx.res && botCacheResponseRefusal(ctx.req, ctx.res, ctx.pathname) === null) {
-      applyBotCacheEdgeHeaders(ctx.res, BOT_CACHE_ROUTES[ctx.pathname as BotCacheRoutePattern]);
+      applyBotCachePrivateHeaders(ctx.res);
+      captureBotCacheRender(ctx.req, ctx.res, ctx.pathname as BotCacheRoutePattern);
     }
     // Not awaited: a flag evaluation or log write must never delay the response.
     void sampleImageRender(ctx.pathname, ctx.query, ctx.req as never);

@@ -82,6 +82,8 @@ vi.mock('~/server/redis/caches', () => {
   };
 });
 
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service imports.
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
@@ -92,7 +94,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));
@@ -167,6 +168,136 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ url: KEY, userId: 5, clientUrl: true })
     );
+  });
+
+  it("puts a new image after a post's storyline text items, whatever index the client sent", async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce({ index: 8 } as never);
+    dbMock.dbWrite.image.aggregate.mockResolvedValueOnce({ _max: { index: 3 } } as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 9 })
+    );
+  });
+
+  it('puts a new image after the last image when that comes after the last text', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce({ index: 2 } as never);
+    dbMock.dbWrite.image.aggregate.mockResolvedValueOnce({ _max: { index: 5 } } as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 0 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 6 })
+    );
+  });
+
+  it('keeps the index the client sent on a post with no text items', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 2 })
+    );
+  });
+
+  it('puts a new image last when another image already holds the index the client sent', async () => {
+    // No image that may be hidden sits at or after 2, but a visible image holds index 2 already.
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
+    dbMock.dbWrite.image.findFirst.mockResolvedValueOnce({ id: 12 } as never);
+    dbMock.dbWrite.image.aggregate
+      .mockResolvedValueOnce({ _max: { index: 0 } } as never) // images that may be hidden
+      .mockResolvedValueOnce({ _max: { index: 5 } } as never); // every image
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 6 })
+    );
+  });
+
+  it('puts a new image last when the client sends an index ahead of an image that may be hidden', async () => {
+    // A free index (1, a gap) or a negative one would put the upload ahead of the held image at 3.
+    for (const sent of [1, -1]) {
+      vi.clearAllMocks();
+      dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+      dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+      dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
+      dbMock.dbWrite.image.findFirst.mockResolvedValueOnce(null as never);
+      dbMock.dbWrite.image.aggregate
+        .mockResolvedValueOnce({ _max: { index: 3 } } as never)
+        .mockResolvedValueOnce({ _max: { index: 3 } } as never);
+      const { createImage } = await import('~/server/services/image.service');
+
+      await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: sent } as never).catch(
+        () => null
+      );
+
+      expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ index: 4 })
+      );
+    }
+  });
+
+  it('keeps the index of each of several parallel uploads to a fresh post', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.image.findFirst.mockResolvedValue(null as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await Promise.all(
+      [0, 1, 2].map((index) =>
+        addPostImage({
+          url: `${KEY}${index}`,
+          type: 'image',
+          postId: 1,
+          user,
+          index,
+        } as never).catch(() => null)
+      )
+    );
+
+    const indexes = vi
+      .mocked(createImage)
+      .mock.calls.map(([args]) => (args as { index: number }).index);
+    expect([...indexes].sort()).toEqual([0, 1, 2]);
+  });
+
+  it('sends an upload to a judge-rated collection through the normal scan', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({
+      userId: 5,
+      collection: { metadata: { judgesApplyBrowsingLevel: true } },
+    } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user } as never).catch(() => null);
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(createImage).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.skipIngestion).toBeFalsy();
   });
 
   it('creates a server-minted url without the client url flag', async () => {

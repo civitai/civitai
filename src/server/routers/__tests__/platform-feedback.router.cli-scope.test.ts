@@ -5,9 +5,11 @@ import type * as PlatformFeedbackService from '~/server/services/platform-feedba
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * Who may call `platformFeedback`. Both procedures are for a coding agent holding an API token, so
- * both carry `AppBlocksSubmit`; the ledger and the "admits a token carrying AppBlocksSubmit" arm
- * fail without the router's `.meta`, the refusal arms fail if the scope is widened.
+ * Who may call `platformFeedback`. `create` and `getStatus` are for a coding agent holding an API
+ * token, so both carry `AppBlocksSubmit`; the ledger and the "admits a token carrying
+ * AppBlocksSubmit" arm fail without the router's `.meta`, the refusal arms fail if the scope is
+ * widened. `listChanges` is the moderator feed; its access is pinned in
+ * `platform-feedback.router.list-changes.test.ts`.
  */
 
 const { svc, rateLimitCalls } = vi.hoisted(() => ({
@@ -35,12 +37,12 @@ vi.mock('~/server/middleware.trpc', async (importOriginal) => {
 const { platformFeedbackRouter } = await import('~/server/routers/platform-feedback.router');
 
 // Literals, so a renumbered enum fails the sanity test instead of moving every arm with it.
-const FULL = 33554431;
-const SUBMIT = 1 << 25; // 33554432
-const WITH_SUBMIT = 1 | SUBMIT; // UserRead | AppBlocksSubmit
+const FULL = 33554431n;
+const SUBMIT = 1n << 25n; // 33554432
+const WITH_SUBMIT = 1n | SUBMIT; // UserRead | AppBlocksSubmit
 const WITHOUT_SUBMIT = [
-  ['UserRead|AppBlocksDevTunnel', 1 | (1 << 26)],
-  ['Full minus UserWrite', FULL & ~2],
+  ['UserRead|AppBlocksDevTunnel', 1n | (1n << 26n)],
+  ['Full minus UserWrite', FULL & ~2n],
 ] as const;
 
 const SCOPE_GATE_ERROR = {
@@ -63,7 +65,7 @@ const sessionCtx = (u: User = user) =>
     res: { setHeader: () => undefined },
   } as never);
 
-const tokenCtx = (tokenScope: number) =>
+const tokenCtx = (tokenScope: bigint) =>
   ({
     ...(sessionCtx() as object),
     apiKeyId: 999,
@@ -130,22 +132,24 @@ describe('platformFeedback token-scope gate', () => {
     expect(TokenScope.AppBlocksSubmit).toBe(SUBMIT);
     expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit).toBe(WITH_SUBMIT);
     expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(WITHOUT_SUBMIT[0][1]);
-    for (const [, mask] of WITHOUT_SUBMIT) expect(mask & SUBMIT).toBe(0);
+    for (const [, mask] of WITHOUT_SUBMIT) expect(mask & SUBMIT).toBe(0n);
   });
 
   // Read off the built router and lists every procedure: adding one, or dropping an annotation,
   // fails here until the scope decision is written down.
-  it('both procedures, and only these two, require AppBlocksSubmit', () => {
+  it('the two agent procedures, and only these, require AppBlocksSubmit', () => {
     const procedures = platformFeedbackRouter._def.procedures as unknown as Record<
       string,
-      { _def: { type: string; meta?: { requiredScope?: number; blockApiKeys?: boolean } } }
+      { _def: { type: string; meta?: { requiredScope?: bigint; blockApiKeys?: boolean } } }
     >;
     const ledger = Object.fromEntries(
       Object.entries(procedures).map(([name, p]) => [name, [p._def.type, p._def.meta ?? null]])
     );
     expect(ledger).toEqual({
-      create: ['mutation', { requiredScope: 33554432 }],
-      getStatus: ['query', { requiredScope: 33554432 }],
+      create: ['mutation', { requiredScope: 33554432n }],
+      getStatus: ['query', { requiredScope: 33554432n }],
+      // A moderator procedure: a token caller needs a full-scope personal key, whatever its meta.
+      listChanges: ['query', null],
     });
   });
 

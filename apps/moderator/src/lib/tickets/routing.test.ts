@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SENT_TO_SUPPORT_TAG, TICKET_ROUTING, routeTicket } from './routing';
+import { PRIVACY_REQUEST_TAG, SENT_TO_SUPPORT_TAG, TICKET_ROUTING, routeTicket } from './routing';
 
 const OPEN = 2;
 const WAITING_ON_MOD_LEAD = 8;
@@ -75,5 +75,24 @@ describe('routeTicket', () => {
       expect(routeTicket({ ...base, tags: ['test-ticket-views'] })).toBe('moderation');
       expect(routeTicket({ ...base, tags: [] })).toBe('moderation');
     });
+  });
+});
+
+describe('a privacy request', () => {
+  it('belongs to neither view, whatever its feature, status or other tags', () => {
+    for (const over of [
+      { cfFeature: 'Moderation Decision', status: OPEN },
+      { cfFeature: 'Billing', status: WAITING_ON_MOD_LEAD },
+      { cfFeature: null, status: 7 },
+    ])
+      expect(
+        routeTicket({ ...over, routerTopic: null, tags: ['Privacy-Request', SENT_TO_SUPPORT_TAG] })
+      ).toBe('legal');
+  });
+
+  it('is decided by the tag alone', () => {
+    const base = { cfFeature: 'Moderation Decision', status: 7, routerTopic: null };
+    expect(routeTicket({ ...base, tags: [PRIVACY_REQUEST_TAG] })).toBe('legal');
+    expect(routeTicket({ ...base, tags: [] })).toBe('moderation');
   });
 });

@@ -54,7 +54,7 @@ async function render(...between: React.ReactElement[]) {
     root.render(
       React.createElement(
         'div',
-        { style: { position: 'relative' } },
+        { style: { position: 'relative' }, 'data-testid': 'container' },
         React.createElement('img', { 'data-testid': 'media', alt: '' }),
         ...between,
         React.createElement(Overlay)
@@ -68,7 +68,7 @@ const observedIds = () => observed.map((el) => el.getAttribute('data-testid'));
 describe('useDrawnMediaBox finds the media past other overlays', () => {
   it('directly after the media', async () => {
     await render();
-    expect(observedIds()).toEqual(['host', 'media']);
+    expect(observedIds()).toEqual(['host', 'media', 'container']);
   });
 
   it('after other overlay hosts on the same media', async () => {
@@ -76,7 +76,7 @@ describe('useDrawnMediaBox finds the media past other overlays', () => {
       React.createElement('div', { key: 'a', [MEDIA_OVERLAY_ATTR]: '', 'data-testid': 'hat-host' }),
       React.createElement('div', { key: 'b', [MEDIA_OVERLAY_ATTR]: '', 'data-testid': 'other' })
     );
-    expect(observedIds()).toEqual(['host', 'media']);
+    expect(observedIds()).toEqual(['host', 'media', 'container']);
   });
 
   it('every overlay host on the image detail media carries the attribute', () => {

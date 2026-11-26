@@ -126,7 +126,7 @@ export function StickerBookGrid({
         {shown.map((item) => (
           <div key={item.imageId} className="relative">
             <div style={{ width: CARD_WIDTH }}>
-              <ImagesCard data={item.image} height={CARD_HEIGHT} />
+              <ImagesCard data={item.image} height={CARD_HEIGHT} width={CARD_WIDTH} />
             </div>
             <PlacedBy counterparts={item.counterparts} side={side} latestAt={item.latestAt} />
           </div>
@@ -151,7 +151,7 @@ function PlacedBy({
 }: {
   counterparts: BookItems[number]['counterparts'];
   side: StickerBookSide;
-  /** When the most recent sticker landed — Ellie's mock carried a time. */
+  /** When the most recent sticker landed. */
   latestAt: Date | string | null;
 }) {
   if (!counterparts.length) return null;

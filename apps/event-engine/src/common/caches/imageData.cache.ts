@@ -42,17 +42,14 @@ export const imageTagIds = createCache<ImageTagIds>({
     );
 
     // Fetch tag metadata for filtering
-    const tagIds = [...new Set(imageTags.map(t => t.tagId))];
+    const tagIds = [...new Set(imageTags.map((t) => t.tagId))];
     const tags = await ctx.pg.query<{
       id: number;
       name: string;
       type: string;
-    }>(
-      `SELECT id, name, type FROM "Tag" WHERE id = ANY($1)`,
-      [tagIds]
-    );
+    }>(`SELECT id, name, type FROM "Tag" WHERE id = ANY($1)`, [tagIds]);
 
-    const tagMap = new Map(tags.map(t => [t.id, t]));
+    const tagMap = new Map(tags.map((t) => [t.id, t]));
 
     // Check which images have WD14 tags
     const hasWD14: Record<number, boolean> = {};
@@ -218,60 +215,6 @@ export const userCosmetics = createCache<UserCosmeticData>({
     }, {});
 
     return Object.values(grouped);
-  },
-  ttl: 60 * 60 * 24, // 24 hours
-});
-
-/**
- * Profile picture data
- */
-export type ProfilePictureData = {
-  userId: number;
-  id: number;
-  url: string;
-  nsfwLevel: number;
-  hash: string;
-  type: string;
-  width: number;
-  height: number;
-  metadata: Record<string, unknown> | null;
-};
-
-/**
- * Cache for user profile pictures
- * Fetches profile picture information for users
- */
-export const profilePictures = createCache<ProfilePictureData>({
-  redisKey: 'user:profilePicture',
-  idKey: 'userId',
-  fieldTypes: {
-    userId: 'number',
-    id: 'number',
-    url: 'string',
-    nsfwLevel: 'number',
-    hash: 'string',
-    type: 'string',
-    width: 'number',
-    height: 'number',
-    metadata: 'json?',
-  },
-  async fetch(ctx: CacheContext, ids: number[]): Promise<ProfilePictureData[]> {
-    return await ctx.pg.query<ProfilePictureData>(
-      `SELECT
-        u.id as "userId",
-        i.id,
-        i.url,
-        i."nsfwLevel",
-        i.hash,
-        i.type,
-        i.width,
-        i.height,
-        i.metadata
-       FROM "User" u
-       JOIN "Image" i ON i.id = u."profilePictureId"
-       WHERE u.id = ANY($1)`,
-      [ids]
-    );
   },
   ttl: 60 * 60 * 24, // 24 hours
 });

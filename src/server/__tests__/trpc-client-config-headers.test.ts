@@ -10,8 +10,9 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * The site alerts version and the forced-update flag reach browsers as response headers set in
- * the route's `responseMeta`, from the CLIENT hash read that `needsUpdate` already makes. Driven
+ * The site alerts version and the forced-update flag (also set for a removed procedure) reach
+ * browsers as response headers set in the route's `responseMeta`, from the CLIENT hash read that
+ * `needsUpdate` already makes. Driven
  * over a real socket through the real route and adapter, as `trpc-response-write-format.test.ts`
  * is, because the streamed batch path writes its head before any procedure finishes.
  */
@@ -145,5 +146,58 @@ describe('x-update-required', () => {
   it('reaches an outdated bundle on an unbatched call, and never a current one', async () => {
     expect((await get('payload', OUTDATED)).get('x-update-required')).toBe('true');
     expect((await get('payload', WEB)).get('x-update-required')).toBeNull();
+  });
+});
+
+describe('x-update-required on a removed procedure', () => {
+  const SERVER_VERSION = '5.0.300';
+  const NEWER = { 'x-client': 'web', 'x-client-version': '5.0.400' };
+  let previous: string | undefined;
+  beforeAll(() => {
+    previous = process.env.version;
+    process.env.version = SERVER_VERSION;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.version;
+    else process.env.version = previous;
+  });
+
+  const prompt = async (path: string, headers: Record<string, string>) => {
+    const res = await fetch(`${baseUrl}/api/trpc/${path}`, { headers });
+    await res.text();
+    expect(res.status).toBeLessThan(500);
+    return res.headers.get('x-update-required');
+  };
+
+  // WEB is past the CLIENT hash's forced version, so only the removed procedure can set it.
+  it('reaches a bundle older than the server that calls a procedure it no longer has', async () => {
+    expect(await prompt('payload', WEB)).toBeNull();
+    expect(await prompt('gone', WEB)).toBe('true');
+    expect(
+      await prompt(`payload,gone?batch=1&input=${encodeURIComponent('{}')}`, {
+        ...WEB,
+        'trpc-accept': 'application/jsonl',
+      })
+    ).toBe('true');
+  });
+
+  it('never reaches a bundle newer than the server, or a non-web client', async () => {
+    expect(await prompt('gone', NEWER)).toBeNull();
+    expect(await prompt('gone', { 'x-client-version': '5.0.200' })).toBeNull();
+  });
+
+  // The flag rides only responses the edge does not keep, and a missing procedure is an error.
+  it('is set on a response that is never edge-cached', async () => {
+    const res = await fetch(`${baseUrl}/api/trpc/gone`, {
+      headers: { ...WEB, 'x-test-cacheable': '1' },
+    });
+    await res.text();
+    expect(res.headers.get('cache-control')).not.toMatch(/s-maxage/);
+    expect(res.headers.get('x-update-required')).toBe('true');
+  });
+
+  it('answers a client version that does not parse rather than failing', async () => {
+    await prompt('gone', { ...WEB, 'x-client-version': 'abc' });
+    await prompt('payload', { ...WEB, 'x-client-version': 'abc' });
   });
 });

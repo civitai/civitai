@@ -134,7 +134,8 @@ beforeAll(async () => {
       "type"   "CollectionType",
       "read"   "CollectionReadConfiguration" NOT NULL DEFAULT 'Private',
       "write"  "CollectionWriteConfiguration" NOT NULL DEFAULT 'Private',
-      "collaborationDisabledAt" timestamp
+      "collaborationDisabledAt" timestamp,
+      "archivedAt" timestamp
     );
     CREATE TABLE "CollectionContributor" (
       "userId"       integer NOT NULL,
@@ -161,6 +162,7 @@ beforeAll(async () => {
       "reviewedById" integer,
       "rejectionReason" text,
       "rejectionDetail" text,
+      "addedById"    integer DEFAULT 7777, -- the uploader below: a genuine submission
       "createdAt"    timestamp NOT NULL DEFAULT now()
     );
     CREATE TABLE "ModelMetric" (
@@ -180,7 +182,9 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       "id"              integer PRIMARY KEY,
       "postId"          integer,
+      "userId"          integer DEFAULT 7777,
       "nsfwLevel"       integer NOT NULL,
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
       "modelRestricted" boolean NOT NULL DEFAULT false,
       "needsReview"     text,
       "ingestion"       "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
@@ -194,7 +198,8 @@ beforeAll(async () => {
       "status"      "ArticleStatus" NOT NULL,
       "publishedAt" timestamp,
       "nsfwLevel"   integer NOT NULL,
-      "ingestion"   "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned'
+      "ingestion"   "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "availability" "Availability" NOT NULL DEFAULT 'Public'
     );
 
     INSERT INTO "Collection" ("id","userId","mode") VALUES

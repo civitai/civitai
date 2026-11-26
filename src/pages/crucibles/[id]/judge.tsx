@@ -274,7 +274,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const votingRef = useRef(false);
   const handleVote = useCallback(
     async (winnerId: number, loserId: number, watched: WatchedMs) => {
-      if (votingRef.current || !pair) return;
+      if (votingRef.current || dismissingRef.current || !pair) return;
 
       votingRef.current = true;
       setIsVoting(true);
@@ -319,6 +319,35 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       handleVote(lastVoteAttempt.winnerId, lastVoteAttempt.loserId, lastVoteAttempt.watched);
     }
   }, [lastVoteAttempt, isVoting, handleVote]);
+
+  const dismissPairMutation = trpc.crucible.dismissJudgingPair.useMutation({
+    onError: (error) => showErrorNotification({ error: new Error(error.message) }),
+  });
+  const isDismissing = dismissPairMutation.isPending;
+  // A ref, like votingRef: a second click lands before `isDismissing` re-renders.
+  const dismissingRef = useRef(false);
+  // The skip list doesn't change, so the query input doesn't either: the next pair is refetched.
+  const handleDismiss = useCallback(async () => {
+    if (votingRef.current || dismissingRef.current || isPairPending || !pair) return;
+    dismissingRef.current = true;
+    try {
+      await dismissPairMutation.mutateAsync({
+        crucibleId: id,
+        entryIds: [pair.left.id, pair.right.id],
+      });
+      refetchProgress();
+      const result = await refetchPair();
+      // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
+      if (result.data === null) {
+        await refetchProgress();
+        setAllPairsJudged(true);
+      }
+    } catch {
+      // Reported by the mutation's onError.
+    } finally {
+      dismissingRef.current = false;
+    }
+  }, [isPairPending, pair, dismissPairMutation, id, refetchProgress, refetchPair]);
 
   // Changing the excluded ids changes the query input, which fetches the next pair on its own.
   // Awaiting a `refetch()` here instead resolved with the NEW input's still-empty result, which
@@ -598,11 +627,12 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                   )}
                   pair={pair}
                   paused={briefingOpen}
-                  isLoading={isPairPending || isVoting}
-                  disabled={isVoting || isPairPlaceholder || !!voteError}
+                  isLoading={isPairPending || isVoting || isDismissing}
+                  disabled={isVoting || isDismissing || isPairPlaceholder || !!voteError}
                   minViewSeconds={crucible.minViewSeconds}
                   onVote={handleVote}
                   onSkip={handleSkip}
+                  onDismiss={handleDismiss}
                   footerStart={
                     <JudgingSessionStats
                       sessionVotes={sessionVotes}
@@ -870,7 +900,13 @@ function getTimeRemaining(endAt: Date): string {
   return `${minutes} min`;
 }
 
-export default Page(CrucibleJudgePage, {
+// "Next crucible" and the suggested crucibles are client navigations to this same route, which keep
+// the page mounted. Keyed by id, each crucible starts with fresh judging state.
+function CrucibleJudgeRoute(props: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  return <CrucibleJudgePage key={props.id} {...props} />;
+}
+
+export default Page(CrucibleJudgeRoute, {
   getLayout: (page) => (
     <AppLayout scrollable={false} footer={false}>
       {page}

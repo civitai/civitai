@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"json\":{\"collectionId\":3,\"tags\":[5161]}}")

@@ -44,7 +44,13 @@ const ARTICLE_ID = 77;
 const IMAGE_ID = 4242;
 
 const run = () =>
-  resolveArticleImageScan({ articleId: ARTICLE_ID, imageId: IMAGE_ID, nsfwLevel: 1, userId: 7 });
+  resolveArticleImageScan({
+    csamReview: true,
+    articleId: ARTICLE_ID,
+    imageId: IMAGE_ID,
+    nsfwLevel: 1,
+    userId: 7,
+  });
 
 const ownMocks = [headObject, getImageUploadBackend, queueUpdate];
 
@@ -137,7 +143,9 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
     await expect(run()).resolves.toBeUndefined();
 
     expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
-    expect(queueUpdate).toHaveBeenCalledWith([{ id: ARTICLE_ID, action: expect.anything() }]);
+    expect(queueUpdate).toHaveBeenCalledWith([{ id: ARTICLE_ID, action: expect.anything() }], {
+      reason: 'image-scan',
+    });
   });
 
   it('never consults the bucket for a url that is not a key', async () => {

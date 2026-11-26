@@ -7,12 +7,22 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileRunState, type RunLimits, type RunState } from '@/vector-sync/cursor';
-import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
-import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
+import { imageIdFromEvent, liveness, VectorSyncQueue } from '@/vector-sync/consumer';
+import {
+  ModelMismatchError,
+  SITE_REPLICATION,
+  VectorStore,
+  type CollectionSpec,
+} from '@/vector-sync/qdrant';
+import { modelDomain } from '@/vector-sync/models/domain';
+import { CONTENT_DOMAINS } from '@/vector-sync/content/domains';
+import { MODEL_COLLECTION } from '@/vector-sync/models/collection';
+import { ARTICLE_COLLECTION } from '@/vector-sync/articles/collection';
 import type { QdrantClient } from '@qdrant/js-client-rest';
 import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
   buildEmbedInput,
+  failedStepDetail,
   takeBatch,
   Embedder,
   type EmbedderOptions,
@@ -58,6 +68,7 @@ class FakePg {
   images = new Map<number, ImageRow>();
   tags = new Map<number, number[]>();
   baseModels = new Map<number, string[]>();
+  modelVersionIds = new Map<number, number[]>();
   queries: string[] = [];
 
   put(...rows: ImageRow[]) {
@@ -80,7 +91,11 @@ class FakePg {
       return {
         rows: ids
           .filter((id) => this.baseModels.has(id))
-          .map((imageId) => ({ imageId, baseModels: this.baseModels.get(imageId) })),
+          .map((imageId) => ({
+            imageId,
+            baseModels: this.baseModels.get(imageId),
+            modelVersionIds: this.modelVersionIds.get(imageId),
+          })),
       };
     }
     if (sql.includes('i.id = ANY')) {
@@ -216,10 +231,13 @@ describe('eligibility', () => {
     ['needs review', { needsReview: 'poi' }],
     ['minor', { minor: true }],
     ['poi', { poi: true }],
+    ['rated Blocked', { nsfwLevel: 32 }],
+    ['rated Blocked among other levels', { nsfwLevel: 36 }],
   ];
 
-  test('a scanned, posted, unflagged image is eligible', () => {
+  test('a scanned, posted, unflagged image is eligible, at any level but Blocked', () => {
     expect(isEligible(imageRow(1))).toBe(true);
+    expect(isEligible(imageRow(1, { nsfwLevel: 16 }))).toBe(true);
   });
 
   test.each(ineligible)('%s is not eligible', (_name, patch) => {
@@ -228,7 +246,7 @@ describe('eligibility', () => {
 
   test('the SQL predicate names every rule the row check applies', () => {
     expect(eligibleSql('i')).toBe(
-      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false`
+      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false AND (i."nsfwLevel" & 32) = 0`
     );
   });
 });
@@ -249,6 +267,7 @@ describe('sync transitions', () => {
     const pg = new FakePg().put(imageRow(1, { ingestion: 'Pending' }));
     pg.tags.set(1, [5, 9]);
     pg.baseModels.set(1, ['SDXL 1.0']);
+    pg.modelVersionIds.set(1, [128078, 290640]);
     const store = new FakeStore();
     const embedder = new FakeEmbedder();
     await syncImageIds([1], deps(pg, store, embedder));
@@ -261,6 +280,7 @@ describe('sync transitions', () => {
       nsfwLevel: 4,
       tagIds: [5, 9],
       baseModels: ['SDXL 1.0'],
+      modelVersionIds: [128078, 290640],
       type: 'image',
       userId: 7,
       postId: 70,
@@ -361,6 +381,23 @@ describe('embed inputs', () => {
     });
   });
 
+  test("a failed step's own account of itself is logged, without its media URL or a vector", () => {
+    const detail = failedStepDetail({
+      name: 'embed-7',
+      status: 'failed',
+      input: { videoUrl: 'https://cdn.example/v/original=true/v.mp4' },
+      reason: 'decode error at https://cdn.example/v/original=true/v.mp4',
+      output: { embedding: [0.5, 0.25], profile: 'p' } as never,
+    });
+    expect(JSON.parse(detail)).toEqual({
+      status: 'failed',
+      reason: 'decode error at <url>',
+      output: { profile: 'p' },
+    });
+    expect(failedStepDetail(undefined)).toBe('no step in the workflow');
+    expect(failedStepDetail({ status: 'failed', note: 'x'.repeat(2000) }).length).toBe(601);
+  });
+
   test('a workflow takes at most its size in inputs and 8 videos', () => {
     const drain = (queue: { id: string; imageUrl?: string; videoUrl?: string }[], size: number) => {
       const sizes: number[] = [];
@@ -432,6 +469,7 @@ describe('embedder', () => {
     const result = await e.embed(['1', '2', '3', '4'].map((id) => ({ id, imageUrl: 'u' })));
     expect([...result.vectors.keys()].sort()).toEqual([1, 2, 4]);
     expect(result.failed).toEqual([3]);
+    expect(result.rejected).toEqual([3]);
   });
 
   test('an auth failure stops the run instead of being bisected', async () => {
@@ -1416,6 +1454,44 @@ describe('collection layout', () => {
     );
     expect(noHnsw.map((c) => c.field_name).sort()).toEqual(['postId', 'userId']);
   });
+
+  // Decision: the site-search Qdrant runs 3 nodes and its collections keep 2 copies of each shard,
+  // acknowledging a write on 1. The image instance is a single node, so images keep the default.
+  // Qdrant only applies these at creation; changing them later means a new collection.
+  test('site collections are created replicated, images are not', async () => {
+    const created = async (spec?: typeof MODEL_COLLECTION | typeof ARTICLE_COLLECTION) => {
+      let args: { replication_factor?: number; write_consistency_factor?: number } = {};
+      const client = {
+        collectionExists: async () => ({ exists: false }),
+        createCollection: async (_c: string, a: typeof args) => void (args = a),
+        getCollection: async () => ({ payload_schema: {}, config: {} }),
+        createPayloadIndex: async () => undefined,
+        getAliases: async () => ({ aliases: [{ alias_name: 'a', collection_name: 'c' }] }),
+      };
+      const qc = client as unknown as QdrantClient;
+      await (spec ? new VectorStore(qc, 'c', spec as never) : new VectorStore(qc, 'c')).bootstrap({
+        alias: 'a',
+      });
+      return [args.replication_factor, args.write_consistency_factor];
+    };
+    expect(await created(MODEL_COLLECTION)).toEqual([2, 1]);
+    expect(await created(ARTICLE_COLLECTION)).toEqual([2, 1]);
+    expect(await created()).toEqual([undefined, undefined]);
+  });
+
+  // Every non-image domain lives on the replicated site-search instance; a new domain's spec
+  // must spread SITE_REPLICATION too.
+  test('every site domain uses the replicated spec', () => {
+    const specs = [modelDomain, ...CONTENT_DOMAINS].map((d) => {
+      const { replicationFactor, writeConsistencyFactor } = d.store()
+        .spec as CollectionSpec<object>;
+      return { name: d.name, replicationFactor, writeConsistencyFactor };
+    });
+    expect(specs.map((s) => s.name)).toEqual(
+      expect.arrayContaining(['model', 'article', 'comic', 'crucible', 'challenge'])
+    );
+    for (const spec of specs) expect(spec).toEqual({ name: spec.name, ...SITE_REPLICATION });
+  });
 });
 
 describe('backfill lease', () => {
@@ -1788,6 +1864,35 @@ describe('review round 2', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  test('liveness: a flush hung on a query that never returns is wedged; a failing or progressing one is not', async () => {
+    const hung = new FakePg();
+    hung.query = () => new Promise(() => undefined);
+    const queue = new VectorSyncQueue(deps(hung, new FakeStore()), async () => undefined);
+    queue.add(1, { topic: 't', partition: 0, offset: '1' });
+    void queue.flush();
+    await Promise.resolve();
+    const t0 = queue.flushStartedAt!;
+    expect(t0).not.toBeNull();
+    expect(liveness(queue, t0 + 44 * 60_000).status).toBe(200);
+    expect(liveness(queue, t0 + 45 * 60_000)).toEqual({
+      status: 503,
+      body: { wedged: true, flushStartedAt: t0 },
+    });
+    // Vectors returned meanwhile mean it is slow, not stuck.
+    queue.lastProgress = t0 + 30 * 60_000;
+    expect(liveness(queue, t0 + 45 * 60_000).status).toBe(200);
+
+    const failing = new FakePg();
+    failing.query = async () => {
+      throw new Error('Query read timeout');
+    };
+    const retried = new VectorSyncQueue(deps(failing, new FakeStore()), async () => undefined);
+    retried.add(1, { topic: 't', partition: 0, offset: '1' });
+    await expect(retried.flush()).rejects.toThrow('Query read timeout');
+    expect(retried.flushStartedAt).toBeNull();
+    expect(retried.isWedged(Date.now() + 60 * 60_000)).toBe(false);
+  });
+
   test('health: a slow flush making progress after one failure stays up; a retry loop does not', () => {
     const queue = new VectorSyncQueue(deps(new FakePg(), new FakeStore()), async () => undefined);
     const t0 = 1_000_000_000;
@@ -2130,7 +2235,19 @@ describe('one input per step (orchestration #460)', () => {
     const result = await embedderWith(fetchImpl).embed(inputs(3));
     expect([...result.vectors.keys()].sort()).toEqual([1, 3]);
     expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([2]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a step that succeeds with an unusable output fails, but is not the media refused', async () => {
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(workflowBody(stepIds(init)));
+      body.steps[1].output.embedding = [1, 2];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl).embed(inputs(3));
+    expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([]);
   });
 
   test('one step from another model revision rejects the workflow it came in', async () => {
@@ -2486,7 +2603,7 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
   };
 
   // An outage (or an expired queue) used to mark every image failed and let the caller move on.
-  test.each(['failed', 'expired', 'canceled'])(
+  test.each(['expired', 'canceled'])(
     'a %s workflow with no step succeeded is re-submitted, not dropped',
     async (status) => {
       let posts = 0;
@@ -2517,11 +2634,48 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(result.failed).toEqual([]);
   });
 
-  test('a workflow that keeps failing ends as counted failures, without an error that would stall the caller', async () => {
+  // Reconcile 2026-11-09: one old image whose media 404s fails all 16 steps of its workflow.
+  // Retried as an outage, the same batch was re-submitted for 15 minutes and the bucket stalled.
+  test('a failed workflow with no step succeeded is split until the bad input is isolated, not re-submitted whole', async () => {
+    const submitted: string[][] = [];
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const ids = stepIds(init);
+      submitted.push(ids);
+      return ids.includes('5') ? failedWorkflow(init, 'failed') : ok(init, 50);
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(16));
+    expect(result.failed).toEqual([5]);
+    expect([...result.vectors.keys()].sort((a, b) => a - b)).toEqual(
+      inputs(16)
+        .map((i) => Number(i.id))
+        .filter((id) => id !== 5)
+    );
+    const asKeys = submitted.map((ids) => ids.join(','));
+    expect(new Set(asKeys).size).toBe(asKeys.length); // no batch sent twice
+    expect(submitted).toHaveLength(9); // 16, then halves 8+8, 4+4, 2+2, 1+1
+    expect(result.error).toBeUndefined();
+  });
+
+  // Deliberate: a 'failed' workflow is treated as bad inputs, never as an outage, so an outage that
+  // reports 'failed' is bisected (2N-1 workflows) and counted failed for reconcile to retry. If
+  // you are adding outage retry back for 'failed', the 404 batch above must still not stall.
+  test('a failed workflow where every input fails ends with all of them failed after one bisection', async () => {
     let posts = 0;
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
       posts++;
       return failedWorkflow(init, 'failed');
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(4));
+    expect(posts).toBe(7);
+    expect(result.failed.sort()).toEqual([1, 2, 3, 4]);
+    expect(result.error).toBeUndefined();
+  });
+
+  test('a workflow that keeps expiring ends as counted failures, without an error that would stall the caller', async () => {
+    let posts = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      posts++;
+      return failedWorkflow(init, 'expired');
     }) as unknown as typeof fetch;
     const result = await clocked(fetchImpl).e.embed(inputs(2));
     expect(posts).toBe(3); // maxRetries 2
@@ -2552,6 +2706,8 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(posts).toBe(2); // at 10 min one re-submit fits the 15-min window; at 20 min none does
 
     expect(result.failed.sort()).toEqual([1, 2]);
+    // An outage is not the media's fault: the refused-media memo must not hold these back.
+    expect(result.rejected).toEqual([]);
     expect(result.error).toBeUndefined();
   });
 

@@ -3,11 +3,13 @@
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import { leadComCoverBlurred } from '$lib/com-face';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import RestrictedLeadFields from './RestrictedLeadFields.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import {
     LIFTED_NOTE,
@@ -19,7 +21,20 @@
     rows,
     total,
     civitaiUrl,
-  }: { rows: RestrictedVerdictRow[]; total: number; civitaiUrl: string } = $props();
+    queueEmpty = false,
+  }: {
+    rows: RestrictedVerdictRow[];
+    total: number;
+    civitaiUrl: string;
+    /** Opens the panel; it starts collapsed to its heading otherwise. */
+    queueEmpty?: boolean;
+  } = $props();
+
+  let expanded = $state(untrack(() => queueEmpty));
+  // A queue that comes back empty (Refresh queue, a filter, a search) leaves only these leads.
+  $effect(() => {
+    if (queueEmpty) expanded = true;
+  });
 
   const RESTRICTION_LABEL: Record<Restriction, string> = {
     minor: 'minor',
@@ -65,18 +80,36 @@
 
 {#if rows.length}
   <section class="rounded-md border border-red-6/40 bg-dark-6 p-3" aria-label="Scan rated NSFW">
-    <h2 class="m-0 text-sm font-semibold">
-      Scan rated NSFW on a restricted model
-      <span class="text-dark-2"
-        >({total > rows.length ? `${rows.length} of ${total} shown` : rows.length})</span
+    <div class="flex items-center gap-2">
+      <h2 class="m-0 text-sm font-semibold">
+        Scan rated NSFW on a restricted model
+        <span class="text-dark-2"
+          >({total > rows.length ? `${rows.length} of ${total} shown` : rows.length})</span
+        >
+      </h2>
+      <button
+        type="button"
+        class="ml-auto shrink-0 text-xs {LINK_CLASS}"
+        aria-expanded={expanded}
+        aria-controls={expanded ? 'restricted-verdict-leads' : undefined}
+        onclick={() => (expanded = !expanded)}
       >
-    </h2>
-    <p class="m-0 mt-1 text-xs text-dark-2">
+        {expanded ? 'Hide' : 'Show'}<span class="sr-only"> leads</span>
+      </button>
+    </div>
+    {#if !expanded && rows.some((row) => errors[row.modelId])}
+      <p class="m-0 mt-1 text-xs text-red-5" role="alert">A ruling failed: show the leads to see it.</p>
+    {/if}
+    {#if expanded}
+    <p class="m-0 mt-1 hidden text-xs text-dark-2 lg:block">
       The owner marked these minor, a real person or SFW-only. Minor and real-person models keep their
       rating until you rule or the owner unticks the flag; SFW-only models were rated NSFW, and Keep
       restores SFW-only. Minor first.
     </p>
-    <ul class="m-0 mt-2 flex list-none flex-col gap-2 p-0">
+    <ul
+      id="restricted-verdict-leads"
+      class="m-0 mt-2 flex max-h-24 list-none flex-col gap-2 overflow-y-auto p-0 lg:max-h-[30vh]"
+    >
       {#each rows as row (row.modelId)}
         <li class="rounded border border-dark-4 p-2 text-sm">
           <div class="flex flex-wrap items-center gap-1.5">
@@ -154,7 +187,7 @@
                 {/if}
               </dl>
               <form method="POST" action="?/ruleRestrictedVerdict" use:enhance={submit(row.modelId)}>
-                <input type="hidden" name="modelId" value={row.modelId} />
+                <RestrictedLeadFields modelId={row.modelId} revision={row.revision} />
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-dark-2">
                     Reason {row.restriction === 'minor'
@@ -218,18 +251,20 @@
                   class="hidden"
                   use:enhance={submit(row.modelId)}
                 >
-                  <input type="hidden" name="modelId" value={row.modelId} />
+                  <RestrictedLeadFields modelId={row.modelId} revision={row.revision} />
                   <input type="hidden" name="ruling" value="rateNsfw" />
                   <input type="hidden" name="reason" value={reasons[row.modelId] ?? ''} />
                 </form>
               {/if}
-              {#if errors[row.modelId]}
-                <p class="m-0 text-xs text-red-5" role="alert">{errors[row.modelId]}</p>
-              {/if}
             </div>
+          {/if}
+          <!-- Outside the open row, so a lead closed after its ruling failed still says so. -->
+          {#if errors[row.modelId]}
+            <p class="m-0 mt-2 text-xs text-red-5" role="alert">{errors[row.modelId]}</p>
           {/if}
         </li>
       {/each}
     </ul>
+    {/if}
   </section>
 {/if}

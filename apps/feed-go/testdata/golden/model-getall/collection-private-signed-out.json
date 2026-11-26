@@ -1,0 +1,68 @@
+{
+  "name": "collection-private-signed-out",
+  "description": "A Private collection signed out: an empty answer, cacheable like every signed-out one.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"collectionId\":42,\"sort\":\"Newest\",\"limit\":2,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "green.example.test"
+    },
+    "session": null
+  },
+  "redis": {
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": [],
+    "collections": [
+      {
+        "id": 42,
+        "read": "Private",
+        "userId": 1001,
+        "contributors": [
+          {
+            "userId": 1003,
+            "permissions": [
+              "ADD"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "items": [],
+        "nextCursor": null
+      },
+      "meta": {
+        "values": {
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "writes": {}
+  }
+}

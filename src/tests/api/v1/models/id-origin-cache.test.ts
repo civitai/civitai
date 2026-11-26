@@ -136,7 +136,7 @@ function modelItem(id: number) {
             metadata: {},
           },
         ],
-        images: [{ id: 99, url: 'img.png', type: 'image' }],
+        images: [{ id: 99, url: 'img.png', type: 'image', nsfwLevel: 1 }],
       },
     ],
   };
@@ -374,6 +374,56 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
     expect(res.body.name).not.toBe('STALE');
     expect(res.body.id).toBe(123);
     expect(mockGetModelsWithVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('(j) serves only card images within the served level: SFW in a restricted region', async () => {
+    mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => {
+      const item = modelItem(input.ids[0]);
+      item.modelVersions[0].images = [
+        { id: 98, url: 'pg.png', type: 'image', nsfwLevel: 1 },
+        { id: 99, url: 'r.png', type: 'image', nsfwLevel: 4 },
+      ];
+      return { items: [item] };
+    });
+    const urls = (res: { body?: any }) =>
+      res.body.modelVersions[0].images.map((i: { url: string }) => i.url);
+
+    regionBox.restricted = true;
+    expect(urls(await invoke({ id: '123' }))).toEqual(['pg.png']);
+    // The same id: the origin cache keeps the two levels apart.
+    regionBox.restricted = false;
+    expect(urls(await invoke({ id: '123' }))).toEqual(['pg.png', 'r.png']);
+  });
+
+  it('(l) drops a creator avatar above the served level, keeps one within it', async () => {
+    const withAvatar = (nsfwLevel: number) =>
+      mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => {
+        const item = modelItem(input.ids[0]);
+        item.user = {
+          username: 'creator',
+          image: 'avatar.png',
+          profilePicture: { url: 'pic.png', type: 'image', nsfwLevel } as never,
+        };
+        return { items: [item] };
+      });
+    const avatar = (res: { body?: any }) => res.body.creator.image;
+
+    regionBox.restricted = true;
+    withAvatar(4);
+    expect(avatar(await invoke({ id: '123' }))).toBeNull();
+    withAvatar(1);
+    expect(avatar(await invoke({ id: '124' }))).toBe('pic.png');
+    regionBox.restricted = false;
+    withAvatar(4);
+    expect(avatar(await invoke({ id: '125' }))).toBe('pic.png');
+  });
+
+  it('(k) keeps every answer out of the shared cache, since it depends on the region', async () => {
+    for (const restricted of [true, false]) {
+      regionBox.restricted = restricted;
+      const res = (await invoke({ id: '123' })) as unknown as { headers: Record<string, unknown> };
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+    }
   });
 
   it('(i) opts out of the addon discovery gates — a by-id fetch is not a request for NSFW', async () => {

@@ -13,8 +13,8 @@ import { trpc } from '~/utils/trpc';
  *
  *   1. The JWT scopes they've granted THIS app (`blocks.listMyScopeGrants`,
  *      filtered to this app, rendered via the shared `ScopeConsentList` — the same
- *      component the /apps/activity "Apps & permissions" tab uses, which wraps
- *      `BlockScopeList` and adds the per-scope REVOKE control, the app-level
+ *      component the /apps/activity "Apps & permissions" tab uses, which renders the
+ *      plain-language permission rows and adds the per-scope REVOKE control, the app-level
  *      "permissions last changed" line and the revoke failure notice).
  *   2. A per-app action audit timeline (`AppActivityPanel` with the `appBlockId`
  *      drill-down — Buzz attribution + scope-gated call audit interleaved).
@@ -95,7 +95,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
             overstatement in the other direction. Still not the bare "Granted permissions"
             #4722 rejected: the list below is the app's EFFECTIVE set
             (`manifest.scopes ∩ approved_scopes`), not the user's granted set — see the comment
-            on `BlockScopeList` below. */}
+            on `ScopeConsentList` below. */}
         <Text fw={600} size="sm">
           Permissions from your installs and consents
         </Text>
@@ -110,7 +110,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
         ) : grantsQuery.isError && !grant ? (
           /* 🔴 AN ERROR BRANCH, BECAUSE WITHOUT ONE A FAILED READ ASSERTED A DENIAL. On a query
              error `data` is `undefined` and `isLoading` is `false`, so this fell straight through
-             to `<BlockScopeList>` with `scopeGrantEmptyScopeLabel('activity')` — a sentence about
+             to the permission list with `scopeGrantEmptyScopeLabel('activity')` — a sentence about
              what the viewer has and has not granted. The client cannot make a claim about the
              viewer's record from a read that failed, and the previous hard-coded string was
              record-shaped ("No permissions recorded …") so it survived the same state; the
@@ -259,7 +259,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              running, so it unambiguously has access — "you granted it nothing, here is what it
              did" is true, while the install/consent sentence would imply a relationship that
              is not there. */
-          /* 🔴 `ScopeConsentList`, NOT `BlockScopeList` DIRECTLY — the per-scope revoke control,
+          /* 🔴 `ScopeConsentList`, NOT A BARE PERMISSION LIST — the per-scope revoke control,
              the "you last removed a permission on <date>" line and the failure notice all live
              inside it, and `src/pages/apps/activity.tsx` renders the SAME component with the same
              single `grant` object. That shared mount is the mechanism, not a convention: this

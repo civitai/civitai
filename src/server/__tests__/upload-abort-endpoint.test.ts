@@ -211,43 +211,10 @@ describe('/api/upload/abort — error classification', () => {
   });
 
   /**
-   * 🔴 THE RESPONSE MUST NOT DEPEND ON TELEMETRY. Every case above runs with a resolving
-   * `logToAxiom` (a `vi.fn()` from `~/__tests__/setup`), so none of them could see the
-   * 2026-08-23 failure: with Axiom's ingest host unreachable, the awaited log call above
-   * the classifier threw and this entire taxonomy became unreachable — 92 sampled 500s on
-   * a route whose normal 500 rate is zero. Mirrors the block in
-   * ./upload-complete-endpoint.test.ts, which carries the full mechanism.
-   *
-   * Asserts the handler settles cleanly AND the client's status — see the note in
-   * ./upload-complete-endpoint.test.ts on why `resolves` is load-bearing. Pre-fix, both
-   * cases observe `statusCode` 0.
+   * 🔴 THE RESPONSE MUST NOT WAIT ON TELEMETRY: a slow or failing log must not turn a stored
+   * object into a 500.
    */
-  describe('telemetry failure cannot change the client response', () => {
-    const withFailingLogger = async (res: ReturnType<typeof makeRes>) => {
-      vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
-      try {
-        await expect(handler(makeReq(), res)).resolves.toBeUndefined();
-      } finally {
-        vi.mocked(logToAxiom).mockReset();
-      }
-    };
-
-    it('NoSuchUpload still classifies to 204 — the branch is reachable', async () => {
-      mockAbortMultipartUpload.mockRejectedValue(
-        s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
-      );
-      const res = makeRes();
-      await withFailingLogger(res);
-      expect(res.statusCode).toBe(204);
-    });
-
-    it('a successful abort still returns 200', async () => {
-      mockAbortMultipartUpload.mockResolvedValue({ ok: true });
-      const res = makeRes();
-      await withFailingLogger(res);
-      expect(res.statusCode).toBe(200);
-    });
-
+  describe('telemetry runs after the response', () => {
     /**
      * 🔴 ORDERING, read directly. A status-only assertion cannot see the log being moved back
      * ahead of the response once the log is contained — a mutation sweep proved that on the
@@ -491,5 +458,58 @@ describe('/api/upload/abort — file size', () => {
 
     expect(lastLogged().name).toBe('s3-upload-abort');
     expect(lastLogged()).not.toHaveProperty('fileSize');
+  });
+});
+
+describe('/api/upload/abort — a malformed body is a 400, not a 500', () => {
+  const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  beforeEach(() => {
+    // Mirrors the SDK serializer's throw for a missing UploadId, so a handler that reaches S3
+    // without the guard fails with a 500.
+    mockAbortMultipartUpload.mockImplementation(async (_b, _k, uploadId) => {
+      if (uploadId == null) throw new TypeError('Expected a non-null value for UploadId');
+    });
+  });
+
+  it('missing uploadId → 400 + no-store, S3 never called, still logged', async () => {
+    const res = makeRes();
+    await handler(makeReq({ body: { uploadId: undefined, failure: { kind: 'complete' } } }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Missing or invalid bucket, key or uploadId' });
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
+    expect(lastLogged().name).toBe('s3-upload-abort-invalid');
+    expect(lastLogged().failure).toEqual({ kind: 'complete' });
+    expect(lastLogged().invalid).toEqual(['uploadId']);
+    expect(lastLogged().key).toBe('some/key.safetensors');
+  });
+
+  it('names every bad field and omits an invalid key from the log row', async () => {
+    await handler(makeReq({ body: { key: '', bucket: undefined } }), makeRes());
+    expect(lastLogged().invalid).toEqual(['bucket', 'key']);
+    expect(lastLogged()).not.toHaveProperty('key');
+  });
+
+  it.each([
+    ['missing key', { key: undefined }],
+    ['empty key', { key: '' }],
+    ['missing bucket', { bucket: undefined }],
+    ['empty uploadId', { uploadId: '' }],
+    ['non-string uploadId', { uploadId: 123 }],
+  ])('%s → 400, and S3 is never called', async (_label, body) => {
+    const res = makeRes();
+    await handler(makeReq({ body }), res);
+    expect(res.statusCode).toBe(400);
+    expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('a literal null JSON body → 400, not a destructuring 500', async () => {
+    const req = makeReq();
+    (req as { body: unknown }).body = null;
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(mockAbortMultipartUpload).not.toHaveBeenCalled();
   });
 });

@@ -11,16 +11,18 @@
     noun,
     curPage,
     totalPages,
+    note,
   }: {
     total: number;
     noun: string;
     curPage: number;
     totalPages: number;
+    note?: string;
   } = $props();
 </script>
 
 <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-dark-3">
-  <span>{total.toLocaleString()} {noun}{total === 1 ? '' : 's'}</span>
+  <span>{total.toLocaleString()} {noun}{total === 1 ? '' : 's'}{note ? ` · ${note}` : ''}</span>
   <div class="flex items-center gap-3">
     <PageSizeSelect />
     {#if totalPages > 1}

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import path from 'node:path';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -62,8 +61,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/delete';
-import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
+import handler from '~/server/api-routes/mod/user/delete';
 import {
   GENERIC_SERVER_ERROR_MESSAGE,
   REST_ERROR_CODE,
@@ -188,6 +186,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeImages: false,
       // Defaulted, not absent: support-led erasure keeps app data unless it asks.
       removeAppData: false,
+      actorId: 990000007,
     });
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
   });
@@ -205,6 +204,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeModels: undefined,
       removeImages: false,
       removeAppData: true,
+      actorId: 990000007,
     });
   });
 
@@ -233,6 +233,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       // Defaulted, not absent — see the grace-period case below.
       removeImages: false,
       removeAppData: false,
+      actorId: 990000007,
     });
   });
 
@@ -471,7 +472,7 @@ describe('user.delete — API keys', () => {
   // The refusals here come from `defineModeratorEndpoint`'s credential rule, pinned in
   // `moderator-rest-wrappers.credential-requirements.test.ts`. These cases hold this route to it.
   const MODERATOR = { id: 990000007, isModerator: true, permissions: [], bannedAt: null };
-  const asBearer = (tokenScope: number) => {
+  const asBearer = (tokenScope: bigint) => {
     bearerSession.value = { user: MODERATOR, ...PERSONAL_KEY, tokenScope };
     return call({ userId: TARGET, username: NAME }, { authorization: 'Bearer key' });
   };
@@ -543,51 +544,8 @@ describe('user.delete — the retry path, after a deletion reported as failed', 
   });
 });
 
-describe('user.delete — an account under a legal hold', () => {
-  it('refuses with the neutral text and records no deletion', async () => {
-    deleteUser.mockRejectedValueOnce(new LegalHoldError());
-
-    const { status, body } = await call({ userId: TARGET, username: NAME });
-
-    expect(status).toBe(403);
-    expect(body).toMatchObject({ message: 'Account under legal hold; contact Legal.' });
-    expect(trackModActivity).not.toHaveBeenCalled();
-    expect(mockUserActivity).not.toHaveBeenCalled();
-  });
-
-  /** The moderator app's body reader and refusal texts, loaded by path across the app boundary. */
-  const moderatorSide = async () => {
-    const lib = path.resolve(__dirname, '../../../../../..', 'apps/moderator/src/lib');
-    const { restErrorReason } = (await import(
-      /* @vite-ignore */ `${lib}/server/rest-error-reason.ts`
-    )) as { restErrorReason: (body: unknown, status: number) => string | null };
-    const texts = (await import(/* @vite-ignore */ `${lib}/legal-hold.ts`)) as Record<
-      string,
-      string
-    >;
-    return { restErrorReason, ...texts };
-  };
-
-  it.each([
-    ['a hold', () => new LegalHoldError(), 'LEGAL_HOLD_REFUSAL'],
-    [
-      'a hold status it could not read',
-      () => new LegalHoldUnconfirmedError(),
-      'HOLD_UNKNOWN_REFUSAL',
-    ],
-  ])('refuses %s with the text the moderator app maps it by', async (_, error, refusal) => {
-    deleteUser.mockRejectedValueOnce(error());
-    const moderator = await moderatorSide();
-
-    const { status, body } = await call({ userId: TARGET, username: NAME });
-
-    expect(status).toBe(403);
-    expect(moderator[refusal]).toEqual(expect.any(String));
-    expect(moderator.restErrorReason(body, status)).toBe(moderator[refusal]);
-  });
-
-  // THE CONTROL: any other failure is not reported as a hold.
-  it('does not dress up another failure as a hold', async () => {
+describe('user.delete — a failed deletion', () => {
+  it('answers 500 with the generic error body', async () => {
     deleteUser.mockRejectedValueOnce(new Error('boom'));
 
     const { status, body } = await call({ userId: TARGET, username: NAME });

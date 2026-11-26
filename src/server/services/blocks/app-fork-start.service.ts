@@ -22,10 +22,12 @@
  * `forgejoCommitSha`: the commit the platform itself wrote on approve. Never a branch HEAD, which
  * an unreviewed push can move.
  *
- * 🔴 NOTHING ELSE IS INHERITED. This module writes no database row at all: no approvals, no
+ * 🔴 NOTHING ELSE IS INHERITED. This module writes no database row of its own: no approvals, no
  * scopes, no goods catalog, no entitlements, no fee accruals. Paid goods stay in the fork's CODE
  * and can sell only after the fork's own publish review approves them. Pinned by the
- * "no database writes" test.
+ * "no database writes" test. The one row a start leads to is the fork's SOURCE REPO record,
+ * written by `app-source-repo.service.ts` (`createForkSourceRepo`): the fork's own git repo,
+ * seeded with the same files as the sandbox seed, which builds nothing and grants nothing.
  *
  * The session lives in sysRedis (`REDIS_SYS_KEYS.BLOCKS.FORK_SESSION`) for 30 days — longer than
  * the sandbox service keeps an unused app (14 days) — so a fork published within its life gets
@@ -39,7 +41,18 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import {
@@ -54,10 +67,10 @@ import {
   FORK_NOT_ALLOWED_MESSAGE,
   FORK_NO_APPROVED_VERSION_MESSAGE,
   FORK_PARENT_UNAVAILABLE_MESSAGE,
-  FORK_RATE_LIMITED_MESSAGE,
+  forkRateLimitedMessage,
   FORK_SETTING_DISABLED_MESSAGE,
   FORK_SOURCE_UNREADABLE_MESSAGE,
-  FORK_START_LIMITS,
+  FORK_START_LIMIT_IDS,
   FORK_TOO_LARGE_MESSAGE,
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
@@ -69,6 +82,7 @@ import {
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_MAX_IMPORT_COLLECTIONS,
   APP_STORAGE_MAX_IMPORTS,
+  APP_STORAGE_PUBLISH_SCOPE,
   isCollectionExportable,
   type DeclaredStorageCollection,
 } from '~/shared/constants/block-storage.constants';
@@ -79,6 +93,14 @@ import {
 
 /** How long a fork session (and so a fork's claim to its parent) is kept. */
 export const FORK_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** The longest a fork start waits for the fork's source repo to be created. */
+export const FORK_SOURCE_REPO_WAIT_MS = 5_000;
+let forkSourceRepoWaitMs = FORK_SOURCE_REPO_WAIT_MS;
+/** Tests only: a shorter wait, so the bound is exercised with real timers. */
+export function __setForkSourceRepoWaitMsForTests(ms: number = FORK_SOURCE_REPO_WAIT_MS) {
+  forkSourceRepoWaitMs = ms;
+}
 
 /** The sandbox service's own seed caps (`SEED_MAX_BYTES`, `SEED_MAX_ENTRIES`). */
 export const FORK_SEED_MAX_BYTES = 25 * 1024 * 1024;
@@ -96,59 +118,9 @@ const MANIFEST_PATH = 'block.manifest.json';
 // The seed's contents
 // ---------------------------------------------------------------------------
 
-/** Top-level directories that hold dependencies or build output, never source. */
-const BUILD_OUTPUT_DIRS = new Set([
-  'dist',
-  'build',
-  'out',
-  '.next',
-  '.turbo',
-  '.vercel',
-  '.cache',
-  '.output',
-  'coverage',
-]);
-
-const SSH_KEY_RE = /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?(\.pub)?$/;
-const KEY_FILE_RE = /\.(pem|key|p12|pfx|p8|ppk|jks|keystore)$/i;
-/** Files that commonly hold a registry token, a password or a cloud credential. */
-const CREDENTIAL_FILES = new Set([
-  '.npmrc',
-  '.yarnrc',
-  '.yarnrc.yml',
-  '.netrc',
-  '.pypirc',
-  '.git-credentials',
-  '.dev.vars',
-  '.pgpass',
-  '.htpasswd',
-  'credentials.json',
-]);
-/** Directories that hold credentials wholesale. */
-const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.docker', '.gnupg', '.kube']);
-
-/**
- * Why `path` is left out of a fork's seed, or `null` to keep it. Secrets (`.env*`, keys,
- * the common credential files and directories), git metadata, dependencies (`node_modules` at any
- * depth) and top-level build output. A superset of what the sandbox service itself skips.
- *
- * ⚠ A DENYLIST, SO NOT A GUARANTEE: a secret in a file with an ordinary name (a hard-coded token
- * in `src/config.ts`) is copied like any other source. What the fork receives is the parent's
- * APPROVED source, which a moderator has reviewed; this list only removes the usual places a
- * credential sits beside it.
- */
-export function forkSeedExclusionReason(path: string): string | null {
-  const segments = path.split('/').filter(Boolean);
-  const base = segments[segments.length - 1] ?? '';
-  if (segments.some((s) => s === '.git')) return 'git';
-  if (segments.some((s) => s.startsWith('.env'))) return 'env';
-  if (segments.some((s) => s === 'node_modules')) return 'dependencies';
-  if (segments.length > 1 && BUILD_OUTPUT_DIRS.has(segments[0])) return 'build-output';
-  if (KEY_FILE_RE.test(base) || SSH_KEY_RE.test(base)) return 'key';
-  if (CREDENTIAL_FILES.has(base) || segments.some((s) => CREDENTIAL_DIRS.has(s)))
-    return 'credentials';
-  return null;
-}
+// The exclusion list lives in its own module (no I/O) so the source-repo writer applies the same
+// one; re-exported here for this module's existing callers and tests.
+export { forkSeedExclusionReason };
 
 export type ForkSeedZip = {
   buffer: Buffer;
@@ -157,6 +129,8 @@ export type ForkSeedZip = {
   files: string[];
   /** Paths left out. */
   excluded: string[];
+  /** The kept files themselves, in archive order: what the fork's source repo is seeded with. */
+  entries: Array<{ path: string; content: Buffer }>;
 };
 
 /**
@@ -193,10 +167,14 @@ export async function buildForkSeedZip(
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
   prefillParentStorageImports(manifest);
+  // After the prefill: the import still reaches every exportable PARENT collection, tallies included.
+  stripDeprecatedStoragePrimitives(manifest);
   manifest.blockId = forkSlug;
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
   delete manifest.repository;
+  // Same for the issue-tracker / support link: the parent author's tracker is not the fork's.
+  delete manifest.bugs;
   // `iframe.src` is PLATFORM-OWNED: the parent's is its own stamped URL, which the server
   // re-stamps for the fork on submit anyway, and `civitai app validate` refuses an authored one.
   // Only `src` goes; the rest of `iframe` (heights, resizable, sandbox) is the author's to keep.
@@ -220,6 +198,7 @@ export async function buildForkSeedZip(
     sha256: createHash('sha256').update(buffer).digest('hex'),
     files: kept.map((f) => f.path),
     excluded,
+    entries: kept,
   };
 }
 
@@ -291,6 +270,55 @@ export function prefillParentStorageImports(manifest: Record<string, unknown>): 
     justifications[APP_STORAGE_IMPORT_SCOPE] = defaultForkImportJustification(parentName);
   }
   manifest.scopeJustifications = justifications;
+}
+
+/**
+ * Remove the deprecated tally primitives from a fork's OWN collections, in place
+ * (docs/app-storage-generic-core.md, rollout step 3). A fork's first submit has no previous approved
+ * version, so submit refuses any `marks`, `counters` or `write: "none"` it declares
+ * (`deprecatedPrimitiveErrors`); a seed copied as-is from a parent that still declares them could
+ * never be submitted unedited. So: `marks` and `counters` go from every collection, and a collection
+ * with `write: "none"` goes whole (it held nothing but counters and marks). Everything else (schemas,
+ * indexes, the imports prefill) is kept. A `collections` left empty is removed, and a `storage` left
+ * with neither collections nor imports too, since the schema requires at least one of them.
+ * When `storage` goes, so do the storage scopes and their `scopeJustifications` entries:
+ * `appStorageScopeErrors` refuses each of them with nothing in `storage` for it to reach, and the
+ * manifest validator refuses a justification for a scope that is not requested.
+ */
+export function stripDeprecatedStoragePrimitives(manifest: Record<string, unknown>): void {
+  const storage = manifest.storage;
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return;
+  const store = storage as Record<string, unknown>;
+  const collections = store.collections;
+  if (!collections || typeof collections !== 'object' || Array.isArray(collections)) return;
+  const kept: Record<string, unknown> = {};
+  for (const [name, decl] of Object.entries(collections as Record<string, unknown>)) {
+    if (!decl || typeof decl !== 'object' || Array.isArray(decl)) {
+      kept[name] = decl;
+      continue;
+    }
+    const { marks: _marks, counters: _counters, ...rest } = decl as Record<string, unknown>;
+    if (rest.write === 'none') continue;
+    kept[name] = rest;
+  }
+  if (Object.keys(kept).length > 0) store.collections = kept;
+  else delete store.collections;
+  if (store.collections !== undefined || store.imports !== undefined) return;
+  delete manifest.storage;
+  const storageScopes = [
+    APP_STORAGE_BASE_SCOPE,
+    APP_STORAGE_PUBLISH_SCOPE,
+    APP_STORAGE_IMPORT_SCOPE,
+  ];
+  if (Array.isArray(manifest.scopes)) {
+    manifest.scopes = (manifest.scopes as unknown[]).filter(
+      (s) => !(storageScopes as unknown[]).includes(s)
+    );
+  }
+  const justifications = manifest.scopeJustifications;
+  if (justifications && typeof justifications === 'object' && !Array.isArray(justifications)) {
+    for (const scope of storageScopes) delete (justifications as Record<string, unknown>)[scope];
+  }
 }
 
 /** The sandbox service's cap on a seed's uncompressed size (`SEED_MAX_UNCOMPRESSED_BYTES`). */
@@ -416,19 +444,26 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 // ---------------------------------------------------------------------------
 
 /**
- * Count one fork start against each of the user's windows ({@link FORK_START_LIMITS}). Refuses
+ * Count one fork start against each of the user's windows ({@link FORK_START_LIMIT_IDS}). Refuses
  * with TOO_MANY_REQUESTS past any cap, and FAILS CLOSED (SERVICE_UNAVAILABLE) when the counter
  * cannot be read: every start builds and uploads a copy of an app's source.
  */
-async function consumeForkStart(userId: number): Promise<void> {
-  for (const { windowSeconds, max } of FORK_START_LIMITS) {
-    const key = `${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
+async function consumeForkStart(user: SessionUser): Promise<void> {
+  // The user's limits, from the registry (a KeyValue override, else the code defaults).
+  const limits = await Promise.all(
+    FORK_START_LIMIT_IDS.map(async (id) => {
+      const { window } = getUsageLimitDef(id);
+      if (window.type !== 'rolling') throw new Error(`${id} is not a rolling window`);
+      return { id, windowSeconds: window.seconds, max: await resolveUserAppLimit(id, user) };
+    })
+  );
+  const message = forkRateLimitedMessage(limits[0].max, limits[1].max);
+  const userId = user.id;
+  for (const { id, windowSeconds, max } of limits) {
+    const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await withSysReadDeadline(
-        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
-      );
-      count = Number((result as unknown[] | null)?.[1]);
+      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds);
     } catch {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
@@ -436,7 +471,16 @@ async function consumeForkStart(userId: number): Promise<void> {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
     if (count > max) {
-      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: FORK_RATE_LIMITED_MESSAGE });
+      // A failed TTL read falls back to the whole window: the wait is at most that.
+      const ttl = await boundedClusterCall('consumeForkStart', () => redis.ttl(key)).catch(
+        () => windowSeconds
+      );
+      throwAppRateLimited(id, ttl > 0 ? ttl : windowSeconds, message, {
+        limit: max,
+        used: count,
+        windowSeconds,
+        resetAt: new Date(Date.now() + (ttl > 0 ? ttl : windowSeconds) * 1000),
+      });
     }
   }
 }
@@ -563,7 +607,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_NO_APPROVED_VERSION_MESSAGE });
   }
 
-  await consumeForkStart(user.id);
+  await consumeForkStart(user);
 
   // Reserve a slug: free in the database, then claimed atomically by the session's SET NX.
   const now = new Date();
@@ -623,6 +667,30 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
         EX: FORK_SESSION_TTL_SECONDS,
       })
     );
+    // The fork's own git repo, seeded with exactly the files its sandbox starts from. The parent
+    // named in its trailers is THIS session's (server-resolved), never anything in the manifest.
+    // Best-effort and never throws: the fork starts whether or not the repo could be made, and
+    // the source-repo backfill makes one that is missing.
+    // Waited on for at most FORK_SOURCE_REPO_WAIT_MS: a slow git host must not hold the start (the
+    // creation carries on, and the backfill covers one that never finishes).
+    const sourceRepo = import('~/server/services/blocks/app-source-repo.service')
+      .then(({ createForkSourceRepo }) =>
+        createForkSourceRepo({
+          forkSlug,
+          userId: user.id,
+          files: seedZip.entries,
+          lineage: {
+            parentSlug: parentBlock.blockId,
+            parentCommitSha,
+            parentAppBlockId: parentBlock.id,
+          },
+        })
+      )
+      .catch(() => undefined);
+    await Promise.race([
+      sourceRepo,
+      new Promise((resolve) => setTimeout(resolve, forkSourceRepoWaitMs).unref?.()),
+    ]);
     return { forkSlug, parentName: parent.name, parentListingId: parent.id, seed };
   } catch (err) {
     // Release the reservation: nothing will ever be created under it. And the seed object, if it
@@ -634,7 +702,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       name: 'app-fork-start-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
 }
@@ -710,7 +778,7 @@ export async function applyForkSessionToFirstPublishRequest(args: {
         name: 'app-fork-session-provenance-failed',
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
-      }).catch(() => null);
+      });
     }
     return false;
   }

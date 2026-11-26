@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -7,8 +8,12 @@ import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
+  gatedVersionIds,
+  getGateRuleState,
+  getGateSubjects,
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
@@ -16,23 +21,69 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { CacheTTL } from '~/server/common/constants';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { logToAxiom } from '~/server/logging/client';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
+import {
+  refreshBlobsService,
+  type BlobRefreshResult,
+} from '~/server/services/orchestrator/refreshBlobs';
+import { getConsumerBlobId, shouldRefreshBlobUrl } from '~/shared/orchestrator/blob-url';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getDownloadFilename } from '~/server/services/file.service';
+import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
-  LicensingFeeType,
   ModelType,
   ModelHashType,
-  ModelUsageControl,
+  ModelStatus,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  LicensingFeeType,
+  ModelFileVisibility,
+  type ModelUsageControl,
+  type ScanResultCode,
+} from '~/shared/utils/prisma/enums';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
+import {
+  getMiniModerationState,
+  moderationBlocksGeneration,
+  receivesMiniModeration,
+} from '~/server/utils/mini-moderation-state';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
+import {
+  credentialKind,
+  evaluateMiniEpochCaller,
+  type MiniEpochCallerClass,
+  getMiniEpochGateMode,
+  hasVersionGrant,
+} from '~/server/utils/mini-epoch-caller';
+import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
+import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
+
+const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
+const MINI_SCOPES = { anyOfScopes: MODEL_VIEW_SCOPES };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -43,15 +94,23 @@ export const schema = z.object({
   // → the existing 400 path fires. (The `if (!id)` guard below still covers a
   // legitimately absent id.)
   id: z.coerce.number().int().gt(0).lte(2147483647),
-  epoch: z.number().optional(),
+  // Read only for a caller who may pick the epoch (see `epochSchema`); everyone else is answered as
+  // if it were absent, so a malformed value refuses nobody else.
+  epoch: z.unknown().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
   // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
+  // `1`: also a `downloadLink` the caller fetches the file with as a provider, for a caller on the
+  // provider allowlist. Anyone else is answered as if it were absent, not refused.
+  downloadLink: z.unknown().optional(),
 });
+
+const epochSchema = z.coerce.number().int();
 
 type VersionRow = {
   id: number;
   versionName: string;
+  trainedWords: string[];
   availability: Availability;
   publishedAt: Date | null;
   modelId: number;
@@ -71,10 +130,14 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  modelStatus: string;
+  modelMode: string | null;
+  modelAvailability: Availability;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: number | null;
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
@@ -83,8 +146,14 @@ type VersionRow = {
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  sourceLicensingFeeMarkup: number | null;
   versionFlags: number;
   userFlags: number;
+  ownerDeletedAt: Date | null;
+  ownerBannedAt: Date | null;
+  nsfwLevel: number;
+  sfwName: string | null;
+  modelDeletedAt: Date | null;
 };
 type FileRow = {
   id: number;
@@ -94,15 +163,38 @@ type FileRow = {
   metadata: FileMetadata;
   sizeKB: number;
   name: string;
+  overrideName: string | null;
   hashes: Record<ModelHashType, string>;
   replacedAt: Date | null;
+  pickleScanResult: ScanResultCode | null;
+  virusScanResult: ScanResultCode | null;
 };
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: 'selfGated' });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
+  // The orchestrator's service token carries no user and keeps its own path.
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const credential = orchestrator
+    ? { outcome: 'session' as const, effectiveUser: sessionUser }
+    : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
+  // Read lazily, so the flag and its log stay off paths whose answer does not depend on it.
+  let scopeRefused: Promise<boolean> | undefined;
+  const isScopeRefused = () =>
+    (scopeRefused ??=
+      credential.outcome === 'refused'
+        ? scopeRefusalMode(req, MINI_ROUTE, MINI_SCOPES).then((mode) => mode === 'enforce')
+        : Promise.resolve(false));
+  // A credential the scope gate refuses carries no moderator rights here either.
+  const user =
+    credential.effectiveUser?.isModerator && (await isScopeRefused())
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
+
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
@@ -110,6 +202,7 @@ export default MixedAuthEndpoint(async function handler(
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const where = [Prisma.sql`mv.id = ${id}`];
+  // An owner's own credential sees its own version row even when the scope gate refuses it.
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
@@ -122,6 +215,7 @@ export default MixedAuthEndpoint(async function handler(
     SELECT
       mv.id,
       mv.name as "versionName",
+      mv."trainedWords",
       mv."modelId",
       m.name as "modelName",
       mv."baseModel",
@@ -132,13 +226,20 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.status as "modelStatus",
+      m.mode as "modelMode",
+      m.availability as "modelAvailability",
       m.poi,
+      m."deletedAt" AS "modelDeletedAt",
+      mv."nsfwLevel",
+      m."sfwName",
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
+      mv."licensingFeeMarkup"::float8 AS "licensingFeeMarkup",
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
@@ -147,8 +248,11 @@ export default MixedAuthEndpoint(async function handler(
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
+      lsv."licensingFeeMarkup"::float8 AS "sourceLicensingFeeMarkup",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
+      u."deletedAt" AS "ownerDeletedAt",
+      u."bannedAt" AS "ownerBannedAt",
       (
         (
             pa."entityId" IS NOT NULL
@@ -207,7 +311,63 @@ export default MixedAuthEndpoint(async function handler(
   `;
   // Same answer as an unknown id, so the response does not reveal that the version exists.
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
+  // A deleted, unpublished or not yet released model is shown only to its owner and moderators, as
+  // on the model page. The orchestrator's service token has no user: it reads this to decide what
+  // may generate.
+  if (
+    !orchestrator &&
+    !canViewModelVersionStatus({
+      viewer: user?.id ? { id: user.id, isModerator: user.isModerator } : null,
+      ownerId: modelVersion.modelUserId,
+      modelStatus: modelVersion.modelStatus as ModelStatus,
+      versionStatus: modelVersion.status as ModelStatus,
+      publishedAt: modelVersion.publishedAt,
+    })
+  )
+    return modelNotFound(res);
+
+  let privateCaller: { callerClass: MiniEpochCallerClass } | undefined;
+  if (
+    modelVersion.availability === Availability.Private ||
+    modelVersion.modelAvailability === Availability.Private
+  ) {
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+        scopeRefused: await isScopeRefused(),
+      });
+      if (caller.withhold) return modelNotFound(res);
+      privateCaller = caller;
+    }
+  }
+
+  // Above SFW, unrated, or with a civitai.com name, the answer depends on the caller's region, which
+  // the shared cache does not key on.
+  const withinSfw =
+    !!modelVersion.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, modelVersion.nsfwLevel);
+  if (!withinSfw || modelVersion.sfwName != null)
+    res.setHeader('Cache-Control', 'private, no-store');
+  // A restricted region is served the levels /api/v1/model-versions/[id] serves it (unrated fails
+  // closed), with the civitai.com name. The orchestrator, on its verified service token, is exempt:
+  // it is not a viewer in a region.
+  const servedLevel = orchestrator ? allBrowsingLevelsFlag : apiBrowsingLevel(req);
+  if (
+    servedLevel !== allBrowsingLevelsFlag &&
+    !Flags.intersects(modelVersion.nsfwLevel, servedLevel)
+  )
+    return modelNotFound(res);
+  const modelName = resolveModelFace(
+    { name: modelVersion.modelName, sfwName: modelVersion.sfwName },
+    showsSfwFace(servedLevel)
+  ).name;
 
   const files = await dbWrite.$queryRaw<FileRow[]>`
     SELECT 
@@ -218,7 +378,10 @@ export default MixedAuthEndpoint(async function handler(
       mf.metadata, 
       mf."sizeKB", 
       mf.name,
+      mf."overrideName",
       mf."replacedAt",
+      mf."pickleScanResult",
+      mf."virusScanResult",
       COALESCE(
         JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
         '{}'::json
@@ -226,7 +389,8 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."overrideName", mf."replacedAt",
+      mf."pickleScanResult", mf."virusScanResult"
     -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
     -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
     ORDER BY mf.id
@@ -253,8 +417,15 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
-  const visibleFiles =
-    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  // A credential the scope gate refuses sees only what anyone may.
+  const viewerManages = (isOwner || isMod) && !(await isScopeRefused());
+  const listed = await trainingDataListing(dbRead, [{ id, files }], {
+    redCapable: isRedCapableHost(req.headers.host),
+    viewerManages,
+  });
+  const visibleFiles = files.filter(
+    (f) => (viewerManages || f.visibility === ModelFileVisibility.Public) && listed(f)
+  );
 
   // The download route merges the requesting user's `filePreferences` into
   // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning
@@ -274,6 +445,25 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
+  // Owner, moderator, grantee or the service token, with a credential that passes the scope gate.
+  // The scope is checked last, so the refusal log counts only callers it would change.
+  let entitledToVersion: Promise<boolean> | undefined;
+  const isEntitled = () =>
+    (entitledToVersion ??= (async () =>
+      orchestrator ||
+      ((isOwner || isMod || (!!user?.id && (await hasVersionGrant(user.id, modelVersion.id)))) &&
+        !(await isScopeRefused())))());
+
+  // A file id the caller may not see is answered as one that does not exist, decided before the
+  // file is looked up so the answer cannot tell the two apart.
+  if (modelFileId && !visibleFiles.some((f) => f.id === modelFileId)) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (!(await isEntitled()))
+      return res
+        .status(404)
+        .json({ error: `Model file ${modelFileId} not found in version ${id}` });
+  }
+
   // `getPrimaryFile` over the unfiltered files with default preferences, deliberately — see both
   // notes above; this only decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
@@ -281,6 +471,35 @@ export default MixedAuthEndpoint(async function handler(
     : getPrimaryFile(files);
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
+
+  // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
+  // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
+  let mayResign = false;
+  let maySelectEpoch = false;
+  if (useEpochUrl) {
+    // `useEpochUrl` implies a Private version, so the gate above has classed the caller unless off.
+    if (privateCaller) {
+      mayResign =
+        privateCaller.callerClass !== 'anonymous' && privateCaller.callerClass !== 'other';
+      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(privateCaller.callerClass);
+    } else {
+      mayResign =
+        orchestrator ||
+        ((user?.id === modelVersion.modelUserId || !!user?.isModerator) &&
+          !(await isScopeRefused()));
+      maySelectEpoch = mayResign;
+    }
+  }
+
+  let requestedEpoch: number | undefined;
+  if (maySelectEpoch && results.data.epoch !== undefined) {
+    const parsed = epochSchema.safeParse(results.data.epoch);
+    if (!parsed.success)
+      return res.status(400).json({ error: z.prettifyError(parsed.error) ?? 'Invalid epoch' });
+    requestedEpoch = parsed.data;
+    // The body varies by ?epoch= for this caller; keep it out of shared caches.
+    res.setHeader('Cache-Control', 'private, no-store');
+  }
 
   const targetFile = useEpochUrl
     ? requestedFile
@@ -308,10 +527,10 @@ export default MixedAuthEndpoint(async function handler(
     const epoch =
       trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
-          return e.epoch_number === results.data.epoch;
+          return e.epoch_number === requestedEpoch;
         }
 
-        return e.epochNumber === results.data.epoch;
+        return e.epochNumber === requestedEpoch;
       }) ??
       // Non-mutating last-element read. `epochs?.pop()` would MUTATE the
       // metadata object this handler was handed, and it is the only reader here
@@ -368,35 +587,99 @@ export default MixedAuthEndpoint(async function handler(
     })}`;
   }
 
+  const downloadUrls = [downloadUrl];
+  const sha256 = targetFile.hashes.SHA256;
+  // Anything else would lead with a url that refuses where the id url serves.
+  const hashRouteServes = hashRouteServesEveryone({
+    fileVisibility: targetFile.visibility,
+    pickleScanResult: targetFile.pickleScanResult,
+    virusScanResult: targetFile.virusScanResult,
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    usageControl: modelVersion.usageControl,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+  });
+  if (
+    !trainingResults &&
+    hashRouteServes &&
+    sha256 &&
+    // A scan that never ran writes 64 zeros, which every such file would share.
+    !/^0+$/.test(sha256) &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_HASH_URLS, String(targetFile.id)))
+  )
+    downloadUrls.unshift(`${baseUrl}/api/download/sha256/${sha256.toLowerCase()}`);
+
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
-    downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
+    for (const [i, url] of downloadUrls.entries())
+      downloadUrls[i] = url.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
   const { format } = targetFile.metadata;
 
-  const genStates = await resolveCanGenerateForVersions(
-    [
+  // Gate rules decide per generating user, which only the permission check knows: a gated version
+  // asks for it (checkPermission), and canGenerate leaves the gate out. The same answer for every
+  // caller, so the orchestrator's account can't change what a gate does.
+  const [genStates, gateRuleState, gateSubjects] = await Promise.all([
+    resolveCanGenerateForVersions(
+      [
+        {
+          id: modelVersion.id,
+          status: modelVersion.status,
+          availability: modelVersion.availability,
+          usageControl: modelVersion.usageControl,
+          baseModel: modelVersion.baseModel,
+          covered: modelVersion.covered ?? false,
+          coveredLive: modelVersion.coveredLive ?? false,
+          modelUserId: modelVersion.modelUserId,
+          modelType: modelVersion.type,
+          flags: modelVersion.versionFlags,
+          modelVersionAlias: modelVersion.generationAlias,
+        },
+      ],
+      {
+        user: { id: user?.id, isModerator: user?.isModerator },
+        sfwOnly: false,
+        wildcardsEnabled: false,
+        ignoreGateRules: true,
+      }
+    ),
+    getGateRuleState(),
+    getGateSubjects([
       {
         id: modelVersion.id,
-        status: modelVersion.status,
-        availability: modelVersion.availability,
-        usageControl: modelVersion.usageControl,
         baseModel: modelVersion.baseModel,
-        covered: modelVersion.covered ?? false,
-        coveredLive: modelVersion.coveredLive ?? false,
-        modelUserId: modelVersion.modelUserId,
-        modelType: modelVersion.type,
-        flags: modelVersion.versionFlags,
-        modelVersionAlias: modelVersion.generationAlias,
+        generationAlias: modelVersion.generationAlias,
       },
-    ],
-    {
-      user: { id: user?.id, isModerator: user?.isModerator },
-      sfwOnly: false,
-      wildcardsEnabled: false,
-    }
-  );
-  const canGenerate = genStates.get(modelVersion.id)?.canGenerate ?? false;
+    ]),
+  ]);
+  const gateAsksPermission = gatedVersionIds(gateSubjects, gateRuleState).has(modelVersion.id);
+  // A kill switch (available to nobody) refuses everyone, so it stays a hard refusal here: the
+  // permission check's "no" could otherwise fall through to an early-access free trial.
+  const gateRefusesEveryone =
+    gateRuleState.known &&
+    gatedVersionIds(gateSubjects, gateRuleState, {
+      isModerator: true,
+      isMember: true,
+      hasTestingAccess: true,
+    }).has(modelVersion.id);
+  const moderation = getMiniModerationState({
+    versionStatus: modelVersion.status,
+    versionAvailability: modelVersion.availability,
+    modelStatus: modelVersion.modelStatus,
+    modelMode: modelVersion.modelMode,
+    modelAvailability: modelVersion.modelAvailability,
+    poi: modelVersion.poi,
+    modelDeletedAt: modelVersion.modelDeletedAt,
+    ownerDeletedAt: modelVersion.ownerDeletedAt,
+    ownerBannedAt: modelVersion.ownerBannedAt,
+  });
+  const canGenerate =
+    !moderationBlocksGeneration(moderation) &&
+    !gateRefusesEveryone &&
+    (genStates.get(modelVersion.id)?.canGenerate ?? false);
 
   // Check if should charge
   const shouldChargeResult = await getShouldChargeForResources([
@@ -463,6 +746,7 @@ export default MixedAuthEndpoint(async function handler(
     settlementCurrency: string;
     recipientModelVersionId: number;
     recipientUserId: number;
+    markup?: number;
   }> = [];
   if (isLicensingRoot) {
     fees.push({
@@ -472,6 +756,7 @@ export default MixedAuthEndpoint(async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   } else if (hasSourceRule) {
     fees.push({
@@ -481,6 +766,7 @@ export default MixedAuthEndpoint(async function handler(
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
       recipientUserId: modelVersion.sourceLicensingFeeRecipientUserId!,
+      ...feeMarkup(modelVersion.sourceLicensingFeeType, modelVersion.sourceLicensingFeeMarkup),
     });
   }
   if (hasOwnFee) {
@@ -491,6 +777,7 @@ export default MixedAuthEndpoint(async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   }
 
@@ -509,21 +796,77 @@ export default MixedAuthEndpoint(async function handler(
       ownerFlags: modelVersion.userFlags,
     });
 
+  // An epoch url is the orchestrator's own link to the weights, outside the download route's
+  // gates: a deleted or taken-down model's is moderators-only, as its files are.
+  const gated = {
+    status: modelVersion.status,
+    model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
+  };
+  const withholdEpochUrl =
+    !!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated));
+
+  // The stored url was signed once, at publish, and is signed again here for a caller it is served
+  // to. Each refresh also extends the blob's life on the orchestrator, so never for a withheld url.
+  const blobId =
+    trainingResults && mayResign && !withholdEpochUrl
+      ? getConsumerBlobId(downloadUrls[0])
+      : undefined;
+  let resignedEpochUrl: string | undefined;
+  if (blobId) {
+    const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, !!user?.isModerator);
+    // A blocked blob is never served; a missing one is, until the stored url expires.
+    if (
+      resigned.status === 'gone' &&
+      (resigned.reason !== 'missing' || shouldRefreshBlobUrl(downloadUrls[0]))
+    )
+      return res.status(404).json({ error: 'Missing epoch' });
+    if (resigned.status === 'refreshed') {
+      res.setHeader('Cache-Control', 'private, no-store');
+      downloadUrls[0] = resigned.url;
+      resignedEpochUrl = resigned.url;
+    } else
+      logToAxiom({
+        type: 'warning',
+        name:
+          resigned.status === 'gone'
+            ? 'mini-epoch-resign-gone-unexpired'
+            : 'mini-epoch-blob-resign',
+        message: 'served the stored epoch url',
+        modelVersionId: modelVersion.id,
+        fileId: targetFile.id,
+        blobId,
+      });
+  }
+
+  const downloadLink =
+    results.data.downloadLink === '1' && !trainingResults
+      ? await providerDownloadLink(req, modelVersion.id, targetFile.id, isScopeRefused)
+      : undefined;
+
+  const includeModeration = receivesMiniModeration(req, user);
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
     versionName: modelVersion.versionName,
-    modelName: modelVersion.modelName,
+    modelName,
     userId: modelVersion.modelUserId,
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,
     publishedAt: modelVersion.publishedAt,
     size: targetFile.sizeKB, // nullable
     fileType: targetFile.type,
-    fileName: targetFile.name,
+    // Same name the download route serves, not the stored targetFile.name.
+    fileName: safeDecodeURIComponent(
+      getDownloadFilename({
+        model: { name: modelVersion.modelName, type: modelVersion.type },
+        modelVersion: { name: modelVersion.versionName, trainedWords: modelVersion.trainedWords },
+        file: targetFile,
+        versionFiles: files,
+      })
+    ),
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : downloadUrls, // nullable
     format, // nullable
     canGenerate,
     isFeatured,
@@ -531,15 +874,149 @@ export default MixedAuthEndpoint(async function handler(
     // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
     evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
-    checkPermission: modelVersion.checkPermission,
+    checkPermission: modelVersion.checkPermission || gateAsksPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
-    freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    // Without readable rules a kill switch can't be told apart, so no trial may stand in for the
+    // permission check's refusal.
+    freeTrialLimit:
+      modelVersion.checkPermission && gateRuleState.known ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
     fees,
     payoutEnabled,
     tipsEnabled,
+    ...(includeModeration ? { moderation } : {}),
+    ...(downloadLink ? { downloadLink } : {}),
   };
+  logMiniModerationCaller(req, user, modelVersion, includeModeration);
+  if (includeModeration || downloadLink) res.setHeader('Cache-Control', 'private, no-store');
+  const preset = res.getHeader?.('X-Expires');
+  const presetAt = typeof preset === 'string' ? Date.parse(preset) : undefined;
+  // Built while the gate rules are unreadable (every version marked gated): kept briefly, so
+  // ungated versions don't pay a permission check for the orchestrator's whole refresh interval.
+  const unknownRulesAt = gateRuleState.known ? undefined : Date.now() + 60_000;
+  const expiresAt = miniResponseExpiresAt({
+    now: Date.now(),
+    alreadySet:
+      presetAt !== undefined && unknownRulesAt !== undefined
+        ? Math.min(presetAt, unknownRulesAt)
+        : presetAt ?? unknownRulesAt,
+    moderation: includeModeration,
+    epochUrl: resignedEpochUrl,
+    downloadLinkExpiresAt: downloadLink ? Date.parse(downloadLink.expiresAt) : undefined,
+  });
+  // Read by the orchestrator as the absolute time its cached copy of this response expires.
+  if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
-});
+}
+
+/**
+ * A percent-of-compute fee's markup: charged with the fee, logged apart from it, never paid to the
+ * recipient. A per-image fee carries none, whatever the column holds.
+ */
+function feeMarkup(
+  type: LicensingFeeType | null,
+  markup: number | null
+): { markup: number } | Record<string, never> {
+  return type === LicensingFeeType.PercentOfCompute && markup != null && markup > 0
+    ? { markup }
+    : {};
+}
+
+/**
+ * The orchestrator's link to the file this response describes, for an allowlisted ApiKey; undefined
+ * for anyone else, and whenever the mint is off or fails, so the response is what it was without it.
+ */
+async function providerDownloadLink(
+  req: NextApiRequest,
+  modelVersionId: number,
+  fileId: number,
+  isScopeRefused: () => Promise<boolean>
+): Promise<{ url: string; expiresAt: string } | undefined> {
+  // Loaded on demand: only an orchestrator call that asks for a link needs the download-link graph.
+  const [{ headerApiKeyCredential }, { mintProviderLink }] = await Promise.all([
+    import('~/server/services/download-link/download-link-minter'),
+    import('~/server/services/download-link/download-link.service'),
+  ]);
+  const credential = headerApiKeyCredential(req);
+  if (!credential || (await isScopeRefused())) return undefined;
+  const minted = await mintProviderLink(credential, {
+    provider: 'orchestrator',
+    modelVersionId,
+    fileId,
+  }).catch(() => null);
+  return minted?.ok ? { url: minted.url, expiresAt: minted.expiresAt } : undefined;
+}
+
+/** Logs which principal the request's credential resolves to. */
+function logMiniModerationCaller(
+  req: NextApiRequest,
+  user: Session['user'] | undefined,
+  { id: modelVersionId, modelUserId: ownerId }: { id: number; modelUserId: number },
+  moderationIncluded: boolean
+) {
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const resolvedAs = credentialKind(req, user, orchestrator);
+  if (resolvedAs === 'none') return;
+  const principal = user?.isModerator
+    ? 'moderator'
+    : orchestrator
+    ? 'orchestrator-token'
+    : user?.id && user.id === ownerId
+    ? 'owner'
+    : 'other';
+  logToAxiom({
+    type: 'info',
+    name: 'mini-moderation-caller',
+    modelVersionId,
+    resolvedAs,
+    principal,
+    moderationIncluded,
+  });
+}
+
+const RESIGN_TIMEOUT_MS = 3000;
+
+/**
+ * A fresh signature from the blob owner's own orchestrator account; `unknown` on any failure. Only a
+ * refreshed url is cached, so a refusal (a blocked blob above all) is asked again on the next read.
+ */
+async function resignEpochBlob(
+  ownerId: number,
+  blobId: string,
+  moderator: boolean
+): Promise<BlobRefreshResult> {
+  const unknown: BlobRefreshResult = { blobId, status: 'unknown' };
+  const key = `${REDIS_KEYS.CACHES.EPOCH_BLOB_RESIGNED_URL}:${ownerId}:${blobId}` as const;
+  const controller = new AbortController();
+  const resign = async (): Promise<BlobRefreshResult> => {
+    const cached = await redis.packed.get<string>(key).catch(() => null);
+    if (cached && !shouldRefreshBlobUrl(cached))
+      return { blobId, status: 'refreshed', url: cached };
+    const token = await getOrchestratorToken(ownerId, undefined, { bypassCache: moderator });
+    const [result] = await refreshBlobsService({
+      token,
+      blobIds: [blobId],
+      signal: controller.signal,
+    });
+    if (result?.status === 'refreshed')
+      void redis.packed.set(key, result.url, { EX: CacheTTL.xs * 5 }).catch(() => undefined);
+    return result ?? unknown;
+  };
+  return withTimeoutFallback(
+    resign().catch(() => unknown),
+    RESIGN_TIMEOUT_MS,
+    unknown,
+    () => controller.abort()
+  );
+}
+
+/**
+ * The answer to an unknown id and to a version the caller may not see, headers included, so the two
+ * cannot be told apart. Never in a shared cache: the same id can be visible to another caller.
+ */
+function modelNotFound(res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(404).json({ error: 'Model not found' });
+}

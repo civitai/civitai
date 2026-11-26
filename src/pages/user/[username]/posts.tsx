@@ -12,6 +12,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { isViewer } from '~/utils/is-viewer';
@@ -77,11 +78,15 @@ function UserPostsFeed({ profileUserId }: { profileUserId: number }) {
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? PostSort.Newest;
   const selfView = isViewer(currentUser, profileUserId);
+  // The header bar's search of this creator's posts (pageSearch); read here, not from the post
+  // params other feeds share.
+  const pageSearchText = useFeedSearchQuery();
   // A moderator sees anything the creator can see of their own. Matches the
   // images and videos tabs; the server authorizes this independently in
   // `post.service.ts` and does not trust the control being rendered.
   const canViewDrafts = selfView || (currentUser?.isModerator ?? false);
   const features = useFeatureFlags();
+  const searchText = features.pageSearch ? pageSearchText : undefined;
 
   const [section, setSection] = useState<'published' | 'draft'>(
     canViewDrafts ? querySection ?? 'published' : 'published'
@@ -144,6 +149,7 @@ function UserPostsFeed({ profileUserId }: { profileUserId: number }) {
             <PostsInfinite
               filters={{
                 ...query,
+                query: searchText,
                 username: undefined,
                 userId: profileUserId,
                 followed,

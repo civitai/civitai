@@ -49,7 +49,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -88,6 +87,7 @@ vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
+  purgePublicModelShowcaseEdgeCache: vi.fn(),
 }));
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: mockTrackModActivity,

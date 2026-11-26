@@ -105,7 +105,8 @@ export type ScopeConsentRow = {
 };
 
 /**
- * The displayed rows for one app, in render order, each tagged with its consent state.
+ * The displayed rows for one app, each tagged with its consent state. The renderer regroups
+ * them (sensitive first, by OAuth bit), so this order is not the on-screen order.
  *
  * 🔴 A REVOKED SCOPE IS APPENDED EVEN WHEN IT IS NOT IN `scopes`, AND THAT IS THE WHOLE
  * REASON THIS FUNCTION EXISTS RATHER THAN A `.map()` AT EACH CALL SITE. `scopes` is the
@@ -118,10 +119,9 @@ export type ScopeConsentRow = {
  * control, so the row survives its own disappearance from the manifest.
  *
  * Order: the app's own set first, in the order the server sent it (manifest order,
- * de-duplicated), then any revoked-but-no-longer-declared scope, sorted. Appending rather
- * than merging keeps the common case byte-identical to the pre-change list, so the phase-1
- * geometry arms — which read the gap from the FIRST fixture scope's description down to the
- * SECOND's id — are measuring the same two rows they were written against.
+ * de-duplicated), then any revoked-but-no-longer-declared scope, sorted. This is only the
+ * tie-break among scopes of equal rank: the renderer groups and sorts by the shared rule
+ * (`groupListingPermissions`), which is stable, so it is not the on-screen order.
  *
  * 🔴 THE STATE TESTS ARE ORDERED `revoked` → `unknown` → `fixed` → (`revokable` | `not-granted`),
  * AND NO ADJACENT PAIR MAY BE SWAPPED.
@@ -330,7 +330,7 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
     'server-side to this app, so it cannot see anything you own from anywhere else.',
   'apps:store:items:write':
     "Can't be withdrawn. Only items you authored in this app can be listed, and each one is " +
-    'checked server-side and reviewed by a moderator before it appears in the App Store.',
+    'checked server-side and reviewed by a moderator before it first appears in the App Store.',
 };
 
 /**
@@ -351,7 +351,7 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
  *
  * 🔴 `isKnownBlockScope` IS THE DISCRIMINATOR AND IT COMES FROM THE SHARED REGISTRY, not from a
  * local copy. `~/shared/constants/block-scope.constants` is client-safe — that is already why
- * `BlockScopeList` imports `isSensitiveBlockScope` from it — and it is the same FUNCTION the
+ * `listingPermissions.ts` imports `isSensitiveBlockScope` from it — and it is the same FUNCTION the
  * server's `revokableScopes` computation filters on.
  *
  * ⚠️ "THE CLIENT CANNOT DISAGREE WITH THE SERVER ABOUT WHICH ARM A ROW IS IN" WAS CLAIMED HERE AND

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ClickHouseError } from '@clickhouse/client';
 import type {
   IClickhouseClient,
   IRedisClient,
@@ -10,6 +11,7 @@ vi.hoisted(() => {
 });
 
 import { MetricService } from '../../../../event-engine-common/services/metrics';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 // A `metrics:<type>:<id>` entry is a ClickHouse snapshot plus the watcher's live increments, and an
 // increment that never lands is never re-applied. Hot entries slide their TTL, so before this an
@@ -24,39 +26,48 @@ const lockKey = (id: number) => `metrics:lock:Image:${id}`;
 
 type Hash = Record<string, string>;
 
+// MetricService's scripts (the stampede lock, the stamped replace) run as real Lua.
 function fakeRedis() {
-  const hashes = new Map<string, Hash>();
   const strings = new Map<string, string>();
+  const lua = createLuaRedis(Date.now(), { strings });
+  const call = (command: string, key: string, ...args: string[]) =>
+    lua.eval(`return redis.call('${command}', KEYS[1], unpack(ARGV))`, {
+      keys: [key],
+      arguments: args,
+    });
   const client = {
-    hGetAll: vi.fn(async (key: string) => ({ ...(hashes.get(key) ?? {}) })),
+    hGetAll: vi.fn(async (key: string) => ({ ...(lua.hash(key) ?? {}) })),
     expire: vi.fn(async () => 1),
-    del: vi.fn(async (key: string) => Number(hashes.delete(key) || strings.delete(key))),
-    // The only script MetricService runs is the stampede lock's SET NX.
-    eval: vi.fn(
-      async (
-        script: string,
-        { keys, arguments: args }: { keys: string[]; arguments: string[] }
-      ) => {
-        if (!script.includes("'NX'")) throw new Error(`unexpected script: ${script}`);
-        if (strings.has(keys[0])) return 0;
-        strings.set(keys[0], args[0]);
-        return 1;
-      }
+    del: vi.fn((key: string) => call('DEL', key)),
+    // Lua's nil comes back as false; the real client returns null.
+    get: vi.fn(async (key: string) => {
+      const value = await call('GET', key);
+      return typeof value === 'string' ? value : null;
+    }),
+    set: vi.fn((key: string, value: string, options?: { EX?: number }) =>
+      options?.EX ? call('SET', key, value, 'EX', String(options.EX)) : call('SET', key, value)
     ),
+    eval: lua.eval,
+    // hReplaceEx's pipeline, used for a miss with no ClickHouse row.
     multi: () => {
-      const ops: (() => void)[] = [];
+      const ops: (() => Promise<unknown>)[] = [];
       const multi = {
-        del: (key: string) => (ops.push(() => hashes.delete(key)), multi),
+        del: (key: string) => (ops.push(() => call('DEL', key)), multi),
         hSet: (key: string, fields: Hash) => (
-          ops.push(() => hashes.set(key, { ...(hashes.get(key) ?? {}), ...fields })), multi
+          ops.push(() => call('HSET', key, ...Object.entries(fields).flat())), multi
         ),
         expire: () => multi,
-        exec: async () => ops.map((op) => op()),
+        exec: async () => {
+          const results = [];
+          for (const op of ops) results.push(await op());
+          return results;
+        },
       };
       return multi;
     },
   };
-  return { client: client as unknown as IRedisClient, hashes, strings };
+  const hashes = { get: lua.hash, set: lua.setHash };
+  return { client: client as unknown as IRedisClient, hashes, strings, pttl: lua.pttl };
 }
 
 // Answers the populate query from `truth`, for the ids the query names.
@@ -195,5 +206,156 @@ describe('MetricService cache refresh', () => {
     expect((await service.fetch('Image', [1]))[1].Like).toBe(5);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(query).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The populate lookup names a few cache-missed ids, and it is most of the analytics DB's query CPU.
+// It runs single-threaded (more threads only queue it behind other queries for CPU) under a server
+// cap, because the app's budget for the read only stops the caller waiting. The query itself is
+// not cancelled with the caller, so a lookup that is merely late still fills the cache, and the
+// lookup after one the cap stopped runs uncapped, so a slow server still fills it.
+describe('MetricService populate lookup settings', () => {
+  const POINT_LOOKUP_SETTINGS = {
+    max_threads: 1,
+    max_execution_time: 6,
+    timeout_overflow_mode: 'throw',
+  };
+
+  // What the client throws when the server stops a query at max_execution_time.
+  const serverTimeout = () =>
+    new ClickHouseError({
+      message: 'Timeout exceeded: elapsed 6.0 seconds, maximum: 6',
+      code: '159',
+      type: 'TIMEOUT_EXCEEDED',
+    });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('runs a cold-miss lookup single-threaded under a server cap, and never cancels it', async () => {
+    const redis = fakeRedis();
+    const ch = fakeClickhouse({ 1: { Like: 4 }, 2: { Like: 7 } });
+    const service = new MetricService(ch.client, redis.client);
+
+    await service.fetch('Image', [1, 2]);
+
+    expect(ch.query).toHaveBeenCalledTimes(1);
+    const params = ch.query.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
+    expect(params).not.toHaveProperty('abort_signal');
+  });
+
+  it('runs the background refresh lookup with the same settings', async () => {
+    const redis = fakeRedis();
+    redis.hashes.set(metricKey(1), { Like: '5', _populatedAt: String(nowSeconds() - 2 * HOUR) });
+    const ch = fakeClickhouse({ 1: { Like: 8 } });
+    const service = new MetricService(ch.client, redis.client);
+
+    await service.fetch('Image', [1]);
+
+    await vi.waitFor(() => expect(ch.query).toHaveBeenCalledTimes(1));
+    const params = ch.query.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
+  });
+
+  it('applies the settings up to 100 ids and leaves a larger batch on the server defaults', async () => {
+    const ids = (n: number, from: number) => Array.from({ length: n }, (_, i) => from + i);
+    const redis = fakeRedis();
+    const ch = fakeClickhouse({});
+    const service = new MetricService(ch.client, redis.client);
+
+    await service.fetch('Image', ids(100, 1));
+    await service.fetch('Image', ids(101, 1001));
+    // Read in batches of 1000 and 1: the 1-id remainder of a large populate is not capped either.
+    await service.fetch('Image', ids(1001, 5001));
+
+    expect(ch.queriedIds.map((batch) => batch.length)).toEqual([100, 101, 1000, 1]);
+    const [atLimit, overLimit, largeBatch, remainder] = ch.query.mock.calls.map(
+      (call) => call[0] as Record<string, unknown>
+    );
+    expect(atLimit.clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
+    expect(overLimit).not.toHaveProperty('clickhouse_settings');
+    expect(largeBatch).not.toHaveProperty('clickhouse_settings');
+    expect(remainder).not.toHaveProperty('clickhouse_settings');
+  });
+
+  it('after a server timeout, holds the lock so the next request waits instead of querying again', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const redis = fakeRedis();
+    const query = vi.fn(async () => {
+      throw serverTimeout();
+    });
+    const service = new MetricService({ query } as unknown as IClickhouseClient, redis.client);
+
+    // The caller sees the error; the app's image-metrics read catches it and serves the cache.
+    await expect(service.fetch('Image', [1])).rejects.toBeInstanceOf(ClickHouseError);
+    expect(redis.strings.has(lockKey(1))).toBe(true);
+    // Re-armed to the full backstop TTL so it expires on its own: nothing heartbeats it any more.
+    expect(redis.client.expire).toHaveBeenCalledWith(lockKey(1), 10);
+    expect(redis.client.del).not.toHaveBeenCalledWith(lockKey(1));
+
+    // The next request for the id waits out the lock, answers without throwing, and does not query.
+    const next = service.fetch('Image', [1]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(next).resolves.toHaveProperty('1');
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the ids of a lookup stopped at the cap, so the next lookup naming one runs uncapped and caches', async () => {
+    const redis = fakeRedis();
+    const timedOutKey = 'metrics:timeout:Image:1';
+    const query = vi
+      .fn(async (_params: Record<string, unknown>) => ({
+        json: async () => [{ entityId: 1, metricType: 'Like', value: 12 }],
+      }))
+      .mockRejectedValueOnce(serverTimeout());
+    const service = new MetricService({ query } as unknown as IClickhouseClient, redis.client);
+
+    await expect(service.fetch('Image', [1])).rejects.toBeInstanceOf(ClickHouseError);
+    expect(redis.strings.get(timedOutKey)).toBe('1');
+    // As long as a cached entry: a shorter marker would let a rarely read id be stopped on every read.
+    expect(redis.pttl(timedOutKey)).toBe(12 * HOUR * 1000);
+
+    // The lock's backstop runs out. The harness clock stands still, so drop the lock by hand. Id 2
+    // was never stopped: one marked id in the batch is enough.
+    redis.strings.delete(lockKey(1));
+    const retried = await service.fetch('Image', [1, 2]);
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[0][0].clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
+    // Still one thread, but no server cap: it finishes however slow the server is.
+    expect(query.mock.calls[1][0].clickhouse_settings).toEqual({ max_threads: 1 });
+    expect(retried[1].Like).toBe(12);
+    expect(redis.hashes.get(metricKey(1))?.Like).toBe('12');
+  });
+
+  it('falls back to the capped lookup when the timeout marker cannot be read', async () => {
+    const redis = fakeRedis();
+    vi.mocked(redis.client.get).mockRejectedValue(new Error('redis down'));
+    const ch = fakeClickhouse({ 1: { Like: 4 } });
+    const service = new MetricService(ch.client, redis.client);
+
+    expect((await service.fetch('Image', [1]))[1].Like).toBe(4);
+    const params = ch.query.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.clickhouse_settings).toEqual(POINT_LOOKUP_SETTINGS);
+  });
+
+  it('still releases the lock when the lookup fails for any other reason', async () => {
+    const redis = fakeRedis();
+    const query = vi.fn(async () => {
+      throw new Error('Socket hang up');
+    });
+    const service = new MetricService({ query } as unknown as IClickhouseClient, redis.client);
+
+    await expect(service.fetch('Image', [1])).rejects.toThrow('Socket hang up');
+    expect(redis.strings.has(lockKey(1))).toBe(false);
+    expect(redis.client.expire).not.toHaveBeenCalledWith(lockKey(1), 10);
+    expect(redis.strings.has('metrics:timeout:Image:1')).toBe(false);
   });
 });

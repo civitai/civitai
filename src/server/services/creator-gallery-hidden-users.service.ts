@@ -122,6 +122,10 @@ export async function bustModelGallerySettings(modelIds: number[]) {
     () => deleteModelGallerySettingsKeys(modelIds).catch(() => null),
     REBUST_DELAY_MS
   ).unref?.();
+  const { bustVersionShowcasesForModels } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await bustVersionShowcasesForModels(modelIds);
 }
 
 async function deleteModelGallerySettingsKeys(modelIds: number[]) {

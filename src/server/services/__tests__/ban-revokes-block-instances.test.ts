@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Setup-order import: installs the `~/env/server` mock carrying the real test RSA keypair
 // BEFORE `block-token.service` reads env at module load. Same posture as the sibling
 // real-JWT suites (`block-scope.approved-gate.test.ts`).
@@ -66,12 +66,24 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => {
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { revokeBlockInstancesForPublisher } from '~/server/services/blocks/publisher-ban-revocation.service';
+
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
 
 const { toggleBan } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
@@ -178,7 +190,7 @@ const APP_ID = 'app_618';
 /** The in-memory Redis the marker is written into and read back out of. */
 const store = new Map<string, string>();
 
-const userFindUnique = dbMock.dbRead.user.findUnique;
+const userFindUnique = dbMock.dbWrite.user.findUnique;
 const userUpdate = dbMock.dbWrite.user.update;
 const userFindFirst = dbMock.dbWrite.user.findFirst;
 const subscriptionFindMany = dbMock.dbWrite.blockUserSubscription.findMany;
@@ -190,8 +202,6 @@ const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 // `undefined` from the canonical mock and the fan-out then throws on `.catch`.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
-const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
-const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
 
 async function mint(
   blockInstanceId: string,
@@ -324,8 +334,6 @@ beforeEach(() => {
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
-  commentUpdateMany.mockResolvedValue({ count: 0 });
-  commentV2UpdateMany.mockResolvedValue({ count: 0 });
 
   subscriptionFindMany.mockResolvedValue([
     ...PINNED.map(({ blockInstanceId }, i) => ({
@@ -916,5 +924,90 @@ describe('the writer can never fail a ban', () => {
   it('a failing Redis write still completes the ban', async () => {
     redisMock.redis.set.mockRejectedValue(new Error('redis is down'));
     await expect(banPublisher()).resolves.toMatchObject({ id: PUBLISHER_ID });
+  });
+});
+
+/**
+ * App Assistant direct previews: a ban also revokes every preview session of the user at the
+ * sandbox service (`"*"`), from a `finally`, so it does not depend on the instance lookup, whose
+ * DB reads can reject. The unban clears a `"*"` still queued and sends nothing itself.
+ */
+describe('a ban revokes the publisher’s App Assistant direct previews', () => {
+  const QUEUE = `${REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER}:preview-revoke-queue`;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let lua: LuaRedis;
+  const revokesSent = () =>
+    fetchMock.mock.calls
+      .filter((c) => String(c[0]).endsWith('/internal/v1/previews/revoke'))
+      .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+
+  beforeEach(() => {
+    setEnv({
+      APP_ASSISTANT_SANDBOX_URL: 'https://sandbox.test',
+      PREVIEW_REVOKE_HMAC_SECRET: 'test-only-preview-revoke-secret',
+    });
+    fetchMock = vi.fn(async () => new Response('{"rotated":0}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    lua = createLuaRedis(Date.now(), { integerArgs: true });
+    redisMock.redis.eval.mockImplementation(
+      (script: string, opts: { keys: string[]; arguments: string[] }) => lua.eval(script, opts)
+    );
+    redisMock.redis.hDel.mockImplementation((k: string, f: string) =>
+      lua.eval("return redis.call('HDEL', KEYS[1], ARGV[1])", { keys: [k], arguments: [f] })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setEnv({ APP_ASSISTANT_SANDBOX_URL: undefined, PREVIEW_REVOKE_HMAC_SECRET: undefined });
+  });
+
+  it('sends "*" even when resolvePublisherInstanceIds throws', async () => {
+    appBlockFindMany.mockRejectedValue(new Error('primary unreachable'));
+    await expect(revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID })).rejects.toThrow(
+      'primary unreachable'
+    );
+    expect(revokesSent()).toEqual([
+      { userId: PUBLISHER_ID, previewId: '*', issuedAt: expect.any(Number), reason: 'ban' },
+    ]);
+  });
+
+  it('a ban through toggleBan sends it after the markers', async () => {
+    await banPublisher();
+    expect(revokesSent()).toEqual([
+      { userId: PUBLISHER_ID, previewId: '*', issuedAt: expect.any(Number), reason: 'ban' },
+    ]);
+    const markerWrites = redisMock.redis.set.mock.calls
+      .map((c, i) => ({
+        key: String(c[0]),
+        order: redisMock.redis.set.mock.invocationCallOrder[i],
+      }))
+      .filter(({ key }) => key.startsWith(REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN));
+    expect(markerWrites).toHaveLength(ALL_INSTANCE_IDS.length);
+    const revokeOrder = fetchMock.mock.calls
+      .map((c, i) => ({ url: String(c[0]), order: fetchMock.mock.invocationCallOrder[i] }))
+      .find(({ url }) => url.endsWith('/internal/v1/previews/revoke'))!.order;
+    expect(Math.max(...markerWrites.map((w) => w.order))).toBeLessThan(revokeOrder);
+  });
+
+  it('an unban sends no revoke and clears a "*" still queued; it sends the hold release instead', async () => {
+    fetchMock.mockResolvedValue(new Response('', { status: 503 }));
+    await revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID });
+    expect(Object.keys(lua.hash(QUEUE) ?? {})).toEqual([`${PUBLISHER_ID}:*`]);
+    fetchMock.mockClear();
+
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'publisher',
+      email: null,
+    });
+    await banPublisher(); // `bannedAt` set ⇒ the UNBAN branch
+    expect(revokesSent()).toEqual([]);
+    // The ban's queued "*" is gone; the unban's hold release (HOLD_RELEASE_PATH) took a 503 and is
+    // the only thing queued now.
+    expect(
+      fetchMock.mock.calls.filter((c) => String(c[0]).endsWith('/internal/v1/holds/release'))
+    ).toHaveLength(1);
+    expect(Object.keys(lua.hash(QUEUE) ?? {})).toEqual([`${PUBLISHER_ID}:release`]);
   });
 });

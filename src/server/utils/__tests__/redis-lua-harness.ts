@@ -1,3 +1,4 @@
+import { pack, unpack } from 'msgpackr';
 import { LuaFactory } from 'wasmoon';
 
 /**
@@ -5,8 +6,9 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
- * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
+ * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), INCR, HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
+ * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, ZADD, ZREM,
+ * ZRANGE (BYSCORE, REV, LIMIT, WITHSCORES), ZUNIONSTORE (sum), and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
  * and every number it returns must be an integer (Redis would silently truncate a float).
  * `integerArgs` relaxes the first for scripts whose numeric arguments are literals or `ipairs`
@@ -27,6 +29,8 @@ export type LuaRedis = {
   set: (key: string) => string[] | undefined;
   /** Replaces the set at `key`, as a test's starting data. */
   setSet: (key: string, members: string[]) => void;
+  /** The sorted set at `key` (after expiry) as member -> score, or undefined. */
+  zset: (key: string) => Record<string, number> | undefined;
   /** The string at `key` (after expiry), or undefined. */
   string: (key: string) => string | undefined;
   /** Replaces the string at `key`, as a test's starting data, expiring in `ttlMs` when given. */
@@ -62,6 +66,7 @@ export function createLuaRedis(
   const hashes = new Map<string, Map<string, string>>();
   const lists = new Map<string, string[]>();
   const sets = new Map<string, Set<string>>();
+  const zsets = new Map<string, Map<string, number>>();
   const expiresAt = new Map<string, number>();
   const fieldExpiresAt = new Map<string, Map<string, number>>();
   const calls: string[][] = [];
@@ -81,6 +86,9 @@ export function createLuaRedis(
         await engine.doString('unpack = table.unpack');
         engine.global.set('KEYS', keys);
         engine.global.set('ARGV', argv);
+        engine.global.set('__cmsgpack', cmsgpack);
+        // Lists cross as comma-joined numbers, so scripts get real Lua tables, not JS proxies.
+        await engine.doString(CMSGPACK_SHIM);
         engine.global.set('redis', {
           call: redisCall,
           error_reply: (message: string) => {
@@ -114,6 +122,11 @@ export function createLuaRedis(
       sets.set(key, new Set(members));
       expiresAt.delete(key);
     },
+    zset: (key) => {
+      expire(key);
+      const z = zsets.get(key);
+      return z ? Object.fromEntries(z) : undefined;
+    },
     string: (key) => {
       expire(key);
       return strings.get(key);
@@ -145,13 +158,14 @@ export function createLuaRedis(
   };
 
   function exists(key: string) {
-    return hashes.has(key) || sets.has(key) || lists.has(key) || strings.has(key);
+    return hashes.has(key) || sets.has(key) || zsets.has(key) || lists.has(key) || strings.has(key);
   }
 
   function expire(key: string) {
     const at = expiresAt.get(key);
     if (at !== undefined && at <= state.nowMs) {
       sets.delete(key);
+      zsets.delete(key);
       hashes.delete(key);
       strings.delete(key);
       expiresAt.delete(key);
@@ -200,6 +214,14 @@ export function createLuaRedis(
         else if (px !== -1) expiresAt.set(key, state.nowMs + Number(strArgs[2 + px + 1]));
         else expiresAt.delete(key);
         return { ok: 'OK' };
+      }
+      case 'INCR': {
+        const current = strings.get(key) ?? '0';
+        if (!/^-?\d+$/.test(current))
+          throw new Error('ERR value is not an integer or out of range');
+        const next = String(Number(current) + 1);
+        strings.set(key, next);
+        return Number(next);
       }
       case 'EXISTS':
         return exists(key) ? 1 : 0;
@@ -297,7 +319,8 @@ export function createLuaRedis(
         return removed;
       }
       case 'DEL': {
-        const existed = hashes.delete(key) || sets.delete(key) || strings.delete(key);
+        const existed =
+          hashes.delete(key) || sets.delete(key) || zsets.delete(key) || strings.delete(key);
         expiresAt.delete(key);
         return existed ? 1 : 0;
       }
@@ -315,6 +338,72 @@ export function createLuaRedis(
         l[i] = strArgs[2];
         return 'OK';
       }
+      case 'ZADD': {
+        const z = zsets.get(key) ?? new Map<string, number>();
+        let added = 0;
+        for (let i = 1; i < strArgs.length; i += 2) {
+          const score = Number(strArgs[i]);
+          if (Number.isNaN(score)) throw new Error('ERR value is not a valid float');
+          if (!z.has(strArgs[i + 1])) added++;
+          z.set(strArgs[i + 1], score);
+        }
+        zsets.set(key, z);
+        return added;
+      }
+      case 'ZREM': {
+        const z = zsets.get(key);
+        let removed = 0;
+        for (const m of strArgs.slice(1)) if (z?.delete(m)) removed++;
+        if (z && !z.size) {
+          zsets.delete(key);
+          expiresAt.delete(key);
+        }
+        return removed;
+      }
+      case 'ZUNIONSTORE': {
+        const n = Number(strArgs[1]);
+        if (strArgs.length !== 2 + n) throw new Error('ZUNIONSTORE: only plain sum is supported');
+        const out = new Map<string, number>();
+        for (const k of strArgs.slice(2, 2 + n)) {
+          expire(k);
+          for (const [m, score] of zsets.get(k) ?? []) out.set(m, (out.get(m) ?? 0) + score);
+        }
+        zsets.delete(key);
+        expiresAt.delete(key);
+        if (out.size) zsets.set(key, out);
+        return out.size;
+      }
+      case 'ZRANGE': {
+        const opts = strArgs.slice(3).map((a) => a.toUpperCase());
+        if (!opts.includes('BYSCORE')) throw new Error('ZRANGE: only BYSCORE is supported');
+        const rev = opts.includes('REV');
+        // Redis reads the bounds as max, min under REV.
+        const [lo, hi] = rev ? [strArgs[2], strArgs[1]] : [strArgs[1], strArgs[2]];
+        const bound = (b: string) => {
+          const exclusive = b.startsWith('(');
+          const raw = exclusive ? b.slice(1) : b;
+          const v =
+            raw === '-inf' ? -Infinity : raw === '+inf' || raw === 'inf' ? Infinity : Number(raw);
+          if (Number.isNaN(v)) throw new Error('ERR min or max is not a float');
+          return { v, exclusive };
+        };
+        const min = bound(lo);
+        const max = bound(hi);
+        let rows = [...(zsets.get(key) ?? [])]
+          .filter(([, sc]) => (min.exclusive ? sc > min.v : sc >= min.v))
+          .filter(([, sc]) => (max.exclusive ? sc < max.v : sc <= max.v))
+          .sort(([am, as], [bm, bs]) => as - bs || (am < bm ? -1 : am > bm ? 1 : 0));
+        if (rev) rows.reverse();
+        const limit = opts.indexOf('LIMIT');
+        if (limit !== -1) {
+          const offset = Number(strArgs[3 + limit + 1]);
+          const count = Number(strArgs[3 + limit + 2]);
+          rows = rows.slice(offset, count < 0 ? undefined : offset + count);
+        }
+        return opts.includes('WITHSCORES')
+          ? rows.flatMap(([m, sc]) => [m, String(sc)])
+          : rows.map(([m]) => m);
+      }
       default:
         throw new Error(`redis.call: ${command} is not supported by the harness`);
     }
@@ -330,3 +419,58 @@ function toRedisReply(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * A stand-in for `HINCRBY key field 1` that hands out `next()` instead of counting, and stores it in
+ * `lua`'s hash as the real command would, so a script that reads the field back sees the counter.
+ */
+export function hashTicketFrom(lua: LuaRedis, next: () => number) {
+  return async (key: string, field: string) => {
+    const ticket = next();
+    lua.setHash(key, { ...(lua.hash(key) ?? {}), [field]: String(ticket) });
+    return ticket;
+  };
+}
+
+/**
+ * Redis's `cmsgpack` for arrays of numbers, backed by msgpackr. Like Redis's, `pack` writes an
+ * integral number as an integer (int64 above 2^32), which msgpackr reads back as a bigint; `unpack`
+ * hands Lua plain numbers. Packed bytes travel as base64 strings: wasmoon passes strings through C,
+ * where a NUL byte would cut them short. Scripts only move packed values, never read their bytes.
+ */
+const cmsgpack = {
+  pack: (list: string) =>
+    pack(
+      (list === '' ? [] : list.split(',')).map((s) => {
+        const v = Number(s);
+        return Number.isInteger(v) ? BigInt(v) : v;
+      })
+    ).toString('base64'),
+  unpack: (packed: string) => {
+    const value = unpack(Buffer.from(packed, 'base64'));
+    if (!Array.isArray(value)) throw new Error('cmsgpack.unpack: only arrays are supported');
+    return value.map((v) => String(v)).join(',');
+  },
+};
+
+const CMSGPACK_SHIM = `
+local js = __cmsgpack
+__cmsgpack = nil
+cmsgpack = {
+  pack = function(t)
+    local parts = {}
+    for i = 1, #t do parts[i] = string.format('%d', t[i]) end
+    return js.pack(table.concat(parts, ','))
+  end,
+  unpack = function(s)
+    local out = {}
+    for x in string.gmatch(js.unpack(s), '[^,]+') do out[#out + 1] = tonumber(x) end
+    return out
+  end,
+}
+`;
+
+/** A packed value in the harness's string form, as the JS writer (msgpackr `pack`) stored it. */
+export const packedForHarness = (value: unknown) => pack(value).toString('base64');
+/** Decodes a harness hash value written by a script's `cmsgpack.pack`. */
+export const unpackFromHarness = (value: string) => unpack(Buffer.from(value, 'base64'));

@@ -1,4 +1,4 @@
-import { IMAGES_CARD_FOOTER_HEIGHT } from '~/components/Image/Infinite/ImagesCard';
+import { IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT } from '~/components/Image/Infinite/images-card-footer';
 
 /** Tallest image area of a two-column-wide card; its footer is added on top. */
 const SPAN_IMAGE_MAX_HEIGHT = 520;
@@ -17,6 +17,6 @@ export function getImagesSpanMaxHeight({
   customCard?: boolean;
 }) {
   return optedIn && flagOn && !customCard
-    ? SPAN_IMAGE_MAX_HEIGHT + IMAGES_CARD_FOOTER_HEIGHT
+    ? SPAN_IMAGE_MAX_HEIGHT + IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT
     : undefined;
 }

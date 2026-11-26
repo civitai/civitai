@@ -5,7 +5,8 @@
  * node via `meta.options`.
  */
 
-import { Button, Group, Input, RangeSlider, SegmentedControl, Stack, Text } from '@mantine/core';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { Button, Group, Input, RangeSlider, Stack, Text } from '@mantine/core';
 import { SheetSelect } from './SheetSelect';
 import { IconVideo, IconX } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -154,15 +155,14 @@ export function ControlVideoInput({ value, onChange, meta, error }: ControlVideo
           onChange={(video) => update({ video: video as VideoValue | undefined })}
         />
 
-        <SegmentedControl
+        <ChoiceGroup
+          aria-label="Control video source"
           value={entry.mode}
           onChange={(mode) => update({ mode: mode as ControlVideoMode })}
           data={[
             { value: 'auto', label: 'Preprocess for me' },
             { value: 'preprocessed', label: 'Already preprocessed' },
           ]}
-          fullWidth
-          size="xs"
         />
 
         <Group grow align="flex-start">

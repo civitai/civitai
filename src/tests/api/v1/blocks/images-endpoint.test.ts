@@ -8,6 +8,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /**
@@ -24,13 +25,19 @@ import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service
  * search service is mocked so no Prisma/Meili/Flipt is loaded.
  */
 
-const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel, mockWithoutHeld } =
-  vi.hoisted(() => ({
-    mockWithoutHeld: vi.fn(),
-    mockRunImageSearch: vi.fn(),
-    mockCheckRateLimit: vi.fn(),
-    mockGetHeldGalleryLevel: vi.fn(),
-  }));
+const {
+  mockRunImageSearch,
+  mockCheckRateLimit,
+  mockGetHeldGalleryLevel,
+  mockWithoutHeld,
+  mockIsWithheld,
+} = vi.hoisted(() => ({
+  mockIsWithheld: vi.fn(async () => false),
+  mockWithoutHeld: vi.fn(),
+  mockRunImageSearch: vi.fn(),
+  mockCheckRateLimit: vi.fn(),
+  mockGetHeldGalleryLevel: vi.fn(),
+}));
 
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 
@@ -41,6 +48,7 @@ vi.mock('~/server/services/image-search.service', () => ({
 
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: mockGetHeldGalleryLevel,
+  isModelGalleryWithheld: mockIsWithheld,
 }));
 
 // Per-token catalog rate limiter — mocked so the existing maturity-clamp tests
@@ -85,7 +93,14 @@ vi.mock('~/server/utils/request-bulkhead', () => ({
   HEAVY_REQUEST_CONCURRENCY: 10,
 }));
 
+/**
+ * A minted token carries BOTH maturity claims. Unless a test names the viewer's
+ * own level, the viewer sits at the full domain ceiling, so a case about the
+ * DOMAIN clamp reads the domain alone; the viewer-level cases below set it.
+ */
 function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
+  const viewer =
+    'viewerBrowsingLevel' in over ? {} : { viewerBrowsingLevel: over.maxBrowsingLevel };
   return {
     iss: 'civitai',
     aud: 'civitai-app-block',
@@ -100,8 +115,10 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     ctx: {},
     // No catalog:read (retired): the endpoint accepts ANY valid block token
     // (withBlockScope with no requiredScope). The handler never reads `scopes` —
-    // its only authority is the maturity clamp on claims.maxBrowsingLevel.
+    // its only authority is the maturity clamp on claims.maxBrowsingLevel and
+    // claims.viewerBrowsingLevel.
     scopes: [],
+    ...viewer,
     ...over,
   };
 }
@@ -153,6 +170,7 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     // Default: under the per-token ceiling (existing clamp tests must be served).
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
@@ -195,11 +213,11 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(ctx.browsingLevel & (4 | 8 | 16)).toBe(0);
   });
 
-  it('MISSING claim (legacy/pre-#2670 token) → fails closed to SFW', async () => {
-    claimsBox.claims = fakeClaims({}); // no maxBrowsingLevel
+  it('MISSING claims (legacy/pre-#2670 token) → fails closed to PG', async () => {
+    claimsBox.claims = fakeClaims({}); // no maxBrowsingLevel, no viewerBrowsingLevel
     await invoke({ nsfw: 'true', browsingLevel: '31' });
     const [, ctx] = mockRunImageSearch.mock.calls[0];
-    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel).toBe(NsfwLevel.PG);
   });
 
   it('client maturity fields are NEVER forwarded to the search input', async () => {
@@ -213,26 +231,23 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(input.data).not.toHaveProperty('someJunk');
   });
 
-  it.each([{ ids: '1,2' }, { imageId: '2' }])(
-    'leaves out held images from a search by image id (%o)',
-    async (query) => {
-      claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-      const found = [{ id: 1 }, { id: 2 }];
-      mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
-      mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
-
-      const res = await invoke(query);
-
-      expect(mockWithoutHeld).toHaveBeenCalledWith(found);
-      expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
-    }
-  );
-
-  it('does not filter a search that names no image id', async () => {
+  it.each([
+    { ids: '1,2' },
+    { imageId: '2' },
+    { username: 'someone' },
+    {},
+    { modelId: '5' },
+    { ids: '1,2', modelId: '5' },
+  ])("leaves out images above their own post's held level (%o)", async (query) => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-    await invoke({ username: 'someone' });
+    const found = [{ id: 1 }, { id: 2 }];
+    mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
+    mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
 
-    expect(mockWithoutHeld).not.toHaveBeenCalled();
+    const res = await invoke(query);
+
+    expect(mockWithoutHeld).toHaveBeenCalledWith(found);
+    expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
   });
 
   it('forwards the selector params (type/limit/sort/modelId/postId/username)', async () => {
@@ -380,11 +395,136 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
   });
 });
 
+// The route's clamp is the VIEWER's level (domain ∩ viewer), not the domain alone:
+// on a mature domain, a viewer whose own settings are PG must not be served R/X/XXX
+// catalog images — the gated image read already hides those from them.
+describe('/api/v1/blocks/images — the viewer level narrows the domain ceiling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('RED domain + a PG-only viewer → searched at PG, ids included', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      domain: 'red',
+    });
+    const res = await invoke({ ids: '11,22' });
+
+    expect(res.statusCode).toBe(200);
+    const [input, ctx] = mockRunImageSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(NsfwLevel.PG);
+    expect(input.data.ids).toEqual([11, 22]);
+  });
+
+  it('RED domain + a PG/PG13/R viewer → searched at exactly those three levels', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(
+      NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R
+    );
+  });
+
+  it('a viewer level wider than the domain never widens it', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: sfwBrowsingLevelsFlag,
+      viewerBrowsingLevel: allBrowsingLevelsFlag,
+      domain: 'green',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('a RED token with no viewer level (minted before the claim) fails closed to PG', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: undefined,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
+  });
+
+  // A viewer level sharing NO level with the domain cap is served the cap, by the
+  // main site's rule (`clampToDomainCap`: `(requested & cap) || cap`), never an
+  // empty page: the main site would fill that viewer's grid.
+  it('a mature-only viewer on a SFW domain (minted as 0) is served the SFW cap', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: sfwBrowsingLevelsFlag,
+      viewerBrowsingLevel: 0,
+      domain: 'green',
+    });
+    const res = await invoke({ ids: '11' });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('a viewer level of exactly 0 on a RED domain is served the RED cap, never above it', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R,
+      viewerBrowsingLevel: 0,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(
+      NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R
+    );
+  });
+
+  it('a restricted region over an R-and-above viewer is served the region SFW cap, by the same rule', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX,
+      domain: 'red',
+    });
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('a restricted region keeps a PG-only viewer at PG (narrowed, never widened back to SFW)', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
+  });
+
+  it('an empty domain ceiling gets an empty page and searches nothing', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: 0,
+      viewerBrowsingLevel: undefined,
+      domain: 'green',
+    });
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ items: [], metadata: {} });
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+});
+
 describe('/api/v1/blocks/images — a held model or version', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
   });
@@ -415,6 +555,24 @@ describe('/api/v1/blocks/images — a held model or version', () => {
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['modelId', { modelId: '5' }, { modelId: 5 }],
+    ['modelVersionId', { modelVersionId: '50' }, { modelVersionId: 50 }],
+    ['postId', { postId: '500' }, { postId: 500 }],
+  ])(
+    'serves ?%s= of a taken-down model no images, searching nothing',
+    async (_n, query, selector) => {
+      mockIsWithheld.mockResolvedValueOnce(true);
+
+      const res = await invoke(query);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(mockIsWithheld).toHaveBeenCalledWith(expect.objectContaining(selector));
+      expect(mockRunImageSearch).not.toHaveBeenCalled();
+    }
+  );
+
   it('leaves an unheld model at the token level', async () => {
     mockGetHeldGalleryLevel.mockResolvedValue(undefined);
 
@@ -441,6 +599,7 @@ describe('/api/v1/blocks/images — ?ids= batch', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
 

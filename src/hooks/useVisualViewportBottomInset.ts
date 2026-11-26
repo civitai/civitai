@@ -35,12 +35,27 @@ export function visualViewportBottomInset(
   layoutHeight: number,
   viewport: VisualViewportLike | null | undefined
 ): number {
+  const keyboardHeight = visualViewportKeyboardHeight(layoutHeight, viewport);
+  if (!keyboardHeight || !viewport) return 0;
+  const inset = keyboardHeight - viewport.offsetTop;
+  return Number.isFinite(inset) && inset > 0 ? Math.round(inset) : 0;
+}
+
+/**
+ * The height of the keyboard shrinking the visual viewport, whether or not a pan has since moved
+ * it off the layout viewport's bottom; `0` for none, under the same two readings as
+ * {@link visualViewportBottomInset}.
+ */
+function visualViewportKeyboardHeight(
+  layoutHeight: number,
+  viewport: VisualViewportLike | null | undefined
+): number {
   if (!viewport) return 0;
   if (viewport.scale != null && Math.abs(viewport.scale - 1) > SCALE_TOLERANCE) return 0;
   const keyboardHeight = layoutHeight - viewport.height;
-  if (!Number.isFinite(keyboardHeight) || keyboardHeight < KEYBOARD_INSET_MIN_PX) return 0;
-  const inset = keyboardHeight - viewport.offsetTop;
-  return Number.isFinite(inset) && inset > 0 ? Math.round(inset) : 0;
+  return Number.isFinite(keyboardHeight) && keyboardHeight >= KEYBOARD_INSET_MIN_PX
+    ? keyboardHeight
+    : 0;
 }
 
 /**
@@ -68,4 +83,48 @@ export function useVisualViewportBottomInset(enabled = true): number {
   }, [enabled]);
 
   return enabled ? inset : 0;
+}
+
+/**
+ * Whether an on-screen keyboard is up: either it shrank the visual viewport (the keyboard's height,
+ * not what a pan leaves of it over the bottom edge: iOS pans a low field fully into view, leaving
+ * nothing), or the browser resized the layout viewport itself for it (`innerHeight` is at least
+ * {@link KEYBOARD_INSET_MIN_PX} short of the tallest it has been at this width), which some Android
+ * browsers do instead.
+ */
+export function isKeyboardOpen(
+  layout: { tallest: number; height: number },
+  viewport: VisualViewportLike | null | undefined
+): boolean {
+  return (
+    visualViewportKeyboardHeight(layout.height, viewport) > 0 ||
+    layout.tallest - layout.height >= KEYBOARD_INSET_MIN_PX
+  );
+}
+
+/** {@link isKeyboardOpen}, kept current. A width change (a rotation) starts the tallest afresh. */
+export function useKeyboardOpen(): boolean {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const viewport = window.visualViewport;
+    let width = 0;
+    let tallest = 0;
+    const update = () => {
+      const { innerWidth, innerHeight: height } = window;
+      tallest = innerWidth === width ? Math.max(tallest, height) : height;
+      width = innerWidth;
+      setOpen(isKeyboardOpen({ tallest, height }, viewport));
+    };
+    update();
+    window.addEventListener('resize', update);
+    viewport?.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      viewport?.removeEventListener('resize', update);
+    };
+  }, []);
+
+  return open;
 }

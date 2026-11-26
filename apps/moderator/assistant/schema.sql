@@ -131,8 +131,8 @@ CREATE TABLE IF NOT EXISTS assistant_playbook_version (
     CHECK (status IN ('accepted', 'proposed', 'rejected'))
 );
 
--- 🔴 What the assistant asks its maintainers for: "I needed a tool that does X". Read by the standing
--- seat that owns the assistant, which answers in `response` and moves `status`.
+-- 🔴 What the assistant asks its maintainers for: "I needed a tool that does X". Answered from the
+-- requests page by a holder of the audit grant, who sets `response` and moves `status`.
 CREATE TABLE IF NOT EXISTS assistant_tool_request (
   id            bigserial   PRIMARY KEY,
   chat_id       bigint      NOT NULL REFERENCES assistant_chat (id),
@@ -155,6 +155,9 @@ CREATE TABLE IF NOT EXISTS assistant_tool_request (
 
 CREATE INDEX IF NOT EXISTS assistant_tool_request_created_idx
   ON assistant_tool_request (created_at DESC);
+
+-- Who last answered the request. `resolved_at` is set only once it is built or declined.
+ALTER TABLE assistant_tool_request ADD COLUMN IF NOT EXISTS resolved_by integer;
 
 -- What each finished turn cost, in USD, at the higher of OpenRouter's live price and the release's list
 -- price for its model (`price_source` says whether a live price was read). The daily dollar cap sums

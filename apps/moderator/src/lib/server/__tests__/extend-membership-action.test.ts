@@ -38,7 +38,7 @@ let calls: Call[];
 let respond: () => Response | Promise<Response>;
 
 const INPUT = {
-  userId: 8675309,
+  userId: 990100034,
   days: 3,
   reason: 'Ticket 123: three days instead of a refund',
   expectedCurrentPeriodEnd: 1795314120,
@@ -124,9 +124,9 @@ describe('extendMembership', () => {
 describe('previewMembershipExtension', () => {
   it('reads with a GET as the moderator, the inputs in the query string', async () => {
     respond = () => new Response(JSON.stringify({ problems: [] }), { status: 200 });
-    await previewMembershipExtension({ userId: 8675309, days: 3 });
+    await previewMembershipExtension({ userId: 990100034, days: 3 });
     expect(calls[0].url).toBe(
-      'https://civitai.com/api/mod/user/membership-extend-preview?userId=8675309&days=3'
+      'https://civitai.com/api/mod/user/membership-extend-preview?userId=990100034&days=3'
     );
     expect(calls[0].init.method).toBe('GET');
     expect((calls[0].init.headers as Record<string, string>).cookie).toBe(
@@ -136,7 +136,7 @@ describe('previewMembershipExtension', () => {
 });
 
 describe('setMembershipCancel / previewMembershipCancel', () => {
-  const CANCEL = { userId: 8675309, cancelAtPeriodEnd: false, reason: 'Ticket 123: keep it' };
+  const CANCEL = { userId: 990100034, cancelAtPeriodEnd: false, reason: 'Ticket 123: keep it' };
 
   it('posts to /api/mod/user/membership-cancel as the moderator, with exactly the endpoint fields', async () => {
     respond = () =>
@@ -156,9 +156,9 @@ describe('setMembershipCancel / previewMembershipCancel', () => {
 
   it('the preview sends the choice in the query string', async () => {
     respond = () => new Response(JSON.stringify({ problems: [] }), { status: 200 });
-    await previewMembershipCancel({ userId: 8675309, cancelAtPeriodEnd: true });
+    await previewMembershipCancel({ userId: 990100034, cancelAtPeriodEnd: true });
     expect(calls[0].url).toBe(
-      'https://civitai.com/api/mod/user/membership-cancel-preview?userId=8675309&cancelAtPeriodEnd=true'
+      'https://civitai.com/api/mod/user/membership-cancel-preview?userId=990100034&cancelAtPeriodEnd=true'
     );
     expect(calls[0].init.method).toBe('GET');
   });
@@ -177,7 +177,7 @@ describe('setMembershipCancel / previewMembershipCancel', () => {
 
 describe('resyncMembership', () => {
   const RESYNC = {
-    userId: 8675309,
+    userId: 990100034,
     reason: 'Ticket 123: webhook missed',
     confirmEndBuzzMembership: 'buzz_sub_1|active|2026-11-22T02:52:00.000Z',
   };

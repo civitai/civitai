@@ -6,7 +6,7 @@ boost is paid for and displayed. What ships today is described in
 items change decisions recorded there, and those are called out.
 
 Because it ships later, the shipped boost stays as it is — including
-`BOOST_NON_REFUNDABLE`, which is accurate for the `PUT`-upgrade boost and only becomes wrong when this
+`BOOST_REFUND_POLICY`, which is accurate for the `PUT`-upgrade boost and only becomes wrong when this
 design lands.
 
 ## Why the shape changes
@@ -219,9 +219,9 @@ boost's, and here it does not.
   fee rides on a generation workflow's `cost.fixed.downloadPriority`. With no generation workflow to
   read it from, the boost's price has to come from the load workflow, and C2 becomes this design's
   blocker rather than a moderator-tool detail.
-- **`BOOST_NON_REFUNDABLE`** — "The boost fee isn't refunded if you cancel the generation" — is
-  accurate today and becomes wrong the day decision 6 ships. It reached testers deliberately, in
-  response to their asking; it has to change with the architecture, not after it.
+- **`BOOST_REFUND_POLICY`** — "The boost is refunded if the download never starts, but not once it
+  has" — has to be re-checked the day decision 6 ships. It reached testers deliberately, in response
+  to their asking; it has to change with the architecture, not after it.
 - **Surfacing load workflows in the queue makes the existing explicit-purchase loads visible too.**
   Those already ship and are currently invisible. Possibly an improvement, but it is a live behaviour
   change riding along on this one.

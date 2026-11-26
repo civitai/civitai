@@ -24,6 +24,7 @@ import { BETA_MESSAGE_MAX } from '~/server/schema/blocks/offsite-listing.schema'
 import { BETA_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-beta.service';
 import { OWNER_REVISION_IN_PROGRESS_MESSAGE } from '~/server/services/blocks/app-listing-moderator-edit';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import { TokenScope, consentableScopes } from '~/shared/constants/token-scope.constants';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
 // refusal overrides the stub.
@@ -61,11 +62,15 @@ type Row = Record<string, unknown> & { id: string };
 
 const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const makeClient = () => ({
+    // The connect listing's OAuth client (deriveScopePatch reads its owner + ceiling).
+    oauthClient: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),
-      update: vi.fn(async (args: { data: unknown }) => args.data),
+      update: vi.fn(async (args: { where: { id: string }; data: unknown }) => args.data),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
       deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
@@ -100,6 +105,9 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     },
     // Fix B4: listMySubmissions' last-event batch is now a raw `DISTINCT ON` query.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    // The no-type `issue_tracker_url` column is written by raw SQL (the revision apply copies
+    // the shadow's link onto the parent), so the interactive tx needs the raw write surface.
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -440,6 +448,69 @@ describe('updateListing', () => {
 // ---------------------------------------------------------------------------
 // beginListingRevision
 // ---------------------------------------------------------------------------
+
+describe('updateListing — the justification map is MATERIAL on a live listing (offline_access)', () => {
+  // A connect listing whose client allows ModelsRead only, so the derived mask equals the stored one
+  // and the ONLY thing a patch changes is the justification map.
+  const CLIENT = 'oc_connect';
+  const connectParent = (justifications: Record<string, string>) =>
+    approvedParent({
+      connectClientId: CLIENT,
+      connectRequestedScopes: Number(consentableScopes(TokenScope.ModelsRead)),
+      connectScopeJustifications: justifications,
+    });
+  const patch = (j: Record<string, string>): UpdateListingPatch => ({
+    requestedScopes: consentableScopes(TokenScope.ModelsRead),
+    scopeJustifications: j,
+  });
+  beforeEach(() => {
+    mockRead.oauthClient.findUnique.mockResolvedValue({
+      userId: OWNER,
+      allowedScopes: TokenScope.ModelsRead,
+    });
+    mockRead.appListing.findFirst.mockResolvedValue(null); // no existing shadow
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_shadow_j' });
+  });
+  const liveWrites = () =>
+    mockWrite.appListing.update.mock.calls.filter(([args]) => args.where.id === 'apl_parent');
+
+  it.each([
+    ['TICKING offline_access', {}, { offline_access: 'syncs your images nightly' }],
+    ['UNTICKING offline_access', { offline_access: 'syncs your images nightly' }, {}],
+    ['changing its reason', { offline_access: 'nightly' }, { offline_access: 'hourly' }],
+  ])(
+    '🔴 %s → staged on a shadow for review; the live row is not written',
+    async (_l, live, next) => {
+      mockRead.appListing.findUnique.mockResolvedValue(connectParent(live));
+      const res = await updateListing({
+        listingId: 'apl_parent',
+        patch: patch(next),
+        userId: OWNER,
+      });
+      expect(res).toMatchObject({ requiresReview: true, shadowId: 'apl_shadow_j' });
+      expect(liveWrites()).toEqual([]);
+      expect(mockWrite.appListing.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'apl_shadow_j' },
+          data: expect.objectContaining({ connectScopeJustifications: next }),
+        })
+      );
+    }
+  );
+
+  it('re-sending the SAME reasons (whitespace aside) is not a change → in place, no review', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(connectParent({ offline_access: 'nightly' }));
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: patch({ offline_access: '  nightly ' }),
+      userId: OWNER,
+    });
+    expect(res).toMatchObject({ requiresReview: false, shadowId: null });
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+});
 
 describe('beginListingRevision', () => {
   it('clones scalars + screenshots into a hidden draft shadow (synthetic slug, null appBlockId, revisionOfId set)', async () => {
@@ -1060,6 +1131,18 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     },
   };
 
+  /**
+   * The raw statements against the moderation-event table only. `listMySubmissions` also reads
+   * the listings' trust links by raw SQL (`readListingProblemLinkMaps`), so a bare `$queryRaw`
+   * call count no longer means "the last-event query".
+   */
+  const modEventCalls = () =>
+    mockRead.$queryRaw.mock.calls.filter((c: unknown[]) =>
+      ((c[0] as { strings?: string[] })?.strings ?? [])
+        .join('?')
+        .includes('app_listing_moderation_events')
+    );
+
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
@@ -1072,7 +1155,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     const res = await listMySubmissions({ userId: OWNER });
 
     // The raw last-event query is issued exactly once for the removed listing set.
-    expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(modEventCalls()).toHaveLength(1);
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
   });
 
@@ -1090,7 +1173,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
       .mockResolvedValueOnce([liveRequestRow])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
-    expect(mockRead.$queryRaw).not.toHaveBeenCalled();
+    expect(modEventCalls()).toHaveLength(0);
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 
@@ -1127,10 +1210,10 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
         { appListingId: 'apl_removed', action: 'owner-unpublish' },
       ]);
       await listMySubmissions({ userId: OWNER });
-      expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(modEventCalls()).toHaveLength(1);
       // `Prisma.sql` builds a `Sql` object: `.strings` is the static text, `.values` the
-      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as calls[0][0].
-      const arg = mockRead.$queryRaw.mock.calls[0][0] as {
+      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as the first argument.
+      const arg = modEventCalls()[0][0] as {
         strings: string[];
         values: unknown[];
       };

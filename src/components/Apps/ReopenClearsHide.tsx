@@ -10,8 +10,8 @@ import { trpc } from '~/utils/trpc';
  *
  * Exactly one call per slug per mount: the ref holds the slug already sent, so a re-render (or
  * a fresh `mutate` identity) does not repeat the write. Best-effort and silent — a failure
- * leaves the hide in place, which is the behaviour before this existed, and is not worth
- * interrupting the app the viewer just opened.
+ * leaves the hide in place (the server keeps dropping the row; this browser's home still shows
+ * the app as a recents-only tile), which is not worth interrupting the app just opened.
  */
 export function ReopenClearsHide({ slug }: { slug: string }) {
   const utils = trpc.useUtils();

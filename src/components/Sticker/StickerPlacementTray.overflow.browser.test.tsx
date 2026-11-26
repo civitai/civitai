@@ -50,6 +50,7 @@ vi.mock('~/store/sticker-placement-draft.store', () => ({
       targetImageId: IMAGE_ID,
       trayOpen: true,
       drafts: [],
+      readyPlacements: {},
       closeTray: () => undefined,
       setTray: () => undefined,
       begin: () => undefined,
@@ -82,7 +83,6 @@ vi.mock('~/components/Sticker/StickerShopTile', () => ({ StickerShopTile: () => 
 vi.mock('~/components/Sticker/use-sticker-drag-out', () => ({
   useStickerDragOut: () => ({ grab: () => undefined, dragging: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
@@ -97,7 +97,8 @@ const renderTray = async () => {
   renderWithProviders(
     <IsClientProvider>
       <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
-    </IsClientProvider>
+    </IsClientProvider>,
+    { user: { id: 7 } }
   );
   await expect.element(page.getByText('Tap or drag a sticker onto the image.')).toBeInTheDocument();
 };

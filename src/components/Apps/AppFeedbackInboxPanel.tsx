@@ -17,6 +17,9 @@ import { useMemo, useState } from 'react';
 import type { InboxActionError, InboxStatusFilter } from '~/components/Apps/appFeedbackInbox';
 import {
   buildSetOwnerStatusInput,
+  feedbackEnvironmentLine,
+  feedbackForkLabel,
+  INBOX_COMMITS_NOTE,
   feedbackRowMeta,
   INBOX_STATUS_FILTERS,
   inboxActionError,
@@ -27,9 +30,12 @@ import {
   ownerStatusChoices,
   ownerStatusColor,
   ownerStatusLabel,
+  RECENT_ERRORS_HEADING,
+  RECENT_ERRORS_NOTE,
+  recentErrorLine,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
-import type { OwnerFeedbackDto } from '~/server/services/blocks/app-feedback.service';
+import type { OwnerFeedbackListItem } from '~/server/services/blocks/app-feedback.service';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -48,6 +54,10 @@ export function AppFeedbackInboxPanel({ appListingId }: { appListingId: string }
           {INBOX_PRIVACY_NOTE}
         </Text>
       </Alert>
+
+      <Text size="xs" c="dimmed" data-testid="app-feedback-commits-note">
+        {INBOX_COMMITS_NOTE}
+      </Text>
 
       <SegmentedControl
         value={filter}
@@ -109,7 +119,7 @@ function FeedbackRow({
   onRefresh,
 }: {
   appListingId: string;
-  item: OwnerFeedbackDto;
+  item: OwnerFeedbackListItem;
   onRefresh: () => void;
 }) {
   const utils = trpc.useUtils();
@@ -142,6 +152,8 @@ function FeedbackRow({
   });
   const busy = setStatus.isPending || flag.isPending;
   const meta = feedbackRowMeta(item);
+  const environment = feedbackEnvironmentLine(item.environment);
+  const fork = feedbackForkLabel(item.forkOf ?? null);
   const testId = (part: string) => `app-feedback-${part}-${item.id}`;
 
   return (
@@ -186,6 +198,41 @@ function FeedbackRow({
         <Text size="sm" style={{ whiteSpace: 'pre-wrap' }} data-testid={testId('message')}>
           {item.message}
         </Text>
+
+        {fork && (
+          <Text size="xs" c="dimmed" data-testid={testId('fork')}>
+            {fork}
+          </Text>
+        )}
+
+        {environment && (
+          <Text size="xs" c="dimmed" data-testid={testId('environment')}>
+            {environment}
+          </Text>
+        )}
+
+        {item.recentErrors.length > 0 && (
+          <Paper withBorder p="xs" radius="sm" data-testid={testId('recent-errors')}>
+            <Stack gap={4}>
+              <Text size="xs" fw={600}>
+                {RECENT_ERRORS_HEADING}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {RECENT_ERRORS_NOTE}
+              </Text>
+              {item.recentErrors.map((error, i) => (
+                <Text
+                  key={i}
+                  size="xs"
+                  ff="monospace"
+                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                >
+                  {recentErrorLine(error)}
+                </Text>
+              ))}
+            </Stack>
+          </Paper>
+        )}
 
         {actionError && (
           <Alert color="red" variant="light" p="xs" data-testid={testId('error')}>

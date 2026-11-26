@@ -1,7 +1,7 @@
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type { CommentV3Comment } from '../types';
 
@@ -15,9 +15,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useFeatureFlags: () => ({}),
   useOptionalFeatureFlags: () => ({}),
-}));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'tester' }),
 }));
 vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -47,6 +44,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 
 const { CommentEditor } = await import('../CommentComposer');
 
+// The editor is a lazy chunk (next/dynamic). Loaded here, so the 1 s waits below cover a render, not
+// a cold import of the editor, which a busy runner can take longer than that to fetch.
+beforeAll(async () => {
+  await import('~/components/RichTextEditor/RichTextEditorComponent');
+}, 30_000);
+
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** True when the element is what the browser hits at its own centre, i.e. it is drawn and clickable. */
@@ -67,7 +70,8 @@ describe.each([
     renderWithProviders(
       <div style={{ padding: '120px 24px' }}>
         <CommentEditor autoFocus {...props} />
-      </div>
+      </div>,
+      { user: { id: 1, username: 'tester' } }
     );
     await vi.waitFor(() => expect(document.querySelector('.ProseMirror')).not.toBeNull());
 

@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -20,14 +24,16 @@ vi.mock('../db', () => ({
   },
 }));
 
-const {
-  releaseHeldUserCsamFlags,
-  clearRemovedFlagsUnlessHeld,
-  RELEASABLE_LEGS,
-  RELEASE_TABLE,
-  HOLD_MARKER_TABLE,
-  HOLD_MARKER_VIEW,
-} = await import('../csam-flag-clear');
+const { fireDeferredBlockEffects } = vi.hoisted(() => ({
+  fireDeferredBlockEffects: vi.fn(async (_c: unknown, _o: unknown) => undefined),
+}));
+vi.mock('../deferred-block-effects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../deferred-block-effects')>()),
+  fireDeferredBlockEffects,
+}));
+
+const { releaseHeldUserCsamFlags, clearRemovedFlagsUnlessHeld, RELEASABLE_LEGS, RELEASE_TABLE } =
+  await import('../csam-flag-clear');
 
 const SCHEMA = `
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
@@ -36,8 +42,12 @@ CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,
   "needsReview" TEXT,
+  "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
+CREATE TABLE IF NOT EXISTS "Appeal" (id serial PRIMARY KEY, "entityType" text, "entityId" int, status text);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
   "images" JSONB NOT NULL DEFAULT '[]'
@@ -45,8 +55,6 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, "activity" TEXT
 );
-CREATE TABLE "${HOLD_MARKER_TABLE}" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-CREATE VIEW "${HOLD_MARKER_VIEW}" AS SELECT "userId" FROM "${HOLD_MARKER_TABLE}" GROUP BY "userId";
 `;
 
 // The migration itself, so a column it adds that the release does not write fails here.
@@ -69,16 +77,14 @@ const USERS = {
   badInput: 201,
   dryRun: 202,
   mismatch: 203,
-  raceMarker: 204,
   auditFails: 205,
   tableBack: 206,
-  drift: 207,
   report: 210,
   secondaryReport: 211,
   reportedImage: 212,
-  evidenceHold: 213,
   notHeld: 220,
   bystander: 230,
+  deferred: 240,
 } as const;
 type Key = keyof typeof USERS;
 
@@ -111,7 +117,6 @@ const releasesFor = async (userId: number) =>
   ).rows;
 
 beforeAll(async () => {
-  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(RELEASE_TABLE_SQL);
@@ -135,7 +140,6 @@ beforeAll(async () => {
     INSERT INTO "CsamReport" ("userId", "details") VALUES (210, '{}');
     INSERT INTO "CsamReport" ("userId", "details") VALUES (-1, '{"secondaryUserId": "211"}');
     INSERT INTO "CsamReport" ("userId", "details", "images") VALUES (-1, '{}', '[{"id": 2121}]');
-    INSERT INTO "${HOLD_MARKER_TABLE}" ("userId") VALUES (213);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -276,14 +280,13 @@ describe('releasing a user held only by a ban', () => {
 });
 
 // `legs` come back in `flagClearHoldLegs` order.
-const LEG_ORDER = ['csamReport', 'csamReportSecondary', 'ban', 'reportedImage', 'evidenceHold'];
+const LEG_ORDER = ['csamReport', 'csamReportSecondary', 'ban', 'reportedImage'];
 const byLeg = (a: string, b: string) => LEG_ORDER.indexOf(a) - LEG_ORDER.indexOf(b);
 
 const OTHER_LEGS = [
   ['report', 'csamReport'],
   ['secondaryReport', 'csamReportSecondary'],
   ['reportedImage', 'reportedImage'],
-  ['evidenceHold', 'evidenceHold'],
 ] as const;
 
 describe('a user held by more than a ban', () => {
@@ -308,9 +311,9 @@ describe('a user held by more than a ban', () => {
   // The pre-check and the UPDATE each carry the hold; this pins the UPDATE's on its own.
   it.each(OTHER_LEGS)('is skipped by the update itself (%s)', async (key) => {
     const kysely = dbHandle.current as Kysely<never>;
-    expect(
-      await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key], 'view', RELEASABLE_LEGS)
-    ).toEqual([]);
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key], RELEASABLE_LEGS)).toEqual(
+      []
+    );
     expect(await flagged(USERS[key])).toHaveLength(3);
   });
 });
@@ -338,33 +341,68 @@ describe('refusals that are not holds', () => {
   });
 });
 
-describe('the evidence-hold marker under a release', () => {
-  // Built when no marker existed, the update must still see one that appeared since.
-  it('is skipped by an update built before the marker objects appeared', async () => {
-    const kysely = dbHandle.current as Kysely<never>;
-    const id = USERS.raceMarker;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, id, 'none', RELEASABLE_LEGS)).toEqual(
-      []
-    );
-    expect(await flagged(id)).toHaveLength(3);
-  });
+describe('releasing a user whose block put effects off', () => {
+  const id = USERS.deferred;
+  const deferredRows = async () =>
+    (
+      await db.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect" WHERE "imageId" = $1`, [
+        id * 10 + 1,
+      ])
+    ).rows;
 
-  it('refuses everyone while the table exists without its view', async () => {
-    const id = USERS.drift;
-    await db.exec(`DROP VIEW "${HOLD_MARKER_VIEW}"`);
-    try {
-      expect(await release(id)).toEqual({
-        ok: false,
-        reason: 'held',
-        legs: ['ban', 'evidenceHold'],
-      });
-      expect(await flagged(id)).toHaveLength(3);
-    } finally {
-      await db.exec(
-        `CREATE VIEW "${HOLD_MARKER_VIEW}" AS SELECT "userId" FROM "${HOLD_MARKER_TABLE}" GROUP BY "userId"`
-      );
-    }
-    // Control: the same user releases once the view is back.
-    expect(await release(id)).toMatchObject({ ok: true, count: 2 });
+  it('fires nothing on a dry run, then claims and fires them once on the release', async () => {
+    await db.query(`INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES ($1)`, [id * 10 + 1]);
+    fireDeferredBlockEffects.mockClear();
+
+    expect(await count(id)).toMatchObject({ ok: true, dryRun: true, count: 2 });
+    expect(fireDeferredBlockEffects).not.toHaveBeenCalled();
+    expect(await deferredRows()).toHaveLength(1);
+
+    expect(await release(id)).toMatchObject({ ok: true, dryRun: false, count: 2 });
+    expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
+    expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
+      [
+        {
+          imageId: id * 10 + 1,
+          violationType: null,
+          notifyOwner: true,
+          reportReason: null,
+          reportIds: [],
+        },
+      ],
+      { moderatorId: ADMIN }
+    );
+    expect(await deferredRows()).toEqual([]);
+  });
+});
+
+describe('releasing a user with an image under appeal', () => {
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    const user = 250;
+    const [csam, moderated] = [user * 10 + 1, user * 10 + 2];
+    await db.query(`INSERT INTO "User" ("id", "bannedAt", "meta") VALUES ($1, $2, $3)`, [
+      user,
+      new Date('2026-01-01'),
+      minorBan,
+    ]);
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion") VALUES
+        (${csam}, ${user}, 'csam', 'CSAM', 'Blocked'), (${moderated}, ${user}, 'csam', 'moderated', 'Blocked');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', ${csam}, 'Pending'), ('Image', ${moderated}, 'Pending');
+    `);
+
+    expect(await release(user)).toMatchObject({ ok: true, dryRun: false, count: 2 });
+    expect(
+      (
+        await db.query(
+          `SELECT id, "needsReview" FROM "Image" WHERE id IN (${csam}, ${moderated}) ORDER BY id`
+        )
+      ).rows
+    ).toEqual([
+      { id: csam, needsReview: null },
+      // Control: the same release restores it on an image under another block.
+      { id: moderated, needsReview: 'appeal' },
+    ]);
   });
 });

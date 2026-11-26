@@ -1,5 +1,6 @@
 import { OpenRouter } from '@openrouter/sdk';
 import type {
+  ChatGenerationParamsProvider,
   ChatMessageToolCall,
   Message,
   SystemMessage,
@@ -17,8 +18,10 @@ export const AI_MODELS = {
   // Primary models for complex tasks
   GPT_4O: 'openai/gpt-4o',
   GPT_4O_MINI: 'openai/gpt-4o-mini',
-  CLAUDE_SONNET: 'anthropic/claude-sonnet-4',
-  CLAUDE_HAIKU: 'anthropic/claude-3-5-haiku',
+  // OpenRouter retires old ids outright: a retired id 404s on every call. Every id here must be
+  // in LIVE_IDS (or KNOWN_ABSENT) in __tests__/openrouter-models.test.ts.
+  CLAUDE_SONNET: 'anthropic/claude-sonnet-5.5',
+  CLAUDE_HAIKU: 'anthropic/claude-haiku-5.5',
 
   KIMI: 'moonshotai/kimi-k2.5',
   // DEAD, not merely deprecated: this id 404s with "Grok 4.1 Fast is deprecated" on every call
@@ -27,7 +30,7 @@ export const AI_MODELS = {
   GROK_4_3: 'x-ai/grok-4.3',
   GPT_5_NANO: 'openai/gpt-5-nano',
   MIMO: 'xiaomi/mimo-v2.5',
-  STEP_FUN: 'stepfun/step-3.5-flash',
+  STEP_FUN: 'stepfun/step-3.7-flash',
   // Pairwise challenge judging (see challenge-judge-routes.ts). QWEN_FLASH refuses adult pairs
   // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
   QWEN_FLASH: 'qwen/qwen3.7-flash',
@@ -40,7 +43,7 @@ export const AI_MODELS = {
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',
-  VISION_FALLBACK: 'anthropic/claude-sonnet-4',
+  VISION_FALLBACK: 'anthropic/claude-sonnet-5.5',
 } as const;
 
 // eslint-disable-next-line @typescript-eslint/ban-types
@@ -56,6 +59,8 @@ export type SimpleMessage = {
   content: string | ContentItem[];
 };
 
+export type OpenRouterProvider = ChatGenerationParamsProvider;
+
 type GetJsonCompletionInput = {
   model?: AIModel;
   messages: SimpleMessage[];
@@ -64,6 +69,8 @@ type GetJsonCompletionInput = {
   retries?: number;
   // Per request. The client has no timeout of its own, so a hung provider call never returns.
   timeoutMs?: number;
+  /** Merged over the default `{ allowFallbacks: true }`, e.g. to pin a provider. */
+  provider?: OpenRouterProvider;
 };
 
 /**
@@ -208,7 +215,7 @@ type CustomOpenRouter = OpenRouter & {
   // every existing `getJsonCompletion<T>()` caller depends on.
   getJsonCompletionWithUsage: <T>(
     params: GetJsonCompletionInput
-  ) => Promise<{ content: T; usage: TokenUsage }>;
+  ) => Promise<{ content: T; usage: TokenUsage; generationId?: string }>;
   // Free-TEXT sibling of getJsonCompletion — a single non-streaming completion
   // that returns the assistant's plain text (NOT parsed as JSON). For grounded
   // Q&A / chat turns where the reply is prose citing evidence, not a JSON object.
@@ -248,7 +255,8 @@ function createOpenRouterClient() {
     maxTokens = 2048,
     retries = 0,
     timeoutMs,
-  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
+    provider,
+  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage; generationId?: string }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
     const response = await client.chat.send(
@@ -260,6 +268,7 @@ function createOpenRouterClient() {
         responseFormat: { type: 'json_object' },
         provider: {
           allowFallbacks: true,
+          ...provider,
         },
       },
       timeoutMs ? { timeoutMs } : undefined
@@ -276,21 +285,22 @@ function createOpenRouterClient() {
           maxTokens,
           retries: retries - 1,
           timeoutMs,
+          provider,
         });
-        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
+        return { ...retried, usage: sumUsage(usage, retried.usage) };
       }
       throw new Error(APP_ERROR_MESSAGES.no_content);
     }
 
     try {
       // Try to parse as JSON directly
-      return { content: JSON.parse(content) as T, usage };
+      return { content: JSON.parse(content) as T, usage, generationId: response.id };
     } catch {
       // Try to extract JSON from markdown code block
       const jsonBlockMatch = content.match(/```json\n(.*?)\n```/s)?.[1];
       if (jsonBlockMatch) {
         try {
-          return { content: JSON.parse(jsonBlockMatch) as T, usage };
+          return { content: JSON.parse(jsonBlockMatch) as T, usage, generationId: response.id };
         } catch {
           // Fall through to retry/error
         }
@@ -304,8 +314,9 @@ function createOpenRouterClient() {
           maxTokens,
           retries: retries - 1,
           timeoutMs,
+          provider,
         });
-        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
+        return { ...retried, usage: sumUsage(usage, retried.usage) };
       }
       // Never the content: a model can be led to repeat the prompts it was sent.
       console.error('Failed to parse JSON from completion', {

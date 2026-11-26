@@ -18,6 +18,8 @@ let updateResult:
   | { userId: number; alsoReportedBy: number[] | null; details?: unknown }
   | undefined;
 let affectedRows: number;
+/** The report's status as stored; an UPDATE's `status in (...)` where matches against it. */
+let storedStatus: ReportStatus;
 
 type Call = [string, unknown[]];
 
@@ -79,8 +81,13 @@ vi.mock('../db', () => ({
             wheres(calls).map(([column]) => column),
             'an UPDATE here must be scoped to a single report'
           ).toContain('id');
+          const statusExcluded = wheres(calls).some(
+            ([column, op, value]) =>
+              column === 'status' && op === 'in' && !(value as unknown[]).includes(storedStatus)
+          );
           const returning = calls.some(([m]) => m === 'returning');
-          if (!returning) return { numUpdatedRows: BigInt(affectedRows) };
+          if (!returning) return { numUpdatedRows: BigInt(statusExcluded ? 0 : affectedRows) };
+          if (statusExcluded) return undefined;
           // Only the columns the UPDATE asked for, so a payout that reads one it never returned sees nothing.
           const columns = calls.find(([m]) => m === 'returning')![1][0] as string[];
           return (
@@ -115,6 +122,7 @@ beforeEach(() => {
   existingReportId = 1;
   updateResult = { userId: 10, alsoReportedBy: null };
   affectedRows = 1;
+  storedStatus = ReportStatus.Pending;
 });
 
 /** The `where` arguments the UPDATE was built with, as `[column, op, value]` triples. */
@@ -175,6 +183,35 @@ describe('setReportStatus', () => {
     expect(recordModActivity).toHaveBeenCalledTimes(1);
   });
 
+  it('moves the report only from the statuses a caller names, in the UPDATE itself', async () => {
+    await setReportStatus({
+      id: 1,
+      status: ReportStatus.Actioned,
+      userId: 7,
+      fromStatuses: [ReportStatus.Pending, ReportStatus.Processing],
+    });
+
+    expect(updateWheres()).toContainEqual([
+      'status',
+      'in',
+      [ReportStatus.Pending, ReportStatus.Processing],
+    ]);
+  });
+
+  it('rewards nobody when that guard matched nothing (a report reviewed meanwhile)', async () => {
+    storedStatus = ReportStatus.Unactioned;
+
+    const result = await setReportStatus({
+      id: 1,
+      status: ReportStatus.Actioned,
+      userId: 7,
+      fromStatuses: [ReportStatus.Pending, ReportStatus.Processing],
+    });
+
+    expect(result).toEqual({ ok: true, changed: false });
+    expect(rewardReportReporters).not.toHaveBeenCalled();
+  });
+
   it('keeps the status guard on the UPDATE, which is what makes changed:false reachable', async () => {
     await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
 
@@ -218,6 +255,26 @@ describe('setReportStatus', () => {
 
     expect(rewardReportReporters).toHaveBeenCalledWith(
       expect.objectContaining({ reporterIds: [10, 11, 12], unpaidReporterIds: [10, 11] })
+    );
+  });
+
+  it('pays nothing to the reporters a caller names, beside the ones the report marks', async () => {
+    updateResult = { userId: 10, alsoReportedBy: [11, 12] };
+
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7, noRewardFor: [12] });
+
+    expect(rewardReportReporters).toHaveBeenCalledWith(
+      expect.objectContaining({ reporterIds: [10, 11, 12], unpaidReporterIds: [12] })
+    );
+  });
+
+  it('pays no reporter at all when the caller closes it with noReward', async () => {
+    updateResult = { userId: 10, alsoReportedBy: [11, 12] };
+
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7, noReward: true });
+
+    expect(rewardReportReporters).toHaveBeenCalledWith(
+      expect.objectContaining({ reporterIds: [10, 11, 12], unpaidReporterIds: [10, 11, 12] })
     );
   });
 

@@ -8,8 +8,13 @@ import {
   PostgresIntrospector,
   PostgresQueryCompiler,
 } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { blockedWords } from '@civitai/mod-utils/profanity/lists';
+import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import { ThreadSort } from '~/server/common/enums';
+import type * as FliptClient from '~/server/flipt/client';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
 import {
   type CommentV3Db,
@@ -18,11 +23,32 @@ import {
   getCommentLock,
   getCommentReplies,
   getCommentSection,
+  countSectionComments,
   getCommentThread,
+  resolveModelPageCommentId,
 } from '~/server/services/commentv3/read.service';
 
 // Against real Postgres, with CommentV3 rows as the mirror or the v3 write path stores them.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
+// Reset even when a test fails part way, so its flag and list read never reach the next test.
+afterEach(() => {
+  profanityFlag.on = true;
+  setProfanityListReaderForTests();
+});
+
+// `profanity-managed-list` per test; every other flag as the real client answers it.
+const profanityFlag = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === original.FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST
+        ? profanityFlag.on
+        : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (original.isFlipt as any)(flag, ...rest),
+  };
+});
 
 const dialect = (pg: PGlite): Dialect => {
   const connection: DatabaseConnection = {
@@ -62,7 +88,11 @@ const dialect = (pg: PGlite): Dialect => {
 const at = (minute: number) =>
   `'2025-01-01 00:00:00+00'::timestamptz + interval '${minute} minutes'`;
 const SETUP = `
-ALTER TABLE "User" ADD COLUMN username text, ADD COLUMN "deletedAt" timestamp, ADD COLUMN image text;
+ALTER TABLE "User" ADD COLUMN username text, ADD COLUMN "deletedAt" timestamp, ADD COLUMN image text,
+  ADD COLUMN "profilePictureId" int;
+ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text, ADD COLUMN IF NOT EXISTS "needsReview" text,
+  ADD COLUMN IF NOT EXISTS ingestion text, ADD COLUMN IF NOT EXISTS "nsfwLevel" int,
+  ADD COLUMN IF NOT EXISTS "blockedFor" text, ADD COLUMN IF NOT EXISTS "userId" int;
 UPDATE "User" SET username = 'u' || id;
 INSERT INTO "Article" VALUES (10);
 INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 10);
@@ -170,6 +200,19 @@ describe('getCommentSection', () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it('leaves a hidden top-level comment out where the surface asks, rather than folded in', async () => {
+    const page = await section(reader, { budget: 100, hidden: 'exclude' });
+    expect(page.rootIds).toEqual([600, 100, 200, 500, 800]);
+    const asModerator = await section(moderator, { budget: 100, hidden: 'exclude' });
+    expect(asModerator.rootIds).not.toContain(700);
+    expect((await section(reader, { budget: 100, hidden: 'only' })).rootIds).toEqual([700]);
+  });
+
+  it('counts the top-level comments this viewer may see, apart from the hidden ones', async () => {
+    // The section's own roots: an excluded author's, a ToS removal and an empty placeholder are not.
+    expect(await countSectionComments(db, ARTICLE, reader)).toEqual({ visible: 5, hidden: 1 });
+  });
+
   it('opens at most the per-root cap under one comment, shallowest first', async () => {
     const page = await section(reader, { repliesPerRoot: 7, budget: 100 });
     expect(page.children[100].ids).toEqual([101, 102, 103, 104, 105]);
@@ -221,6 +264,52 @@ describe('getCommentSection', () => {
     expect(item(page, 100)).toMatchObject({ deleted: false, user: { id: 2 } });
   });
 
+  it('pairs each masked copy with its own comment, and gives a deleted one none', async () => {
+    // A shipped entry read at runtime, never written down: this repository is public. The list
+    // read is the shipped one.
+    profanityFlag.on = true;
+    setProfanityListReaderForTests({
+      read: async () => ({ blocked: null, allowed: null, source: 'fallback' }),
+    });
+    const word = blockedWords
+      .map(cleanWord)
+      .find(
+        (w) => isUsableBlockedEntry(w) && !w.includes('|') && createProfanityFilter().clean(w) !== w
+      )!;
+    await pg.query(`INSERT INTO "Article" VALUES (77)`);
+    await pg.query(`INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 77)`);
+    await pg.query(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "deletedAt") VALUES
+        (7700, 'article', 77, NULL, 4, 'a clean first comment', now() - interval '3 minutes', NULL),
+        (7701, 'article', 77, NULL, 4, $1, now() - interval '2 minutes', now()),
+        (7710, 'article', 77, 7701, 2, 'a reply that keeps the deleted one', now() - interval '90 seconds', NULL),
+        (7702, 'article', 77, NULL, 4, $2, now() - interval '1 minute', NULL)`,
+      [`<p>${word}</p>`, `<p>then ${word}</p>`]
+    );
+    const page = await getCommentSection(db, { entityType: 'article', entityId: 77 }, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect(item(page, 7700).maskedContent).toBeNull();
+    expect(item(page, 7701)).toMatchObject({ deleted: true, content: '', maskedContent: null });
+    expect(item(page, 7702).maskedContent).toMatch(/^<p>then \*+<\/p>$/);
+
+    // Flag off: no masked copy at all, and the text exactly as stored.
+    profanityFlag.on = false;
+    const off = await getCommentSection(db, { entityType: 'article', entityId: 77 }, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect([7700, 7702].map((id) => item(off, id).maskedContent)).toEqual([undefined, undefined]);
+    expect(item(off, 7702).content).toBe(`<p>then ${word}</p>`);
+  });
+
   it('never opens through a deleted comment what a ToS removal or an excluded author hid', async () => {
     const page = await section(reader, { budget: 100 });
     for (const id of [560, 553, 570, 571, 580, 581]) expect(ids(page)).not.toContain(id);
@@ -262,6 +351,52 @@ describe('getCommentSection', () => {
 });
 
 describe('getCommentReplies', () => {
+  // A tombstone that was pinned when deleted: older rows still carry pinnedAt (the delete now clears it).
+  it('treats a deleted comment as unpinned: no pin, no lead slot, no jump among replies', async () => {
+    await pg.exec(`
+      INSERT INTO "Article" VALUES (12);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 12);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "pinnedAt", "deletedAt") VALUES
+        (1200, 'article', 12, NULL, 2, 'live', ${at(1)}, NULL, NULL),
+        (1210, 'article', 12, NULL, 3, '', ${at(2)}, ${at(90)}, now()),
+        (1220, 'article', 12, NULL, 4, 'pinned', ${at(3)}, ${at(80)}, NULL),
+        (1230, 'article', 12, NULL, 5, 'plain', ${at(4)}, NULL, NULL);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "pinnedAt", "deletedAt") VALUES
+        (1211, 'article', 12, 1210, 2, 'under the tombstone', ${at(5)}, NULL, NULL),
+        (1201, 'article', 12, 1200, 2, 'first reply', ${at(10)}, NULL, NULL),
+        (1202, 'article', 12, 1200, 3, '', ${at(11)}, ${at(91)}, now());
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt")
+        VALUES (1203, 'article', 12, 1202, 4, 'under the reply tombstone', ${at(12)});
+    `);
+    const entity = { entityType: 'article', entityId: 12 };
+    const page = await getCommentSection(db, entity, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect(page.rootIds).toEqual([1220, 1200, 1210, 1230]);
+    expect(item(page, 1210)).toMatchObject({ deleted: true, pinnedAt: null });
+    expect(item(page, 1220).pinnedAt).not.toBeNull();
+    expect(page.children[1200].ids).toEqual([1201, 1202]);
+
+    const replies = await getCommentReplies(db, 1200, reader, { sort: ThreadSort.Oldest });
+    expect(ids(replies).slice(0, 2)).toEqual([1201, 1202]);
+    expect(item(replies, 1202)).toMatchObject({ deleted: true, pinnedAt: null });
+    // A later page still reaches it: it is paged as unpinned, not left to a first page it no longer leads.
+    const firstReply = await getCommentReplies(db, 1200, reader, {
+      sort: ThreadSort.Oldest,
+      limit: 1,
+    });
+    const nextReply = await getCommentReplies(db, 1200, reader, {
+      sort: ThreadSort.Oldest,
+      limit: 1,
+      cursor: firstReply.children[1200].nextCursor!,
+    });
+    expect(ids(nextReply)[0]).toBe(1202);
+  });
+
   it('pages one comment’s replies and continues where the section stopped', async () => {
     const page = await section(reader);
     const rest = await getCommentReplies(db, 101, reader, {
@@ -319,6 +454,41 @@ describe('getCommentThread', () => {
   });
 });
 
+describe('resolveModelPageCommentId', () => {
+  // Model 7: 950 with old id 100 (also article comment 100's id) and 951, written since the flip.
+  // Model 8: 960 with old id 950 (model 7's comment's own id).
+  it('names a model comment by its old id, or by its own, never another model’s', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" VALUES (7), (8);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 7), ('model', 8);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "legacyV1Id") VALUES
+        (950, 'model', 7, 2, 'old', 100), (951, 'model', 7, 2, 'new', NULL),
+        (960, 'model', 8, 2, 'other', 950);`);
+    expect(await resolveModelPageCommentId(db, 7, 951)).toBe(951);
+    expect(await resolveModelPageCommentId(db, 7, 950)).toBe(950);
+    expect(await resolveModelPageCommentId(db, 7, 100)).toBe(950);
+    expect(await resolveModelPageCommentId(db, 8, 950)).toBe(960);
+    // Not an old id on this model: taken as the comment's own, which the thread read checks.
+    expect(await resolveModelPageCommentId(db, 8, 951)).toBe(951);
+  });
+});
+
+describe('a locked comment', () => {
+  it('says so on its item, which is what takes its Reply away, and not on its neighbours', async () => {
+    await pg.exec(`UPDATE "CommentV3" SET locked = true WHERE id = 101`);
+    try {
+      const page = await section(reader);
+      expect(item(page, 101).locked).toBe(true);
+      expect(item(page, 102).locked).toBe(false);
+      const thread = await getCommentThread(db, 101, reader, onArticle);
+      expect(thread!.comment.locked).toBe(true);
+      expect(item(thread!.replies, 107).locked).toBe(false);
+    } finally {
+      await pg.exec(`UPDATE "CommentV3" SET locked = false WHERE id = 101`);
+    }
+  });
+});
+
 describe('getCommentLock', () => {
   it('is locked by the topic, or by the comment or any ancestor', async () => {
     expect(await getCommentLock(db, ARTICLE, 107)).toEqual({ locked: false });
@@ -334,6 +504,39 @@ describe('getCommentLock', () => {
       expect(await getCommentLock(db, ARTICLE)).toEqual({ locked: true });
     } finally {
       await pg.exec(`UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'article'`);
+    }
+  });
+});
+
+describe("a comment author's image", () => {
+  const authorImage = async () => {
+    const page = await getCommentSection(db, { entityType: 'article', entityId: 11 }, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+    });
+    return page.comments.find((comment) => comment.id === 900)?.user?.image;
+  };
+
+  it('is left out when it names the author’s held or blocked profile picture, and kept otherwise', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "needsReview", "blockedFor") VALUES
+        (9001, 'key-held', 'minor', NULL), (9002, 'key-blocked', NULL, 'moderated'), (9003, 'key-ok', NULL, NULL);
+    `);
+    try {
+      for (const [pictureId, image, expected] of [
+        [9001, 'https://cdn.example/key-held/width=96', null],
+        [9002, 'key-blocked', null],
+        [9003, 'key-ok', 'key-ok'],
+        [9001, 'an-older-upload', 'an-older-upload'],
+      ] as const) {
+        await pg.query(`UPDATE "User" SET "profilePictureId" = $1, image = $2 WHERE id = 4`, [
+          pictureId,
+          image,
+        ]);
+        expect(await authorImage()).toBe(expected);
+      }
+    } finally {
+      await pg.exec(`UPDATE "User" SET "profilePictureId" = NULL, image = NULL WHERE id = 4`);
     }
   });
 });

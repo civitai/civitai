@@ -5,7 +5,8 @@ import type * as CoverageSource from '~/server/services/generation/coverage-sour
 import type * as GenerationService from '~/server/services/generation/generation.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
 
 const { getModel } = vi.hoisted(() => ({ getModel: vi.fn() }));
@@ -78,8 +79,15 @@ beforeEach(() => {
   });
 });
 
-const get = (user: object | undefined, features: object, forEditor?: boolean) =>
-  getModelHandler({ input: { id: 1, forEditor }, ctx: { user, features } } as never);
+const SCOPED_KEY = {
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.ModelsRead,
+};
+
+const get = (user: object | undefined, features: object, forEditor?: boolean, credential = {}) =>
+  getModelHandler({ input: { id: 1, forEditor }, ctx: { user, features, ...credential } } as never);
 
 describe('model.getById .com face', () => {
   it.each([
@@ -104,6 +112,12 @@ describe('model.getById .com face', () => {
     expect(model.sfwDescription).toBe('<p>Com description</p>');
   });
 
+  it('the editor read gives the owner on a scoped key nothing new', async () => {
+    const model = await get(owner, COM, true, SCOPED_KEY);
+    expect(model.name).toBe('Com title');
+    expect(model.sfwName).toBeNull();
+  });
+
   it('the editor read gives a non-owner nothing new', async () => {
     const model = await get(stranger, COM, true);
     expect(model.name).toBe('Com title');
@@ -113,10 +127,10 @@ describe('model.getById .com face', () => {
   });
 
   it.each([
-    ['owner', owner, true, false],
-    ['moderator', moderator, true, true],
-    ['non-owner', stranger, false, false],
-    ['signed-out viewer', undefined, false, false],
+    ['owner', owner, 'detected', false],
+    ['moderator', moderator, 'detected', true],
+    ['non-owner', stranger, null, false],
+    ['signed-out viewer', undefined, null, false],
   ])(
     'the listing re-check removal reaches the %s only as it should',
     async (_, user, told, seesRecord) => {
@@ -124,6 +138,7 @@ describe('model.getById .com face', () => {
         at: '2026-11-05T00:00:00.000Z',
         sfwCoverImageId: 5,
         reason: 'detected',
+        detail: 'CHECK-REASON-TEXT',
       };
       const stored = await getModel();
       getModel.mockResolvedValue({ ...stored, meta: { comFaceRemoved } });
@@ -131,6 +146,8 @@ describe('model.getById .com face', () => {
       const model = await get(user, COM);
 
       expect(model.comFaceRemoved).toBe(told);
+      // The check's reason is for moderators only; the owner is told which fields were read.
+      if (!seesRecord) expect(JSON.stringify(model)).not.toContain('CHECK-REASON-TEXT');
       expect((model.meta as Record<string, unknown> | null)?.comFaceRemoved).toEqual(
         seesRecord ? comFaceRemoved : undefined
       );

@@ -3,7 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Convention guard: no `z.coerce.boolean()` under src/pages/api.
+ * Convention guard: no `z.coerce.boolean()` under src/pages/api or src/server/api-routes.
  *
  * These handlers parse `req.query`, where every value is a string, and
  * `z.coerce.boolean()` is JS `Boolean()` — so `?flag=false` parses as TRUE and the
@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 const API_DIR = path.resolve(__dirname, '../../../pages/api');
+const SERVED_API_DIR = path.resolve(__dirname, '../../api-routes');
 
 /** Matches `z.coerce.boolean(`, `zod.coerce.boolean(` and a bare destructured `coerce.boolean(`. */
 const COERCE_BOOLEAN = /\bcoerce\s*\.\s*boolean\s*\(/;
@@ -58,11 +59,12 @@ function findViolations(files: string[]) {
  */
 const MIN_SCANNED_FILES = 200;
 
-describe('no z.coerce.boolean under src/pages/api', () => {
+describe('no z.coerce.boolean under src/pages/api or src/server/api-routes', () => {
   it('can read the api tree', () => {
     // Fail closed: a missing or moved directory is a broken guard, not a clean one.
     expect(fs.existsSync(API_DIR)).toBe(true);
     expect(walk(API_DIR).length).toBeGreaterThanOrEqual(MIN_SCANNED_FILES);
+    expect(walk(SERVED_API_DIR).length).toBeGreaterThan(100);
   });
 
   it('detects the pattern it is looking for', () => {
@@ -73,14 +75,11 @@ describe('no z.coerce.boolean under src/pages/api', () => {
     expect(detected).toHaveLength(1);
   });
 
-  it('does not report the fixed sites, which name the pattern in their comments', () => {
-    expect(findViolations([path.resolve(API_DIR, 'admin/permission.ts')])).toEqual([]);
-    expect(
-      findViolations([path.resolve(API_DIR, 'mod/daily-challenge/backfill-theme-elements.ts')])
-    ).toEqual([]);
+  it('does not report a fixed site, which names the pattern in its comments', () => {
+    expect(findViolations([path.resolve(SERVED_API_DIR, 'admin/permission.ts')])).toEqual([]);
   });
 
   it('reports no violations', () => {
-    expect(findViolations(walk(API_DIR))).toEqual([]);
+    expect(findViolations([...walk(API_DIR), ...walk(SERVED_API_DIR)])).toEqual([]);
   });
 });

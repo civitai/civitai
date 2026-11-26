@@ -1,8 +1,6 @@
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
 import { randomBytes } from 'crypto';
-import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
-import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { heldEntryOnBountySql } from '~/server/services/held-review.service';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -10,7 +8,8 @@ import {
   Availability,
   BountyEntryMode,
   Currency,
-  ImageIngestionStatus,
+  EntityType,
+  JobQueueType,
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -63,6 +62,9 @@ import {
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';
+import { staleRatingRaise } from '~/server/services/bounty-rated-level';
+import { enqueueJobs } from '~/server/services/job-queue.service';
+import { updateBountyNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -77,7 +79,9 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -102,7 +106,12 @@ import {
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
+import {
+  filterSensitiveProfanityData,
+  keepStoredProfanityData,
+} from '~/libs/profanity-simple/helpers';
+import { withStoredScanDetails } from '~/server/utils/bounty-details';
 import { logToAxiom } from '~/server/logging/client';
 
 // Unique per request: a refund by prefix must never reach another request's charge. The
@@ -110,6 +119,45 @@ import { logToAxiom } from '~/server/logging/client';
 export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {
   return `bounty-${bountyId}-${userId}-${randomBytes(6).toString('hex')}-${Date.now()}`;
 };
+
+/**
+ * The creation charge's prefix for a keyed bounty: the creator, the client's key (a uuid, minted
+ * once per new bounty and resent on its retries), then the time the client minted the key. The
+ * same on every retry, so the ledger holds one charge for it; the user comes first, so a key can
+ * only ever name this creator's charge. The time stays last, where award pricing reads it
+ * (`prefixChargedAt`), and is chosen once per key: a time taken per request would make each retry
+ * a new prefix. `bounty-k-` keeps it apart from the keyless form (`bounty-<bountyId>-…`), whose
+ * second segment is a number.
+ */
+export const getKeyedBountyTransactionPrefix = (
+  userId: number,
+  idempotencyKey: string,
+  chargedAt: number
+) => `bounty-k-${userId}-${idempotencyKey}-${chargedAt}`;
+
+/**
+ * How far a keyed creation's client-chosen charge time may sit from the server's clock. A retry can
+ * come long after the key was minted; a time ahead of the server is a client clock running fast.
+ * Outside the window the key is not used and the creation is charged as an unkeyed one (a new
+ * prefix per call, as before keys): a client with a badly wrong clock keeps the old behaviour
+ * rather than being refused.
+ *
+ * The time inside the window IS what award pricing reads (`prefixChargedAt`): it groups the
+ * supporter's charges and is written to the award as `supporterChargedAt`, which bankable netting
+ * compares with its cutover (`BANKABLE_CUTOVER`). A client can therefore backdate it by up to 7
+ * days; the cutover already lies further back than that, so a backdated time still reads as after
+ * it. A cutover that ever moves to within 7 days of now would make this window matter.
+ */
+export const KEYED_BOUNTY_CHARGED_AT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const KEYED_BOUNTY_CHARGED_AT_MAX_LEAD_MS = 24 * 60 * 60 * 1000;
+
+/** The client's charge time for a keyed creation, or undefined when it is outside the window. */
+export function keyedBountyChargedAt(chargedAt: number | undefined, now = Date.now()) {
+  if (chargedAt === undefined) return undefined;
+  if (chargedAt < now - KEYED_BOUNTY_CHARGED_AT_MAX_AGE_MS) return undefined;
+  if (chargedAt > now + KEYED_BOUNTY_CHARGED_AT_MAX_LEAD_MS) return undefined;
+  return chargedAt;
+}
 
 export const isBountyTransactionPrefix = (prefix: string) => {
   return prefix.startsWith('bounty-') && prefix.split('-').length >= 4;
@@ -129,11 +177,12 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     period,
     baseModels,
     excludedUserIds,
+    ids,
   },
   select,
   viewer,
 }: {
-  input: GetInfiniteBountySchema;
+  input: GetInfiniteBountySchema & { ids?: number[] };
   select: TSelect;
   viewer?: BountyViewer;
 }) => {
@@ -176,6 +225,8 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   if (excludedUserIds?.length) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
+
+  if (ids) AND.push({ id: { in: ids } });
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
   if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
@@ -230,6 +281,8 @@ export const createBounty = async ({
   buzzType,
   addLockedProperties,
   blurbUses,
+  idempotencyKey,
+  chargedAt,
   ...data
 }: CreateBountyInput & {
   userId: number;
@@ -242,12 +295,26 @@ export const createBounty = async ({
   blurbUses?: BlurbUse[];
 }) => {
   const { userId } = data;
+  // A Buzz bounty with the client's key and a usable charge time is charged once across retries
+  // (createKeyedBuzzBounty); anything else is charged as before keys.
+  const keyedChargedAt =
+    currency === Currency.BUZZ && idempotencyKey !== undefined
+      ? keyedBountyChargedAt(chargedAt)
+      : undefined;
+  const keyed =
+    idempotencyKey !== undefined && keyedChargedAt !== undefined
+      ? { idempotencyKey, chargedAt: keyedChargedAt }
+      : undefined;
+  const assertCanAffordBounty = async () => {
+    const account = await getUserBuzzAccount({ accountId: userId });
+    if ((account[0]?.balance ?? 0) < unitAmount) {
+      throw throwInsufficientFundsError();
+    }
+  };
   switch (currency) {
     case Currency.BUZZ:
-      const account = await getUserBuzzAccount({ accountId: userId });
-      if ((account[0]?.balance ?? 0) < unitAmount) {
-        throw throwInsufficientFundsError();
-      }
+      // A keyed charge checks the balance only when nothing is held under its key yet.
+      if (!keyed) await assertCanAffordBounty();
       break;
     default: // Do no checks
       break;
@@ -270,105 +337,141 @@ export const createBounty = async ({
   let imagesToIngest: IngestImageInput[] = [];
   const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
-  const bounty = await dbWrite.$transaction(
-    async (tx) => {
-      const bounty = await tx.bounty.create({
-        data: {
-          ...data,
-          lockedProperties: lockedProperties.length ? lockedProperties : undefined,
-          startsAt,
-          expiresAt,
-          // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
-          entryMode: BountyEntryMode.BenefactorsOnly,
-          details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
-          tags: tags
-            ? {
-                create: tags.map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      connectOrCreate: {
-                        where: { name },
-                        create: { name, target: [TagTarget.Bounty] },
-                      },
+  // The bounty row with its files and images, on the caller's transaction. `id` is set only for a
+  // keyed creation, whose charge names the id (see createKeyedBuzzBounty).
+  const writeBountyRows = async (tx: Prisma.TransactionClient, id?: number) => {
+    const bounty = await tx.bounty.create({
+      data: {
+        ...(id !== undefined ? { id } : {}),
+        ...data,
+        lockedProperties: lockedProperties.length ? lockedProperties : undefined,
+        startsAt,
+        expiresAt,
+        // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
+        entryMode: BountyEntryMode.BenefactorsOnly,
+        details:
+          (withStoredScanDetails(data.details, null) as Prisma.JsonObject) ?? Prisma.JsonNull,
+        tags: tags
+          ? {
+              create: tags.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Bounty] },
                     },
-                  };
-                }),
-              }
-            : undefined,
-        },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+
+    if (files) {
+      await updateEntityFiles({
+        tx,
+        entityId: bounty.id,
+        entityType: 'Bounty',
+        files,
+        ownRights: !!ownRights,
       });
+    }
 
-      if (files) {
-        await updateEntityFiles({
-          tx,
-          entityId: bounty.id,
-          entityType: 'Bounty',
-          files,
-          ownRights: !!ownRights,
-        });
-      }
+    if (images) {
+      imagesToIngest = await createEntityImages({
+        images,
+        tx,
+        userId,
+        keysCheckedFor,
+        entityId: bounty.id,
+        entityType: 'Bounty',
+      });
+    }
+    return bounty;
+  };
+  const writeBenefactor = (tx: Prisma.TransactionClient, bountyId: number, prefix: string) =>
+    tx.bountyBenefactor.create({
+      data: {
+        userId,
+        bountyId,
+        unitAmount,
+        currency,
+        buzzTransactionId: [prefix],
+      },
+    });
+  const writeBlurbReferences = async (tx: Prisma.TransactionClient, bountyId: number) => {
+    if (blurbUses)
+      await reconcileBlurbReferences({
+        entityType: 'Bounty',
+        entityId: bountyId,
+        uses: blurbUses,
+        tx,
+      });
+  };
 
-      if (images) {
-        imagesToIngest = await createEntityImages({
-          images,
-          tx,
-          userId,
-          keysCheckedFor,
-          entityId: bounty.id,
-          entityType: 'Bounty',
-        });
-      }
+  let bounty: Awaited<ReturnType<typeof writeBountyRows>>;
+  if (keyed) {
+    if (!buzzType) throw throwBadRequestError('buzzType is required for Buzz bounties');
+    const created = await createKeyedBuzzBounty({
+      userId,
+      unitAmount,
+      buzzType,
+      ...keyed,
+      assertCanAffordBounty,
+      write: async (tx, id, prefix) => {
+        const written = await writeBountyRows(tx, id);
+        await writeBenefactor(tx, written.id, prefix);
+        await writeBlurbReferences(tx, written.id);
+        return written;
+      },
+    });
+    // An earlier request under this key created the bounty and did what follows.
+    if (!created.createdHere)
+      return { ...created.bounty, details: created.bounty.details as BountyDetailsSchema | null };
+    bounty = created.bounty;
+  } else {
+    bounty = await dbWrite.$transaction(
+      async (tx) => {
+        const bounty = await writeBountyRows(tx);
 
-      switch (currency) {
-        case Currency.BUZZ: {
-          if (!buzzType) {
-            throw throwBadRequestError('buzzType is required for Buzz bounties');
+        switch (currency) {
+          case Currency.BUZZ: {
+            if (!buzzType) {
+              throw throwBadRequestError('buzzType is required for Buzz bounties');
+            }
+
+            const prefix = getBountyTransactionPrefix(bounty.id, userId);
+            // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz charge inside the txn for a keyless creation (a client from before keys). A keyed one charges outside and records after (createKeyedBuzzBounty).
+            await createMultiAccountBuzzTransaction({
+              fromAccountId: userId,
+              fromAccountTypes: [buzzType],
+              externalTransactionIdPrefix: prefix,
+              toAccountId: 0,
+              amount: unitAmount,
+              type: TransactionType.Bounty,
+              details: {
+                entityId: bounty.id,
+                entityType: 'Bounty',
+              },
+            });
+
+            await writeBenefactor(tx, bounty.id, prefix);
+
+            break;
           }
-
-          const prefix = getBountyTransactionPrefix(bounty.id, userId);
-          // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz charge inside the txn. Moving it out needs charge→tx→refund-on-failure compensation (a Postgres rollback can't undo an external Buzz charge); left for a domain-owner change.
-          await createMultiAccountBuzzTransaction({
-            fromAccountId: userId,
-            fromAccountTypes: [buzzType],
-            externalTransactionIdPrefix: prefix,
-            toAccountId: 0,
-            amount: unitAmount,
-            type: TransactionType.Bounty,
-            details: {
-              entityId: bounty.id,
-              entityType: 'Bounty',
-            },
-          });
-
-          await tx.bountyBenefactor.create({
-            data: {
-              userId,
-              bountyId: bounty.id,
-              unitAmount,
-              currency,
-              buzzTransactionId: [prefix],
-            },
-          });
-
-          break;
+          default: // Do no checks
+            break;
         }
-        default: // Do no checks
-          break;
-      }
 
-      if (blurbUses)
-        await reconcileBlurbReferences({
-          entityType: 'Bounty',
-          entityId: bounty.id,
-          uses: blurbUses,
-          tx,
-        });
+        await writeBlurbReferences(tx, bounty.id);
 
-      return bounty;
-    },
-    { maxWait: 10000, timeout: 30000 }
-  );
+        return bounty;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
+  }
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -382,6 +485,146 @@ export const createBounty = async ({
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
+
+/**
+ * A new bounty id, taken before a keyed creation is charged so the charge can name the bounty it
+ * pays for (`details.entityId`: the "View Bounty" link in the creator's transactions and the
+ * export's entity url). Bounty.id is a SERIAL, so the row can be inserted with it: `nextval` has
+ * already moved the sequence past it. Null when it cannot be taken; the charge then names no bounty
+ * and the row takes its id on insert.
+ */
+async function reserveBountyId(): Promise<number | null> {
+  try {
+    const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT nextval(pg_get_serial_sequence('"Bounty"', 'id'))::int AS id
+    `;
+    return typeof row?.id === 'number' ? row.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The bounty id a held keyed charge names (`details.entityId`, set by the request that charged it).
+ * Undefined when no leg names one (a charge made before the id was sent) or the read fails: the
+ * bounty is then created under a fresh id and that one charge links to nothing.
+ */
+async function heldChargeBountyId(prefix: string): Promise<number | undefined> {
+  try {
+    const legs = await getMultiAccountTransactionsByPrefix(prefix);
+    for (const leg of legs) {
+      const held = await getTransactionByExternalId(leg.externalTransactionId);
+      const entityId = held?.details?.entityId;
+      if (typeof entityId === 'number' && Number.isSafeInteger(entityId) && entityId > 0)
+        return entityId;
+    }
+  } catch {
+    // A read gap: the bounty is still created, under the id this request reserved.
+  }
+  return undefined;
+}
+
+type CreatedBounty = Prisma.BountyGetPayload<true>;
+
+/**
+ * A keyed Buzz bounty: charged once across the client's retries and created once.
+ *
+ * The charge runs first and OUTSIDE any transaction (`chargeByPrefix` under the keyed prefix:
+ * looked up first, the balance checked only when nothing is held, an unknown outcome resent once
+ * and otherwise "may have gone through", a held charge reused only for the same terms). Then the
+ * bounty and its benefactor row are written in one short transaction under the key's lock
+ * (`recordKeyedCharge`): a benefactor row already holding the prefix answers the retry with its
+ * bounty, a refunded charge is refused, and a failed write refunds the charge under the lock.
+ *
+ * The bounty's id is chosen before the charge, so the charge can name it (`details.entityId`):
+ * - first attempt: a fresh id (`reserveBountyId`), sent on the charge;
+ * - the charge was already held (a retry, or a concurrent request under the key charged first):
+ *   the id the held charge names, so the bounty is created under the id its charge links to,
+ *   whichever request records it. A concurrent loser's reserved id is simply never used.
+ * A held charge that names no id (or cannot be read) gets the fresh id, and its link is missing.
+ * The benefactor row, which award pricing and refunds read, links charge and bounty either way.
+ */
+async function createKeyedBuzzBounty({
+  userId,
+  unitAmount,
+  buzzType,
+  idempotencyKey,
+  chargedAt,
+  assertCanAffordBounty,
+  write,
+}: {
+  userId: number;
+  unitAmount: number;
+  buzzType: BuzzSpendType;
+  idempotencyKey: string;
+  chargedAt: number;
+  assertCanAffordBounty: () => Promise<void>;
+  write: (
+    tx: Prisma.TransactionClient,
+    id: number | undefined,
+    prefix: string
+  ) => Promise<CreatedBounty>;
+}): Promise<{ bounty: CreatedBounty; createdHere: boolean }> {
+  // Imported here, not at the top, as report.service does: only a keyed creation needs them.
+  const { chargeByPrefix, prefixWasRefunded } = await import('~/server/services/buzz-keyed-charge');
+  const { CHARGE_LOCKED_READ, CHARGE_LOCKED_REFUND, recordKeyedCharge } = await import(
+    '~/server/services/buzz-charge-lock'
+  );
+  const { refundMultiAccountTransaction } = await import('~/server/services/buzz.service');
+
+  const prefix = getKeyedBountyTransactionPrefix(userId, idempotencyKey, chargedAt);
+  const context = { userId, amount: unitAmount };
+  const reserved = (await reserveBountyId()) ?? undefined;
+
+  const { replayed } = await chargeByPrefix(prefix, context, {
+    reusable: true,
+    expected: {
+      amount: unitAmount,
+      fromAccountId: userId,
+      fromAccountTypes: [buzzType],
+      toAccountId: 0,
+      type: TransactionType.Bounty,
+    },
+    beforeCharging: assertCanAffordBounty,
+    charge: () =>
+      createMultiAccountBuzzTransaction({
+        fromAccountId: userId,
+        fromAccountTypes: [buzzType],
+        externalTransactionIdPrefix: prefix,
+        toAccountId: 0,
+        amount: unitAmount,
+        type: TransactionType.Bounty,
+        details: {
+          ...(reserved !== undefined ? { entityId: reserved } : {}),
+          entityType: 'Bounty',
+        },
+      }),
+    declined: () => new TRPCError({ code: 'BAD_REQUEST', message: 'Unable to charge the bounty' }),
+  });
+  // Held: the charge names the id of the request that made it, which may not be this one.
+  const id = replayed ? (await heldChargeBountyId(prefix)) ?? reserved : reserved;
+
+  return recordKeyedCharge<{ bounty: CreatedBounty; createdHere: boolean }>(prefix, context, {
+    findRecorded: async (tx) => {
+      const recorded = await tx.bountyBenefactor.findFirst({
+        where: { userId, buzzTransactionId: { has: prefix } },
+        select: { bounty: true },
+      });
+      return recorded ? { bounty: recorded.bounty, createdHere: false } : null;
+    },
+    isRefunded: () => prefixWasRefunded(prefix, context, CHARGE_LOCKED_READ),
+    record: async (tx) => ({ bounty: await write(tx, id, prefix), createdHere: true }),
+    refund: () =>
+      refundMultiAccountTransaction(
+        {
+          externalTransactionIdPrefix: prefix,
+          description: 'Reason: Bounty refund, the bounty was not created',
+          details: { entityType: 'Bounty', reason: 'bounty-not-created' },
+        },
+        CHARGE_LOCKED_REFUND
+      ),
+  });
+}
 
 export const updateBountyById = async ({
   id,
@@ -397,6 +640,7 @@ export const updateBountyById = async ({
   isModerator,
   addLockedProperties,
   blurbUses,
+  shownImageIds,
   ...data
 }: UpdateBountyInput & {
   userId: number;
@@ -415,9 +659,13 @@ export const updateBountyById = async ({
 
   let imagesToIngest: IngestImageInput[] = [];
   const keysCheckedFor = await checkEntityImageKeys({ images, userId });
+  let nsfwChanged = false;
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
+      // Orders this edit against a text scan flagging the bounty: a flag the scan committed first is
+      // read here and kept; a scan that arrives mid-edit waits, then applies to the edited row.
+      await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
       const existing = await tx.bounty.findUniqueOrThrow({
         where: { id },
         select: {
@@ -426,7 +674,10 @@ export const updateBountyById = async ({
           complete: true,
           poi: true,
           meta: true,
+          details: true,
           lockedProperties: true,
+          nsfw: true,
+          moderatorNsfwLevel: true,
           _count: { select: { entries: true } },
         },
       });
@@ -449,6 +700,9 @@ export const updateBountyById = async ({
         existing.poi &&
         data.poi === false &&
         hasOpenTextScanFlag(existing.meta, 'poi');
+      const ratingRaise = staleRatingRaise(existing, data.nsfw);
+      // Covers the rating raise, which only happens when the flag changes.
+      nsfwChanged = data.nsfw !== undefined && data.nsfw !== existing.nsfw;
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
       if (addLockedProperties?.length)
@@ -458,7 +712,10 @@ export const updateBountyById = async ({
         ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
-      if (liftedTextScanPoi && isRemovedWithOwner(existing.meta))
+      if (
+        liftedTextScanPoi &&
+        (existing.meta as { removedWithOwner?: unknown } | null)?.removedWithOwner === true
+      )
         throw throwBadRequestError('This bounty is kept hidden until its payout settles');
 
       if (
@@ -476,6 +733,7 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
+          ...ratingRaise,
           ...(liftedTextScanPoi && {
             availability:
               (readTextScanFlags(existing.meta).poi?.prev?.availability as
@@ -491,7 +749,12 @@ export const updateBountyById = async ({
           entryLimit,
           startsAt,
           expiresAt,
-          details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
+          details:
+            (withStoredScanDetails(
+              isModerator ? details : keepStoredProfanityData(details, existing.details),
+              // A moderator unflagging the bounty overrules the scan, so its record goes too.
+              isModerator && data.nsfw === false ? null : existing.details
+            ) as Prisma.JsonObject) ?? Prisma.JsonNull,
           tags: tags
             ? {
                 deleteMany: {
@@ -539,6 +802,7 @@ export const updateBountyById = async ({
           entityType: 'Bounty',
           userId,
           keysCheckedFor,
+          shownImageIds,
         });
       }
 
@@ -550,10 +814,23 @@ export const updateBountyById = async ({
           tx,
         });
 
+      // The stored level is recomputed below; the queued job covers a crash before that runs.
+      if (nsfwChanged)
+        await enqueueJobs(
+          [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
+          tx
+        );
+
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
   );
+
+  // The edit has committed, so a failure here is logged; the queued job retries it.
+  if (nsfwChanged)
+    await updateBountyNsfwLevels([id]).catch((e) =>
+      handleLogError(e, 'bounty-edit-nsfw-level-recompute', { bountyId: id })
+    );
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -598,6 +875,9 @@ export const upsertBounty = async ({
       })
     : null;
   const storedLockedProperties = stored?.lockedProperties ?? [];
+  // Non-moderators can only write fresh profanity detections, never client-supplied ones.
+  if (!isModerator && data.details)
+    data.details = filterSensitiveProfanityData(data.details, false);
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
@@ -624,7 +904,7 @@ export const upsertBounty = async ({
   const addLockedProperties: string[] = [];
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
+    const profanityFilter = (await getServerProfanityFilter()).filter;
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
@@ -683,6 +963,14 @@ export const upsertBounty = async ({
   }
 };
 
+const autoNsfwBountySelect = {
+  name: true,
+  nsfw: true,
+  moderatorNsfwLevel: true,
+  lockedProperties: true,
+  details: true,
+} satisfies Prisma.BountySelect;
+
 /**
  * The one path for "a bounty's description changed", for a caller holding only new HTML — the
  * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
@@ -711,10 +999,7 @@ export async function applyBountyContentChange({
   // catch it — same reason `applyArticleContentChange` re-checks.
   await throwOnBlockedUserContent(description, { surface: 'bounty' });
 
-  const stored = await dbWrite.bounty.findUnique({
-    where: { id },
-    select: { name: true, nsfw: true, lockedProperties: true, details: true },
-  });
+  const stored = await dbWrite.bounty.findUnique({ where: { id }, select: autoNsfwBountySelect });
   if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
 
   // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
@@ -736,28 +1021,57 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
-  const flagged = (await legacyProfanityAutoNsfwApplies('Bounty', id))
-    ? evaluateAutoNsfw({
-        name: stored.name,
-        description,
-        alreadyNsfw: stored.nsfw,
-        lockedProperties: stored.lockedProperties,
-      })
-    : null;
-  if (flagged) {
-    const details = {
-      ...((stored.details as MixedObject | null) ?? {}),
-      ...flagged.metaPatch,
-    } as Prisma.InputJsonObject;
-    // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
-    // the jsonb + text[] binds is where that trade stops being worth it.
-    await dbWrite.bounty.update({
-      where: { id },
-      data: flagged.lock
-        ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), details }
-        : { details },
+  const profanity = await getServerProfanityFilter();
+  const evaluate = (row: typeof stored) =>
+    evaluateAutoNsfw({
+      name: row.name,
+      description,
+      alreadyNsfw: row.nsfw,
+      lockedProperties: row.lockedProperties,
+      profanity,
     });
-  }
+  // The unlocked read only decides whether to open the transaction; the write is decided again
+  // under the row lock, as `updateBountyById` does, so a moderator rating written in between is
+  // not lowered to R by the stale-rating raise.
+  const flaggedNsfw =
+    (await legacyProfanityAutoNsfwApplies('Bounty', id)) &&
+    !!evaluate(stored) &&
+    // One transaction with the retry job: the next fan-out pass sees nsfw already set and would
+    // never recompute a stored level left stale by a failed enqueue.
+    (await dbWrite.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
+      const current = await tx.bounty.findUnique({ where: { id }, select: autoNsfwBountySelect });
+      const flagged = current && evaluate(current);
+      if (!flagged) return false;
+      const details = {
+        ...((current.details as MixedObject | null) ?? {}),
+        ...flagged.metaPatch,
+      } as Prisma.InputJsonObject;
+      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and
+      // hand-rolling the jsonb + text[] binds is where that trade stops being worth it.
+      await tx.bounty.update({
+        where: { id },
+        data: flagged.lock
+          ? {
+              nsfw: true,
+              ...staleRatingRaise(current, true),
+              lockedProperties: uniq([...current.lockedProperties, 'nsfw']),
+              details,
+            }
+          : { details },
+      });
+      if (flagged.lock)
+        await enqueueJobs(
+          [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
+          tx
+        );
+      return flagged.lock;
+    }));
+  // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
+  if (flaggedNsfw)
+    await updateBountyNsfwLevels([id]).catch((e) =>
+      handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
+    );
 
   await queueBountySearchIndexUpdate(id);
   scanEntityInBackground({ entityType: 'Bounty', entityId: id });
@@ -862,16 +1176,14 @@ export const deleteBountyById = async ({
     }
   }
 
-  const markerView = await holdMarkerViewExists();
   const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
   const result = await dbWrite.$transaction(async (tx) => {
     if (!(await lockBountyForPayout(tx, id))) return null;
     const stored = await tx.bounty.findUnique({ where: { id } });
     if (!stored) return null;
-    // A held entrant, or an award recorded for manual resolution, keeps the bounty: hidden and
-    // detached from its owner, deleted later by `bounty-payout-retry`.
-    const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
-      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
+    // An award recorded for manual resolution keeps the bounty: hidden and detached from its
+    // owner, deleted later by `bounty-payout-retry`.
+    const keepsBounty = openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable);
     const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${keepsBounty}`;
     const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
       WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
@@ -887,7 +1199,8 @@ export const deleteBountyById = async ({
               'availabilityBeforeRemoval', b.availability,
               'userIdBeforeRemoval', b."userId"
             )
-        WHERE b.id = ${id} AND ${keepsBounty} AND ${notRemovedWithOwnerSql('b.meta')}
+        WHERE b.id = ${id} AND ${keepsBounty}
+          AND (b.meta ->> 'removedWithOwner') IS DISTINCT FROM 'true'
       )
       SELECT EXISTS (SELECT 1 FROM gone) AS gone`;
     return { bounty: stored, gone };
@@ -917,28 +1230,71 @@ export const deleteBountyById = async ({
   return result?.bounty ?? null;
 };
 
+/**
+ * The ids of the bounties' images the viewer may see, by the entity image rules and the bounty
+ * search index's exclusions.
+ */
+async function getVisibleBountyImageIds({
+  bountyIds,
+  userId,
+  isModerator,
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) {
+  if (bountyIds.length === 0) return [];
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed: !!seesReportListed,
+    ownerSeesReportListed,
+  });
+  const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
+    SELECT ic."imageId"
+    FROM "ImageConnection" ic
+    JOIN "Image" i ON i.id = ic."imageId"
+    WHERE ic."entityType" = 'Bounty'
+      AND ic."entityId" IN (${Prisma.join(bountyIds)})
+      ${AND.length ? Prisma.sql`AND ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
+  `;
+  return rows.map(({ imageId }) => imageId);
+}
+
+type BountyImageViewer = { userId?: number; isModerator?: boolean } & Partial<
+  Omit<ReportListedViewer, 'userId'>
+>;
+
+/** Generation data its uploader hid goes only to the uploader and moderators. */
+const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
+  image: T,
+  viewer: { userId?: number; isModerator?: boolean }
+) =>
+  image.hideMeta && !viewer.isModerator && image.userId !== viewer.userId
+    ? { ...image, meta: null }
+    : image;
+
 export const getBountyImages = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-
-  if (userId) imageOr.push({ userId });
+  seesReportListed,
+  ownerSeesReportListed,
+}: GetByIdInput & BountyImageViewer) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds: [id],
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: 'Bounty',
-      image: { OR: imageOr },
-    },
-    select: { image: { select: imageSelect } },
+    // image-connection-orphan-safe: imageIds were read from Image just above.
+    where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
+    select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
-    ...image,
+    ...withVisibleMeta(image, { userId, isModerator }),
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     tags: image.tags.map((t) => t.tag),
   }));
@@ -1070,31 +1426,29 @@ export const getImagesForBounties = async ({
   bountyIds,
   userId,
   isModerator,
-}: {
-  bountyIds: number[];
-  userId?: number;
-  isModerator?: boolean;
-}) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-  if (userId) imageOr.push({ userId });
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds,
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityType: 'Bounty',
-      entityId: { in: bountyIds },
-      image: { OR: imageOr },
-    },
+    // image-connection-orphan-safe: imageIds were read from Image just above.
+    where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
-      image: { select: imageSelect },
+      image: { select: { ...imageSelect, poi: true, minor: true } },
     },
   });
 
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
-      ...image,
+      ...withVisibleMeta(image, { userId, isModerator }),
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
@@ -1131,7 +1485,7 @@ function logBountyPayoutError({
     bountyId,
     userId,
     transactionPrefix,
-  }).catch(() => null);
+  });
 }
 
 async function refundBountyPrefix(txId: string, description: string, details: MixedObject) {
@@ -1596,7 +1950,7 @@ export async function refundUnpayableBountyAward(bountyId: number) {
       message: `Bounty ${bountyId}: refund of an unpayable award failed; deleted by a moderator anyway`,
       bountyId,
       benefactors,
-    }).catch(() => null);
+    });
   }
   return true;
 }
@@ -1726,7 +2080,7 @@ export async function releaseStuckBountyAward(
     refundDescription: 'Reason: Bounty refund, the bounty was closed by a moderator',
   });
   for (const supporter of unpaid)
-    await logToAxiom({
+    logToAxiom({
       name: 'bounty-award',
       type: 'error',
       message: `Bounty ${bountyId}: award from user ${supporter.userId} has no charge on record; neither paid nor refunded, for a manual ruling`,
@@ -1734,9 +2088,9 @@ export async function releaseStuckBountyAward(
       userId: supporter.userId,
       unitAmount: supporter.unitAmount,
       buzzTransactionId: supporter.buzzTransactionId,
-      winnerUserId: read.payoutWinnerUserId,
       moderatorId,
-    }).catch(() => null);
+      payload: { winnerUserId: read.payoutWinnerUserId },
+    });
   return { unpaidAwards: unpaid.length, refundSettled };
 }
 
@@ -1927,16 +2281,15 @@ export async function resolveUnpaidBountyAward({
     return true;
   });
   if (recorded)
-    await logToAxiom({
+    logToAxiom({
       name: 'bounty-award',
       type: 'info',
       message: `Bounty ${bountyId}: unpaid award from user ${userId} resolved as ${ruling}`,
       bountyId,
       userId,
-      ruling,
-      ledgerReference,
       moderatorId,
-    }).catch(() => null);
+      payload: { ruling, ledgerReference },
+    });
   return { recorded };
 }
 
@@ -1958,27 +2311,17 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
   return { settled };
 }
 
-/** A kept bounty is detached from its owner, who is recorded in meta.userIdBeforeRemoval. */
-const keptBountyOwnerSql = Prisma.raw(
-  `COALESCE(b."userId", (b.meta ->> 'userIdBeforeRemoval')::int)`
-);
-
 /**
  * Kept bounties that never had a payout or supporters, or whose payout is settled: any other still
- * owes supporters. One whose owner or an entrant is held waits for the first run after the hold ends,
- * and one with an award recorded for manual resolution waits until it is resolved.
+ * owes supporters. One with an award recorded for manual resolution waits until it is resolved.
  */
-
 export async function deleteSettledKeptBounties() {
-  const markerView = await holdMarkerViewExists();
   const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
   const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
     WHERE b.meta ->> 'removedWithOwner' = 'true'
       AND ((b."payoutRecordedAt" IS NULL
           AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id))
         OR (b.complete AND b."payoutSettledAt" >= b."payoutRecordedAt"))
-      AND NOT ${ownerHeldSql(keptBountyOwnerSql)}
-      AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
       AND NOT ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
     WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),

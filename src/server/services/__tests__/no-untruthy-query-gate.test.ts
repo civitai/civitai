@@ -76,7 +76,7 @@ const COMMENT_LINE = /^\s*(\/\/|\/?\*)/;
  */
 const EXEMPT = /no-untruthy-query-gate-exempt:/;
 /** The only site allowed to stay uncoerced, and why — see the marker there for the pending call. */
-const EXEMPTED = ['src/components/Resource/Forms/TrainingSelectFile.tsx:438'];
+const EXEMPTED = ['src/components/Resource/Forms/TrainingSelectFile.tsx:434'];
 
 function uncoerced(value: string) {
   return UNCOERCED.test(value.replace(COERCED_GROUP, ''));
@@ -133,8 +133,8 @@ function scan() {
     byExt[path.extname(file)] = (byExt[path.extname(file)] ?? 0) + 1;
     const lines = text.split(/\r?\n/);
     lines.forEach((line, i) => {
-      const comments = precedingComments(lines, i);
       if (hasBareGate(line)) {
+        const comments = precedingComments(lines, i);
         // Uncoerced on its own terms — either a violation, or an accounted-for exemption.
         if (comments.some((l) => EXEMPT.test(l))) exempted.push(`${file}:${i + 1}`);
         else offenders.push(`${file}:${i + 1}`);

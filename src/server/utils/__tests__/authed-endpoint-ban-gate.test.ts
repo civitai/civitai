@@ -21,12 +21,20 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 const API_DIR = join(process.cwd(), 'src/pages/api');
+const SERVED_API_DIR = join(process.cwd(), 'src/server/api-routes');
 
 /**
  * Routes a banned account may still call, each for a reason a moderator signed off on. Adding a route
  * here is a moderation decision, not a code-review one: ask before you extend it.
  */
-const ALLOW_BANNED = ['auth/impersonate.ts', 'download/user-transactions.ts', 'v1/me.ts'];
+const ALLOW_BANNED = [
+  'auth/freshdesk.ts',
+  'auth/impersonate.ts',
+  'download/user-transactions.ts',
+  'v1/me.ts',
+];
+/** Approved routes with their own test: freshdesk in api-ban-gate.test.ts, impersonate below. */
+const TESTED_SEPARATELY = ['auth/freshdesk.ts', 'auth/impersonate.ts'];
 
 /** Routes that dispatch on the query before reaching their AuthedEndpoint. */
 const QUERY: Record<string, Record<string, string>> = {
@@ -41,11 +49,13 @@ function routeFiles(dir: string): string[] {
   });
 }
 
-const sources = routeFiles(API_DIR).map((path) => ({
-  route: relative(API_DIR, path).split('\\').join('/'),
-  path,
-  source: readFileSync(path, 'utf8'),
-}));
+const sources = [API_DIR, SERVED_API_DIR].flatMap((dir) =>
+  routeFiles(dir).map((path) => ({
+    route: relative(dir, path).split('\\').join('/'),
+    path,
+    source: readFileSync(path, 'utf8'),
+  }))
+);
 const authedRoutes = sources.filter(({ source }) =>
   /\b(Authed|Orchestrator)Endpoint\(/.test(source)
 );
@@ -131,7 +141,7 @@ describe('allowBanned is used only by the approved routes', () => {
 });
 
 describe('the approved routes still serve a banned session', () => {
-  it.each(ALLOW_BANNED.filter((r) => r !== 'auth/impersonate.ts'))(
+  it.each(ALLOW_BANNED.filter((r) => !TESTED_SEPARATELY.includes(r)))(
     '%s does not answer the banned 403',
     async (route) => {
       getServerAuthSession.mockResolvedValue(banned);
@@ -166,6 +176,9 @@ describe('the approved routes still serve a banned session', () => {
 describe('every authed API route refuses a banned session', () => {
   it('finds the authed routes', () => {
     expect(gatedRoutes.length).toBeGreaterThanOrEqual(33);
+    expect(sources.filter(({ path }) => path.startsWith(SERVED_API_DIR)).length).toBeGreaterThan(
+      100
+    );
   });
 
   it.each(gatedRoutes.map(({ route, path }) => [route, path]))(

@@ -2,13 +2,18 @@ import { json, redirect, type RequestHandler } from '@sveltejs/kit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { familyId } from '@civitai/auth';
 import { markFamilyLive } from '$lib/server/auth/lineage';
 import { preUpgradeHubSession } from '$lib/server/auth/legacy-upgrade';
+import { isUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
@@ -16,7 +21,13 @@ import {
   isSkipConsentRedirectUri,
   redirectUriMatches,
 } from '$lib/server/oauth/redirect-uri';
-import { carriesNonUserScope, hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
+import {
+  carriesNonUserScope,
+  hasScope,
+  parseScopeRequest,
+  scopeFromColumn,
+  scopeToColumn,
+} from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
 import { checkClientAccess } from '$lib/server/oauth/access';
@@ -25,6 +36,16 @@ import { isHubPageRequest } from '$lib/server/auth/same-origin';
 import { getClientIp } from '$lib/server/auth/request';
 import { logAxiomError } from '$lib/server/axiom';
 import { parsePrompt } from '$lib/server/oauth/prompt';
+import { IMPERSONATION_REFUSED } from '$lib/server/auth/impersonation-refusal';
+import {
+  declineOffline,
+  grantOffline,
+  grantOfflineImplied,
+  isOfflineGrantOn,
+  parseOfflineBuzzCap,
+  readConsentForOffline,
+} from '$lib/server/oauth/offline-grant';
+import { offlineAllowedForClient } from '$lib/server/oauth/listing-offline';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
 // Ported from the main app's src/pages/api/auth/oauth/authorize.ts. The session gate uses the hub's
@@ -49,6 +70,12 @@ import { parsePrompt } from '$lib/server/oauth/prompt';
 //                    skips consent.
 //   select_account — show the consent screen's account picker, even when a remembered consent covers it.
 // First-party clients have no consent screen, so `consent` and `select_account` don't apply to them.
+//
+// OFFLINE ACCESS (flag `oauth-offline-grant`; offline-grant.ts). Off, `offline_access` changes nothing.
+// On, a request with `offline_access` needs the consent's offline grant: a remembered consent without
+// one goes back to the consent screen, whose "Stay connected while you're away" line (with the app's
+// proposed Buzz cap, `offline_buzz_limit` / `offline_buzz_period`) records it. The code carries
+// `offlineRequested` only when the grant is there, and /token issues a refresh token only then.
 
 const oauthError = (status: number, error: string, description?: string) =>
   json({ error, ...(description ? { error_description: description } : {}) }, { status });
@@ -90,7 +117,7 @@ async function resolveVerifiedClient(params: Record<string, string>): Promise<Ve
   // ORIGIN (its host checked against the TrustedSpokeDomain registry — exact / subdomain-wildcard / dev
   // loopback). Shared with getAuthorizationCode.
   const redirectUri = params.redirect_uri;
-  const client = await resolveClientLite(clientId, redirectUri);
+  const client = await resolveClientLite(clientId, redirectUri, 'authorize');
   if (!client) return { error: oauthError(400, 'invalid_client', 'Unknown client_id') };
 
   if (!redirectUri || !redirectUriMatches(client.redirectUris, redirectUri)) {
@@ -145,7 +172,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       // Answering needs the client looked up, which a signed-out request never did before: charge the
       // caller's IP first, as there's no user to charge.
       if (!(await checkOAuthRateLimit('authorize-anon', getClientIp(request)))) {
-        return oauthError(429, 'rate_limited', 'Too many authorization requests');
+        return rateLimitedResponse(
+          oauthRetryAfter('authorize-anon'),
+          undefined,
+          'Too many authorization requests'
+        );
       }
       const verified = await resolveVerifiedClient(params);
       if ('error' in verified) return verified.error;
@@ -156,7 +187,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Rate limit by user id.
   if (!(await checkOAuthRateLimit('authorize', String(user.id)))) {
-    return oauthError(429, 'rate_limited', 'Too many authorization requests');
+    return rateLimitedResponse(
+      oauthRetryAfter('authorize'),
+      undefined,
+      'Too many authorization requests'
+    );
   }
 
   const verified = await resolveVerifiedClient(params);
@@ -224,6 +259,23 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // here too so the stored consent + consent screen reflect what the token actually carries.
   const requestedScope = scopeRequest.scope | TokenScope.UserRead;
 
+  // Offline access is its own grant only with the flag on; off, the request is handled as before.
+  // First-party codes go to /session, never /token, so they never carry it.
+  // A listed App Store connect client is offered it only when its approved listing declares it
+  // (listing-offline.ts); otherwise the request is handled as one without offline_access.
+  // `offlineRequested`: the request carries offline_access and the flag is on, whatever the
+  // listing says. An approval with the line unticked declines on THAT, so an untick is never lost
+  // to a listing read that failed or came back undeclared.
+  const offlineRequested =
+    !client.isFirstParty && scopeRequest.offlineAccess && (await isOfflineGrantOn());
+  const offlineAsked = offlineRequested && (await offlineAllowedForClient(clientId));
+  if (
+    offlineAsked &&
+    parseOfflineBuzzCap(params.offline_buzz_limit, params.offline_buzz_period) === 'invalid'
+  ) {
+    return failToClient('invalid_request', 'Invalid offline_buzz_limit or offline_buzz_period');
+  }
+
   // prompt=login with a session: the hub can't force a fresh sign-in (see PROMPT above).
   if (prompt.has('login')) {
     return failToClient('login_required', 'Signing in again is not supported');
@@ -240,8 +292,20 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   const isFirstParty = client.isFirstParty;
   // A grant to a registered app carries no impersonation marker and would outlive the impersonation.
   if (!isFirstParty && locals.impersonatedBy != null) {
-    return failToClient('access_denied', 'Not available while impersonating', 403);
+    return failToClient('access_denied', IMPERSONATION_REFUSED, 403);
   }
+  // A code turns into lasting credentials at /token and /session, and an approval stores a remembered
+  // consent, so neither happens on a session the hub accepted without reading the session store. A user
+  // handed over by a fresh sign-in is not this session.
+  if (
+    locals.user &&
+    user.id === locals.user.id &&
+    locals.session &&
+    isUnconfirmedSession(locals.session)
+  ) {
+    return failToClient('temporarily_unavailable', 'Try again in a minute', 503);
+  }
+
   const skipsConsent = isFirstParty
     ? client.skipConsent
     : client.skipConsent &&
@@ -251,32 +315,65 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       !prompt.has('select_account');
   const existingConsent = skipsConsent
     ? undefined
+    : offlineAsked
+    ? await readConsentForOffline(user.id, clientId)
     : await db
         .selectFrom('OauthConsent')
         .select(['scope'])
         .where('userId', '=', user.id)
         .where('clientId', '=', clientId)
         .executeTakeFirst();
+  // Set below when the code may carry offline access: the grant is (now) on the consent.
+  let offlineGranted = false;
 
   if (skipsConsent) {
-    // Trusted: no consent record, no consent screen — fall straight through to code issuance.
+    // Trusted: no consent record, no consent screen — fall straight through to code issuance. Asked
+    // for offline access, the grant is implied as the scopes are, and recorded so it can be revoked.
+    if (offlineAsked) {
+      await grantOfflineImplied({ userId: user.id, clientId, scope: requestedScope });
+      offlineGranted = true;
+    }
+  } else if (isApproval && offlineAsked && params.offline === 'true') {
+    // The user approved the offline line, with the cap as they left it (the screen's own fields; the
+    // app's proposal only decides what they started at). That grant needs a consent row, so it is
+    // stored whether or not "remember" was ticked; "remember" still decides whether the row's scope
+    // is updated. An existing cap the user did not change is kept (offlineCapAfterApproval).
+    const submitted = parseOfflineBuzzCap(params.offline_cap_limit, params.offline_cap_period);
+    if (submitted === 'invalid') return oauthError(400, 'invalid_request', 'Invalid Buzz limit');
+    const proposed = parseOfflineBuzzCap(params.offline_buzz_limit, params.offline_buzz_period);
+    await grantOffline({
+      userId: user.id,
+      clientId,
+      scope: requestedScope,
+      rememberScope: params.remember === 'true',
+      proposed: proposed === 'invalid' ? null : proposed,
+      submitted,
+    });
+    offlineGranted = true;
   } else if (isApproval) {
+    // An approval with the offline line unticked takes away a previous offline grant, including
+    // when the listing read failed or says undeclared (the line was not shown, but the user's
+    // "no" still stands).
+    if (offlineRequested && params.offline !== 'true') await declineOffline(user.id, clientId);
     // Buzz spend-limit at consent (AIServicesWrite) is a fast-follow (§E) — not parsed in this first
     // pass, so buzzLimit is left null. Persist the consent only when "remember" was checked.
     if (params.remember === 'true') {
       await db
         .insertInto('OauthConsent')
-        .values({ userId: user.id, clientId, scope: requestedScope })
+        .values({ userId: user.id, clientId, scope: scopeToColumn(requestedScope) })
         .onConflict((oc) =>
           oc
             .columns(['userId', 'clientId'])
-            .doUpdateSet({ scope: requestedScope, updatedAt: new Date() })
+            .doUpdateSet({ scope: scopeToColumn(requestedScope), updatedAt: new Date() })
         )
         .execute();
     }
   } else if (
     !existingConsent ||
-    !hasScope(existingConsent.scope, requestedScope) ||
+    !hasScope(scopeFromColumn(existingConsent.scope), requestedScope) ||
+    // Flag on: a remembered consent without the offline grant does not cover a request for it.
+    (offlineAsked &&
+      !('offlineGrantedAt' in existingConsent && existingConsent.offlineGrantedAt)) ||
     prompt.has('consent') ||
     prompt.has('select_account')
   ) {
@@ -291,10 +388,18 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       if (typeof value === 'string') consentUrl.searchParams.set(key, value);
     }
     redirect(303, consentUrl.toString());
+  } else if (offlineAsked) {
+    // Reached only through the condition above, so the remembered consent carries the grant.
+    offlineGranted = true;
   }
 
   // Issue the authorization code via the library (PKCE challenge stored, code hashed in Redis). The
   // library reads `scope` as the decimal bitmask, so it gets the parsed value, not the raw names.
+  // A first-party code minted for the hub session's own user carries its impersonation.
+  const impersonation =
+    isFirstParty &&
+    locals.session?.impersonatedBy != null &&
+    Number(locals.session.sub) === user.id;
   let code;
   try {
     const oauthReq = toOAuthRequest({
@@ -307,7 +412,13 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     // through AsyncLocalStorage so getClient can fall back to it for this in-flight call.
     code = await authorizeRedirectUriStore.run(redirectUri, () =>
       oauthServer.authorize(oauthReq, newOAuthResponse(), {
-        authenticateHandler: { handle: () => ({ id: user.id }) },
+        authenticateHandler: {
+          handle: () => ({
+            id: user.id,
+            ...(impersonation && { impersonation }),
+            ...(offlineGranted && { offlineRequested: true }),
+          }),
+        },
       })
     );
   } catch (err) {
@@ -347,7 +458,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   if (locals.session && locals.sessionSlot === 'shared') {
     await preUpgradeHubSession(cookies, locals.session, locals.user).catch(() => undefined);
   }
-  await storeOidcContext(code.authorizationCode, {
+  const stored = await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     openid: scopeRequest.openid || undefined,
     authTime: Math.floor(Date.now() / 1000),
@@ -356,8 +467,15 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     iat0: hubSession?.iat0,
     impersonatedBy: hubSession?.impersonatedBy,
     impExp: hubSession?.impExp,
-    proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
+    proofFamily:
+      isFirstParty && locals.session && !isUnconfirmedSession(locals.session)
+        ? familyId(locals.session)
+        : undefined,
   });
+  // An impersonation code is redeemed only with its context, so none is sent without it.
+  if (!stored && impersonation) {
+    return failToClient('temporarily_unavailable', 'Try again', 503);
+  }
 
   logOAuthEvent({
     type: 'authorization.granted',

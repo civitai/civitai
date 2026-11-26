@@ -18,7 +18,10 @@ import { useChatStore } from '~/components/Chat/ChatProvider';
 import { DealAccountabilitySheet } from '~/components/CreatorShop/Services/deals/DealAccountabilitySheet';
 import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealActionsPanel';
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
+import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
+import { ServiceLicenseTerms } from '~/components/CreatorShop/Services/ServiceLicenseTerms';
+import { DealReviewCard } from '~/components/CreatorShop/Services/deals/DealReviewCard';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { Gated } from '~/components/Gated/Gated';
@@ -30,6 +33,7 @@ import {
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { pluralize } from '~/shared/utils/pluralize';
@@ -144,7 +148,8 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
   // A mature deal opened on green redirects to red. Exits stay open on the server either way.
   return (
     <Gated contentNsfwLevel={deal.maxNsfwLevel} meta={{ title: 'Service deal', deIndex: true }}>
-      <Stack gap="lg" py="md">
+      {/* Room under the last card for the fixed footer bar and its floating buttons on a phone. */}
+      <Stack gap="lg" pt="md" pb={{ base: 96, sm: 'md' }}>
         <Stack gap={4}>
           <Text size="sm" c="dimmed">
             Deal #{deal.id} ·{' '}
@@ -196,8 +201,18 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
           <Grid.Col span={{ base: 12, md: 7 }}>
             <Stack gap="lg">
               <DealEscrowPanel deal={deal} />
-              {deal.deadlines.disputeUntil && (
-                <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+              {features.creatorServicesNext &&
+              deal.review &&
+              (deal.deadlines.disputeUntil || deal.review.review) ? (
+                <DealReviewCard
+                  deal={deal}
+                  state={deal.review}
+                  until={deal.deadlines.disputeUntil}
+                />
+              ) : (
+                deal.deadlines.disputeUntil && (
+                  <DisputeWindow deal={deal} until={deal.deadlines.disputeUntil} />
+                )
               )}
               {lines.length > 0 && (
                 <Paper withBorder radius="md" p="md">
@@ -211,15 +226,58 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                 </Paper>
               )}
               <DealActionsPanel deal={deal} />
+              {features.creatorServicesNext &&
+                deal.status === 'Requested' &&
+                deal.viewerRole !== 'moderator' && <PushSoftAsk surface="deal-flow" />}
               <DealFilesPanel deal={deal} />
+              <DealAttachmentsPanel deal={deal} />
               <Paper withBorder radius="md" p="md">
                 <Stack gap={6}>
                   <Text fw={600}>The request</Text>
                   <Text size="sm" className="whitespace-pre-line break-words">
                     {deal.requestText}
                   </Text>
+                  {deal.formAnswers?.map((line, index) => (
+                    <div key={index}>
+                      <Text size="xs" c="dimmed">
+                        {line.label}
+                      </Text>
+                      <Text size="sm" className="whitespace-pre-line break-words">
+                        {line.answer}
+                      </Text>
+                    </div>
+                  ))}
+                  {deal.priceBreakdown && (
+                    <Stack gap={2} mt={4}>
+                      {deal.priceBreakdown.map((line, index) => (
+                        <Group key={index} justify="space-between" gap="xs">
+                          <Text size="xs" c="dimmed">
+                            {line.label}
+                          </Text>
+                          <Text size="xs">{line.price.toLocaleString()}</Text>
+                        </Group>
+                      ))}
+                      <Group justify="space-between" gap="xs">
+                        <Text size="sm" fw={600}>
+                          Total
+                        </Text>
+                        <Text size="sm" fw={600}>
+                          ⚡ {deal.price.toLocaleString()}
+                        </Text>
+                      </Group>
+                    </Stack>
+                  )}
                 </Stack>
               </Paper>
+              {deal.license && (
+                <ServiceLicenseTerms license={deal.license}>
+                  {deal.license.agreedAt && (
+                    <Text size="xs" c="dimmed">
+                      Agreed by the buyer on {formatDate(deal.license.agreedAt, 'MMM D, YYYY')}
+                    </Text>
+                  )}
+                </ServiceLicenseTerms>
+              )}
               {notice && (
                 <Paper withBorder radius="md" p="md">
                   <Text size="sm">{notice}</Text>

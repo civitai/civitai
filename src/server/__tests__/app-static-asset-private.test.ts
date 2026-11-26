@@ -6,7 +6,7 @@
  * file exists. A missing file, or a case variant of a real one (rules match without case, the
  * filesystem does not), is answered by the `/images/[imageId]` page instead, through `_app`, with
  * per-viewer props and cookies — and Next keeps the rule's header on that page's 404, its 500 when
- * `getServerSideProps` throws, its redirect, and on `_app`'s own 302 (measured on a Next 16.4.3
+ * `getServerSideProps` throws, its redirect, and on `_app`'s own 302 (measured on a Next 16.4.5
  * production build). `_app.getInitialProps` therefore replaces a rule value with the private one
  * first, recognising it by the value Next already set (not by re-deriving the path).
  *
@@ -26,7 +26,7 @@ import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 
 const h = vi.hoisted(() => ({
   bootstrap: vi.fn<(req: unknown) => Promise<unknown>>(),
-  syncUrl: { current: null as string | null },
+  syncUrl: { current: null as { location: string; setCookies: string[] } | null },
 }));
 
 // Wholesale on purpose, as in app-guard-redirect-once.test.ts: `_app` uses only this export.
@@ -135,7 +135,7 @@ describe.each(RULE_VALUES.flatMap((value) => URLS.map((url) => [value, url] as c
     );
 
     it("leaves private on _app's own 302", async () => {
-      h.syncUrl.current = '/api/auth/authorize?returnUrl=%2F';
+      h.syncUrl.current = { location: '/api/auth/authorize?returnUrl=%2F', setCookies: [] };
       const res = await serve(url, 'render', ruleValue);
       expect(res.statusCode).toBe(302);
       expect(res.getHeader('cache-control')).toBe(PRIVATE);
@@ -162,4 +162,14 @@ describe('a render with any other Cache-Control is left alone', () => {
       expect(res.getHeader('cache-control')).toBeUndefined();
     }
   );
+});
+
+describe("_app's shared-slot sync redirect", () => {
+  it('carries the sync’s Set-Cookie', async () => {
+    const expiry = '__Secure-civ-token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure';
+    h.syncUrl.current = { location: '/api/auth/authorize?returnUrl=%2F', setCookies: [expiry] };
+    const res = await serve('/images/a.png', 'render');
+    expect(res.statusCode).toBe(302);
+    expect(([] as unknown[]).concat(res.getHeader('set-cookie') ?? [])).toContain(expiry);
+  });
 });

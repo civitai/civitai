@@ -1,3 +1,5 @@
+import { credentialViews } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -7,14 +9,9 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { isMeiliOff } from '~/server/services/feed-primary.service';
-import {
-  getAllImages,
-  getImagesFromFeedSearch,
-  getImagesFromFeedServiceForRest,
-} from '~/server/services/image.service';
+import { getAllImages, getImagesFromFeedServiceForRest } from '~/server/services/image.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
-import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
+import { imageMetaCache, servableThumbnails, thumbnailCache } from '~/server/redis/caches';
 import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import {
@@ -29,8 +26,8 @@ import { isDefined } from '~/utils/type-guards';
  * Shared image-search + response-shaping body extracted verbatim from
  * `/api/v1/images/index.ts` so the public endpoint AND the block-scoped catalog
  * endpoint (`/api/v1/blocks/images.ts`) build the SAME response from the SAME
- * query path (legacy `getAllImages` / feed
- * `getImagesFromFeedSearch`, the `withMeta` enrichment, and the JSON shaping).
+ * query path (legacy `getAllImages` / the feed service
+ * `getImagesFromFeedServiceForRest`, the `withMeta` enrichment, and the JSON shaping).
  *
  * The ONLY maturity lever is `browsingLevel`, supplied by the caller. The public
  * endpoint passes its existing region/`?nsfw=`-derived value UNCHANGED; the
@@ -67,11 +64,8 @@ export type RunImageSearchInput = {
    * the same thing.
    */
   postOrder?: boolean;
-  /**
-   * Let the feed service answer feed-search requests behind its flag, and accept the `feed:`
-   * cursors it hands out. Only the public endpoint opts in.
-   */
-  feedService?: boolean;
+  /** Detail endpoints must not cache a failed image query as an empty gallery. */
+  throwOnStatementTimeout?: boolean;
   /** The remaining `...data` fields off the parsed schema (postId/modelId/username/etc). */
   data: Record<string, unknown>;
 };
@@ -118,14 +112,14 @@ export type ShapedImage = {
   tags?: Array<{ id: number; name: string }>;
 };
 
-// The feed emits `${offset}|${sortAtUnix}` and reads only the offset, via `parseInt(...) || 0`
-// (event-engine-common/feeds/base.ts), so anything else silently restarts at page one.
+// A `feed:` cursor the feed service handed out, or the `${offset}|${sortAtUnix}` cursor the search
+// index used to (clients keep those for weeks; the feed reads the offset).
 const FEED_OFFSET_CURSOR = /^(-?\d+)(?:\|[^|]*)?$/;
 
-function assertFeedOffsetCursor(cursor: RunImageSearchInput['cursor'], allowFeedCursor: boolean) {
+function assertFeedOffsetCursor(cursor: RunImageSearchInput['cursor']) {
   if (cursor === undefined || cursor === '') return;
   const value = cursor instanceof Date ? cursor.toISOString() : String(cursor);
-  if (allowFeedCursor && parseFeedCursor(value)) return;
+  if (parseFeedCursor(value)) return;
   const match = FEED_OFFSET_CURSOR.exec(value);
   if (!match) return throwBadRequestError(`Invalid cursor: not a feed offset "${value}"`);
   const offset = Number(match[1]);
@@ -144,8 +138,19 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
-  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, feedService, data } =
-    input;
+  const views = credentialViews({ ...getRequestCredential(req), user });
+  const {
+    limit,
+    skip,
+    cursor,
+    type,
+    withMeta,
+    flatMeta,
+    withTags,
+    postOrder,
+    throwOnStatementTimeout,
+    data,
+  } = input;
 
   const features = getFeatureFlags({ user, req });
 
@@ -153,13 +158,8 @@ export async function runImageSearch(
   // Meili feed query builder does not filter on any of them, so they'd silently
   // return the global feed.
   //
-  // 🔴 The mechanism is the QUERY BUILDER, not the index schema, and an earlier
-  // version of this comment had that wrong ("it indexes postedToId/
-  // modelVersionId only"). Image `id` IS a filterable attribute — on the metrics
-  // index (`metrics-images.search-index.ts` filterableAttributes) and on the
-  // images index (`imagesFilterableAttributes`), where the note reads "`id` is
-  // filterable on every index because the keyset cleanup scan pages on it". What
-  // is missing is the CLAUSE: `ImagesFeed.queryDocuments`
+  // 🔴 The mechanism is the QUERY BUILDER, not the index schema. What is
+  // missing is the CLAUSE: `ImagesFeed.queryDocuments`
   // (event-engine-common/feeds/images.feed.ts) never destructures `ids` and
   // never pushes an `id IN [...]` filter, while its sibling `models.feed.ts`
   // does (line 558). So an `ids` key reaching the feed is dropped on the floor
@@ -197,12 +197,7 @@ export async function runImageSearch(
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
 
-  // Under FEED_SERVICE_MEILI_OFF every caller takes the feed service, opted in or not.
-  const meiliOff =
-    !useLegacyMethod &&
-    (await isMeiliOff({ currentUserId: user?.id, isModerator: user?.isModerator }));
-  const viaFeedService = !!feedService || meiliOff;
-  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, viaFeedService);
+  if (!useLegacyMethod) assertFeedOffsetCursor(cursor);
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -257,6 +252,7 @@ export async function runImageSearch(
   const include = ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])];
   const dbQuery = {
     ...data,
+    throwOnStatementTimeout,
     types: type ? [type] : undefined,
     limit,
     skip,
@@ -269,6 +265,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     user,
+    ...views,
     disableMinor: true,
     disablePoi: true,
     includeBaseModel: true,
@@ -285,38 +282,34 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     currentUserId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator: views.asModerator,
     disableMinor: true,
     disablePoi: true,
     actor,
-  } as unknown as Parameters<typeof getImagesFromFeedSearch>[0];
+  } as unknown as Parameters<typeof getImagesFromFeedServiceForRest>[0];
 
   // A `feed:` cursor is a later page of a feed-served scroll. Clients walking whole
   // back-catalogues spend nearly all their requests there, on images rarely read again, so those
   // pages don't write the per-image caches; first pages, which pollers repeat, still do.
   const cacheWriteBack = parseFeedCursor(cursor) === undefined;
-  const fromFeedService =
-    viaFeedService && !useLegacyMethod
-      ? await getImagesFromFeedServiceForRest(
-          { ...searchQuery, headers: { src: '/api/v1/images' } },
-          { ...dbQuery, cacheWriteBack },
-          { meiliOff }
-        )
-      : undefined;
   const { items, nextCursor } = useLegacyMethod
     ? await getAllImages(dbQuery)
-    : fromFeedService ?? (await getImagesFromFeedSearch(searchQuery));
+    : await getImagesFromFeedServiceForRest(
+        { ...searchQuery, headers: { src: '/api/v1/images' } },
+        { ...dbQuery, cacheWriteBack }
+      );
 
   let imageMetas: Record<number, { id: number; meta?: any }> = {};
   if (withMeta && items.length > 0) {
     imageMetas = await imageMetaCache.fetch(
       items.map((img) => img.id),
-      { writeBack: !fromFeedService || cacheWriteBack }
+      { writeBack: useLegacyMethod || cacheWriteBack }
     );
   }
 
   const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
-  const customThumbnails = videoIds.length > 0 ? await thumbnailCache.fetch(videoIds) : {};
+  const customThumbnails =
+    videoIds.length > 0 ? servableThumbnails(await thumbnailCache.fetch(videoIds)) : {};
 
   const shaped: ShapedImage[] = items.map((image) => {
     const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
@@ -389,7 +382,9 @@ export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | '
   // Loaded on demand: the model service's import graph is large.
   const { getHeldLevelsByPost } = await import('~/server/services/model.service');
   const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
-  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
+  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined), {
+    withOwners: false,
+  });
   return items.filter((image) => {
     const postId = postIdOf(image);
     const hold = postId ? held.get(postId) : undefined;

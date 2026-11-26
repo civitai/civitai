@@ -9,9 +9,11 @@ import {
   submitVersionSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { sendSubmitRateLimited, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
+import {
+  APP_BLOCKS_CLI_KEY_REFUSED,
+  checkAppBlocksCliCredential,
+} from '~/server/auth/bearer-scope-tighten';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -33,7 +35,8 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *     `getSessionFromBearerToken`, which hashes the credential with the same
  *     `generateSecretHash` the public REST API uses and looks it up in the
  *     `ApiKey` table — NO new key system).
- *   - Token type: a PERSONAL key always passes the type gate (unchanged). An
+ *   - Token type: a Full Access personal key passes; any other personal key passes
+ *     unless the `bearer-scope-tighten` flag enforces (`checkAppBlocksCliCredential`). An
  *     OAuth-client-issued token passes ONLY if it carries the dedicated
  *     `TokenScope.AppBlocksSubmit` bit. That scope is opt-in, off-by-default, and
  *     EXCLUDED from `TokenScope.Full`, so only a client that explicitly lists it
@@ -111,8 +114,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // authorized), and `{ type: 'apiKey', id }` for a user-type personal-access
   // key.
   //
-  //  - PERSONAL key (`subject.type !== 'oauth'`, i.e. clientId == null): pass.
-  //    The downstream author + flag gates still apply.
+  //  - PERSONAL key (`subject.type !== 'oauth'`, i.e. clientId == null): a Full Access key
+  //    passes; a narrower one passes unless `bearer-scope-tighten` enforces. The downstream
+  //    author + flag gates still apply.
   //
   //  - OAUTH token (`subject.type === 'oauth'`): pass ONLY if the token carries
   //    the dedicated `TokenScope.AppBlocksSubmit` bit. `oauthClient.create` is an
@@ -129,14 +133,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // The moderator + not-banned gate (step 2) applies to BOTH paths — a scoped
   // OAuth token from a NON-moderator is still rejected there. Ordered after auth
   // (401) and before the mod gate so an un-scoped OAuth key gets 403, never a leak.
-  if (session.subject?.type === 'oauth') {
-    if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
-      res.status(403).json({
-        message:
-          'Submitting an App requires a personal API key or an OAuth token with the Apps submit scope',
-      });
-      return;
-    }
+  const credentialCheck = await checkAppBlocksCliCredential(
+    '/api/v1/blocks/submit-version',
+    session
+  );
+  if (credentialCheck !== 'ok') {
+    res.status(403).json({
+      message:
+        credentialCheck === 'oauth-refused'
+          ? 'Submitting an App requires a personal API key or an OAuth token with the Apps submit scope'
+          : APP_BLOCKS_CLI_KEY_REFUSED,
+    });
+    return;
   }
 
   // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
@@ -169,42 +177,29 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
 
-  // 5. Rate limit — per API key (the stable, authenticated identity), with a
-  // client-IP fallback. `SET NX EX` + `INCR` in one MULTI (same atomic pattern
-  // as the retool endpoint): the key is always created with its TTL, so a crash
-  // between INCR and EXPIRE can't strand a TTL-less counter.
-  // Per API key is the primary identity (always present for a resolved bearer
-  // token); the client-IP form is a defensive fallback only.
-  //
-  // FOLLOW-UP (F2, not yet implemented): this bucket is per-API-KEY, but a user
-  // can mint many personal keys (or rotate them) to widen their effective window.
-  // The retool endpoint buckets on `actor.id` (per-user), which is the stronger
-  // identity. Switching here to `user:${user.id}` would be the more robust limit;
-  // left as a deliberate follow-up to keep this PR's auth change focused.
-  const rateSubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
+  // 5. Rate limit — per USER (shared with the session route's `user:<id>` bucket, so minting or
+  // rotating keys cannot widen the window) AND per API key (client-IP fallback). Each is
+  // `SET NX EX` + `INCR` in one MULTI: the key is always created with its TTL, so a crash between
+  // INCR and EXPIRE can't strand a TTL-less counter.
   // F3 + #28: the limiter fails CLOSED (a Redis throw, a hang past the sys read deadline, or a
   // malformed counter is a 503, never a silent bypass). See `takeSubmitSlot`.
-  const slot = await takeSubmitSlot(rateSubject);
-  if (!slot.ok && slot.reason !== 'limited') {
-    req.log?.warn(
-      slot.reason === 'unavailable'
-        ? 'blocks/submit-version: rate limiter threw; failing closed'
-        : 'blocks/submit-version: rate-limit counter malformed; failing closed',
-      { rateSubject }
-    );
-    res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
-    return;
-  }
-  if (!slot.ok) {
-    const retryAfter = slot.retryAfterSeconds;
-    res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-    res.status(429).json({
-      message: 'Rate limit exceeded',
-      retryAfterSeconds: retryAfter,
-      limit: SUBMIT_RATE_LIMIT.max,
-      windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
-    });
-    return;
+  const keySubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
+  for (const rateSubject of [`user:${user.id}`, keySubject]) {
+    const slot = await takeSubmitSlot(rateSubject, user);
+    if (!slot.ok && slot.reason !== 'limited') {
+      req.log?.warn(
+        slot.reason === 'unavailable'
+          ? 'blocks/submit-version: rate limiter threw; failing closed'
+          : 'blocks/submit-version: rate-limit counter malformed; failing closed',
+        { rateSubject }
+      );
+      res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
+      return;
+    }
+    if (!slot.ok) {
+      sendSubmitRateLimited(res, slot);
+      return;
+    }
   }
 
   // 6. Validate the JSON body (same schema as the session route: bundleBase64
@@ -243,6 +238,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       // stays absent; the service must not invent a value.
       sourceCommit: parsed.data.sourceCommit,
       sourceDirty: parsed.data.sourceDirty,
+      // GitHub Actions OIDC token: dropped here unless `app-blocks-oidc-verified-submit` is on
+      // for this submitter, so with the flag off it is never verified or stored.
+      // (The verifier module is loaded only when a token was sent.)
+      githubOidcToken: parsed.data.githubOidcToken
+        ? await (
+            await import('~/server/services/blocks/github-actions-oidc.service')
+          ).actionsOidcTokenForSubmit(user, parsed.data.githubOidcToken)
+        : undefined,
     });
     // The service returns a richer object; the CLI contract is the stable subset (plus the
     // listing readiness, so `civitai app submit` can say what a moderator will need).
@@ -254,6 +257,12 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       status: 'pending',
       listing: result.listing ?? null,
       storageMigrationWarnings: result.storageMigrationWarnings ?? [],
+      // Never refuses: notes the developer may act on (`submitAdvisories`), `[]` when none.
+      advisories: result.advisories ?? [],
+      // Only when a GitHub Actions token was verified: whether its run was stored.
+      ...(result.actionsRunSourceRecorded === undefined
+        ? {}
+        : { actionsRunSourceRecorded: result.actionsRunSourceRecorded }),
     });
   } catch (err) {
     // The service throws plain Errors with human-readable messages (bundle too
@@ -263,14 +272,41 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       res.status(403).json({ message: err.message });
       return;
     }
-    const { isStorageMigrationRefusal } = await import(
-      '~/server/services/apps/storage-schema-migrations'
+    // A GitHub Actions OIDC token that failed verification: 400 (fix the pipeline) or 503 (GitHub's
+    // keys or the replay store did not answer; re-run). The message never contains the token.
+    const { isGithubActionsOidcRefusal } = await import(
+      '~/server/services/blocks/github-actions-oidc-refusal'
     );
+    if (isGithubActionsOidcRefusal(err)) {
+      res.status(err.status).json({
+        message: err.message,
+        code: 'github_oidc_token_rejected',
+        reason: err.reason,
+      });
+      return;
+    }
+    const [
+      { isStorageMigrationRefusal },
+      { isStorageHookRefusal },
+      { isManifestValidationRefusal },
+      { isModuleGraphRefusal },
+    ] = await Promise.all([
+      import('~/server/services/apps/storage-schema-migrations'),
+      import('~/server/services/apps/storage-hooks'),
+      import('~/server/services/blocks/manifest-submit-validation'),
+      import('~/server/services/blocks/bundle-module-graph'),
+    ]);
     // A schema-migration refusal also carries the structured list (collection, pointer,
     // keyword, old → new) so a client can show each breaking change.
     res.status(400).json({
       message: (err as Error).message,
       ...(isStorageMigrationRefusal(err) ? { storageBreakingChanges: err.breaking } : {}),
+      // A permission-hook refusal carries one entry per refused hook (collection, file, reason).
+      ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
+      // A manifest the approve-time validator refuses carries every validator error.
+      ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
+      // A module-graph refusal carries every import that would not load (importer, specifier).
+      ...(isModuleGraphRefusal(err) ? { moduleGraphErrors: err.problems } : {}),
     });
   }
 });

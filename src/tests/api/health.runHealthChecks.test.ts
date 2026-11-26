@@ -62,15 +62,19 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 
 vi.mock('~/server/meilisearch/client', () => ({
-  metricsSearchClient: null,
   MeiliCallTimeoutError: class MeiliCallTimeoutError extends Error {},
 }));
 
-vi.mock('~/server/prom/client', () => ({
-  registerCounter: () => ({ inc: vi.fn() }),
-  registerCounterWithLabels: () => ({ inc: vi.fn() }),
-  registerHistogram: () => ({ observe: vi.fn() }),
-}));
+// The checks register their metrics on the shared registry; the app shim itself pulls in the db
+// pools, so take the three registry exports from the package.
+vi.mock('~/server/prom/client', async () => {
+  const t = await import('@civitai/telemetry/client');
+  return {
+    instrumentationRegistry: t.instrumentationRegistry,
+    PROM_PREFIX: t.PROM_PREFIX,
+    registerInstrumentationMetric: t.registerInstrumentationMetric,
+  };
+});
 
 vi.mock('~/server/redis/client', () => ({
   redis: mocks.redis,
@@ -85,7 +89,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));

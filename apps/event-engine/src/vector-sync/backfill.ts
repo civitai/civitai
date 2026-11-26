@@ -23,7 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { assertVectorSyncConfig, config } from '@/config';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { vectorPgPool } from './pg';
 import { logger } from '@/utils/logger';
 import { fileRunState, redisRunState, type RunLimits, type RunState } from './cursor';
 import { Embedder, MAX_INPUTS_PER_WORKFLOW, takeBatch, type EmbedInput } from './embedder';
@@ -649,14 +649,10 @@ async function main() {
       if (!withoutImageCdc) gateCheck = () => connectorBlock();
     }
 
-    const pg = createGuardedPgPool(
-      { connectionString: config.postgres.connectionString, max: config.vectorSync.pgPoolMax },
-      'vector-backfill',
-      (m, err) => logger.error({ err }, m)
-    );
+    const pg = vectorPgPool('vector-backfill', { batch: true });
     const store = VectorStore.fromConfig();
     if (!dryRun) await store.bootstrap();
-    else if (!(await store.client.collectionExists(store.collection)).exists) {
+    else if (!(await store.exists())) {
       // Nothing is written in a dry run, so a missing collection just means no points yet.
       store.existing = async () => new Set();
     }

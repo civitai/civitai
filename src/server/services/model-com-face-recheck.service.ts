@@ -3,12 +3,21 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 import type { ComFaceRemovedReason, ModelMeta } from '~/server/schema/model.schema';
-import { checkComFaceIntent, getOwnTriggerWords } from '~/server/services/model-sfw-face.service';
+import {
+  checkComFaceIntent,
+  checkComFaceIntentVerdict,
+  checkSfwFace,
+  getOwnTriggerWords,
+} from '~/server/services/model-sfw-face.service';
+import type { SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { backoffDelay } from '~/utils/backoff';
 
 const QUEUE = 'com-face-recheck';
 /** A model whose check got no verdict waits in a KeyValue row under this prefix until its next try. */
-const RETRY_KEY_PREFIX = 'com-face-recheck:';
+export const RETRY_KEY_PREFIX = 'com-face-recheck:';
 
 /** Retries back off from the first delay, doubling up to the max, until the window since the oldest
  *  edit still without a verdict runs out. */
@@ -16,12 +25,14 @@ export const COM_FACE_RECHECK_FIRST_DELAY_MS = 60_000;
 export const COM_FACE_RECHECK_MAX_DELAY_MS = 60 * 60_000;
 export const COM_FACE_RECHECK_WINDOW_MS = 24 * 60 * 60_000;
 export const COM_FACE_RECHECK_GAVE_UP = 'gave up without a verdict; took the face off civitai.com';
+/** The log line carrying the listing intent verdict; `path` says which (`detected` or `gave-up`). */
+export const COM_FACE_INTENT_RECORDED = 'listing intent verdict';
 
 type RetryState = { since: string; attempt: number; nextAt: string };
 
 /**
- * Queues the intent re-check for a model whose listing (name, description or trigger words) an
- * owner just changed. Call after the write commits; it never throws, so a queue failure cannot fail
+ * Queues the .com face re-check for a model whose listing (name, description, version names or
+ * trigger words) an owner just changed. Call after the write commits; it never throws, so a queue failure cannot fail
  * the save. Models without a .com face are skipped when the job runs.
  *
  * When the queue is unavailable the edit goes in as a due retry row instead, under the same window
@@ -42,9 +53,9 @@ export async function queueComFaceRecheck(modelId: number) {
 export const dueRetryRowSql = (modelId: number, since: Date) => {
   const value: RetryState = { since: since.toISOString(), attempt: 0, nextAt: '' };
   return Prisma.sql`
-    INSERT INTO "KeyValue" (key, value) VALUES (${retryKey(modelId)}, ${JSON.stringify(
-    value
-  )}::jsonb)
+    INSERT INTO "KeyValue" (key, value) VALUES (${comFaceRecheckRetryKey(
+      modelId
+    )}, ${JSON.stringify(value)}::jsonb)
     ON CONFLICT (key) DO UPDATE
     SET value = "KeyValue".value || '{"attempt":0,"nextAt":""}'::jsonb
   `;
@@ -62,7 +73,15 @@ async function fallBackFromQueue(modelId: number) {
   );
 }
 
-type RecheckResult = 'skipped' | 'allowed' | 'removed' | 'unavailable';
+/** `unavailable`: the version rating got no verdict. `intent-unavailable`: the listing intent check
+ *  got no verdict. */
+type RecheckResult =
+  | 'skipped'
+  | 'allowed'
+  | 'removed'
+  | 'recorded'
+  | 'unavailable'
+  | 'intent-unavailable';
 
 async function readModel(modelId: number) {
   // Primary: the edit that queued this has just committed.
@@ -83,9 +102,10 @@ async function readModel(modelId: number) {
 }
 
 /**
- * Re-runs the .com face intent check on a model's current listing. When it is detected the model
- * leaves .com: the .com cover is cleared (the .com title and description stay, so the owner can
- * pick a cover again once the listing passes) and the level is recomputed.
+ * Re-checks a model's face after a listing edit. The version names and trigger words, which .com
+ * shows unchanged, are rated as the .com title is; a mature rating takes the face off .com (the .com
+ * cover is cleared, the .com title and description stay). A detected or unanswered listing intent
+ * verdict is recorded for moderators.
  */
 export async function recheckComFace(modelId: number): Promise<RecheckResult> {
   const model = await readModel(modelId);
@@ -101,30 +121,31 @@ export async function recheckComFace(modelId: number): Promise<RecheckResult> {
     userId: model.userId,
     db: dbWrite,
   });
-  const result = await checkComFaceIntent({
-    name: model.name,
-    description: model.description,
-    triggerWords,
+  const clean: SfwFaceVerdict = { status: 'clean' };
+  const [verdict, { versions = clean }] = await Promise.all([
+    checkComFaceIntentVerdict({
+      name: model.name,
+      description: model.description,
+      triggerWords,
+    }),
+    checkSfwFace({ modelId, userId: model.userId, db: dbWrite }),
+  ]);
+  if (versions.status === 'flagged')
+    return (await removeComFace(modelId, model.sfwCoverImageId, 'detected', versions.reason))
+      ? 'removed'
+      : 'skipped';
+  if (versions.status === 'unavailable') return 'unavailable';
+  if (verdict.status !== 'detected')
+    return verdict.status === 'unavailable' ? 'intent-unavailable' : 'allowed';
+  recordIntent(modelId, 'detected', {
+    sfwCoverImageId: model.sfwCoverImageId,
+    detail: verdict.reason,
   });
-  if (result !== 'detected') return result;
-  return (await removeComFace(modelId, model.sfwCoverImageId, 'detected')) ? 'removed' : 'skipped';
-}
-
-/** Takes the model off .com without a verdict: the check never answered inside the window. Returns
- *  whether this call took it off; throws when that cannot be finished, so the retry stays. */
-async function removeUnverified(modelId: number) {
-  const model = await readModel(modelId);
-  if (!model) return false;
-  if (model.sfwCoverImageId == null) {
-    if ((model.meta as ModelMeta | null)?.comFaceRemoved) await finishRemoval(modelId);
-    return false;
-  }
-  // No row updated: a cover picked since the read went through the save gate and queued its own check.
-  return removeComFace(modelId, model.sfwCoverImageId, 'recheck-unverified');
+  return 'recorded';
 }
 
 /** Clears the .com cover and records the marker, only while the cover is still the one read: a cover
- *  picked since then went through the save gate. */
+ *  picked since then went through the save gate and queued its own check. */
 export const comFaceRemovalSql = (
   modelId: number,
   coverId: number,
@@ -140,14 +161,28 @@ export const comFaceRemovalSql = (
   `;
 };
 
-async function removeComFace(modelId: number, coverId: number, reason: ComFaceRemovedReason) {
+async function removeComFace(
+  modelId: number,
+  coverId: number,
+  reason: ComFaceRemovedReason,
+  detail?: string
+) {
   const marker: NonNullable<ModelMeta['comFaceRemoved']> = {
     at: new Date().toISOString(),
     sfwCoverImageId: coverId,
     reason,
+    ...(detail && { detail }),
   };
+  let notice: NotifyTextScanRatingRaisedArgs | null = null;
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
+    if (updated) {
+      // Imported here: the action reaches services that import this module.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      notice = await applyComFaceHeldVerdict(tx, modelId);
+    }
     if (updated)
       await tx.modActivity.create({
         data: {
@@ -158,25 +193,252 @@ async function removeComFace(modelId: number, coverId: number, reason: ComFaceRe
       });
     return updated > 0;
   });
-  if (removed) await finishRemoval(modelId);
+  // The notice follows the level refresh, as in upsertModel, and is sent even when the refresh
+  // throws: a retry does not re-apply the verdict.
+  try {
+    if (removed) await finishRemoval(modelId);
+  } finally {
+    if (notice) await faceLossNotice.send([notice]);
+  }
   return removed;
 }
 
-/** Drops the cover's safe bits from the model's level, which is what takes it off .com. */
+/** Takes the model off .com without a verdict: the version rating never answered inside the window.
+ *  Returns whether this call took it off; throws when that cannot be finished, so the retry stays. */
+async function removeUnverified(modelId: number) {
+  const model = await readModel(modelId);
+  if (!model) return false;
+  if (model.sfwCoverImageId == null) {
+    if ((model.meta as ModelMeta | null)?.comFaceRemoved) await finishRemoval(modelId);
+    return false;
+  }
+  // No row updated: a cover picked since the read went through the save gate and queued its own check.
+  return removeComFace(modelId, model.sfwCoverImageId, 'recheck-unverified');
+}
+
+/** Records the intent verdict for moderators: `detected`, or `gave-up` when it never answered. */
+function recordIntent(
+  modelId: number,
+  path: 'detected' | 'gave-up',
+  extra: { sfwCoverImageId?: number; detail?: string } = {}
+) {
+  logToAxiom({
+    type: 'info',
+    name: 'com-face-recheck',
+    message: COM_FACE_INTENT_RECORDED,
+    modelId,
+    path,
+    ...extra,
+  });
+}
+
+/** Drops the cover's safe bits from the model's level, which is what takes it off .com. Rethrows
+ *  after queueing the level job, so the re-check retry still runs. */
 async function finishRemoval(modelId: number) {
   // Imported here: the level service pulls in search.
   const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
-  await updateModelNsfwLevels([modelId]);
+  try {
+    await updateModelNsfwLevels([modelId]);
+  } catch (error) {
+    const { enqueueJobs } = await import('~/server/services/job-queue.service');
+    await enqueueJobs([
+      { entityId: modelId, entityType: EntityType.Model, type: JobQueueType.UpdateNsfwLevel },
+    ]).catch(() => null);
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'com face removed; level refresh queued',
+      modelId,
+      error: (error as Error).message,
+    });
+    throw error;
+  }
   // Imported here: model-version.service imports this module.
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache(modelId);
+  await rescanTextAfterFaceLoss(modelId);
 }
 
-const retryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
+/** The owner's rating notice for a held verdict the removal applied, sent after commit. Swapped by
+ *  tests; imported lazily, as the action reaches services that import this module. */
+export const faceLossNotice = {
+  send: async (notices: NotifyTextScanRatingRaisedArgs[]) => {
+    const { notifyComFaceHeldVerdictApplied } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await notifyComFaceHeldVerdictApplied(notices);
+  },
+};
+
+/** Swapped by tests. Imported lazily: the scan reaches services that import this module. */
+export const faceLossRescan = {
+  loadSubmit: () => import('~/server/services/text-scan/submit'),
+};
+
+/**
+ * Scans the model's text again past the unchanged-text skip: the text scan may have left an R+
+ * listing unrated on the strength of a .com face that is now gone. Never throws.
+ */
+export async function rescanTextAfterFaceLoss(modelId: number) {
+  try {
+    const { scanEntityInBackground } = await faceLossRescan.loadSubmit();
+    scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'com-face-recheck',
+      message: 'text rescan after face loss failed',
+      modelId,
+      error: (error as Error).message,
+    });
+  }
+}
+
+/** A model whose face the re-check removed waits here, after a listing edit, for one restore check. */
+const RESTORE_KEY_PREFIX = 'com-face-restore:';
+/** The restore check runs once the owner has stopped editing this long: one check per burst. */
+export const COM_FACE_RESTORE_QUIET_MS = 2 * 60_000;
+const restoreKey = (modelId: number) => `${RESTORE_KEY_PREFIX}${modelId}`;
+
+/**
+ * Arms the restore check after an owner edit to a model's .red title, description, version names or
+ * trigger words.
+ * Writes nothing unless the re-check took the model's face off .com. Each edit pushes the check
+ * back. Call after the write commits; it never throws.
+ */
+export async function queueComFaceRestore(modelId: number) {
+  const value = JSON.stringify({ editAt: new Date().toISOString() });
+  await dbWrite
+    .$executeRaw(
+      Prisma.sql`
+        INSERT INTO "KeyValue" (key, value)
+        SELECT ${restoreKey(modelId)}, ${value}::jsonb
+        WHERE EXISTS (
+          SELECT 1 FROM "Model" WHERE id = ${modelId} AND meta->'comFaceRemoved' IS NOT NULL
+        )
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      `
+    )
+    .catch((error) => logError('restore enqueue failed', modelId, error));
+}
+
+type ArmedRow = { key: string; value: unknown };
+
+/** Drops the removal marker, only while nothing the verdict rests on has changed since the read: no
+ *  cover picked, the same marker, the same title and description, and no newer edit armed.
+ *  A version-text save that commits after the verdict but before its edit is armed is not seen
+ *  here; a cover picked afterwards queues its own re-check, which rates the current text. */
+export const comFaceRestoreSql = (
+  modelId: number,
+  marker: NonNullable<ModelMeta['comFaceRemoved']>,
+  listing: { name: string; description: string | null },
+  armed: ArmedRow
+) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = meta - 'comFaceRemoved'
+  WHERE id = ${modelId}
+    AND "sfwCoverImageId" IS NULL
+    AND jsonb_typeof(meta) = 'object'
+    AND meta->'comFaceRemoved' = ${JSON.stringify(marker)}::jsonb
+    AND name = ${listing.name}
+    AND description IS NOT DISTINCT FROM ${listing.description}::text
+    AND EXISTS (
+      SELECT 1 FROM "KeyValue" WHERE key = ${armed.key} AND value = ${JSON.stringify(
+  armed.value
+)}::jsonb
+    )
+`;
+
+type RestoreResult = 'skipped' | 'restored' | 'kept' | 'unavailable';
+
+/**
+ * Re-runs the intent check on a model the re-check took off .com. An allowed listing drops the
+ * marker; the old cover is not put back, so the owner picks one again through the save gate.
+ * Detected or no verdict keeps the marker.
+ */
+export async function restoreComFace(modelId: number, armed: ArmedRow): Promise<RestoreResult> {
+  const model = await readModel(modelId);
+  const marker = (model?.meta as ModelMeta | null)?.comFaceRemoved;
+  if (!model || !marker || model.sfwCoverImageId != null) return 'skipped';
+
+  const triggerWords = await getOwnTriggerWords({ modelId, userId: model.userId, db: dbWrite });
+  const [result, { versions = { status: 'clean' } }] = await Promise.all([
+    checkComFaceIntent({ name: model.name, description: model.description, triggerWords }),
+    checkSfwFace({ modelId, userId: model.userId, db: dbWrite }),
+  ]);
+  if (result === 'unavailable' || versions.status === 'unavailable') return 'unavailable';
+  if (result === 'detected' || versions.status === 'flagged') return 'kept';
+
+  const restored = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.$executeRaw(
+      comFaceRestoreSql(
+        modelId,
+        marker,
+        { name: model.name, description: model.description },
+        armed
+      )
+    );
+    if (updated)
+      await tx.modActivity.create({
+        data: { activity: 'restoreComFace', entityType: 'model', entityId: modelId },
+      });
+    return updated > 0;
+  });
+  if (!restored) return 'skipped';
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+  await bustPublicModelResponseCache(modelId);
+  return 'restored';
+}
+
+/**
+ * Runs the restore checks whose burst of edits has gone quiet. Each runs once: whatever the
+ * result, the row goes, and only a new edit arms it again.
+ */
+export async function processComFaceRestores(now = new Date(), budgetMs = COM_FACE_RUN_BUDGET_MS) {
+  const startedAt = Date.now();
+  const counts: Record<RestoreResult | 'failed', number> = {
+    skipped: 0,
+    restored: 0,
+    kept: 0,
+    unavailable: 0,
+    failed: 0,
+  };
+  const rows = await dbWrite.keyValue.findMany({
+    where: { key: { startsWith: RESTORE_KEY_PREFIX } },
+  });
+  for (const row of rows) {
+    if (Date.now() - startedAt > budgetMs) break;
+    const modelId = Number(row.key.slice(RESTORE_KEY_PREFIX.length));
+    if (!Number.isInteger(modelId) || restoreKey(modelId) !== row.key) continue;
+    const editAt = Date.parse((row.value as { editAt?: string } | null)?.editAt ?? '');
+    if (now.getTime() - editAt < COM_FACE_RESTORE_QUIET_MS) continue;
+
+    const result = await restoreComFace(modelId, row).catch((error) => {
+      logError('restore threw', modelId, error);
+      return 'failed' as const;
+    });
+    counts[result]++;
+    // An edit since the read rewrote the row: it stays for its own check.
+    await dbWrite
+      .$executeRaw(
+        Prisma.sql`DELETE FROM "KeyValue" WHERE key = ${row.key} AND value = ${JSON.stringify(
+          row.value
+        )}::jsonb`
+      )
+      .catch((error) => logError('restore row delete failed', modelId, error));
+  }
+  return counts;
+}
+
+export const comFaceRecheckRetryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
 const retryDelay = (attempt: number) =>
-  Math.min(COM_FACE_RECHECK_FIRST_DELAY_MS * 2 ** (attempt - 1), COM_FACE_RECHECK_MAX_DELAY_MS);
-/** A run stops taking new models after this, inside the job lock; the rest wait for the next run. */
-const RUN_BUDGET_MS = 4 * 60_000;
+  backoffDelay(attempt - 1, {
+    baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,
+    maxMs: COM_FACE_RECHECK_MAX_DELAY_MS,
+  });
+/** A run stops taking new models after this, inside the job lock; the rest wait for the next run.
+ *  The re-checks and the restore checks share it. */
+export const COM_FACE_RUN_BUDGET_MS = 4 * 60_000;
 
 function logError(message: string, modelId: number, error?: unknown) {
   logToAxiom({
@@ -187,7 +449,7 @@ function logError(message: string, modelId: number, error?: unknown) {
     ...(error !== undefined && {
       error: error instanceof Error ? error.message : String(error),
     }),
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -202,7 +464,9 @@ export async function processComFaceRechecks(now = new Date()) {
     skipped: 0,
     allowed: 0,
     removed: 0,
+    recorded: 0,
     unavailable: 0,
+    'intent-unavailable': 0,
     failed: 0,
     gaveUp: 0,
     errored: 0,
@@ -218,7 +482,7 @@ export async function processComFaceRechecks(now = new Date()) {
   const waitingSince = new Map<number, string>();
   for (const row of waiting) {
     const modelId = Number(row.key.slice(RETRY_KEY_PREFIX.length));
-    if (!Number.isInteger(modelId) || retryKey(modelId) !== row.key) continue;
+    if (!Number.isInteger(modelId) || comFaceRecheckRetryKey(modelId) !== row.key) continue;
     const state = (row.value ?? {}) as Partial<RetryState>;
     // An unreadable start counts as out of time and an unreadable nextAt as due, so both fail closed.
     const since = Number.isFinite(Date.parse(state.since ?? ''))
@@ -241,7 +505,7 @@ export async function processComFaceRechecks(now = new Date()) {
 
   const requeue: number[] = [];
   for (const [modelId, state] of work) {
-    if (Date.now() - startedAt > RUN_BUDGET_MS) {
+    if (Date.now() - startedAt > COM_FACE_RUN_BUDGET_MS) {
       if (fresh.has(modelId)) requeue.push(modelId);
       continue;
     }
@@ -252,17 +516,24 @@ export async function processComFaceRechecks(now = new Date()) {
       });
       counts[result]++;
 
-      if (result !== 'unavailable' && result !== 'failed') {
+      if (result !== 'unavailable' && result !== 'intent-unavailable' && result !== 'failed') {
         if (waitingSince.has(modelId))
-          await dbWrite.keyValue.deleteMany({ where: { key: retryKey(modelId) } });
+          await dbWrite.keyValue.deleteMany({ where: { key: comFaceRecheckRetryKey(modelId) } });
         continue;
       }
 
       const since = state?.since ?? now.toISOString();
       if (now.getTime() - new Date(since).getTime() >= COM_FACE_RECHECK_WINDOW_MS) {
-        // Fail closed: no verdict on the current listing means the face does not stay up.
+        if (result === 'intent-unavailable') {
+          const model = await readModel(modelId);
+          if (model?.sfwCoverImageId != null)
+            recordIntent(modelId, 'gave-up', { sfwCoverImageId: model.sfwCoverImageId });
+          await dbWrite.keyValue.deleteMany({ where: { key: comFaceRecheckRetryKey(modelId) } });
+          continue;
+        }
+        // Fail closed: no rating of what .com shows means the face does not stay up.
         const removed = await removeUnverified(modelId);
-        await dbWrite.keyValue.deleteMany({ where: { key: retryKey(modelId) } });
+        await dbWrite.keyValue.deleteMany({ where: { key: comFaceRecheckRetryKey(modelId) } });
         if (removed) {
           counts.gaveUp++;
           logError(COM_FACE_RECHECK_GAVE_UP, modelId);
@@ -280,8 +551,8 @@ export async function processComFaceRechecks(now = new Date()) {
         ).toISOString(),
       };
       await dbWrite.keyValue.upsert({
-        where: { key: retryKey(modelId) },
-        create: { key: retryKey(modelId), value },
+        where: { key: comFaceRecheckRetryKey(modelId) },
+        create: { key: comFaceRecheckRetryKey(modelId), value },
         update: { value },
       });
     } catch (error) {

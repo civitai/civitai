@@ -1,6 +1,9 @@
-import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { randomId } from '@mantine/hooks';
 import type { NotificationData } from '@mantine/notifications';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import type { ComponentType } from 'react';
+import { Suspense } from 'react';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -9,18 +12,87 @@ import {
   IconInfoCircle,
   IconX,
 } from '@tabler/icons-react';
+import type {
+  ReportProblem,
+  ReportProblemButton as ReportProblemButtonComponent,
+} from '~/components/Feedback/ReportProblemButton';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { parseErrorRef } from '~/utils/feedback/errorRef';
 import { getRateLimit, withRetryText } from '~/utils/rate-limit';
 
+let ReportProblemButton:
+  | ComponentType<React.ComponentProps<typeof ReportProblemButtonComponent>>
+  | undefined;
+
+/**
+ * The app shell hands over the "Report this" button. This module is imported almost everywhere,
+ * including by `~/utils/trpc`, which the button needs, so it cannot import the button itself.
+ * Until one is registered, toasts offer no "Report this".
+ */
+export function registerReportProblemButton(
+  component: ComponentType<React.ComponentProps<typeof ReportProblemButtonComponent>>
+) {
+  ReportProblemButton = component;
+}
+
+/** A toast with a "Report this" action stays up long enough to reach it. */
+const REPORTABLE_AUTO_CLOSE = 10_000;
+const DEFAULT_AUTO_CLOSE = 3000;
+
+/** A notification message with "Report this" under it; `id` is the notification's, to close it. */
+export function withReportAction({
+  id,
+  message,
+  title,
+  text,
+  errorRef,
+  report,
+}: {
+  id: string;
+  message: React.ReactNode;
+  title?: string;
+  text: string;
+  errorRef?: string;
+  report: ReportProblem;
+}) {
+  if (!ReportProblemButton) return message;
+  return (
+    <Stack gap={0} align="flex-start">
+      <div>{message}</div>
+      <Suspense fallback={null}>
+        <ReportProblemButton
+          {...report}
+          title={title}
+          message={text}
+          errorRef={errorRef}
+          onOpen={() => hideNotification(id)}
+        />
+      </Suspense>
+    </Stack>
+  );
+}
+
+/**
+ * `report`: offer "Report this", for a caller that knows what failed (an orchestration failure
+ * passes `{ area: 'orchestration', workflowId?, jobId? }`). Without it the action is offered only
+ * for a masked server fault — one whose message carries a server ref — never for a validation
+ * message, which a report could not help with.
+ */
 export function showErrorNotification({
   error,
   reason,
   title,
-  autoClose = 3000,
+  autoClose,
+  report,
+  position,
 }: {
   error: Error | { message: string } | { message: string }[];
   reason?: React.ReactNode;
   title?: string;
   autoClose?: number | false;
+  report?: ReportProblem;
+  /** Unset: the provider's default corner. */
+  position?: NotificationData['position'];
 }) {
   const message = Array.isArray(error) ? (
     <ul>
@@ -29,15 +101,28 @@ export function showErrorNotification({
       ))}
     </ul>
   ) : (
-    reason ?? withRetryText(error.message, getRateLimit(error))
+    reason ?? rateLimitedMessage(error.message, getRateLimit(error))
   );
 
+  const text = Array.isArray(error)
+    ? error.map((e) => e.message).join('\n')
+    : typeof reason === 'string'
+    ? reason
+    : error.message;
+  const errorRef = Array.isArray(error) ? undefined : parseErrorRef(error.message);
+  const reportable = (!!report || !!errorRef) && !!ReportProblemButton;
+  const id = randomId();
+
   showNotification({
+    id,
     icon: <IconX size={18} />,
     color: 'red',
-    message,
+    message: reportable
+      ? withReportAction({ id, message, title, text, errorRef, report: report ?? {} })
+      : message,
     title,
-    autoClose,
+    autoClose: autoClose ?? (reportable ? REPORTABLE_AUTO_CLOSE : DEFAULT_AUTO_CLOSE),
+    position,
   });
 }
 
@@ -62,7 +147,7 @@ export function showSuccessNotification({
 export function showWarningNotification({
   message,
   title,
-  autoClose = 3000,
+  autoClose = DEFAULT_AUTO_CLOSE,
 }: {
   message: string | React.ReactNode;
   title?: string;
@@ -188,4 +273,18 @@ export function showExpiredCaptchaTokenNotification({
       </div>
     ),
   });
+}
+
+/** A refusal's message with when to retry, and for a plan limit, a link to where to see it. */
+function rateLimitedMessage(message: string, rateLimit: ReturnType<typeof getRateLimit>) {
+  const text = withRetryText(message, rateLimit);
+  if (rateLimit?.kind !== 'product') return text;
+  return (
+    <>
+      {text}{' '}
+      <Anchor component={NextLink} href="/user/account/usage" inherit>
+        See your usage limits
+      </Anchor>
+    </>
+  );
 }

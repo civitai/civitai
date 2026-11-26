@@ -111,6 +111,7 @@ export const CLEANUP_INDEXES: IndexConfig[] = [
       AND a.ingestion = ${ArticleIngestionStatus.Scanned}::"ArticleIngestionStatus"
       AND a."tosViolation" = FALSE
       AND a.availability != ${Availability.Unsearchable}::"Availability"
+      AND a.availability != ${Availability.Private}::"Availability"
     `,
   },
   {

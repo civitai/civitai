@@ -9,6 +9,7 @@ import {
   type AppReactionEntityType,
   type EntityReactionError,
 } from '~/shared/constants/block-reaction.constants';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
 /**
  * SET_ENTITY_REACTION / GET_ENTITY_REACTIONS — the shared, PURE decision layer for the app
@@ -213,6 +214,16 @@ export function classifyEntityReactionError(err: unknown): EntityReactionError {
   return 'entity-unavailable';
 }
 
+/**
+ * The consent-gated scopes a reaction refusal says are missing. `needs-consent` is a
+ * refusal for {@link APP_REACTION_SCOPE} and no other error names a scope. The hosts
+ * pass the result to `resolveConsentNoticeAfterRefusal` (`requestConsentGate.ts`),
+ * which decides whether it brings the missing-permissions notice back.
+ */
+export function entityReactionRefusedScopes(error: EntityReactionError): string[] {
+  return error === 'needs-consent' ? [APP_REACTION_SCOPE] : [];
+}
+
 /** Exactly-once reply for one request. Every later call is a no-op. */
 export function createReactionReplyLatch({
   requestId,
@@ -220,7 +231,11 @@ export function createReactionReplyLatch({
 }: {
   requestId: string;
   emit: (payload: Record<string, unknown>) => void;
-}): { reply: (payload: { result: unknown } | { error: EntityReactionError }) => void } {
+}): {
+  reply: (
+    payload: { result: unknown } | { error: EntityReactionError; rateLimit?: RateLimitMeta }
+  ) => void;
+} {
   let settled = false;
   return {
     reply: (payload) => {

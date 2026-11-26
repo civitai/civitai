@@ -1,8 +1,11 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
+import { listWithheldIds, withheldRow } from './retracted-media';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
+import { isReviewImageSql } from './review-image';
 import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 
@@ -39,6 +42,8 @@ export type BulkImage = {
   negativePrompt: string | null;
   isProfilePicture: boolean;
   hasConnection: boolean;
+  /** On a service review: removable, but its owner (the buyer) is not offered for a strike. */
+  isReviewImage: boolean;
   approvedAppeal: ApprovedAppealBadge;
 };
 
@@ -72,6 +77,7 @@ const extraColumns = [
   sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = i."id")`.as(
     'hasConnection'
   ),
+  isReviewImageSql(sql.ref('i.id')).as('isReviewImage'),
 ];
 
 /**
@@ -85,6 +91,30 @@ export type BulkBatch = {
   truncated: boolean;
   offset: number;
 };
+
+/** A batch image as a moderator is sent it: `restricted` when withheld (`restrictedImageIds`), and
+ *  then with no media and nothing that says why. */
+export type ServedBulkImage = Omit<BulkImage, 'type'> & {
+  type: BulkImage['type'] | null;
+  restricted: boolean;
+};
+
+export async function withholdBatchMedia<B extends { items: BulkImage[] }>(
+  batch: B,
+  { csamReview }: { csamReview: boolean }
+): Promise<Omit<B, 'items'> & { items: ServedBulkImage[] }> {
+  const withheld = await listWithheldIds(
+    batch.items.map((i) => i.id),
+    { csamReview },
+    'bulk-image-manager'
+  );
+  return {
+    ...batch,
+    items: batch.items.map((i) =>
+      withheld.has(i.id) ? withheldRow(i) : { ...i, restricted: false }
+    ),
+  };
+}
 
 const imageBase = () => dbRead.selectFrom('Image as i');
 type ImageBase = ReturnType<typeof imageBase>;
@@ -272,16 +302,30 @@ export async function getImagesByIds(
  * The distinct OWNERS of a batch (Retool's GetBulkRemoveImageUserIdsForNotifs). A 300-image removal
  * spanning 40 accounts must send 40 notifications, not 300 — which is the whole reason Retool had a
  * separate query for it rather than notifying per row.
+ *
+ * Feedback page captures are left out and counted: their owner is a system account.
  */
-export async function getBatchOwners(imageIds: number[]): Promise<number[]> {
-  if (!imageIds.length) return [];
+export async function getBatchOwners(
+  imageIds: number[]
+): Promise<{ owners: number[]; capturesSkipped: number }> {
+  if (!imageIds.length) return { owners: [], capturesSkipped: 0 };
   const rows = await dbRead
     .selectFrom('Image')
-    .select('userId')
-    .distinct()
+    .select((eb) => ['userId', eb.fn.countAll<string>().as('images')])
     .where('id', 'in', imageIds)
+    .groupBy('userId')
     .execute();
-  return rows.map((r) => r.userId);
+  return {
+    owners: rows.filter((r) => !isFeedbackCaptureOwner(r.userId)).map((r) => r.userId),
+    capturesSkipped: Number(rows.find((r) => isFeedbackCaptureOwner(r.userId))?.images ?? 0),
+  };
+}
+
+export function capturesSkippedNote(capturesSkipped: number): string {
+  if (!capturesSkipped) return '';
+  return `${capturesSkipped} feedback page capture${
+    capturesSkipped === 1 ? '' : 's'
+  } skipped: their owner is a system account.`;
 }
 
 /**
@@ -319,6 +363,34 @@ export async function countImagesForUser(userId: number): Promise<number> {
   return Number(row?.c ?? 0);
 }
 
+export type StrikeSummary = {
+  struck: number;
+  owners: number;
+  capturesSkipped: number;
+  /** Service review images in the batch, whose owners are not struck for them. */
+  reviewImagesSkipped: number;
+  error?: string;
+};
+
+/** Which of `imageIds` are images on a service review. */
+export async function reviewImageIdsAmong(imageIds: number[]): Promise<Set<number>> {
+  if (!imageIds.length) return new Set();
+  const rows = await dbRead
+    .selectFrom('Image as i')
+    .select('i.id')
+    .where('i.id', 'in', imageIds)
+    .where(isReviewImageSql(sql.ref('i.id')))
+    .execute();
+  return new Set(rows.map((r) => r.id));
+}
+
+export function reviewImagesSkippedNote(reviewImagesSkipped: number): string {
+  if (!reviewImagesSkipped) return '';
+  return `${reviewImagesSkipped} service review image${
+    reviewImagesSkipped === 1 ? '' : 's'
+  } left out of the strike.`;
+}
+
 /**
  * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
  * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
@@ -329,9 +401,23 @@ export async function strikeBatchOwners(input: {
   /** The user-facing strike description — the same canned message the removal was filed under. */
   description: string;
   moderatorId: number;
-}): Promise<{ struck: number; owners: number; error?: string }> {
-  const owners = await getBatchOwners(input.imageIds);
-  if (!owners.length) return { struck: 0, owners: 0, error: 'no owners could be resolved' };
+}): Promise<StrikeSummary> {
+  // A service review image's owner is the buyer who posted it, not its maker: never struck for it.
+  const reviewImages = await reviewImageIdsAmong(input.imageIds);
+  const strikeable = input.imageIds.filter((id) => !reviewImages.has(id));
+  const reviewImagesSkipped = input.imageIds.length - strikeable.length;
+  if (!strikeable.length) return { struck: 0, owners: 0, capturesSkipped: 0, reviewImagesSkipped };
+  const { owners, capturesSkipped } = await getBatchOwners(strikeable);
+  if (!owners.length)
+    return capturesSkipped
+      ? { struck: 0, owners: 0, capturesSkipped, reviewImagesSkipped }
+      : {
+          struck: 0,
+          owners: 0,
+          capturesSkipped,
+          reviewImagesSkipped,
+          error: 'no owners could be resolved',
+        };
 
   const results = await Promise.all(
     owners.map((userId) =>
@@ -347,6 +433,8 @@ export async function strikeBatchOwners(input: {
   return {
     struck: owners.length - failed.length,
     owners: owners.length,
+    capturesSkipped,
+    reviewImagesSkipped,
     // The first reason, not a count: they share a cause (rate limit, endpoint down) far more often
     // than not, and a bare "3 failed" sends the moderator to the logs to find out why.
     error: failed.length ? failed[0].error : undefined,
@@ -379,7 +467,7 @@ export type RemoveBatchResult =
       alreadyBlocked: number;
       /** `null` when no flag was asked for. `applied: false` carries why. */
       flag: { flag: 'poi' | 'minor' | 'tag'; applied: boolean; error?: string } | null;
-      struck: { struck: number; owners: number; error?: string } | null;
+      struck: StrikeSummary | null;
       /** Removals held for a second moderator; neither flagged nor struck. */
       held: HeldSummary[];
     };

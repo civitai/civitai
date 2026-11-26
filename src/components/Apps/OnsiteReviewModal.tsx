@@ -1,11 +1,14 @@
 import {
   Accordion,
+  ActionIcon,
   Alert,
+  Anchor,
   Badge,
   Button,
   Card,
   Code,
   Group,
+  Loader,
   Modal,
   NumberInput,
   ScrollArea,
@@ -16,7 +19,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { Tooltip } from '~/components/MantineOverlays';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
@@ -25,18 +28,22 @@ import {
   IconChartBar,
   IconCheck,
   IconCoin,
+  IconDots,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
   IconLayoutGrid,
   IconLock,
+  IconRefresh,
   IconShieldLock,
   IconWindow,
   IconX,
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
+import { AgentFindingsCard } from '~/components/Apps/AgentFindingsCard';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+import { groupBlockScopes, PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import type { ReviewSubmitterChip, ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 import {
@@ -45,6 +52,9 @@ import {
   useNowTick,
 } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
+import { reviewProvenanceLines } from '~/components/Apps/reviewSourceProvenance';
+import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
+import { PREVIEW_CHIP_COLORS, previewChipState } from '~/components/Apps/reviewQueueSignals';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   FileDiffEntry,
@@ -53,13 +63,18 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
 import {
   parseManifestAnalytics,
   type DeclaredEventProperty,
 } from '~/shared/constants/block-analytics.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  isSensitiveBlockScope,
+  resolvePerCallBuzzBudget,
+} from '~/shared/constants/block-scope.constants';
+import { PASS_THROUGH_MAX_BUZZ } from '~/server/schema/blocks/workflow.schema';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -68,6 +83,12 @@ import {
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import type { FloorAsset } from '~/shared/utils/listing-publish-floor';
+import {
+  bootCheckUnavailable,
+  BOOT_CHECK_UNAVAILABLE_NOTICE,
+  reviewBootCheckSummary,
+  type ReviewBootCheckSummary,
+} from '~/shared/utils/review-boot-check';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -90,14 +111,15 @@ import { trpc } from '~/utils/trpc';
  * it exactly as before (zero behaviour change).
  */
 
-export type ManifestDiffSummary =
+export type ManifestDiffSummary = (
   | { kind: 'first-version'; fields: string[] }
   | {
       kind: 'update';
       added: string[];
       removed: string[];
       changed: Array<{ field: string; from: unknown; to: unknown }>;
-    };
+    }
+) & { registryExports?: RegistryExportDiff };
 
 export type FileSummary = {
   files: Array<{ path: string; sha256: string; sizeBytes: number }>;
@@ -110,6 +132,8 @@ export type ReviewedRequestCommon = {
   id: string;
   appBlockId: string | null;
   slug: string;
+  /** Pending rows: open review holds on the app (`listPendingRequests`); null = unreadable. */
+  openHoldCount?: number | null;
   version: string;
   submittedAt: string | Date;
   bundleSizeBytes: string;
@@ -121,6 +145,9 @@ export type ReviewedRequestCommon = {
   // PUSH-ORIGINATED requests (git-push, empty bundle) have no review-org
   // snapshot — this links the mod to the canonical repo at the exact pushed sha.
   pushCommitUrl?: string | null;
+  /** The client's claimed commit and the checked GitHub Actions run, as two separate facts.
+   *  Set by the pending list and the single-request read; absent elsewhere (renders nothing). */
+  sourceProvenance?: ReviewSourceProvenance | null;
   submittedBy: ReviewUserChip;
   /** Lifetime store opens for this app's listing, joined on slug by the list/detail
    *  reads. Optional so a fixture need not spell it; `undefined` is "unknown", which the
@@ -137,6 +164,12 @@ export type ReviewedRequestCommon = {
   approveRating?: { listingId: string; declared: string | null } | null;
   /** Icon / cover the listing this approve publishes lacks; non-empty ⇒ the server refuses Approve. */
   approveFloorMissing?: FloorAsset[];
+  /** The review boot check's result + mode (pending list + single read); null = no check
+   *  recorded. Approve is refused on the app's boot-check hold or on a recorded enforced failure
+   *  (`bootCheckOverrideMissing`); one written override reason passes both. */
+  previewBootCheck?: ReviewBootCheckSummary | null;
+  /** Under a current `enforce` flag, a pending request with no enforced pass ("not run"). */
+  previewBootCheckUnverified?: boolean;
 };
 
 export type PendingRequest = ReviewedRequestCommon;
@@ -175,6 +208,13 @@ export function formatBytes(s: string): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
+}
+
+/** `1:05` / `0:42` — the building counter. */
+export function formatElapsed(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const sec = totalSeconds % 60;
+  return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
 /*
@@ -292,6 +332,56 @@ export function ReviewSubmitterMeta({
 }
 
 /**
+ * Where the submitted bundle came from, on two labelled lines: the commit the CLIENT claimed
+ * (unchecked) and the GitHub Actions run the server VERIFIED from a GitHub-signed token. Built by
+ * the pure `reviewProvenanceLines`; renders nothing when the request carries no provenance block.
+ * The run line's note says what verification does not cover (the bundle itself).
+ */
+export function ReviewSourceProvenanceMeta({
+  provenance,
+}: {
+  provenance: ReviewSourceProvenance | null | undefined;
+}) {
+  const lines = reviewProvenanceLines(provenance);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-source-provenance">
+      {lines.map((line) => (
+        <div key={line.key} data-review-provenance-line={line.key}>
+          <Text size="xs">
+            <Text span size="xs" c="dimmed">
+              {line.heading}:{' '}
+            </Text>
+            <Text span size="xs" ff="monospace">
+              {line.value}
+            </Text>
+            {line.links.map((link) => (
+              <Text span size="xs" key={link.label}>
+                {' · '}
+                <Anchor
+                  size="xs"
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-review-provenance-link={`${line.key}-${link.label}`}
+                >
+                  {link.label}
+                </Anchor>
+              </Text>
+            ))}
+          </Text>
+          {line.note ? (
+            <Text size="xs" c="dimmed">
+              {line.note}
+            </Text>
+          ) : null}
+        </div>
+      ))}
+    </Stack>
+  );
+}
+
+/**
  * The read-only APPROVED / REJECTED banner for a decided submission — who decided, when,
  * and the notes or reason they left.
  *
@@ -379,8 +469,17 @@ export function ReviewDecisionAlert({
  */
 export function ReviewFilesSection({
   request,
+  autoLoadDiff = false,
 }: {
   request: Pick<ReviewedRequestCommon, 'id' | 'fileSummary' | 'manifestDiffSummary'>;
+  /**
+   * Load the per-file diff list on arrival instead of behind the "Show code diff" switch.
+   * The review PAGE's Code tab passes it: arriving on that tab IS the request to see the
+   * code, and the per-file bodies stay collapsed (their rows are only built when opened).
+   * The modal keeps the switch — it renders every section in one scroll, so mounting it is
+   * not a request to read code.
+   */
+  autoLoadDiff?: boolean;
 }) {
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
@@ -414,7 +513,7 @@ export function ReviewFilesSection({
           rather than opening with the Code tab: the diff response has no total-bytes cap
           (300 files × 256 KiB/side), so a mod who opened this tab only to read the file
           counts would pay for the whole fetch. One click is the right price for that. */}
-      <CodeDiffPanel publishRequestId={request.id} />
+      <CodeDiffPanel publishRequestId={request.id} autoLoad={autoLoadDiff} />
     </Stack>
   );
 }
@@ -438,7 +537,43 @@ export function ReviewManifestDiffSection({
       ) : (
         <ManifestDiffPreview diff={mds} />
       )}
+      {mds.registryExports && <RegistryExportsNotice exports={mds.registryExports} />}
     </Stack>
+  );
+}
+
+/**
+ * The collections this version publishes to registries — outside Civitai, to anyone who
+ * follows them — shown on its own because the generic diff only says `storage` changed.
+ */
+export function RegistryExportsNotice({ exports }: { exports: RegistryExportDiff }) {
+  return (
+    <Alert color="orange" variant="light" p="xs" title="Published to registries">
+      <Stack gap={4}>
+        {exports.exported.map((name) => (
+          <Group key={`e:${name}`} gap={6}>
+            <Code style={{ fontSize: 11 }}>{name}</Code>
+            {exports.added.includes(name) && (
+              <Badge size="xs" color="orange">
+                new in this version
+              </Badge>
+            )}
+          </Group>
+        ))}
+        {exports.removed.map((name) => (
+          <Group key={`r:${name}`} gap={6}>
+            <Code style={{ fontSize: 11 }}>{name}</Code>
+            <Badge size="xs" color="gray">
+              no longer published
+            </Badge>
+          </Group>
+        ))}
+        <Text size="xs" c="dimmed">
+          Visible shared documents of these collections become readable by anyone through a
+          registry. Private and hidden documents never leave.
+        </Text>
+      </Stack>
+    </Alert>
   );
 }
 
@@ -447,16 +582,26 @@ export function ReviewManifestDiffSection({
  *
  * 🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it. On-site PENDING only, and
  * DARK unless the mod-only `app-blocks-agentic-review` CLIENT flag resolves — fail-closed,
- * so an absent Flipt flag means this renders nothing. External/connect requests are out of
- * scope and hidden. Two surfaces mount it now (the modal body and the page's Agent report
+ * so an absent Flipt flag means this renders nothing. External/connect requests are hidden
+ * here; the off-site modal mounts the connect lane behind `app-listings-agentic-review`. Two surfaces mount it now (the modal body and the page's Agent report
  * tab); a copied `mode === 'pending' && !!features?.… && isOnsiteReviewRequest(…)` at each
  * would be the same predicate twice, wrong at one of them eventually.
  */
 export function ReviewAgentSection({
   selection,
   fallback = null,
+  variant = 'full',
+  onOpenReport,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
+  /**
+   * `full` — the whole report panel (the AI report tab, the modal).
+   * `summary` — the finding-counts card the Overview leads with. Same gate, so the Overview cannot
+   * show AI findings to a reviewer the report itself is hidden from.
+   */
+  variant?: 'full' | 'summary';
+  /** `summary` only: opens the full report (the page switches to its AI report tab). */
+  onOpenReport?: () => void;
   /**
    * Rendered INSTEAD when the gate declines.
    *
@@ -476,6 +621,15 @@ export function ReviewAgentSection({
   if (mode !== 'pending') return <>{fallback}</>;
   if (!features?.appBlocksAgenticReview) return <>{fallback}</>;
   if (!isOnsiteReviewRequest(request)) return <>{fallback}</>;
+  if (variant === 'summary') {
+    return (
+      <AgentFindingsCard
+        publishRequestId={request.id}
+        slug={request.slug}
+        onOpenReport={onOpenReport}
+      />
+    );
+  }
   return <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />;
 }
 
@@ -621,6 +775,7 @@ export function OnsiteReviewModalBody({
   return (
     <Stack gap="md">
       <ReviewSubmitterMeta request={request} now={now} />
+      <ReviewSourceProvenanceMeta provenance={request.sourceProvenance} />
 
       <ReviewDecisionAlert selection={selection} now={now} />
 
@@ -679,8 +834,16 @@ export function OnsiteReviewModalBody({
 
 export function ReviewPreviewSection({
   selection,
+  frameHeight = 420,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
+  /**
+   * The embedded app's height. The modal keeps the compact 420px panel, since it shares its
+   * height with every other section; the review page sizes it for JUDGING the app rather than
+   * glimpsing it (`REVIEW_PREVIEW_TALL_HEIGHT` on the Preview tab, a fold-bounded height on the
+   * Overview).
+   */
+  frameHeight?: number | string;
 }) {
   /*
     🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it — the same rule
@@ -691,24 +854,43 @@ export function ReviewPreviewSection({
   */
   if (selection.mode !== 'pending') return null;
   return (
-    <ReviewPreviewPanel publishRequestId={selection.request.id} slug={selection.request.slug} />
+    <ReviewPreviewPanel
+      publishRequestId={selection.request.id}
+      slug={selection.request.slug}
+      frameHeight={frameHeight}
+    />
   );
 }
+
+/** The review page's Preview-tab height: most of the viewport, capped where more stops helping. */
+export const REVIEW_PREVIEW_TALL_HEIGHT = 'min(75vh, 900px)';
+
+/** The Overview's height: bounded so the app, the AI findings and the actions share one fold. */
+export const REVIEW_PREVIEW_OVERVIEW_HEIGHT = 'min(60vh, 720px)';
 
 function ReviewPreviewPanel({
   publishRequestId,
   slug,
+  frameHeight,
 }: {
   publishRequestId: string;
   slug: string;
+  frameHeight: number | string;
 }) {
   const utils = trpc.useUtils();
 
   // Shared live-preview poll + iframe-src stabilization (extracted verbatim to
   // `useReviewPreview` so this in-modal preview and the full-page preview route
   // stay behaviourally identical).
-  const { state, detail, isLive, inProgress, isFailed, stableIframeSrc, error } =
+  const { state, updatedAt, detail, isLive, inProgress, isFailed, stableIframeSrc, error } =
     useReviewPreview(publishRequestId);
+  const chip = previewChipState(state);
+  // A second-resolution tick only while building, for the elapsed counter.
+  const now = useNowTick(inProgress ? 1000 : REVIEW_RELATIVE_TICK_MS);
+  const elapsedS =
+    inProgress && updatedAt
+      ? Math.max(0, Math.round((now.getTime() - updatedAt.getTime()) / 1000))
+      : null;
 
   const previewMut = trpc.blocks.previewRequest.useMutation({
     onSuccess: async () => {
@@ -743,8 +925,24 @@ function ReviewPreviewPanel({
           Review preview
         </Text>
         {state && (
-          <Badge size="sm" variant="light" color={isLive ? 'green' : isFailed ? 'red' : 'blue'}>
-            {state.replace('preview-', '')}
+          <Badge
+            size="sm"
+            variant="light"
+            color={PREVIEW_CHIP_COLORS[chip]}
+            data-testid="apps-review-preview-state"
+          >
+            {chip}
+          </Badge>
+        )}
+        {bootCheckUnavailable(reviewBootCheckSummary(state, detail)) && (
+          <Badge
+            size="sm"
+            variant="light"
+            color="yellow"
+            title={BOOT_CHECK_UNAVAILABLE_NOTICE}
+            data-testid="apps-review-boot-check-unavailable-badge"
+          >
+            Boot check couldn&apos;t run
           </Badge>
         )}
       </Group>
@@ -754,16 +952,21 @@ function ReviewPreviewPanel({
       </Text>
 
       <Group gap="xs">
-        <Button
-          size="xs"
-          variant="light"
-          leftSection={<IconWindow size={14} />}
-          loading={previewMut.isPending}
-          disabled={previewMut.isPending || inProgress}
-          onClick={() => previewMut.mutate({ publishRequestId })}
-        >
-          {state ? 'Rebuild preview' : 'Start preview'}
-        </Button>
+        {/* The primary action is the one that moves the preview forward: Start when there is
+            none, Open full-page when it is live. Rebuild / Tear down are maintenance, so they
+            live in the ⋯ menu rather than competing with it. */}
+        {!state && (
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconWindow size={14} />}
+            loading={previewMut.isPending}
+            disabled={previewMut.isPending || inProgress}
+            onClick={() => previewMut.mutate({ publishRequestId })}
+          >
+            Start preview
+          </Button>
+        )}
         {isLive && (
           // Full-page preview on a SAME-ORIGIN internal route that mounts the same
           // review host bridge at full viewport — opened top-level, so the mod
@@ -780,33 +983,68 @@ function ReviewPreviewPanel({
             rel="noopener"
             rightSection={<IconExternalLink size={12} />}
           >
-            Open full-page preview ↗
+            Open full-page preview
           </Button>
         )}
         {state && (
-          // Shown for every non-null preview state INCLUDING preview-failed:
-          // teardownPreview clears any deploy_state that starts with `preview-`
-          // back to null, so a FAILED preview can be dismissed to "Start preview"
-          // (not just rebuilt). Label reflects that a failed row has nothing live
-          // to tear down — it's a dismiss.
-          <Button
-            size="xs"
-            variant="light"
-            color="red"
-            leftSection={<IconX size={12} />}
-            loading={teardownMut.isPending}
-            disabled={teardownMut.isPending}
-            onClick={() => teardownMut.mutate({ publishRequestId })}
-          >
-            {isFailed ? 'Dismiss failed preview' : 'Tear down preview'}
-          </Button>
+          /*
+            Shown for every non-null preview state INCLUDING preview-failed:
+            teardownPreview clears any deploy_state that starts with `preview-`
+            back to null, so a FAILED preview can be dismissed to "Start preview"
+            (not just rebuilt). Label reflects that a failed row has nothing live
+            to tear down — it's a dismiss.
+          */
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon
+                variant="default"
+                size="md"
+                aria-label="More preview actions"
+                loading={previewMut.isPending || teardownMut.isPending}
+                data-testid="apps-review-preview-menu"
+              >
+                <IconDots size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={<IconRefresh size={14} />}
+                disabled={previewMut.isPending || inProgress}
+                onClick={() => previewMut.mutate({ publishRequestId })}
+              >
+                Rebuild preview
+              </Menu.Item>
+              <Menu.Item
+                color="red"
+                leftSection={<IconX size={14} />}
+                disabled={teardownMut.isPending}
+                onClick={() => teardownMut.mutate({ publishRequestId })}
+              >
+                {isFailed ? 'Dismiss failed preview' : 'Tear down preview'}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         )}
       </Group>
 
       {inProgress && (
-        <Text size="xs" c="dimmed">
-          Building + deploying the review preview…
-          {detail?.sha ? ` (sha ${detail.sha.slice(0, 12)})` : ''}
+        <Group gap={6} data-testid="apps-review-preview-building">
+          <Loader size="xs" />
+          <Text size="xs" c="dimmed">
+            Building — usually ~2 min
+            {elapsedS != null ? ` · ${formatElapsed(elapsedS)} elapsed` : ''}
+            {detail?.sha ? ` (sha ${detail.sha.slice(0, 12)})` : ''}
+          </Text>
+        </Group>
+      )}
+      {chip === 'queued' && (
+        <Text size="xs" c="dimmed" data-testid="apps-review-preview-queued">
+          Queued — the build starts when a preview slot frees up.
+        </Text>
+      )}
+      {chip === 'expired' && (
+        <Text size="xs" c="dimmed" data-testid="apps-review-preview-expired">
+          This preview expired and was torn down. Rebuild it from the ⋯ menu.
         </Text>
       )}
       {isFailed && (
@@ -833,9 +1071,10 @@ function ReviewPreviewPanel({
         // back — a short preview in a tall box, which reads as a styling nit
         // rather than a regression.
         <div
+          data-testid="apps-review-preview-frame"
           style={{
             width: '100%',
-            height: 420,
+            height: frameHeight,
             display: 'flex',
             flexDirection: 'column',
             border: '1px solid var(--mantine-color-default-border)',
@@ -1144,9 +1383,17 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-export function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
+export function CodeDiffPanel({
+  publishRequestId,
+  autoLoad = false,
+}: {
+  publishRequestId: string;
+  /** Fetch + show the file list immediately, with no switch (the review page's Code tab). */
+  autoLoad?: boolean;
+}) {
   const features = useFeatureFlags();
-  const [show, setShow] = useState(false);
+  const [toggled, setShow] = useState(false);
+  const show = autoLoad || toggled;
 
   const { data, isLoading, error } = trpc.blocks.getPublishRequestDiff.useQuery(
     { publishRequestId },
@@ -1160,12 +1407,14 @@ export function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }
   return (
     <Stack gap={4}>
       <Group gap={8}>
-        <Switch
-          size="sm"
-          label="Show code diff"
-          checked={show}
-          onChange={(e) => setShow(e.currentTarget.checked)}
-        />
+        {!autoLoad && (
+          <Switch
+            size="sm"
+            label="Show code diff"
+            checked={show}
+            onChange={(e) => setShow(e.currentTarget.checked)}
+          />
+        )}
         {show && !isLoading && !error && (
           <Text size="xs" c="dimmed">
             {files.length} file{files.length === 1 ? '' : 's'} changed
@@ -1221,6 +1470,9 @@ const HANDLED_MANIFEST_KEYS = new Set([
   // be visible INLINE to the reviewer, not folded into the raw-JSON disclosure. A link
   // the mod never actually looked at is the one thing this whole surface exists to stop.
   'repository',
+  // The issue-tracker / Support link: the same kind of store-visible outbound link as
+  // `repository`, published on approve, so it is shown inline beside Source for the same reason.
+  'bugs',
   'category',
   'type',
   'minApiVersion',
@@ -1331,6 +1583,16 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const description = typeof manifest.description === 'string' ? manifest.description : null;
   const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
   const repository = typeof manifest.repository === 'string' ? manifest.repository : null;
+  // Shown whatever its shape: a string is the link the approve publishes; anything else (a
+  // manifest stored before `bugs` was string-only) publishes NO link, and the reviewer is told so
+  // rather than having it silently disappear.
+  const bugsRaw = manifest.bugs;
+  const bugs =
+    bugsRaw === undefined
+      ? null
+      : typeof bugsRaw === 'string'
+      ? { text: bugsRaw, valid: true }
+      : { text: JSON.stringify(bugsRaw) ?? String(bugsRaw), valid: false };
   const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
@@ -1402,6 +1664,14 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
         {repository && (
           <Text size="xs" c="dimmed" data-testid="apps-onsite-review-source-repo">
             Source: <Code>{repository}</Code>
+          </Text>
+        )}
+        {/* Store-visible issue-tracker / Support link (manifest `bugs`), on the same terms as
+            Source: plain text, verbatim, never an anchor. */}
+        {bugs && (
+          <Text size="xs" c="dimmed" data-testid="apps-onsite-review-support">
+            Support: <Code>{bugs.text}</Code>
+            {!bugs.valid && ' (not a URL string — approving shows no Support link)'}
           </Text>
         )}
         {description && (
@@ -1506,6 +1776,32 @@ export function ManifestScopeRow({
   );
 }
 
+function ManifestPerJobBudget({ manifest }: { manifest: Record<string, unknown> }) {
+  const declared = (manifest.page as { buzzBudgetPerGen?: unknown } | undefined)?.buzzBudgetPerGen;
+  const budget = resolvePerCallBuzzBudget(declared);
+  const usesDefault = !(typeof declared === 'number' && Number.isInteger(declared));
+  const overPassThroughMax = budget > PASS_THROUGH_MAX_BUZZ;
+  return (
+    <Group gap={6} data-testid="apps-review-per-job-budget">
+      <IconCoin size={14} />
+      <Text size="sm">
+        Per-job Buzz budget: <b>{budget}</b>
+        {usesDefault && ' (default)'}
+      </Text>
+      {overPassThroughMax && (
+        <Badge
+          color="orange"
+          variant="light"
+          size="sm"
+          data-testid="apps-review-per-job-budget-over"
+        >
+          Over {PASS_THROUGH_MAX_BUZZ}: approve only if intended
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
 export function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -1520,11 +1816,8 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
     !Array.isArray(manifest.scopeJustifications)
       ? (manifest.scopeJustifications as Record<string, unknown>)
       : {};
-  // Split the declared scopes into a SENSITIVE group (elevated-risk — rendered
-  // first with warning emphasis) and the normal group. Each group keeps the
-  // existing "(N)" count semantics for its own members.
-  const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
-  const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
+  // Same groups and order as the store listing the viewer will see.
+  const { sensitive: sensitiveScopes, other: normalScopes } = groupBlockScopes(scopes);
   return (
     <Card withBorder p="sm" data-testid="apps-review-permissions">
       <Stack gap="xs">
@@ -1557,7 +1850,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 <Group gap={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitiveScopes.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitiveScopes.length})
                   </Text>
                   <Tooltip
                     multiline
@@ -1572,12 +1865,15 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 {sensitiveScopes.map((s) => (
                   <ManifestScopeRow key={s} scope={s} justifications={justifications} />
                 ))}
+                {scopes.includes('ai:write:budgeted') && (
+                  <ManifestPerJobBudget manifest={manifest} />
+                )}
               </Stack>
             )}
             <Group gap={6}>
               <IconKey size={14} />
               <Text size="sm" fw={600}>
-                Permissions ({normalScopes.length})
+                {PERMISSION_GROUP_LABELS.other} ({normalScopes.length})
               </Text>
               <Tooltip
                 multiline

@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -77,6 +78,11 @@ export default function Safety({
             <Title className={classes.heroTitle}>Civitai Safety Center</Title>
             <Text ta="center" className={classes.heroText}>
               A summary of our policies, guidelines, and approach to keeping Civitai safe.
+            </Text>
+            <Text ta="center" className={classes.heroText}>
+              <Link href="/safety/how-we-keep-it-safe">
+                How we keep generation and sharing safe
+              </Link>
             </Text>
           </Stack>
         </Container>
@@ -278,6 +284,13 @@ export default function Safety({
                   while empowering users with tools to see content that is the most interesting and
                   relevant to them. We do this through a combination of user controls, automated
                   content labeling, and content moderation.
+                </p>
+                <p>
+                  For how these checks work when you generate, share, upload or train, see{' '}
+                  <Link href="/safety/how-we-keep-it-safe">
+                    How Civitai Keeps Generation and Sharing Safe
+                  </Link>
+                  .
                 </p>
                 <Title order={3}>User Control</Title>
                 <p>

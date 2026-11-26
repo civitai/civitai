@@ -13,6 +13,11 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import {
+  isSysReadonlyRetryAllowed,
+  withoutSysReadonlyRetry,
+  withSysReadonlyRetry,
+} from './sys-readonly-retry';
 import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
@@ -516,7 +521,7 @@ async function reconnectClusterBounded(clusterClient: any, stepTimeoutMs: number
   // forever. On timeout connect() keeps running in the background — it still completes the
   // reconnect if the node comes back — but the watchdog is free to re-arm after its cooldown.
   await withTimeout(
-    clusterClient.connect(),
+    connectWithRetry(clusterClient, { label: 'cluster' }),
     stepTimeoutMs,
     `connect() did not settle within ${stepTimeoutMs}ms`
   );
@@ -604,47 +609,59 @@ function startClusterSelfHeal(
 /** Sys clients whose reconnect is waiting on a teardown that outlived the step timeout. */
 const lateSysReconnects = new WeakSet<object>();
 
-/** Sys clients with a connect() retry pending (see connectSysClient). */
-const sysConnectRetries = new WeakSet<object>();
+/** Clients with a connect() retry pending (see connectWithRetry). */
+const connectRetries = new WeakSet<object>();
+
+export type ConnectWithRetryOptions = {
+  /** Names the client in the retry log lines. */
+  label: string;
+  delayMs?: (attempt: number) => number;
+  /** Runs when a RETRY (not the first attempt) leaves the client open. */
+  onRetryConnected?: () => void;
+};
 
 /**
- * `client.connect()` for a sys base client and, while it rejects and leaves the client CLOSED,
- * connect() again in the background with backoff until one succeeds.
+ * `client.connect()` and, while it rejects and leaves the client CLOSED, connect() again in the
+ * background with backoff until one succeeds.
  *
- * WHY (node-redis 6): RedisSentinel's connect() gives up after `maxCommandRediscovers` failed
- * discovery passes (each pass fails on a master connection's first error since 6.2.0) and then
- * destroys the client (@redis/client 6.3.0 sentinel/index.js, RedisSentinelInternal.connect).
- * Nothing reopens it: every command then fails at once, so the sys watchdog, which triggers on
- * commands piling up, never fires again and the client stays down until the process restarts. A
- * connect() overlapping a master outage with no failover (the Sentinel still naming the master)
- * longer than those passes ends that way: at startup, or in a self-heal's reconnect.
+ * WHY (node-redis 6): a connect() that fails leaves the client closed, and nothing reopens it:
+ * every command then throws "The client is closed" at once, so neither watchdog (both trigger on
+ * commands piling up or timing out) ever fires again, and the client stays down until the process
+ * restarts. RedisSentinel's connect() gives up after `maxCommandRediscovers` failed discovery
+ * passes and destroys the client (sentinel/index.js, RedisSentinelInternal.connect); RedisCluster's
+ * connect() resets `isOpen` when discovery fails on every root node (cluster/cluster-slots.js
+ * connect). Both happen when a connect() overlaps an outage: at startup, or in a self-heal.
  *
  * Settles with the FIRST attempt, so callers that bound it behave as before. One retry is pending
- * per client at a time, and retrying stops once the client is open again (someone else connected
- * it). Exported (with an injectable backoff) for tests.
+ * per client at a time whichever call site scheduled it, and retrying stops once the client is open
+ * again (someone else connected it).
  */
-export function connectSysClient(
+export function connectWithRetry(
   client: { connect: () => unknown; isOpen?: boolean },
-  delayMs: (attempt: number) => number = reconnectDelayMs
+  { label, delayMs = reconnectDelayMs, onRetryConnected }: ConnectWithRetryOptions
 ): Promise<unknown> {
   const attempt = (n: number): Promise<unknown> => {
     const p = Promise.resolve().then(() => client.connect());
     p.catch((err: unknown) => {
       if (n > 0) {
         log(
-          `Redis sys connect() retry ${n} failed: ${
+          `Redis ${label} connect() retry ${n} failed: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
       }
-      if (client.isOpen !== false || sysConnectRetries.has(client)) return;
-      sysConnectRetries.add(client);
+      if (client.isOpen !== false || connectRetries.has(client)) return;
+      connectRetries.add(client);
       const timer = setTimeout(() => {
-        sysConnectRetries.delete(client);
+        connectRetries.delete(client);
         if (client.isOpen !== false) return;
         attempt(n + 1).then(
-          // A destroy() racing the attempt (a self-heal) also resolves it, with the client closed.
-          () => client.isOpen !== false && log(`Redis sys client connected on retry ${n + 1}`),
+          () => {
+            // A destroy() racing the attempt (a self-heal) also resolves it, with the client closed.
+            if (client.isOpen === false) return;
+            log(`Redis ${label} client connected on retry ${n + 1}`);
+            onRetryConnected?.();
+          },
           () => undefined
         );
       }, delayMs(n + 1));
@@ -653,6 +670,37 @@ export function connectSysClient(
     return p;
   };
   return attempt(0);
+}
+
+/** Clients whose first ensureClientOpen() connect() attempt has not settled yet. */
+const reopening = new WeakSet<object>();
+
+/**
+ * Reopen a client found CLOSED (connectWithRetry), unless something already owns its reconnect: a
+ * first attempt still in flight, a pending retry, or a self-heal waiting on a late teardown. Cheap
+ * enough to call on every client access, so a client closed by a path that schedules no reconnect
+ * is reopened by its next caller; concurrent callers start one connect(), not one each.
+ */
+export function ensureClientOpen(
+  client: { connect: () => unknown; isOpen?: boolean },
+  label: string,
+  delayMs?: (attempt: number) => number
+): void {
+  if (client.isOpen !== false) return;
+  if (reopening.has(client) || connectRetries.has(client) || lateSysReconnects.has(client)) return;
+  reopening.add(client);
+  log(`Redis ${label} client found closed; reconnecting`);
+  void connectWithRetry(client, { label, delayMs })
+    .catch(() => undefined)
+    .finally(() => reopening.delete(client));
+}
+
+/** connectWithRetry for a sys base client. */
+export function connectSysClient(
+  client: { connect: () => unknown; isOpen?: boolean },
+  delayMs: (attempt: number) => number = reconnectDelayMs
+): Promise<unknown> {
+  return connectWithRetry(client, { label: 'sys', delayMs });
 }
 
 /**
@@ -973,6 +1021,8 @@ export type RedisMetricsBridge = {
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
+  // sys READONLY retry outcome counter (./sys-readonly-retry), same bridge and label shape.
+  redisSysReadonlyRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
 };
 
 function getRedisMetrics(): RedisMetricsBridge | undefined {
@@ -1094,14 +1144,25 @@ export function attachSysSentinelListeners(
     errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   }
 ) {
+  // @redis/client emits SENTINE_LIST_CHANGE (sic) on every sentinel scan, carrying only the list
+  // size; log it only when the size moves. The Symbol seed makes the first event always log, even
+  // without a size.
+  let lastSentinelListSize: unknown = Symbol('no sentinel list size seen');
   client.on('topology-change', (event: any) => {
     const { type: eventType, node } = event ?? {};
     const host = node?.host ?? '?';
     const port = node?.port ?? '?';
-    ctx.log(
-      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
-      event
-    );
+    const unchangedSentinelList =
+      eventType === 'SENTINE_LIST_CHANGE' && event.size === lastSentinelListSize;
+    if (eventType === 'SENTINE_LIST_CHANGE') lastSentinelListSize = event.size;
+    if (!unchangedSentinelList) {
+      ctx.log(
+        `Redis sentinel topology change [type=${
+          eventType ?? 'unknown'
+        }, host=${host}, port=${port}]`,
+        event
+      );
+    }
     ctx.topologyCounter
       .labels({
         type: String(eventType ?? 'unknown'),
@@ -1161,6 +1222,10 @@ export interface InstrumentCommandsOptions {
   sysDeadlineMs?: number;
   /** Sys client: reject new commands while this many are already in flight. <= 0 disables. */
   sysInflightCap?: number;
+  /** Sys client: retry writes rejected with READONLY (./sys-readonly-retry). */
+  sysReadonlyRetryEnabled?: boolean;
+  /** Sys client: delay before each READONLY retry (ms). */
+  sysReadonlyRetryBackoffMs?: readonly number[];
 }
 
 /**
@@ -1301,6 +1366,21 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
   const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
+  // Sentinel client only: it re-resolves the master when a command fails with READONLY, so a
+  // retry can reach the new primary. A single-node client keeps its one connection, so READONLY
+  // there means it points at a replica and retrying the same address cannot help.
+  const sysReadonlyRetry =
+    clientLabel === 'sys' &&
+    isClusterClient &&
+    (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
+  // A pipeline that hits READONLY may already have applied earlier writes, so this wrapper never
+  // retries one.
+  if (sysReadonlyRetry && typeof self._executePipeline === 'function') {
+    const originalPipeline = self._executePipeline;
+    self._executePipeline = function (this: any, ...args: any[]) {
+      return withoutSysReadonlyRetry(() => originalPipeline.apply(this, args));
+    };
+  }
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
@@ -1342,6 +1422,14 @@ export function instrumentCommands(
           backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        })
+      : sysReadonlyRetry && isSysReadonlyRetryAllowed()
+      ? withSysReadonlyRetry(runOnce, {
+          backoffMs: opts.sysReadonlyRetryBackoffMs,
+          onResult: (result, retries) => {
+            getRedisMetrics()?.redisSysReadonlyRetryCounter?.inc({ result });
+            log(`sysRedis READONLY retry ${result} after ${retries} retries`);
+          },
         })
       : runOnce();
 
@@ -1699,21 +1787,25 @@ function getBaseClient(type: 'cache' | 'system') {
     // Don't await here - let connection happen in background
     // The client will queue commands until connected
     log(`Calling connect() for ${type} (cluster) client...`);
-    baseClient
-      .connect()
-      .then(async () => {
-        log(`${type} cluster client connected`);
-        await setupEnhancedFailover();
-        // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
-        // cluster client. Guarded so a self-heal forced reconnect doesn't stack a second
-        // watchdog interval. Pass setupEnhancedFailover so forceClusterReconnect re-establishes
-        // the periodic-rediscover interval after a heal (FIX #3). The forced reconnect does NOT
-        // re-run this connect() .then callback (it calls baseClient.connect() directly), so the
-        // re-setup must be threaded through the watchdog, not relied on here.
-        if (type === 'cache' && !clusterSelfHealInterval) {
-          startClusterSelfHeal(baseClient, setupEnhancedFailover);
-        }
-      })
+    const onConnected = async () => {
+      log(`${type} cluster client connected`);
+      await setupEnhancedFailover();
+      // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
+      // cluster client. Guarded so a self-heal forced reconnect doesn't stack a second
+      // watchdog interval. Pass setupEnhancedFailover so forceClusterReconnect re-establishes
+      // the periodic-rediscover interval after a heal (FIX #3). The forced reconnect does NOT
+      // re-run this callback (it calls baseClient.connect() directly), so the re-setup must be
+      // threaded through the watchdog, not relied on here.
+      if (type === 'cache' && !clusterSelfHealInterval) {
+        startClusterSelfHeal(baseClient, setupEnhancedFailover);
+      }
+    };
+    connectWithRetry(baseClient, {
+      label: `${type} cluster`,
+      // A first connect() that failed never ran onConnected, so the watchdog was never started.
+      onRetryConnected: () => void onConnected().catch(() => undefined),
+    })
+      .then(onConnected)
       .catch((err) => {
         log(`Redis connection failed (${type})`, err);
       });
@@ -2093,8 +2185,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
   // (src/server/redis/client.ts `make()`, memoized on globalThis.__civitaiRedisClients in every
   // environment — this module is evaluated once per bundler module graph, so a module-scope memo
-  // would not be enough; build builds nothing), and `createSysRedis` has zero
-  // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
+  // would not be enough; build builds nothing), and every app that calls `createSysRedis` memoizes
+  // the one it builds. So there is never a second, unwatched
   // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
   // unwatched — revisit the guard (key it per client set) at that point.
   if (type === 'system' && !sysSelfHealInterval) {
@@ -2178,12 +2270,32 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
   return { redis: getCacheClient(), sysRedis: getSysClient() };
 }
 
-// Source of Truth data
+// DURABLE STATE ONLY: revocations, idempotency markers, spend reservations, ledgers, job and game state.
+// Caches, read-through results and rate-limit windows belong in REDIS_KEYS (the cache client), with a TTL.
+// A new entry here needs explicit sign-off and an entry in __tests__/sys-key-ledger.test.ts; new durable
+// data otherwise goes in Postgres. A placement next to an existing key here is not a justification.
 export const REDIS_SYS_KEYS = {
+  DOWNLOAD_LINK: {
+    // Download links written before they moved to the cluster (REDIS_KEYS.DOWNLOAD_LINK): read,
+    // fetch-counted and revoked here only as the fallback for those links. Remove with that
+    // fallback, after DOWNLOAD_LINK_SYS_FALLBACK_UNTIL in
+    // src/server/services/download-link/download-link.store.ts.
+    LINK: 'dl:link',
+    LINK_ID: 'dl:linkid',
+    CRED_LINKS: 'dl:links:cred',
+  },
   APP: {
+    // Review batches written before they moved to the cluster (REDIS_KEYS.APP.REVIEW_BATCH): read by
+    // the moderator app only as the fallback for those batches. Remove with that fallback, after
+    // REVIEW_BATCH_SYS_FALLBACK_UNTIL in apps/moderator/src/lib/server/review-batch.ts.
+    REVIEW_BATCH: 'app:review-batch',
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',
+    // The case engine's send brake: present = no case notice is sent. JSON { by, at, reason }.
+    CASES_SENDS_PAUSED: 'app:cases:sends-paused',
+    // `app:cases:send-running:<batchId>` — one batch's run lock, held by its send or its export (never both).
+    CASES_SEND_RUNNING: 'app:cases:send-running',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
@@ -2193,11 +2305,6 @@ export const REDIS_SYS_KEYS = {
     // Single-use marker for redeemed cross-domain swap tokens — `swap:used:${jti}` (TTL = swap max age).
     USED: 'swap:used',
   },
-  IMAGE_UPLOAD: {
-    // Chunked upload-relay session — hash `system:image-upload:relay-session:${sessionId}` holding
-    // the owning userId, the server-minted key, the multipart uploadId and one ETag per part.
-    RELAY_SESSION: 'system:image-upload:relay-session',
-  },
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
@@ -2205,6 +2312,10 @@ export const REDIS_SYS_KEYS = {
   PRICING: {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
     FEE_ALLOWANCE_BOOST: 'system:pricing:fee-allowance-boost',
+  },
+  ARTICLE_VERDICT_RESUBMITS: {
+    // Forced resubmits per article text — `system:article-verdict-resubmits:${articleId}:${textHash}`.
+    ATTEMPTS: 'system:article-verdict-resubmits',
   },
   COLLECTION_AI_REVIEW: {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
@@ -2234,8 +2345,8 @@ export const REDIS_SYS_KEYS = {
      * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
      * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
      * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
-     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
-     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     * a genuinely-new tip uses a fresh client key. Fail-CLOSED on a redis error at
+     * claim time (money path).
      */
     TIP_IDEM: 'system:blocks:tip-idem',
     /**
@@ -2253,8 +2364,8 @@ export const REDIS_SYS_KEYS = {
      * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
      * logical generation across retries. Per-(user, app, key) so a key can never
      * collide across apps or users. Short TTL (covers realistic retry windows); a
-     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
-     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     * genuinely-new generation uses a fresh client key. Fail-CLOSED on a redis error
+     * at claim time (money path).
      */
     GEN_IDEM: 'system:blocks:gen-idem',
     /**
@@ -2295,8 +2406,21 @@ export const REDIS_SYS_KEYS = {
      */
     APP_SPEND_CAP: 'system:blocks:app-spend-cap',
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
-    // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
+    // endpoint (`/api/v1/blocks/submit-version`).
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    // Review previews started automatically at submit, per submitter per UTC day
+    // (`system:blocks:review-auto-builds:${userId}:${YYYY-MM-DD}`). Past the budget the submit
+    // still succeeds and the preview waits for a moderator to start it.
+    REVIEW_AUTO_BUILDS: 'system:blocks:review-auto-builds',
+    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per UTC
+    // day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): the only record of listing-check
+    // model spend; the daily agent-review budget reads it, so it must survive eviction.
+    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
+    // Live app pointer on the shared static server, per app slug (`...:${slug}`, no TTL): set to
+    // 'attempted' when this platform starts a live unpublish or restore for the app (the evidence a
+    // relist restores on), upgraded to 'confirmed' when an unpublish succeeded, and cleared when its
+    // pointer is written back (a restore or a deploy). Its lock and dirty mark are in REDIS_KEYS.
+    LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
@@ -2332,11 +2456,12 @@ export const REDIS_SYS_KEYS = {
      */
     FORK_SESSION: 'system:blocks:fork-session',
     /**
-     * FORKABLE APPS — per-user fork-start counters, keyed
-     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
-     * MULTI (always created with its TTL); fail-closed on a redis error.
+     * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
+     * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
+     * sha256 it releases secrets for. Written by `mintWakeTicket` on a wake the user started (TTL
+     * `WAKE_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
      */
-    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    HIBERNATION_WAKE_TICKET: 'system:blocks:hibernation-wake-ticket',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
@@ -2352,8 +2477,7 @@ export const REDIS_SYS_KEYS = {
      * spend counter). Sub-keyed as `${DEV_TUNNEL}:cred:<fp>` /
      * `${DEV_TUNNEL}:session:<id>` / `${DEV_TUNNEL}:host:<host>` /
      * `${DEV_TUNNEL}:user:<uid>:<blockId>` / `${DEV_TUNNEL}:spend:<id>`. All
-     * carry a hard-TTL EX so they self-expire (dev-tunnel.service.ts). On
-     * `sysRedis`, like the sibling BLOCKS caps/limiters.
+     * carry a hard-TTL EX so they self-expire (dev-tunnel.service.ts).
      */
     DEV_TUNNEL: 'system:blocks:dev-tunnel',
     /**
@@ -2367,14 +2491,6 @@ export const REDIS_SYS_KEYS = {
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
     /**
-     * APP DEV PREVIEW ERRORS — the uncaught errors (and console errors) an app's own code reported
-     * in its LIVE DEV PREVIEW (`BLOCK_ERROR {fatal:false}` from a dev-tunnel host only), keyed
-     * `${DEV_PREVIEW_ERRORS}:<userId>:<blockId>`. A capped LIST (newest first, last 200), hard-TTL
-     * EX 2h, written only while the user has a live dev tunnel of that app; read back by App
-     * Assistant's app-activity read for that same user (preview-errors.service.ts). On `sysRedis`.
-     */
-    DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
-    /**
      * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
      * post-paid customComfy job's terminal poll/cancel can refund the
      * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
@@ -2383,8 +2499,7 @@ export const REDIS_SYS_KEYS = {
      * `{ buzzCapKey, appSpendKey|null, ceiling }`, hard-TTL EX ~25h so it
      * self-expires with the reservation window. Written at submit (after
      * reserving the ceiling), consumed once via GET+DEL at the FIRST terminal
-     * observation (idempotent settle). On `sysRedis`, like the sibling BLOCKS
-     * caps/limiters. DEV/live-harness tokens still get a per-user daily
+     * observation (idempotent settle). DEV/live-harness tokens still get a per-user daily
      * reservation + settle; the per-app reservation (and its settle key) is
      * absent for them (synthetic appBlockId), matching the txt2img caps.
      */
@@ -2442,8 +2557,9 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
-    /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
-    TRAINING_RUNS: 'system:blocks:training-runs',
+    // One App Block output UNLOCK at a time per workflow (`block-output-unlock-lock.ts`):
+    // `system:blocks:output-unlock-lock:${workflowId}` = the holder's random token, SET NX EX.
+    OUTPUT_UNLOCK_LOCK: 'system:blocks:output-unlock-lock',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
     TRAINING_QUOTE: 'system:blocks:training-quote',
     /**
@@ -2456,8 +2572,6 @@ export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
-    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
-    REPEATS: 'download:repeats',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -2519,8 +2633,11 @@ export const REDIS_SYS_KEYS = {
     // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
     // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
-    // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
-    STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId
+    // lowercased>. Written to the cluster now (REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING); read here
+    // only as the fallback for ratings written before the move. Remove with that fallback, after
+    // DATASET_RATING_SYS_FALLBACK_UNTIL in apps/training-studio/src/lib/server/dataset-rating.ts.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -2530,10 +2647,6 @@ export const REDIS_SYS_KEYS = {
   },
   SYSTEM: {
     FEATURES: 'system:features',
-    /** Per-user daily notification-email counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
-    NOTIFICATION_EMAIL_USER_QUOTA: 'system:notification-email-user-quota',
-    /** Per-type hourly notification-email counters: `<prefix>:<type>:<YYYY-MM-DDTHH>`. */
-    NOTIFICATION_EMAIL_TYPE_QUOTA: 'system:notification-email-type-quota',
     PERMISSIONS: 'system:permissions',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
@@ -2549,6 +2662,7 @@ export const REDIS_SYS_KEYS = {
       default applies.
      */
     DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
+    KNIGHTS_V2_SOURCES: 'system:knights-v2-sources',
     /*
       Set of userIds whose grace-blocked images are waiting on the
       restore-user-images job. `restoreUser` adds an id once its restore
@@ -2559,13 +2673,19 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
-    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). Written to
+    // the cluster now (REDIS_KEYS.SYSTEM.UPLOAD_KEY_OWNER); read here only as the fallback for
+    // records written before the move. Remove with that fallback, after
+    // UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL in src/server/services/image-url-ownership.ts.
     UPLOAD_KEY_OWNER: 'system:upload-key-owner',
     // `<prefix>:<YYYY-MM-DD>:<caller>:<host bucket>` = a HyperLogLog of the users who sent a
     // generation input url on that external host bucket that UTC day (TTL 2 days).
     GENERATION_INPUT_EXTERNAL_HOST_USERS: 'system:generation-input-external-host-users',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
+    // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }: the semanticSearchAudit
+    // ClickHouse rows. Missing or 0 = off.
+    SEMANTIC_SEARCH_AUDIT: 'system:semantic-search-audit',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
     // searches to the candidate feed service and record the comparison. Off when missing.
     FEED_SHADOW: 'system:feed-shadow',
@@ -2581,6 +2701,10 @@ export const REDIS_SYS_KEYS = {
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
     IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
+    // Sorted set of imageIds whose upload prompt scan had no verdict, scored by when to scan them
+    // again; `:attempts` is a hash of imageId -> the attempt that entry is. See
+    // src/server/services/upload-prompt-retry.service.ts.
+    UPLOAD_PROMPT_SCAN_RETRY: 'system:upload-prompt-scan-retry',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2639,9 +2763,9 @@ export const REDIS_SYS_KEYS = {
     USER_CUT: 'session:user-cut',
     // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
     FAMILY_LIVE: 'session:family-live',
-    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser. Written only once
+    // the browser has two families or an account list; a single-family browser has none.
     DEVICE_FAMILIES: 'session:device-families',
-    LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
     HUB_UPGRADE: 'session:hub-upgrade',
@@ -2653,6 +2777,11 @@ export const REDIS_SYS_KEYS = {
     // WITHOUT writing the hub's own `.civitai.com` session, which is civitai.com's session too.
     // `domain` is the spoke's registrable domain, not a full redirect_uri — see apps/auth pending-authz.ts.
     PENDING_AUTHZ: 'session:pending-authz',
+  },
+  OAUTH: {
+    // `oauth:xchg:${jti}` → JSON record of one exchanged access token, read by introspection.
+    // Expires a minute after the token does.
+    TOKEN_EXCHANGES: 'oauth:xchg',
   },
   JOB: 'job',
   SEARCH_INDEX_CLEANUP: {
@@ -2684,9 +2813,9 @@ export const REDIS_SYS_KEYS = {
     // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
     // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
-    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
-    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
-    // and only new volume after that is filed again. No TTL.
+    // Hash: field = creator userId, value = JSON { filedAt, counterparties: { [userId]: two-way
+    // amount when last filed } }, so only new volume is filed again. Older entries have `warnedAt`
+    // and `chatId` in place of `filedAt` (`parseFiledRecord`). No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
     // String. How many other users the review follows Buzz through before it reaches the creator
     // again; the review clamps it to what it supports (`runCounterpartyReview`).
@@ -2856,12 +2985,6 @@ export const REDIS_SYS_KEYS = {
       Structure: set of Clavata keys
      */
     CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
-    /*
-      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
-        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
-      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
-     */
-    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
   },
   CONTENT: {
     /*
@@ -2876,11 +2999,8 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
-    // Delivery ids already handled by the HQ task webhook — `webhooks:hq:processed:${webhookId}`.
-    HQ_PROCESSED: 'webhooks:hq:processed',
     // Civitai AIR checkouts already sent to AIR — `webhooks:stripe:air-notified:${checkoutSessionId}`.
     STRIPE_AIR_NOTIFIED: 'webhooks:stripe:air-notified',
-    MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
     // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
     // callbacks so the terminal workflow event can classify the failure. Short TTL.
     IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
@@ -2888,29 +3008,24 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
-  MEMBERSHIP_EXTEND: {
-    // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
-    LOCK: 'membership-extend:lock',
-  },
   HEADLESS_POST: {
     IDEMPOTENCY: 'headless-post:idempotency',
   },
-  REMIX_APP: {
-    // A choice ask's per-option prices, per run, segment and step, while that ask is open.
-    OPTION_PRICES: 'remix-app:option-prices',
-  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
-    SEND_LOCK: 'message-as-civitai:send-lock',
   },
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
-    // Per judge: `winner>loser` for each vote, so pairs implied by their own votes can be skipped.
+    // Per judge: `winner>loser` for each vote, from before the set moved to the cache cluster
+    // (REDIS_KEYS.CRUCIBLE.VOTE_OUTCOMES). Read only, never written.
+    // 🔴 Delete with the fallback read after VOTE_OUTCOMES_SYS_FALLBACK_UNTIL (crucible.service.ts).
     VOTE_OUTCOMES: 'crucible:vote-outcomes',
     // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
     ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
+    // Per judge: pair keys they chose never to be shown again.
+    DISMISSED_PAIRS: 'crucible:dismissed-pairs',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
@@ -2928,6 +3043,10 @@ export const REDIS_SYS_KEYS = {
 const REDIS_KEYS_UNPREFIXED = {
   POST_INTENT: {
     RATE_LIMIT: 'post-intent:rate-limit',
+  },
+  STICKER_AUTO_TRACK: {
+    // Suffix `:<userId>:<UTC day>`.
+    DAILY_RUNS: 'sticker-auto-track:daily-runs',
   },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
@@ -2977,9 +3096,123 @@ const REDIS_KEYS_UNPREFIXED = {
     CONSENT_REVOKED_SCOPES: 'blocks:consent-revoked-scopes',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
+    // One-use marker for a GitHub Actions OIDC token an App submit presented:
+    // `${ACTIONS_OIDC_JTI}:${jti}`, SET NX with a TTL that outlives the token's own expiry
+    // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
+    // See `src/server/services/blocks/github-actions-oidc.service.ts`.
+    ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
+    // One-use marker for a recipe-runner block token at submit: `${RUNNER_SUBMIT_JTI}:${jti}`, SET NX
+    // with a TTL just past the token's expiry (verifier clock tolerance). The attempt ledger bounds a
+    // replay if it is evicted.
+    RUNNER_SUBMIT_JTI: 'blocks:runner-submit-jti',
+    // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
+    // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
+    // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
+    // prefixed `buzz-cap`, so a prefix match on the counters never takes it in. A lost flag asks
+    // the viewer to opt in again.
+    BUZZ_CAP_OPT_IN: 'system:blocks:buzz-opt-in',
+    // The viewer's LAST daily app Buzz cap check refused: `system:blocks:buzz-refused:
+    // ${userId}:${UTC-day}` = the cap it was refused at, expiring at the next UTC midnight. What
+    // the running app's paused notice reads; a passing check or opting in deletes it. Not
+    // prefixed `buzz-cap`.
+    BUZZ_CAP_REFUSED: 'system:blocks:buzz-refused',
+    // A spend was refused at the viewer's own per-app daily limit in the last few minutes:
+    // `system:blocks:consent-limit-refused:${userId}:${appBlockId}` = the limit it was refused at.
+    // What lets the host open the raise dialog for an app's request; nothing an app declares can set it.
+    CONSENT_LIMIT_REFUSED: 'system:blocks:consent-limit-refused',
+    // Per-user fixed-window rate limit on `blocks.getMyAppDailyLimit`, the host's read behind the
+    // raise dialog: `system:blocks:daily-limit-read-rate:${userId}`.
+    DAILY_LIMIT_READ_RATE: 'system:blocks:daily-limit-read-rate',
+    /**
+     * APP DEV PREVIEW ERRORS — the uncaught errors (and console errors) an app's own code reported
+     * in its LIVE DEV PREVIEW (`BLOCK_ERROR {fatal:false}` from a dev-tunnel host only), keyed
+     * `${DEV_PREVIEW_ERRORS}:<userId>:<blockId>`. A capped LIST (newest first, last 200), hard-TTL
+     * EX 2h, written only while the user has a live dev tunnel of that app; read back by App
+     * Assistant's app-activity read for that same user (preview-errors.service.ts).
+     */
+    DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
+    // FORKABLE APPS: per-user fork starts in one window
+    // (`system:blocks:fork-rate-limit:${userId}:${windowSeconds}`).
+    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    // New-submission moderator alerts per submitter per UTC hour
+    // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
+    REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
+    // Git pushes recorded for review, per slug, and the web manifest editor's commits, per user
+    // (`system:blocks:push-review-rate-limit:<slug:|user:><id>`).
+    PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
+    // Agent-review auto-start budget reserved by starts in flight, in US cents, per UTC day
+    // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
+    // reserved before the start and released once its report row exists (or the start failed).
+    AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    /**
+     * Per-viewer UTC-day quota for App Blocks batch private uploads (`OPEN_MEDIA_UPLOAD_BATCH`),
+     * across all apps: `system:blocks:media-upload-batch-daily:<items|bytes>:<userId>:<yyyy-mm-dd>`:
+     * the files or bytes charged that day.
+     */
+    MEDIA_UPLOAD_BATCH_DAILY: 'system:blocks:media-upload-batch-daily',
+    /**
+     * App Blocks `kind:'training'` run generation per (viewer, app, body); see
+     * block-training-quote.service. A lost count makes the next deliberate re-run of that body
+     * dedupe onto the earlier run, the same outcome the code already accepts for a lost bump.
+     */
+    TRAINING_RUNS: 'system:blocks:training-runs',
+    /**
+     * APP HIBERNATE — one record per hibernation attempt, keyed
+     * `system:blocks:hibernation-attempt:${attemptId}`. JSON: the user, the app and the upload key
+     * civitai built. Written `SET NX` by `begin` (TTL `ATTEMPT_TTL_SECONDS`) and read by `commit`,
+     * so a commit can only land the objects its own `begin` named (`app-hibernation.service.ts`).
+     * A lost record answers its commit `unknown-attempt`: the sandbox service keeps the app, and
+     * the upload is swept as an orphan.
+     */
+    HIBERNATION_ATTEMPT: 'system:blocks:hibernation-attempt',
+    /**
+     * SOURCE REPOS — one writer at a time per source repo, keyed
+     * `system:blocks:source-repo-lock:${slug}`. `SET NX EX` around an App Assistant save or a
+     * backfill seed, so two saves of one app never race each other into a spurious conflict
+     * (`app-source-repo.service.ts`). Released by its holder; the TTL frees a dead holder's lock.
+     */
+    SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
+    // Per app slug (`...:${slug}`): LOCK (SET NX EX) serialises the live pointer Jobs of one app;
+    // DIRTY asks the lock holder to look at the app again before it lets go. The takedown mark
+    // beside them is durable and stays in REDIS_SYS_KEYS.
+    LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
+    LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
+    /**
+     * APP DEV TUNNEL — the per-user keys of a dev tunnel, all tagged `{<userId>}` so the script
+     * that lists a tunnel (`LIST_DEV_TUNNEL`, dev-tunnel.service.ts) runs in one slot:
+     * `...:user:{<userId>}:<blockId>` (the user's live session for that block),
+     * `...:user-index:{<userId>}` (the blocks a ban must find), and a start's client key,
+     * `...:client-start:{<userId>}:<clientKey>` / `...:client-cancelled:{<userId>}:<clientKey>`.
+     * Every key carries a TTL. The session, credential, host and spend records stay in
+     * REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL.
+     */
+    DEV_TUNNEL_USER: 'system:blocks:dev-tunnel',
   },
   DOWNLOAD: {
     COUNT: 'download:count',
+    /*
+      Use: requests for one file by one user in the last day, so repeats of a file (a resumed
+      download) count toward the download limit only past a cap. A lost entry costs at most one
+      extra counted download. See src/server/utils/download-repeats.ts.
+      Structure: integer, key = `${REPEATS}:${userKey}:${fileId}`, SET NX EX 24h + INCR in one
+      single-key MULTI.
+     */
+    REPEATS: 'download:repeats',
+    /** `<prefix>:<provider>:<hour>`: a provider's downloads this hour. See provider-download.limiter.ts. */
+    PROVIDER: 'download:provider',
+  },
+  DOWNLOAD_LINK: {
+    // `dl:mint-rate:<cred|user>:<id>:<minute>`: fixed-window mint counters.
+    MINT_RATE: 'dl:mint-rate',
+    // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
+    // fetches). The raw id is never stored.
+    LINK: 'dl:link',
+    // `dl:linkid:<linkId>` → the link's hash key, for revoking one link by its public linkId.
+    LINK_ID: 'dl:linkid',
+    // `dl:reuse:<credential>:<fileId>:<userId|public>` → the hash key of the link a repeat mint returns.
+    REUSE: 'dl:reuse',
+    // `dl:links:cred:<credential>` — set of the hash keys a credential minted, for revoking them all.
+    CRED_LINKS: 'dl:links:cred',
   },
   USER: {
     BASE: 'user',
@@ -3007,12 +3240,51 @@ const REDIS_KEYS_UNPREFIXED = {
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
+    // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
+    // without re-rating.
+    MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
+    MODEL3D_PREVIEW_V2_PENDING: 'generation:model3d-preview-v2-pending',
+    MODEL3D_PREVIEW_V2_RETRY: 'generation:model3d-preview-v2-retry',
+    MODEL3D_RATING_V2_CLEAR: 'generation:model3d-rating-v2-clear',
+  },
+  TRAINING: {
+    // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
+    // key :<workflowId>. Only a workflow with this record can give items back; lost, they stay counted.
+    STUDIO_AUTO_LABEL_SUBMITTED: 'training:studio-auto-label-submitted',
+    // Studio auto-label items given back to a user's daily quota, key :<userId>:<yyyy-mm-dd>; capped
+    // at the daily limit so failing items can't run unbounded.
+    STUDIO_AUTO_LABEL_RELEASED_DAILY: 'training:studio-auto-label-released-daily',
+    // Steps of a Studio auto-label workflow whose failure already gave its item back to the daily
+    // quota (set of step names), key :<workflowId>. Lost early, a later poll gives those items
+    // back again: at most one workflow's failed items, and only to today's quota.
+    STUDIO_AUTO_LABEL_RELEASED: 'training:studio-auto-label-released',
+    // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
+    STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
+    // Training Studio's v2 image rating per dataset blob (packed), key :<raterModel>:<blobId lowercased>.
+    // Blobs are immutable.
+    STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
+    // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
+    STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:m<level>:<blobId
+    // lowercased>, so a failed or unanswered rating is not sent again on every view. Lost early, the
+    // blob is sent once more, within the daily allowance.
+    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
+    // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
+    // acts on, and how. Written by hand with an expiry; deleting it, or its eviction, refuses every call.
+    RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
     DEVICE_CODES: 'packed:oauth:device-codes',
     DEVICE_USER_CODES: 'packed:oauth:device-user-codes',
     OIDC_CONTEXT: 'packed:oauth:oidc-context',
+    // `packed:oauth:refresh-tombstone:<sha256 of the token>` → the chain a rotated refresh token
+    // belonged to (family id, user, client). TTL at most 7 days, and never past the rotated token's own
+    // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
+    // src/lib/server/oauth/offline-grant.ts.
+    REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
+    // A ban's mark on a self-only client it disabled: see src/server/services/oauth-ban-marker.ts.
+    BAN_DISABLED: 'oauth:ban-disabled',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
@@ -3029,6 +3301,74 @@ const REDIS_KEYS_UNPREFIXED = {
     PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). A cache: the
+    // cache cluster can evict a record before its TTL under memory pressure, so 30 days is a
+    // maximum. A miss falls back to the upload request log, then the caller's own Image rows.
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
+    /** Per-user daily notification-email counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    NOTIFICATION_EMAIL_USER_QUOTA: 'system:notification-email-user-quota',
+    /** Per-type hourly notification-email counters: `<prefix>:<type>:<YYYY-MM-DDTHH>`. */
+    NOTIFICATION_EMAIL_TYPE_QUOTA: 'system:notification-email-type-quota',
+  },
+  FLIPT: {
+    // `system:flipt:snapshot:<FLIPT_ENVIRONMENT>` — the last Flipt evaluation snapshot a process
+    // fetched live (JSON), and `…:meta` beside it ({ savedAt, etag }). A process that cannot reach
+    // Flipt at startup evaluates from it. Written by @civitai/flipt's createKvSnapshotStore, which
+    // reads and writes the two keys one command at a time, never together.
+    SNAPSHOT: 'system:flipt:snapshot',
+  },
+  APP: {
+    // `app:held-sheet:code:<sha256(code)>` — one sign-in code for the held-media sheet, 60 s, single use.
+    HELD_SHEET_CODE: 'app:held-sheet:code',
+    // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
+    // A lost session (eviction included) signs the sheet out; the moderator signs in again.
+    HELD_SHEET_SESSION: 'app:held-sheet:session',
+    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON. Written by the
+    // main app's mint, read by the moderator app's sign-in and batch routes.
+    REVIEW_BATCH: 'app:review-batch',
+    // `app:review-batch-key:<keyId>` — set of the live batch hashes one moderator API key minted.
+    REVIEW_BATCH_KEY: 'app:review-batch-key',
+    // `app:review-batch-idem:<keyId>:<sha256(idempotencyKey)>` — the hash of the batch that key last
+    // minted under that idempotency key, so a repeat revokes it; `…-lock:…` holds a mint in flight.
+    REVIEW_BATCH_IDEM: 'app:review-batch-idem',
+    REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
+    // `app:review-sheet:session:{<sha256(token)>}` — one general-tier review sheet session, and
+    // `…:batches` beside it, the batches it holds. Tagged so one DEL ends both.
+    REVIEW_SHEET_SESSION: 'app:review-sheet:session',
+  },
+  IMAGE_UPLOAD: {
+    // Chunked upload-relay session — hash `system:image-upload:relay-session:${sessionId}` holding
+    // the owning userId, the server-minted key, the multipart uploadId and one ETag per part. A lost
+    // session fails that upload, which the client starts again.
+    RELAY_SESSION: 'system:image-upload:relay-session',
+  },
+  FEEDBACK: {
+    // Fixed-window count of HQ filing attempts per reporter — `system:feedback:hq-filing:${userId}`.
+    HQ_FILING: 'system:feedback:hq-filing',
+  },
+  TRAINING_DATA_SCAN: {
+    // Self-heal resubmits per zip — `system:training-data-scan:heal-attempts:${fileId}:${urlHash}`.
+    HEAL_ATTEMPTS: 'system:training-data-scan:heal-attempts',
+    // Definite "can't read the zip" answers per zip — same key shape.
+    HEAL_UNREADABLE: 'system:training-data-scan:heal-unreadable',
+    // Self-heal workflows already taken back — `system:training-data-scan:heal-taken-back:${workflowId}`.
+    HEAL_TAKEN_BACK: 'system:training-data-scan:heal-taken-back',
+  },
+  WEBHOOKS: {
+    // Delivery ids already handled by the HQ task webhook — `webhooks:hq:processed:${webhookId}`.
+    // A lost id lets a redelivery re-close the task's entries, which is idempotent.
+    HQ_PROCESSED: 'webhooks:hq:processed',
+    // Once-an-hour marker per version and per file for the orchestrator cache bust after a failed
+    // scan; a lost marker costs one more bust.
+    MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
+  },
+  REMIX_APP: {
+    // A choice ask's per-option prices, per run, segment and step, while that ask is open.
+    OPTION_PRICES: 'remix-app:option-prices',
+    // A fresh random token after every mod write; the registry cache key carries it. Kept longer
+    // than a registry cache entry lives, so when it expires no entry of the generation readers fall
+    // back to is still alive.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
@@ -3045,22 +3385,47 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_ENGAGEMENT_RANKING: 'packed:caches:creator-engagement-ranking:v1',
     // `<prefix>:<userId>` — the 30-day reacted-image candidates, shared by every ranking type.
     CREATOR_ENGAGEMENT_CANDIDATES: 'packed:caches:creator-engagement-candidates:v1',
+    // `<prefix>:<event>:<userId>:<placements hash>` — each placed hat's views where it is now.
+    EVENT_HAT_PLACEMENT_STATS: 'packed:caches:event-hat-placement-stats:v1',
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // The live per-provider download tokens. See provider-download/provider-token.store.ts.
+    PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
+    // `<prefix>:<blobId>` — an App Block media blob's scan verdict. See blobRatings.ts `readBlobState`.
+    BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
+    // `<prefix>:<blobId>` — set after a failed, timed-out or pending verdict read (see `BLOB_STATE_BACKOFF_SECONDS`).
+    BLOCK_MEDIA_BLOB_STATE_BACKOFF: 'packed:caches:block-media-blob-state-backoff',
+    // `<prefix>:<uploadId>` — a search-by-image upload: owner, blob id and scan workflow id, for an
+    // hour. See image-search-upload.service.ts.
+    SEARCH_UPLOAD: 'packed:caches:search-upload',
+    // `<prefix>:<userId>:<blobId>` — the viewer's upload of that blob, so a repeat reuses its scan.
+    SEARCH_UPLOAD_REF: 'packed:caches:search-upload-ref',
+    // `<prefix>:<userId>` — set while the viewer's last upload is still being scanned.
+    SEARCH_UPLOAD_PENDING: 'packed:caches:search-upload-pending',
+    // `<prefix>:<userId>` — held while one of the viewer's upload searches runs, so the daily count is
+    // never read and written by two at once.
+    SEARCH_UPLOAD_SEARCHING: 'packed:caches:search-upload-searching',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    FEATURE_PAGES_SERVICE_TOKEN: 'packed:caches:feature-pages-service-token',
+    FEATURE_PAGES_VIEWER_HANDLE: 'packed:caches:feature-pages-viewer-handle',
+    // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
+    // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
+    // the display read of a placement space. See placement-space.service.ts.
+    PLACEMENT_SPACE: 'packed:caches:placement-space',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
-    PROFILE_PICTURES: 'packed:caches:profile-pictures',
+    PROFILE_PICTURES: 'packed:caches:profile-pictures:v4',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
+    VERSION_SHOWCASE: 'packed:caches:version-showcase',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
@@ -3076,6 +3441,10 @@ const REDIS_KEYS_UNPREFIXED = {
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models-2',
     OFFICIAL_MODELS: 'packed:caches:official-models',
+    // Per viewer and browsing level: the model ids that lead their first page of Hot.
+    PERSONAL_HOT_LEAD: 'packed:caches:personal-hot-lead',
+    // Global: models with a recent new version, the lead's candidates.
+    PERSONAL_HOT_LEAD_CANDIDATES: 'packed:caches:personal-hot-lead-candidates',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     HOME_BLOCKS_SYSTEM: 'packed:caches:home-blocks-system',
     IMAGE_META: 'packed:caches:image-meta',
@@ -3095,6 +3464,8 @@ const REDIS_KEYS_UNPREFIXED = {
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
+    // Legacy annual-sub-payment and reward rows, per user and query window.
+    LEGACY_PREPAID_DELIVERIES: 'packed:caches:legacy-prepaid-deliveries',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
@@ -3128,6 +3499,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
     REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
+    // The remix app rows (`app_blocks` with a remix status): `getRemixAppRegistry`, busted on every mod edit.
+    REMIX_APP_REGISTRY: 'packed:caches:remix-app-registry',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3170,6 +3543,12 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
+    CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
+    // Which host images have any remix-gallery placement, so the card and gallery reads skip
+    // the database for the hosts that have none; see
+    // src/server/services/remix-gallery-hosts.cache.ts.
+    REMIX_GALLERY_HOSTS: 'packed:caches:remix-gallery-hosts',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
@@ -3183,6 +3562,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // `<ownerId>:<blobId>` -> a freshly signed url for a published training epoch, re-signed with
+    // the owner's orchestrator token. Short TTL, well under the signed lifetime; see mini/[id].ts.
+    EPOCH_BLOB_RESIGNED_URL: 'packed:caches:epoch-blob-resigned-url',
     // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.
@@ -3206,6 +3588,7 @@ const REDIS_KEYS_UNPREFIXED = {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
     HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
+    FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },
   LIVE_NOW: 'live-now',
   TAG: 'tag',
@@ -3213,6 +3596,11 @@ const REDIS_KEYS_UNPREFIXED = {
     BASE: 'event', // special case
     EVENT_CLEANUP: 'eventCleanup',
     CACHE: 'packed:event',
+    // An event's Hat Turf state, `event-turf:{<event>}:<part>` (turfKeys in
+    // src/server/events/turf/turf-map.ts): every part shares the event's tag, because one script
+    // writes the map, counts, stamps and feed indexes together. No TTL: the every-5-minute
+    // reconcile (reconcileAllTurf) rebuilds all of it from Postgres.
+    TURF: 'event-turf',
   },
   COSMETICS: {
     IDS: 'cosmeticIds',
@@ -3222,6 +3610,9 @@ const REDIS_KEYS_UNPREFIXED = {
     LIMIT: {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
+      // `<userId>` hashes of abuse limits the user is refused by now: field = limiter key,
+      // value = retry time (epoch ms), each field expiring at that time.
+      ACTIVE: 'trpc:limit:active',
     },
     // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
     IN_FLIGHT: 'trpc:in-flight',
@@ -3276,7 +3667,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
-    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
+    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast-v2',
   },
   NEW_ORDER: {
     RATED: 'new-order:rated',
@@ -3318,16 +3709,72 @@ const REDIS_KEYS_UNPREFIXED = {
       Structure: string '1' set NX with a TTL, key = `text-scan:missing-prompt-logged:${promptKey}`.
      */
     MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
+    /*
+      Use: attempts the retry job has made per article; past the cap it sends nothing, so a call that
+      keeps failing is not billed forever. Lost on eviction, an article gets up to one more round of retries.
+      Structure: integer (INCRBY), TTL 31d, key = `text-scan:category-retries:${articleId}`.
+     */
+    CATEGORY_RETRIES: 'text-scan:category-retries',
+    /*
+      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
+        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
+      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
+     */
+    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
+  },
+  MEMBERSHIP_EXTEND: {
+    // Per-member lock around a moderator's Stripe membership extend, cancel or re-sync.
+    LOCK: 'membership-extend:lock',
+  },
+  MESSAGE_AS_CIVITAI: {
+    // Per-target lock: one moderator send to a user at a time.
+    SEND_LOCK: 'message-as-civitai:send-lock',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; a lost one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+    /*
+      Use: a judge's own votes, so pairs those votes already decide by transitivity are not served.
+      Structure: set of `winner>loser`, key = `crucible:vote-outcomes:${crucibleId}:${userId}`,
+      TTL 30d. A cache: a lost or missing set only serves a pair the judge could have skipped.
+     */
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
+  },
+  BOT_CACHE: {
+    /*
+      Use: a verified crawler's page HTML, so a repeat request for the URL is not rendered again.
+      Structure: packed { pattern, headers, body (brotli HTML) }, key =
+      `botcache:v1:${buildId}:${host}:${path}?${sortedQuery}`, TTL 300s.
+     */
+    HTML: 'botcache:v1',
   },
   SEMANTIC_SEARCH: {
     /*
-      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
-      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
+      Use: one aligned block of ranked candidate ids from the search service, shared by every viewer
+      whose filter and viewer class match, so a repeated search makes no Qdrant call.
+      Structure: packed { ids: number[], correctedQuery?: string },
+      key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
      */
-    QUERY_VECTOR: 'semantic-search:query-vector',
+    CANDIDATES: 'semantic-search:candidates',
+  },
+  FEED_GO: {
+    /*
+      Use: the Training Data listing rule sets (trainingDataListingRulesId) of the Node builds now
+      answering the public model API, read by feed-go before it serves a body listing a Training
+      Data file (src/server/services/feed-go-training-data-rules.ts).
+      Structure: hash, field = rule set id, value '1'; each field expires
+      FEED_GO_TRAINING_DATA_RULES_TTL_MS after its last write (HPEXPIRE), so the hash holds only the builds still answering.
+     */
+    TRAINING_DATA_RULES_LIVE: 'feed-go:training-data-rules-live',
   },
 } as const;
 
@@ -3366,6 +3813,7 @@ export const REDIS_SUB_KEYS = {
   },
   QUEUES: {
     MERGING: 'merging', // sys
+    CONSUMING: 'consuming', // sys
   },
 } as const;
 

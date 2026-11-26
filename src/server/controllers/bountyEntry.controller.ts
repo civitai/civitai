@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { TRPCError } from '@trpc/server';
 import type { Context, ProtectedContext } from '../createContext';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -9,6 +10,9 @@ import {
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
+import { capNestedImages } from '~/server/utils/browsing-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import {
   awardBountyEntry,
   deleteBountyEntry,
@@ -16,6 +20,7 @@ import {
   getBountyEntryFilteredFiles,
   getEntryById,
   upsertBountyEntry,
+  BOUNTY_ENTRY_LIMIT_REACHED,
 } from '../services/bountyEntry.service';
 import type {
   SubmitBountyEntryInput,
@@ -26,6 +31,7 @@ import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
@@ -68,13 +74,20 @@ export const getBountyEntryHandler = async ({
       if (blocked) throw throwNotFoundError();
     }
 
-    const images = await getImagesByEntity({
-      id: entry.id,
-      type: 'BountyEntry',
-      isModerator: ctx.user?.isModerator,
-      userId: ctx.user?.id,
-      imagesPerId: 10,
-    });
+    const canEdit = !!ctx.user && (ctx.user.isModerator || ctx.user.id === entry.user?.id);
+    const [images, showsImage] = await Promise.all([
+      getImagesByEntity({
+        id: entry.id,
+        type: 'BountyEntry',
+        include: ['tags'],
+        isModerator: ctx.user?.isModerator,
+        userId: ctx.user?.id,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        seesReportListed: seesReportListed(ctx),
+        imagesPerId: canEdit ? constants.bounties.maxEntryImagesForEdit : 10,
+      }),
+      getRequestImageFilter(ctx),
+    ]);
     const files = await getBountyEntryFilteredFiles({
       id: entry.id,
       userId: ctx.user?.id,
@@ -85,7 +98,7 @@ export const getBountyEntryHandler = async ({
 
     return {
       ...entry,
-      images: images.map((i) => ({
+      images: capNestedImages(images.filter(showsImage), ctx).map((i) => ({
         ...i,
         metadata: i.metadata as MixedObject,
       })),
@@ -108,9 +121,12 @@ export const getBountyEntryHandler = async ({
 export const upsertBountyEntryHandler = async ({
   input,
   ctx,
+  replaceImages,
 }: {
   input: UpsertBountyEntryInput;
   ctx: ProtectedContext;
+  /** See `upsertBountyEntry`. */
+  replaceImages?: boolean;
 }) => {
   const { id: userId } = ctx.user;
   try {
@@ -137,12 +153,13 @@ export const upsertBountyEntryHandler = async ({
       bounty.entryLimit &&
       bounty.entries.filter((entry) => entry.userId === userId).length >= bounty.entryLimit
     ) {
-      throw throwBadRequestError('You have reached the maximum number of entries for this bounty');
+      throw throwBadRequestError(BOUNTY_ENTRY_LIMIT_REACHED);
     }
 
     const entry = await upsertBountyEntry({
       ...input,
       userId,
+      replaceImages,
     });
 
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id as number}`);
@@ -190,7 +207,8 @@ export const submitBountyEntryHandler = async ({
     images: imageUuids.map((url) => ({ url, type: MediaType.image })),
   };
 
-  return upsertBountyEntryHandler({ input: upsertInput, ctx });
+  // Sends the entry's whole image set and never reads the stored one, so an edit replaces it.
+  return upsertBountyEntryHandler({ input: upsertInput, ctx, replaceImages: true });
 };
 
 export const awardBountyEntryHandler = async ({
@@ -258,6 +276,7 @@ export const deleteBountyEntryHandler = async ({
   try {
     const deleted = await deleteBountyEntry({
       ...input,
+      userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
     });
     if (!deleted) throw throwNotFoundError(`No bounty entry with id ${input.id}`);

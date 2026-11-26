@@ -364,6 +364,28 @@ describe('App Assistant’s gate on the runner', () => {
     );
   });
 
+  it('report_ready notes an app with Civitai’s stock look, read from its sandbox, and stays ready', async () => {
+    fake.add('my-app');
+    let css = 'body { color: var(--civitai-color-text); }';
+    const plain = fake.tools.get('run_command')!;
+    // The runner's theme read, answered as a shell would over the app's files (its mark echoed).
+    fake.tools.set('run_command', (args, signal, sandbox) => {
+      const mark = /'(@@theme-[0-9a-f]+@@)'/.exec(String(args.command))?.[1];
+      if (!mark) return plain(args, signal, sandbox);
+      return `exit_code: 0\ntimed_out: false\n---\n\n${mark} ./src/index.css\n${css}\n${mark} END\n`;
+    });
+    const { tools } = await open();
+    await passAll(tools.tools);
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({
+      ready: true,
+      advisories: [{ code: 'default-theme' }],
+    });
+    css = '.app { --civitai-color-primary: #7c3aed; }';
+    const own = (await call(tools.tools, 'report_ready', CIVITAI)) as Record<string, unknown>;
+    expect(own.ready).toBe(true);
+    expect(own).not.toHaveProperty('advisories');
+  });
+
   it('offers submit_for_review only once the app is ready, and a file change withdraws it', async () => {
     fake.add('my-app');
     const { tools, reported } = await open();

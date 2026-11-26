@@ -22,7 +22,6 @@
 <div class={cn('grid gap-1.5', colClass[cols] ?? 'grid-cols-4', className)}>
   {#each urls as url, i (i)}
     {#if isVideo}
-      <!-- svelte-ignore a11y_media_has_caption -->
       <video
         src={url}
         muted

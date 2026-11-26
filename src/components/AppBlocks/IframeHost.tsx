@@ -1,4 +1,3 @@
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
@@ -32,7 +31,8 @@ import { ChromeForkMenuItem } from './ChromeForkEntry';
 import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
-import { resolveAppFeedbackRequest } from './appFeedbackChrome';
+import { resolveAppFeedbackRequest, withAppFeedbackDiagnostics } from './appFeedbackChrome';
+import { readAppFeedbackEnvironment } from './appFeedbackDiagnostics';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
@@ -43,7 +43,11 @@ import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveSourcePublishConsentRequest,
@@ -55,12 +59,18 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
+import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import { APP_STORAGE_PUBLISH_SCOPE } from '~/shared/constants/block-storage.constants';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import {
+  reportAppSubmitError,
+  reportAppSubmitResult,
+  useAppSessionTelemetry,
+} from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -69,14 +79,16 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
 import type { BlockHostSurface } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openDialog } from '~/components/Dialog/openDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
@@ -88,10 +100,11 @@ import {
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
-import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
@@ -99,6 +112,7 @@ import {
   sharedStorageErrorReply,
   storageErrorMessage,
 } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -110,7 +124,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import { appsRunBackTarget, type AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
 // PageBlockHost, and this copy carried NO dedupe id. Both surfaces now go through
 // `openBlockConsentModal`, which owns the lazy component reference alongside the id
@@ -172,7 +185,6 @@ interface IframeHostProps {
   onConsentGranted?: () => void;
 }
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
 // If the token never arrives within this window, surface a token_error so the
 // user isn't stuck behind an indefinite skeleton.
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;
@@ -399,6 +411,8 @@ export function AppBlockChrome({
   hostSurface,
   canOpenPage = false,
   launchOrigin = 'store',
+  getRecentFailures,
+  appRoute,
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -453,6 +467,10 @@ export function AppBlockChrome({
    *  (`/apps/store`). See `appsRunBackTarget`. Omitted → the store, which is what every
    *  surface other than a home launch should say. */
   launchOrigin?: AppsRunOrigin;
+  /** The host bridge's failed replies to this app, attached to a feedback report. */
+  getRecentFailures?: () => AppFeedbackRecentError[];
+  /** The app's own route on the page host, attached to a feedback report. */
+  appRoute?: string;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -482,6 +500,14 @@ export function AppBlockChrome({
   // up the snapshot it took at click time.
   const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
   const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
+  const openFeedback = (target: AppFeedbackModalTarget) =>
+    setFeedbackTarget({
+      ...target,
+      request: withAppFeedbackDiagnostics(target.request, {
+        recentErrors: getRecentFailures?.(),
+        environment: readAppFeedbackEnvironment(appRoute),
+      }),
+    });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -945,7 +971,7 @@ export function AppBlockChrome({
             request={feedbackRequest}
             hostSurface={hostSurface}
             labelled={!geometry.compact}
-            onOpenFeedback={setFeedbackTarget}
+            onOpenFeedback={openFeedback}
           />
           {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
             was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
@@ -1345,8 +1371,9 @@ export function IframeHost({
   // app rather than a bare boolean for the same reason PageBlockHost's is: the slot
   // can swap installs without unmounting, and a dismissal must not carry over to a
   // DIFFERENT app's permissions. Per-mount on purpose — nothing persists it, so a
-  // dismissal is "not now", not "never".
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  // dismissal is "not now", not "never" — and a refusal for a permission the viewer can
+  // still grant ends it early (`reviveConsentNoticeOnRefusal` below).
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
@@ -1448,12 +1475,20 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage, reportNoToken } = usePostMessage({
+  // App_Session: one row per host session (see appInAppTelemetry.ts).
+  const { countSubmit: countAppSubmit, countMessage: countAppMessage } = useAppSessionTelemetry({
+    appBlockId: install.appBlockId,
+    host: 'iframe',
+    enabled: true,
+  });
+
+  const { send, onMessage, reportNoToken, recentFailures } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
     host: 'IframeHost',
     appBlockId: install.appBlockId,
+    onInbound: countAppMessage,
   });
 
   // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
@@ -2031,6 +2066,29 @@ export function IframeHost({
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [onMessage, readGateStatus]);
 
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with PageBlockHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId: install.appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [install.appBlockId]
+  );
+
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -2156,6 +2214,11 @@ export function IframeHost({
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+  const dailyLimitRaise = useDailyLimitRaiseBridge({
+    appBlockId: install.appBlockId,
+    appName: install.manifest.name,
+  });
+  const outputUnlock = useOutputUnlockBridge({ appName: install.manifest.name });
 
   useEffect(() => {
     const off = onMessage<
@@ -2170,6 +2233,7 @@ export function IframeHost({
         typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
           ? raw.idempotencyKey
           : undefined;
+      countAppSubmit();
       try {
         const { snapshot } = await submitWorkflowMutation.mutateAsync({
           blockToken: token,
@@ -2177,8 +2241,11 @@ export function IframeHost({
           body: raw.body as never,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        reportAppSubmitResult(install.appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        dailyLimitRaise.onRelayedSnapshot(snapshot);
       } catch (err) {
+        reportAppSubmitError(install.appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', {
           requestId,
           snapshot: failureSnapshot(err),
@@ -2186,7 +2253,67 @@ export function IframeHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    countAppSubmit,
+    install.appBlockId,
+    dailyLimitRaise,
+  ]);
+
+  // REQUEST_DAILY_LIMIT_RAISE → DAILY_LIMIT_RAISE_ACK, then DAILY_LIMIT_RAISE_RESULT. Same
+  // handler as PageBlockHost; see `useDailyLimitRaiseBridge` for when the dialog may open.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'REQUEST_DAILY_LIMIT_RAISE',
+      (raw) => {
+        const requestId = raw?.requestId;
+        if (typeof requestId !== 'string' || requestId.length === 0) return;
+        void dailyLimitRaise.onRaiseRequest({
+          ack: (opened) => send('DAILY_LIMIT_RAISE_ACK', { requestId, opened }),
+          result: (raised) => send('DAILY_LIMIT_RAISE_RESULT', { requestId, raised }),
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -2309,24 +2436,24 @@ export function IframeHost({
               slotId: typeof modelCtx.slotId === 'string' ? modelCtx.slotId : undefined,
             }
           : undefined;
-        dialogStore.trigger<BuyBuzzModalProps>({
-          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
-          // against each other in the dialog store's exists-check.
-          id: `block-buy-buzz-${requestId}`,
-          component: BuyBuzzModal,
-          props: {
+        openDialog(
+          () => import('~/components/Modals/BuyBuzzModal'),
+          {
             minBuzzAmount: amount,
             attribution,
             onPurchaseSuccess: () => {
               purchased = true;
             },
           },
-          options: {
+          {
+            // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+            // against each other in the dialog store's exists-check.
+            id: `block-buy-buzz-${requestId}`,
             onClose: () => {
               send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
             },
-          },
-        });
+          }
+        );
       }
     );
     return off;
@@ -2478,6 +2605,7 @@ export function IframeHost({
             requestId,
             ok: false,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2574,6 +2702,7 @@ export function IframeHost({
         send('BUZZ_BALANCE_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2633,6 +2762,7 @@ export function IframeHost({
             requestId,
             value: null,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2665,6 +2795,7 @@ export function IframeHost({
             requestId,
             ok: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2697,6 +2828,7 @@ export function IframeHost({
             ok: false,
             deleted: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2746,6 +2878,7 @@ export function IframeHost({
           requestId,
           keys: [],
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2776,6 +2909,7 @@ export function IframeHost({
           limitBytes: 0,
           limitRows: 0,
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2874,7 +3008,10 @@ export function IframeHost({
           nextCursor: result.nextCursor,
         });
       } catch (err) {
-        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          ...sharedStorageErrorReply(err),
+        });
       }
     });
     return off;
@@ -2896,7 +3033,10 @@ export function IframeHost({
           );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNT_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -2919,7 +3059,10 @@ export function IframeHost({
           );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
-          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNTS_RESULT', {
+            requestId,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3095,7 +3238,11 @@ export function IframeHost({
               : null,
           });
         } catch (err) {
-          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: null,
+            ...sharedStorageErrorReply(err),
+          });
         }
       }
     );
@@ -3214,42 +3361,42 @@ export function IframeHost({
           collectionId,
           collection: identity.identity,
         });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
           // not reproducible, since rendering a Mantine modal costs >1 ms.)
           id: `block-collection-follow-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: copy.message,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a write that is under way.
-              settlement.markConsented();
-              try {
-                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
-                // actor and target, so `collectionId` is the ONLY thing the block
-                // influences.
-                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
-                else await unfollowCollectionMutation.mutateAsync({ collectionId });
-                settlement.reply({ result: { collectionId, followed: follow } });
-              } catch (err) {
-                // FORBIDDEN from the collection services (e.g. a private
-                // collection this viewer may not follow) lands here as a message,
-                // never as a hang.
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a write that is under way.
+            settlement.markConsented();
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              settlement.reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op.
+          onCancel: settlement.decline,
         });
       })();
     });
@@ -3285,6 +3432,10 @@ export function IframeHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -3306,7 +3457,9 @@ export function IframeHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error, ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -3320,6 +3473,7 @@ export function IframeHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -3354,7 +3508,7 @@ export function IframeHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          latch.reply({ error: classifyEntityReactionError(err), ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -3387,6 +3541,20 @@ export function IframeHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The missing-permissions notice's scopes for this render, or null for no notice.
+  // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message HANDLER can
+  // see a status React has not yet flushed an effect for; a render has the state
+  // itself, and a ref read cannot schedule the re-render that makes this notice
+  // appear. Reading the ref here would happen to work today (the render body writes it
+  // before `framed()` runs) for a reason that has nothing to do with why it is correct.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status,
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId: install.appBlockId,
+  });
+
   // W7 host trust frame: wraps the LOADING + READY states (rendered here,
   // around the iframe, not inside it — so a block can't fake/restyle/hide the
   // "App block" provenance chrome). Terminal-FAILURE states no longer render
@@ -3414,6 +3582,7 @@ export function IframeHost({
         slotId={slotId}
         hostSurface="model-slot"
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+        getRecentFailures={recentFailures}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not
           exist until now. Every term of the decision is in `resolveHostConsentNotice`
@@ -3443,21 +3612,11 @@ export function IframeHost({
           "never grant scopes from the sandbox" gate belongs there, and passing a
           constant `false` here would only invite someone to wire it to the wrong
           thing. */}
-      {resolveHostConsentNotice({
-        // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message
-        // HANDLER can see a status React has not yet flushed an effect for; a render
-        // has the state itself, and a ref read cannot schedule the re-render that
-        // makes this notice appear. Reading the ref here would happen to work today
-        // (the render body writes it before `framed()` runs) for a reason that has
-        // nothing to do with why it is correct.
-        status,
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId: install.appBlockId,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={install.manifest.name}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -3465,7 +3624,10 @@ export function IframeHost({
             const scopes = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(install.appBlockId)}
+          onDismiss={() =>
+            setConsentNotice((current) => dismissConsentNotice(current, install.appBlockId))
+          }
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {children}

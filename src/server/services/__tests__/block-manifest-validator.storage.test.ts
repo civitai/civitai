@@ -130,6 +130,25 @@ describe('manifest storage — accepted declarations', () => {
         { scopeJustifications: JUSTIFIED }
       ),
     ],
+    // Viewer-keyed documents are available (`viewerKeyedDocs` on): submit accepts `keyedBy`.
+    [
+      'votes: keyedBy "parent+viewer" on a shared write "own" collection',
+      manifest(
+        {
+          collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' } },
+        },
+        [STORAGE, PUBLISH],
+        { scopeJustifications: JUSTIFIED }
+      ),
+    ],
+    [
+      'likes: keyedBy "viewer" on a shared write "own" collection',
+      manifest(
+        { collections: { likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' } } },
+        [STORAGE, PUBLISH],
+        { scopeJustifications: JUSTIFIED }
+      ),
+    ],
     ['kind "docs" stated explicitly', withPrefs({ kind: 'docs' })],
     ['a 3-segment index path', withPrefs({ indexes: { 'meta.round.n': 'number' } })],
     [
@@ -412,7 +431,7 @@ describe('manifest storage — features not available yet', () => {
         { collections: { plays: { visibility: 'shared', write: 'owner', counters: ['plays'] } } },
         [STORAGE]
       ),
-      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own" or "none" for now',
+      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own" for now',
     ],
     [
       'documents any viewer may edit',
@@ -421,7 +440,7 @@ describe('manifest storage — features not available yet', () => {
         [STORAGE, PUBLISH],
         { scopeJustifications: JUSTIFIED }
       ),
-      'storage.collections.notes.write "anyone" is not available yet — documents any viewer may edit arrive in a later phase of App Storage; use "own" or "none" for now',
+      'storage.collections.notes.write "anyone" is not available yet — documents any viewer may edit arrive in a later phase of App Storage; use "own" for now',
     ],
   ])('refuses %s', (_label, m, message) => {
     expect(validate(isolated(m as Record<string, unknown>))).toEqual(refused(message));
@@ -794,12 +813,18 @@ describe('manifest storage — collection schemas', () => {
   });
 });
 
+/** The submission gate also requires a surface (here a `page`), which BASE does not declare. */
+const submittable = (m: Record<string, unknown>) => ({
+  ...m,
+  page: { path: '/', title: 'Test Block' },
+});
+
 describe('manifest storage — collection schema patterns at submission (ReDoS gate)', () => {
   it('refuses a pattern that backtracks catastrophically', async () => {
     const m = withPrefs({
       schema: { properties: { code: { type: 'string', pattern: '^(a+)+$', maxLength: 40 } } },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual(
       refused(
         `${SCHEMA_AT}.properties.code.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
       )
@@ -808,7 +833,10 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
 
   it('accepts a linear pattern (control: the gate is not refusing every pattern)', async () => {
     expect(
-      await BlockManifestValidator.validateSubmission(withPrefs({ schema: CARD_SCHEMA }), APP_CTX)
+      await BlockManifestValidator.validateSubmission(
+        submittable(withPrefs({ schema: CARD_SCHEMA })),
+        APP_CTX
+      )
     ).toEqual({ valid: true });
   });
 
@@ -822,7 +850,7 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
     const m = withPrefs({
       schema: { properties: { name: { type: 'string', pattern, maxLength: 40 } } },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual(
       refused(
         `${SCHEMA_AT}.properties.name.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
       )
@@ -839,7 +867,9 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
         },
       },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual({ valid: true });
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual({
+      valid: true,
+    });
   });
 
   // Invariant guard, not regression coverage: refused before the flag fix too (as "unknown").
@@ -849,7 +879,7 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
         properties: { code: { type: 'string', pattern: '^(\\u{61}+)+$', maxLength: 40 } },
       },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual(
       refused(
         `${SCHEMA_AT}.properties.code.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
       )

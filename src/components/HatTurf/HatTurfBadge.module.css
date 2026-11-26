@@ -1,6 +1,6 @@
 /*
  * A 24px dial (team ring around the leader's disc), and, when there is more to say, a dark chip
- * that carries the count (10 and up) and the lock to its right. A surface resizes it by setting
+ * that carries the viewer's margin and the lock to its right. A surface resizes it by setting
  * `--hat-turf-badge-size`: a different property from `--dial`, so it wins whatever the order the
  * two stylesheets load in.
  */
@@ -67,11 +67,20 @@
   transition: fill 0.3s ease;
 }
 
+/* The unfilled part of the disc, toward the scoring cap. */
+.discTrack {
+  opacity: 0.35;
+}
+
+.level {
+  transition: y 0.4s ease, height 0.4s ease;
+}
+
 .neutral {
   fill: rgba(255, 255, 255, 0.2);
 }
 
-/* Holds the digit or hat over the disc: 14/48 of the dial from the centre. */
+/* Holds the digit over the disc: 14/48 of the dial from the centre. */
 .disc {
   position: absolute;
   inset: calc(var(--dial) * 10 / 48);
@@ -80,17 +89,18 @@
   color: var(--mantine-color-white);
 }
 
-.hat {
-  width: 82%;
-  height: 82%;
-}
-
 .count {
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--mantine-color-white);
+}
+
+/* Two digits in the disc: the font follows the dial so both fit, on the card and in the detail row. */
+.countTwo {
+  font-size: calc(var(--dial) * 0.34);
+  letter-spacing: -0.03em;
 }
 
 /* White has to read on the lightest team colour (yellow) too. */
@@ -147,4 +157,10 @@
   .bump {
     animation: none;
   }
+}
+
+/* The viewer's margin: signed, in the chip beside the dial. */
+.margin {
+  font-size: 11px;
+  font-weight: 700;
 }

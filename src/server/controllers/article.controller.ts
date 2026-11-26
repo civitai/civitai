@@ -7,6 +7,8 @@ import type {
   ArticleMetadata,
 } from '~/server/schema/article.schema';
 import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
+import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
@@ -35,8 +37,10 @@ export const upsertArticleHandler = async ({
     // than refused: the edit form seeds itself from the article, so an owner editing a marked
     // article sends the flag back and would be locked out with a bare UNAUTHORIZED.
     // `upsertArticle` leaves the column alone when the field is undefined.
-    const { isOfficial, ...articleInput } = input;
+    const { isOfficial, bannerImage, ...articleInput } = input;
     const official = ctx.user.isModerator ? isOfficial : undefined;
+    // Dropped, not refused, for the same reason as `isOfficial`; undefined leaves the column alone.
+    const banner = ctx.features.articleTypography ? bannerImage : undefined;
 
     if (input.scheduledAt && !ctx.features.articleScheduling)
       throw throwBadRequestError('Scheduling articles is not available');
@@ -58,8 +62,11 @@ export const upsertArticleHandler = async ({
     const result = await upsertArticle({
       ...articleInput,
       isOfficial: official,
+      bannerImage: banner,
       userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
+      // As getArticleById reads it, so a save keeps what that read withheld from this editor.
+      isModerator: actsAsModerator(ctx),
+      reportListedViewer: reportListedViewerOf(ctx),
       scanContent,
     });
 

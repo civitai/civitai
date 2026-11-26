@@ -25,6 +25,8 @@ const { getImageTagReviewQueue } = await import('../image-tags.service');
 const { getImageRatingRequests } = await import('../image-rating-review.service');
 
 const SCHEMA = `
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" "EntityType", "type" TEXT, data JSONB);
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT,
@@ -43,6 +45,7 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT FALSE,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
   "blockedFor" TEXT,
@@ -54,6 +57,8 @@ CREATE TABLE "Image" (
   "postId" INTEGER,
   "userId" INTEGER NOT NULL DEFAULT 7
 );
+CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+CREATE TABLE "ModerationRuleVersion" ("id" SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Report" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL DEFAULT 7, "reason" TEXT NOT NULL DEFAULT 'TOSViolation',
@@ -129,6 +134,18 @@ describe('keyset queues reach every item exactly once', () => {
     expect(seen).toEqual(NEWEST_FIRST);
   });
 
+  it("never sends the uploader's legacy profile image on the image review queue", async () => {
+    await db.exec(`UPDATE "User" SET image = 'legacy-key' WHERE id = 7`);
+    await insertImages(`"needsReview"`, () => `'minor'`);
+    const { items } = await getImageReviewQueue({
+      needsReview: 'minor',
+      browsingLevel: 1,
+      limit: 4,
+    });
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) expect(item).not.toHaveProperty('userImage');
+  });
+
   it.each(LIMITS)('reported image queue at %i per page', async (limit) => {
     await insertImages(`"nsfwLevel"`, () => `1`);
     // Report ids run opposite to image ids, so the walk follows the report cursor, not the image id.
@@ -143,6 +160,36 @@ describe('keyset queues reach every item exactly once', () => {
 
     expect(seen).toEqual(NEWEST_FIRST);
   });
+
+  it.each(LIMITS)(
+    'reported image queue at %i per page, an image its owner deleted first',
+    async (limit) => {
+      await insertImages(`"nsfwLevel"`, () => `1`);
+      for (const [n, imageId] of NEWEST_FIRST.entries()) {
+        await db.exec(`INSERT INTO "Report" ("id") VALUES (${501 + n})`);
+        await db.exec(`INSERT INTO "ImageReport" VALUES (${imageId}, ${501 + n})`);
+      }
+      const requested = NEWEST_FIRST.at(-1)!;
+      await db.exec(
+        `INSERT INTO "JobQueue" VALUES (${requested}, 'Image', 'PendingDelete', '{"ownerId": 1}')`
+      );
+      // Not a parent's cleanup, another queue's row, or a post's request with an image's id.
+      await db.exec(`INSERT INTO "JobQueue" VALUES
+        (${NEWEST_FIRST[0]}, 'Image', 'PendingDelete', '{"cleanup": true}'),
+        (${NEWEST_FIRST[1]}, 'Image', 'ImageStorageDelete', NULL),
+        (${NEWEST_FIRST[2]}, 'Post', 'PendingDelete', '{"ownerId": 1}')`);
+
+      const seen = await walkPages<number>((cursor) =>
+        getReportedImageQueue({ browsingLevel: 1, cursor, limit })
+      );
+
+      expect(seen).toEqual([requested, ...NEWEST_FIRST.slice(0, -1)]);
+      const { items } = await getReportedImageQueue({ browsingLevel: 1, limit });
+      expect(items.map((item) => item.deleteRequested)).toEqual(
+        items.map((item) => item.id === requested)
+      );
+    }
+  );
 
   it.each(LIMITS)('comic panel queue at %i per page', async (limit) => {
     await insertImages(`"needsReview"`, () => `'minor'`);
@@ -199,5 +246,43 @@ describe('keyset queues reach every item exactly once', () => {
     const seen = await walkPages<number>((cursor) => getImageRatingRequests({ cursor, limit }));
 
     expect(seen).toEqual(IMAGE_IDS);
+  });
+});
+
+describe('queue items carry modelRestricted for the MatureRestricted badge', () => {
+  const restrictedOnly = async () =>
+    db.exec(`UPDATE "Image" SET "modelRestricted" = ("id" = ${IMAGE_IDS[0]})`);
+  const flagged = (items: { id: number; modelRestricted: boolean }[]) =>
+    items.filter((i) => i.modelRestricted).map((i) => i.id);
+
+  it('on the image review queue', async () => {
+    await insertImages(`"needsReview"`, () => `'minor'`);
+    await restrictedOnly();
+    const { items } = await getImageReviewQueue({
+      needsReview: 'minor',
+      browsingLevel: 1,
+      limit: 10,
+    });
+    expect(flagged(items)).toEqual([IMAGE_IDS[0]]);
+  });
+
+  it('on the reported image queue', async () => {
+    await insertImages(`"nsfwLevel"`, () => `1`);
+    await restrictedOnly();
+    for (const [n, imageId] of IMAGE_IDS.entries()) {
+      await db.exec(`INSERT INTO "Report" ("id") VALUES (${501 + n})`);
+      await db.exec(`INSERT INTO "ImageReport" VALUES (${imageId}, ${501 + n})`);
+    }
+    const { items } = await getReportedImageQueue({ browsingLevel: 1, limit: 10 });
+    expect(flagged(items)).toEqual([IMAGE_IDS[0]]);
+  });
+
+  it('on the image rating request queue', async () => {
+    await insertImages(`"nsfwLevel"`, () => `1`);
+    await restrictedOnly();
+    for (const id of IMAGE_IDS)
+      await db.exec(`INSERT INTO "ImageRatingRequest" VALUES (${id}, 3, 4, 'Pending', now())`);
+    const { items } = await getImageRatingRequests({ limit: 10 });
+    expect(flagged(items)).toEqual([IMAGE_IDS[0]]);
   });
 });

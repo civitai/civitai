@@ -37,12 +37,12 @@ function invalid(res: NextApiResponse, issues: { path: PropertyKey[]; message: s
 }
 
 async function fail(res: NextApiResponse, route: string, error: unknown) {
-  await logToAxiom({
+  logToAxiom({
     name: 'game-frame-reports',
     type: 'error',
     route,
     message: error instanceof Error ? error.message : String(error),
-  }).catch(() => null);
+  });
   return res.status(500).json({ error: 'internal' });
 }
 

@@ -4,9 +4,7 @@
 > with the `defineRetoolEndpoint` builder were deleted. Every route described below now returns 404.
 >
 > **What replaced them:** one endpoint per action under `/api/mod/*`, built with
-> `defineModeratorEndpoint` (`src/server/utils/moderator-endpoint.ts`). They are browsable, with their
-> schemas and a per-endpoint test form, at **`/moderator/api`**, and machine-readable at
-> `/api/mod/openapi.json`.
+> `defineModeratorEndpoint` (`src/server/utils/moderator-endpoint.ts`).
 >
 > **The one difference that matters if you are porting a caller:** the old family authenticated a
 > _shared_ moderator API key as a Bearer token. The new one authenticates the **acting moderator** —
@@ -73,6 +71,10 @@ Params are validated by the action's Zod schema. Validation errors return `400` 
 | `src/pages/api/mod/retool/strike.ts`    | `strike`    | `create`, `void`, `getUserStrikes`                                                              |
 
 Read the source file for the authoritative schema of each action — every file leads with a doc comment that lists actions + params.
+
+The comment actions live on as `/api/mod/comment/bulk-delete` and `remove-as-tos`, which take
+`{ commentIds }` (CommentV3 ids) since CommentV3 Phase 5; the `commentV2Ids` list in the example
+below is gone.
 
 ## Examples
 

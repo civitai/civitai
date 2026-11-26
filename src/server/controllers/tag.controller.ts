@@ -1,4 +1,5 @@
 import type { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
+import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
@@ -12,6 +13,8 @@ import type {
   GetVotableTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
+import { canViewerOpenModel } from '~/server/services/model-visibility.service';
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { getHomeExcludedTags } from '~/server/services/system-cache';
 import {
   addTags,
@@ -34,10 +37,15 @@ export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTag
   }
 };
 
+type TagListItem = Awaited<ReturnType<typeof getTags>>['items'][number];
+
 export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; ctx: Context }) => {
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
+
+    if (input?.modelId && !(await canViewerOpenModel(input.modelId, ctx.user)))
+      return getPagingData({ items: [] as TagListItem[] }, take, page);
 
     const results = await getTags({
       ...input,
@@ -119,6 +127,7 @@ export const getVotableTagsHandler = async ({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
     });
 
     return results;
@@ -139,6 +148,7 @@ export const addTagVotesHandler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
     });
   } catch (error) {
     throw throwDbError(error);
@@ -167,10 +177,17 @@ export const addTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => 
   }
 };
 
-export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => {
+export const disableTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AdjustTagsSchema;
+  ctx: ProtectedContext;
+}) => {
   try {
-    await disableTags(input);
+    await disableTags({ ...input, csamReview: !!ctx.features?.csamReports });
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

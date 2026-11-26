@@ -1,6 +1,8 @@
 import { env } from '$env/dynamic/private';
 import { getSpendableBuzz } from '$lib/server/buzz';
 import { mainAppOrigin } from '$lib/server/main-app';
+import { allowedModelFlags } from '$lib/server/flipt';
+import { ELEMENTS_UI_FLAG_KEY } from '$lib/data/trainingModels';
 import type { LayoutServerLoad } from './$types';
 
 // Header data shared by every route: the sign-out link and the user's buzz balance. Loaded here (not
@@ -13,7 +15,14 @@ export const load: LayoutServerLoad = async ({ locals }) => ({
   signalsEnabled: !locals.devPreview,
   // Same predicate as the main app's `isPaidMember`; the dev-login stub has no tier, so it's unknown.
   isPaidMember: locals.devPreview ? undefined : !!locals.user.tier && locals.user.tier !== 'free',
+  // Auto-label runs on the main app as this user; the dev-login stub has no session to send.
+  canAutoLabel: !locals.devPreview,
   // Main-app origin for the /generate hand-off links — resolved here so CIVITAI_URL stays the one
   // knob for every main-app deep link.
   civitaiUrl: mainAppOrigin(),
+  // The redesign's header and banner render on every route, not only in the flow /new evaluates.
+  elementsUi: locals.devPreview
+    ? true
+    : (await allowedModelFlags(locals.user, [ELEMENTS_UI_FLAG_KEY])).length > 0,
+  userId: locals.user.id,
 });

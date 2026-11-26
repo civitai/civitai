@@ -42,6 +42,12 @@
     display: none;
   }
 
+  // A second stack under a first (the form footer's, inside the footer slot, under the layout's) is
+  // already the footer's gap away from it, so its first item adds no padding of its own.
+  :global([data-strips]:not(:empty)) ~ * & > :first-child {
+    padding-top: 0;
+  }
+
   > * {
     flex: none;
     margin: 0 !important;
@@ -58,17 +64,25 @@
   }
 
   // The stack spans the footer's padding, and the footer drops its top padding for it; only alerts
-  // fill that space themselves.
+  // fill that space themselves. Anything else (the queue, a reward) sits 8px from what is above it,
+  // and 8px from an alert under it, so it is spaced the same on both sides.
   > :not(:global(.mantine-Alert-root), :global(.mantine-Notification-root)):not(
       :has(:global(.mantine-Alert-root), :global(.mantine-Notification-root))
     ) {
     padding-inline: 8px;
     padding-top: 8px;
+
+    // `:has()` can't nest, so an alert in a wrapper is matched by the wrapper's marker.
+    &:has(
+        + :is(:global(.mantine-Alert-root), :global(.mantine-Notification-root), [data-strip-full])
+      ) {
+      // Less the stack's 1px gap.
+      padding-bottom: 7px;
+    }
   }
 
   :global(.mantine-Notification-root),
   :global(.mantine-Alert-root) {
-    min-height: 40px;
     padding-block: 6px !important;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -83,11 +97,18 @@
   > :not([data-expanded], [data-strip-full]) {
     :global(.mantine-Notification-description),
     :global(.mantine-Alert-message),
-    :global(.mantine-Text-root) {
+    :global(.mantine-Text-root),
+    :global(.mantine-Stack-root) {
       display: -webkit-box;
       -webkit-line-clamp: 1;
       -webkit-box-orient: vertical;
       overflow: hidden;
+    }
+
+    // A title over its message (AlertWithIcon, DismissibleAlert) folds onto one line.
+    :global(.mantine-Stack-root) > * {
+      display: inline !important;
+      margin: 0 0.4em 0 0 !important;
     }
   }
 }

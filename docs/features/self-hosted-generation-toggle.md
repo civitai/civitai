@@ -34,7 +34,7 @@ The implementation followed the plan; the notable specifics and deviations:
 ### Known limitations (accepted)
 
 - **`canGenerate` is not gated** — `resolveCanGenerateForVersions` / `getResourceCanGenerate` already enforce the _operator_ ecosystem gates but **not** the self-hosted toggle, so "Create" buttons on model pages/cards stay enabled site-wide even when self-hosted is off. Enforcement is generator-form + submit-time only. (Deliberately scoped out to avoid touching the shared canGenerate path.)
-- **Propagation** — `getGenerationConfig` is `staleTime: Infinity` and only invalidated on the toggling mod's own client, so already-open generator sessions don't reflect a toggle change until reload.
+- **Propagation** — the toggling mod's own client invalidates `getGenerationConfig` at once. Other open generators pick the change up within 5 minutes (`refetchInterval`), or on returning to the tab once their copy is a minute old.
 - **Default ecosystem** — on fresh load with self-hosted disabled, the form can still land on a disabled default (the node _factory_ computes `defaultValue` and doesn't re-run on async `ext`); the alert + hidden submit cover it, the user switches models manually.
 
 ## The crux: what "self-hosted" means in code

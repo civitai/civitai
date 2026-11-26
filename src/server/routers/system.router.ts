@@ -41,10 +41,11 @@ export const systemRouter = router({
   // client-side against Meili and have no server hop to strip on.
   getBenignPhrases: publicProcedure
     .meta({ requiredScope: TokenScope.Full })
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    // Short, because it also bounds how long a moderator edit or a flag-off takes to reach users.
+    .use(edgeCacheIt({ ttl: CacheTTL.md }))
     .query(async ({ ctx }) => {
       const lists = await getClientBenignLists();
-      // A fail-open result is a 200 the edge would otherwise hold for an hour, pinning empty
+      // A fail-open result is a 200 the edge would otherwise hold for its TTL, pinning empty
       // whitelists site-wide off one transient error.
       //
       // `ctx.cache.skip = true` would now also work from here — `edgeCacheIt` re-reads it

@@ -78,6 +78,7 @@ import {
   MOD_MESSAGE_BODY_MIN,
   MOD_MESSAGE_SUBJECT_MAX,
 } from '~/server/schema/blocks/app-moderator-message.schema';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 function modMessageErr(code: string, message: string): Error {
   return Object.assign(new Error(message), { name: 'AppModeratorMessageError', code });
@@ -204,6 +205,33 @@ describe('error mapping', () => {
     await expect(caller.messageAppOwner(INPUT)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: expect.stringContaining('900'),
+    });
+  });
+
+  it('RATE_LIMITED answers with the meta the service error carries', async () => {
+    const rateLimit = {
+      retryAfterSeconds: 900,
+      retryAt: '2026-01-01T00:15:00.000Z',
+      id: 'apps.moderator-messages',
+      kind: 'abuse',
+    };
+    mockMessageAppOwner.mockRejectedValueOnce(
+      Object.assign(modMessageErr('RATE_LIMITED', 'Too many moderator messages'), { rateLimit })
+    );
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    const refused = await caller.messageAppOwner(INPUT).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(rateLimitMetaOf(refused)).toEqual(rateLimit);
+  });
+
+  it('RATE_LIMITED with no meta of its own still answers the id and a retry', async () => {
+    mockMessageAppOwner.mockRejectedValueOnce(modMessageErr('RATE_LIMITED', 'Too many'));
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    const refused = await caller.messageAppOwner(INPUT).catch((e: unknown) => e);
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      retryAfterSeconds: 60,
+      id: 'apps.moderator-messages',
+      kind: 'abuse',
     });
   });
 

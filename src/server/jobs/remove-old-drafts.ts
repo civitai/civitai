@@ -1,14 +1,16 @@
 import { Prisma } from '@prisma/client';
-import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { modelDataHeldSql } from '~/server/services/legal-hold.service';
+import { draftKeptSql, draftModeratedSql } from '~/server/common/draft-keep';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('remove-old-drafts');
+
+const draftKept = Prisma.raw(draftKeptSql('m'));
+const draftModerated = Prisma.raw(draftModeratedSql('m'));
 
 /**
  * The reaping schedule now lives in `src/server/common/draft-reaping.ts` and is
@@ -135,6 +137,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
     FROM "Model" m
     JOIN "ModelMetric" mm ON mm."modelId" = m.id
     WHERE m.status IN ('Draft', 'Deleted')
+      -- Kept drafts (draft-keep.ts); the DELETE checks it again on the primary.
+      AND NOT ${draftKept}
       -- REAP_AGE_DAYS. Abandonment threshold: lowering this WIDENS what is
       -- destroyed. Not part of the fence below, and not tied to its window.
       AND m."updatedAt" < now() - INTERVAL '30 days'
@@ -194,7 +198,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   let deletedCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
-  let heldCount = 0;
+  let reportedCount = 0;
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
@@ -234,45 +238,50 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
       if (deletable.length === 0) continue;
 
-      // Checked in the DELETE itself, so a hold placed after the replica SELECT still stops it.
+      // Checked in the DELETE itself, so a report filed after the replica SELECT still stops it.
       const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
-        WITH doomed AS (
-          SELECT m.id FROM "Model" m
-          WHERE m.id = ANY(${deletable})
-            AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
-        ),
-        ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m
-        WHERE m.id IN (SELECT id FROM doomed)
+        WHERE m.id = ANY(${deletable})
+          AND NOT ${draftKept}
         RETURNING m.id
       `;
       const deletedSet = new Set(deletedRows.map((r) => r.id));
       const deleted = deletable.filter((id) => deletedSet.has(id));
       deletedCount += deleted.length;
 
-      // Not deleted and still there is held; gone already (another delete got there first) is not.
+      // Not deleted and still there was kept; gone already (another delete got there first) was not.
       // Reporting only, so a failure here must not fail a batch whose deletes have committed.
       const notDeleted = deletable.filter((id) => !deletedSet.has(id));
       if (notDeleted.length > 0) {
-        await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT id FROM "Model" WHERE id = ANY(${notDeleted}) ORDER BY id
+        await dbWrite.$queryRaw<{ id: number; moderated: boolean }[]>`
+          SELECT m.id, ${draftModerated} AS moderated
+          FROM "Model" m WHERE m.id = ANY(${notDeleted}) ORDER BY m.id
         `.then(
           (rows) => {
-            heldCount += rows.length;
-            // Model ids only: the same held drafts come up every night.
-            if (rows.length > 0)
+            const moderated = rows.filter((r) => r.moderated).map((r) => r.id);
+            const reported = rows.filter((r) => !r.moderated).map((r) => r.id);
+            reportedCount += reported.length;
+            // Model ids only: the same kept drafts come up every night.
+            if (moderated.length > 0)
               logToAxiom({
                 type: 'info',
                 name: 'remove-old-drafts',
-                message: 'Kept old draft models of owners under a legal hold',
-                modelIds: rows.map((r) => r.id),
+                message: 'Kept old draft models a moderator acted on',
+                modelIds: moderated,
+              });
+            if (reported.length > 0)
+              logToAxiom({
+                type: 'info',
+                name: 'remove-old-drafts',
+                message: 'Kept old draft models tied to a CsamReport',
+                modelIds: reported,
               });
           },
           (error: unknown) =>
             logToAxiom({
               type: 'error',
               name: 'remove-old-drafts',
-              message: 'Failed to read which old draft models a legal hold kept',
+              message: 'Failed to read why old draft models were kept',
               error: (error as Error)?.message,
               modelIds: notDeleted,
             })
@@ -334,7 +343,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   log(
     `Removed ${deletedCount} old draft models` +
       `${skippedCount > 0 ? `, ${skippedCount} skipped for recent activity` : ''}` +
-      `${heldCount > 0 ? `, ${heldCount} kept for a legal hold` : ''}` +
+      `${reportedCount > 0 ? `, ${reportedCount} kept for a report` : ''}` +
       `${errorCount > 0 ? `, ${errorCount} failed` : ''}`
   );
 });

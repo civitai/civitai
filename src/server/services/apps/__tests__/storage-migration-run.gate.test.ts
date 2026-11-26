@@ -217,7 +217,11 @@ describe('loadStorageMigrationBaseline', () => {
       slug: 'card-app',
       excludePublishRequestId: 'pubreq_SELF',
     });
-    expect(baseline).toEqual({ prev: ENFORCED, history: [LATEST, OLDER] });
+    expect(baseline).toEqual({
+      prev: ENFORCED,
+      history: [LATEST, OLDER],
+      approved: [LATEST, OLDER],
+    });
     expect(dbMock.dbRead.appBlock.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.appBlockPublishRequest.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -257,7 +261,7 @@ describe('loadStorageMigrationBaseline', () => {
         excludePublishRequestId: 'pubreq_SELF',
         selfManifest: SELF,
       })
-    ).toEqual({ prev: ENFORCED, history: [ENFORCED] });
+    ).toEqual({ prev: ENFORCED, history: [ENFORCED], approved: [ENFORCED] });
   });
 
   it('a version that does not change storage keeps app_blocks as the baseline', async () => {
@@ -281,7 +285,26 @@ describe('loadStorageMigrationBaseline', () => {
     expect(await loadStorageMigrationBaseline({ slug: 'new-app' })).toEqual({
       prev: null,
       history: [],
+      approved: [],
     });
+  });
+
+  it('🔴 approved holds EVERY approval (keyedBy immutability); history only the newest 50', async () => {
+    const rows = Array.from({ length: 51 }, (_, i) => ({
+      id: `pubreq_${i}`,
+      manifest: i === 50 ? OLDER : ENFORCED,
+    }));
+    dbMock.dbWrite.appBlock.findFirst.mockResolvedValueOnce({ id: APP, manifest: ENFORCED });
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValueOnce(rows);
+    const baseline = await loadStorageMigrationBaseline({ slug: 'card-app' });
+    expect(baseline.history).toHaveLength(50);
+    expect(baseline.history).not.toContain(OLDER);
+    expect(baseline.approved).toHaveLength(51);
+    expect(baseline.approved[50]).toBe(OLDER);
+    const query = dbMock.dbWrite.appBlockPublishRequest.findMany.mock.calls.at(-1)?.[0] as {
+      take?: number;
+    };
+    expect(query.take).toBeUndefined();
   });
 });
 
@@ -409,13 +432,55 @@ describe("the runner after a later approval (F1: loadTarget supersedes only on a
     const left = await advanceStorageMigrationRun(run, { store, persist: async () => undefined });
     expect(left.status).toBe('completed');
     expect(migrateDocuments).toHaveBeenCalledTimes(1);
-    // Against the latest approved declaration of `cards` (the same storage config).
+    // Against the latest approved declaration of `cards` (the same storage config). No enforced
+    // manifest is wired here, so its schema major is not known.
     expect((migrateDocuments.mock.calls[0] as unknown[])[1]).toEqual({
       name: 'cards',
       config: expect.objectContaining({
         visibility: 'private',
         schema: RUN_MANIFEST.storage.collections.cards.schema,
       }),
+      schemaMajor: null,
+    });
+  });
+
+  it("🔴 the run's collection carries its current schema major, derived from the approved history and the enforced manifest", async () => {
+    // `cards` @v1 had `legacy`; the run's request dropped it from a closed schema (not additive),
+    // which minted @v2. Rows in an order the derivation must not depend on.
+    const V1 = {
+      storage: {
+        collections: {
+          ...RUN_MANIFEST.storage.collections,
+          cards: {
+            visibility: 'private',
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: { keep: {}, legacy: {} },
+            },
+          },
+        },
+      },
+    };
+    wire({ id: 'pubreq_RUN', manifest: RUN_MANIFEST });
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValueOnce({ manifest: RUN_MANIFEST });
+    dbMock.dbRead.appBlockPublishRequest.findMany.mockResolvedValueOnce([
+      { id: 'pubreq_RUN', manifest: RUN_MANIFEST, reviewedAt: new Date('2026-11-02T00:00:00Z') },
+      { id: 'pubreq_V1', manifest: V1, reviewedAt: new Date('2026-11-01T00:00:00Z') },
+    ]);
+    const { migrateDocuments, store } = storeReturning();
+    const left = await advanceStorageMigrationRun(
+      { ...run, appBlockId: 'ab_GATE_MAJOR_4102' },
+      { store, persist: async () => undefined }
+    );
+    expect(left.status).toBe('completed');
+    expect((migrateDocuments.mock.calls[0] as unknown[])[1]).toMatchObject({
+      name: 'cards',
+      schemaMajor: 2,
+    });
+    expect(dbMock.dbWrite.appBlock.findUnique).toHaveBeenCalledWith({
+      where: { id: 'ab_GATE_MAJOR_4102' },
+      select: { manifest: true, updatedAt: true },
     });
   });
 

@@ -122,7 +122,7 @@ describe('getImage postless authorization', () => {
     expect(sql).toContain(`p."publishedAt" < now() OR p."userId" = ${VIEWER}`);
   });
 
-  it('admits a postless image that is the cover of a visible article', async () => {
+  it('admits a postless image that is the cover or banner of a visible article', async () => {
     const sql = await captureQuery({ id: IMAGE_ID });
 
     // Article covers are uploaded without a post, so `/images/<cover id>` 404'd for every reader
@@ -130,7 +130,7 @@ describe('getImage postless authorization', () => {
     // behind `i."postId" IS NULL` so an image in an unpublished post can't borrow it. Anchored on
     // both ends so a conjunct appended to the branch can't hide beside a substring match.
     expect(sql).toContain(
-      `OR (i."postId" IS NULL AND i."userId" = NULL) OR (i."postId" IS NULL AND EXISTS ( SELECT 1 FROM "Article" a WHERE a."coverId" = i.id AND a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' )) OR (i."postId" IS NULL AND ( EXISTS (`
+      `OR (i."postId" IS NULL AND i."userId" = NULL) OR (i."postId" IS NULL AND EXISTS ( SELECT 1 FROM "Article" a WHERE (a."coverId" = i.id OR a."bannerId" = i.id) AND a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' AND (a.availability != 'Private' OR a."userId" = NULL) )) OR (i."postId" IS NULL AND ( EXISTS (`
     );
   });
 
@@ -145,6 +145,17 @@ describe('getImage postless authorization', () => {
     // every postless image has a server-side rule (owner, article cover, bounty).
     const input = getImageSchema.parse({ id: IMAGE_ID, withoutPost: true });
     expect(input).toEqual({ id: IMAGE_ID });
+  });
+
+  it("keeps a review hold on the owner's own image unless the caller asks for the owner's view", async () => {
+    const hold = /i\."needsReview" NOT IN \('csam', ?'minor'\)( OR i\."userId" = (\w+))?\)/;
+    expect((await captureQuery({ id: IMAGE_ID, userId: VIEWER })).match(hold)?.[1]).toBeUndefined();
+    const owner = await captureQuery({ id: IMAGE_ID, userId: VIEWER, ownerSeesHeld: true });
+    expect(owner.match(hold)?.[2]).toBe(String(VIEWER));
+    // A signed-out read binds no owner, so no hold is lifted.
+    const anon = await captureQuery({ id: IMAGE_ID, ownerSeesHeld: true });
+    expect(anon).toMatch(hold);
+    expect(anon.match(hold)?.[1]).toBeUndefined();
   });
 
   it('leaves the moderator path ungated', async () => {

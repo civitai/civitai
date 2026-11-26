@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@mantine/core';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { armReactionNudge } from '~/components/HatTurf/reaction-nudge';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
+import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import type { HatSpot } from '~/components/HatTurf/HatTurfCardProvider';
 import revealClasses from '~/components/Sticker/placement-reveal.module.scss';
@@ -26,7 +28,7 @@ import type { HatPose, HatSticker } from '~/components/HatTurf/hat-turf.utils';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useDraftGestures } from '~/components/Sticker/useDraftGestures';
-import { HAT_MAX_SCALE } from '~/server/schema/turf.schema';
+import { HAT_MAX_SCALE, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   createStickerPlacementDraftStore,
   DraftStoreContext,
@@ -63,6 +65,8 @@ function HatTurfLive({ imageId }: { imageId: number }) {
 }
 
 const NARROW_PICTURE = 220;
+/** Hats a narrow feed card draws; wider cards draw all the feed reads (TURF_FEED_STICKERS). */
+const NARROW_DRAW_LIMIT = 3;
 const LOAD_EVENTS = ['load', 'loadedmetadata', 'resize'] as const;
 const UNDRESSED = resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false });
 
@@ -144,7 +148,11 @@ function HatDraftSticker({
   return (
     <DraftSticker
       draft={draft}
-      artwork={artwork(scale)}
+      artwork={
+        <span style={{ display: 'block', transform: flip ? 'scaleX(-1)' : undefined }}>
+          {artwork(scale)}
+        </span>
+      }
       selected
       dressed={UNDRESSED}
       price={0}
@@ -154,6 +162,8 @@ function HatDraftSticker({
       ownerUsername={null}
       onGesture={onGesture}
       opaque
+      liftOverTray
+      knobFlips
       commit={
         <Button
           size="sm"
@@ -227,6 +237,8 @@ function HatTurfLayerContent({
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
   const [surface, setSurface] = useState<HTMLElement | null>(null);
+  // When this visit's placement landed, for its time left.
+  const [placedAt, setPlacedAt] = useState<Date | null>(null);
   const stickers = stickersProp ?? feed?.stickers[imageId];
   const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length || !!corner);
 
@@ -281,6 +293,10 @@ function HatTurfLayerContent({
           : next
       );
     };
+    // The containers from the picture up to the layer's parent: padding on one moves a picture that
+    // keeps its size (the detail view's sticker timeline re-centres a width-limited video), and only
+    // that container's box changes, so they are watched too.
+    let between: HTMLElement[] = [];
     const bind = () => {
       const next = parent.querySelector<HTMLElement>('img, video');
       if (next === media) return;
@@ -288,9 +304,15 @@ function HatTurfLayerContent({
         observer.unobserve(media);
         for (const event of LOAD_EVENTS) media.removeEventListener(event, measure);
       }
+      for (const el of between) observer.unobserve(el);
+      between = [];
       media = next;
       if (!media) return;
       observer.observe(media);
+      for (let el = media.parentElement; el; el = el === parent ? null : el.parentElement) {
+        between.push(el);
+        observer.observe(el);
+      }
       for (const event of LOAD_EVENTS) media.addEventListener(event, measure);
       measure();
     };
@@ -315,7 +337,8 @@ function HatTurfLayerContent({
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
-  const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
+  const limit =
+    drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? NARROW_DRAW_LIMIT : TURF_FEED_STICKERS);
   const drawn = reveal.visible ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
   const overflow = reveal.visible ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
@@ -346,8 +369,13 @@ function HatTurfLayerContent({
       { event: feed.event, imageId, cosmeticId, source, data: { ...pose, opacity: 1 } },
       {
         onSuccess: () => {
+          if (feed.team)
+            armReactionNudge(imageId, feed.team, () =>
+              utils.hatTurf.reactionEarns.fetch({ event: feed.event, imageId }, { staleTime: 0 })
+            );
           setDraft(null);
           setPlaced(pose);
+          setPlacedAt(new Date());
           if (source === 'feed') track('feed_place_save', feed.event);
           void utils.hatTurf.getStock.invalidate();
           void utils.hatTurf.getSummaries.invalidate();
@@ -377,7 +405,12 @@ function HatTurfLayerContent({
   );
 
   return (
-    <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
+    <div
+      ref={ref}
+      className={clsx(classes.layer, (source !== 'feed' || draft) && classes.raised)}
+      data-testid="hat-turf-layer"
+      data-sticker-overlay
+    >
       {feed?.joined && <HatTurfLive imageId={imageId} />}
       {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
       {!box && corner && <div className={classes.corner}>{corner}</div>}
@@ -408,6 +441,7 @@ function HatTurfLayerContent({
                 style={{ ...poseStyle(pose), ['--hat-glow' as string]: colorOf(sticker.team) }}
               >
                 {revealed(String(sticker.id), hatArt(sticker.art, sticker.team, pose))}
+                {own && <HatTimeLeft placedAt={sticker.createdAt} />}
               </div>
             );
           })}
@@ -418,6 +452,7 @@ function HatTurfLayerContent({
               data-testid="hat-turf-placed"
             >
               {hatArt(chosenArt, feed.team, placed)}
+              <HatTimeLeft placedAt={placedAt} />
             </div>
           )}
           {/* Shown with Show hats off too: placing a hat is still the game. */}
@@ -441,10 +476,16 @@ function HatTurfLayerContent({
             </div>
           )}
           {overflow > 0 &&
+            // A feed card with no way to open the rest draws no chip: it would be a count with no action.
+            (onMore || source !== 'feed') &&
             (onMore ? (
               <button
                 type="button"
-                className={clsx(classes.more, classes.moreButton)}
+                className={clsx(
+                  classes.more,
+                  source === 'feed' && classes.moreFeed,
+                  classes.moreButton
+                )}
                 data-testid="hat-turf-more"
                 disabled={moreLoading}
                 onClick={(event) => {

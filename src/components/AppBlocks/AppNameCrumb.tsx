@@ -280,8 +280,8 @@ function AppNameCrumbCard({
       ) : (
         <>
           {/* The SHARED formatter the store cards use — `getRecommendLabel` renders
-              "No reviews yet" when `recommendPct` is null rather than a misleading
-              "0% recommend". Reusing it is what keeps the frame and the store from
+              "No reviews yet" for zero reviews and the counts when the percentage is
+              withheld. Reusing it is what keeps the frame and the store from
               disagreeing about the same app's rating. */}
           <Text size="xs" c="dimmed" data-testid="app-block-name-popover-recommend">
             {getRecommendLabel(detail.recommend, detail.reviewCount)}

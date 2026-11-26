@@ -1,0 +1,736 @@
+import * as grpc from '@grpc/grpc-js';
+import type { Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { VerifyToken } from '~/server/registry-adapter/auth';
+import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { composeAdapter } from '~/server/registry-adapter/doc-streams';
+import { createLevelFeed, parseSharedLevelClients } from '~/server/registry-adapter/level-feed';
+import type { SubscriptionLimiter } from '~/server/registry-adapter/limits';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
+import { abortableSleep } from '~/utils/errorHandling';
+import {
+  REGISTRY_SERVICE,
+  createGrpcServer,
+  decodeEvent,
+  encodeEvent,
+  errorInfoOf,
+  errorStatus,
+  listenGrpc,
+} from '~/server/registry-adapter/grpc';
+import type { Adapter, Change, Entity, StreamEvent } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import { createRegistryServer, sseFrame } from '~/server/registry-adapter/serve';
+import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
+
+/** The gRPC binding, through a real `@grpc/grpc-js` client. */
+
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
+// A body with every JSON kind, nested: what `Entity.body`'s JSON bytes must carry unchanged.
+const BODY = { slug: 'alpha', stars: 4.5, listed: true, retired: null, tags: ['a', 1, { q: [] }] };
+// Each app body has a known rating, so an anonymous subscription is sent it (`audience.ts`).
+const ent = (slug: string, rev: string, body: object = { slug }): Entity => ({
+  urn: `urn:apps.civitai.com:app/${slug}`,
+  schemas: [APPS],
+  rev,
+  body: { ...body, contentRating: 'g' },
+});
+
+const grpcServers: grpc.Server[] = [];
+let httpServer: HttpServer | undefined;
+afterEach(async () => {
+  for (const s of grpcServers.splice(0)) s.forceShutdown();
+  if (httpServer) {
+    httpServer.closeAllConnections();
+    await new Promise<void>((resolve) => httpServer!.close(() => resolve()));
+    httpServer = undefined;
+  }
+});
+
+/**
+ * A client of the method at `path`, built from a literal path rather than an exported service, so
+ * a server that does not answer at that path fails here as UNIMPLEMENTED.
+ */
+const clientAt = (path: string) =>
+  grpc.makeGenericClientConstructor(
+    { Subscribe: { ...REGISTRY_SERVICE.Subscribe, path } },
+    'Registry'
+  );
+const SPEC_PATH = '/registry.v1.Registry/Subscribe';
+const LEGACY_PATH = '/Source/Subscribe';
+const Client = clientAt(SPEC_PATH);
+
+type Outcome = {
+  events: StreamEvent[];
+  error?: { code: number; reason: string | null };
+};
+
+/**
+ * One gRPC subscription to `a`: its events until `until` holds (then cancelled), the stream ends,
+ * or 5s pass, and its error status if it failed.
+ */
+async function viaGrpc(
+  a: Adapter,
+  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string; meta: Buffer }>,
+  until: (events: StreamEvent[]) => boolean = () => false,
+  path: string = SPEC_PATH,
+  extra: {
+    onRegion?: (line: string) => void;
+    metadata?: grpc.Metadata;
+    limiter?: SubscriptionLimiter;
+    regionRestricted?: (origin: RequestOrigin) => boolean;
+    verifyToken?: VerifyToken;
+  } = {}
+): Promise<Outcome> {
+  const server = createGrpcServer(a, {
+    onRegion: extra.onRegion,
+    limiter: extra.limiter,
+    regionRestricted: extra.regionRestricted,
+    verifyToken: extra.verifyToken,
+  });
+  grpcServers.push(server);
+  const port = await listenGrpc(server, 0);
+  const PathClient = clientAt(path);
+  const client = new PathClient(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+  const subscribe = (
+    client as unknown as Record<
+      string,
+      (r: unknown, m: grpc.Metadata) => grpc.ClientReadableStream<StreamEvent>
+    >
+  ).Subscribe;
+  return new Promise<Outcome>((resolve) => {
+    const events: StreamEvent[] = [];
+    let cancelled = false;
+    const call = subscribe.call(
+      client,
+      { schema: APPS, cursor: '', urns: [], filter: '', ...req },
+      extra.metadata ?? new grpc.Metadata()
+    );
+    const finish = (outcome: Outcome) => {
+      clearTimeout(timer);
+      client.close();
+      resolve(outcome);
+    };
+    const stop = () => {
+      cancelled = true;
+      call.cancel();
+    };
+    const timer = setTimeout(stop, 5_000);
+    call.on('data', (e: StreamEvent) => {
+      events.push(e);
+      if (until(events)) stop();
+    });
+    call.on('error', (err: grpc.ServiceError) =>
+      finish(
+        cancelled && err.code === grpc.status.CANCELLED
+          ? { events }
+          : { events, error: { code: err.code, reason: errorInfoOf(err.metadata)?.reason ?? null } }
+      )
+    );
+    call.on('end', () => finish({ events }));
+  });
+}
+
+/** One HTTP subscription to `a`, read to its end, as the events its SSE frames carry. */
+async function viaHttp(a: Adapter, query: string): Promise<StreamEvent[]> {
+  httpServer = createRegistryServer(a);
+  await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve));
+  const { port } = httpServer.address() as AddressInfo;
+  const text = await (await fetch(`http://127.0.0.1:${port}${query}`)).text();
+  return text
+    .split('\n\n')
+    .filter((frame) => frame.startsWith('event: '))
+    .map((frame) => {
+      const type = /^event: (\w+)$/m.exec(frame)![1];
+      const data = JSON.parse(/^data: (.*)$/m.exec(frame)![1]) as Record<string, unknown>;
+      return { type, ...data } as StreamEvent;
+    });
+}
+
+/** The catalog adapter over `states`, read in turn, the last one repeating. */
+function catalog(states: Entity[][], store = createMemorySnapshotStore()) {
+  let reads = 0;
+  return createPollingAdapter({
+    namespace: 'apps.civitai.com',
+    serves: [APPS],
+    read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
+    store,
+    pollMs: 5,
+    sleep: abortableSleep,
+  });
+}
+
+const kinds = (events: StreamEvent[]) => events.map((e) => e.type);
+
+describe('the gRPC binding', () => {
+  it('🔴 a snapshot, then live, then the changes, the body carried unchanged', async () => {
+    const a = catalog([[ent('alpha', 'r1', BODY)], [ent('alpha', 'r1', BODY), ent('beta', 'r1')]]);
+    const { events, error } = await viaGrpc(a, {}, (e) => e.length === 3);
+    expect(error).toBeUndefined();
+    expect(kinds(events)).toEqual(['upsert', 'live', 'upsert']);
+    expect(events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1', BODY), cursor: '' });
+    expect((events[2] as { entity: Entity }).entity.urn).toBe('urn:apps.civitai.com:app/beta');
+  });
+
+  it('🔴 resumes from a cursor it issued: live with that cursor, then only what changed', async () => {
+    const store = createMemorySnapshotStore();
+    const first = await viaGrpc(catalog([[ent('alpha', 'r1')]], store), {}, (e) =>
+      e.some((x) => x.type === 'live')
+    );
+    const live = first.events.find((e) => e.type === 'live') as { cursor: string };
+    const resumed = await viaGrpc(
+      catalog([[ent('alpha', 'r2')]], store),
+      { cursor: live.cursor },
+      (e) => e.length === 2
+    );
+    expect(resumed.events).toEqual([
+      { type: 'live', cursor: live.cursor },
+      { type: 'upsert', entity: ent('alpha', 'r2'), cursor: expect.any(String) },
+    ]);
+  });
+
+  it('🔴 a cursor the source refuses is OUT_OF_RANGE with ErrorInfo reason cursor_expired, and no event', async () => {
+    const store = createMemorySnapshotStore(1);
+    const a = catalog([[ent('alpha', 'r1')], [ent('alpha', 'r2')]], store);
+    const first = await viaGrpc(a, {}, (e) => e.some((x) => x.type === 'live'));
+    const live = first.events.find((e) => e.type === 'live') as { cursor: string };
+    // One state kept per stream: a second snapshot evicts the first one's.
+    await a.snapshot(APPS, { signal: new AbortController().signal });
+    const res = await viaGrpc(a, { cursor: live.cursor });
+    expect(res).toEqual({
+      events: [],
+      error: { code: grpc.status.OUT_OF_RANGE, reason: 'cursor_expired' },
+    });
+  });
+
+  it('🔴 a schema this source does not serve is end, and nothing else', async () => {
+    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {
+      schema: 'urn:schema:elsewhere.example:model@v1',
+    });
+    expect(res).toEqual({ events: [{ type: 'end' }] });
+  });
+
+  it('a request that is not valid is INVALID_ARGUMENT with reason bad_request', async () => {
+    const res = await viaGrpc(catalog([[]]), { filter: '{not json' });
+    expect(res.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+  });
+
+  // Rule 6: a filter this source will not evaluate is refused, never ignored.
+  it.each([
+    ['a lookahead pattern', '{"properties":{"slug":{"pattern":"^(?!zzz)"}}}'],
+    ['a $ref', '{"$ref":"#/x","x":{"properties":{"slug":{"const":"zzz"}}}}'],
+    ['a filter over the size bound', JSON.stringify({ not: {}, description: 'x'.repeat(8192) })],
+  ])('🔴 %s is INVALID_ARGUMENT with reason bad_request, and no event', async (_name, filter) => {
+    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), { filter });
+    expect(res).toEqual({
+      events: [],
+      error: { code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' },
+    });
+  });
+
+  // Rule 4: `urns` outside this registry's namespace are a request it can never serve anything
+  // for.
+  it('🔴 urns all of another namespace are end first, and nothing else', async () => {
+    const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {
+      urns: ['urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d'],
+    });
+    expect(res).toEqual({ events: [{ type: 'end' }] });
+  });
+
+  it('🔴 an unexpected error is UNAVAILABLE and its text never reaches the client', async () => {
+    const failing: Adapter = {
+      ...catalog([[]]),
+      snapshot: async () => {
+        throw new Error('password authentication failed for db-canary-31');
+      },
+    };
+    const res = await viaGrpc(failing, {});
+    expect(res.error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+  });
+});
+
+describe('🔴 each gRPC subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /**
+   * One subscription from the edge's CA, with meta DE, read to live; its region lines and its
+   * outcome.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      req = { meta: Buffer.from('{"country":"DE"}', 'utf8') },
+      authorization,
+      limiter,
+      regionRestricted,
+    }: {
+      req?: Parameters<typeof viaGrpc>[1];
+      authorization?: string;
+      limiter?: SubscriptionLimiter;
+      regionRestricted?: (origin: RequestOrigin) => boolean;
+    } = {}
+  ) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const metadata = new grpc.Metadata();
+    metadata.set('cf-ipcountry', 'CA');
+    metadata.set('cf-connecting-ip', '192.0.2.7');
+    metadata.set('x-forwarded-for', '198.51.100.1');
+    if (authorization) metadata.set('authorization', authorization);
+    const logged: string[] = [];
+    const res = await viaGrpc(
+      catalog([[ent('alpha', 'r1')]]),
+      req,
+      (e) => e.some((x) => x.type === 'live'),
+      SPEC_PATH,
+      { onRegion: (line) => logged.push(line), metadata, limiter, regionRestricted }
+    );
+    return { error: res.error, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { error, logged } = await lines('1');
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=DE region=none source=meta restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { error, logged } = await lines(undefined);
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    const { error, logged } = await lines(undefined, { regionRestricted: () => true });
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=true principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { error, logged } = await lines('1', { req: { filter: '{not json' } });
+    expect(error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { error, logged } = await lines('1', { limiter });
+    expect(error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { error, logged } = await lines('1', { authorization: 'Bearer x' });
+    expect(error).toEqual({ code: grpc.status.UNAUTHENTICATED, reason: 'invalid_token' });
+    expect(logged).toEqual([]);
+  });
+});
+
+describe('🔴 the method answers at the spec path only', () => {
+  it('the service path is the one the spec names', () => {
+    expect(REGISTRY_SERVICE.Subscribe.path).toBe('/registry.v1.Registry/Subscribe');
+  });
+
+  it('the spec path: a snapshot, then live', async () => {
+    const res = await viaGrpc(
+      catalog([[ent('alpha', 'r1')]]),
+      {},
+      (e) => e.some((x) => x.type === 'live'),
+      SPEC_PATH
+    );
+    expect(res.error).toBeUndefined();
+    expect(kinds(res.events)).toEqual(['upsert', 'live']);
+    expect(res.events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1'), cursor: '' });
+  });
+
+  // The earlier spec's path is not served.
+  it.each([[LEGACY_PATH], ['/Nope/Subscribe']])(
+    '%s is UNIMPLEMENTED, with no event',
+    async (path) => {
+      const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {}, () => false, path);
+      expect(res).toEqual({ events: [], error: { code: grpc.status.UNIMPLEMENTED, reason: null } });
+    }
+  );
+});
+
+describe('🔴 a gRPC consumer that stops reading (rule 8)', () => {
+  it('is ended at once with RESOURCE_EXHAUSTED, not left open behind its full buffer', async () => {
+    // ~8 MB of snapshot: more than any HTTP/2 window, so a paused client stalls the server.
+    const pad = 'x'.repeat(4096);
+    const entities = Array.from({ length: 2000 }, (_, i) => ent(`app-${i}`, 'r1', { pad }));
+    const many: Adapter = {
+      namespace: 'apps.civitai.com',
+      serves: (s) => s === APPS,
+      // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+      snapshot: async () => ({ cursor: 'c1.snap', entities }),
+      changes: async () =>
+        (async function* (): AsyncGenerator<Change> {
+          // no changes
+        })(),
+    };
+    const server = createGrpcServer(many, { slowConsumerMs: 200 });
+    grpcServers.push(server);
+    const port = await listenGrpc(server, 0);
+    const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+    const call = (
+      client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<StreamEvent>>
+    ).Subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '' });
+    const outcome = await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => resolve('still open after 5s'), 5_000);
+      let received = 0;
+      call.on('data', () => {
+        // Stop reading after the first event, and never resume.
+        if (++received === 1) call.pause();
+      });
+      call.on('error', (err: grpc.ServiceError) => {
+        clearTimeout(timer);
+        resolve(grpc.status[err.code]);
+      });
+      call.on('end', () => {
+        clearTimeout(timer);
+        resolve('ended normally');
+      });
+    });
+    call.cancel();
+    client.close();
+    expect(outcome).toBe('RESOURCE_EXHAUSTED');
+  });
+});
+
+describe('🔴 the wire: the spec proto’s field numbers', () => {
+  // Hand-encoded from the spec's proto block, not from the code's schema: Event.live = 3,
+  // Event.end = 4, Event.progress = 6, Event.upsert = 1; Upsert.entity = 1, .cursor = 2;
+  // Entity.urn = 1, .schemas = 2, .rev = 3, .body = 4 (bytes: the body's JSON text, UTF-8).
+  // No event this source sends sets Entity.meta (5), and these set no Event.meta (5): empty is
+  // absent. A live or progress WITH meta is below.
+  it.each<[string, StreamEvent, string]>([
+    ['live', { type: 'live', cursor: 'ab' }, '1a040a026162'],
+    ['progress', { type: 'progress', cursor: 'ab' }, '32040a026162'],
+    ['end', { type: 'end' }, '2200'],
+    ['delete', { type: 'delete', urn: 'u', cursor: 'c' }, '12060a0175120163'],
+    [
+      'upsert',
+      {
+        type: 'upsert',
+        entity: { urn: 'u', schemas: ['s'], rev: 'r', body: 'b' },
+        cursor: 'c',
+      },
+      // body = 4: 3 bytes, `"b"`
+      '0a13' + '0a0e' + '0a0175' + '120173' + '1a0172' + '2203226222' + '120163',
+    ],
+  ])('%s', (_name, event, hex) => {
+    expect(encodeEvent(event).toString('hex')).toBe(hex);
+  });
+
+  const upsert = (body: unknown): StreamEvent => ({
+    type: 'upsert',
+    entity: { urn: 'u', schemas: ['s'], rev: 'r', body },
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- builds one event to encode, not a paging fake
+    cursor: 'c',
+  });
+  it.each<[string, unknown, string]>([
+    // `4.5`
+    ['a number', 4.5, '0a130a0e0a01751201731a01722203342e35120163'],
+    // `null`
+    ['null', null, '0a140a0f0a01751201731a017222046e756c6c120163'],
+    // `{"b":"é","a":[1,true,null]}`: keys in the body's own order (not sorted, so a sorting
+    // encoder fails this), no spaces, `é` as UTF-8 (c3 a9)
+    [
+      'an object',
+      { b: 'é', a: [1, true, null] },
+      '0a2c0a270a01751201731a0172221c' +
+        '7b2262223a22c3a9222c2261223a5b312c747275652c6e756c6c5d7d' +
+        '120163',
+    ],
+    // `[{"q":[]},"x"]`
+    [
+      'an array',
+      [{ q: [] }, 'x'],
+      '0a1e0a190a01751201731a0172220e5b7b2271223a5b5d7d2c2278225d120163',
+    ],
+  ])('upsert with %s as its body: the body is its JSON text', (_name, body, hex) => {
+    expect(encodeEvent(upsert(body)).toString('hex')).toBe(hex);
+    expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(upsert(body));
+  });
+
+  // Event.meta = 5 (bytes: a JSON object's text, UTF-8), here `{"head":{"seq":7}}` (18 bytes),
+  // encoded in field-number order: after live (3), before progress (6).
+  const META_HEX = '2a12' + '7b2268656164223a7b22736571223a377d7d';
+  it.each<[string, StreamEvent, string]>([
+    ['live', { type: 'live', cursor: 'ab', meta: { head: { seq: 7 } } }, '1a040a026162' + META_HEX],
+    [
+      'progress',
+      { type: 'progress', cursor: 'ab', meta: { head: { seq: 7 } } },
+      META_HEX + '32040a026162',
+    ],
+  ])('%s with meta: Event.meta is its JSON text, and decodes back', (_name, event, hex) => {
+    expect(encodeEvent(event).toString('hex')).toBe(hex);
+    expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(event);
+  });
+
+  it('a body JSON cannot hold is sent as JSON.stringify sends it, as over HTTP', () => {
+    // `{"n":null}`: a non-finite number is null, an undefined property is dropped.
+    expect(encodeEvent(upsert({ n: Number.NaN, gone: undefined })).toString('hex')).toBe(
+      '0a1a0a150a01751201731a017222' + '0a' + '7b226e223a6e756c6c7d' + '120163'
+    );
+  });
+});
+
+describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', () => {
+  it('an upsert frame carries the entity, its body a JSON value, not text or bytes', () => {
+    expect(
+      sseFrame({
+        type: 'upsert',
+        entity: { urn: 'u', schemas: ['s'], rev: 'r', body: { a: [1, true, null], b: 'é' } },
+        cursor: 'c',
+      })
+    ).toBe(
+      'event: upsert\n' +
+        'id: c\n' +
+        'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{"a":[1,true,null],"b":"é"}},"cursor":"c"}\n\n'
+    );
+  });
+
+  // INVARIANT GUARD (green before this change: the frame is the event's own fields): what the SSE
+  // consumer reads the head and a private record's seq from.
+  it("a live or progress frame carries the event's meta; a private entity's key and seq ride in the entity", () => {
+    expect(sseFrame({ type: 'live', cursor: 'c', meta: { head: { seq: 7 } } })).toBe(
+      'event: live\nid: c\ndata: {"cursor":"c","meta":{"head":{"seq":7}}}\n\n'
+    );
+    expect(sseFrame({ type: 'progress', cursor: 'c', meta: { head: { seq: 9 } } })).toBe(
+      'event: progress\nid: c\ndata: {"cursor":"c","meta":{"head":{"seq":9}}}\n\n'
+    );
+    expect(
+      sseFrame({
+        type: 'upsert',
+        entity: { urn: 'u', schemas: ['s'], rev: 'r', body: {}, key: 'k', seq: 12 },
+        cursor: 'c',
+      })
+    ).toBe(
+      'event: upsert\nid: c\n' +
+        'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{},"key":"k","seq":12},"cursor":"c"}\n\n'
+    );
+  });
+
+  it('over a live server, the same entity is a JSON object over HTTP and its JSON text over gRPC', async () => {
+    // Built here rather than by `ent`, so the body is exactly BODY whatever `ent` adds to one.
+    const entity: Entity = {
+      urn: 'urn:apps.civitai.com:app/alpha',
+      schemas: [APPS],
+      rev: 'r1',
+      body: BODY,
+    };
+    const one = (): Adapter => ({
+      namespace: 'apps.civitai.com',
+      serves: (s) => s === APPS,
+      // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+      snapshot: async () => ({ cursor: 'c1.snap', entities: [entity] }),
+      changes: async () =>
+        (async function* (): AsyncGenerator<Change> {
+          // no changes
+        })(),
+    });
+    httpServer = createRegistryServer(one());
+    await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve));
+    const { port: httpPort } = httpServer.address() as AddressInfo;
+    const sse = await (
+      await fetch(`http://127.0.0.1:${httpPort}/subscribe?schema=${encodeURIComponent(APPS)}`)
+    ).text();
+    const data = /^event: upsert\nid:.*\ndata: (.*)$/m.exec(sse)![1];
+    // The body is the entity's last field: its text runs to the entity's closing brace.
+    const bodyText = /"body":(.*)\},"cursor":""\}$/.exec(data)![1];
+    expect(bodyText).toBe(
+      '{"slug":"alpha","stars":4.5,"listed":true,"retired":null,"tags":["a",1,{"q":[]}]}'
+    );
+    expect(typeof (JSON.parse(data) as { entity: { body: unknown } }).entity.body).toBe('object');
+
+    const RawClient = grpc.makeGenericClientConstructor(
+      { Subscribe: { ...REGISTRY_SERVICE.Subscribe, responseDeserialize: (b: Buffer) => b } },
+      'Registry'
+    );
+    const server = createGrpcServer(one());
+    grpcServers.push(server);
+    const grpcPort = await listenGrpc(server, 0);
+    const client = new RawClient(`127.0.0.1:${grpcPort}`, grpc.credentials.createInsecure());
+    const messages = await new Promise<Buffer[]>((resolve, reject) => {
+      const out: Buffer[] = [];
+      const call = (
+        client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<Buffer>>
+      ).Subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '' });
+      call.on('data', (b: Buffer) => out.push(b));
+      call.on('end', () => resolve(out));
+      call.on('error', reject);
+    });
+    client.close();
+    // Entity.body (field 4, length-delimited): exactly the SSE body's text, byte for byte.
+    const text = Buffer.from(bodyText, 'utf8');
+    const field = Buffer.concat([Buffer.from([0x22, text.length]), text]);
+    expect(messages[0].includes(field)).toBe(true);
+  });
+});
+
+describe('🔴 HTTP and gRPC serve one core', () => {
+  // A snapshot narrowed by `urns` and a filter, a change the filter turns into a delete, and a
+  // change of another URN that only moves the cursor: every path through the core.
+  const snapshot = [ent('alpha', 'r1', { kind: 'onsite' }), ent('beta', 'r1', { kind: 'offsite' })];
+  const adapter = (): Adapter => ({
+    namespace: 'apps.civitai.com',
+    serves: (s) => s === APPS,
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+    snapshot: async () => ({ cursor: 'c1.snap', entities: snapshot }),
+    changes: async () =>
+      (async function* (): AsyncGenerator<Change> {
+        yield { upsert: ent('alpha', 'r2', { kind: 'offsite' }), cursor: 'c1.two' };
+        yield { upsert: ent('gamma', 'r1', { kind: 'onsite' }), cursor: 'c1.three' };
+      })(),
+  });
+  const FILTER = '{"properties":{"kind":{"const":"onsite"}}}';
+  const URNS = ['urn:apps.civitai.com:app/alpha', 'urn:apps.civitai.com:app/beta'];
+
+  it('the same request gets the same events, cursors included', async () => {
+    const http = await viaHttp(
+      adapter(),
+      `/subscribe?schema=${encodeURIComponent(APPS)}` +
+        URNS.map((u) => `&urn=${encodeURIComponent(u)}`).join('') +
+        `&filter=${encodeURIComponent(FILTER)}`
+    );
+    const overGrpc = await viaGrpc(adapter(), { urns: URNS, filter: FILTER });
+    expect(kinds(http)).toEqual(['upsert', 'live', 'delete', 'progress', 'end']);
+    expect(overGrpc).toEqual({ events: http });
+  });
+});
+
+describe('🔴 an error is named by its ErrorInfo reason alone, as the spec names it', () => {
+  it('the status details carry the reason and no domain', () => {
+    const { metadata } = errorStatus('cursor_expired', 'gone');
+    const raw = metadata!.get('grpc-status-details-bin')[0] as Buffer;
+    // Hand-encoded: google.rpc.Status { code = 1: 11 (OUT_OF_RANGE), message = 2: "gone",
+    // details = 3: Any { type_url = 1: "type.googleapis.com/google.rpc.ErrorInfo",
+    // value = 2: ErrorInfo { reason = 1: "cursor_expired" } } }. No ErrorInfo.domain (field 2).
+    expect(raw.toString('hex')).toBe(
+      '080b' +
+        '1204676f6e65' +
+        '1a3c' +
+        '0a28747970652e676f6f676c65617069732e636f6d2f676f6f676c652e7270632e4572726f72496e666f' +
+        '1210' +
+        '0a0e637572736f725f65787069726564'
+    );
+    expect(errorInfoOf(metadata)).toEqual({ reason: 'cursor_expired', domain: '' });
+  });
+});
+
+describe('🔴 a shared-collection level subscription is refused on gRPC (level-feed.ts, HTTP only)', () => {
+  const LEVEL_CLIENT = 'svc-appdata-grpc-93d2';
+  const SLUG = 'grpc-board-41';
+  const SCHEMA = `urn:schema:apps.civitai.com:${SLUG}/records@v1`;
+  const service: VerifyToken = async () => ({
+    subject: `service:${LEVEL_CLIENT}`,
+    userId: null,
+    clientId: LEVEL_CLIENT,
+    scope: 0n,
+    actor: null,
+    service: true,
+    expiresAt: null,
+  });
+  const store = createMemorySnapshotStore();
+  let reads = 0;
+  /** A level feed that WOULD serve one rated document, were the subscription not refused. */
+  const adapter = () =>
+    composeAdapter(
+      catalog([[]]),
+      createDocFeed({
+        source: {
+          head: async () => 0,
+          changes: async () => ({ docs: [], tombs: [] }),
+          documents: async () => [],
+          witness: async () => ({ docSeq: null, tombSeq: null }),
+        },
+        resolve: async () => null,
+        store,
+        pollMs: 60_000,
+        sleep: abortableSleep,
+      }),
+      undefined,
+      createLevelFeed({
+        clients: parseSharedLevelClients(LEVEL_CLIENT),
+        source: {
+          head: async () => {
+            reads += 1;
+            return 3;
+          },
+          changes: async () => ({ docs: [], tombs: [] }),
+          documents: async (_a, _c, _s, beforeKey) =>
+            beforeKey === ''
+              ? [
+                  {
+                    key: '01KG0R',
+                    data: { t: 'r-doc' },
+                    version: 1,
+                    seq: 3,
+                    createdAt: '2026-11-01T00:00:00.000Z',
+                    updatedAt: '2026-11-01T00:00:00.000Z',
+                  },
+                ]
+              : [],
+          witness: async () => ({ docSeq: 3, tombSeq: null }),
+        },
+        resolve: async () => ({
+          appId: 'ab_grpc_board',
+          slug: SLUG,
+          collection: 'records',
+          contentRating: 'pg13',
+          family: [{ urn: SCHEMA, body: { type: 'object' } }],
+          appBlockId: 'ab_grpc_board',
+          levelsOn: true,
+        }),
+        store,
+        pollMs: 60_000,
+        sleep: abortableSleep,
+        maxRecords: 2_001,
+      })
+    );
+  const bearer = () => {
+    const m = new grpc.Metadata();
+    m.set('authorization', 'Bearer svc');
+    return m;
+  };
+
+  it('a level subscription answers bad_request with no event and no store read', async () => {
+    reads = 0;
+    const out = await viaGrpc(
+      adapter(),
+      { schema: SCHEMA, meta: Buffer.from('{"level":4}', 'utf8') },
+      undefined,
+      SPEC_PATH,
+      { verifyToken: service, metadata: bearer() }
+    );
+    expect(out.events).toEqual([]);
+    expect(out.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+    expect(reads).toBe(0);
+  });
+
+  it('positive control: the same token naming no level is served as today (live, no error)', async () => {
+    const out = await viaGrpc(
+      adapter(),
+      { schema: SCHEMA },
+      (events) => events.some((e) => e.type === 'live'),
+      SPEC_PATH,
+      { verifyToken: service, metadata: bearer() }
+    );
+    expect(out.error).toBeUndefined();
+    expect(kinds(out.events)).toEqual(['live']);
+  });
+});

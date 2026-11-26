@@ -23,6 +23,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   uploadType: true,
   usageControl: true,
   licensingFee: true,
+  licensingFeeType: true,
   metrics: {
     select: {
       downloadCount: true,
@@ -49,6 +50,9 @@ export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSele
       mode: true,
       availability: true,
       userId: true,
+      // Decide the showcase hold only; not part of the response.
+      minor: true,
+      sfwOnly: true,
     },
   },
 });

@@ -6,17 +6,19 @@ const { createTransport, sent } = vi.hoisted(() => ({
   sent: [] as Record<string, any>[],
 }));
 
-vi.mock('~/env/server', () => ({
-  env: {
-    IS_BUILD: false,
+// The transport is built by @civitai/email from process.env; the app env only carries IS_BUILD.
+const appEnv = vi.hoisted(() => {
+  Object.assign(process.env, {
     EMAIL_HOST: 'smtp.test',
-    EMAIL_PORT: 587,
-    EMAIL_SECURE: false,
+    EMAIL_PORT: '587',
+    EMAIL_SECURE: 'false',
     EMAIL_USER: 'user',
     EMAIL_PASS: 'pass',
     EMAIL_FROM: 'Civitai <noreply@test.dev>',
-  },
-}));
+  });
+  return { IS_BUILD: false };
+});
+vi.mock('~/env/server', () => ({ env: appEnv }));
 
 // Real nodemailer message building, with the SMTP socket swapped for the JSON transport.
 // jsonTransport's info has no `rejected`, which sendEmail reads, so it is added here.
@@ -54,6 +56,7 @@ describe('sendEmail', () => {
       cc: 'c@test.dev',
       subject: 'Hello',
       html: '<p>Body</p>',
+      tags: { template: 'test', mailClass: 'transactional' },
     });
 
     expect(sent).toHaveLength(1);
@@ -67,15 +70,57 @@ describe('sendEmail', () => {
   });
 
   it('builds the pooled SMTP transport from the email env', async () => {
-    await import('~/server/email/client');
+    vi.resetModules(); // the transport is built once, on first use
+    createTransport.mockClear();
+    const { isEmailConfigured } = await import('~/server/email/client');
+    expect(isEmailConfigured()).toBe(true);
+    expect(createTransport).toHaveBeenCalledTimes(1);
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({
         pool: true,
+        maxConnections: 30,
+        maxMessages: 600,
         host: 'smtp.test',
         port: 587,
         secure: false,
         auth: { user: 'user', pass: 'pass' },
+        connectionTimeout: 5_000,
+        greetingTimeout: 5_000,
+        socketTimeout: 30_000,
       })
     );
+  });
+
+  it('passes custom headers through to the message', async () => {
+    const { sendEmail } = await import('~/server/email/client');
+    await sendEmail({
+      to: 'a@test.dev',
+      subject: 'Hello',
+      html: '<p>Body</p>',
+      headers: { 'List-Unsubscribe': '<https://example.test/u>' },
+      tags: { template: 'test', mailClass: 'transactional' },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].headers).toEqual({
+      'List-Unsubscribe': '<https://example.test/u>',
+      'X-Civitai-Send-Id': expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+  });
+
+  it('sends nothing and reports unconfigured during a build', async () => {
+    appEnv.IS_BUILD = true;
+    try {
+      const { sendEmail, isEmailConfigured } = await import('~/server/email/client');
+      expect(isEmailConfigured()).toBe(false);
+      await sendEmail({
+        to: 'a@test.dev',
+        subject: 'Hello',
+        html: '<p>Body</p>',
+        tags: { template: 'test', mailClass: 'transactional' },
+      });
+      expect(sent).toHaveLength(0);
+    } finally {
+      appEnv.IS_BUILD = false;
+    }
   });
 });

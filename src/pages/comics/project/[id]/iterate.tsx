@@ -11,6 +11,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
+  notifyIfReferenceImagesSkipped,
 } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
@@ -27,7 +28,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -68,7 +69,7 @@ function ComicIteratePage() {
   const numericPanelId = panelId ? Number(panelId) : null;
   const numericPanelPosition = Number(panelPosition) || 0;
   const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
 
   // ── Fetch project data for references + cost ──
   // Iterate.tsx only needs `baseModel`, `references`, and `name` — no
@@ -153,6 +154,7 @@ function ComicIteratePage() {
 
   // ── Mutations ──
   const iterateGenerateMutation = trpc.comics.iterateGenerate.useMutation({
+    onSuccess: notifyIfReferenceImagesSkipped,
     onError: (error) => showErrorNotification({ error, title: 'Failed to generate' }),
   });
 
@@ -161,6 +163,7 @@ function ComicIteratePage() {
   });
 
   const createPanelFromImageMutation = trpc.comics.enhancePanel.useMutation({
+    onSuccess: notifyIfReferenceImagesSkipped,
     onError: (error) => showErrorNotification({ error, title: 'Failed to create panel' }),
   });
 
@@ -265,8 +268,7 @@ function ComicIteratePage() {
       params.set('pendingWidth', String(info.width));
       params.set('pendingHeight', String(info.height));
       if (info.prompt) params.set('pendingPrompt', info.prompt);
-      const url = `//${redDomain}/comics/project/${projectId}/iterate?${params.toString()}`;
-      return syncAccount(url);
+      return redHref(`/comics/project/${projectId}/iterate?${params.toString()}`);
     },
     [
       redDomain,
@@ -277,7 +279,7 @@ function ComicIteratePage() {
       imageUrl,
       width,
       height,
-      syncAccount,
+      redHref,
     ]
   );
 

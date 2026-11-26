@@ -47,8 +47,8 @@ had no `pnpm` at all — which silently disables the daemon's own auto-install p
 **The fix, whatever your setup: start it from a shell whose `node --version` matches `.nvmrc` and which
 has `pnpm` on `PATH`.** `nvm use` at the repo root gives you both.
 
-**On NixOS (optional)** the flake wrapper does that for you — it pins node to the same version `.nvmrc`
-names (until nixpkgs ships 24.22.1 it gives 24.19.0; see the note in `flake.nix`), puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
+**On NixOS (optional)** the flake wrapper does that for you — it takes node's major from `.nvmrc`
+(the locked nixpkgs can lag `.nvmrc`'s patch; see the note in `flake.nix`), puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
 
 ```bash
 nix run .#dev-server -- status
@@ -192,6 +192,7 @@ node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB 
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
+node .claude/skills/dev-server/scripts/loopback-bind.selftest.mjs      # apps answer on 127.0.0.1 and [::1], nothing else
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
 node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new`/`wt env` never overwrite a credential a tree already has
@@ -321,7 +322,7 @@ against.
 `envModeSummary`, and the daemon log prints them next to `Env:` at start:
 
 ```
-Env: <repos-root>\worktrees\thing\.env
+Env: <worktree-root>\thing\.env
 Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
 ```
 
@@ -493,7 +494,7 @@ Redbird binds ports 80 and 443. On Windows the daemon must be launched from an e
 
 ## Apps
 
-`moderator` and `creator-studio` run through the daemon the same way the main app does — started
+`moderator`, `creator-studio` and `training-studio` run through the daemon the same way the main app does — started
 from the worktree you are in, logs in the same place, port reserved by the same allocator.
 
 ```bash
@@ -514,12 +515,13 @@ appear under `apps` in `status`, beside the main-app sessions.
 |-----|----------------|
 | moderator | 5174 |
 | creator-studio | 5175 |
+| training-studio | 5176 |
 
 **Preferred, not fixed.** The first worktree to start an app gets the number in that table; a second
 worktree starting the same app drifts to the next free port instead of dying on EADDRINUSE, so two
 branches of the same app can run side by side. Nothing has to be rewritten to follow the drift:
-neither app's `.env` carries its own port or base URL. Every app's preferred port is held back from
-the drift search, so moderator drifting never displaces creator-studio.
+no app's `.env` carries its own port or base URL. Every app's preferred port is held back from
+the drift search, so one app drifting never displaces another.
 
 🔴 **Read the `path` field, not just the fact that it started.** An app serving the wrong checkout
 answers 200s and looks completely healthy — the only thing that contradicts you is `path`.
@@ -550,15 +552,15 @@ anyone in without it. The **main app is not** started: the apps reach it over RE
 and a cold Next.js compile is not something to trigger on someone's behalf. Start it yourself if the
 page you are looking at needs it.
 
-### They bind `::`, deliberately
+### They listen on loopback only, under both spellings
 
-The daemon starts every vite sidecar with `--host ::`. Bound to `127.0.0.1` they answered on v4 and
-nothing on `[::1]`; Windows resolves `localhost` to `::1` first, so the browser got
-connection-refused while curl — which falls back to v4 — reported the server perfectly healthy.
-`--host localhost` is **not** the fix either: it resolves to `::1` only, moving the outage onto every
-caller that hardcodes `127.0.0.1`. `::` accepts v4-mapped addresses, so `localhost`, `127.0.0.1` and
-`[::1]` all answer, and it matches what `next dev` already binds on 3000. Tradeoff: `::` also listens
-on LAN interfaces, where the old bind was loopback-only.
+The daemon starts every vite sidecar with `--host 127.0.0.1` and serves `[::1]` on the same port with
+a forward that opens and closes with the app. Both are needed: Windows resolves `localhost` to `::1`
+first, while other callers hardcode `127.0.0.1`, and vite accepts a single `--host`. Without the
+`[::1]` side, the browser got connection-refused while curl, which falls back to v4, reported the
+server healthy. `localhost`, `127.0.0.1` and `[::1]` all answer where the machine has IPv6 loopback;
+otherwise the daemon logs that `[::1]` is not served. Apps see `[::1]` clients as `127.0.0.1` in
+`getClientAddress()`.
 
 ### First request is slow
 
@@ -596,7 +598,7 @@ AUTH_HUB_PORT=5173         # hub dev port (matches AUTH_JWT_ISSUER)
 
 ### One-time env setup
 
-The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It's already been generated for local dev, reusing the main app's dev DB / redis / secret / provider creds, with a fresh EC P-256 (ES256) signing keypair. Two files matter:
+The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It was generated for local dev with the main app's redis / secret / provider creds and a fresh EC P-256 (ES256) signing keypair. **Its `DATABASE_URL` / `DATABASE_REPLICA_URL` are whatever that file says, and nothing syncs or checks them:** they must name the same database as the primary root `.env` (the dev clone), or every session signs in against a different database than the app reads. Check the host before relying on a login (`DATABASE_URL` host:port in both files should match), and restart the hub (`auth restart`) after changing it. Two files matter:
 
 - `apps/auth/.env` — hub signing keypair (`AUTH_JWT_PRIVATE_KEY`/`_PUBLIC_KEY`, PKCS8/SPKI), `AUTH_JWT_ISSUER=http://localhost:5173`, shared `NEXTAUTH_SECRET` + `AUTH_INTERNAL_TOKEN`, DB/redis, providers, email.
 - root `.env` — spoke side: `AUTH_JWT_ISSUER` + `AUTH_JWKS_URI` (→ `localhost:5173`) + a matching `AUTH_INTERNAL_TOKEN`.
@@ -684,7 +686,7 @@ It earns the space in any checkout you restart: **45.8s cold vs 4.3s warm** on t
 
 Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
 
-Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`, `WORKTREE_CACHE_MAX_GB`.
+Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`, `WORKTREE_CACHE_MAX_GB`, `WORKTREE_ROOT`.
 
 ## Worktrees
 
@@ -695,11 +697,14 @@ node .claude/skills/dev-server/cli.mjs wt new <name> <branch>                   
 node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat/x  # a feature integration branch
 ```
 
-It fetches the base, runs `git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track <base>`,
+It fetches the base, runs `git worktree add <worktree-root>/<name> -b <branch> --no-track refs/remotes/<base>`
+(`<worktree-root>` is `<repos-root>/worktrees`, or `WORKTREE_ROOT` from the skill `.env` / process env when set;
+it must be absolute, and trees already under another root keep working with `wt stale`, `wt rm` and the daemon),
 initialises `event-engine-common`, writes `.envrc` when the primary has one, copies every `.env`
 file (root and per-app, plus the skills' credentials), runs `pnpm install` (`--no-install` skips it),
 and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
-existing branch or path. Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
+existing branch or path, and a `<branch>` starting `origin/` or `refs/` (it is the new
+branch's name, not the base: the base is `--base`). Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
 the repos root, tracking `origin/main`). Why each flag matters: `docs/dev/worktrees.md`.
 
 Remove one when its PR merges with `wt stale` / `wt rm` (below).

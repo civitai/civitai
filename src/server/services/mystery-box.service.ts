@@ -20,14 +20,21 @@ import {
 } from '~/server/services/buzz.service';
 import {
   countHeldItems,
+  countHeldItemsBySourceSuffix,
   findHeldItemById,
   findHeldItemBySource,
   grantItem,
+  listHeldItemsBySourcePrefix,
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
   listHeldItems,
 } from '~/server/services/item.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
+import {
+  assertCreatorBoxSellable,
+  payCreatorBoxSaleAfterGrant,
+  singleColorOf,
+} from '~/server/services/creator-box-payout.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, lockItemHolder } from '~/server/services/item-holder-lock';
 import {
   assertConfirmedPrice,
@@ -56,8 +63,13 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   BOX_OPENING_REWARD_STATUS,
   boxOpenClaimKey,
+  boxPackTermsOf,
+  type BoxPackTerms,
   cosmeticTeamOf,
   isForTeam,
+  packBoxSourceKey,
+  packBoxSourcePrefix,
+  parsePackBoxSourceKey,
 } from '@civitai/shared/mystery-box';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
@@ -210,14 +222,70 @@ async function markLeftForUser<T extends { cosmeticId: number; rewardDefinitionI
 }
 
 /**
+ * For each holding, how many of its box's catalog entries for the holder's `team` are still left
+ * for them, by `markLeftForUser`'s rule (owned from any source, or drawn from this box, is not
+ * left). Two reads for all the holdings together, so a job checking many holders reads per page,
+ * not per holder.
+ */
+export async function countLeftForHolders(
+  client: Prisma.TransactionClient,
+  holdings: {
+    boxDefinitionId: number;
+    userId: number;
+    team: string | undefined;
+    catalog: BoxCatalogEntry[];
+  }[]
+): Promise<number[]> {
+  if (!holdings.length) return [];
+  const userIds = [...new Set(holdings.map((h) => h.userId))];
+  const boxIds = [...new Set(holdings.map((h) => h.boxDefinitionId))];
+  const cosmeticIds = [...new Set(holdings.flatMap((h) => h.catalog.map((e) => e.cosmeticId)))];
+  const owned = cosmeticIds.length
+    ? await client.$queryRaw<{ userId: number; cosmeticId: number }[]>`
+        SELECT DISTINCT "userId", "cosmeticId" FROM "UserCosmetic"
+        WHERE "userId" = ANY(${userIds}::int[]) AND "cosmeticId" = ANY(${cosmeticIds}::int[])`
+    : [];
+  const drawn = await client.$queryRaw<
+    { userId: number; boxDefinitionId: number; rewardDefinitionId: number }[]
+  >`
+    SELECT DISTINCT "userId", "boxDefinitionId", "rewardDefinitionId" FROM "BoxOpening"
+    WHERE "userId" = ANY(${userIds}::int[]) AND "boxDefinitionId" = ANY(${boxIds}::int[])
+      AND "rewardType" = ${ITEM_TYPE.cosmetic}`;
+  const ownedKeys = new Set(owned.map((o) => `${o.userId}:${o.cosmeticId}`));
+  const drawnKeys = new Set(
+    drawn.map((d) => `${d.userId}:${d.boxDefinitionId}:${d.rewardDefinitionId}`)
+  );
+  return holdings.map(
+    ({ boxDefinitionId, userId, team, catalog }) =>
+      catalog.filter(
+        (entry) =>
+          isForTeam(entry.team, team) &&
+          !ownedKeys.has(`${userId}:${entry.cosmeticId}`) &&
+          !drawnKeys.has(`${userId}:${boxDefinitionId}:${entry.rewardDefinitionId}`)
+      ).length
+  );
+}
+
+/**
  * Everything this box holds for this user, read live: its enabled contents for their `team`, each
  * marked whether it is still `left` for them.
  */
 export async function getBoxContentsForUser(
   client: Prisma.TransactionClient,
-  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
+  {
+    boxDefinitionId,
+    userId,
+    team,
+    catalog,
+  }: {
+    boxDefinitionId: number;
+    userId: number;
+    team?: string;
+    /** This box's `getBoxCatalog`, when the caller already read it. */
+    catalog?: BoxCatalogEntry[];
+  }
 ): Promise<BoxContentForUser[]> {
-  const forTeam = (await getBoxCatalog(client, boxDefinitionId)).flatMap(
+  const forTeam = (catalog ?? (await getBoxCatalog(client, boxDefinitionId))).flatMap(
     ({ team: cosmeticTeam, ...entry }) => (isForTeam(cosmeticTeam, team) ? [entry] : [])
   );
   return markLeftForUser(client, { boxDefinitionId, userId }, forTeam);
@@ -229,7 +297,7 @@ export async function getBoxContentsForUser(
  */
 export async function getBoxPoolForUser(
   client: Prisma.TransactionClient,
-  params: { boxDefinitionId: number; userId: number; team?: string }
+  params: Parameters<typeof getBoxContentsForUser>[1]
 ): Promise<BoxPoolEntry[]> {
   const contents = await getBoxContentsForUser(client, params);
   return contents.filter((entry) => entry.left).map(({ left: _left, ...entry }) => entry);
@@ -361,6 +429,9 @@ export const clearBoxCatalogDisplayCache = () => {
   servedVersions.clear();
 };
 
+/** Who sells a creator's pack. */
+export type BoxSeller = { id: number; username: string | null };
+
 export type MysteryBoxView = {
   boxDefinitionId: number;
   name: string;
@@ -379,6 +450,16 @@ export type MysteryBoxView = {
     title: string;
     unitAmount: number;
     availableTo: Date | null;
+  } | null;
+  /** The listing selling a pack of these boxes, under the same conditions as `listing`. */
+  packListing: {
+    shopItemId: number;
+    title: string;
+    unitAmount: number;
+    availableTo: Date | null;
+    size: number;
+    /** The tiers the pack's first box draws from while any of them has something left. */
+    guaranteedTierIds: number[];
   } | null;
   tiers: {
     id: number;
@@ -400,6 +481,7 @@ export type MysteryBoxView = {
   }[];
   /** The viewer's unopened boxes of it, as `Item.id` strings. */
   heldBoxItemIds: string[];
+  seller?: BoxSeller;
 };
 
 // Archived boxes too: one still held still opens.
@@ -444,12 +526,14 @@ export async function buildMysteryBoxView(
     team,
     tiers,
     listing,
+    packListing,
     heldBoxItemIds,
   }: {
     userId: number;
     team: string | undefined;
     tiers: BoxTierRow[];
     listing: MysteryBoxView['listing'];
+    packListing: MysteryBoxView['packListing'];
     heldBoxItemIds: string[];
   }
 ): Promise<MysteryBoxView> {
@@ -467,6 +551,7 @@ export async function buildMysteryBoxView(
     team,
     art: boxArtFor((box.params ?? {}) as BoxParams, team),
     listing,
+    packListing,
     tiers: tiers
       .filter((tier) => tier.boxDefinitionId === box.id)
       .map(({ boxDefinitionId: _box, ...tier }) => tier),
@@ -483,12 +568,21 @@ export async function buildMysteryBoxView(
   };
 }
 
+/** A listing's pack terms, or null for a single box and for terms that don't parse (not sold). */
+function packTermsOrNull(meta: unknown): BoxPackTerms | null | 'malformed' {
+  try {
+    return boxPackTermsOf(meta) ?? null;
+  } catch {
+    return 'malformed';
+  }
+}
+
 /**
  * The published listings of these boxes, and which of a box's is on sale now (stock, then its sale
- * window).
+ * window): `onSale` the one selling a single box, `packOnSale` the one selling a pack of them.
  */
 export async function readBoxListings(boxIds: number[]) {
-  const listings = await dbRead.cosmeticShopItem.findMany({
+  const rows = await dbRead.cosmeticShopItem.findMany({
     where: { itemDefinitionId: { in: boxIds }, status: CosmeticShopItemStatus.Published },
     select: {
       id: true,
@@ -498,19 +592,31 @@ export async function readBoxListings(boxIds: number[]) {
       availableQuantity: true,
       availableFrom: true,
       availableTo: true,
+      meta: true,
     },
     orderBy: { id: 'asc' },
   });
+  const listings = rows.map(({ meta, ...listing }) => ({
+    ...listing,
+    pack: packTermsOrNull(meta),
+  }));
   // Only a listing with a quantity needs its sold count, read for those ids alone.
   const sold = await getSoldCounts(
     listings.filter((l) => l.availableQuantity !== null).map((l) => l.id)
   );
   const now = new Date();
-  const onSale = (boxId: number) =>
-    listings.find(
-      (l) => l.itemDefinitionId === boxId && !boxSaleRefusal(l, sold.get(l.id) ?? 0, now)
-    );
-  return { listings, onSale };
+  const sellable = (l: (typeof listings)[number], boxId: number) =>
+    l.itemDefinitionId === boxId &&
+    l.pack !== 'malformed' &&
+    !boxSaleRefusal(l, sold.get(l.id) ?? 0, now);
+  const onSale = (boxId: number) => listings.find((l) => !l.pack && sellable(l, boxId));
+  const packOnSale = (boxId: number) => {
+    const listing = listings.find((l) => l.pack && sellable(l, boxId));
+    return listing?.pack && listing.pack !== 'malformed'
+      ? { ...listing, pack: listing.pack }
+      : undefined;
+  };
+  return { listings, onSale, packOnSale };
 }
 
 /** An event's boxes in these statuses, in id order. */
@@ -532,12 +638,60 @@ export type MysteryBoxCatalogEntry = {
   description: string | null;
   /** The price of the listing on sale now. */
   unitAmount: number;
+  /** The pack of these boxes on sale now, if any. */
+  pack: { unitAmount: number; size: number; guaranteedTierIds: number[] } | null;
   tiers: MysteryBoxView['tiers'];
   /** Every enabled content with the team it is for; each team draws only from its own. */
   contents: { contentId: number; tierId: number; team: string | null }[];
   /** The event's teams, including any with nothing of its own in the box. */
   teams: string[];
 };
+
+/**
+ * The catalog entries for boxes on sale: each box with its tiers and display contents. A box with no
+ * live listing is skipped. `withPack` adds the bundle listing; creator packs have none.
+ */
+export async function buildCatalogEntries(
+  boxes: BoxDefinitionRow[],
+  { teams, withPack }: { teams: string[]; withPack: boolean }
+): Promise<MysteryBoxCatalogEntry[]> {
+  const boxIds = boxes.map((box) => box.id);
+  const [{ onSale, packOnSale }, tiers] = await Promise.all([
+    readBoxListings(boxIds),
+    getBoxTiers(boxIds),
+  ]);
+  const entries = await Promise.all(
+    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
+      const listing = onSale(box.id);
+      if (!listing) return null;
+      const catalog = await getBoxCatalogForDisplay(box);
+      const pack = withPack ? packOnSale(box.id) : undefined;
+      return {
+        boxDefinitionId: box.id,
+        name: box.name,
+        description: box.description,
+        unitAmount: listing.unitAmount,
+        pack: pack
+          ? {
+              unitAmount: pack.unitAmount,
+              size: pack.pack.size,
+              guaranteedTierIds: pack.pack.guaranteedTierIds,
+            }
+          : null,
+        tiers: tiers
+          .filter((tier) => tier.boxDefinitionId === box.id)
+          .map(({ boxDefinitionId: _box, ...tier }) => tier),
+        contents: catalog.map(({ contentId, tierId, team }) => ({
+          contentId,
+          tierId,
+          team: team ?? null,
+        })),
+        teams,
+      };
+    })
+  );
+  return entries.filter((entry): entry is MysteryBoxCatalogEntry => entry !== null);
+}
 
 /**
  * An event's mystery boxes on sale now, for a viewer not on a team (signed out, or not joined): the
@@ -562,32 +716,66 @@ export async function getMysteryBoxCatalogForEvent({
 
   const boxes = await readEventBoxes(event, [ITEM_DEFINITION_STATUS.published]);
   if (!boxes.length) return [];
+  return buildCatalogEntries(boxes, { teams: [...access.teams], withPack: true });
+}
+
+/**
+ * The viewer's view of each box: on sale (only while `playable` and published), or held. A box that
+ * is neither is skipped. `withPack` adds the bundle listing; creator packs have none.
+ */
+export async function buildBoxViews(
+  boxes: BoxDefinitionRow[],
+  {
+    userId,
+    team,
+    playable,
+    withPack,
+  }: { userId: number; team: string | undefined; playable: boolean; withPack: boolean }
+): Promise<MysteryBoxView[]> {
   const boxIds = boxes.map((box) => box.id);
-  const [{ onSale }, tiers] = await Promise.all([readBoxListings(boxIds), getBoxTiers(boxIds)]);
+  const [{ onSale, packOnSale }, held, tiers] = await Promise.all([
+    readBoxListings(boxIds),
+    listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
+    getBoxTiers(boxIds),
+  ]);
 
   const views = await Promise.all(
-    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
-      const listing = onSale(box.id);
-      if (!listing) return null;
-      const catalog = await getBoxCatalogForDisplay(box);
-      return {
-        boxDefinitionId: box.id,
-        name: box.name,
-        description: box.description,
-        unitAmount: listing.unitAmount,
-        tiers: tiers
-          .filter((tier) => tier.boxDefinitionId === box.id)
-          .map(({ boxDefinitionId: _box, ...tier }) => tier),
-        contents: catalog.map(({ contentId, tierId, team }) => ({
-          contentId,
-          tierId,
-          team: team ?? null,
-        })),
-        teams: [...access.teams],
-      };
+    boxes.map(async (box): Promise<MysteryBoxView | null> => {
+      const sold = playable && box.status === ITEM_DEFINITION_STATUS.published;
+      const listing = sold ? onSale(box.id) : undefined;
+      const pack = sold && withPack ? packOnSale(box.id) : undefined;
+      const heldBoxItemIds = held
+        .filter((item) => item.itemDefinitionId === box.id)
+        .map((item) => item.id.toString());
+      if (!listing && !pack && !heldBoxItemIds.length) return null;
+
+      return buildMysteryBoxView(box, {
+        userId,
+        team,
+        tiers,
+        heldBoxItemIds,
+        listing: listing
+          ? {
+              shopItemId: listing.id,
+              title: listing.title,
+              unitAmount: listing.unitAmount,
+              availableTo: listing.availableTo,
+            }
+          : null,
+        packListing: pack
+          ? {
+              shopItemId: pack.id,
+              title: pack.title,
+              unitAmount: pack.unitAmount,
+              availableTo: pack.availableTo,
+              size: pack.pack.size,
+              guaranteedTierIds: pack.pack.guaranteedTierIds,
+            }
+          : null,
+      });
     })
   );
-  return views.filter((view): view is MysteryBoxCatalogEntry => view !== null);
+  return views.filter((view): view is MysteryBoxView => view !== null);
 }
 
 /**
@@ -616,40 +804,7 @@ export async function getMysteryBoxesForEvent({
 
   const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
   if (!boxes.length) return [];
-  const boxIds = boxes.map((box) => box.id);
-
-  const [{ onSale }, held, tiers] = await Promise.all([
-    readBoxListings(boxIds),
-    listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
-    getBoxTiers(boxIds),
-  ]);
-
-  const views = await Promise.all(
-    boxes.map(async (box): Promise<MysteryBoxView | null> => {
-      const listing =
-        playable && box.status === ITEM_DEFINITION_STATUS.published ? onSale(box.id) : undefined;
-      const heldBoxItemIds = held
-        .filter((item) => item.itemDefinitionId === box.id)
-        .map((item) => item.id.toString());
-      if (!listing && !heldBoxItemIds.length) return null;
-
-      return buildMysteryBoxView(box, {
-        userId,
-        team,
-        tiers,
-        heldBoxItemIds,
-        listing: listing
-          ? {
-              shopItemId: listing.id,
-              title: listing.title,
-              unitAmount: listing.unitAmount,
-              availableTo: listing.availableTo,
-            }
-          : null,
-      });
-    })
-  );
-  return views.filter((view): view is MysteryBoxView => view !== null);
+  return buildBoxViews(boxes, { userId, team, playable, withPack: true });
 }
 
 // How long a purchase still settling counts against what is left for its buyer, from its last
@@ -657,6 +812,43 @@ export async function getMysteryBoxesForEvent({
 // pressed again it resumes, and a charged one is granted without this check, so a box can then be
 // sold past what is left (kept, as an empty box, until contents arrive or a moderator refunds it).
 const PENDING_CLAIM_RESERVES_MS = 15 * 60 * 1000;
+
+/**
+ * A user's purchases of this box still settling, across its listings: the boxes they will grant
+ * (a pack's claim counts its size), and how many of them are packs.
+ */
+async function countPendingBoxClaims(
+  tx: Prisma.TransactionClient,
+  {
+    boxDefinitionId,
+    userId,
+    exceptTransactionId,
+  }: { boxDefinitionId: number; userId: number; exceptTransactionId: string }
+) {
+  const listings = await tx.cosmeticShopItem.findMany({
+    where: { itemDefinitionId: boxDefinitionId },
+    select: { id: true, meta: true },
+  });
+  const since = new Date(Date.now() - PENDING_CLAIM_RESERVES_MS);
+  const count = (shopItemIds: number[]) =>
+    countPendingShopPurchaseClaims(tx, { userId, shopItemIds, exceptTransactionId, since });
+  const singleIds: number[] = [];
+  const packListings: { id: number; size: number }[] = [];
+  for (const listing of listings) {
+    const terms = packTermsOrNull(listing.meta);
+    // A malformed pack is refused before its claim; counted as one box, it reserves no less.
+    if (terms && terms !== 'malformed') packListings.push({ id: listing.id, size: terms.size });
+    else singleIds.push(listing.id);
+  }
+  let boxes = singleIds.length ? await count(singleIds) : 0;
+  let packs = 0;
+  for (const listing of packListings) {
+    const pending = await count([listing.id]);
+    boxes += pending * listing.size;
+    packs += pending;
+  }
+  return { boxes, packs };
+}
 
 export type MysteryBoxShopItem = {
   id: number;
@@ -673,14 +865,24 @@ export type MysteryBoxShopItem = {
 
 export type MysteryBoxPurchaseResult = {
   kind: 'box';
-  /** The held box's `Item.id`, as a string: it is a BIGINT. */
+  /** The held box's `Item.id`, as a string: it is a BIGINT. A pack's guaranteed box. */
   boxItemId: string;
+  /** Every box the purchase granted that is still held, `boxItemId` first. */
+  boxItemIds: string[];
   boxDefinitionId: number;
 };
 
+const purchaseResult = (items: { id: bigint; itemDefinitionId: number }[]) => ({
+  kind: 'box' as const,
+  boxItemId: items[0].id.toString(),
+  boxItemIds: items.map((item) => item.id.toString()),
+  boxDefinitionId: items[0].itemDefinitionId,
+});
+
 /**
- * Buys one mystery box: the shop's claim-first purchase, granting a held box `Item` keyed on the
- * claim. Opening it is separate and moves no money.
+ * Buys one mystery box, or a pack of them (`meta.pack`): the shop's claim-first purchase, granting
+ * held box `Item`s keyed on the claim, one charge for all of them. Opening is separate and moves no
+ * money.
  *
  * Every refusal comes before the claim. The availability check (the box still has something left
  * for the buyer beyond the boxes they hold and the purchases they have pending) runs under the
@@ -697,6 +899,7 @@ export async function purchaseMysteryBox({
   payWith = 'default',
   buzzType,
   mysteryBoxEnabled,
+  creatorMysteryPacksEnabled,
   countryCode,
 }: {
   userId: number;
@@ -708,18 +911,31 @@ export async function purchaseMysteryBox({
   payWith?: 'default' | 'blue-first';
   buzzType: BuzzSpendType;
   mysteryBoxEnabled: boolean | undefined;
+  creatorMysteryPacksEnabled?: boolean;
   countryCode: string | null | undefined;
 }): Promise<MysteryBoxPurchaseResult> {
   const shopItemId = shopItem.id;
   const boxDefinitionId = shopItem.itemDefinitionId;
+  let pack: BoxPackTerms | undefined;
+  try {
+    pack = boxPackTermsOf(shopItem.meta);
+  } catch {
+    throw throwBadRequestError('This box is not available');
+  }
 
-  // A retry of a purchase that completed answers with the box it granted, so a buy-and-open whose
-  // response was lost can still open it. An opened box is gone, and the claim answers below.
+  // A retry of a purchase that completed answers with the boxes it granted, so a buy-and-open whose
+  // response was lost can still open them. An opened box is gone, and the claim answers below.
   if (idempotencyKey) {
     const sourceKey = shopPurchaseTransactionId('box', userId, shopItemId, idempotencyKey);
-    const held = await findHeldItemBySource(dbWrite, { sourceKey, userId });
-    if (held)
-      return { kind: 'box', boxItemId: held.id.toString(), boxDefinitionId: held.itemDefinitionId };
+    const held = pack
+      ? await listHeldItemsBySourcePrefix(dbWrite, {
+          sourcePrefix: packBoxSourcePrefix(sourceKey),
+          userId,
+        })
+      : await findHeldItemBySource(dbWrite, { sourceKey, userId }).then((item) =>
+          item ? [item] : []
+        );
+    if (held.length) return purchaseResult(held);
   }
 
   const box = await dbWrite.itemDefinition.findUnique({
@@ -746,8 +962,14 @@ export async function purchaseMysteryBox({
       throw throwBadRequestError('This box is not available');
     if (!box || box.type !== ITEM_TYPE.box || box.status !== ITEM_DEFINITION_STATUS.published)
       throw throwBadRequestError('This box is not available');
-    // A creator's pack isn't sold until its sale pays the creator; approving one doesn't open it.
-    if (box.sellerId != null) throw throwBadRequestError('This box is not available');
+    if (box.sellerId != null)
+      await assertCreatorBoxSellable({
+        sellerId: box.sellerId,
+        buyerId: userId,
+        enabled: creatorMysteryPacksEnabled,
+        isPack: !!pack,
+        buzzType,
+      });
 
     if (isMysteryBoxBlockedIn(countryCode, await getMysteryBoxBlockedRegions()))
       throw throwBadRequestError('Mystery boxes are not available in your region');
@@ -802,24 +1024,39 @@ export async function purchaseMysteryBox({
       if (!chargedBefore && !sameKeyClaim)
         await runPurchaseChecks(pendingClaim, async () => {
           await assertBoxSellable(tx, box.id);
-          const left = (await getBoxPoolForUser(tx, { boxDefinitionId: box.id, userId, team }))
-            .length;
+          const pool = await getBoxPoolForUser(tx, { boxDefinitionId: box.id, userId, team });
           const held = await countHeldItems(tx, { itemDefinitionId: box.id, userId });
-          const listings = await tx.cosmeticShopItem.findMany({
-            where: { itemDefinitionId: box.id },
-            select: { id: true },
-          });
-          const pending = await countPendingShopPurchaseClaims(tx, {
+          const pending = await countPendingBoxClaims(tx, {
+            boxDefinitionId: box.id,
             userId,
-            shopItemIds: listings.map((listing) => listing.id),
             exceptTransactionId: transactionId,
-            since: new Date(Date.now() - PENDING_CLAIM_RESERVES_MS),
           });
-          if (left <= held + pending)
+          const reserved = held + pending.boxes;
+          if (pool.length <= reserved)
             throw throwBadRequestError(
-              held + pending > 0
+              reserved > 0
                 ? 'Your unopened boxes already cover everything left in this box'
                 : "You've collected everything in this box"
+            );
+          if (!pack) return;
+          if (pool.length < reserved + pack.size)
+            throw throwBadRequestError(
+              `There are fewer than ${pack.size} things left in this box for you. Buy single boxes instead.`
+            );
+          // Each unopened or pending pack holds one guaranteed draw against the same tiers.
+          const { guaranteedTierIds } = pack;
+          const guaranteedLeft = pool.filter((entry) =>
+            guaranteedTierIds.includes(entry.tierId)
+          ).length;
+          // An unopened first box of a pack still owes its guaranteed draw.
+          const guaranteedHeld = await countHeldItemsBySourceSuffix(tx, {
+            itemDefinitionId: box.id,
+            userId,
+            sourceSuffix: packBoxSourceKey('', 1),
+          });
+          if (guaranteedLeft < guaranteedHeld + pending.packs + 1)
+            throw throwBadRequestError(
+              "There isn't enough left in this box for a pack's guaranteed pull. Buy single boxes instead."
             );
         });
       // Committed with the checks above, before the lock is released: a competing purchase waiting on
@@ -858,8 +1095,9 @@ export async function purchaseMysteryBox({
   );
   if (!transaction.transactionCount) throw new Error('There was an error creating the transaction');
 
+  let items: { id: bigint; itemDefinitionId: number }[];
   try {
-    const item = await dbWrite.$transaction(async (tx) => {
+    items = await dbWrite.$transaction(async (tx) => {
       // The lock comes first here, unlike the shelf grant: the availability check counts this claim
       // as pending until the box exists, so the claim turning paid and the box appearing must be
       // seen together by anyone holding the lock. A concurrent grant of the same claim waits on the
@@ -875,11 +1113,26 @@ export async function purchaseMysteryBox({
           unitAmount,
           buzzTransactionId: transactionId,
           refunded: false,
+          // The terms its boxes were sold under, read by the open and the refunds: the listing's can
+          // change after the sale.
+          ...(pack ? { meta: { pack } } : {}),
         },
       });
-      return grantItem(tx, { itemDefinitionId: box.id, userId, sourceKey: transactionId });
+      if (!pack)
+        return [
+          await grantItem(tx, { itemDefinitionId: box.id, userId, sourceKey: transactionId }),
+        ];
+      const granted = [];
+      for (let n = 1; n <= pack.size; n++)
+        granted.push(
+          await grantItem(tx, {
+            itemDefinitionId: box.id,
+            userId,
+            sourceKey: packBoxSourceKey(transactionId, n),
+          })
+        );
+      return granted;
     });
-    return { kind: 'box', boxItemId: item.id.toString(), boxDefinitionId: item.itemDefinitionId };
   } catch (error) {
     // With a client key, a unique violation here means a request with the same key recorded this
     // purchase first; the prefix is shared with it, so it is not refunded from here.
@@ -900,6 +1153,21 @@ export async function purchaseMysteryBox({
     );
     throw throwBadRequestError('Failed to purchase box');
   }
+
+  // Outside the grant's try: a payout failure must not refund the buyer. Paid in the colour the
+  // charge came from, which a resumed claim may not share with this request; a charge from several
+  // accounts is left to the sweep, which refuses it for a person to pay.
+  const chargedColor = singleColorOf(transaction.transactionIds);
+  if (box.sellerId != null && chargedColor)
+    await payCreatorBoxSaleAfterGrant({
+      buzzTransactionId: transactionId,
+      buyerId: userId,
+      sellerId: box.sellerId,
+      unitAmount,
+      color: chargedColor,
+      title: shopItem.title,
+    });
+  return purchaseResult(items);
 }
 
 export type MysteryBoxOpenResult = {
@@ -914,6 +1182,8 @@ export type MysteryBoxOpenResult = {
   cosmeticId: number | null;
   /** The odds this draw ran under, from the opening's own record. */
   odds: { tierWeight: number; eligibleWeight: number; tierPoolSize: number };
+  /** Drawn from a pack's guaranteed tiers only. */
+  guaranteed: boolean;
   /** True when this answers an open that already happened (a retry or a double-click). */
   replayed: boolean;
 };
@@ -930,6 +1200,7 @@ type BoxOpeningRow = {
   tierWeight: number;
   eligibleWeight: number;
   tierPoolSize: number;
+  guaranteed: boolean;
 };
 
 const openingResult = (
@@ -950,10 +1221,35 @@ const openingResult = (
     eligibleWeight: opening.eligibleWeight,
     tierPoolSize: opening.tierPoolSize,
   },
+  guaranteed: opening.guaranteed,
   replayed,
 });
 
 const NOT_YOUR_BOX = 'This box is not yours to open';
+
+/**
+ * The tiers a held box must draw from, when it is the first box of a pack: read from its purchase,
+ * never from the key alone.
+ */
+async function guaranteedTiersOf(
+  tx: Prisma.TransactionClient,
+  {
+    sourceKey,
+    boxDefinitionId,
+    userId,
+  }: { sourceKey: string; boxDefinitionId: number; userId: number }
+) {
+  const packBox = parsePackBoxSourceKey(sourceKey);
+  if (packBox?.n !== 1) return undefined;
+  const purchase = await tx.userCosmeticShopPurchases.findUnique({
+    where: { buzzTransactionId: packBox.transactionId },
+    select: { userId: true, meta: true, shopItem: { select: { itemDefinitionId: true } } },
+  });
+  if (purchase?.userId !== userId || purchase.shopItem.itemDefinitionId !== boxDefinitionId)
+    return undefined;
+  const terms = packTermsOrNull(purchase.meta);
+  return terms && terms !== 'malformed' ? terms.guaranteedTierIds : undefined;
+}
 
 /** The open that already happened for this box, answered again; refuses another user's. */
 async function replayOpening(client: Prisma.TransactionClient, boxItemId: bigint, userId: number) {
@@ -1024,17 +1320,13 @@ export async function openMysteryBox({
       // FOR SHARE holds the version until commit: a builder save locks this row FOR NO KEY UPDATE
       // and waits for opens in flight, so this open cannot pass the check at one version and draw
       // from the next one's tiers and contents. After the Item lock, never before it.
-      const [box] = await tx.$queryRaw<
-        { id: number; type: string; version: number; sellerId: number | null }[]
-      >`
-        SELECT "id", "type", "version", "sellerId" FROM "ItemDefinition"
+      const [box] = await tx.$queryRaw<{ id: number; type: string; version: number }[]>`
+        SELECT "id", "type", "version" FROM "ItemDefinition"
         WHERE "id" = ${item.itemDefinitionId}
         FOR SHARE
       `;
       if (!box || box.type !== ITEM_TYPE.box)
         throw throwBadRequestError('This box cannot be opened');
-      // Not sold or granted yet; whatever path reached one, it doesn't open before it pays its creator.
-      if (box.sellerId != null) throw throwBadRequestError('This box cannot be opened');
       // The holder was shown this version's contents and odds.
       if (expectedVersion !== box.version)
         throw throwBadRequestError("This box's contents changed. Check them and try again.");
@@ -1048,7 +1340,25 @@ export async function openMysteryBox({
         where: { boxDefinitionId: box.id },
         select: { id: true, weight: true, sortOrder: true },
       });
-      const draw = drawFromOdds(computeBoxOdds(tiers, pool), randomInt);
+      const guaranteedTierIds = await guaranteedTiersOf(tx, {
+        sourceKey: item.sourceKey,
+        boxDefinitionId: box.id,
+        userId,
+      });
+      // With none of the guaranteed tiers left for the holder, the box draws from all of it.
+      const guaranteedPool = guaranteedTierIds
+        ? pool.filter((entry) => guaranteedTierIds.includes(entry.tierId))
+        : [];
+      const guaranteed = guaranteedPool.length > 0;
+      const draw = drawFromOdds(
+        guaranteed
+          ? computeBoxOdds(
+              tiers.filter((tier) => guaranteedTierIds?.includes(tier.id)),
+              guaranteedPool
+            )
+          : computeBoxOdds(tiers, pool),
+        randomInt
+      );
       const reward = pool.find((entry) => entry.contentId === draw.contentId);
       if (!reward) throw new Error(`box ${box.id} drew content ${draw.contentId} outside its pool`);
 
@@ -1077,6 +1387,7 @@ export async function openMysteryBox({
           tierPoolSize: draw.tierPoolSize,
           itemRoll: draw.itemRoll,
           rewardStatus: BOX_OPENING_REWARD_STATUS.granted,
+          guaranteed,
         },
       });
       await tx.item.delete({ where: { id: item.id } });
@@ -1114,8 +1425,9 @@ export async function openMysteryBox({
     boxVersion: result.boxVersion,
     rewardDefinitionId: result.rewardDefinitionId,
     cosmeticId: result.cosmeticId,
+    guaranteed: result.guaranteed,
     ...draw,
-  }).catch();
+  });
 
   // The box is already opened: a cache miss here must not read as a failed open.
   if (grantedSticker) await refreshOwnedStickerCache([userId]).catch(() => undefined);

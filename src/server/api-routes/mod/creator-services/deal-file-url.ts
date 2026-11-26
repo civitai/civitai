@@ -1,0 +1,48 @@
+import * as z from 'zod';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  getServiceDealFileDownloadUrl,
+  resolveServiceDealFileDownload,
+} from '~/server/services/creator-service-deal-file.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
+import { SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS } from '~/shared/constants/creator-services.constants';
+
+export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
+  method: 'GET',
+  summary: 'A short-lived signed download URL for one Creator Services delivery file.',
+  returns: '{ url, expiresAt }',
+  notes: [
+    'The original file, whatever its status or scan result: this is for dispute review. With delivered=true, the file as the buyer receives it.',
+    "deal-files' `canDownload` answers for the original. With delivered=true a file it offers can still be not-found: a zip with no delivery copy, or a held file the caller uploaded, since an uploader gets back only their own original.",
+    'The URL is an attachment download and stops working after about five minutes. Do not store it; ask again.',
+    "Each call is recorded as a moderator fetch (kind ModeratorFetch, never Download), under the caller's own role on the deal.",
+  ],
+  input: z.object({
+    fileId: z.coerce.number().int().positive().describe('The delivery file id.'),
+    delivered: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((value) => value === 'true')
+      .describe('Ask for the file as the buyer receives it instead of the original.'),
+  }),
+  async handler({ fileId, delivered }, { actor, tracker, req }) {
+    const target = await resolveServiceDealFileDownload({
+      fileId,
+      userId: actor.id,
+      isModerator: true,
+      delivered,
+      moderatorFetch: true,
+      canReviewCsam: !!getFeatureFlags({ user: actor, req }).csamReports,
+      // Dispute review sees a file whatever its rating.
+      servableLevels: allBrowsingLevelsFlag,
+    });
+    if (!target) throw throwNotFoundError('File not found');
+    const url = await getServiceDealFileDownloadUrl(target, tracker);
+    return {
+      url,
+      expiresAt: new Date(Date.now() + SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS * 1000).toISOString(),
+    };
+  },
+});

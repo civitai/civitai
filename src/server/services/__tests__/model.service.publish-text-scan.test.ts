@@ -50,7 +50,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -145,6 +144,7 @@ beforeEach(() => {
   });
   mockTx.modelVersion.findFirst.mockResolvedValue({ publishedAt: new Date('2026-01-01') });
   mockTx.$executeRaw.mockResolvedValue(0);
+  mockTx.$queryRaw.mockResolvedValue([]);
   // The requested versions are this model's own.
   dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
     where,

@@ -10,13 +10,16 @@ import {
   resolveResourceFileSchema,
   setEvictableSchema,
   setAdditionalResourceFeeWaivedSchema,
+  setPartnerDisclosureSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
   checkResourcesCoverage,
   getGenerationData,
   getGenerationStatus,
+  getGenerationStatusState,
   getGateRules,
+  getGateRuleState,
   getGeneratorMessages,
   getGenerationConfig,
   getResourceData,
@@ -32,8 +35,10 @@ import {
   toggleGenerationDisabled,
   setEvictable,
   setAdditionalResourceFeeWaived,
+  setPartnerDisclosure,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
+import { clearOrchestratorForGateChange } from '~/server/services/orchestrator/models';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
@@ -47,7 +52,16 @@ import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { coverageAudience } from '~/server/services/generation/coverage-source';
+import {
+  coverageAudience,
+  generatorAcceptsBoostRequired,
+} from '~/server/services/generation/coverage-source';
+
+/** The stored rule with this id, if the rules can be read. */
+async function storedGateRule(id: string) {
+  const state = await getGateRuleState();
+  return state.known ? state.value.find((rule) => rule.id === id) : undefined;
+}
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -92,10 +106,14 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
-    .query(async () => {
+    .query(async ({ ctx }) => {
+      const { status: read, known } = await getGenerationStatusState();
+      // A cold pod's fail-closed fallback (kill switch unreadable, never read) must not be cached
+      // at the edge: it would be served to everyone for the TTL after the pod recovers.
+      if (!known && ctx.cache) ctx.cache.skip = true;
       // Don't expose the moderator-identity audit stamps on the public,
       // edge-cached endpoint — they're moderator-only (getStatusModerator).
-      const { updatedBy, selfHostedUpdatedBy, ...status } = await getGenerationStatus();
+      const { updatedBy, selfHostedUpdatedBy, ...status } = read;
 
       // Only surface the status message to clients while the gate is actually
       // engaged. The message stays persisted in Redis (so operators don't have
@@ -140,12 +158,20 @@ export const generationRouter = router({
       })
     ),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
-  saveGateRule: moderatorProcedure
-    .input(gateRuleSchema)
-    .mutation(({ input }) => saveGateRule(input)),
+  // Each change clears the orchestrator's cached answers for what the rule covered before and after.
+  saveGateRule: moderatorProcedure.input(gateRuleSchema).mutation(async ({ input }) => {
+    const before = await storedGateRule(input.id);
+    const saved = await saveGateRule(input);
+    const orchestrator = await clearOrchestratorForGateChange([before, saved]);
+    return { ...saved, orchestrator };
+  }),
   deleteGateRule: moderatorProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => deleteGateRule(input.id)),
+    .mutation(async ({ input }) => {
+      const before = await storedGateRule(input.id);
+      await deleteGateRule(input.id);
+      return { orchestrator: await clearOrchestratorForGateChange([before]) };
+    }),
   getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
   saveGeneratorMessage: moderatorProcedure
     .input(generatorMessageSchema)
@@ -166,6 +192,11 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
     ),
+  setPartnerDisclosure: moderatorProcedure
+    .input(setPartnerDisclosureSchema)
+    .mutation(({ input, ctx }) =>
+      setPartnerDisclosure({ ...input, isModerator: ctx.user.isModerator })
+    ),
   getCoverageAudience: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => coverageAudience(ctx.user ?? undefined)),
@@ -178,6 +209,9 @@ export const generationRouter = router({
           user: ctx.user,
           withPreview: true,
           browsingLevel: getRequestBrowsingLevel(ctx),
+          // The generator form's own read of the resources it will submit, so it must agree with
+          // the whatIf: an admitted cold checkpoint reads as generatable, not stripped at submit.
+          acceptBoostRequired: generatorAcceptsBoostRequired(input.acceptBoostRequired, ctx),
         })
       ).filter((r) => canViewPoiModel(r.model.poi, r.model.userId, ctx.user))
     ),

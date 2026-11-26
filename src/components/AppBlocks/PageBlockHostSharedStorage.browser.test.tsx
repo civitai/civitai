@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
@@ -9,6 +10,7 @@ import {
   SAVE_BYTES_WINDOW_MS,
   SAVE_IMAGE_MAX_CONCURRENT,
 } from '~/components/AppBlocks/saveImageDownload';
+import { buildFbx, buildGlb, concatBytes } from '~/components/AppBlocks/__tests__/model3dFixtures';
 
 /**
  * App Blocks SHARED (cross-user / app-global) storage bridge — host side (Phase 2b).
@@ -57,6 +59,9 @@ const mocks = vi.hoisted(() => ({
   // the origin allowlist + request parse stay REAL (see the partial mock below).
   saveDownload: vi.fn(),
   saveBytesDownload: vi.fn(),
+  // The zip content check under its deadline: the REAL one unless a test holds it open.
+  verifyBeforeDownload: vi.fn(),
+  actualVerifyBeforeDownload: undefined as unknown as (...args: unknown[]) => unknown,
   // per-user storage reads/writes (also wired at render; inert here)
   storageGet: vi.fn(),
   storageSet: vi.fn(),
@@ -66,19 +71,17 @@ const mocks = vi.hoisted(() => ({
   storageInvalidate: vi.fn(),
 }));
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Partial mock: keep the REAL origin allowlist + filename sanitizer + request
 // parser (the security-critical pure logic), stub ONLY the top-frame blob
 // download so the SAVE_IMAGE tests never hit the network.
 vi.mock('~/components/AppBlocks/saveImageDownload', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./saveImageDownload')>();
+  mocks.actualVerifyBeforeDownload = actual.verifySaveBytesBeforeDownload as never;
   return {
     ...actual,
     downloadUrlAsBlob: mocks.saveDownload,
     downloadBytesAsBlob: mocks.saveBytesDownload,
+    verifySaveBytesBeforeDownload: (...args: unknown[]) => mocks.verifyBeforeDownload(...args),
   };
 });
 
@@ -122,6 +125,7 @@ vi.mock('~/utils/trpc', () => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: mocks.getImagesByIds }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       storage: {
@@ -254,6 +258,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.getImagesByIds.mockReset();
     mocks.saveDownload.mockReset();
     mocks.saveBytesDownload.mockReset();
+    mocks.verifyBeforeDownload.mockReset();
+    mocks.verifyBeforeDownload.mockImplementation(mocks.actualVerifyBeforeDownload);
     useDialogStore.getState().closeAll();
   });
 
@@ -467,7 +473,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(r.payload).toEqual({ requestId: 'rq_save_bytes', ok: true });
     });
     expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
-    const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+    const [savedBytes, { type: savedType, filename: savedName }] =
+      mocks.saveBytesDownload.mock.calls[0];
     // toBe, not toEqual: vitest's toEqual treats any two ArrayBuffers as equal.
     expect(savedBytes).toBe(bytes);
     expect([savedType, savedName]).toEqual(['image/png', 'healed.png']);
@@ -496,6 +503,245 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       });
     });
     expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  /** A real jszip-written DEFLATE zip, as an app would build it. */
+  const zipBytes = async (files: Record<string, string | Uint8Array>) => {
+    const zip = new JSZip();
+    for (const [name, content] of Object.entries(files)) zip.file(name, content);
+    const u8 = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+    return u8.slice().buffer;
+  };
+
+  test('SAVE_IMAGE bytes variant: a valid zip is saved as application/zip under .zip', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const bytes = await zipBytes({
+      'images/001.png': new Uint8Array(PNG_BYTES()),
+      'images/001.txt': 'a cat, sitting',
+    });
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_zip', bytes, filename: 'dataset.html' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_zip', ok: true });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+    const [savedBytes, { type: savedType, filename: savedName }] =
+      mocks.saveBytesDownload.mock.calls[0];
+    expect(savedBytes).toBe(bytes);
+    expect([savedType, savedName]).toEqual(['application/zip', 'dataset.zip']);
+    replies.stop();
+  });
+
+  // A page block hands a generated 3D model to the viewer. Content-classified
+  // like every bytes save; the name the block sends never decides the type.
+  test.each([
+    [
+      'GLB',
+      () => buildGlb({ binBytes: 64 }),
+      'turnaround.png',
+      'model/gltf-binary',
+      'turnaround.glb',
+    ],
+    ['FBX', () => buildFbx(), 'turnaround.txt', 'model/x-fbx', 'turnaround.fbx'],
+  ] as const)(
+    'SAVE_IMAGE bytes variant: a binary %s model downloads under its own extension',
+    async (_kind, build, sentName, wantType, wantName) => {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+      const bytes = build().slice().buffer;
+
+      postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_model', bytes, filename: sentName });
+
+      await vi.waitFor(() => {
+        const r = replies.last('SAVE_IMAGE_RESULT');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({ requestId: 'rq_save_model', ok: true });
+      });
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+      const [savedBytes, { type: savedType, filename: savedName }] =
+        mocks.saveBytesDownload.mock.calls[0];
+      expect(savedBytes).toBe(bytes);
+      expect([savedType, savedName]).toEqual([wantType, wantName]);
+      replies.stop();
+    }
+  );
+
+  test('SAVE_IMAGE bytes variant: a GLB with bytes past its declared length is refused (no download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    // A valid GLB with a second file riding after it: its chunks still tile the declared length,
+    // so only the declared-length-equals-buffer check refuses it.
+    const glb = concatBytes(buildGlb({ binBytes: 64 }), new Uint8Array(PNG_BYTES()));
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bad_glb',
+      bytes: glb.buffer,
+      filename: 'turnaround.glb',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_bad_glb',
+        ok: false,
+        error: 'file type is not allowed',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes variant: ONE zip check in flight — a second zip is busy, a text save is not', async () => {
+    // Hold the first zip's content check open; release it at the end.
+    let release: (() => void) | undefined;
+    mocks.verifyBeforeDownload.mockImplementationOnce(
+      (...args: unknown[]) =>
+        new Promise((resolve) => {
+          release = () => resolve(mocks.actualVerifyBeforeDownload(...args));
+        })
+    );
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const first = await zipBytes({ 'a.txt': 'first' });
+    const second = await zipBytes({ 'b.txt': 'second' });
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_zip_1', bytes: first, filename: 'one.zip' });
+    await vi.waitFor(() => expect(mocks.verifyBeforeDownload).toHaveBeenCalledTimes(1));
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_zip_2', bytes: second, filename: 'two.zip' });
+    await vi.waitFor(() => {
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_zip_2'
+      );
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_zip_2', ok: false, error: 'busy' });
+    });
+    // A non-zip bytes save is not behind the zip gate.
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_text',
+      bytes: new TextEncoder().encode('notes').buffer,
+      filename: 'n.txt',
+    });
+    await vi.waitFor(() => {
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_text'
+      );
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_text', ok: true });
+    });
+    // Release the first: it downloads, and the slot is free again for a later zip.
+    release?.();
+    await vi.waitFor(() => {
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_zip_1'
+      );
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_zip_1', ok: true });
+    });
+    // The slot was RELEASED when the first check finished: another zip is checked and saved.
+    const third = await zipBytes({ 'c.txt': 'third' });
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_zip_3', bytes: third, filename: 'three.zip' });
+    await vi.waitFor(() => {
+      const r = replies.received.find(
+        (m) =>
+          m.type === 'SAVE_IMAGE_RESULT' &&
+          (m.payload as { requestId?: string }).requestId === 'rq_zip_3'
+      );
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_zip_3', ok: true });
+    });
+    // The busy zip was never content-checked. (Every bytes save goes through the check — a no-op
+    // for the text one — so count the ZIP checks, by the bytes they were given.)
+    const zipChecks = mocks.verifyBeforeDownload.mock.calls.filter(
+      (c) => (c[1] as { type?: string }).type === 'application/zip'
+    );
+    // By CONTENT: postMessage hands the host a structured-clone copy, not `first` itself.
+    expect(zipChecks.map((c) => [...new Uint8Array(c[0] as ArrayBuffer)])).toEqual([
+      [...new Uint8Array(first)],
+      [...new Uint8Array(third)],
+    ]);
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes variant: a zip whose check finishes AFTER the host unmounts is never downloaded', async () => {
+    let release: (() => void) | undefined;
+    let seenSignal: AbortSignal | undefined;
+    let held: Promise<unknown> | undefined;
+    mocks.verifyBeforeDownload.mockImplementationOnce((...args: unknown[]) => {
+      held = new Promise((resolve) => {
+        seenSignal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
+        release = () => resolve(mocks.actualVerifyBeforeDownload(args[0], args[1]));
+      });
+      return held;
+    });
+    const host = await renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const bytes = await zipBytes({ 'a.txt': 'x' });
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_zip_gone', bytes, filename: 'gone.zip' });
+    await vi.waitFor(() => expect(mocks.verifyBeforeDownload).toHaveBeenCalledTimes(1));
+    expect(seenSignal?.aborted).toBe(false);
+    await host.unmount();
+    expect(seenSignal?.aborted).toBe(true); // the check was told to stop
+    release?.();
+    // Wait on the check the handler is awaiting, then one tick for the handler's continuation
+    // (queued before this await, so it has run) — no sleep standing in for "long enough".
+    await held;
+    await Promise.resolve();
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+  });
+
+  test('SAVE_IMAGE bytes variant: a zip whose entry inflates past its declared size is refused BEFORE the download', async () => {
+    // The seam: processSaveBytes accepts this zip (its declared sizes are within every bound), so
+    // only the handler awaiting the inflate check can stop it. Lie consistently in BOTH headers.
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const bytes = await zipBytes({ 'zeros.txt': new Uint8Array(3 * 1024 * 1024 + 5) });
+    const view = new DataView(bytes);
+    const cd = view.getUint32(bytes.byteLength - 22 + 16, true);
+    view.setUint32(22, 4_321, true);
+    view.setUint32(cd + 24, 4_321, true);
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_zip_lie', bytes, filename: 'dataset.zip' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_zip_lie',
+        ok: false,
+        error: 'zip entry does not inflate to its declared size',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    // A REFUSED check releases the one-zip slot too: the next valid zip is checked and saved.
+    const next = await zipBytes({ 'a.txt': 'fine' });
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_zip_after_lie',
+      bytes: next,
+      filename: 'n.zip',
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_zip_after_lie', ok: true });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
     replies.stop();
   });
 
@@ -585,7 +831,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
 
       expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
-      const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+      const [savedBytes, { type: savedType, filename: savedName }] =
+        mocks.saveBytesDownload.mock.calls[0];
       expect(savedBytes).toBeInstanceOf(ArrayBuffer);
       expect(Array.from(new Uint8Array(savedBytes as ArrayBuffer))).toEqual([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,

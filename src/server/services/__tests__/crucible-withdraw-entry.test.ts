@@ -19,6 +19,12 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   afterPostsPublish,
 }));
 
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
+
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   refundMultiAccountTransaction,
@@ -53,6 +59,19 @@ beforeEach(() => {
 });
 
 describe('withdrawCrucibleEntry', () => {
+  it('releases the reviews of only the entry posts it revealed, not ones already public', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 300, userId: ENTRANT, hidden: true },
+      { id: 301, userId: ENTRANT, hidden: false },
+    ]);
+
+    await withdraw();
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [300] })
+    );
+  });
+
   it('detaches the image under the crucible row lock, keeping the row and its fee', async () => {
     const result = await withdraw();
 

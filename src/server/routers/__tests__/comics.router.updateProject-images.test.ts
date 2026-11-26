@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as SearchIndex from '~/server/search-index';
+import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 
 /**
  * `comics.updateProject` sets the project's cover and hero by existing image id. Like the panel
@@ -17,10 +18,19 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   comicsSearchIndex: { queueUpdate },
 }));
 
-// See comics.router.createChapterComment.test.ts: `isFlagProtected` recomputes flags.
+// `isFlagProtected` recomputes flags from the user unless `ctx.features.trpcFlagGuardPerRequest` is
+// set, so without this a non-moderator caller is refused before the handler.
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ comicCreator: true }),
+}));
+
+// The public reads exclude hidden and blocked creators; nobody is hidden here.
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferencesService>()),
+  HiddenUsers: { getCached: async () => [] },
+  BlockedUsers: { getCached: async () => [] },
+  BlockedByUsers: { getCached: async () => [] },
 }));
 
 import { comicsRouter } from '../comics.router';
@@ -69,7 +79,7 @@ function writtenData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.comicProject.findUnique.mockResolvedValue({
+  dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
     userId: USER_ID,
     coverImageId: CURRENT_COVER,
     heroImageId: CURRENT_HERO,
@@ -92,6 +102,15 @@ describe.each(['coverImageId', 'heroImageId'] as const)(
       expect(dbMock.dbRead.image.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: OWN_IMAGE } })
       );
+    });
+
+    it("refuses the caller's own image when it is a deal file's scan copy", async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+        [...strings].join('').includes('ServiceDealFile')
+          ? [{ dealFileImage: true }]
+          : []) as never);
+      await expect(update({ [column]: OWN_IMAGE })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(dbMock.dbWrite.comicProject.update).not.toHaveBeenCalled();
     });
 
     it("refuses another user's image and writes nothing", async () => {
@@ -123,7 +142,7 @@ describe.each(['coverImageId', 'heroImageId'] as const)(
 
 describe('comics.updateProject - project ownership still comes first', () => {
   it("refuses another user's project before any image lookup", async () => {
-    dbMock.dbRead.comicProject.findUnique.mockResolvedValue({
+    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
       userId: OTHER_USER_ID,
       coverImageId: null,
       heroImageId: null,
@@ -133,5 +152,172 @@ describe('comics.updateProject - project ownership still comes first', () => {
     });
     expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.comicProject.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A mature image made with a base model that restricts mature images reaches only its uploader. Each
+ * case carries an unrestricted mature image beside the restricted one, which everyone still gets.
+ */
+describe('comics public reads withhold a restricted image from everyone but its uploader', () => {
+  const R = 4;
+  const STRANGER_ID = 9;
+  const restricted = { nsfwLevel: R, modelRestricted: true, userId: USER_ID };
+  const unrestricted = { nsfwLevel: R, modelRestricted: false, userId: USER_ID };
+
+  function publicCaller(user: { id: number; isModerator: boolean } | undefined) {
+    return comicsRouter.createCaller({
+      ...fakeCtx(),
+      user: user && { ...user, onboarding: OnboardingSteps.Buzz, muted: false },
+    } as never);
+  }
+
+  const stranger = () => publicCaller(undefined);
+  const owner = () => publicCaller({ id: USER_ID, isModerator: false });
+  const moderator = () => publicCaller({ id: STRANGER_ID, isModerator: true });
+
+  beforeEach(() => {
+    dbMock.dbRead.comicProjectMetric.findMany.mockResolvedValue([]);
+  });
+
+  describe('getPublicProjectForReader', () => {
+    const panel = (id: number, image: typeof restricted) => ({
+      id,
+      imageUrl: `panel-${id}.jpeg`,
+      prompt: '',
+      position: id,
+      image: {
+        id: id * 10,
+        ...image,
+        hash: null,
+        width: 1,
+        height: 1,
+        ingestion: 'Scanned',
+        needsReview: null,
+        tosViolation: false,
+      },
+    });
+
+    beforeEach(() => {
+      const project = {
+        id: PROJECT_ID,
+        name: 'comic',
+        description: null,
+        userId: USER_ID,
+        coverImage: null,
+        heroImage: null,
+        heroImagePosition: null,
+        meta: null,
+        genre: null,
+        nsfwLevel: R,
+        status: 'Active',
+        tosViolation: false,
+        publishedAt: new Date('2026-01-01'),
+        user: { id: USER_ID, bannedAt: null },
+        chapters: [
+          {
+            id: 1,
+            projectId: PROJECT_ID,
+            position: 0,
+            name: 'one',
+            status: 'Published',
+            nsfwLevel: R,
+            publishedAt: new Date('2026-01-01'),
+            availability: 'Public',
+            earlyAccessConfig: null,
+            earlyAccessEndsAt: null,
+            panels: [panel(1, restricted), panel(2, unrestricted)],
+          },
+        ],
+      };
+      // The meta read first, then the full read.
+      dbMock.dbRead.comicProject.findUnique.mockImplementation(
+        async ({ select }: { select: { chapters?: unknown } }) =>
+          select.chapters ? structuredClone(project) : { userId: USER_ID, status: 'Active' }
+      );
+    });
+
+    const panelUrls = async (caller: ReturnType<typeof publicCaller>) => {
+      const { chapters } = await caller.getPublicProjectForReader({ id: PROJECT_ID });
+      return chapters[0].panels.map((p) => p.imageUrl);
+    };
+
+    it('serves a stranger the chapter without the restricted panel image', async () => {
+      expect(await panelUrls(stranger())).toEqual([null, 'panel-2.jpeg']);
+    });
+
+    it('withholds it from a moderator too', async () => {
+      expect(await panelUrls(moderator())).toEqual([null, 'panel-2.jpeg']);
+    });
+
+    it("serves it to the panel's uploader", async () => {
+      expect(await panelUrls(owner())).toEqual(['panel-1.jpeg', 'panel-2.jpeg']);
+    });
+  });
+
+  describe('getPublicProjects', () => {
+    beforeEach(() => {
+      const image = (id: number, flags: typeof restricted) => ({
+        id,
+        url: `image-${id}.jpeg`,
+        ...flags,
+        type: 'image',
+        metadata: null,
+        width: 1,
+        height: 1,
+        name: null,
+        hash: null,
+      });
+      dbMock.dbRead.comicProject.findMany.mockResolvedValue([
+        {
+          id: PROJECT_ID,
+          name: 'comic',
+          description: null,
+          coverImage: image(CURRENT_COVER, restricted),
+          heroImage: image(CURRENT_HERO, unrestricted),
+          heroImagePosition: null,
+          genre: null,
+          nsfwLevel: R,
+          updatedAt: new Date('2026-01-01'),
+          user: { id: USER_ID },
+          chapters: [],
+        },
+      ]);
+    });
+
+    const card = async (caller: ReturnType<typeof publicCaller>) => {
+      const { items } = await caller.getPublicProjects({ limit: 20 });
+      const [item] = items;
+      return {
+        cover: item.coverImage?.url ?? null,
+        hero: item.heroImage?.url ?? null,
+        thumbnail: item.thumbnailUrl,
+      };
+    };
+
+    it('drops a restricted cover, and the thumbnail drawn from it, for a stranger', async () => {
+      expect(await card(stranger())).toEqual({
+        cover: null,
+        hero: `image-${CURRENT_HERO}.jpeg`,
+        thumbnail: null,
+      });
+    });
+
+    it('keeps the restricted cover for its uploader', async () => {
+      expect(await card(owner())).toEqual({
+        cover: `image-${CURRENT_COVER}.jpeg`,
+        hero: `image-${CURRENT_HERO}.jpeg`,
+        thumbnail: `image-${CURRENT_COVER}.jpeg`,
+      });
+    });
+
+    it('drops a restricted hero for a stranger, not for its uploader', async () => {
+      const [row] = (await dbMock.dbRead.comicProject.findMany({} as never)) as any[];
+      dbMock.dbRead.comicProject.findMany.mockResolvedValue([
+        { ...row, heroImage: { ...row.heroImage, ...restricted } },
+      ] as never);
+      expect((await card(stranger())).hero).toBeNull();
+      expect((await card(owner())).hero).toBe(`image-${CURRENT_HERO}.jpeg`);
+    });
   });
 });

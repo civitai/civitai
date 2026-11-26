@@ -1,7 +1,7 @@
 <script lang="ts" generics="T">
   import type { Snippet } from 'svelte';
   import { LINK_CLASS } from '$lib/format';
-  import type { CardSection } from '$lib/server/tickets/section';
+  import type { CardSection } from '$lib/server/section';
 
   let {
     title,

@@ -18,7 +18,6 @@ vi.mock('~/server/auth/bearer-token', () => ({
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -29,7 +28,9 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/storyline.service', () => ({ moderateStorylineTitle }));
 
-const { default: handler } = (await import('~/pages/api/mod/storyline/lift-title-takedown')) as {
+const { default: handler } = (await import(
+  '~/server/api-routes/mod/storyline/lift-title-takedown'
+)) as {
   default: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 };
 

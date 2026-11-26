@@ -9,28 +9,8 @@ describe('canSetGenerationOnly', () => {
     expect(canSetGenerationOnly(undefined)).toBe(false);
   });
 
-  it('denies a free creator', () => {
-    expect(canSetGenerationOnly(user())).toBe(false);
-  });
-
-  it('denies bronze and silver', () => {
-    expect(canSetGenerationOnly(user({ tier: 'bronze' }))).toBe(false);
-    expect(canSetGenerationOnly(user({ tier: 'silver' }))).toBe(false);
-  });
-
-  it('allows gold', () => {
-    expect(canSetGenerationOnly(user({ tier: 'gold' }))).toBe(true);
-  });
-
-  it('allows a moderator on any tier', () => {
-    expect(canSetGenerationOnly(user({ isModerator: true }))).toBe(true);
-  });
-
-  it('allows an explicit generationOnlyModels grant', () => {
-    expect(canSetGenerationOnly(user({ permissions: ['generationOnlyModels'] }))).toBe(true);
-  });
-
-  it('does not treat an unrelated permission as a grant', () => {
-    expect(canSetGenerationOnly(user({ permissions: ['creatorsProgram'] }))).toBe(false);
+  it('allows every signed-in creator, whatever their tier', () => {
+    for (const tier of [undefined, 'free', 'founder', 'bronze', 'silver', 'gold'] as const)
+      expect(canSetGenerationOnly(user({ tier }))).toBe(true);
   });
 });

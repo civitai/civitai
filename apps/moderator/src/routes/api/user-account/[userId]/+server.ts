@@ -3,12 +3,10 @@ import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
 import { listGrantableBoxes } from '$lib/server/mystery-box-builder.service';
 import {
-  getAvailableBadges,
+  getGrantBadges,
   getBounties,
   getBountyEntries,
   getShopPurchases,
-  getComments,
-  getCommentsV2,
   getCosmetics,
   getGrantedBoxes,
   getReceivedReviews,
@@ -26,40 +24,34 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
   const [
     receivedReviews,
-    comments,
-    commentsV2,
     cosmetics,
     trainings,
     bounties,
     bountyEntries,
     shopPurchases,
-    availableBadges,
+    badges,
     grantedBoxes,
     grantableBoxes,
   ] = await Promise.all([
     getReceivedReviews(userId),
-    getComments(userId),
-    getCommentsV2(userId),
     getCosmetics(userId),
     getTrainingRuns(userId),
     getBounties(userId),
     getBountyEntries(userId),
     getShopPurchases(userId),
-    getAvailableBadges(userId),
+    getGrantBadges(userId),
     getGrantedBoxes(userId),
     listGrantableBoxes(),
   ]);
 
   return json({
     receivedReviews,
-    comments,
-    commentsV2,
     cosmetics,
     trainings,
     bounties,
     bountyEntries,
     shopPurchases,
-    availableBadges,
+    badges,
     grantedBoxes,
     grantableBoxes,
   });

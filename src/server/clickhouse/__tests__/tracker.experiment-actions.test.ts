@@ -15,7 +15,15 @@ const req = {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-async function writtenRow(type: 'Experiment_Exposure' | 'HatTurf_Action' | 'UserMenu_Click') {
+async function writtenRow(
+  type:
+    | 'Experiment_Exposure'
+    | 'HatTurf_Action'
+    | 'UserMenu_Click'
+    | 'AppStore_Action'
+    | 'App_Open'
+    | 'App_Visit'
+) {
   const tracker = new Tracker(req, undefined, { user: { id: 42 } } as never);
   const before = fetchMock.mock.calls.length;
   await tracker.action({ type, details: {} });
@@ -31,7 +39,7 @@ describe('experiment actions on the actions table', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each(['Experiment_Exposure', 'HatTurf_Action'] as const)(
+  it.each(['Experiment_Exposure', 'HatTurf_Action', 'AppStore_Action'] as const)(
     '%s keeps the user id and stores no ip or userAgent, from any caller',
     async (type) => {
       const row = await writtenRow(type);
@@ -44,6 +52,15 @@ describe('experiment actions on the actions table', () => {
   it('leaves actor metadata on other action types', async () => {
     expect(await writtenRow('UserMenu_Click')).toHaveProperty('userAgent');
   });
+
+  it.each(['App_Open', 'App_Visit'] as const)(
+    '%s KEEPS ip and userAgent — its count de-dupes per actor, falling back to ip',
+    async (type) => {
+      const row = await writtenRow(type);
+      expect(row).toHaveProperty('ip');
+      expect(row).toHaveProperty('userAgent');
+    }
+  );
 });
 
 describe('what a browser may post', () => {

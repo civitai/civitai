@@ -1,6 +1,9 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
-import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import {
+  APPS_PLATFORM_FEEDBACK_AREA,
+  ORCHESTRATION_FEEDBACK_AREA,
+} from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import {
   MODEL_FLAGS_APPEALS_PATH,
@@ -9,9 +12,12 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { MERGE_ANALYSIS_PATH } from '$lib/model-merge-analysis';
 import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
+import { PRESERVED_VIEW_PAGE } from '$lib/preserved-view';
+import { feedbackAreaLabel } from '$lib/feedback';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
-import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
+import { reportCountKey, reportEntityLabels, reportPath, reportQueueEntities } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
 export const APP = 'moderator';
@@ -61,6 +67,8 @@ export type NavLink = {
   // sections. Reached and granted by the page's own entry, and kept out of this section's badge and the
   // dashboard so its count is not summed twice.
   shortcut?: true;
+  // Reached by link only.
+  hidden?: true;
   children?: NavLink[];
 };
 
@@ -85,12 +93,13 @@ export const NAVIGATION: NavLink[] = [
     label: 'Reports',
     path: '/reports',
     sharedAccess: true,
-    children: reportEntities.map((entity) => ({
+    children: reportQueueEntities.map((entity) => ({
       path: reportPath(entity),
       label: reportEntityLabels[entity],
       countKey: reportCountKey(entity),
     })),
   },
+  { path: '/cases', label: 'Takedown Cases' },
   {
     label: 'Images',
     path: '/images',
@@ -116,8 +125,6 @@ export const NAVIGATION: NavLink[] = [
         countKey: reportCountKey('image'),
         shortcut: true,
       },
-      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
-      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/scan-probe', label: 'Scan Probe' },
@@ -157,6 +164,8 @@ export const NAVIGATION: NavLink[] = [
         ],
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
+      { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
+      { path: '/models/version-showcases', label: 'Featured community images' },
     ],
   },
   {
@@ -200,6 +209,7 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/creator-services/disputes', label: 'Service Disputes' },
+  { path: '/creator-program/payout-reviews', label: 'Payout Reviews' },
   { path: '/messages', label: 'Civitai Messages', countKey: 'civitaiMessages' },
   {
     label: 'Audit',
@@ -210,7 +220,12 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/scanner-audit', label: 'Scanner Audit' },
       { path: GENERATOR_RESTRICTIONS_PATH, label: 'Generator Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
-      { path: '/audit/training-data', label: 'Training Data Review' },
+      {
+        path: '/audit/training-data',
+        label: 'Training Data Review',
+        countKey: 'trainingDataReview',
+      },
+      { path: '/audit/app-upload-batches', label: 'App Upload Batches' },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
       { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
     ],
@@ -225,6 +240,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/text-scan/shadow-sexual-prompt', label: 'Shadow sexual prompt' },
     ],
   },
+  { path: PRESERVED_VIEW_PAGE, label: 'Preserved-file review', hidden: true },
   {
     label: 'Retool',
     path: '/retool',
@@ -271,8 +287,13 @@ export const NAVIGATION: NavLink[] = [
       { path: '/feedback', label: 'General queue', countKey: 'feedbackNew' },
       {
         path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
-        label: 'Apps platform (developers)',
+        label: feedbackAreaLabel(APPS_PLATFORM_FEEDBACK_AREA),
         countKey: 'feedbackAppsPlatformNew',
+      },
+      {
+        path: `/feedback?area=${ORCHESTRATION_FEEDBACK_AREA}&status=new`,
+        label: feedbackAreaLabel(ORCHESTRATION_FEEDBACK_AREA),
+        countKey: 'feedbackOrchestrationNew',
       },
     ],
   },
@@ -327,6 +348,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/users/newest', label: 'Newest Users' },
       { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
+      { path: '/users/data-exports', label: 'Data Exports' },
     ],
   },
   // No path of its own, so each queue is granted on its own: whoever handles account appeals need not
@@ -338,6 +360,21 @@ export const NAVIGATION: NavLink[] = [
       label: q.label,
       countKey: siteAppealCountKey(q.category),
     })),
+  },
+  // /knights-of-new-order must keep this path: existing stored grants are keyed on it.
+  {
+    label: 'Knights of New Order',
+    children: [
+      {
+        path: '/knights-of-new-order/inquisitor',
+        label: 'Inquisitor',
+        countKey: 'knightsInquisitor',
+      },
+      { path: '/knights-of-new-order/trials', label: 'Trials' },
+      { path: '/knights-of-new-order/shop', label: 'Shop' },
+      { path: '/knights-of-new-order', label: 'Linked accounts', countKey: 'knightsLinkReviews' },
+      { path: '/knights-of-new-order/config', label: 'Config' },
+    ],
   },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
@@ -405,7 +442,7 @@ export function grantsSnapshot(): Record<string, Role[]> {
   return Object.fromEntries(grants.map((g) => [g.path, [...g.roles]]));
 }
 
-type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
+export type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
 /** The admin check: holds `moderator:admin`, which reaches everything and grants everything. */
 export const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);
@@ -428,6 +465,7 @@ function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
+    if (link.hidden) continue;
     if (link.shortcut ? !canAccess(user, link.path!) : link.path && !allows(link.path, user))
       continue;
     if (link.sharedAccess) {

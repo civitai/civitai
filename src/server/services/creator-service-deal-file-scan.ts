@@ -11,6 +11,11 @@ import {
 } from '~/server/flipt/client';
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import {
+  blobAir,
+  clamFilesScanned,
+  uploadConsumerBlob,
+} from '~/server/services/orchestrator/consumer-blob-scan';
 import { getBucket, getS3Client } from '~/utils/s3-utils';
 
 /**
@@ -38,31 +43,16 @@ const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const SUBMIT_TIMEOUT_MS = 60_000;
 const READ_TIMEOUT_MS = 10_000;
 
-const blobAir = (blobId: string) => `urn:air:other:other:orchestrator:blob@${blobId}`;
-
 async function uploadBlob(target: FinalScanTarget) {
   const object = await getS3Client().send(
     new GetObjectCommand({ Bucket: await getBucket(), Key: target.s3Key })
   );
   if (!object.Body) throw new Error('Empty object body');
-  const response = await fetch(
-    `${env.ORCHESTRATOR_ENDPOINT?.replace(/\/$/, '')}/v2/consumer/blobs`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': String(target.size),
-      },
-      body: object.Body.transformToWebStream(),
-      duplex: 'half',
-      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
-    } as RequestInit
-  );
-  if (!response.ok) throw new Error(`Blob upload failed: ${response.status}`);
-  const { id } = (await response.json()) as { id?: string };
-  if (!id) throw new Error('Blob upload returned no id');
-  return id;
+  return uploadConsumerBlob({
+    body: object.Body.transformToWebStream(),
+    size: target.size,
+    timeoutMs: UPLOAD_TIMEOUT_MS,
+  });
 }
 
 /**
@@ -120,6 +110,16 @@ export async function submitFinalScan(target: FinalScanTarget): Promise<'Pending
   return 'Pending';
 }
 
+/**
+ * Whether unpack accepted this Final as a video. Only `unpackVideo` writes `scannedEtag`, after
+ * its sniff, length and probe checks and before the content scan (`createScanImage`), so a file
+ * that merely has a video name never has it. The marker does not prove the scan: the Final passing
+ * still rests on every entry's content scan having Passed (`settleFinals`). A replaced upload is a
+ * new row and the key is fixed once Ready, so the scan reads the version the etag names. Anything
+ * that writes `scannedEtag` elsewhere widens what this lets through.
+ */
+export const acceptedAsVideo = (file: { scannedEtag: string | null }) => !!file.scannedEtag;
+
 /** What a scan workflow says about its file: a verdict, a scan to run again, or nothing yet. */
 export type FinalScanReading = 'Passed' | 'Failed' | 'Retry' | 'Running';
 
@@ -137,23 +137,16 @@ type ScanStep = {
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 /**
- * How many files the virus scan says it read: its count when it reports one, else the count in the
- * scanner's own summary, which is what the orchestrator returns today. Zero when it says neither.
- */
-function filesScanned(clam: NonNullable<ScanStep['output']>) {
-  if (typeof clam.scannedFileCount === 'number') return clam.scannedFileCount;
-  const summary = /^Scanned files:\s*(\d+)\s*$/m.exec(clam.output ?? '');
-  return summary ? Number(summary[1]) : 0;
-}
-
-/**
  * Reads a scan workflow. The verdict is in each step's output, never the workflow's status: a
  * workflow that found a virus still succeeds. Anything found fails the file even if the other step
  * did not finish; a pass needs both steps to have run and reported clean. Every other outcome of a
  * finished workflow, including a step status this code does not know, is a scan to run again. A
  * workflow not finished is Running whatever its status, and is abandoned once stale.
  */
-export function readFinalScan(workflow: { status?: string | null; steps?: unknown[] | null }) {
+export function readFinalScan(
+  workflow: { status?: string | null; steps?: unknown[] | null },
+  { video = false }: { video?: boolean } = {}
+) {
   const steps = (workflow.steps ?? []) as ScanStep[];
   const clam = steps.find((step) => step.$type === 'modelClamScan')?.output;
   const pickle = steps.find((step) => step.$type === 'modelPickleScan')?.output;
@@ -161,23 +154,35 @@ export function readFinalScan(workflow: { status?: string | null; steps?: unknow
   if (clam?.infected === true || clam?.status === 'infected') return 'Failed';
   if (pickle?.dangerousImportsFound === true || pickle?.status === 'dangerousImportsFound')
     return 'Failed';
+  // A file a scanner could not fully read is not cleared, and scanning it again reads no more.
+  const clamStatus = clam?.status?.toLowerCase();
+  if (clamStatus === 'encrypted' || clamStatus === 'limitsexceeded') return 'Failed';
+  // A pickle scan reads a model's code; a video has none, so its parse error says nothing about it.
+  const pickleParseError = pickle?.status?.toLowerCase() === 'parseerror';
+  if (pickleParseError && !video) return 'Failed';
   if (!TERMINAL.has(workflow.status ?? '')) return 'Running';
   if (workflow.status !== 'succeeded') return 'Retry';
-  const pickleClean = pickle?.status === 'clean' || !!pickle?.status?.startsWith('skipped');
+  const pickleClean =
+    pickle?.status === 'clean' ||
+    !!pickle?.status?.startsWith('skipped') ||
+    (video && pickleParseError);
   // A virus scan that does not say it read the file has not cleared it.
-  const clamClean = clam?.status === 'clean' && filesScanned(clam) > 0;
+  const clamClean = clam?.status === 'clean' && clamFilesScanned(clam) > 0;
   return clamClean && pickleClean ? 'Passed' : 'Retry';
 }
 
 /** Fetches and reads a scan workflow; null when the orchestrator did not answer. */
-export async function getFinalScanReading(workflowId: string): Promise<FinalScanReading | null> {
+export async function getFinalScanReading(
+  workflowId: string,
+  options: { video?: boolean } = {}
+): Promise<FinalScanReading | null> {
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
     signal: AbortSignal.timeout(READ_TIMEOUT_MS),
     path: { workflowId },
   });
   if (!data) return null;
-  return readFinalScan(data as { status?: string; steps?: unknown[] });
+  return readFinalScan(data as { status?: string; steps?: unknown[] }, options);
 }
 
 /**

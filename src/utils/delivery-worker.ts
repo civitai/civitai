@@ -128,6 +128,11 @@ export type ResolveOptions = ResolveAttribution & {
    * `shouldResolveDirect`.
    */
   direct?: boolean;
+  /**
+   * Ignored today by both paths: the storage resolver sizes a B2 URL's lifetime to the file
+   * itself, and the legacy delivery-worker never reads it. Read the returned expiry.
+   */
+  expiresInSeconds?: number;
 };
 
 export async function getDownloadUrlByFileId(
@@ -161,6 +166,7 @@ export async function getDownloadUrlByFileId(
     // field never sees it on an ordinary resolve. (`caller` and `actor` above are
     // always sent; the resolver ignores fields it does not know.)
     ...(canRequestDirect ? { direct: true } : {}),
+    ...(options?.expiresInSeconds ? { expiresInSeconds: options.expiresInSeconds } : {}),
   });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

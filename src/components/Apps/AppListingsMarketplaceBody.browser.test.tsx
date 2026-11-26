@@ -47,12 +47,6 @@ const mocks = vi.hoisted(() => ({
   lastArgs: null as null | Record<string, unknown>,
 }));
 
-// The grid renders AppListingCard, which calls useCurrentUser() (owner "Edit"
-// deep-link gate, added in #3392). Without a mock it hits the real
-// CivitaiSessionContext — absent in the provider stack — and throws "missing
-// CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 /**
  * This suite mounts ANONYMOUSLY (the mock above), and recents are ACCOUNT-scoped
  * (#4048) with `null` — signed out — as its own bucket, not a wildcard. Seeds
@@ -67,22 +61,20 @@ const SESSION_OWNER_ID: number | null = null;
 // fails to load with 0 tests collected and no failing assertion.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
-        useInfiniteQuery: (input: Record<string, unknown>) => {
-          mocks.lastArgs = input;
-          return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isFetchingNextPage: false,
-            fetchNextPage: vi.fn(),
-            hasNextPage: false,
-          };
-        },
+  trpc: (await import('../../../test/trpcProxyStub')).makeTrpcProxy({
+    'appListings.listAvailable': {
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.lastArgs = input;
+        return {
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
+        };
       },
     },
-  },
+  }),
 }));
 
 // 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
@@ -99,9 +91,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 // gates exactly this rule for its own directory.
 // Both hooks must return the SAME flags: a component may call either, and which one
 // it calls is not something a test file can see.
+const flags = vi.hoisted(() => ({
+  value: { appBlocks: true, appBlocksPages: false } as Record<string, boolean>,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
-  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useFeatureFlags: () => flags.value,
+  useOptionalFeatureFlags: () => flags.value,
 }));
 
 // The filters now live in the shared `AdaptiveFiltersDropdown`, which pulls in two
@@ -114,7 +109,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // below fails by burning its timeout. `isClient: true` = post-hydration (so the count
 // badge renders); `mobile: false` = the desktop popover path. The mobile drawer path
 // and the pre-hydration path get their own files.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 // Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
 // a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
@@ -126,14 +120,15 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 const { clearRecentlyOpenedApps, getRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
@@ -165,11 +160,13 @@ const { clearRecentlyOpenedApps, getRecentlyOpenedApps, recordRecentlyOpenedApp 
 const router = useRouter();
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
   // A FRESH object each test: `useZodRouteParams` memoises on the `query`
   // reference, so mutating the previous object in place would be invisible.
   router.query = {};
+  flags.value = { appBlocks: true, appBlocksPages: false };
   vi.mocked(router.replace).mockClear();
   clearRecentlyOpenedApps();
 });
@@ -379,6 +376,33 @@ describe('AppListingsMarketplaceBody', () => {
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
     // Bravo is filtered out client-side by the seeded query.
     expect(page.getByText('Bravo App').elements()).toHaveLength(0);
+  });
+
+  test("with pageSearch the header bar is the store's search: no box of its own, the query still filters", async () => {
+    const pathname = router.pathname;
+    router.pathname = '/apps/store';
+    flags.value = { ...flags.value, pageSearch: true };
+    router.query = { query: 'Alpha' };
+    try {
+      renderWithProviders(<StoreWithControls />);
+      await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+      expect(page.getByLabelText('Search').elements()).toHaveLength(0);
+      expect(page.getByText('Bravo App').elements()).toHaveLength(0);
+    } finally {
+      router.pathname = pathname;
+    }
+  });
+
+  test('a page sharing the store body that the header does not search keeps its box', async () => {
+    const pathname = router.pathname;
+    router.pathname = '/apps/store-preview';
+    flags.value = { ...flags.value, pageSearch: true };
+    try {
+      renderWithProviders(<StoreWithControls />);
+      await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
+    } finally {
+      router.pathname = pathname;
+    }
   });
 
   test('sorting writes the sort param', async () => {

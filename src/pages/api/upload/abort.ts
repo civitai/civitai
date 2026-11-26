@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import {
   abortMultipartUpload,
   classifyS3MultipartError,
@@ -9,6 +9,7 @@ import {
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 import { sanitizeRelayFallbackOutcome } from '~/utils/relay-fallback-outcome';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 /**
  * Sanitize the caller-supplied failure object before it reaches the event stream.
@@ -55,23 +56,55 @@ function sanitizeClientFileSize(input: unknown): number | undefined {
   return size >= 0 && size <= MAX_LOGGED_FILE_SIZE ? size : undefined;
 }
 
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0;
+
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
+  if (session === false) return;
   const userId = session?.user?.id;
-  if (!userId || session.user?.bannedAt) {
+  if (!userId) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
-  const { bucket, key, type, uploadId, backend, failure, relayOutcome, fileSize } = req.body;
+  const { bucket, key, type, uploadId, backend, failure, relayOutcome, fileSize } = req.body ?? {};
   const clientFailure = sanitizeClientFailure(failure);
   const clientFileSize = sanitizeClientFileSize(fileSize);
   // Logged unconditionally, unlike `failure` above: a conditional spread would drop the
   // `unknown` row the sanitiser exists to mint.
   const clientRelayOutcome = sanitizeRelayFallbackOutcome(relayOutcome);
+  // Same guard as ./complete.ts: the SDK rejects a missing bucket/key/uploadId client-side
+  // with an error the classifier would answer as a 500. Still logged after responding — an
+  // abort is also the failed-upload telemetry event, and a 400 must not erase it.
+  if (!isNonEmptyString(bucket) || !isNonEmptyString(key) || !isNonEmptyString(uploadId)) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ error: 'Missing or invalid bucket, key or uploadId' });
+    try {
+      logToAxiom({
+        name: 's3-upload-abort-invalid',
+        userId,
+        type,
+        backend,
+        invalid: (['bucket', 'key', 'uploadId'] as const).filter(
+          (f) => !isNonEmptyString({ bucket, key, uploadId }[f])
+        ),
+        ...(isNonEmptyString(key) ? { key } : {}),
+        ...(clientFailure ? { failure: clientFailure } : {}),
+        ...(clientFileSize !== undefined ? { fileSize: clientFileSize } : {}),
+        relayOutcome: clientRelayOutcome,
+      });
+    } catch {
+      /* contained — see the success path */
+    }
+    return;
+  }
   try {
     let s3;
     if (backend === 'backblaze') {
@@ -87,7 +120,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // uncontained throw would unwind into the catch below and re-answer a request that
     // already succeeded. Not silent — @civitai/axiom reports its own ingest failures.
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-abort',
         userId,
         type,
@@ -140,7 +173,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       }
     } finally {
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-abort-error',
           userId,
           type,

@@ -3,17 +3,31 @@ import path from 'path';
 import { ImageResponse } from 'next/og';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  bountyImageNsfwLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { getChallengeDetail } from '~/server/services/challenge.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  entityImageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { buildOgCoverEdgeUrl, fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -22,6 +36,17 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { siteForCoverId } from '~/shared/constants/version-showcase.constants';
+import {
+  getShowcaseHeldLevels,
+  withinHeldLevel as withinHeldLevelFilter,
+} from '~/server/services/model.service';
+import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
@@ -31,6 +56,8 @@ import {
 } from '~/server/services/creator-milestone-share.service';
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { imageNotFlaggedWhere, isImageNotFlagged } from '~/server/common/image-visibility';
 
 // --- Schema & Types ---
 
@@ -94,6 +121,16 @@ const ogImageSelect = {
   height: true,
 } as const;
 
+const ogArticleImageSelect = {
+  ...ogImageSelect,
+  id: true,
+  ingestion: true,
+  needsReview: true,
+  modelRestricted: true,
+  acceptableMinor: true,
+  minor: true,
+} as const;
+
 // --- Static app assets (inlined) ---
 //
 // The card embeds a couple of small app PNGs (the logo placeholder / stats-bar
@@ -137,6 +174,13 @@ function getAspectRatio(img: { width?: number | null; height?: number | null }):
   return 1;
 }
 
+// Link previews have no viewer, so they pick images as getEntityCoverImage does for a signed-out one.
+const ogImageNotFlagged = imageNotFlaggedWhere();
+
+function notFlagged<T extends Parameters<typeof isImageNotFlagged>[0]>(image: T | null): T | null {
+  return image && isImageNotFlagged(image) ? image : null;
+}
+
 function getSafeImage(image: OgImage | null | undefined): OgImage | null {
   if (!image || !getIsSafeBrowsingLevel(image.nsfwLevel)) return null;
   return image;
@@ -175,8 +219,12 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       sfwDescription: true,
       coverImageId: true,
       sfwCoverImageId: true,
+      nsfw: true,
       meta: true,
+      mode: true,
       userId: true,
+      minor: true,
+      sfwOnly: true,
       user: { select: { username: true, settings: true } },
       modelVersions: {
         where: { status: 'Published' },
@@ -209,14 +257,24 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   });
 
   // Run metric + image queries in parallel
-  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
-  const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on, or
+  // whenever the model isn't mature (its .com showcase sets that cover).
+  const coverId =
+    (model.sfwName != null || !model.nsfw ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  // A taken-down model's card is drawn without any of its images.
+  const withheld = isModelWithheld(model);
   const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
   const previewableImage = {
     tosViolation: false,
     needsReview: null,
     ingestion: 'Scanned' as const,
+    ...ogImageNotFlagged,
   };
+  const heldLevel = (
+    await getShowcaseHeldLevels([{ modelId: id, minor: model.minor, sfwOnly: model.sfwOnly }])
+  ).get(id);
+  const withinHeldLevel =
+    heldLevel !== undefined ? { nsfwLevel: { in: Flags.instanceToArray(heldLevel) } } : {};
   const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
@@ -231,22 +289,23 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       .catch(() => null),
     // Same pick as the model page's showcase (getImagesForModelVersion): the owner's own
     // posts only, earliest post first, unless the model belongs to the system account.
-    dbRead.image.findFirst({
-      where: {
-        post: {
-          publishedAt: { not: null },
-          modelVersionId: publishedVersion.id,
-          availability: Availability.Public,
-          ...(model.userId !== -1 ? { userId: model.userId } : {}),
-        },
-        tosViolation: false,
-        needsReview: null,
-        ingestion: 'Scanned',
-      },
-      select: ogImageSelect,
-      orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
-    }),
-    coverId
+    withheld
+      ? null
+      : dbRead.image.findFirst({
+          where: {
+            post: {
+              publishedAt: { not: null },
+              modelVersionId: publishedVersion.id,
+              availability: Availability.Public,
+              ...(model.userId !== -1 ? { userId: model.userId } : {}),
+            },
+            ...previewableImage,
+            ...withinHeldLevel,
+          },
+          select: ogImageSelect,
+          orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
+        }),
+    coverId && !withheld
       ? dbRead.image.findFirst({
           where: {
             id: coverId,
@@ -257,11 +316,27 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
               ...ownPosts,
             },
             ...previewableImage,
+            ...withinHeldLevel,
           },
           select: ogImageSelect,
         })
       : null,
   ]);
+  const featuredCover =
+    !coverImage && coverId && !withheld
+      ? isShowcaseCoverImage(
+          await getShowcaseCommunityCovers([{ modelId: id, imageId: coverId }]),
+          {
+            modelId: id,
+            imageId: coverId,
+            site: siteForCoverId(model, coverId),
+          }
+        )
+      : undefined;
+  const communityCover =
+    featuredCover && withinHeldLevelFilter([featuredCover], heldLevel).length
+      ? featuredCover
+      : undefined;
 
   const stats: StatItem[] = metric
     ? [
@@ -283,9 +358,15 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 
   return {
     title: sfwName ?? model.name,
-    description: cleanDescription(description),
+    description: cleanDescription(
+      communityCover?.authorUsername
+        ? `Cover image by @${communityCover.authorUsername}. ${description}`
+        : description
+    ),
     creator: model.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(coverImage) ?? getSafeImage(defaultImage)),
+    ...buildEntityImage(
+      getSafeImage(coverImage) ?? getSafeImage(communityCover) ?? getSafeImage(defaultImage)
+    ),
     stats,
   };
 }
@@ -299,12 +380,18 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         status: ArticleStatus.Published,
         tosViolation: false,
         ingestion: ArticleIngestionStatus.Scanned,
+        availability: { not: Availability.Private },
       },
       select: {
         title: true,
         content: true,
         user: { select: { username: true } },
-        coverImage: { select: ogImageSelect },
+        coverImage: {
+          select: ogArticleImageSelect,
+        },
+        bannerImage: {
+          select: ogArticleImageSelect,
+        },
       },
     }),
     dbRead.articleMetric
@@ -320,6 +407,12 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
       .catch(() => null),
   ]);
   if (!article) return null;
+  const listed = await getReportListedHiddenImageIds(
+    [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
+    SIGNED_OUT_REPORT_LISTED
+  );
+  const shown = (image: typeof article.coverImage) =>
+    image && !listed.has(image.id) ? notFlagged(servableArticleImage(image)) : null;
   // Cover-image NSFW handling is done downstream via getSafeImage() +
   // buildEntityImage(null) — when the cover is NSFW the template renders the
   // LogoPlaceholder instead, while still showing title/content/stats.
@@ -335,9 +428,9 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
 
   return {
     title: article.title,
-    description: cleanDescription(article.content ?? ''),
+    description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(article.coverImage)),
+    ...buildEntityImage(getSafeImage(shown(article.coverImage) ?? shown(article.bannerImage))),
     stats,
   };
 }
@@ -380,6 +473,7 @@ async function fetchPostData(id: number): Promise<EntityData | null> {
         tosViolation: false,
         needsReview: null,
         ingestion: 'Scanned',
+        ...ogImageNotFlagged,
       },
       select: ogImageSelect,
       orderBy: [{ index: 'asc' }, { id: 'asc' }],
@@ -467,12 +561,15 @@ async function fetchImageData(id: number): Promise<EntityData | null> {
 }
 
 async function fetchBountyData(id: number): Promise<EntityData | null> {
-  const [bounty, metric, connection] = await Promise.all([
+  const [bounty, metric, images] = await Promise.all([
     dbRead.bounty.findFirst({
       where: { id, availability: { not: 'Private' } },
       select: {
         name: true,
         description: true,
+        nsfw: true,
+        nsfwLevel: true,
+        moderatorNsfwLevel: true,
         user: { select: { username: true } },
       },
     }),
@@ -487,16 +584,27 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
         },
       })
       .catch(() => null),
-    dbRead.imageConnection.findFirst({
-      where: {
-        entityType: 'Bounty',
-        entityId: id,
-        image: { tosViolation: false, needsReview: null, ingestion: 'Scanned' },
-      },
-      select: { image: { select: ogImageSelect } },
-    }),
+    // An image a signed-out visitor is served on the bounty page.
+    dbRead.$queryRaw<OgImage[]>`
+      SELECT i.url, i."nsfwLevel", i.type, i.width, i.height
+      FROM "ImageConnection" ic
+      JOIN "Image" i ON i.id = ic."imageId"
+      WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
+        AND ${Prisma.join(entityImageVisibilityConditions({ seesReportListed: false }), ' AND ')}
+      LIMIT 1
+    `,
   ]);
   if (!bounty) return null;
+
+  // A flagged bounty's images are raised to its flag level, as the bounty list does (an unrated
+  // flag counts as XXX).
+  const textRated = mayBeTextRated(bounty)
+    ? await getTextRatedBountyLevels([id])
+    : new Map<number, number>();
+  const image = images[0] && {
+    ...images[0],
+    nsfwLevel: bountyImageNsfwLevel(bounty, textRated.get(id), images[0].nsfwLevel),
+  };
 
   const stats: StatItem[] = metric
     ? [
@@ -513,7 +621,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
     title: bounty.name,
     description: cleanDescription(bounty.description ?? ''),
     creator: bounty.user?.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(connection?.image)),
+    ...buildEntityImage(getSafeImage(image)),
     stats,
   };
 }

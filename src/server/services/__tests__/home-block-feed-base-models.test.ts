@@ -193,3 +193,24 @@ describe('new & upcoming pool caps', () => {
     expect(imagesArg().limit).toBe(42);
   });
 });
+
+// The home-block editor reads blocks with the moderator's user; its views come from the credential.
+describe('feed views', () => {
+  it.each<[string, { asModerator?: boolean; asOwner?: boolean }]>([
+    ['a scoped key', { asModerator: false, asOwner: false }],
+    ['a session (control)', { asModerator: true, asOwner: true }],
+    ['a caller naming no view (fail closed)', {}],
+  ])("reads a moderator's images feed on %s", async (_, views) => {
+    await getHomeBlockData({
+      input: {},
+      homeBlock: feedBlock({ entity: 'images' }) as never,
+      user: { id: 5, isModerator: true } as never,
+      ...views,
+    });
+
+    expect((getAllImagesIndexMock.mock.calls[0] as unknown[] | undefined)?.[0]).toMatchObject({
+      asModerator: views.asModerator ?? false,
+      asOwner: views.asOwner ?? false,
+    });
+  });
+});

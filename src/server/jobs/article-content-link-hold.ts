@@ -4,6 +4,7 @@ import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { linkArticleContentImages } from '~/server/services/article.service';
 import {
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
   contentLinkHoldCounter,
   getContentLinkHold,
 } from '~/server/services/article-content-link-hold';
@@ -11,8 +12,6 @@ import { createReport } from '~/server/services/report.service';
 import { ArticleStatus, ReportReason } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
-/** A deferral older than this goes to moderators rather than waiting on in silence. */
-export const CONTENT_LINK_DEFERRAL_BACKSTOP_MS = 24 * 60 * 60 * 1000;
 export const CONTENT_LINK_DEFERRAL_REPORT_COMMENT =
   'automated: image could not be verified after 24h';
 const BATCH = 200;
@@ -41,7 +40,7 @@ export async function settleContentLinkHolds(now = new Date()) {
         message: 'Failed to settle a held article',
         articleId,
         error: (error as Error).message,
-      }).catch(() => undefined);
+      });
     }
   }
   return { checked: holds.length };
@@ -52,7 +51,7 @@ async function settleArticle(articleId: number, now: Date) {
   // Read here, not with the batch: a save since then replaced the content the hold was taken on.
   const article = await dbWrite.article.findUnique({
     where: { id: articleId },
-    select: { userId: true, content: true, coverId: true, status: true },
+    select: { userId: true, content: true, coverId: true, bannerId: true, status: true },
   });
   if (!before || !article) return;
   await linkArticleContentImages({
@@ -61,6 +60,7 @@ async function settleArticle(articleId: number, now: Date) {
     userId: before.editorId,
     ownerId: article.userId,
     coverId: article.coverId,
+    bannerId: article.bannerId,
     now,
   });
 

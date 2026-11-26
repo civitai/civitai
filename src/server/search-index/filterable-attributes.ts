@@ -3,7 +3,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -30,22 +29,6 @@ export const collectionsFilterableAttributes = ['user.username', 'type', 'nsfwLe
 
 export const comicsFilterableAttributes = ['id', 'user.username', 'genre', 'nsfwLevel'];
 
-export const imagesFilterableAttributes = [
-  'id',
-  'createdAtUnix',
-  'tagNames',
-  'user.username',
-  'baseModel',
-  'aspectRatio',
-  'nsfwLevel',
-  'type',
-  'toolNames',
-  'techniqueNames',
-  'flags.promptNsfw',
-  'poi',
-  'minor',
-];
-
 export const modelsFilterableAttributes = [
   'availability',
   'canGenerate',
@@ -68,6 +51,7 @@ export const modelsFilterableAttributes = [
   'versions.generatorLoaded',
   'versions.hashes',
   'versions.turbo',
+  'versions.accelerator',
   'versions.id',
   'versions.pricing',
   'cannotPromote',
@@ -233,7 +217,7 @@ export const modelsFilterableAttributes = [
   // ⚠ Added in the SAME change as the sortable entry, and the reason first given for that
   // was WRONG: it said "both lists are written only by `onIndexSetup` from `reset()`".
   // That holds for `sortableAttributes` and NOT for this list —
-  // src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts applies THIS list
+  // src/server/api-routes/admin/temp/apply-models-index-filterable-attributes.ts applies THIS list
   // to the live index with no reset, and there is no sortable equivalent of that route.
   //
   // The decision stands on the corrected argument: a reset writes both lists into the
@@ -273,7 +257,7 @@ export const modelsFilterableAttributes = [
   // 🔴 ⚠️ DO NOT RE-DERIVE THAT AS "THE LISTS ONLY REACH A LIVE INDEX THROUGH A RESET" — a
   // draft of this very entry said exactly that, and it is the claim the ⚠️ paragraph beside
   // the score entry above was written to RETRACT. THIS list has
-  // src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts, which applies it to
+  // src/server/api-routes/admin/temp/apply-models-index-filterable-attributes.ts, which applies it to
   // the live index with no reset; only `sortableAttributes` and `displayedAttributes` are
   // reset-only. The separability argument does not need the false half, so it no longer
   // carries it — the DOCUMENTS are what wait for a rewrite, not the settings.
@@ -299,7 +283,6 @@ export const filterableAttributesByIndex = {
   [BOUNTIES_SEARCH_INDEX]: bountiesFilterableAttributes,
   [COLLECTIONS_SEARCH_INDEX]: collectionsFilterableAttributes,
   [COMICS_SEARCH_INDEX]: comicsFilterableAttributes,
-  [IMAGES_SEARCH_INDEX]: imagesFilterableAttributes,
   [MODELS_SEARCH_INDEX]: modelsFilterableAttributes,
   [TOOLS_SEARCH_INDEX]: toolsFilterableAttributes,
   [USERS_SEARCH_INDEX]: usersFilterableAttributes,

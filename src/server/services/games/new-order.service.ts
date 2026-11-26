@@ -2,6 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import type { NewOrderDamnedReason } from '~/server/common/enums';
 import {
   NewOrderImageRatingStatus,
@@ -28,6 +29,7 @@ import {
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
+  legacyRank,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -76,6 +78,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
+import { loosensImageLevel, withheldImageIds } from '~/server/services/moderator-withheld.service';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
@@ -173,7 +176,11 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
     getVotingCooldownUntil(playerId),
   ]);
 
-  return { ...playerData, ...user, stats, cooldownUntil };
+  // Paladin has no pools in this game; see `legacyRank`.
+  // Typed as the full enum: the client cache also stores the rank a rank-up signal carries.
+  const rankType = legacyRank(playerData.rankType) as NewOrderRankType;
+
+  return { ...playerData, rankType, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -403,7 +410,13 @@ export async function addImageRating({
   damnedReason,
   chTracker,
   isModerator,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  csamReview = false,
+}: AddImageRatingInput & {
+  playerId: number;
+  chTracker?: Tracker;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   // Warm the rated set outside the per-image lock: a cold rebuild reads ClickHouse and must not
@@ -433,6 +446,7 @@ export async function addImageRating({
           damnedReason,
           chTracker,
           isModerator,
+          csamReview,
         });
       }
     )
@@ -453,7 +467,13 @@ async function processImageRating({
   damnedReason,
   chTracker,
   isModerator,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  csamReview = false,
+}: AddImageRatingInput & {
+  playerId: number;
+  chTracker?: Tracker;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) {
   // Validate player and image existence before consuming rate limit budget
   const player = await getPlayerById({ playerId });
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
@@ -481,7 +501,7 @@ async function processImageRating({
             cooldownUntil: rateLimitResult.cooldownUntil,
           },
           message: `Player ${playerId} hit rate limit cooldown`,
-        }).catch(() => null);
+        });
       }
 
       const waitSeconds = rateLimitResult.cooldownUntil
@@ -552,6 +572,7 @@ async function processImageRating({
       nsfwLevel: rating,
       userId: playerId,
       isModerator,
+      csamReview,
       status: 'Actioned',
     });
     await updatePendingImageRatings({ imageId, rating });
@@ -576,7 +597,7 @@ async function processImageRating({
         name: 'new-order-duplicate-vote',
         details: { playerId, imageId },
         message: `Player ${playerId} voted again on image ${imageId}`,
-      }).catch(() => null);
+      });
       return { stats: player.stats };
     }
   } catch (e) {
@@ -616,12 +637,24 @@ async function processImageRating({
     // refused above.
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
+      const primaryImage =
+        consensus &&
+        // primary: the replica can lag a raise made since this round began.
+        (await dbWrite.image.findUnique({ where: { id: imageId }, select: { nsfwLevel: true } }));
+      const primaryLevel = primaryImage ? primaryImage.nsfwLevel : image.nsfwLevel;
       // Guard against excessive down-rating: allow down-rating by at most 1 level,
       // escalate to Inquisitor (mod) queue if the distance is greater
       const isExcessiveDownRating =
-        consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+        consensus && consensus < primaryLevel && Flags.distance(primaryLevel, consensus) > 1;
+      // A vote holds no grant, so it does not loosen what is withheld from a moderator without one:
+      // the image keeps its level and goes to a moderator like an excessive down-rating.
+      const isWithheldDownRating =
+        !isExcessiveDownRating &&
+        !!consensus &&
+        loosensImageLevel(primaryLevel, consensus) &&
+        (await withheldImageIds([imageId], { csamReview: false })).has(imageId);
 
-      if (isExcessiveDownRating) {
+      if (isExcessiveDownRating || isWithheldDownRating) {
         // No decision made yet — keep all votes (including this one) Pending until mod acts
         currentNsfwLevel = undefined;
 
@@ -643,25 +676,23 @@ async function processImageRating({
             name: 'new-order-escalation-skipped',
             details: { imageId, userId: playerId },
             message: `Image ${imageId} was not escalated to Inquisitor queue`,
-          }).catch(() => null);
+          });
         } else
           logToAxiom({
             type: 'info',
             name: 'new-order-down-rating-escalated',
             details: {
               imageId,
-              currentLevel: image.nsfwLevel,
+              currentLevel: primaryLevel,
               consensusLevel: consensus,
-              distance: Flags.distance(image.nsfwLevel, consensus),
+              distance: Flags.distance(primaryLevel, consensus),
               voteCount: newVoteCount,
             },
-            message: `Image ${imageId} down-rating consensus (${
-              image.nsfwLevel
-            } → ${consensus}, distance ${Flags.distance(
-              image.nsfwLevel,
+            message: `Image ${imageId} down-rating consensus (${primaryLevel} → ${consensus}, distance ${Flags.distance(
+              primaryLevel,
               consensus
             )}) escalated to Inquisitor queue`,
-          }).catch(() => null);
+          });
       } else {
         // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
         if (consensus) {
@@ -779,7 +810,7 @@ async function processImageRating({
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
+      );
     }
   }
 
@@ -832,7 +863,7 @@ async function processImageRating({
           error: (error as Error).message,
         },
         message: `Failed to create report for image ${imageId}`,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1103,7 +1134,7 @@ export async function processFinalRatings() {
         message: `Processed correct ratings from ${updateStart.toISOString()} to ${updateEnd.toISOString()}`,
       },
       'clickhouse'
-    ).catch();
+    );
 
     return {
       status: 'processed',
@@ -1127,7 +1158,7 @@ export async function processFinalRatings() {
         cause: error.cause,
       },
       'clickhouse'
-    ).catch();
+    );
     return { status: 'error', error: error.message };
   } finally {
     // Clear lock
@@ -1348,7 +1379,7 @@ export async function handleSanityCheckFailure({
     }
 
     // Log for analytics
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'new-order-sanity-check-failure',
       details: { playerId, imageId, failureCount },
@@ -1447,8 +1478,15 @@ export async function resetPlayer({
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
+    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays.
+    // startAt must be set here (database clock, under the row lock), not by the Prisma data: Knights' conversion ordering depends on it.
+    dbWrite.$executeRaw`
+      UPDATE "NewOrderPlayer"
+      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted"
+      WHERE "userId" = ${playerId}
+    `,
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
       where: { targetPlayerId: playerId, cleansedAt: null },
@@ -1624,10 +1662,19 @@ export async function addImageToQueue({
   const images = (
     await dbRead.image.findMany({
       where: { id: { in: imageIds } },
-      select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
+      select: {
+        id: true,
+        url: true,
+        nsfwLevel: true,
+        metadata: true,
+        needsReview: true,
+        ingestion: true,
+        blockedFor: true,
+      },
     })
   ).filter((image) => {
-    if (!isHeldForReview(image)) return true;
+    // A blocked image is refused whatever the caller saw: no sample may carry one.
+    if (!isHeldForReview(image) && !hasBlockMarker(image)) return true;
     heldIds.push(image.id);
     return false;
   });

@@ -78,18 +78,24 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  describeSharedRefusalField,
+  sharedRefusalField,
   type SharedDataModerationMode,
   type SharedDataSurface,
   type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
+import {
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
   checkSharedWithdrawRateLimit,
   reserveSharedWrite,
 } from '~/server/utils/shared-storage-rate-limit';
-import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
 import {
   tagSharedStorageOutcome,
   withSharedStorageMetrics,
@@ -286,6 +292,7 @@ export async function resolveSharedContext(
   op: SharedOp
 ): Promise<SharedContext> {
   const resolved = await resolveBlockToken(blockToken, {
+    admitRunner: false,
     // 🔴 APPROVAL FIRST, then revocation — the reverse of the bridge and per-user storage.
     // For an instance that is both revoked and not approved this path answers
     // `app block is not approved` where those two answer `block instance revoked`, and it
@@ -374,17 +381,6 @@ export async function resolveSharedContext(
   // them. Do not re-enumerate that set here — it is four ops today and adding a
   // fifth must not silently make this comment wrong. Mechanism + the measurement
   // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
-  //
-  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
-  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
-  // runtime branch, so a bundler that drops it re-opens the exposure with the source
-  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
-  // so line numbers do not matter, and the message text is free to change because the
-  // anchor here is the CONDITION on the next line, not the message. DELETING the branch,
-  // or rewriting that condition, fails the production Docker build at
-  // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
-  // same commit.
   if (userId != null && !subjectUser) {
     throw tagSharedStorageOutcome(
       new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' }),
@@ -806,8 +802,9 @@ type SharedWriteContext = SharedContext & { uid: number };
  * 🔴 A failure that did not land is refunded FREE only if it is marked as our server fault
  * (`escalateToServerFault`); every other failure, 4xx or not, is also charged to the rejection
  * bucket. The marked set is:
- *   - the `data` scan failing (`enforceScan`) and the title/body belt's blocklist read failing
- *     (`assertSharedTextSafe`) — both refused as a 400 but escalated;
+ *   - the `data` scan failing (`enforceScan`), and the title/body belt's blocklist read or its
+ *     prompt audit failing to run (`assertSharedTextSafe`; the audit's 503 only while
+ *     PROMPT_CHECK_FAIL_CLOSED is on) — all refused as a 400 but escalated;
  *   - transaction plumbing (`asTransactionFault`): acquiring the connection, BEGIN, the
  *     `SET LOCAL` of the server-derived app id, and COMMIT.
  * It is an allow-list because a refund is only safe for a failure the caller cannot cause.
@@ -825,7 +822,11 @@ async function withSharedWriteBudget<T>(
 ): Promise<T> {
   const budget = await reserveSharedWrite(ctx.uid, ctx.appBlockId);
   if (!budget.allowed)
-    throwSharedRateLimited(budget, `Too many submissions — retry in ${budget.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      budget.retryAfterSeconds,
+      `Too many submissions — retry in ${budget.retryAfterSeconds}s`
+    );
   let landed = false;
   try {
     return await write(() => {
@@ -1244,7 +1245,12 @@ async function voteSharedRowUnmetered(blockToken: string, key: string): Promise<
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed)
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many votes — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
@@ -1301,7 +1307,12 @@ async function unvoteSharedRowUnmetered(
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed)
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many votes — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   const rows = (
@@ -1340,7 +1351,11 @@ async function withdrawSharedRowUnmetered(
   // bucket lives beside the constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
   if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   const client = await pool.connect();
@@ -1393,7 +1408,11 @@ async function reportSharedRowUnmetered(
   // other buckets — the containment is defence-in-depth, not the auth boundary).
   const rl = await checkSharedReportRateLimit(uid, appBlockId);
   if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many reports — retry in ${rl.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many reports — retry in ${rl.retryAfterSeconds}s`
+    );
 
   const pool = requireAppsDb();
   const exists = (await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key]))
@@ -1438,7 +1457,7 @@ async function reportSharedRowUnmetered(
       key,
     },
     'block-audit'
-  ).catch(() => {});
+  );
 
   return { ok: true as const };
 }
@@ -1595,7 +1614,11 @@ async function incrementSharedCounterUnmetered(
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
   if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many increments — retry in ${rl.retryAfterSeconds}s`);
+    throwAppRateLimited(
+      'apps.shared-storage',
+      rl.retryAfterSeconds,
+      `Too many increments — retry in ${rl.retryAfterSeconds}s`
+    );
 
   // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
   // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`).
@@ -1657,6 +1680,15 @@ async function incrementSharedCounterUnmetered(
     }
   };
 
+  if (moderationMode !== 'enforce' && containsPrivateMediaUrl(key)) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Content contains a blocked link (counterKey)',
+      }),
+      'moderation_blocked'
+    );
+  }
   let outcome = await runIncrement(moderationMode === 'enforce');
   if (!outcome) {
     // Enforce, and this increment would create the key: scan it now, with no transaction open.
@@ -1909,11 +1941,14 @@ async function assertSharedValueSafeAndSerialize(params: {
         { schema, slug, appBlockId, uid },
         { policy: e.category, category: e.category, reason: `auto:${e.category}` }
       );
-      const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      // The field the belt refused (never the term or the text), when it could be placed.
+      const message = e.field ? `${e.message} (field: ${e.field})` : e.message;
+      const refusal = new TRPCError({ code: 'BAD_REQUEST', message, cause: e });
       // `unchecked`, not escalation, picks the outcome: a scan that threw is unchecked but charged.
       const outcome = e.unchecked ? 'moderation_unavailable' : 'moderation_blocked';
-      // An outage the belt refused on (its blocklist read failing) stays our fault on the
-      // refusal too, so the write budget refunds it instead of charging the caller.
+      // An outage the belt refused on (its blocklist read failing, or its prompt audit unable to
+      // run) stays our fault on the refusal too, so the write budget refunds it instead of
+      // charging the caller.
       if (isEscalatedServerFault(e)) {
         throw tagSharedStorageOutcome(escalateToServerFault(refusal), outcome);
       }
@@ -1949,6 +1984,13 @@ async function assertSharedValueSafeAndSerialize(params: {
   // A thunk, so shadow mode parses off the request path too (inside the deferred scan).
   const readStoredData = () =>
     value.data === undefined ? undefined : (JSON.parse(serialized) as { data?: unknown }).data;
+  // Refused in every mode; under `enforce` the scan below records it.
+  if (mode !== 'enforce' && valueContainsPrivateMediaUrl(JSON.parse(serialized))) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Content contains a blocked link (data)' }),
+      'moderation_blocked'
+    );
+  }
   if (mode === 'enforce') {
     const scan = await enforceScan(
       () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
@@ -2038,7 +2080,7 @@ async function enforceScan(
         error: error instanceof Error ? error.name : typeof error,
       },
       'block-audit'
-    ).catch(() => undefined);
+    );
     throw tagSharedStorageOutcome(
       escalateToServerFault(
         new TRPCError({
@@ -2055,7 +2097,8 @@ async function enforceScan(
  * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then,
  * when `hit` is set, reject it with the SAME consequences a title/body hit has
  * (`fileSharedBlockConsequences`, attributed to the caller — the writer of the text) and a
- * BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
+ * BAD_REQUEST carrying a generic message plus the field the hit sits in (`sharedRefusalField`,
+ * e.g. `(field: data.actions[2].text)`) — never the matched term or text. An overflow (a blob too
  * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
  * past a cap. With `hit` null it only records.
  *
@@ -2092,12 +2135,16 @@ async function refuseSharedTextHit(
     field,
   });
 
-  const message =
+  const reason =
     hit.category === 'link'
       ? 'Content contains a blocked link'
       : hit.category === 'overflow'
       ? 'Data is too large or too deeply nested to review'
       : 'Content flagged for review';
+  const named = describeSharedRefusalField(
+    sharedRefusalField(scan, hit, ctx.surface === 'counter' ? 'key' : 'data')
+  );
+  const message = `${reason} (${named})`;
   throw tagSharedStorageOutcome(
     new TRPCError({ code: 'BAD_REQUEST', message }),
     'moderation_blocked'

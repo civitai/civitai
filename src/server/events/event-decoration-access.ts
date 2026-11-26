@@ -84,7 +84,7 @@ async function visibleAmong(
         name: 'event-decoration-access',
         message: (error as Error).message,
         event: definition.event,
-      }).catch(() => undefined);
+      });
     }
   }
   return visible;

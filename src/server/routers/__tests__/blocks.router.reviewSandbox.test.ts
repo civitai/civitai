@@ -104,6 +104,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 const mockDbRead = dbMock.dbRead;
 const mockRedis = redisMock.redis;
 const mockSysRedis = redisMock.sysRedis;
@@ -184,13 +185,13 @@ beforeEach(() => {
 });
 
 describe('blocks.previewRequest', () => {
-  it('moderator + flags on: reaches the service with the server modUserId', async () => {
+  it('moderator + flags on: reaches the service with the server-derived moderator actor', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.previewRequest({ publishRequestId: PUBREQ });
     expect(res.url).toBe('https://review-x.civit.ai/my-app');
     expect(mockPreviewRequest).toHaveBeenCalledWith({
       publishRequestId: PUBREQ,
-      modUserId: 1, // SERVER-derived, never client-supplied
+      actor: { kind: 'moderator', userId: 1 }, // SERVER-derived, never client-supplied
     });
   });
 
@@ -299,10 +300,19 @@ describe('blocks.mintReviewBlockToken', () => {
 
   it('runForReal:true is REJECTED (TOO_MANY_REQUESTS) once the mint rate limit is exceeded — service NOT reached', async () => {
     mockSysRedis.incrBy.mockResolvedValue(999); // over the per-mod window cap
+    mockSysRedis.ttl.mockResolvedValue(1800); // half the hour's window left
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
-    await expect(
-      caller.mintReviewBlockToken({ publishRequestId: PUBREQ, runForReal: true })
-    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    const refused = await caller
+      .mintReviewBlockToken({ publishRequestId: PUBREQ, runForReal: true })
+      .catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // The window's own TTL as the wait, and the abuse id with no counts.
+    expect(rateLimitMetaOf(refused)).toEqual({
+      retryAfterSeconds: 1800,
+      retryAt: expect.any(String),
+      id: 'apps.review-token-run-for-real',
+      kind: 'abuse',
+    });
     expect(mockMintReviewBlockToken).not.toHaveBeenCalled();
   });
 

@@ -57,6 +57,17 @@
     display: none;
   }
 
+  // The Flag Race row: one row with a column for every flag, stretched to fill the width when they
+  // fit and scrolling sideways when they don't, so every flag can be reached. Wide containers only;
+  // the narrow carousels below have their own.
+  @container not (max-width: theme('screens.md')) {
+    &.gridFlag {
+      grid-auto-flow: column;
+      grid-template-columns: repeat(var(--count), minmax(336px, 1fr));
+      overflow-x: auto;
+    }
+  }
+
   @container (max-width: theme('screens.md')) {
     grid-auto-flow: column;
     grid-template-columns: repeat(calc(var(--count) / 2), 296px);
@@ -71,6 +82,11 @@
 
     &.gridRow {
       grid-auto-flow: column;
+    }
+
+    // One scrolling row with a column for every flag.
+    &.gridFlag {
+      grid-template-columns: repeat(var(--count), 296px);
     }
   }
 

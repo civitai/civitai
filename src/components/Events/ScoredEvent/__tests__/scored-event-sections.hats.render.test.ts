@@ -87,14 +87,21 @@ vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
   },
 }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: () => null }));
+vi.mock('~/components/HatTurf/EventPointPopsSetting', () => ({
+  EventPointPopsSetting: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () => null }));
-// Inside the standings section; its own browser test covers it.
+// Its own browser test covers it.
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
   HatTurfEventSection: () => null,
+}));
+vi.mock('~/components/Events/ScoredEvent/FlagRaceEventSection', () => ({
+  FlagRaceEventSection: () => null,
 }));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: () => null,
   TopHats: () => null,
+  TopTurfPlayers: () => null,
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');
@@ -225,7 +232,7 @@ describe('ScoredEventSections: Your hats', () => {
   });
 });
 
-// Justin (2026-11-03): where we say which team you're on, it is your showcase hat, not the team cap.
+// 2026-11-03: where we say which team you're on, it is your showcase hat, not the team cap.
 describe('ScoredEventSections: your team panel hat', () => {
   const heroHat = (hat: typeof showcase.hat) => {
     showcase.hat = hat;

@@ -13,6 +13,10 @@ vi.mock('~/components/Profile/ProfileLayout2', () => ({ UserProfileLayout: () =>
 vi.mock('~/components/CreatorJourney/useMilestoneLanding', () => ({
   useMilestoneLanding: mocks.landing,
 }));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
+  useFeatureFlags: () => ({}),
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   // Still loading, so the page stops at its loader; the hook runs before that return.
@@ -22,6 +26,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 import type * as Trpc from '~/utils/trpc';
+import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import ProfilePage from '~/pages/user/[username]/index';
 
 const act = (React as unknown as { act: typeof actType }).act;

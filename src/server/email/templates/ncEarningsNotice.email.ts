@@ -47,12 +47,17 @@ export function getNcEarningsNoticeHtml({
 }
 
 export const ncEarningsNoticeEmail = createEmail({
+  template: 'ncEarningsNotice',
+  mailClass: 'transactional',
   header: ({ to, notice, baseModels }: NcEarningsNoticeData) => ({
     subject: getNcEarningsNoticeSubject({ notice, baseModels }),
     to,
   }),
   html(data: NcEarningsNoticeData) {
     return simpleEmailWithTemplate({
+      icon: '📢',
+      accent: 'blue',
+      eyebrow: 'Creator earnings',
       header: getNcEarningsNoticeSubject(data),
       body: getNcEarningsNoticeHtml(data),
     });

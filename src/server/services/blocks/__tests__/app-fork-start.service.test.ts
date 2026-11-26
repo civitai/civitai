@@ -26,6 +26,7 @@ const m = vi.hoisted(() => ({
   forkable: vi.fn(),
   reconstruct: vi.fn(),
   setProvenance: vi.fn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
+  createSource: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
@@ -62,12 +63,17 @@ vi.mock('~/server/services/blocks/app-fork.service', async (importOriginal) => (
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   reconstructBundleFromForgejo: m.reconstruct,
 }));
+// The fork's source repo: its own service, pinned in `app-source-repo.service.test.ts`. Here only
+// what the start hands it (and that the start never depends on it).
+vi.mock('~/server/services/blocks/app-source-repo.service', () => ({
+  createForkSourceRepo: m.createSource,
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { FORKABLE_OFFSITE_MESSAGE } from '~/server/services/blocks/app-fork.service';
 import {
   FORK_BUSY_MESSAGE,
@@ -80,6 +86,7 @@ import {
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
 import type { SessionUser } from '~/types/session';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 const {
   FORK_SESSION_TTL_SECONDS,
@@ -91,6 +98,10 @@ const {
   isValidForkSlug,
   startAppFork,
 } = await import('~/server/services/blocks/app-fork-start.service');
+const { checkStorageMigrations } = await import('~/server/services/apps/storage-schema-migrations');
+const { appStorageScopeErrors, parseManifestStorage } = await import(
+  '~/shared/constants/block-storage.constants'
+);
 
 // ---------------------------------------------------------------------------
 // Fixtures — pairwise distinct, and distinct from every constant the assertions name.
@@ -198,7 +209,8 @@ function installRedis() {
     }
   );
   redisMock.sysRedis.del.mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0));
-  redisMock.sysRedis.multi.mockImplementation(() => {
+  // The fork-start windows are on the cache cluster; the fork sessions above stay in system Redis.
+  redisMock.redis.multi.mockImplementation(() => {
     let key = '';
     const chain = {
       set: (k: string) => {
@@ -281,6 +293,7 @@ beforeEach(async () => {
   m.summary.mockResolvedValue({ id: PARENT_LISTING, slug: PARENT_SLUG, name: PARENT_NAME });
   m.forkable.mockResolvedValue({ available: true, forkable: true });
   m.reconstruct.mockImplementation(async () => parentBundle());
+  m.createSource.mockResolvedValue({ kind: 'created' });
   setEnv({
     APP_FORK_SEED_S3_ENDPOINT: `https://${SEED_HOST}`,
     APP_FORK_SEED_S3_BUCKET: 'fork-seed-bucket-test',
@@ -414,18 +427,49 @@ describe('startAppFork — refusals (exact errors)', () => {
 
   it('rate limit: 5 an hour — the 6th start is refused', async () => {
     for (let i = 0; i < 5; i++) await expect(start()).resolves.toBeTruthy();
-    await expect(start()).rejects.toMatchObject({
+    const refused = await start().catch((err: unknown) => err);
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: FORK_RATE_LIMITED_MESSAGE,
     });
+    // A product allowance: the meta names the hourly window and carries its counts.
+    const meta = rateLimitMetaOf(refused);
+    expect(meta).toEqual({
+      retryAfterSeconds: expect.any(Number),
+      retryAt: expect.any(String),
+      id: 'apps.fork-starts-hourly',
+      kind: 'product',
+      limit: 5,
+      used: 6,
+      remaining: 0,
+      windowSeconds: 3600,
+      resetAt: expect.any(String),
+    });
+    expect(meta!.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(meta!.retryAfterSeconds).toBeLessThanOrEqual(3600);
     expect(m.reconstruct).toHaveBeenCalledTimes(5);
+    // The windows are counted on the cache cluster, not in system Redis.
+    expect([...counters.keys()].sort()).toEqual([
+      `system:blocks:fork-rate-limit:${FORKER_ID}:3600`,
+      `system:blocks:fork-rate-limit:${FORKER_ID}:86400`,
+    ]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('rate limit: 20 a day — refused past it even with the hour window fresh', async () => {
-    counters.set(`${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
-    await expect(start()).rejects.toMatchObject({
+    counters.set(`${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
+    const refused = await start().catch((err: unknown) => err);
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: FORK_RATE_LIMITED_MESSAGE,
+    });
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      id: 'apps.fork-starts-daily',
+      kind: 'product',
+      limit: 20,
+      used: 21,
+      remaining: 0,
+      windowSeconds: 86_400,
     });
     expect(m.reconstruct).not.toHaveBeenCalled();
   });
@@ -521,6 +565,76 @@ describe('startAppFork — a successful start', () => {
     expect(forkSlug).not.toBe(seen[1]);
     expect(forkSlug).toMatch(/^pixel-garden-fork-[0-9a-f]{4}$/);
     expect(isValidForkSlug(forkSlug)).toBe(true);
+  });
+
+  it('creates the fork’s source repo with exactly the seed’s files, and the SESSION’s parent', async () => {
+    const result = await start();
+    expect(m.createSource).toHaveBeenCalledTimes(1);
+    const arg = m.createSource.mock.calls[0][0] as {
+      forkSlug: string;
+      userId: number;
+      files: Array<{ path: string; content: Buffer }>;
+      lineage: unknown;
+    };
+    expect(arg.forkSlug).toBe(result.forkSlug);
+    expect(arg.userId).toBe(FORKER_ID);
+    expect(arg.lineage).toEqual({
+      parentSlug: PARENT_SLUG,
+      parentCommitSha: APPROVED_SHA,
+      parentAppBlockId: PARENT_BLOCK,
+    });
+    // The same files the sandbox seed holds, byte for byte.
+    const zip = await JSZip.loadAsync(putBodies[0]);
+    const zipped = Object.keys(zip.files)
+      .filter((n) => !zip.files[n].dir)
+      .sort();
+    expect(arg.files.map((f) => f.path).sort()).toEqual(zipped);
+    for (const f of arg.files)
+      expect(f.content.equals(await zip.file(f.path)!.async('nodebuffer'))).toBe(true);
+  });
+
+  it('🔴 FORGERY: a parent manifest naming another parent changes nothing about the lineage', async () => {
+    m.reconstruct.mockImplementation(async () =>
+      parentBundle({
+        ...PARENT_FILES,
+        'block.manifest.json': JSON.stringify({
+          blockId: 'someone-elses-app',
+          name: PARENT_NAME,
+          version: '1.4.0',
+          forkOf: 'someone-elses-app',
+          'Forked-From-App': 'someone-elses-app',
+          'Forked-From-Commit': HEAD_SHA,
+        }),
+      })
+    );
+    await start();
+    expect((m.createSource.mock.calls[0][0] as { lineage: unknown }).lineage).toEqual({
+      parentSlug: PARENT_SLUG,
+      parentCommitSha: APPROVED_SHA,
+      parentAppBlockId: PARENT_BLOCK,
+    });
+  });
+
+  it('a source repo that never finishes holds the start only for the bounded wait', async () => {
+    const { __setForkSourceRepoWaitMsForTests } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    m.createSource.mockReturnValue(new Promise(() => undefined));
+    __setForkSourceRepoWaitMsForTests(25);
+    try {
+      // Would never settle if the start awaited the creation itself.
+      await expect(start()).resolves.toMatchObject({ parentName: PARENT_NAME });
+      expect(m.createSource).toHaveBeenCalledTimes(1);
+    } finally {
+      __setForkSourceRepoWaitMsForTests();
+    }
+  });
+
+  it('a source repo that could not be made never fails the start, nor releases its slug', async () => {
+    m.createSource.mockRejectedValue(new Error('git host down'));
+    const result = await start();
+    expect(result).toMatchObject({ parentName: PARENT_NAME });
+    expect(store.has(sessionKey(result.forkSlug))).toBe(true);
   });
 
   it('🔴 writes nothing to the database: no approvals, scopes, goods or entitlements are copied', async () => {
@@ -754,6 +868,137 @@ describe('the fork seed pre-fills storage imports of the parent', () => {
   });
 });
 
+// docs/app-storage-generic-core.md, rollout step 3: a fork's first submit has no previous approved
+// version, so it may declare no mark, counter or write "none" (`deprecatedPrimitiveErrors`). The seed
+// strips them from the fork's OWN collections; the import of the parent's collections is unchanged.
+describe('the fork seed strips the deprecated tally primitives', () => {
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'vote-app-fork-ab12'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+  const SCHEMA = { type: 'object', properties: { title: { type: 'string', maxLength: 60 } } };
+
+  it('🔴 drops marks and counters, and a write "none" collection, keeping everything else', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      scopes: ['apps:storage'],
+      storage: {
+        collections: {
+          records: {
+            visibility: 'shared',
+            write: 'own',
+            marks: ['vote'],
+            counters: ['views'],
+            schema: SCHEMA,
+            indexes: { title: 'string' },
+            showAuthor: true,
+          },
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], marks: ['played'] },
+          notes: { visibility: 'private' },
+        },
+      },
+    });
+    expect(manifest.storage.collections).toEqual({
+      records: {
+        visibility: 'shared',
+        write: 'own',
+        schema: SCHEMA,
+        indexes: { title: 'string' },
+        showAuthor: true,
+      },
+      notes: { visibility: 'private' },
+    });
+    // The import still reaches every exportable PARENT collection, the counter one included.
+    expect(manifest.storage.imports).toEqual([
+      { from: 'vote-app', collections: ['records', 'plays', 'notes'], access: 'readwrite' },
+    ]);
+    // The seed is a first version the submit check accepts as it stands.
+    expect(checkStorageMigrations(null, manifest).errors).toEqual([]);
+  });
+
+  it('positive control: the parent’s own storage, unstripped, is refused as a first version', () => {
+    const parent = {
+      storage: {
+        collections: {
+          records: { visibility: 'shared', write: 'own', marks: ['vote'] },
+        },
+      },
+    };
+    expect(checkStorageMigrations(null, parent).errors).toHaveLength(1);
+  });
+
+  it('🔴 a parent whose only collections are write "none" and not exportable seeds no storage, and no storage scope', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      // `apps:storage:read` is the legacy key-value scope: not tied to `storage`, so it stays.
+      scopes: ['apps:storage', 'user:read:self', 'apps:storage:publish', 'apps:storage:read'],
+      scopeJustifications: {
+        'apps:storage:publish': 'Lets voters post their picks.',
+        'user:read:self': 'Shows the voter their name.',
+      },
+      storage: {
+        collections: {
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], exportable: false },
+        },
+      },
+    });
+    expect(manifest.storage).toBeUndefined();
+    expect(manifest.scopes).toEqual(['user:read:self', 'apps:storage:read']);
+    expect(manifest.scopeJustifications).toEqual({
+      'user:read:self': 'Shows the voter their name.',
+    });
+    // The seed passes the storage/scope cross-check as it stands.
+    // Parse errors would make the scope check return [] vacuously, so pin them empty first.
+    expect(parseManifestStorage(manifest).errors).toEqual([]);
+    expect(appStorageScopeErrors(manifest.scopes, parseManifestStorage(manifest))).toEqual([]);
+  });
+
+  it('positive control: a seed with no storage that keeps apps:storage is refused by the scope check', () => {
+    expect(appStorageScopeErrors(['apps:storage'], parseManifestStorage({}))).toEqual([
+      'scopes includes apps:storage but storage declares no collections — declare them under storage.collections, or remove the scope',
+    ]);
+  });
+
+  it('a parent whose storage survives the strip keeps apps:storage', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      scopes: ['apps:storage', 'user:read:self'],
+      storage: {
+        collections: {
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], exportable: false },
+          notes: { visibility: 'private', exportable: false },
+        },
+      },
+    });
+    expect(manifest.storage).toEqual({
+      collections: { notes: { visibility: 'private', exportable: false } },
+    });
+    expect(manifest.scopes).toEqual(['apps:storage', 'user:read:self']);
+    // Parse errors would make the scope check return [] vacuously, so pin them empty first.
+    expect(parseManifestStorage(manifest).errors).toEqual([]);
+    expect(appStorageScopeErrors(manifest.scopes, parseManifestStorage(manifest))).toEqual([]);
+  });
+
+  it('a parent with only write "none" collections keeps the import, without an empty collections map', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      scopes: ['apps:storage'],
+      storage: { collections: { plays: { visibility: 'shared', write: 'none', counters: ['n'] } } },
+    });
+    expect(manifest.storage).toEqual({
+      imports: [{ from: 'vote-app', collections: ['plays'], access: 'readwrite' }],
+    });
+  });
+});
+
 describe('the fork seed drops the parent’s server-owned iframe.src', () => {
   // The PARENT's platform-stamped URL. Distinct from any constant the code names: the seed must
   // not advertise it as the fork's, and `civitai app validate` refuses any authored iframe.src.
@@ -804,5 +1049,47 @@ describe('the fork seed drops the parent’s server-owned iframe.src', () => {
   it('a parent manifest with no iframe at all still builds, and gains none', async () => {
     const manifest = await seedManifest({ blockId: 'notes-app', name: 'Notes App', scopes: [] });
     expect(manifest).toEqual({ blockId: 'notes-app-fork-cd34', name: 'Notes App', scopes: [] });
+  });
+});
+
+describe('the fork seed drops the parent’s issue-tracker link (`bugs`)', () => {
+  // The PARENT author's tracker. Left in, the fork's store page would send the fork's users to
+  // report problems to someone else's project.
+  const PARENT_TRACKER = 'https://parent-tracker-5521.example.test/issues';
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-ef56'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('removes a string `bugs` and keeps every other key', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      tagline: 'kept',
+      bugs: PARENT_TRACKER,
+    });
+    expect(manifest).toEqual({
+      blockId: 'notes-app-fork-ef56',
+      name: 'Notes App',
+      scopes: [],
+      tagline: 'kept',
+    });
+    expect(JSON.stringify(manifest)).not.toContain(PARENT_TRACKER);
+  });
+
+  it('removes an object `bugs` (url + email) entirely', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      bugs: { url: PARENT_TRACKER, email: 'parent-author-5521@example.test' },
+    });
+    expect('bugs' in manifest).toBe(false);
+    expect(JSON.stringify(manifest)).not.toContain('parent-author-5521');
   });
 });

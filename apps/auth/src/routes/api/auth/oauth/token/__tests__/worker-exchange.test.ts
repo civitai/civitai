@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import type * as CivitaiAuth from '@civitai/auth';
 import type * as Jose from 'jose';
 
@@ -43,7 +44,8 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => undefined,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: vi.fn(async (bucket: string, id: string | null | undefined) => {
     h.rateLimitCalls.push([bucket, id]);
     return !h.rateLimitDeny.has(bucket);
@@ -175,7 +177,7 @@ function saladJwt(
 ): Promise<string> {
   const jwt = new SignJWT({
     salad_machine_id: 'salad-machine-7',
-    salad_container_group_id: SALAD_GROUP,
+    salad_workload_id: SALAD_GROUP,
     ...claims,
   })
     .setProtectedHeader({ alg: 'ES256', kid: 'salad-1' })
@@ -272,7 +274,9 @@ describe('worker token exchange', () => {
       expect.objectContaining({
         key: generateSecretHash(res.body.access_token as string),
         type: 'Worker',
-        tokenScope: WORKER,
+        // WorkerRegister (2^29), in both scope columns.
+        tokenScope: 536870912,
+        tokenScopeWide: '536870912',
         userId: OWNER,
         clientId: POOL,
         workerDeviceId: device.id,
@@ -315,7 +319,8 @@ describe('worker token exchange', () => {
     h.rateLimitDeny.add('worker-device');
     const res = await exchange();
     expect(res.status).toBe(429);
-    expect(res.body.error).toBe('rate_limited');
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(res.body).toMatchObject({ error: 'rate_limited', retry_after: 60 });
     expect(workerKeys()).toHaveLength(0);
   });
 
@@ -489,7 +494,7 @@ describe('worker token exchange — Salad IMDS JWT', () => {
   });
 
   it('refuses a container group not on the client allowlist', async () => {
-    const res = await saladExchange(await saladJwt({ salad_container_group_id: 'group-b' }));
+    const res = await saladExchange(await saladJwt({ salad_workload_id: 'group-b' }));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
@@ -520,7 +525,7 @@ describe('worker token exchange — Salad IMDS JWT', () => {
     const enc = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
     const claims = {
       salad_machine_id: 'm1',
-      salad_container_group_id: SALAD_GROUP,
+      salad_workload_id: SALAD_GROUP,
       iss: SALAD_ISSUER,
       aud: SALAD_AUDIENCE,
       exp: Math.floor(Date.now() / 1000) + 300,

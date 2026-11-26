@@ -1,7 +1,8 @@
 import { Button, Group, Paper, Stack, Text, Textarea, Title } from '@mantine/core';
-import { closeAllModals, openModal } from '@mantine/modals';
 import { IconShieldX } from '@tabler/icons-react';
 import { useState } from 'react';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   CRUCIBLE_TAKEDOWN_CREATOR_FUNDS,
   CRUCIBLE_TAKEDOWN_REASON_LENGTH,
@@ -10,7 +11,9 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+/** Inside the take-down dialog, a success closes it; on the panel itself there is nothing to close. */
 function useTakeDown(crucibleId: number) {
+  const { onClose } = useDialogContext();
   const utils = trpc.useUtils();
   return trpc.crucible.takeDown.useMutation({
     onSuccess: (result) => {
@@ -26,7 +29,7 @@ function useTakeDown(crucibleId: number) {
           title: 'Crucible taken down',
           message: `${result.refundedEntries} entries refunded. Creator funds: ${result.creatorFunds}.`,
         });
-      closeAllModals();
+      onClose();
       utils.crucible.getById.invalidate({ id: crucibleId });
       utils.crucible.getEntries.invalidate({ crucibleId });
     },
@@ -36,6 +39,7 @@ function useTakeDown(crucibleId: number) {
 }
 
 function TakeDownForm({ crucibleId }: { crucibleId: number }) {
+  const { onClose } = useDialogContext();
   const [reason, setReason] = useState('');
   const takeDown = useTakeDown(crucibleId);
   const trimmed = reason.trim();
@@ -59,7 +63,7 @@ function TakeDownForm({ crucibleId }: { crucibleId: number }) {
         required
       />
       <Group justify="flex-end">
-        <Button variant="default" onClick={() => closeAllModals()}>
+        <Button variant="default" onClick={() => onClose()}>
           Keep it
         </Button>
         <Button
@@ -138,7 +142,7 @@ export function CrucibleTakeDownPanel({
           fullWidth
           leftSection={<IconShieldX size={16} />}
           onClick={() =>
-            openModal({
+            openContentDialog({
               title: 'Take down crucible',
               centered: true,
               children: <TakeDownForm crucibleId={crucibleId} />,

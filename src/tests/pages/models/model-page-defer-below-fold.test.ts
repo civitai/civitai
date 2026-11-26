@@ -13,7 +13,8 @@ import * as F from './model-page-fixture';
 
 /**
  * The model page's SERVER render under the `modelPageDeferBelowFold` trial, and under
- * `modelPageDesignSystemMarkup` (the last three describes).
+ * `modelPageDesignSystemMarkup` (the three describes after those), and with `deferredSsr` (the
+ * `ssrSignedInSkipPrefetch` shell, the last describe).
  *
  * Renders the real page component (and the real `ModelVersionDetails` under it) to an HTML string
  * in the node unit project, inside the real Theme/App/IsClient/Router/IntersectionObserver
@@ -32,6 +33,11 @@ const m = vi.hoisted(() => ({
   flags: {} as Record<string, boolean>,
   user: null as null | Record<string, unknown>,
   downloaded: [] as number[],
+  /**
+   * `ssrSignedInSkipPrefetch`'s `skip` arm: getServerSideProps prefetched only `model.getById` and
+   * `hiddenPreferences.getHidden` (pinned by `model-page-skip-prefetch.test.ts`).
+   */
+  skipArm: false,
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -133,7 +139,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     },
   };
   const procedures = new Proxy(prefetched, {
-    get: (target, key: string) => (key in target ? target[key] : notPrefetched),
+    get: (target, key: string) =>
+      key in target &&
+      (!m.skipArm || key === 'model.getById' || key === 'hiddenPreferences.getHidden')
+        ? target[key]
+        : notPrefetched,
   });
   return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy(procedures) };
 });
@@ -163,7 +173,7 @@ const ANON_FLAGS = { ...getFeatureFlags({ host: 'civitai.com' }) } as Record<str
 type Layer = [unknown, Record<string, unknown> | null];
 
 /** Server-render the page; returns the body HTML and the `next/head` markup it emitted. */
-function renderPage(flags: Record<string, boolean>) {
+function renderPage(flags: Record<string, boolean>, pageProps: { deferredSsr?: boolean } = {}) {
   m.flags = flags;
   let headElements: ReactNode = null;
   const headManager = {
@@ -199,7 +209,7 @@ function renderPage(flags: Record<string, boolean>) {
   ];
   const tree = layers.reduceRight<ReactElement>(
     (child, [Component, props]) => createElement(Component as never, props, child),
-    createElement(ModelPage as never, { id: F.MODEL_ID })
+    createElement(ModelPage as never, { id: F.MODEL_ID, ...pageProps })
   );
   const html = renderToString(tree);
   const head = renderToStaticMarkup(createElement('head', null, headElements));
@@ -242,6 +252,7 @@ const VIEWER = {
 beforeEach(() => {
   m.user = null;
   m.downloaded = [];
+  m.skipArm = false;
 });
 
 describe('model page server render — modelPageDeferBelowFold OFF', () => {
@@ -289,7 +300,13 @@ describe.each([false, true])(
       expect(head).toContain(
         `<title>${F.MODEL_NAME} - v3.0 | Stable Diffusion XL LoRA | Civitai</title>`
       );
-      expect(head).toMatch(/<meta name="description" content="About lantern-description-marker/);
+      // The built snippet leads with name, ecosystem, type and creator, then the counts, then the
+      // model's own text.
+      expect(head).toMatch(
+        new RegExp(
+          `<meta name="description" content="${F.MODEL_NAME} is a Stable Diffusion XL LoRA by ${F.CREATOR_USERNAME}\\. [^"]*downloads, [^"]*likes\\. About ${F.MODEL_DESCRIPTION_MARKER}`
+        )
+      );
       expect(head).toContain(
         '<link rel="canonical" href="/models/4201/lantern-glow-portrait-lora"/>'
       );
@@ -539,5 +556,57 @@ describe('model page server render — modelPageDesignSystemMarkup, Mantine root
     for (const name of ['Badge', 'Button', 'Group', 'Stack', 'Text'])
       expect(on[name] ?? 0, name).toBeLessThan(off[name] ?? 0);
     expect(total(on)).toBeLessThan(total(off));
+  });
+});
+
+// ─── ssrSignedInSkipPrefetch ────────────────────────────────────────────────────────────────────
+
+/** PageLoader's root, the one loader the shell renders in place of the content. */
+const PAGE_LOADER = 'class="absolute inset-0 flex items-center justify-center gap-4"';
+const MODEL_H1 = new RegExp(`<h1[^>]*>${F.MODEL_NAME}</h1>`);
+
+describe('model page server render — deferredSsr (ssrSignedInSkipPrefetch skip arm)', () => {
+  beforeEach(() => {
+    m.user = VIEWER;
+  });
+
+  it("renders a loader in place of the content, with the skip arm's cache", () => {
+    m.skipArm = true;
+    const { html } = renderPage(ANON_FLAGS, { deferredSsr: true });
+
+    expect(count(html, PAGE_LOADER)).toBe(1);
+    expect(html).not.toMatch(MODEL_H1);
+    expect(html).not.toContain(F.MODEL_DESCRIPTION_MARKER);
+    expect(html).not.toContain('>Download<');
+    expect(count(html, CREATOR_CARD_ROOT)).toBe(0);
+  });
+
+  it("keeps the full page's title, description and canonical in <head>", () => {
+    const full = renderPage(ANON_FLAGS).head;
+    m.skipArm = true;
+    const { head } = renderPage(ANON_FLAGS, { deferredSsr: true });
+
+    const tag = (markup: string, re: RegExp) => markup.match(re)?.[0];
+    const TITLE = /<title>[^<]*<\/title>/;
+    const DESCRIPTION = /<meta name="description" content="[^"]*"\/>/;
+    const CANONICAL = /<link rel="canonical" href="[^"]*"\/>/;
+    expect(tag(head, TITLE)).toBe(
+      `<title>${F.MODEL_NAME} - v3.0 | Stable Diffusion XL LoRA | Civitai</title>`
+    );
+    expect(tag(head, CANONICAL)).toBe(
+      '<link rel="canonical" href="/models/4201/lantern-glow-portrait-lora"/>'
+    );
+    // The same tags the full render emits (the description's counts come from model.getById).
+    expect(tag(head, TITLE)).toBe(tag(full, TITLE));
+    expect(tag(head, DESCRIPTION)).toBe(tag(full, DESCRIPTION));
+    expect(tag(head, DESCRIPTION)).toBeDefined();
+    expect(tag(head, CANONICAL)).toBe(tag(full, CANONICAL));
+  });
+
+  it('deferredSsr false (flag off, anonymous, bots): the full content, unchanged', () => {
+    const { html } = renderPage(ANON_FLAGS, { deferredSsr: false });
+
+    expect(html).toMatch(MODEL_H1);
+    expect(html).toContain(F.MODEL_DESCRIPTION_MARKER);
   });
 });

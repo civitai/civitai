@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import type { CategoryTagType } from '~/server/services/system-cache';
 
 export const TEXT_SCAN_LABELS = [
   'nsfw',
@@ -29,8 +30,6 @@ export type TextScanEntityType =
   | 'BountyEntry'
   | 'Challenge'
   | 'ChatMessage'
-  | 'Comment'
-  | 'CommentV2'
   | 'CommentV3'
   | 'ResourceReview'
   | 'User'
@@ -39,7 +38,12 @@ export type TextScanEntityType =
   | 'Collection'
   | 'Storyline'
   | 'ImageCaption'
-  | 'ModelRules';
+  | 'ServiceOffering'
+  | 'PostText'
+  | 'ModelRules'
+  | 'AppDoc'
+  | 'ServiceDealReview'
+  | 'ServiceDealReviewReply';
 
 export type TextScanField = { heading: string; text: string | null | undefined };
 
@@ -58,12 +62,25 @@ export type TextScanSubject = {
 export type TextScanProfile = {
   entityType: TextScanEntityType;
   labels: TextScanLabel[];
+  /**
+   * A verdict settles only when it answers every label in `labels`, and an active scan that cannot
+   * ask for one of them is not submitted: see `unansweredTextScanLabels`.
+   */
+  requireEveryLabel?: boolean;
   /** Compared against `subjectTextLength` (raw trimmed field text, no headings). */
   minChars?: number;
   /** Entities that no longer exist are absent from the map; ones that are not public are not. */
   load: (ids: number[]) => Promise<Map<number, TextScanSubject>>;
   /** The subset of `labels` this subject is scanned for; all of them when absent. */
   labelsFor?: (subject: TextScanSubject) => TextScanLabel[];
+  /** Also classify the subject into one of these category tags, in a call apart from the scan. */
+  category?: TextScanCategoryHook;
+};
+
+export type TextScanCategoryHook = {
+  tagType: CategoryTagType;
+  /** null clears it. */
+  write: (entityId: number, tagId: number | null) => Promise<void>;
 };
 
 export type TextScanOutput = {

@@ -1,7 +1,6 @@
 import { useComputedColorScheme } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
 import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
-import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import {
@@ -13,6 +12,8 @@ import {
   IconFlag,
   IconGift,
   IconGraphOff,
+  IconConfetti,
+  IconConfettiOff,
   IconGraph,
   IconEye,
   IconMicrophone,
@@ -23,7 +24,7 @@ import {
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
-import { openHiddenImagesFromUserModal } from '~/components/Dialog/triggers/hidden-images-from-user';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -45,6 +46,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -181,6 +183,25 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
+  const toggleEventPointsMutation = trpc.user.setEventPointsExclusion.useMutation({
+    async onMutate({ setTo }) {
+      await queryUtils.user.getCreator.cancel({ username });
+
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
+        prevUser ? { ...prevUser, excludeFromEventPoints: setTo } : undefined
+      );
+
+      return { prevUser };
+    },
+    onError(_error, _vars, context) {
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      showErrorNotification({
+        error: new Error('Unable to change event points eligibility, please try again.'),
+      });
+    },
+  });
+
   const colorScheme = useComputedColorScheme('dark');
 
   const handleToggleMute = () => {
@@ -201,25 +222,15 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     if (user.excludeFromLeaderboards)
       toggleLeaderboardMutation.mutate({ id: user.id, setTo: !user.excludeFromLeaderboards });
     else
-      openConfirmModal({
+      openConfirm({
         title: 'Remove from Leaderboards',
-        children: `Are you sure you want to remove this user from leaderboards? This will take effect at the next refresh.`,
+        message: `Are you sure you want to remove this user from leaderboards? This will take effect at the next refresh.`,
         labels: { confirm: 'Yes, remove from leaderboards', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
         onConfirm: () =>
           toggleLeaderboardMutation.mutate({ id: user.id, setTo: !user.excludeFromLeaderboards }),
       });
   };
-  // const handleRemoveContent = () => {
-  //   if (!user) return;
-  //   openConfirmModal({
-  //     title: 'Remove All Content',
-  //     children: `Are you sure you want to remove all content (models, reviews, comments, posts, and images) by this user? This action cannot be undone.`,
-  //     labels: { confirm: 'Yes, remove all content', cancel: 'Cancel' },
-  //     confirmProps: { color: 'red' },
-  //     onConfirm: () => removeContentMutation.mutate({ id: user.id }),
-  //   });
-  // };
   const handleEnableTipalti = () => {
     if (user) enableTipaltiMutation.mutate({ id: user.id });
   };
@@ -317,6 +328,26 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                   ? 'Include in leaderboards'
                   : 'Exclude from leaderboards'}
               </Menu.Item>
+              <Menu.Item
+                color={user.excludeFromEventPoints ? 'green' : 'red'}
+                leftSection={
+                  user.excludeFromEventPoints ? (
+                    <IconConfetti size={14} stroke={1.5} />
+                  ) : (
+                    <IconConfettiOff size={14} stroke={1.5} />
+                  )
+                }
+                onClick={() =>
+                  toggleEventPointsMutation.mutate({
+                    id: user.id,
+                    setTo: !user.excludeFromEventPoints,
+                  })
+                }
+              >
+                {user.excludeFromEventPoints
+                  ? 'Include in event points'
+                  : 'Exclude from event points'}
+              </Menu.Item>
               {/* <Menu.Item
                 color="red"
                 leftSection={<IconTrash size={14} stroke={1.5} />}
@@ -389,9 +420,13 @@ export const UserContextMenu = ({ username }: { username: string }) => {
             <Menu.Item
               leftSection={<IconEye size={14} stroke={1.5} />}
               onClick={() =>
-                openHiddenImagesFromUserModal({
-                  props: { userId: user.id, username: user.username },
-                })
+                openDialog(
+                  () => import('~/components/HiddenPreferences/HiddenImagesFromUserModal'),
+                  {
+                    userId: user.id,
+                    username: user.username,
+                  }
+                )
               }
             >
               Review hidden images

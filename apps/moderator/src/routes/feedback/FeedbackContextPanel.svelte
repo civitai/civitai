@@ -5,6 +5,7 @@
   import {
     FARO_LOKI_RETENTION_HOURS,
     faroSessionLink,
+    feedbackPathLinksToCivitai,
     reconstructFeedbackUrl,
     type FeedbackContext,
   } from '$lib/feedback';
@@ -69,7 +70,9 @@
     <span class="ml-2 font-normal normal-case">{dateTime(createdAt)}</span>
   </h3>
 
-  {#if reconstructed}
+  {#if reconstructed && !feedbackPathLinksToCivitai(area)}
+    <span class="font-mono text-sm wrap-anywhere">{reconstructed}</span>
+  {:else if reconstructed}
     <a
       href={`${civitaiUrl}${reconstructed}`}
       target="_blank"
@@ -123,6 +126,18 @@
     {/if}
   </div>
 </section>
+
+{#if context.environment.length}
+  <section class="flex min-w-0 flex-col gap-2">
+    <h3 class="text-xs tracking-wide text-dark-2 uppercase">Environment</h3>
+    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-sm">
+      {#each context.environment as row, i (i)}
+        <dt class="text-dark-2">{row.label}</dt>
+        <dd class="font-mono wrap-anywhere">{row.value}</dd>
+      {/each}
+    </dl>
+  </section>
+{/if}
 
 <FeedbackBrowserErrors {context} />
 

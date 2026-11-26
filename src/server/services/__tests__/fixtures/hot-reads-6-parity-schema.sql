@@ -49,7 +49,10 @@ CREATE TABLE "hot_reads_6_parity"."Image" (
   "type"      "hot_reads_6_parity"."MediaType"                NOT NULL DEFAULT 'image',
   "width"     INTEGER,
   "height"    INTEGER,
-  "metadata"  JSONB                                           NOT NULL DEFAULT '{}'
+  "metadata"  JSONB                                           NOT NULL DEFAULT '{}',
+  "needsReview" TEXT,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false,
+  "blockedFor" TEXT
 );
 
 CREATE TABLE "hot_reads_6_parity"."Cosmetic" (
@@ -166,7 +169,9 @@ CREATE TABLE "hot_reads_6_parity"."ModelFile" (
   "modelVersionId" INTEGER                                     NOT NULL,
   "metadata"       JSONB,
   "visibility"     "hot_reads_6_parity"."ModelFileVisibility" NOT NULL DEFAULT 'Public',
-  "replacedAt"     TIMESTAMP(3)
+  "replacedAt"     TIMESTAMP(3),
+  "pickleScanResult" TEXT                                      NOT NULL DEFAULT 'Pending',
+  "virusScanResult"  TEXT                                      NOT NULL DEFAULT 'Pending'
 );
 
 CREATE TABLE "hot_reads_6_parity"."ModelFileHash" (

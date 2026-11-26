@@ -12,8 +12,32 @@ import type { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { EventPointPops } from '~/shared/constants/event-point-pops.constants';
 
-const Context = createContext<ContentSettingsStore | null>(null);
+/**
+ * Whether this viewer sees event cosmetics (worn hats) and Hat Turf. Reads true outside the
+ * provider. Viewer-side only: it changes nothing about opt-in, stock or scoring.
+ */
+export function useShowEventCosmetics() {
+  const store = useContext(Context);
+  const preview = useContext(EventCosmeticsPreviewContext);
+  const getSnapshot = () => preview || (store?.getState().showEventCosmetics ?? true);
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, getSnapshot, getSnapshot);
+}
+
+const EventCosmeticsPreviewContext = createContext(false);
+/**
+ * Shows event cosmetics inside whatever the setting: for a preview of the hat someone is picking,
+ * fitting or buying, which is a control they opened, not content.
+ */
+export function EventCosmeticsPreview({ children }: { children: React.ReactNode }) {
+  return (
+    <EventCosmeticsPreviewContext.Provider value>{children}</EventCosmeticsPreviewContext.Provider>
+  );
+}
+
+/** Exported for test harnesses that seed the store without trpc. */
+export const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
 export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
@@ -23,12 +47,14 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
       // These lists are filtered on the server by these two, read from the session, which this
-      // mutation has refreshed by the time it returns: the app image picker's posted list, and a
-      // shop's services (mature ones show only at the viewer's level). A list fetched before that
-      // was filtered at the old level. A no-op for a list that has not been opened.
+      // mutation has refreshed by the time it returns: the app image picker's posted list, a 3D
+      // model's related posts, and a shop's services (mature ones show only at the viewer's
+      // level). A list fetched before that was filtered at the old level. A no-op for a list
+      // that has not been opened.
       if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
         void queryUtils.blockImagePicker.getPosted.reset();
         void queryUtils.creatorService.getForShop.reset();
+        void queryUtils.model3d.getRelatedPosts.reset();
       }
 
       // Patch every confirmed field into the getSettings React Query cache so
@@ -45,6 +71,10 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       if (variables.blurNsfw !== undefined) changedSettings.blurNsfw = variables.blurNsfw;
       if (variables.autoplayGifs !== undefined)
         changedSettings.autoplayGifs = variables.autoplayGifs;
+      if (variables.showEventCosmetics !== undefined)
+        changedSettings.showEventCosmetics = variables.showEventCosmetics;
+      if (variables.eventPointPops !== undefined)
+        changedSettings.eventPointPops = variables.eventPointPops;
 
       if (Object.keys(changedSettings).length === 0) return;
 
@@ -96,6 +126,19 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       snapshotRef.current = settings;
     }
   }, [settings]);
+
+  // Event cosmetics are hidden on this device by its cookie too: the only place a signed-out
+  // viewer's choice lives, and the first paint's answer before an account is read.
+  useEffect(() => {
+    const store = storeRef.current;
+    if (!store) return;
+    return store.subscribe((curr, prev) => {
+      if (curr.showEventCosmetics !== prev.showEventCosmetics)
+        setCookie('showEventCosmetics', curr.showEventCosmetics);
+      if (curr.eventPointPops !== prev.eventPointPops)
+        setCookie('eventPointPops', curr.eventPointPops);
+    });
+  }, []);
 
   useEffect(() => {
     const store = storeRef.current;
@@ -153,6 +196,8 @@ type StoreState = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
+  showEventCosmetics: boolean;
+  eventPointPops: EventPointPops;
   domain: ColorDomain;
 };
 
@@ -163,7 +208,7 @@ type StoreStateActions = {
 };
 
 type ContentSettingsStore = ReturnType<typeof createContentSettingsStore>;
-function createContentSettingsStore(state: StoreState) {
+export function createContentSettingsStore(state: StoreState) {
   return createStore<StoreState & StoreStateActions>()(
     devtools(
       (set) => ({

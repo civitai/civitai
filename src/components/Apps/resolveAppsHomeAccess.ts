@@ -2,6 +2,7 @@ import { hasAppsStoreQueryParams } from '~/components/Apps/appsStoreQueryParams'
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import type { AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
+import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 
 export type AppsHomeAccessResult =
   | { notFound: true }
@@ -9,17 +10,6 @@ export type AppsHomeAccessResult =
   | { props: Record<string, never> };
 
 type RouteQuery = Record<string, string | string[] | undefined>;
-
-/** Rebuild a Next `query` object as a `?a=1&b=2` string, keeping repeated keys. */
-function toSearch(query: RouteQuery): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined) continue;
-    for (const v of Array.isArray(value) ? value : [value]) params.append(key, v);
-  }
-  const search = params.toString();
-  return search ? `?${search}` : '';
-}
 
 /**
  * The `/apps` SSR decision. `/apps` is the signed-in viewer's app home; the marketplace
@@ -47,7 +37,11 @@ export function resolveAppsHomeAccess(args: {
   const query = args.query ?? {};
   if (hasAppsStoreQueryParams(query) || !args.user) {
     return {
-      redirect: { destination: `${APPS_STORE_HREF}${toSearch(query)}`, permanent: false },
+      // `[]`: nothing is excluded — the WHOLE query moves to the store.
+      redirect: {
+        destination: `${APPS_STORE_HREF}${buildPassthroughQuery(query, [])}`,
+        permanent: false,
+      },
     };
   }
   return { props: {} };

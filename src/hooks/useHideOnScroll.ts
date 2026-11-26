@@ -1,6 +1,9 @@
 import type { RefObject } from 'react';
 import { useEffect, useState } from 'react';
 
+/** Marks a scroller inside the target (a sidebar list) whose scrolling must not hide the header. */
+const IGNORE_SELECTOR = '[data-ignore-hide-on-scroll]';
+
 type Options = {
   /** How far to scroll, since the last change of direction, before the header hides or returns. */
   distance?: number;
@@ -18,7 +21,8 @@ type Options = {
  *
  * `target` is the window, or an element that is or contains the scrolling element; an element is
  * listened to in the capture phase, so the scroller can sit anywhere inside it. Scrolls of elements
- * that can't scroll vertically (a row of chips) are ignored. With no target, nothing hides.
+ * that can't scroll vertically (a row of chips), or sit inside `data-ignore-hide-on-scroll`, are
+ * ignored. With no target, nothing hides.
  */
 export function useHideOnScroll(
   target: RefObject<HTMLElement> | 'window' | undefined,
@@ -41,6 +45,7 @@ export function useHideOnScroll(
       else {
         const el = e.target as HTMLElement;
         if (!(el instanceof HTMLElement) || el.scrollHeight <= el.clientHeight) return;
+        if (el.closest(IGNORE_SELECTOR)) return;
         y = el.scrollTop;
       }
       const down = y > lastY;

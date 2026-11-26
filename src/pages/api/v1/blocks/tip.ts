@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -15,8 +16,8 @@ import { dbRead } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/client';
 import type { ProtectedContext } from '~/server/createContext';
 import { hydrateBlockSubject } from '~/server/services/blocks/block-collections.service';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import {
-  BLOCK_TIP_CAP_PER_DAY,
   BLOCK_TIP_MAX_PER_TIP,
   checkBlockTipRateLimit,
   claimTipIdempotency,
@@ -27,6 +28,7 @@ import {
   reserveBlockTipSpend,
 } from '~/server/utils/block-tip-rate-limit';
 import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotency';
+import { appRateLimitBody, appRateLimitMeta, utcDayReset } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/v1/blocks/tip
@@ -46,9 +48,9 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  * Response: `{ ok: true, tip: { toUserId, amount, entityType?, entityId? } }`.
  *
  * PAGE-SAFE via BOUNDED tipping: this endpoint enforces a per-tip cap
- * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY,
+ * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (the registry's `apps.tip-daily`,
  * reserve-and-refund) BEFORE any money moves — the analogue of the gen-spend
- * `buzzBudget` + `BLOCK_BUZZ_CAP_PER_DAY` pair. Those caps are what let
+ * `buzzBudget` + per-user daily cap pair. Those caps are what let
  * `social:tip:self` come off PAGE_FORBIDDEN_SCOPES (a page tip is now bounded, no
  * longer effectively-unbounded spend). Over either cap → clean 4xx (never a 500).
  *
@@ -165,10 +167,22 @@ export const baseHandler = withAxiom(async function handler(
     // Per-instance rate limit (fail-CLOSED on redis error — money path).
     const rateLimit = await checkBlockTipRateLimit(claims.blockInstanceId);
     if (!rateLimit.allowed) {
+      recordBlockClaimsRateLimitRefusal({
+        claims,
+        surface: 'rest',
+        bucket: 'tip',
+        endpoint: 'tip',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
       // TRANSIENT: a rate-limited attempt moved no money — a retry once the window
       // clears must be allowed to execute, so this is NOT cached under the idem key.
-      res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-      return { status: 429, body: { error: 'Too many tips — please retry shortly.' }, transient: true };
+      const meta = appRateLimitMeta('apps.tip-rate', rateLimit.retryAfterSeconds);
+      res.setHeader('Retry-After', String(meta.retryAfterSeconds));
+      return {
+        status: 429,
+        body: appRateLimitBody(meta, 'Too many tips — please retry shortly.'),
+        transient: true,
+      };
     }
 
     const subjectUser = await hydrateBlockSubject(subjectId);
@@ -184,25 +198,45 @@ export const baseHandler = withAxiom(async function handler(
 
     // PER-USER DAILY CAP — atomically RESERVE this tip against the user's UTC-day
     // aggregate BEFORE the money moves. Fail-CLOSED on a redis error (503). Over the
-    // daily cap → refund the reservation + clean 400. The reservation stands only if
-    // the tip transaction below resolves; any throw refunds it.
+    // daily cap → refund the reservation + a 429 with the cap's meta. The reservation
+    // stands only if the tip transaction below resolves; any throw refunds it.
+    // The user's daily cap: the registry's `apps.tip-daily` (a KeyValue override, else the code
+    // default). Never throws; read before the reservation, so a refusal reserves nothing extra.
+    const dailyCap = await resolveUserAppLimit('apps.tip-daily', subjectId);
     let capKey: Awaited<ReturnType<typeof reserveBlockTipSpend>>['key'];
     try {
       const reserved = await reserveBlockTipSpend(subjectId, amount);
       capKey = reserved.key;
-      if (reserved.total > BLOCK_TIP_CAP_PER_DAY) {
+      if (reserved.total > dailyCap) {
         await refundBlockTipSpend(capKey, amount);
+        // TRANSIENT, like the rate limit: no Buzz moved and the reservation is refunded, so a
+        // retry (after the UTC reset, or with a smaller tip) must run rather than replay this.
+        const { retryAfterSeconds, resetAt } = utcDayReset();
+        const meta = appRateLimitMeta('apps.tip-daily', retryAfterSeconds, {
+          limit: dailyCap,
+          // The day's tips before this one, which the refund just gave back.
+          used: reserved.total - Math.ceil(amount),
+          windowSeconds: 24 * 60 * 60,
+          resetAt,
+        });
+        res.setHeader('Retry-After', String(meta.retryAfterSeconds));
         return {
-          status: 400,
-          body: {
-            error: `Daily tip limit reached (${BLOCK_TIP_CAP_PER_DAY} Buzz). Try again tomorrow.`,
-          },
+          status: 429,
+          body: appRateLimitBody(
+            meta,
+            `Daily tip limit reached (${dailyCap} Buzz). Try again tomorrow.`
+          ),
+          transient: true,
         };
       }
     } catch {
       // TRANSIENT: the limiter is unavailable — a retry once redis recovers must be
       // allowed to execute, so this 503 is NOT cached under the idem key.
-      return { status: 503, body: { error: 'Tip limiter unavailable; please retry' }, transient: true };
+      return {
+        status: 503,
+        body: { error: 'Tip limiter unavailable; please retry' },
+        transient: true,
+      };
     }
 
     // Build a minimal ProtectedContext for the controller (it reads ctx.user +

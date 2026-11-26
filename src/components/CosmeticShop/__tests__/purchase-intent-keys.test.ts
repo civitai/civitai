@@ -75,9 +75,6 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 
 const { useMutateCosmeticShop } = await import('~/components/CosmeticShop/cosmetic-shop.util');
-const { usePurchaseIntentKeyStore } = await import(
-  '~/components/CosmeticShop/purchase-intent-keys'
-);
 const { mintPurchaseKey } = await import('~/utils/purchase-key');
 const { useStickerPlacementDraftStore } = await import('~/store/sticker-placement-draft.store');
 
@@ -108,7 +105,9 @@ function unmount() {
   root = undefined;
 }
 
-const SHOP_ITEM_ID = 42;
+// Keys are held for the browser session, so each case buys its own items: a key one case leaves
+// held never reaches the next.
+let SHOP_ITEM_ID = 0;
 const buy = (purchase: Purchase, idempotencyKey?: string) =>
   purchase({ shopItemId: SHOP_ITEM_ID, idempotencyKey });
 const keySent = (call: number) =>
@@ -119,7 +118,7 @@ beforeEach(() => {
   send.mockReset();
   showErrorNotification.mockReset();
   utilSpies.clear();
-  usePurchaseIntentKeyStore.setState({ keys: {} });
+  SHOP_ITEM_ID += 10;
 });
 afterEach(() => unmount());
 
@@ -213,7 +212,23 @@ describe('purchase intent keys', () => {
     const own = '11111111-1111-4111-8111-111111111111';
     await buy(mountPurchaser(), own);
     expect(keySent(0)).toBe(own);
-    expect(usePurchaseIntentKeyStore.getState().keys).toEqual({});
+  });
+
+  // The caller's key is the caller's: the item's held key is neither taken nor released by it.
+  it("a purchase under the caller's own key leaves the item's held key alone", async () => {
+    const purchase = mountPurchaser();
+    const own = '11111111-1111-4111-8111-111111111111';
+    send.mockRejectedValueOnce(httpError(503));
+    await expect(buy(purchase)).rejects.toThrow(); // held: may have charged
+    send.mockResolvedValueOnce({ claimKey: 'own' });
+    await buy(purchase, own); // succeeds under the caller's key
+    send.mockRejectedValueOnce(httpError(400));
+    await expect(buy(purchase, own)).rejects.toThrow(); // declined under the caller's key
+    send.mockResolvedValueOnce({ claimKey: 'retry' });
+    await buy(purchase); // the held intent's retry
+
+    expect(keySent(1)).toBe(own);
+    expect(keySent(3)).toBe(keySent(0));
   });
 });
 

@@ -379,7 +379,7 @@ async function quoteBlockAuthorFeeUncounted(
           error: error instanceof Error ? error.message : String(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     }
     return { charge: false, reason: 'error' };
   }
@@ -604,7 +604,7 @@ async function chargeBlockAuthorFeeUncounted(
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { charged: false, reason: 'debit-failed' };
   }
 
@@ -626,7 +626,7 @@ async function chargeBlockAuthorFeeUncounted(
         feeBuzz,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { charged: false, reason: 'debit-failed' };
   }
 
@@ -663,7 +663,7 @@ async function chargeBlockAuthorFeeUncounted(
         chargedBuzz: feeBuzz,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
   }
 
   // 🔴 WRAPPED, AND THE DEBIT ABOVE IS WHY. `accrueBlockAuthorFee` re-resolves
@@ -712,7 +712,7 @@ async function chargeBlockAuthorFeeUncounted(
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     await refundBlockAuthorFee({ workflowId, viewerUserId, buzzType, feeBuzz });
     return { charged: false, reason: 'accrual-failed' };
   }
@@ -738,7 +738,7 @@ async function chargeBlockAuthorFeeUncounted(
       accrualReason: accrual.reason,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
   await refundBlockAuthorFee({ workflowId, viewerUserId, buzzType, feeBuzz });
   return { charged: false, reason: 'accrual-failed' };
 }
@@ -870,6 +870,8 @@ export async function reverseBlockAuthorFee(args: {
   terminalStatus: string;
   /** Injectable clock, so the mint-eligibility boundary is testable. */
   now?: Date;
+  /** Recorded on the refund transaction (the moderator refund marks itself). */
+  refundDetails?: Record<string, unknown>;
 }): Promise<ReverseBlockAuthorFeeResult> {
   const { workflowId, terminalStatus } = args;
   // 🔴 READ ONCE, USED BY BOTH THE CHECK AND THE CLAIM. Recomputing it at the
@@ -912,7 +914,7 @@ export async function reverseBlockAuthorFee(args: {
           accruedAt: row.accruedAt.toISOString(),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       return { reversed: false, reason: 'settlement-eligible' };
     }
     if (row.status !== STATUS_ACCRUED) {
@@ -927,7 +929,7 @@ export async function reverseBlockAuthorFee(args: {
           viewerUserId: row.viewerUserId,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       return { reversed: false, reason: 'already-settled' };
     }
 
@@ -970,6 +972,7 @@ export async function reverseBlockAuthorFee(args: {
       viewerUserId: row.viewerUserId,
       buzzType: row.buzzType as BuzzAccountType,
       feeBuzz: row.feeBuzz,
+      ...(args.refundDetails ? { details: args.refundDetails } : {}),
     });
     if (!refunded) return { reversed: false, reason: 'refund-failed' };
 
@@ -985,7 +988,7 @@ export async function reverseBlockAuthorFee(args: {
         feeBuzz: row.feeBuzz,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { reversed: true, feeBuzz: row.feeBuzz };
   } catch (error) {
     logToAxiom(
@@ -998,7 +1001,7 @@ export async function reverseBlockAuthorFee(args: {
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { reversed: false, reason: 'refund-failed' };
   }
 }
@@ -1013,13 +1016,18 @@ export async function reverseBlockAuthorFee(args: {
  * line is the only recovery handle. The alternative ordering — refund, then
  * delete — trades it for the worse failure, a refunded viewer whose row settles
  * and pays the author out of platform funds.
+ *
+ * Shares the reversal key with reverseBlockAuthorFee, so a fee is returned to the viewer at most
+ * once whichever path returns it.
  */
-async function refundBlockAuthorFee(args: {
+export async function refundBlockAuthorFee(args: {
   workflowId: string;
   viewerUserId: number;
   buzzType: BuzzAccountType;
   feeBuzz: number;
-}): Promise<boolean> {
+  /** Recorded on the refund transaction. */
+  details?: Record<string, unknown>;
+}): Promise<false | 'created' | 'existed'> {
   const { workflowId, viewerUserId, buzzType, feeBuzz } = args;
   try {
     const result = await createBuzzTransactionMany([
@@ -1032,10 +1040,13 @@ async function refundBlockAuthorFee(args: {
         description: `${APP_AUTHOR_FEE_DESCRIPTION} refund`,
         type: TransactionType.Refund,
         externalTransactionId: blockAuthorFeeReversalKey(workflowId),
+        ...(args.details ? { details: args.details } : {}),
       },
     ]);
-    const landed = (result?.transactions?.length ?? 0) + (result?.conflicts?.length ?? 0) > 0;
-    if (landed) return true;
+    // A conflict is the key already on the ledger: landed, but by an earlier call — which a caller
+    // counting what IT returned needs to tell apart from a refund it just made.
+    if ((result?.transactions?.length ?? 0) > 0) return 'created';
+    if ((result?.conflicts?.length ?? 0) > 0) return 'existed';
   } catch (error) {
     logToAxiom(
       {
@@ -1050,7 +1061,7 @@ async function refundBlockAuthorFee(args: {
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return false;
   }
 
@@ -1065,7 +1076,7 @@ async function refundBlockAuthorFee(args: {
       feeBuzz,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
   return false;
 }
 

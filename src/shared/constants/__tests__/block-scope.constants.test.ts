@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
   APP_STORAGE_SCOPES,
+  appBlockOauthCeiling,
   appStorageScopesIn,
   manifestWantsOauthToken,
   assertSensitiveScopesJustified,
@@ -13,6 +14,7 @@ import {
   isAppBlockOauthClientId,
   isKnownBlockScope,
   isSensitiveBlockScope,
+  OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS,
   PRIVATE_RUN_BUZZ_CAP,
   resolvePerCallBuzzBudget,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
@@ -135,7 +137,7 @@ describe('block-scope.constants', () => {
     // deriveOauthBitmaskFromBlockScopes and validateBlockScopesAgainstOauthClient
     // both index the map right after the predicate; a prototype key must never
     // reach that indexing.
-    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0);
+    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0n);
     const check = validateBlockScopesAgainstOauthClient(PROTOTYPE_KEYS, TokenScope.Full);
     expect(check.valid).toBe(false);
     expect(check.rejectedScopes.sort()).toEqual([...PROTOTYPE_KEYS].sort());
@@ -436,7 +438,7 @@ describe('block-scope.constants', () => {
     });
 
     it('accepts no-bit scopes regardless of bitmask', () => {
-      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0);
+      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0n);
       expect(result.valid).toBe(true);
     });
 
@@ -483,14 +485,14 @@ describe('block-scope.constants', () => {
     });
 
     it('returns 0 for an empty / scope-less manifest (NOT Full)', () => {
-      expect(deriveOauthBitmaskFromBlockScopes([])).toBe(0);
+      expect(deriveOauthBitmaskFromBlockScopes([])).toBe(0n);
       expect(deriveOauthBitmaskFromBlockScopes([])).not.toBe(TokenScope.Full);
     });
 
     it('SKIP_OAUTH_CHECK scopes contribute no bits', () => {
       // apps:storage:* are gated elsewhere (per-op server-side), not via the bit.
       expect(deriveOauthBitmaskFromBlockScopes(['apps:storage:read', 'apps:storage:write'])).toBe(
-        0
+        0n
       );
     });
 
@@ -508,6 +510,31 @@ describe('block-scope.constants', () => {
       // rejected when checked against that ceiling.
       expect(validateBlockScopesAgainstOauthClient(scopes, ceiling).valid).toBe(true);
       expect(validateBlockScopesAgainstOauthClient(['buzz:read:self'], ceiling).valid).toBe(false);
+    });
+  });
+
+  // Pairwise-distinct bits: derived 5n (4n | 1n); stale 8n; AppsRead 2147483648n (opt-in, not
+  // preserved); AppDataRead 4294967296n (the one operator-granted bit kept).
+  describe('appBlockOauthCeiling (keeps an operator-granted AppDataRead bit)', () => {
+    it('the preserved set is exactly AppDataRead', () => {
+      expect(OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS).toBe(4294967296n);
+    });
+
+    it('keeps AppDataRead the client holds and drops every bit the manifest no longer derives', () => {
+      expect(appBlockOauthCeiling(5n, 4294967296n | 2147483648n | 8n)).toBe(4294967301n);
+    });
+
+    it('does not grant AppDataRead to a client without it', () => {
+      expect(appBlockOauthCeiling(5n, 2147483648n | 8n | 1n)).toBe(5n);
+    });
+
+    it('a client with no row yet gets exactly the derived bits', () => {
+      expect(appBlockOauthCeiling(5n, null)).toBe(5n);
+      expect(appBlockOauthCeiling(5n, undefined)).toBe(5n);
+    });
+
+    it('a manifest that derives nothing still keeps the held bit, and only it', () => {
+      expect(appBlockOauthCeiling(0n, 4294967296n | 8n)).toBe(4294967296n);
     });
   });
 });

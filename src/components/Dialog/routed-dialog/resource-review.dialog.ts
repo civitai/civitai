@@ -1,17 +1,9 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type ResourceReviewModal from '~/components/ResourceReview/ResourceReviewModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 
-const ResourceReviewModal = dynamic(
-  () => import('~/components/ResourceReview/ResourceReviewModal'),
-  { ssr: false }
-);
-
-const resourceReviewDialog = routedDialogDictionary.addItem('resourceReview', {
-  component: ResourceReviewModal,
+export const resourceReviewDialog = routedDialog<typeof ResourceReviewModal>({
   target: '#main',
   resolve: (query, { reviewId }) => ({
     query: { ...query, reviewId },
   }),
 });
-
-export type ResourceReviewDialog = typeof resourceReviewDialog;

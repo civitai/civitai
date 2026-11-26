@@ -1,4 +1,7 @@
 <script lang="ts">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
+  import AgentReportFilter from '$lib/components/AgentReportFilter.svelte';
+  import { setAgentReportParam } from '$lib/agent-reports';
   import { dateTime } from '$lib/format';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { enhance } from '$app/forms';
@@ -40,6 +43,9 @@
   } from '$lib/reports';
   import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
   import { browsingLevelLabels } from '@civitai/shared';
+  import { serviceReviewReportActionAllowed } from '@civitai/shared/post-text-report';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
@@ -68,8 +74,9 @@
   const statusForm = new FormState({
     onSubmit: ({ formData }) =>
       (statusChange = { id: Number(formData.get('id')), status: String(formData.get('status')) }),
-    onSuccess: () => {
-      if (statusChange) toast.success(`Report #${statusChange.id} set to ${statusChange.status}`);
+    onSuccess: (result) => {
+      if (result?.notice) toast.warning(String(result.notice));
+      else if (statusChange) toast.success(`Report #${statusChange.id} set to ${statusChange.status}`);
     },
     reload: true,
     onSettled: reloadIfGone,
@@ -107,6 +114,11 @@
     onSettled: reloadIfGone,
   });
   let confirmingOfferingTakedown = $state<number | null>(null);
+  const reviewForm = new FormState({
+    onSuccess: (result) => toast.success(String(result?.serviceReviewAction ?? 'Done')),
+    reload: true,
+    onSettled: reloadIfGone,
+  });
   let offeringReason = $state<string>('');
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
@@ -236,6 +248,21 @@
     </div>
     <Button type="submit" size="sm" variant="outline">Search</Button>
   </form>
+
+  {#if data.agentFilter}
+    <div class="flex flex-col gap-1">
+      <span class="text-xs font-medium text-muted-foreground">Agent reports</span>
+      <AgentReportFilter
+        value={data.agentFilter}
+        onselect={(filter) => {
+          const url = new URL(page.url);
+          setAgentReportParam(url.searchParams, filter);
+          url.searchParams.set('page', '1');
+          navigate(url.pathname + url.search);
+        }}
+      />
+    </div>
+  {/if}
 </div>
 
 {#if data.hidingAutomated}
@@ -309,6 +336,7 @@
                 {:else}
                   <span class="text-muted-foreground">—</span>
                 {/if}
+                {#if report.agentFiled}<AgentBadge />{/if}
                 <!-- Everyone else who filed the same report, folded into the filer's cell rather than
                      a column of its own that sat empty on most rows. -->
                 {#if report.alsoReportedByCount}
@@ -392,7 +420,7 @@
           <dt class="text-muted-foreground">Reason</dt>
           <dd>{selected.reason}</dd>
           <dt class="text-muted-foreground">Reported by</dt>
-          <dd>{selected.reportedByUsername ?? '—'}{selected.reason === 'Ownership' && selected.reportedByEmail ? ` (${selected.reportedByEmail})` : ''}{selected.alsoReportedByCount ? `, and ${selected.alsoReportedByCount} more` : ''}</dd>
+          <dd>{selected.reportedByUsername ?? '—'}{#if selected.agentFiled}{' '}<AgentBadge />{/if}{selected.reason === 'Ownership' && selected.reportedByEmail ? ` (${selected.reportedByEmail})` : ''}{selected.alsoReportedByCount ? `, and ${selected.alsoReportedByCount} more` : ''}</dd>
           <dt class="text-muted-foreground">Reported</dt>
           <dd>{fmtDate(selected.createdAt)}</dd>
         </dl>
@@ -562,7 +590,130 @@
           </div>
         {/if}
 
-        {#if data.type === 'serviceOffering'}
+        {#if data.type === 'serviceOffering' && data.serviceReviews[selected.id]}
+          {@const review = data.serviceReviews[selected.id]}
+          {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
+          {@const hasText = review.comment != null || review.sellerReply != null}
+          {@const canHold = serviceReviewReportActionAllowed('hold', selected)}
+          {@const held = review.commentHeld || review.replyHeld}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <p class="mb-1 flex flex-wrap items-center gap-2 text-sm">
+              <span class="font-medium">Buyer review ({review.verdict})</span>
+              {#if review.hidden}
+                <Badge variant="outline">hidden by a moderator</Badge>
+              {:else if !review.shown}
+                <Badge variant="outline">not shown</Badge>
+              {/if}
+              {#if review.commentHeld || review.replyHeld}
+                <Badge variant="outline">held for CSAM review</Badge>
+              {/if}
+            </p>
+            <p class="mb-2 text-sm text-dark-2">
+              On {offering?.title ?? `service #${selected.entityId}`} ·
+              <a
+                href={`${data.civitaiUrl}/services/deals/${review.dealId}`}
+                target="_blank"
+                rel="noopener"
+                class="underline">Deal #{review.dealId}</a
+              >
+            </p>
+            {#each [{ label: 'Comment', now: review.comment, then: review.reportedComment }, { label: 'Seller reply', now: review.sellerReply, then: review.reportedReply }] as part (part.label)}
+              {#if part.now || part.then}
+                <p class="text-xs font-medium">{part.label}</p>
+                <p class="mb-1 whitespace-pre-wrap text-sm">{part.now ?? '(removed)'}</p>
+                {#if part.then != null && part.then !== part.now}
+                  <p class="mb-2 whitespace-pre-wrap text-xs text-dark-2">When reported: {part.then}</p>
+                {/if}
+              {/if}
+            {/each}
+            {#if review.images.length}
+              <div class="mb-2 flex flex-wrap gap-2">
+                {#each review.images as image (image.id)}
+                  {#if image.restricted}
+                    <div
+                      class="grid h-24 w-24 place-items-center rounded bg-dark-5 p-1 text-center text-[10px] text-dark-2"
+                    >
+                      {RETRACTED_REFUSED}
+                    </div>
+                  {:else}
+                    <EdgeMedia src={image.url} width={200} alt="Review image" class="h-24 w-24 rounded object-cover" />
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+            <form method="POST" use:enhance={reviewForm.enhance} class="flex flex-wrap gap-2">
+              <input type="hidden" name="id" value={selected.id} />
+              {#if canHold}
+                {#if review.comment}
+                  <Button
+                    type="submit"
+                    formaction="?/holdServiceReview"
+                    name="text"
+                    value="comment"
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewForm.submitting || review.commentHeld}
+                  >
+                    Hold comment for CSAM review
+                  </Button>
+                {/if}
+                {#if review.sellerReply}
+                  <Button
+                    type="submit"
+                    formaction="?/holdServiceReview"
+                    name="text"
+                    value="reply"
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewForm.submitting || review.replyHeld}
+                  >
+                    Hold reply for CSAM review
+                  </Button>
+                {/if}
+                {#if !hasText}
+                  <Button
+                    type="submit"
+                    formaction="?/holdServiceReview"
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewForm.submitting || review.hidden}
+                  >
+                    Hide for CSAM review
+                  </Button>
+                {/if}
+              {:else if !review.hidden}
+                <Button
+                  type="submit"
+                  formaction="?/hideServiceReview"
+                  size="sm"
+                  variant="destructive"
+                  disabled={reviewForm.submitting}
+                >
+                  Hide review
+                </Button>
+              {/if}
+              {#if review.hidden && !held}
+                <Button
+                  type="submit"
+                  formaction="?/restoreServiceReview"
+                  size="sm"
+                  variant="outline"
+                  disabled={reviewForm.submitting}
+                >
+                  Restore review
+                </Button>
+              {/if}
+            </form>
+            <p class="mt-2 text-xs text-dark-2">
+              {canHold
+                ? 'A hold hides the whole review, images included, and sends the chosen text to the CSAM text-hold queue; restoring waits for that queue. It sets this report Actioned.'
+                : 'Hiding takes the review off the service page and out of its counts, and sets this report Actioned. Restoring sets it Unactioned.'}
+            </p>
+            {#if reviewForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{reviewForm.error}</p>
+            {/if}
+          </div>
+        {:else if data.type === 'serviceOffering'}
           {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
             {#if offering}
@@ -575,6 +726,8 @@
                 </Badge>
                 {#if offering.removedReason}
                   <Badge variant="outline">taken down by a moderator</Badge>
+                {:else if offering.ingestion === 'Blocked'}
+                  <Badge variant="outline">held by its content check</Badge>
                 {/if}
               </p>
               <p class="mb-1 text-sm text-dark-2">
@@ -661,6 +814,19 @@
                   Take down service
                 </Button>
               {/if}
+            {/if}
+            {#if offering && !offering.removedReason && offering.ingestion === 'Blocked'}
+              <p class="mt-3 mb-2 text-sm">
+                Its content check is holding this service off the site. Releasing shows it again and sets this report
+                Unactioned. Read the title and description first.
+              </p>
+              <form method="POST" action="?/releaseServiceOffering" use:enhance={offeringForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <input type="hidden" name="seenUpdatedAt" value={new Date(offering.updatedAt).toISOString()} />
+                <Button type="submit" size="sm" variant="outline" disabled={offeringForm.submitting}>
+                  Release service
+                </Button>
+              </form>
             {/if}
             {#if offeringForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{offeringForm.error}</p>

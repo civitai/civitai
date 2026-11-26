@@ -112,15 +112,25 @@ export interface SelectMeta {
   presets?: { label: string; value: string }[];
 }
 
-/** A string select: unlike enumDef, an out-of-set value FALLS BACK to the default. */
+/**
+ * A string select: unlike enumDef, an out-of-set value FALLS BACK to the default.
+ *
+ * `aliases` maps another vocabulary's name onto an option (an image's `Euler` onto a Comfy
+ * `euler`), so a remix keeps the value instead of falling back.
+ */
 export const selectDef = cachedFactory(function selectDef(opts: {
   options: readonly string[];
   default?: string;
   presets?: { label: string; value: string }[];
+  aliases?: Readonly<Record<string, string>>;
 }) {
-  const { options } = opts;
+  const { options, aliases } = opts;
   const resolvedDefault =
     opts.default && options.includes(opts.default) ? opts.default : options[0]!;
+  const aliasOf = (val: string) => {
+    const target = aliases?.[val];
+    return target !== undefined && options.includes(target) ? target : undefined;
+  };
   return {
     input: z
       .string()
@@ -128,14 +138,18 @@ export const selectDef = cachedFactory(function selectDef(opts: {
       .transform((val) => {
         if (!val) return undefined;
         if (options.includes(val)) return val;
-        return resolvedDefault;
+        return aliasOf(val) ?? resolvedDefault;
       }),
     output: z.enum(options as [string, ...string[]]),
     default: resolvedDefault,
-    correct: (value) =>
-      options.includes(value)
-        ? undefined
-        : { value: resolvedDefault, reason: 'option_unavailable' },
+    // A remix is a trusted `store.set`, so `input` never sees it: the alias must apply here too.
+    correct: (value) => {
+      if (options.includes(value)) return undefined;
+      const target = aliasOf(value);
+      return target !== undefined
+        ? { value: target, reason: 'alias' }
+        : { value: resolvedDefault, reason: 'option_unavailable' };
+    },
     meta: { options: options.map((s) => ({ label: s, value: s })), presets: opts.presets },
   } satisfies FieldDef<string, SelectMeta>;
 });

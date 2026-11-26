@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { countPendingCsamHolds, countEvidenceHoldsEnding } = vi.hoisted(() => ({
+const { countPendingCsamHolds } = vi.hoisted(() => ({
   countPendingCsamHolds: vi.fn(),
-  countEvidenceHoldsEnding: vi.fn(),
 }));
 
 vi.mock('../cache', () => ({
@@ -13,10 +12,21 @@ const redis = vi.hoisted(() => {
   return {
     store,
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => void store.set(key, value)),
+    set: vi.fn(async (key: string, value: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }),
+    eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) =>
+      store.get(opts.keys[0]) === opts.arguments[0] ? Number(store.delete(opts.keys[0])) : 0
+    ),
   };
 });
 
+vi.mock('../image-tags-count', () => ({
+  countImageTagsNeedingReview: async () => 0,
+  IMAGE_TAGS_COUNT_TIMEOUT_MS: 120_000,
+}));
 vi.mock('../redis', () => ({ getRedis: () => redis }));
 vi.mock('../db', () => ({
   dbRead: {
@@ -51,13 +61,10 @@ vi.mock('../minor-hash.service', () => ({
   getHeldDetectionModelCount: async () => 5,
   getFlaggedCount: async () => 0,
 }));
+vi.mock('../training-moderation.service', () => ({ countTrainingDataReview: async () => 0 }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals: async () => 0 }));
 vi.mock('../csam-holds.queries', () => ({ countPendingCsamHolds }));
-vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  countEvidenceHoldsEnding,
-}));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 
@@ -79,20 +86,6 @@ describe('sidebar count csamTextHolds', () => {
     countPendingCsamHolds.mockRejectedValue(new Error('db down'));
     const counts = (await getSidebarCounts()).counts;
     expect(counts).not.toHaveProperty('csamTextHolds');
-    expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
-  });
-});
-
-describe('sidebar count evidenceHoldsEnding', () => {
-  it('is the number of owners whose hold is ending', async () => {
-    countEvidenceHoldsEnding.mockResolvedValue({ owners: 2, earliest: new Date() });
-    expect((await getSidebarCounts()).counts).toMatchObject({ evidenceHoldsEnding: 2 });
-  });
-
-  it('is dropped, without blanking the other badges, when its query fails', async () => {
-    countEvidenceHoldsEnding.mockRejectedValue(new Error('db down'));
-    const counts = (await getSidebarCounts()).counts;
-    expect(counts).not.toHaveProperty('evidenceHoldsEnding');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });
 });

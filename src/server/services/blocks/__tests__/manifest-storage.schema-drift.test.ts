@@ -7,10 +7,17 @@ import {
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
   APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN,
+  APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+  APP_STORAGE_HOOK_FILE_PATTERN,
+  APP_STORAGE_HOOK_SHA256_PATTERN,
+  APP_STORAGE_HOOK_TIMEOUT_MAX_MS,
+  APP_STORAGE_HOOK_TIMEOUT_MIN_MS,
   APP_STORAGE_IMPORT_ACCESS,
   APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_INDEX_PATH_RE,
   APP_STORAGE_INDEX_TYPES,
+  APP_STORAGE_KEYED_BY,
   APP_STORAGE_KINDS,
   APP_STORAGE_LOG_MAX_ENTRIES,
   APP_STORAGE_MAX_COLLECTIONS,
@@ -27,6 +34,7 @@ import {
   APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
   APP_STORAGE_MIGRATION_PATH_PATTERN,
   APP_STORAGE_OWNED_POINTER_PATTERN,
+  APP_STORAGE_REGISTRY_AUDIENCES,
   APP_STORAGE_RESERVED_INDEX_NAMES,
   APP_STORAGE_SCHEMA_KEYWORDS,
   APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH,
@@ -107,6 +115,10 @@ const CARD = {
     extra: { type: ['object', 'null'], additionalProperties: { type: 'boolean' } },
   },
 };
+const SHA = 'd'.repeat(64);
+const hook = (extra: Record<string, unknown> = {}) => ({
+  hook: { file: 'hooks/cards.js', sha256: SHA, ...extra },
+});
 
 /**
  * [label, storage, accepted with every phased feature ON, phased]. `phased` marks the cases
@@ -164,6 +176,24 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ],
   ['exportable false', priv({ exportable: false }), true],
   ['exportable true on shared', shared({ exportable: true }), true],
+  // Viewer-keyed documents (docs/app-storage-generic-core.md): shared `own` only. Not phased:
+  // `viewerKeyedDocs` is on in production.
+  ['keyedBy viewer on shared own', shared({ keyedBy: 'viewer' }), true],
+  ['keyedBy parent+viewer on shared own', shared({ keyedBy: 'parent+viewer' }), true],
+  ['keyedBy unknown mode', shared({ keyedBy: 'parent' }), false],
+  ['keyedBy not a string', shared({ keyedBy: true }), false],
+  ['keyedBy on private', priv({ keyedBy: 'viewer' }), false],
+  ['keyedBy with write none', shared({ write: 'none', marks: ['vote'], keyedBy: 'viewer' }), false],
+  ['keyedBy with write anyone', shared({ write: 'anyone', keyedBy: 'viewer' }), false],
+  [
+    'keyedBy with write owner',
+    shared({ write: 'owner', counters: ['plays'], keyedBy: 'viewer' }),
+    false,
+  ],
+  ['keyedBy on a log collection', shared({ kind: 'log', keyedBy: 'viewer' }), false],
+  ['keyedBy with marks', shared({ keyedBy: 'parent+viewer', marks: ['vote'] }), false],
+  ['keyedBy with counters', shared({ keyedBy: 'viewer', counters: ['plays'] }), false],
+  ['keyedBy with an empty marks list', shared({ keyedBy: 'viewer', marks: [] }), false],
   ['imports only', imports(imp()), true],
   ['imports beside collections', { ...priv(), ...imports(imp({ access: 'readwrite' })) }, true],
   [
@@ -214,7 +244,16 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['kind log with maxEntries 10000', priv({ kind: 'log', maxEntries: 10000 }), true, true],
   ['ttlSeconds 60', priv({ ttlSeconds: 60 }), true, true],
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],
+  ['registry public on shared', shared({ registry: 'public' }), true, true],
   ['write owner', shared({ write: 'owner', counters: ['plays'] }), true, true],
+  // accept — permission hooks (the `hooks` feature is on in production)
+  ['hook on a private collection', priv(hook()), true],
+  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true],
+  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true],
+  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true],
+  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true],
+  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true],
+  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true],
   // reject — containers
   ['storage null', null, false],
   ['storage array', [], false],
@@ -248,6 +287,9 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['unknown import key', imports(imp({ mode: 'x' })), false],
   ['imports beside empty collections', { collections: {}, ...imports(imp()) }, false],
   ['exportable string', priv({ exportable: 'no' }), false],
+  ['registry on private', priv({ registry: 'public' }), false],
+  ['registry with an unknown audience', shared({ registry: 'everyone' }), false],
+  ['registry boolean', shared({ registry: true }), false],
   // reject — names
   ['uppercase collection', { collections: { Prefs: { visibility: 'private' } } }, false],
   ['leading digit collection', { collections: { '1x': { visibility: 'private' } } }, false],
@@ -391,6 +433,25 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   ['retiredCollections (no such key)', { ...priv(), retiredCollections: ['old_notes'] }, false],
+  // reject — permission hooks
+  ['hook not an object', priv({ hook: 'hooks/cards.js' }), false],
+  ['hook without sha256', priv({ hook: { file: 'h.js' } }), false],
+  ['hook without file', priv({ hook: { sha256: SHA } }), false],
+  ['hook sha256 uppercase', priv(hook({ sha256: 'D'.repeat(64) })), false],
+  ['hook sha256 of 65 chars', priv(hook({ sha256: 'd'.repeat(65) })), false],
+  ['hook file with a leading slash', priv(hook({ file: '/hooks/cards.js' })), false],
+  ['hook file with a ".." segment', priv(hook({ file: 'a/../cards.js' })), false],
+  ['hook file with a "." segment', priv(hook({ file: './cards.js' })), false],
+  ['hook file hidden', priv(hook({ file: '.cards.js' })), false],
+  ['hook file .ts', priv(hook({ file: 'cards.ts' })), false],
+  ['hook file of 201 chars', priv(hook({ file: `${'a'.repeat(198)}.js` })), false],
+  ['hook file in node_modules', priv(hook({ file: 'node_modules/x/i.js' })), false],
+  ['hook file in a nested node_modules', priv(hook({ file: 'a/node_modules/i.js' })), false],
+  ['hook timeoutMs 0', priv(hook({ timeoutMs: 0 })), false],
+  ['hook timeoutMs 501', priv(hook({ timeoutMs: 501 })), false],
+  ['hook timeoutMs fractional', priv(hook({ timeoutMs: 1.5 })), false],
+  ['hook decide (v2)', priv(hook({ decide: { allow: true } })), false],
+  ['hook unknown key', priv(hook({ source: 'x' })), false],
   // reject — ownedModelVersions
   ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
   ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
@@ -498,6 +559,25 @@ const PARSER_ONLY: Array<[string, unknown]> = [
     'a default value over 4096 bytes',
     priv({ migrations: [{ op: 'default', path: '/a', value: 'v'.repeat(4096) }] }),
   ],
+  // Hooks: one file is compared across collections.
+  [
+    'one hook file pinned with two sha256s',
+    {
+      collections: {
+        a: { visibility: 'private', ...hook() },
+        b: { visibility: 'private', ...hook({ sha256: 'e'.repeat(64) }) },
+      },
+    },
+  ],
+];
+
+/**
+ * Rules that span `storage` and a manifest field OUTSIDE it (`outputDir`): the storage schema
+ * cannot see that field, so these are evaluated against whole manifests.
+ */
+const PARSER_ONLY_MANIFESTS: Array<[string, Record<string, unknown>]> = [
+  ['hook file inside outputDir', { outputDir: 'dist', storage: priv(hook({ file: 'dist/h.js' })) }],
+  ['hook file with outputDir "."', { outputDir: '.', storage: priv(hook()) }],
 ];
 
 describe('app-block v1 schema ⇄ storage parser drift guard', () => {
@@ -553,8 +633,10 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
 
     expect(p.kind.enum).toEqual([...APP_STORAGE_KINDS]);
     expect(p.exportable.type).toBe('boolean');
+    expect(p.registry.enum).toEqual([...APP_STORAGE_REGISTRY_AUDIENCES]);
     expect(p.visibility.enum).toEqual([...APP_STORAGE_VISIBILITIES]);
     expect(p.write.enum).toEqual([...APP_STORAGE_WRITE_POLICIES]);
+    expect(p.keyedBy.enum).toEqual([...APP_STORAGE_KEYED_BY]);
 
     for (const [field, max] of [
       ['counters', APP_STORAGE_MAX_COUNTERS],
@@ -653,11 +735,72 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(ack.keyword.enum).not.toContain('required');
   });
 
+  it('pins the permission-hook declaration to the exported constants', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const declared = (collection.properties as Record<string, SchemaObject>).hook;
+    expect(declared.$ref).toBe('#/$defs/storageCollectionHook');
+    const def = schema.$defs.storageCollectionHook;
+    expect(def.type).toBe('object');
+    expect(def.additionalProperties).toBe(false);
+    expect(def.required).toEqual(['file', 'sha256']);
+    const p = def.properties as Record<string, SchemaObject>;
+    expect(Object.keys(p)).toEqual(['file', 'sha256', 'timeoutMs']);
+    expect([p.file.type, p.file.pattern, p.file.maxLength]).toEqual([
+      'string',
+      APP_STORAGE_HOOK_FILE_PATTERN,
+      APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+    ]);
+    expect((p.file.not as SchemaObject).pattern).toBe(
+      APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN
+    );
+    expect([p.sha256.type, p.sha256.pattern]).toEqual(['string', APP_STORAGE_HOOK_SHA256_PATTERN]);
+    expect([p.timeoutMs.type, p.timeoutMs.minimum, p.timeoutMs.maximum]).toEqual([
+      'integer',
+      APP_STORAGE_HOOK_TIMEOUT_MIN_MS,
+      APP_STORAGE_HOOK_TIMEOUT_MAX_MS,
+    ]);
+  });
+
   it('the evaluator resolves a local $ref and refuses one it cannot resolve', () => {
     const doc = { $defs: { s: { type: 'string' } }, properties: { a: { $ref: '#/$defs/s' } } };
     expect(schemaAccepts(doc, { a: 'x' })).toBe(true);
     expect(schemaAccepts(doc, { a: 1 })).toBe(false);
     expect(() => schemaAccepts({ $ref: '#/$defs/missing' }, 1)).toThrow(/cannot resolve/);
+  });
+
+  // docs/app-storage-generic-core.md, rollout step 5: the tally primitives are removed, and the
+  // published schema says so WITHOUT changing what validates (approved manifests keep them, inert;
+  // submit refuses a new one, `deprecatedPrimitiveErrors`).
+  it('marks counters and marks removed (and write "none" in its description), as annotations only', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const p = collection.properties as Record<string, SchemaObject>;
+    for (const field of ['counters', 'marks'] as const) {
+      expect(p[field].deprecated, field).toBe(true);
+      expect(String(p[field].description), field).toMatch(/^REMOVED — use a viewer-keyed/);
+    }
+    // Not the whole `write` property: "own" is not deprecated, so `none` is deprecated in the
+    // description only (`deprecated` cannot sit on one enum value), and the description must not
+    // also offer it as available.
+    expect(p.write.deprecated).toBeUndefined();
+    const write = String(p.write.description);
+    expect(write).toContain('"none" is REMOVED');
+    expect(write).toContain('READ-ONLY');
+    expect(write).toContain('Use "own" with `keyedBy` (a viewer-keyed collection) instead.');
+    expect(write).not.toContain('Available today: "own" and "none".');
+    // Still accepted by the schema (and the parser, with every feature on, as on replay).
+    for (const storage of [
+      one({ visibility: 'shared', write: 'none', counters: ['plays'] }),
+      shared({ marks: ['vote'], counters: ['views'] }),
+    ]) {
+      expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
+      expect(parserAccepts(storage)).toBe(true);
+    }
   });
 
   it('the evaluator refuses a keyword it does not implement', () => {
@@ -683,4 +826,14 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
     expect(parserAccepts(storage)).toBe(false);
   });
+
+  it.each(PARSER_ONLY_MANIFESTS)(
+    '%s → schema accepts, parser refuses (rule across storage and the manifest)',
+    (_l, manifest) => {
+      expect(schemaAccepts(storageSchema, manifest.storage, schema)).toBe(true);
+      expect(parseManifestStorage(manifest, ALL_ON).errors.length).toBeGreaterThan(0);
+      // Positive control: the same storage with no outputDir is accepted.
+      expect(parserAccepts(manifest.storage)).toBe(true);
+    }
+  );
 });

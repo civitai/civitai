@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import {
   actOnRemixGallerySubmissionSchema,
   declineOutOfBandRemixGallerySubmissionsSchema,
@@ -18,6 +19,9 @@ import {
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
+  getStickerAutoTrackSchema,
+  getStickerTracksSchema,
+  startStickerAutoTrackSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
@@ -45,8 +49,10 @@ import {
   getPlacementSpaceRow,
   getPlacementSpaces,
   resolvePlacementSpaceFor,
+  resolvePlacementSpaceForDisplay,
   setPlacementSpace,
 } from '~/server/services/placement-space.service';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import {
   countPendingPlacementsFrom,
   isPlacementSuspended,
@@ -65,8 +71,13 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
+import {
+  getStickerAutoTrack,
+  startStickerAutoTrack,
+} from '~/server/services/sticker-auto-track.service';
 import {
   actOnRemixGallerySubmission,
   declineOutOfBandRemixGallerySubmissions,
@@ -129,6 +140,12 @@ function assertPlacementEnabled(ctx: Context) {
     throw throwAuthorizationError('placement: sticker placement is not available yet');
 }
 
+function assertAutoTrackEnabled(ctx: Context) {
+  assertPlacementEnabled(ctx);
+  if (!ctx.features.stickerVideoTracks || !ctx.features.stickerAutoTrack)
+    throw throwAuthorizationError('placement: auto-track is not available yet');
+}
+
 /**
  * The gallery's own gate. Not `assertPlacementEnabled`: that one requires the
  * sticker flags, and the two surfaces open on different schedules.
@@ -181,7 +198,9 @@ function assertStorylinesEnabled(ctx: Context) {
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
     assertPromotionSurfaceReadable(ctx, input.surface);
-    return resolvePlacementSpaceFor(input);
+    return isFliptSync(FLIPT_FEATURE_FLAGS.PLACEMENT_SPACE_READ_CACHE) === true
+      ? resolvePlacementSpaceForDisplay(input)
+      : resolvePlacementSpaceFor(input);
   }),
 
   // The row for one level, so a toggle shows what that level is set to rather
@@ -279,6 +298,30 @@ export const placementRouter = router({
       })
     ),
 
+  getStickerTracks: publicProcedure.input(getStickerTracksSchema).query(({ input, ctx }) =>
+    ctx.features.stickerVideoTracks
+      ? getStickerPlacementTracks({
+          imageId: input.imageId,
+          viewerId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        })
+      : []
+  ),
+
+  startStickerAutoTrack: guardedProcedure
+    .input(startStickerAutoTrackSchema)
+    .mutation(({ input, ctx }) => {
+      assertAutoTrackEnabled(ctx);
+      return startStickerAutoTrack({ ...input, user: ctx.user });
+    }),
+
+  getStickerAutoTrack: protectedProcedure
+    .input(getStickerAutoTrackSchema)
+    .query(({ input, ctx }) => {
+      assertAutoTrackEnabled(ctx);
+      return getStickerAutoTrack({ ...input, userId: ctx.user.id });
+    }),
+
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
   getSettlementStates: protectedProcedure
@@ -293,6 +336,8 @@ export const placementRouter = router({
    */
   createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
     assertPlacementEnabled(ctx);
+    if (input.track && !ctx.features.stickerVideoTracks)
+      throw throwAuthorizationError('placement: moving stickers are not available yet');
     return createStickerPlacement({
       ...input,
       // After the spread, and the schema has no `placerId` to strip anyway —
@@ -452,6 +497,7 @@ export const placementRouter = router({
       // preferences — a gallery is other people's content on someone else's
       // page, so it is exactly where a block should still bite.
       user: ctx.user ?? undefined,
+      ...credentialViews(ctx),
     })
   ),
 

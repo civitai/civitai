@@ -1,12 +1,16 @@
 import { fail } from '@sveltejs/kit';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { blockImage, isModerationBlocked } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
+import { callModEndpoint } from '$lib/server/user-actions.service';
 import {
+  applyCsamHolds,
   applyMajorityBlocks,
   castVote,
+  itemWithheld,
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
@@ -17,6 +21,7 @@ import {
 } from '$lib/server/scan-label.service';
 import {
   BLOCK_REASON_IDS,
+  CSAM_HOLD_REASON,
   pageCard,
   REASON_COMMENT_MAX,
   REASON_NEEDING_COMMENT,
@@ -32,7 +37,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : parsed;
   const filters = toFilters(query);
   const userId = locals.user.id;
-  const card = await claimNext(userId, filters);
+  const card = await claimNext({ userId, csamReview: holdsCsamReview(locals.user) }, filters);
   const [counters, versions] = await Promise.all([
     getCounters(userId, filters),
     getOpenFlaggerVersions(),
@@ -80,6 +85,9 @@ const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'not-yours', strin
   'already-voted': 'You already voted on this one. Here is the next.',
 };
 
+const HOLD_FAILED =
+  'Your vote is recorded and the image has left the queue, but holding it for CSAM review failed. It is retried on the next vote; tell a lead if this keeps happening.';
+
 const STALE_PAGE = 'This page is out of date. Reload it to keep voting.';
 
 export const actions: Actions = {
@@ -92,6 +100,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     const itemId = await itemForToken(input.token, locals.user.id);
     if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });
+    if (await itemWithheld(itemId, holdsCsamReview(locals.user)))
+      return fail(409, { error: REFUSAL['not-open'] });
     const result = await castVote({
       itemId,
       userId: locals.user.id,
@@ -100,6 +110,28 @@ export const actions: Actions = {
       claimToken: input.token,
     });
     if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
+    // Holds first, and retried here like the blocks below. Must not fail the vote, which has landed.
+    const holds = await applyCsamHolds(
+      {},
+      {
+        hold: async (imageId, voterId) => {
+          const held = await callModEndpoint(
+            'image/report-csam',
+            { imageIds: [imageId], ...(voterId && { scanLabelVoterId: voterId }) },
+            'Hold for CSAM review'
+          );
+          if (!held.ok) throw new Error(held.error);
+        },
+      }
+    ).catch((e) => {
+      console.error('scan label csam hold sweep failed', e);
+      return null;
+    });
+    // Failed, not "not held here": a concurrent vote's sweep may be the one that held it.
+    const holdFailed =
+      input.choice.block &&
+      input.choice.reason === CSAM_HOLD_REASON &&
+      (!holds || holds.failed.some((f) => f.itemId === itemId));
     // Retry pending majority blocks so a failed one is not stranded. Must not fail the vote, which
     // has already landed.
     await applyMajorityBlocks(
@@ -115,6 +147,6 @@ export const actions: Actions = {
       console.error('scan label owner read failed', e);
       return null;
     });
-    return { voted: true, owner };
+    return holdFailed ? { voted: true, owner, error: HOLD_FAILED } : { voted: true, owner };
   },
 };

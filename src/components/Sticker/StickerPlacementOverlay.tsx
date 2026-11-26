@@ -1,3 +1,4 @@
+import { stickerPoseStyle } from '~/components/Sticker/sticker-pose-style';
 import { Button } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -91,8 +92,14 @@ export function StickerPlacementOverlay({
   paced = true,
   step = null,
   takenCorners,
+  hiddenIds,
+  bindPose,
 }: {
   placements: PlacedSticker[];
+  /** Hidden but kept mounted, so showing one again does not replay the reveal. */
+  hiddenIds?: ReadonlySet<number>;
+  /** A ref per sticker for playback that moves it along its track (`useTrackPlayback`). */
+  bindPose?: (id: number) => (node: HTMLElement | null) => void;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
   viewerId?: number;
@@ -279,8 +286,7 @@ export function StickerPlacementOverlay({
   }, []);
 
   const measureSticker = useCallback(
-    (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
-      const placementId = placement.id;
+    (placementId: number) => (node: HTMLDivElement | null) => {
       const existing = disposers.current.get(placementId);
       if (existing) {
         existing();
@@ -329,6 +335,25 @@ export function StickerPlacementOverlay({
     },
     []
   );
+
+  // A pending sticker is measured for the owner's controls and still plays its track. One stable
+  // ref per sticker, so a re-render does not rebuild its animation.
+  const pendingRef = useMemo(() => {
+    const byId = new Map<number, (node: HTMLDivElement | null) => void>();
+    return (id: number) => {
+      let ref = byId.get(id);
+      if (!ref) {
+        const measure = measureSticker(id);
+        const pose = bindPose?.(id);
+        ref = (node) => {
+          measure(node);
+          pose?.(node);
+        };
+        byId.set(id, ref);
+      }
+      return ref;
+    };
+  }, [measureSticker, bindPose]);
 
   const [replayed, setReplayed] = useState(false);
   useEffect(() => {
@@ -497,13 +522,17 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              ref={placement.isPending ? measureSticker(placement) : undefined}
-              className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
+              ref={placement.isPending ? pendingRef(placement.id) : bindPose?.(placement.id)}
+              className={clsx(
+                'absolute',
+                interactive && 'pointer-events-auto',
+                revealClassName,
+                // Important: the reveal animation fills `visibility: visible`, which only an
+                // important rule beats.
+                hiddenIds?.has(placement.id) && '!invisible'
+              )}
               style={{
-                left: `${placement.data.x * 100}%`,
-                top: `${placement.data.y * 100}%`,
-                width: `${placement.data.scale * 100}%`,
-                transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+                ...stickerPoseStyle(placement.data),
                 zIndex: layer,
                 ...delayStyle,
               }}

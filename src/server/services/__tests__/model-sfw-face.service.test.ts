@@ -27,7 +27,7 @@ import {
   assertSfwFaceSafe,
   checkSfwFace,
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
-  COM_FACE_REFUSED_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   draftSfwFace,
 } from '~/server/services/model-sfw-face.service';
 
@@ -108,8 +108,8 @@ describe('assertSfwFaceSafe', () => {
     );
   });
 
-  it('lets a clean face through', async () => {
-    mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.PG));
+  it('lets a clean face through, naming the prompt that passed it for the stamp', async () => {
+    mockPreviewTextScanNsfw.mockResolvedValue({ ...rated(NsfwLevel.PG), promptId: 31 });
     await expect(
       assertSfwFaceSafe({
         sfwName: 'Retro Pinup Style',
@@ -117,7 +117,7 @@ describe('assertSfwFaceSafe', () => {
         name: 'n',
         userId: 1,
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ stamp: { promptId: 31, versionFields: [] } });
   });
 });
 
@@ -180,22 +180,36 @@ describe('the .com face intent gate', () => {
 
   it('refuses a draft for a flagged model before drafting anything', async () => {
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
-    await expect(draftSfwFace({ name: 'n', userId: 1 })).rejects.toThrow(COM_FACE_REFUSED_MESSAGE);
+    await expect(draftSfwFace({ name: 'n', userId: 1 })).rejects.toThrow(
+      COM_FACE_REFUSED_EDIT_MESSAGE
+    );
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("names the fields it read in a refusal, never the check's reason", async () => {
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: true, reason: 'CHECK-REASON-TEXT' },
+    });
+    const error = await assertSfwFaceSafe({ sfwName: 'Retro', name: 'n', userId: 1 }).catch(
+      (e: Error) => e
+    );
+    expect((error as Error).message).toBe(COM_FACE_REFUSED_EDIT_MESSAGE);
+    expect((error as Error).message).toMatch(/title, description and trigger words/);
   });
 
   it('refuses a hand-typed face on a flagged model at save, though its own text is clean', async () => {
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     await expect(
       assertSfwFaceSafe({ sfwName: 'Retro Pinup Style', name: 'n', userId: 1 })
-    ).rejects.toThrow(COM_FACE_REFUSED_MESSAGE);
+    ).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
   });
 
   it('gives the listing refusal when the .com text is flagged too', async () => {
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     mockPreviewTextScanNsfw.mockResolvedValue(rated(NsfwLevel.X));
     await expect(assertSfwFaceSafe({ sfwName: 'Nude Pack', name: 'n', userId: 1 })).rejects.toThrow(
-      COM_FACE_REFUSED_MESSAGE
+      COM_FACE_REFUSED_EDIT_MESSAGE
     );
   });
 

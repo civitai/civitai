@@ -76,7 +76,7 @@
     <Button variant="outline" size="sm" disabled={!has} onclick={onStartSale}>Put on sale</Button>
   {/if}
   <Button variant="outline" size="sm" disabled={!has} onclick={onMakeSafe}
-    >Make safe for .com</Button
+    >Customize for civitai.com</Button
   >
   <Button variant="outline" size="sm" disabled={!has} onclick={() => onAction('usageControl')}>
     Usage control

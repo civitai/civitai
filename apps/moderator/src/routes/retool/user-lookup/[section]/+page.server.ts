@@ -2,7 +2,8 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
-import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { int4Id, jsonField, parseForm, userIdSchema } from '$lib/server/query';
+import { isInt4Id } from '$lib/server/users.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -24,6 +25,8 @@ import {
   mintMembershipCode,
   previewMembershipExtension,
   extendMembership,
+  previewCompGift,
+  compGift,
   previewMembershipCancel,
   setMembershipCancel,
   previewMembershipResync,
@@ -33,7 +36,11 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
-  deleteAccountHold,
+  confirmMemorial,
+  getMemorialPanelState,
+  proposeMemorial,
+  reverseMemorial,
+  type MemorialPanelState,
   countReactions,
   removeReactions,
   purgeAllContent,
@@ -50,6 +57,12 @@ import {
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
 import {
+  MEMORIAL_BASES,
+  MEMORIAL_BASIS_LABELS,
+  MEMORIAL_TRIBUTES_MAX,
+} from '@civitai/shared/memorial';
+import { withheldAccountRefusal } from '$lib/server/retracted-media';
+import {
   boxGrantFields,
   BoxGrantRefused,
   grantMysteryBoxes,
@@ -61,13 +74,17 @@ import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 import {
+  COMP_GIFT_MAX_MONTHS,
+  COMP_GIFT_REASON_MIN,
+  COMP_GIFT_TIERS,
+} from '$lib/membership-gift-comp';
+import {
   CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_REASON_MAX,
   type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
-import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -77,22 +94,19 @@ export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  // Only where the Delete account and Purge buttons render, and only for someone who may press one.
-  let deleteHold: DeleteHold | null = null;
-  if (
-    params.section === 'admin' &&
-    (locals.grants['user.deleteAccount'] || locals.grants['user.purge'])
-  ) {
+  let memorial: MemorialPanelState | null = null;
+  if (params.section === 'admin' && locals.grants['user.memorialize']) {
     const { result } = await parent();
-    if (result) deleteHold = await deleteAccountHold(result.identity.id);
+    if (result) memorial = await getMemorialPanelState(result.identity.id);
   }
-  return { section: params.section, deleteHold };
+  return { section: params.section, memorial };
 };
 
 const NOTE_MAX = 5000;
 
 // Every action's input is a zod parse, per the app standard.
 const accountFail = (message: string) => fail(400, { scope: 'account' as const, error: message });
+const memorialFail = (message: string) => fail(400, { scope: 'memorial' as const, error: message });
 // Separate from `account`: the only renderer of that scope is the panel on Admin, so an identity
 // refusal scoped there is invisible on Basic, where the form actually is.
 const identityFail = (message: string) => fail(400, { scope: 'identity' as const, error: message });
@@ -105,6 +119,23 @@ const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
 const membershipExtendFail = (message: string) =>
   fail(400, { scope: 'membershipExtend' as const, error: message });
+const compGiftFail = (message: string) => fail(400, { scope: 'compGift' as const, error: message });
+const compGiftSchema = userIdSchema.extend({
+  tier: z.enum(COMP_GIFT_TIERS),
+  months: z.coerce.number().int().min(1).max(COMP_GIFT_MAX_MONTHS),
+  reason: z.string().trim().min(COMP_GIFT_REASON_MIN).max(500),
+  message: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((v) => v || undefined),
+  // An unticked checkbox sends nothing.
+  anonymous: z
+    .string()
+    .optional()
+    .transform((v) => v === 'on'),
+});
 const membershipCancelFail = (message: string) =>
   fail(400, { scope: 'membershipCancel' as const, error: message });
 const membershipResyncFail = (message: string) =>
@@ -534,6 +565,8 @@ export const actions: Actions = {
           .transform(() => undefined)
           .or(z.coerce.number().int().positive().max(2_147_483_647))
           .optional(),
+        // One per form (the panel mints it); the ledger key that makes a resubmit recognisable.
+        submissionId: z.string().regex(/^[0-9a-f]{16,64}$/),
       }),
       await request.formData()
     );
@@ -552,6 +585,7 @@ export const actions: Actions = {
       entityType: input.entityType || undefined,
       entityId: input.entityId,
       moderatorId: locals.user.id,
+      submissionId: input.submissionId,
     });
     if (!result.ok) return buzzFail(result.error);
     // The parsed input, not the raw form: the confirmation the panel shows has to name what was
@@ -634,6 +668,25 @@ export const actions: Actions = {
     const result = await extendMembership(input);
     if (!result.ok) return membershipExtendFail(result.error);
     return { success: true, extended: result.result };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  previewCompGift: requiresGrant('user.membership.gift.comp', async ({ request }) => {
+    const input = parseForm(compGiftSchema, await request.formData());
+    if (typeof input === 'string') return compGiftFail(input);
+
+    const result = await previewCompGift(input);
+    if (!result.ok) return compGiftFail(result.error);
+    return { success: true, compPreview: result.preview };
+  }),
+
+  compGift: requiresGrant('user.membership.gift.comp', async ({ request }) => {
+    const input = parseForm(compGiftSchema, await request.formData());
+    if (typeof input === 'string') return compGiftFail(input);
+
+    const result = await compGift(input);
+    if (!result.ok) return compGiftFail(result.error);
+    return { success: true, comped: result.result };
   }),
 
   previewMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
@@ -763,13 +816,12 @@ export const actions: Actions = {
       form
         .getAll(name)
         .map((v) => Number(v))
-        .filter((n) => Number.isInteger(n) && n > 0);
+        .filter(isInt4Id);
 
     if (input.kind === 'comments') {
       if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')
         return contentFail('Unsupported action for comments.');
       const commentIds = ids('commentIds');
-      const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
         action:
           input.op === 'delete'
@@ -778,7 +830,6 @@ export const actions: Actions = {
             ? 'removeAsTos'
             : 'restoreFromTos',
         commentIds,
-        commentV2Ids,
         userId: input.userId,
         moderatorId: locals.user.id,
       });
@@ -787,7 +838,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
-        requested: commentIds.length + commentV2Ids.length,
+        requested: commentIds.length,
       };
     }
 
@@ -817,6 +868,8 @@ export const actions: Actions = {
     if (!user) return accountFail('User not found.');
     if (input.confirm !== (user.username ?? String(input.userId)))
       return accountFail('Type the username exactly to confirm the purge.');
+    const withheld = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
 
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
@@ -824,7 +877,7 @@ export const actions: Actions = {
   }),
 
   // No confirmation check here: the endpoint owns it, and a second copy would drift from it.
-  deleteAccount: requiresGrant('user.deleteAccount', async ({ request }) => {
+  deleteAccount: requiresGrant('user.deleteAccount', async ({ request, locals }) => {
     const input = parseForm(
       userIdSchema.extend({
         username: z.string().optional(),
@@ -834,10 +887,10 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
-    // The endpoint refuses a held account too; this answers before anything is sent.
-    const hold = await deleteAccountHold(input.userId);
-    if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
-    if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
+    if (input.removeImages === 'true') {
+      const withheld = await withheldAccountRefusal(locals.user, input.userId);
+      if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
+    }
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({
@@ -847,6 +900,62 @@ export const actions: Actions = {
       removeImages: flag(input.removeImages),
     });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  }),
+
+  memorialPropose: requiresGrant('user.memorialize', async ({ request, locals }) => {
+    const author = locals.user.username;
+    if (!author) return memorialFail('Your account has no username.');
+    const input = parseForm(
+      userIdSchema.extend({
+        basis: z.enum(MEMORIAL_BASES),
+        note: z.string().trim().min(1, 'Say how the death was confirmed.').max(NOTE_MAX),
+        tributes: jsonField(
+          z
+            .array(
+              z.object({
+                label: z.string().trim().min(1, 'Each tribute needs a label.').max(80),
+                url: z.string().trim().min(1, 'Each tribute needs a link.'),
+              })
+            )
+            .max(MEMORIAL_TRIBUTES_MAX, `At most ${MEMORIAL_TRIBUTES_MAX} tributes.`)
+        ),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return memorialFail(input);
+
+    // First, so a proposal is never left without its evidence, whatever the endpoint answers.
+    await addUserNote({
+      userId: input.userId,
+      notes: `Memorialization evidence (${MEMORIAL_BASIS_LABELS[input.basis]}): ${input.note}`,
+      author,
+    });
+    const result = await proposeMemorial({
+      userId: input.userId,
+      basis: input.basis,
+      tributes: input.tributes,
+    });
+    if (!result.ok) return memorialFail(result.error);
+    return { success: true };
+  }),
+
+  memorialConfirm: requiresGrant('user.memorialize', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ proposedAt: z.string().min(1, 'Reload the page and try again.') }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return memorialFail(input);
+    const result = await confirmMemorial(input.userId, input.proposedAt);
+    if (!result.ok) return memorialFail(result.error);
+    return { success: true, warning: result.warning };
+  }),
+
+  memorialReverse: requiresGrant('user.memorialize', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return memorialFail(input);
+    const result = await reverseMemorial(input.userId);
+    if (!result.ok) return memorialFail(result.error);
     return { success: true };
   }),
 

@@ -16,6 +16,7 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { raiseOwnImageNsfwLevel } from '~/server/services/image.service';
@@ -57,6 +58,10 @@ describe('raiseOwnImageNsfwLevel', () => {
     expect(text).not.toContain('nsfwLevelLocked" =');
     expect(values).toEqual(expect.arrayContaining([NsfwLevel.X, IMAGE_ID, OWNER, 'Scanned']));
     expect(updatePostNsfwLevelMock).toHaveBeenCalledWith(POST_ID);
+    // A community image raised past PG-13 leaves the civitai.com showcases and covers.
+    expect(showcaseQueries(dbMock.dbRead.$queryRaw).map((read) => read.values)).toEqual([
+      [POST_ID],
+    ]);
   });
 
   it('reports nothing applied when no row matched (not the owner, locked, lower, or unscanned)', async () => {

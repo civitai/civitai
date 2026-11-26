@@ -2,8 +2,13 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
+import { isMemorializedFlags } from '@civitai/shared/memorial';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { carriesClientCredentialsOnlyScope, hasScope } from '$lib/server/oauth/scope';
+import {
+  apiKeyRowScope,
+  carriesClientCredentialsOnlyScope,
+  hasScope,
+} from '$lib/server/oauth/scope';
 import { setWildcardCors } from '$lib/server/oauth/http';
 
 // GET /api/auth/oauth/userinfo — OIDC UserInfo (OIDC Core §5.1). Ported from
@@ -33,14 +38,25 @@ const userinfo: RequestHandler = async ({ request }) => {
   const now = new Date();
   const apiKey = await db
     .selectFrom('ApiKey')
-    .select(['userId', 'tokenScope'])
-    .where('key', '=', hash)
-    .where('type', '=', 'Access')
-    .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
+    .innerJoin('User', 'User.id', 'ApiKey.userId')
+    .select(['ApiKey.userId', 'ApiKey.tokenScope', 'ApiKey.tokenScopeWide', 'User.flags'])
+    .where('ApiKey.key', '=', hash)
+    .where('ApiKey.type', '=', 'Access')
+    .where((eb) => eb.or([eb('ApiKey.expiresAt', '>=', now), eb('ApiKey.expiresAt', 'is', null)]))
+    // A banned or deleted owner's token reads as invalid, as at introspection. The session user is cached
+    // for hours, so it can't be relied on to notice a deletion.
+    .where('User.deletedAt', 'is', null)
+    .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
+  const tokenScope = apiKey ? apiKeyRowScope(apiKey) : null;
   // A client-credentials token is single-purpose: it identifies no user here.
-  if (!apiKey || carriesClientCredentialsOnlyScope(apiKey.tokenScope)) {
+  if (
+    !apiKey ||
+    tokenScope === null ||
+    isMemorializedFlags(apiKey.flags) ||
+    carriesClientCredentialsOnlyScope(tokenScope)
+  ) {
     return json(
       { error: 'invalid_token', error_description: 'Invalid or expired token' },
       { status: 401, headers }
@@ -48,7 +64,7 @@ const userinfo: RequestHandler = async ({ request }) => {
   }
 
   // Requires UserRead (fail-safe: deny if the bit is missing).
-  if (!hasScope(apiKey.tokenScope, TokenScope.UserRead)) {
+  if (!hasScope(tokenScope, TokenScope.UserRead)) {
     return json(
       { error: 'insufficient_scope', error_description: 'Token does not have UserRead scope' },
       { status: 403, headers }

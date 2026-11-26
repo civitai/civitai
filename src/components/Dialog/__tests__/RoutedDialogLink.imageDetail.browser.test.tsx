@@ -19,15 +19,6 @@ vi.mock('~/components/Image/Detail/ImageDetailModal', async () => {
       }),
   };
 });
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
-}));
-vi.mock('~/components/Dialog/routed-dialog/registry', async () => {
-  await import('~/components/Dialog/routed-dialog/image-detail.dialog');
-  const { routedDialogDictionary } = await import('~/components/Dialog/routed-dialog/utils');
-  return { dialogs: routedDialogDictionary.getItems() };
-});
 
 const SOURCE_ID = 146911523;
 const REMIX_ID = 147008115;

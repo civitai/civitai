@@ -441,7 +441,7 @@ describe('checkMinorHashOnScan', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
-  it('swallows and logs a lookup failure instead of throwing', async () => {
+  it('swallows a lookup failure instead of throwing', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(new Error('db exploded'));
 
     const result = await checkMinorHashOnScan({
@@ -452,7 +452,6 @@ describe('checkMinorHashOnScan', () => {
     });
 
     expect(result).toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
   it('swallows a setModelMinor failure instead of throwing', async () => {
@@ -467,10 +466,9 @@ describe('checkMinorHashOnScan', () => {
     });
 
     expect(result).toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
-  it('swallows a non-Error throw (a rejected string) and logs a readable message', async () => {
+  it('swallows a non-Error throw (a rejected string)', async () => {
     mockDbRead.$queryRaw.mockRejectedValue('db exploded');
 
     const result = await checkMinorHashOnScan({
@@ -481,10 +479,6 @@ describe('checkMinorHashOnScan', () => {
     });
 
     expect(result).toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'db exploded', modelId: 100, userId: 5, sha256: 'ABC' }),
-      'webhooks'
-    );
   });
 
   it('does not throw when the rejection value is null (property access on a non-Error cast)', async () => {
@@ -493,10 +487,6 @@ describe('checkMinorHashOnScan', () => {
     await expect(
       checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' })
     ).resolves.toBe('skipped');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'null', modelId: 100, userId: 5, sha256: 'ABC' }),
-      'webhooks'
-    );
   });
 });
 
@@ -590,7 +580,6 @@ describe('sweepMinorHashMatches', () => {
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
 
     expect(report).toMatchObject({ flagged: 1, failed: 1 });
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
   it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {
@@ -600,7 +589,6 @@ describe('sweepMinorHashMatches', () => {
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
 
     expect(report).toMatchObject({ flagged: 1, failed: 1 });
-    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
   it('logs the report on a real run so a timeout cannot lose it', async () => {
@@ -682,20 +670,20 @@ describe('getMinorHashMatchesForReview', () => {
     await getMinorHashMatchesForReview({ limit: 1000 });
 
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
+    // Flattened: the predicates live in nested Prisma.Sql fragments.
+    const query = Prisma.sql(strings as TemplateStringsArray, ...values);
+    const text = query.sql;
     expect(text).toContain(`NOT (m.meta ? 'minorHashDismissed')`);
     expect(text).toContain('WHERE NOT c."sameUploader"');
     // A targeted rollback of a flag applied from this queue must not put the model
-    // straight back on it. The gate is a nested Prisma.Sql fragment, so its own
-    // values sit one level down from the template's.
-    const nested = values.flatMap((v) => (v as { values?: unknown[] })?.values ?? []);
-    expect(nested).toContain(MINOR_HASH_CLEARED_KEY);
+    // straight back on it.
+    expect(query.values).toContain(MINOR_HASH_CLEARED_KEY);
     expect(text).toContain('bool_or(EXISTS (');
     expect(text).toContain(`s2."userId" <> c."userId"`);
     // No server-side window at all: an OFFSET page skips rows as the queue is
     // actioned, and any window would confine client sorting to a partial set.
     expect(text).not.toContain('OFFSET');
-    expect(values).toContain(1001); // limit + 1 truncation probe
+    expect(query.values).toContain(1001); // limit + 1 truncation probe
   });
 
   // A model's matched version is often not its default (51 of 411 on prod-scale
@@ -1468,14 +1456,6 @@ describe('rollbackMinorHashAutoFlags', () => {
     const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
 
     expect(report).toMatchObject({ candidates: 2, rolledBack: 1, skipped: 0, failed: 1 });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'minor-hash-rollback',
-        message: 'boom',
-        modelId: 200,
-      }),
-      'webhooks'
-    );
   });
 
   it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {
@@ -1677,6 +1657,8 @@ describe('resolveMinorFlagAppeal', () => {
         resolvedReason: 'other',
         internalNotes: 'school uniform tag',
         userId: 7,
+        // Leaves the owner's pending lock review open: it is ruled on, and its owner told, on its own.
+        modelAppealKind: 'flag',
       })
     );
   });

@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   notifyAppealResolved: vi.fn(async (_n: unknown) => undefined),
   clearStrikeReviewFlag: vi.fn(async (_u: number) => undefined),
   recordModActivity: vi.fn(async (_a: unknown) => undefined),
-  sendEmail: vi.fn(async (_e: unknown) => undefined),
+  sendEmail: vi.fn(async (_e: unknown, _tags?: unknown) => undefined),
   setBanned: vi.fn(),
   setMuted: vi.fn(),
   callModEndpoint: vi.fn(),
@@ -91,6 +91,8 @@ CREATE TABLE "Article" (
   "title" TEXT,
   "status" TEXT,
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
+  "publishedAt" TIMESTAMP,
+  "scheduledAt" TIMESTAMP,
   "metadata" JSONB
 );
 CREATE TABLE "Model" (
@@ -154,10 +156,10 @@ beforeEach(async () => {
       (6, 'clean', 'six@test', NULL, false),
       (7, 'no-email', NULL, NULL, false),
       (8, 'banned-owner', 'eight@test', '2026-09-01', false);
-    INSERT INTO "Article" ("id", "userId", "title", "status", "metadata") VALUES
-      (20, 2, 'Removed', 'UnpublishedViolation', '{"unpublishedReason":"spam"}'),
-      (21, 2, 'Live again', 'Published', NULL),
-      (22, 8, 'Banned owner article', 'UnpublishedViolation', NULL);
+    INSERT INTO "Article" ("id", "userId", "title", "status", "publishedAt", "scheduledAt", "metadata") VALUES
+      (20, 2, 'Removed', 'UnpublishedViolation', now(), NULL, '{"unpublishedReason":"spam"}'),
+      (21, 2, 'Live again', 'Published', now(), NULL, NULL),
+      (22, 8, 'Banned owner article', 'UnpublishedViolation', NULL, '2026-12-01T15:30:00Z', NULL);
     INSERT INTO "Model" ("id", "userId", "name", "status", "meta") VALUES
       (30, 2, 'Removed model', 'UnpublishedViolation', NULL),
       (31, 8, 'Banned owner model', 'UnpublishedViolation', NULL);
@@ -212,6 +214,17 @@ describe('site appeal queues', () => {
     expect([last.items.map((r) => r.id), last.hasMore]).toEqual([[112], false]);
   });
 
+  // The preview reads this: approving a blocked draft must not promise to publish it.
+  it('says a blocked draft goes back to its author, not live', async () => {
+    await pg.exec(
+      `UPDATE "Article" SET metadata = '{"statusBeforeViolation":"Draft"}' WHERE id = 20`
+    );
+    const articles = await getSiteAppealQueue({ category: 'Article', limit: 10, offset: 0 });
+    expect(articles.items.find((r) => r.id === 102)!.subject).toMatchObject({
+      restoresTo: 'Draft',
+    });
+  });
+
   it('counts each queue', async () => {
     expect(await countSiteAppeals()).toEqual({ Account: 4, Article: 3, Model: 2, Other: 2 });
   });
@@ -222,12 +235,17 @@ describe('site appeal queues', () => {
       kind: 'article',
       title: 'Removed',
       status: 'UnpublishedViolation',
+      restoresTo: 'Published',
       ownerBanned: false,
       unpublishedReason: 'spam',
       customMessage: null,
       unpublishedAt: null,
     });
-    expect(articles.items.find((r) => r.id === 112)!.subject).toMatchObject({ ownerBanned: true });
+    // Never published and blocked before blocks recorded a status: approving does not publish it.
+    expect(articles.items.find((r) => r.id === 112)!.subject).toMatchObject({
+      ownerBanned: true,
+      restoresTo: 'Draft',
+    });
     const accounts = await getSiteAppealQueue({ category: 'Account', limit: 10, offset: 0 });
     expect(accounts.items.find((r) => r.id === 101)!.subject).toMatchObject({
       kind: 'account',
@@ -374,7 +392,8 @@ describe('resolveSiteAppeal', () => {
       details: { category: 'Account', restored: false },
     });
     expect(h.sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 'one@test', category: 'Account', approved: false })
+      expect.objectContaining({ to: 'one@test', category: 'Account', approved: false }),
+      { userId: 1 }
     );
   });
 
@@ -412,14 +431,17 @@ describe('resolveSiteAppeal', () => {
         details: { category: 'Account', restored: true },
       })
     );
-    expect(h.sendEmail).toHaveBeenCalledWith({
-      to: 'one@test',
-      username: 'banned-and-muted',
-      category: 'Account',
-      approved: true,
-      restored: true,
-      appealUrl: 'https://civitai.test/appeal',
-    });
+    expect(h.sendEmail).toHaveBeenCalledWith(
+      {
+        to: 'one@test',
+        username: 'banned-and-muted',
+        category: 'Account',
+        approved: true,
+        restored: true,
+        appealUrl: 'https://civitai.test/appeal',
+      },
+      { userId: 1 }
+    );
   });
 
   it('skips the email for an appellant with no address', async () => {

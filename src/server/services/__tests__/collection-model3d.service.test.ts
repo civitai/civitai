@@ -1,15 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
+import type * as CollectionItemVisibility from '~/server/services/collection-item-visibility';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
+import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { saveCollectionItemInputSchema } from '~/server/schema/collection.schema';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
+// Whether the item may be added is covered by collection-item-visibility's own tests.
+vi.mock('~/server/services/collection-item-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionItemVisibility>()),
+  assertCollectionItemsVisibleToViewer: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
+}));
+// Image visibility has its own suites; here it would refuse the image-item create before the write.
+vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageVisibility>()),
+  assertImagesVisibleToViewer: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => ({
   ...(await importOriginal<typeof HomeBlockCache>()),
@@ -141,17 +153,50 @@ describe('saving a 3D model to a collection', () => {
 
 describe('Model3D collection ownership', () => {
   it('checkUserOwnsCollectionAndItem reads the Model3D table', async () => {
-    mockDbRead.collection.findFirst.mockResolvedValue({ type: 'Model3D', userId: USER_ID });
-    mockDbRead.$queryRaw.mockResolvedValue([{ userId: USER_ID }]);
+    mockDbRead.collection.findFirst.mockResolvedValue({ id: COLLECTION_ID });
+    mockDbRead.model3D.findUnique.mockResolvedValue({ userId: USER_ID } as never);
 
     await expect(
       checkUserOwnsCollectionAndItem({
-        itemId: MODEL3D_ID,
+        item: { model3dId: MODEL3D_ID },
         collectionId: COLLECTION_ID,
         userId: USER_ID,
       })
     ).resolves.toBe(true);
-    expect(JSON.stringify(mockDbRead.$queryRaw.mock.calls[0])).toContain('Model3D');
+    expect(mockDbRead.model3D.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: MODEL3D_ID } })
+    );
+  });
+
+  it('checkUserOwnsCollectionAndItem answers for an item in a type-NULL folder', async () => {
+    mockDbRead.collection.findFirst.mockResolvedValue({ id: COLLECTION_ID, type: null } as never);
+    mockDbRead.image.findUnique.mockResolvedValueOnce({ userId: USER_ID } as never);
+    mockDbRead.image.findUnique.mockResolvedValueOnce({ userId: USER_ID + 1 } as never);
+    const check = () =>
+      checkUserOwnsCollectionAndItem({
+        item: { imageId: 42 },
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+      });
+
+    await expect(check()).resolves.toBe(true);
+    await expect(check()).resolves.toBe(false);
+  });
+
+  it("checkUserOwnsCollectionAndItem is false when the collection is not the caller's", async () => {
+    mockDbRead.collection.findFirst.mockResolvedValue(null);
+    mockDbRead.model3D.findUnique.mockResolvedValue({ userId: USER_ID } as never);
+
+    await expect(
+      checkUserOwnsCollectionAndItem({
+        item: { model3dId: MODEL3D_ID },
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+      })
+    ).resolves.toBe(false);
+    expect(mockDbRead.collection.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: COLLECTION_ID, userId: USER_ID } })
+    );
   });
 
   it('removeCollectionItem deletes by model3dId', async () => {
@@ -170,4 +215,66 @@ describe('Model3D collection ownership', () => {
       where: { id: { in: [555] } },
     });
   });
+});
+
+describe('which item a collection save writes', () => {
+  it('keys on the id that has a value, not one present as undefined', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ type: 'Image' })]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ ...permissionRow, type: 'Image' }]);
+
+    await saveItemInCollections({
+      input: {
+        modelId: undefined,
+        imageId: 5,
+        userId: USER_ID,
+        collections: [{ collectionId: COLLECTION_ID }],
+      },
+    } as never).catch(() => undefined);
+
+    expect(mockDbRead.collectionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ imageId: 5 }) })
+    );
+    expect(mockDbRead.collectionItem.findMany.mock.calls[0][0]?.where).not.toHaveProperty(
+      'modelId'
+    );
+  });
+
+  it('refuses a save with no item id', async () => {
+    await expect(
+      saveItemInCollections({
+        input: {
+          modelId: undefined,
+          userId: USER_ID,
+          collections: [{ collectionId: COLLECTION_ID }],
+        },
+      } as never)
+    ).rejects.toThrow("We don't know the type of thing you're adding");
+  });
+});
+
+describe('creating a collection', () => {
+  const create = (item: Record<string, unknown>) =>
+    upsertCollection({
+      input: { name: 'Mine', type: 'Model', userId: USER_ID, ...item },
+    } as never);
+
+  beforeEach(() => {
+    mockDbWrite.collection.create.mockResolvedValue({ id: COLLECTION_ID } as never);
+  });
+
+  it('writes no item when created without one', async () => {
+    await create({}).catch(() => undefined);
+    expect(mockDbWrite.collection.create).toHaveBeenCalled();
+    expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toBeUndefined();
+  });
+
+  it.each(['modelId', 'articleId', 'postId', 'model3dId', 'imageId'])(
+    'writes the item it was created with (%s)',
+    async (key) => {
+      await create({ [key]: 5 }).catch(() => undefined);
+      expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toEqual({
+        create: expect.objectContaining({ [key]: 5, addedById: USER_ID }),
+      });
+    }
+  );
 });

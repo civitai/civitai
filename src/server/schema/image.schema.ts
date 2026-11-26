@@ -1,7 +1,9 @@
 import * as z from 'zod';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
@@ -371,6 +373,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter
+// - ids: the index feed builder never applies it, so an ids batch would return the global feed
 // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
 //   a modelId-only query would silently return the global feed (matches the
 //   /api/v1/images legacy-method logic)
@@ -425,23 +428,76 @@ export function requiresImageDbPath(input: {
   collectionId?: number | null;
   reactions?: unknown[] | null;
   imageId?: number | null;
+  ids?: number[] | null;
   modelId?: number | null;
   modelVersionId?: number | null;
   prioritizedUserIds?: number[] | null;
   publishedOnly?: boolean | null;
   userId?: number | null;
   hidden?: boolean | null;
+  requiringMeta?: boolean | null;
 }) {
   return (
     !!input.hidden ||
+    // The feed service has no filter for images blocked until their metadata is verified.
+    (!!input.requiringMeta && !!input.userId) ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
     !!input.reactions?.length ||
     !!input.imageId ||
+    !!input.ids?.length ||
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
     (!!input.publishedOnly && !!input.userId)
+  );
+}
+
+/**
+ * Feed inputs whose answer depends on the viewer (signed out, each is ignored or reads as nobody's),
+ * so the answer is not edge-cached.
+ */
+export function isViewerScopedImageFeed(input: {
+  reactions?: unknown[] | null;
+  followed?: boolean | null;
+  hidden?: boolean | null;
+  pending?: boolean | null;
+  notPublished?: boolean | null;
+  scheduled?: boolean | null;
+  poiOnly?: boolean | null;
+  minorOnly?: boolean | null;
+  pendingReviewOnly?: boolean | null;
+}) {
+  return (
+    !!input.reactions?.length ||
+    !!input.followed ||
+    !!input.hidden ||
+    !!input.pending ||
+    !!input.notPublished ||
+    !!input.scheduled ||
+    !!input.poiOnly ||
+    !!input.minorOnly ||
+    !!input.pendingReviewOnly
+  );
+}
+
+/** `isViewerScopedImageFeed` plus the Hat Turf inputs, which only image.getInfinite reads. */
+export function isViewerScopedInfiniteFeed(
+  input: Parameters<typeof isViewerScopedImageFeed>[0] & {
+    hatSort?: unknown;
+    hatTurfMine?: boolean | null;
+    hatTurfExpired?: boolean | null;
+    hideTurfHats?: boolean | null;
+    hideWornHats?: boolean | null;
+  }
+) {
+  return (
+    isViewerScopedImageFeed(input) ||
+    !!input.hatSort ||
+    !!input.hatTurfMine ||
+    !!input.hatTurfExpired ||
+    !!input.hideTurfHats ||
+    !!input.hideWornHats
   );
 }
 
@@ -508,7 +564,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
     generation: z.enum(ImageGenerationProcess).array().optional(),
-    ids: z.array(z.number()).optional(),
+    // Raw SQL serves ids queries, so keep it bounded; sticker-book sends up to 200.
+    ids: z.array(z.number()).max(200).optional(),
     imageId: z.number().optional(),
     include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),
@@ -528,6 +585,16 @@ export const getInfiniteImagesSchema = baseQuerySchema
     minorOnly: z.boolean().optional(),
     // Mod only: restrict a collection feed to entries still under review (CollectionItem.status = REVIEW).
     pendingReviewOnly: z.boolean().optional(),
+    // Hat Turf players only (getHatTurfFeedEvent); the handler drops these for anyone else.
+    hatSort: z.enum(HAT_SORTS).optional(),
+    // Whose hats a Hat Turf sort counts; none, every team's.
+    hatTeams: z.string().max(32).array().max(8).optional(),
+    // Only the images the viewer has a live Turf hat on.
+    hatTurfMine: z.boolean().optional(),
+    // Only the images where the viewer's Turf hat has expired, so they can place it again.
+    hatTurfExpired: z.boolean().optional(),
+    hideTurfHats: z.boolean().optional(),
+    hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
     // schema so the type lines up with client filter state; the server does
     // not read it (browsing level is the authoritative cap).
@@ -577,9 +644,8 @@ export const removeImageResourceSchema = z.object({
  * ceiling of its own that this could narrow:
  *
  * - `addEntityToShowcase` truncates the showcase it writes to
- *   `constants.profile.showcaseItemsLimit` (32). That is the only write path that
- *   truncates — `userProfile.update` takes `showcaseItems` unbounded and the service
- *   stores it as given, so a stored showcase is not guaranteed to be at or under 32.
+ *   `constants.profile.showcaseItemsLimit` (32), and `userProfile.update` rejects a
+ *   `showcaseItems` list longer than that.
  * - The notification panel dedupes image ids out of a 30-per-page infinite list, so
  *   500 is ~16 pages deep, and in practice more, since only notifications naming an
  *   image contribute an id.
@@ -670,6 +736,11 @@ export const updateImageAcceptableMinorSchema = z.object({
   acceptableMinor: z.boolean(),
 });
 
+/** Each change purges shared caches; moderators are not limited. */
+export const updateImageAcceptableMinorRateLimits: RateLimit[] = [
+  { limit: 30, period: CacheTTL.hour },
+];
+
 export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
 export const setTosViolationSchema = z.object({
   id: z.number(),
@@ -688,4 +759,6 @@ export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilt
   publishedOnly: z.boolean().optional(),
   /** With publishedOnly: also the caller's unpublished media from the crucible entry modal. */
   includeEntryDrafts: z.boolean().optional(),
+  /** Narrows to media, among the caller's newest OWN_MEDIA_QUERY_WINDOW (1,000), whose prompt, post title or post tag contains this text. */
+  query: z.string().trim().max(100).optional(),
 });

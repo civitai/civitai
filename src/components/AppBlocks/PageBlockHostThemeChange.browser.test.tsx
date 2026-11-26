@@ -29,7 +29,6 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * Mocks mirror `PageBlockHostSignIn.browser.test.tsx` (the page scaffold).
  */
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
@@ -69,6 +68,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {

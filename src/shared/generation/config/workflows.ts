@@ -78,6 +78,8 @@ const EDIT_IMG_IDS = [
   ECO.Krea2,
   ECO.Krea3,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
+  ECO.Fibo2,
 ];
 
 /** Image ecosystems that support image:create */
@@ -129,6 +131,8 @@ const TXT2IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
+  ECO.Fibo2,
 ];
 
 /** Video ecosystems that support video:create */
@@ -144,6 +148,7 @@ const TXT2VID_IDS = [
   ECO.WanVideo27,
   ECO.WanVideo30,
   ECO.Veo3,
+  ECO.GeminiOmni,
   ECO.Vidu,
   ECO.MiniMaxH3,
   ECO.Kling,
@@ -315,6 +320,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Extract Metadata',
     description: 'Extract generation parameters from an image',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
   },
@@ -358,6 +364,7 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.WanVideo30,
       ECO.MiniMaxH3,
       ECO.Flux3Video,
+      ECO.GeminiOmni,
     ],
     excludeModelVersionIds: [
       klingVersionIds.v1_6,
@@ -378,6 +385,7 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [
       ECO.Vidu,
       ECO.Veo3,
+      ECO.GeminiOmni,
       ECO.Kling,
       ECO.LTXV23,
       ECO.LTXV25,
@@ -504,15 +512,14 @@ export const workflowConfigs: WorkflowConfigs = {
     // Image segment, where txt2img/img2img both title as "Create Image").
     label: 'Create 3D Model',
     modeLabel: 'Image to 3D',
-    description:
-      'Generate a 3D model from a source image (Meshy, Tripo, Hunyuan3D, Pixal3D, or Trellis.2)',
+    description: 'Generate a 3D model from a source image (Meshy, Tripo, Pixal3D, or Trellis.2)',
     category: 'model3d',
     // Image-to-3D is supported by all the 3D ecosystems; the user picks one
     // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) is
-    // PolyGen and Tripo only — Hunyuan3D/Pixal3D/Trellis.2 have no text-to-3D
+    // PolyGen and Tripo only — Pixal3D/Trellis.2 have no text-to-3D
     // operation, and neither do Meshy v7 or Tripo v2.5 (versions inside their
     // ecosystems).
-    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D, ECO.Pixal3D, ECO.Trellis2],
+    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Pixal3D, ECO.Trellis2],
     featureFlag: 'model3dGenerator',
     isNew: true,
   },
@@ -526,6 +533,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Enhance Prompt',
     description: 'Improve your prompt with AI suggestions',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
     hidden: true,

@@ -45,9 +45,9 @@ const EXPECTED: [string, string, string][] = [
   ['image', 'ImageReport', 'imageId'],
   ['model', 'ModelReport', 'modelId'],
   ['post', 'PostReport', 'postId'],
+  // Worked in the post queue, keyed by the text's post.
+  ['postText', 'PostTextReport', 'postId'],
   ['article', 'ArticleReport', 'articleId'],
-  ['comment', 'CommentReport', 'commentId'],
-  ['commentV2', 'CommentV2Report', 'commentV2Id'],
   ['commentV3', 'CommentV3Report', 'commentId'],
   ['bounty', 'BountyReport', 'bountyId'],
   ['bountyEntry', 'BountyEntryReport', 'bountyEntryId'],
@@ -60,6 +60,8 @@ const EXPECTED: [string, string, string][] = [
   ['crucible', 'CrucibleReport', 'crucibleId'],
   ['storyline', 'StorylineReport', 'storylineId'],
   ['serviceOffering', 'ServiceOfferingReport', 'serviceOfferingId'],
+  // Worked in the offering queue, keyed by the review's offering.
+  ['serviceDealReview', 'ServiceDealReviewReport', 'serviceOfferingId'],
   ['challenge', 'ChallengeReport', 'challengeId'],
   ['gameFrameGame', 'GameFrameGameReport', 'gameFrameGameId'],
   ['chat', 'ChatReport', 'chatId'],
@@ -219,8 +221,7 @@ describe('report rows link to what was reported', () => {
     // Hardcoded, like EXPECTED above: reading these from CONTEXT_ENTITIES — which is what the query
     // maps over — makes the assertion self-referential, so dropping a resolver would still pass.
     for (const column of [
-      'context:comment',
-      'context:commentV2',
+      'context:commentV3',
       'context:bountyEntry',
       'context:model3dReview',
       'context:reportedUser',
@@ -237,16 +238,6 @@ describe('report rows link to what was reported', () => {
     expect(flat(sql)).toContain(
       `SELECT '/user/' || u.username || '/shop#service-' || o.id FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
     );
-  });
-
-  it('falls back to the main app resolver for a commentV2 whose thread names no entity', async () => {
-    await service.getMostReported({ limit: 10 });
-
-    // 3,519 orphaned threads on the dev clone. Without the coalesce those rows render as dead text,
-    // which is what the mod team reported as comment reports that link nowhere.
-    const sql = emitted().find((s) => s.includes('context:commentV2'))!;
-    expect(sql).toContain("'/comments/v2/' || cv.id");
-    expect(sql.toLowerCase()).toContain('coalesce(case');
   });
 });
 

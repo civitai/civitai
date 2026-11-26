@@ -8,8 +8,6 @@ import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-sc
 
 export const SCAM_ENTITY_TYPES = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'ResourceReview',
   'User',
@@ -20,10 +18,7 @@ export const SCAM_TRIGGER_TEXT_CHARS = 2000;
 
 const SCAM_CLEANUP: Record<ScamEntityType, ScamCleanup> = {
   ChatMessage: 'chatMessages',
-  Comment: 'comments',
-  CommentV2: 'commentsV2',
-  // The commentsV2 cleanup also hides the author's comments on CommentV3-write surfaces.
-  CommentV3: 'commentsV2',
+  CommentV3: 'comments',
   ResourceReview: 'none',
   User: 'none',
   UserProfile: 'none',
@@ -73,11 +68,35 @@ export async function applyScamVerdict(
   });
 }
 
+type ApplyArgs = Parameters<typeof applyScamVerdict>[1];
+const holdThenScam = (entityType: ScamEntityType) =>
+  withCsamHold(entityType, (args) => applyScamVerdict(entityType, args));
+
+/**
+ * CommentV3 also hides a flagged Feature Pages comment (other comments keep the site's rules). The
+ * hide runs whether the csam hold write or the scam action fails; the scam action still waits on
+ * the hold write, and any failure still fails the apply so it is retried.
+ */
+async function applyCommentV3TextScan(args: ApplyArgs) {
+  const steps = [() => holdThenScam('CommentV3')(args)];
+  if (args.outcome.scam?.detected || args.outcome.csam?.detected)
+    steps.unshift(async () => {
+      const { hideFlaggedFpComment } = await import(
+        '~/server/services/commentv3/moderation.service'
+      );
+      await hideFlaggedFpComment(args.entityId, { textHash: args.textHash });
+    });
+  const failed = (await Promise.allSettled(steps.map((step) => step()))).find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected'
+  );
+  if (failed) throw failed.reason;
+}
+
 export const scamModerationAdapters = Object.fromEntries(
   SCAM_ENTITY_TYPES.map((entityType) => [
     entityType,
     createTextScanAdapter(entityType, {
-      applyTextScan: withCsamHold(entityType, (args) => applyScamVerdict(entityType, args)),
+      applyTextScan: entityType === 'CommentV3' ? applyCommentV3TextScan : holdThenScam(entityType),
     }),
   ])
 ) as Record<ScamEntityType, ModerationAdapter>;

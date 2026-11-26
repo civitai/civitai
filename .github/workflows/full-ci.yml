@@ -3,11 +3,22 @@ name: Full CI on label
 # Adding the `full-ci` label to a PR starts the full test suite on it, right away.
 #
 # lint.yml and apps.yml read the label themselves on every PR run (opened, synchronize,
-# reopened, ready_for_review): with it on, the four `Unit tests` shards run and the draft
-# ESLint-only gate is lifted, so every push after the label is added runs the full suite in the
-# PR run. What they cannot do without help is react to the label being ADDED, which is a
-# `labeled` event. This file does that, by dispatching them on the PR branch, along with
-# moderator-boot.yml, which has the same draft gate.
+# reopened, ready_for_review): with it on, the six `Unit tests` shards run and the draft
+# ESLint-only gate is lifted. What they cannot do without help is react to the label being
+# ADDED, which is a `labeled` event. This file does that: it runs the main batch on the PR branch,
+# Lint always and every BATCH_WORKFLOWS suite whose paths the PR reaches (see "THE MAIN BATCH'S
+# SUITES").
+#
+# ── THE LABEL STAYS ON UNTIL THE FULL UNIT SUITE HAS PASSED ONCE ON THE PR ───────────────────
+#
+# lint.yml's `full-ci-done` job removes the label after a Lint run whose six unit shards all
+# passed, on some commit of the PR, not necessarily its head: the PR's own run (it carries the
+# label), or the dispatch below (it passes `pr`). So
+# the label buys one PASSING full unit run; after that, pushes go back to the normal PR run (no
+# unit shards, ESLint only on a draft). To ask again, re-add it. A cancelled, failed or skipped
+# unit run leaves the label on, so the next push runs the shards again. (This job does not
+# remove it itself: a run it found running can still be cancelled by the next push, since PR
+# runs share a cancel-in-progress group, and then no full run would ever finish.)
 #
 # ── WHY A DISPATCHER, AND NOT `labeled` IN lint.yml / apps.yml ────────────────────────────────
 #
@@ -27,21 +38,67 @@ name: Full CI on label
 # ── WHAT THE DISPATCHED RUNS TEST ─────────────────────────────────────────────────────────────
 #
 # A dispatch runs on the BRANCH HEAD, not on the PR's merge commit with its base, so this first
-# full run tests the branch as pushed.
+# full run tests the branch as pushed, except the suites it skips because the PR run on that
+# commit passed them (see below): their verdict is the PR run's, on the merge commit.
 #
 # 🔴 ITS RESULTS ARE NOT IN THE PR'S CHECKS LIST. Measured: the dispatched runs' check-runs sit on
 # the head commit (the commit's check-runs API, the Actions tab), but `gh pr checks` and the PR's
 # status rollup list only pull_request-event runs, so they still show the draft run's skipped
 # `Unit tests` there. This job's summary links the two runs; open `Start full CI on label` to
-# reach them. Every LATER push runs the full suite in the PR run, which the checks list does show. Later PR runs (on push) test the merge commit as usual.
+# reach them. Later PR runs (on push) test the merge commit as usual, with the unit shards
+# until a full unit run has passed (see the label section above).
 # The dispatched Lint run is `only: all`: every suite but ESLint, which is PR-only and already
-# ran on the PR. Its concurrency group is the dispatch one, so it does not cancel the PR's own
-# run in flight. The dispatched apps.yml run is not path-filtered (`paths:` applies to
-# pull_request events only), so it runs the app suites even on a PR that cannot affect them. The
-# same goes for the dispatched moderator-boot.yml run.
+# ran on the PR, and the whole-repo typecheck, which `tekton / typecheck` runs on the PR (a
+# dispatch runs that job only as `only: typecheck`; lint.yml's `typecheck` job). Its concurrency
+# group is the dispatch one, so it does not cancel the PR's own run in flight. That run holds
+# the unit, component and geometry suites, which do not run on a PR without the label.
+#
+# ── NO DRAFT-GATED WORKFLOW IS LEFT HERE ─────────────────────────────────────────────────────
+#
+# This used to dispatch nine draft-gated workflows on a draft PR only. Every one of them is now a
+# main batch suite (the last section below), apps.yml last, when its unit suites moved to the
+# batch: none has a PR run that covers it, ready or draft, so the draft state no longer decides
+# anything. Each one is dispatched when its own `paths:` filter (on.pull_request, or on.push for a
+# workflow with no pull_request trigger) matches a file the PR changes: the label asks for the
+# batch, not for suites the PR cannot affect. scripts/ci/full-ci-paths.mjs applies GitHub's filter
+# semantics to the PR's file list (one paginated API call) and the PR's own copy of each workflow
+# file; it fails open, so an unreadable file list, workflow or filter dispatches. The summary says,
+# per workflow, whether it was dispatched and why. Lint is always dispatched: `full-ci-done` needs
+# its unit shards.
+#
+# ── THE MAIN BATCH'S SUITES: READY OR DRAFT, WHEN THEIR PATHS MATCH ──────────────────────────
+#
+# The workflows in BATCH_WORKFLOWS (scripts/ci/unit-batched.mjs: Go fuzz/govulncheck/tidy/bench,
+# moderator boot, ports manifest, the image builds, Windows, and apps.yml's app suites) do not
+# run on a pull request, so on a ready PR too, each one is dispatched when its own paths filter
+# matches a file the PR changes, through scripts/ci/full-ci-paths.mjs (the batch itself uses that
+# module too). A docs-only PR dispatches none of them. The verify jobs those runs hold check the
+# ref, so a dispatch on a PR branch posts no `(main batch)` status.
 #
 # Not for fork PRs: their branch is not in this repo, so there is nothing here to dispatch on,
 # and their token cannot dispatch anyway. The `if` skips them.
+#
+# ── NO DISPATCH WHEN THE PR'S OWN RUN ALREADY HAS THE SHARDS ─────────────────────────────────
+#
+# A PR opened WITH the label (`gh pr create --label full-ci`) gets `opened` and `labeled` at
+# once. The `opened` Lint run already reads the label and starts the six `Unit tests` shards,
+# so dispatching here too ran the whole suite twice on the same commit, which was most of what
+# this job dispatched (measurement: docs/testing/reading-ci-results.md, "CI cost measurements").
+#
+# So before dispatching, this job looks for a pull_request Lint run on the PR's head commit with
+# a `Unit tests (<n>)` job that was not cancelled (scripts/ci/full-ci-unit-shards.mjs, which
+# scripts/__tests__/full-ci-label.test.ts runs against job lists). The `(<n>)` suffix is the
+# test: GitHub expands the matrix only for a job whose `if` passed, and a skipped `unit` job is
+# listed as plain `Unit tests`.
+# If it finds one, the PR run is the full run, in the checks list, and nothing is dispatched;
+# the summary links it. Otherwise (label added to an existing PR, the PR run not created yet
+# after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
+# On a skip, no batch suite is dispatched either; the labelled PR's own apps.yml run (it reads the
+# label) runs the app suites when its `paths:` filter matches.
+#
+# When it does dispatch Lint on a PR that is not a draft, the PR run on that commit has run (or
+# is running) `Typecheck test files` and `Package unit tests`. So the dispatch passes `skip_passed` and skips
+# the suites that run passed (lint.yml, the `passed` job); the unit shards always run.
 
 on:
   pull_request:
@@ -63,29 +120,143 @@ jobs:
       contents: read
     timeout-minutes: 5
     steps:
+      # Only what the step below reads: the classifier, the path matcher and the workflow files
+      # whose `paths:` filters it applies (the PR's merge commit, so the PR's own copies). No
+      # credentials are persisted: this job's token can dispatch workflows.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci/full-ci-unit-shards.mjs
+            scripts/ci/full-ci-paths.mjs
+            scripts/ci/unit-batched.mjs
+            .github/workflows/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       # The branch name reaches the shell through env, never interpolated into the script: a
       # branch name is attacker-chosen text, and `${{ }}` in `run:` is pasted in before the
       # shell parses it.
-      - name: Dispatch Lint (only=all), App suites and Moderator boot smoke on the PR branch
+      - name: Dispatch Lint (only=all), and on a draft the other draft-gated suites, on the PR branch
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
-          gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
-          # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
-          # dispatch answers 422. That must not fail the job after lint and apps were dispatched.
-          gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF" \
-            || echo "moderator-boot.yml not on this branch; rebase to get it"
+          # Does a pull_request Lint run on this head commit already run the unit shards? See the
+          # header. Polled because the `opened` run can be created a few seconds after this job
+          # starts; an API error counts as "not found", which falls back to dispatching. Polling
+          # stops early once a run on this commit has decided its `unit` job and skipped it (the
+          # plain `Unit tests` name): the label was added after that run, which is the case this
+          # dispatch exists for, so waiting out the remaining polls would only delay it.
+          covered=""
+          for attempt in 1 2 3 4 5 6 7; do
+            decided=false
+            for id in $(gh api "repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=20" \
+                --jq '.workflow_runs[].id' || true); do
+              counts=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+                | node scripts/ci/full-ci-unit-shards.mjs || echo "0 0")
+              read -r expanded skipped <<< "$counts"
+              if [ "${expanded:-0}" -gt 0 ]; then covered=$id; break 2; fi
+              if [ "${skipped:-0}" -gt 0 ]; then decided=true; fi
+            done
+            if [ "$decided" = true ]; then break; fi
+            if [ "$attempt" -lt 7 ]; then sleep 15; fi
+          done
+          if [ -n "$covered" ]; then
+            url="https://github.com/$REPO/actions/runs/$covered"
+            echo "The PR's own Lint run on $HEAD_SHA already runs the unit shards: $url. Nothing dispatched."
+            {
+              echo "### Full CI already running in the PR's own checks"
+              echo "The pull_request Lint run on \`$HEAD_SHA\` runs every suite, unit shards included: $url"
+              echo "App suites and Moderator boot smoke follow their \`paths:\` filters, as on every push."
+              echo "The \`full-ci\` label stays on until a full unit run passes on this PR (lint.yml, \`full-ci-done\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # skip_passed: the dispatch skips the suites the PR run on this commit already passed
+          # (lint.yml, the `passed` job). pr: lint.yml's `full-ci-done` job removes this PR's
+          # label once the dispatch's unit shards pass. A branch cut before an input existed is
+          # rejected with "HTTP 422: Unexpected inputs provided: [...]"; only then is it
+          # dispatched again without, newest input first, and the summary says the dispatch
+          # carries no `pr` (the label stays until a PR run's shards pass). Any other failure
+          # fails this step, as a failed dispatch always did.
+          nopr=""
+          if ! err=$(gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true -f pr="$PR" 2>&1 >/dev/null); then
+            if ! grep -q 'Unexpected inputs provided' <<< "$err"; then
+              echo "$err" >&2
+              exit 1
+            fi
+            nopr=1
+            gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
+              || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
+          fi
+          # The main batch's suites (BATCH_WORKFLOWS, scripts/ci/unit-batched.mjs) left pull requests
+          # and pushes, so no PR run covers them, ready or draft: each is dispatched whenever its own
+          # paths filter matches a file the PR changes (see the header, "THE MAIN BATCH'S SUITES").
+          mapfile -t batch < <(node scripts/ci/unit-batched.mjs workflows)
+          if [ "${#batch[@]}" -eq 0 ]; then
+            echo "::error::scripts/ci/unit-batched.mjs workflows listed no batch workflow" >&2
+            exit 1
+          fi
+          # Each one is dispatched only when its own `paths:` filter matches a file the PR changes
+          # (scripts/ci/full-ci-paths.mjs; see the header, "ONLY WHAT THE PR'S FILES REACH"). The
+          # file list is read once, ready or draft (the batch suites need it on both); a failed or
+          # empty read leaves it empty, and the script then answers `run` for every workflow.
+          changed="$RUNNER_TEMP/full-ci-changed-files.txt"
+          : > "$changed"
+          gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate \
+              --jq '.[] | .filename, (.previous_filename // empty)' > "$changed" \
+            || { echo "could not list the PR's files; every workflow is dispatched"; : > "$changed"; }
+          echo "the PR changes $(wc -l < "$changed") path(s)"
+          declare -A verdict reason
+          for wf in "${batch[@]}"; do
+            on="$RUNNER_TEMP/full-ci-on-$wf.json"
+            yq -o=json '.on' ".github/workflows/$wf" > "$on" 2>/dev/null || : > "$on"
+            paths=$(node scripts/ci/full-ci-paths.mjs "$changed" "$on" 2>/dev/null || echo "run the path check failed")
+            if [ "${paths%% *}" = skip ]; then
+              verdict[$wf]=skip
+              reason[$wf]="a main batch suite, but its paths filter does not match the PR (${paths#* })"
+            else
+              verdict[$wf]=run
+              reason[$wf]="a main batch suite, which no PR run covers; ${paths#* }"
+            fi
+          done
+          for wf in "${batch[@]}"; do
+            if [ "${verdict[$wf]}" = skip ]; then
+              echo "$wf: not dispatched: ${reason[$wf]}"
+              continue
+            fi
+            echo "$wf: dispatching: ${reason[$wf]}"
+            # apps.yml failing to dispatch fails the step, as it always did. A branch cut before
+            # one of the others existed has no such workflow, and the dispatch answers 422: that
+            # must not fail the job after the rest were dispatched.
+            if [ "$wf" = apps.yml ]; then
+              gh workflow run "$wf" -R "$REPO" --ref "$HEAD_REF"
+            else
+              gh workflow run "$wf" -R "$REPO" --ref "$HEAD_REF" \
+                || echo "$wf not on this branch; rebase to get it"
+            fi
+          done
           # Link the runs from this job's summary: it is the only place on the PR that reaches
           # them (see the header). A dispatch's run appears a few seconds after the call returns.
           sleep 10
           echo "### Full CI dispatched on \`$HEAD_REF\`" >> "$GITHUB_STEP_SUMMARY"
-          for wf in lint.yml apps.yml moderator-boot.yml; do
+          echo "The \`full-ci\` label stays on until a full unit run passes on this PR (lint.yml, \`full-ci-done\`)." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$nopr" ]; then
+            echo "This branch's lint.yml has no \`pr\` input, so the Lint dispatch carries none: the label stays on until a PR run's unit shards pass." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for wf in lint.yml "${batch[@]}"; do
+            if [ "$wf" != lint.yml ] && [ "${verdict[$wf]}" = skip ]; then
+              echo "- $wf: not dispatched: ${reason[$wf]}" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
             url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
               --limit 1 --json url -q '.[0].url' || true)
+            why=""
+            if [ "$wf" != lint.yml ]; then why=" (${reason[$wf]})"; fi
             echo "$wf: ${url:-not found yet, see the Actions tab}"
-            echo "- $wf: ${url:-not found yet, see the Actions tab}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- $wf: ${url:-not found yet, see the Actions tab}$why" >> "$GITHUB_STEP_SUMMARY"
           done

@@ -36,6 +36,7 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT FALSE,
   "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
@@ -272,33 +273,6 @@ describe('what a sent CSAM report takes out of the pending count', () => {
   });
 });
 
-describe('an evidence hold in the CSAM queue by user', () => {
-  afterAll(async () => {
-    await db.exec(`DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold"`);
-  });
-
-  const heldBy = async (userId: number) =>
-    (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find((u) => u.userId === userId)
-      ?.heldBy;
-
-  it('names the hold for a user the marker view holds, and only that user', async () => {
-    await db.exec(`
-      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
-      INSERT INTO "EvidenceHold" ("userId") VALUES (103);
-    `);
-    expect(await heldBy(103)).toEqual(['evidenceHold']);
-    expect(await heldBy(106)).toEqual(['csamReportSecondary']);
-  });
-
-  // Without the view every user reads as held, so no user may be told they are on a hold.
-  it('says the status is unknown while the table exists without its view', async () => {
-    await db.exec(`DROP VIEW "EvidenceHeldUser"`);
-    expect(await heldBy(103)).toEqual(['evidenceHoldUnknown']);
-    expect(await heldBy(106)).toEqual(['csamReportSecondary', 'evidenceHoldUnknown']);
-  });
-});
-
 describe('the CSAM queue filtered to one user', () => {
   it('lists only that owner’s flagged images', async () => {
     const { items } = await getImageReviewQueue({
@@ -311,15 +285,124 @@ describe('the CSAM queue filtered to one user', () => {
   });
 });
 
+describe('feedback page captures in the CSAM queue', () => {
+  // Two captures one reporter sent, each showing content that may be anyone's.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (-2, 'civitai-feedback-captures'), (201, 'reporter');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel", "metadata") VALUES
+        (301, -2, 'csam', 'Scanned', 4, '{"feedbackCapture": {"feedbackId": 77, "reporterId": 201}}'),
+        (302, -2, 'csam', 'Scanned', 4, '{"feedbackCapture": {"feedbackId": 78, "reporterId": 201}}');
+    `);
+  });
+  afterAll(async () => {
+    await db.exec(
+      `DELETE FROM "Image" WHERE id IN (301, 302); DELETE FROM "User" WHERE id IN (-2, 201);`
+    );
+  });
+
+  it('lists each capture as a row of its own, never one row for the capture account', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    const captures = users.filter((u) => u.capture);
+    expect(
+      captures.map(({ userId, flagged, capture, reported, heldBy }) => ({
+        userId,
+        flagged,
+        capture,
+        reported,
+        heldBy,
+      }))
+    ).toEqual([
+      {
+        userId: -2,
+        flagged: 1,
+        capture: { imageId: 301, feedbackId: 77, removed: false },
+        reported: false,
+        heldBy: [],
+      },
+      {
+        userId: -2,
+        flagged: 1,
+        capture: { imageId: 302, feedbackId: 78, removed: false },
+        reported: false,
+        heldBy: [],
+      },
+    ]);
+    expect(users.find((u) => u.userId === 101)?.capture).toBeNull();
+  });
+
+  it('counts a capture as reported by a sent report on whichever subject was picked', async () => {
+    await db.exec(`
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "type")
+        VALUES (103, '2026-03-01', '[{"id": 301}]', 'Image');
+    `);
+    try {
+      const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+      const row = (imageId: number) => users.find((u) => u.capture?.imageId === imageId);
+      expect(row(301)).toMatchObject({ pending: 0, reported: true });
+      expect(row(301)?.reportSentAt).toEqual(new Date('2026-03-01'));
+      // The unlisted capture beside it is still pending (control).
+      expect(row(302)).toMatchObject({ pending: 1, reported: false, reportSentAt: null });
+    } finally {
+      await db.exec(`DELETE FROM "CsamReport" WHERE images = '[{"id": 301}]'`);
+    }
+  });
+
+  it("names each capture's report and reporter, and no other image's", async () => {
+    const { items } = await getImageReviewQueue({
+      needsReview: 'csam',
+      browsingLevel: ALL_LEVELS,
+      limit: 50,
+    });
+    expect(items.find((i) => i.id === 301)?.capture).toEqual({
+      feedbackId: 77,
+      reporterId: 201,
+      reporterUsername: 'reporter',
+    });
+    expect(items.find((i) => i.id === 3)?.capture).toBeNull();
+  });
+
+  it('reads a malformed stamp as no report and no reporter, and still loads the queue', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel", "metadata") VALUES
+        (305, -2, 'csam', 'Scanned', 4, '{"feedbackCapture": {"feedbackId": 1.5, "reporterId": 1e12}}');
+    `);
+    try {
+      const { items } = await getImageReviewQueue({
+        needsReview: 'csam',
+        browsingLevel: ALL_LEVELS,
+        capturesOnly: true,
+        limit: 50,
+      });
+      expect(items.find((i) => i.id === 305)?.capture).toEqual({
+        feedbackId: null,
+        reporterId: null,
+        reporterUsername: null,
+      });
+      const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+      expect(users.find((u) => u.capture?.imageId === 305)?.capture?.feedbackId).toBeNull();
+    } finally {
+      await db.exec(`DELETE FROM "Image" WHERE id = 305`);
+    }
+  });
+
+  it('lists only captures under the Feedback captures filter', async () => {
+    const { items } = await getImageReviewQueue({
+      needsReview: 'csam',
+      browsingLevel: ALL_LEVELS,
+      capturesOnly: true,
+      limit: 50,
+    });
+    expect(items.map((i) => i.id)).toEqual([302, 301]);
+  });
+});
+
 describe('images set aside from the CSAM queue', () => {
-  // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
-  // held, with the same two rows (65, 66): a hold changes nothing here.
+  // 301: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302: the same two
+  // rows (65, 66).
   beforeAll(async () => {
     await db.exec(SET_ASIDE_MIGRATION);
     await db.exec(`
-      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
-      INSERT INTO "EvidenceHold" ("userId") VALUES (302);
       INSERT INTO "User" ("id", "username") VALUES (301, 's'), (302, 't');
       INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
         (61, 301, 'csam', 'Blocked'), (63, 301, 'csam', 'Blocked'), (64, 301, 'csam', 'Blocked'),
@@ -334,7 +417,6 @@ describe('images set aside from the CSAM queue', () => {
 
   afterAll(async () => {
     await db.exec(`
-      DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold";
       DROP TRIGGER IF EXISTS "Image_csam_queue_set_aside_end" ON "Image";
       DROP FUNCTION IF EXISTS csam_queue_set_aside_end();
       DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";
@@ -475,6 +557,40 @@ describe('images set aside from the CSAM queue', () => {
       expect(Number((await getImageReviewCounts()).csam)).toBeGreaterThan(0);
     } finally {
       await db.exec(`ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside"`);
+    }
+  });
+});
+
+describe('a removed feedback page capture in the CSAM queue by user', () => {
+  beforeAll(async () => {
+    await db.exec(SET_ASIDE_MIGRATION);
+  });
+  afterAll(async () => {
+    await db.exec(`
+      DROP TRIGGER IF EXISTS "Image_csam_queue_set_aside_end" ON "Image";
+      DROP FUNCTION IF EXISTS csam_queue_set_aside_end();
+      DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";
+    `);
+  });
+
+  it('says a removed capture is removed until it is dismissed', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel") VALUES
+        (303, -2, 'csam', 'Blocked', 32), (304, -2, 'csam', 'Blocked', 32);
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId")
+        VALUES (303, -2, 'Dismissed', 1);
+    `);
+    try {
+      const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+      const removed = (imageId: number) =>
+        users.find((u) => u.capture?.imageId === imageId)?.capture?.removed;
+      expect(removed(303)).toBe(false);
+      expect(removed(304)).toBe(true);
+    } finally {
+      await db.exec(`
+        DELETE FROM "CsamQueueSetAside" WHERE "imageId" = 303;
+        DELETE FROM "Image" WHERE id IN (303, 304);
+      `);
     }
   });
 });

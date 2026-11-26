@@ -4,6 +4,7 @@ import { createCsamReport } from '~/server/services/csam.service';
 import { CSAM_SEND_CLAIM_EXPIRY_SECONDS } from '~/server/services/csam.service-new';
 import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
 import { logToAxiom } from '~/server/logging/client';
+import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 
 type Row = {
   id: number;
@@ -206,6 +207,150 @@ describe('unsent-report lookup', () => {
     );
   });
 
+  it('keeps earlier identical re-files when another is recorded', async () => {
+    const held = {
+      source: 'comment',
+      id: 11,
+      text: 'same words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+    };
+    const earlier = { filedById: 99, at: '2026-10-10T00:00:00.000Z', item: 'comment:11' };
+    const first = seed({
+      userId: 101,
+      images: [{ id: 1 }],
+      details: { contextText: [held], identicalRefiles: [earlier] },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: { contextText: [{ ...held, capturedAt: '2026-10-12T09:00:00.000Z' }] } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toEqual({
+      contextText: [held],
+      identicalRefiles: [
+        earlier,
+        { filedById: MOD, at: '2026-10-12T09:00:00.000Z', item: 'comment:11' },
+      ],
+    });
+  });
+
+  it('marks a stored capture reviewed from an identical reviewed re-file, and records it', async () => {
+    vi.mocked(logToAxiom).mockClear();
+    const held = {
+      source: 'postText',
+      id: 11,
+      text: 'same words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+    };
+    const review = { byId: MOD, at: '2026-10-11T10:00:00.000Z', origin: 'filer-read' };
+    const first = seed({ userId: 101, images: [{ id: 1 }], details: { contextText: [held] } });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: {
+        contextText: [{ ...held, capturedAt: '2026-10-12T09:00:00.000Z', reviewed: review }],
+      } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toEqual({
+      contextText: [{ ...held, reviewed: review }],
+      identicalRefiles: [
+        {
+          filedById: MOD,
+          at: '2026-10-12T09:00:00.000Z',
+          item: 'postText:11',
+          reviewUpgrade: { ...review, change: 'reviewed flag upgraded from unreviewed' },
+        },
+      ],
+    });
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([line]) => line as Record<string, unknown>)
+        .filter((line) => line.subType === 'fold-identical-text')
+    ).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          outcome: 'identical text, not added; reviewed flag upgraded from unreviewed',
+          reviewOrigin: 'filer-read',
+          reviewerId: MOD,
+          reviewedAt: '2026-10-11T10:00:00.000Z',
+        }),
+      }),
+    ]);
+  });
+
+  it.each([
+    ['sent', { reportSentAt: OLD }],
+    ['claimed', { sendClaimId: 'run-1', sendClaimedAt: new Date() }],
+  ])(
+    'leaves a %s report unreviewed: the reviewed re-file is a report of its own',
+    async (_, state) => {
+      const held = {
+        source: 'postText',
+        id: 11,
+        text: 'same words',
+        capturedAt: '2026-10-08T14:05:00.000Z',
+      };
+      const review = { byId: MOD, at: '2026-10-11T10:00:00.000Z', origin: 'filer-read' };
+      const kept = seed({
+        userId: 101,
+        images: [{ id: 1 }],
+        details: { contextText: [held] },
+        ...state,
+      });
+
+      await createCsamReport({
+        userId: 101,
+        reportedById: MOD,
+        type: 'Image',
+        imageIds: [2],
+        details: {
+          contextText: [{ ...held, capturedAt: '2026-10-12T09:00:00.000Z', reviewed: review }],
+        } as never,
+      });
+
+      expect(rows.find((r) => r.id === kept.id)!.details).toEqual({ contextText: [held] });
+    }
+  );
+
+  it('a filing diverted to a report of its own records no identical re-file', async () => {
+    vi.mocked(logToAxiom).mockClear();
+    const held = {
+      source: 'comment',
+      id: 11,
+      text: 'same words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+    };
+    const raced = seed({ userId: 101, images: [{ id: 1 }], details: { contextText: [held] } });
+    tx.csamReport.findMany.mockImplementationOnce(async () => {
+      const row = rows.find((r) => r.id === raced.id)!;
+      row.reportSentAt = OLD;
+      return [{ id: row.id, details: row.details }];
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [4],
+      details: { contextText: [held] } as never,
+    });
+
+    expect(rows[1].details).toEqual({ contextText: [held] });
+    expect(rows.find((r) => r.id === raced.id)!.details).toEqual({ contextText: [held] });
+    expect(
+      vi.mocked(logToAxiom).mock.calls.filter(([line]) => line.subType === 'fold-identical-text')
+    ).toEqual([]);
+  });
+
   it('a report sent after the lookup is left alone, and the new report filed on its own', async () => {
     const raced = seed({ userId: 101, images: [{ id: 1 }] });
     // The lookup still sees the report unsent; it is sent before the lock.
@@ -276,6 +421,73 @@ describe('a second report folded into an unsent one', () => {
       contents: ['nonRealMinors', 'variations'],
       readFailures: { 2: 1 },
     });
+  });
+
+  it('keeps text captured by the first filing and adds what the second captured, an edited item included', async () => {
+    const captured = (id: number, text: string) => ({ source: 'comment', id, text });
+    const first = seed({
+      userId: 101,
+      images: [{ id: 1 }],
+      details: { contextText: [captured(11, 'as first captured')] },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: { contextText: [captured(11, 'edited since'), captured(12, 'new')] } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toEqual({
+      contextText: [
+        captured(11, 'as first captured'),
+        captured(11, 'edited since'),
+        captured(12, 'new'),
+      ],
+    });
+    expect(
+      vi.mocked(logToAxiom).mock.calls.filter(([line]) => line.subType === 'fold-identical-text')
+    ).toEqual([]);
+  });
+
+  it('adds no entry for text the report already holds, and records the re-file', async () => {
+    vi.mocked(logToAxiom).mockClear();
+    const held = {
+      source: 'comment',
+      id: 11,
+      text: 'same words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+    };
+    const first = seed({ userId: 101, images: [{ id: 1 }], details: { contextText: [held] } });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: { contextText: [{ ...held, capturedAt: '2026-10-12T09:00:00.000Z' }] } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toEqual({
+      contextText: [held],
+      identicalRefiles: [{ filedById: MOD, at: '2026-10-12T09:00:00.000Z', item: 'comment:11' }],
+    });
+    const refiles = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([line]) => line as Record<string, unknown>)
+      .filter((line) => line.subType === 'fold-identical-text');
+    expect(refiles).toEqual([
+      expect.objectContaining({
+        reportId: first.id,
+        payload: {
+          filedById: MOD,
+          capturedAt: '2026-10-12T09:00:00.000Z',
+          item: 'comment:11',
+          outcome: 'identical text, not added',
+        },
+      }),
+    ]);
   });
 
   it('keeps the stored details when the second filing sends none, or leaves an answer unset', async () => {
@@ -415,6 +627,82 @@ describe('a second report folded into an unsent one', () => {
       ['b3', 'b3', 'preserved'],
     ]);
     expect(details.generatorEvidence.approvedAt).toBeNull();
+  });
+
+  describe('the producing job id of a generator file', () => {
+    const JOB = 'job-1';
+    const filing = (blobs: StoredEvidenceBlob[]) => ({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage' as const,
+      details: {
+        generatorEvidence: { version: 1 as const },
+        generatedImages: [{ jobId: 'wf-a', source: 'workflow' as const, blobs }],
+      },
+    });
+    const pending = (blobs: Record<string, unknown>[]) =>
+      seed({
+        userId: 101,
+        type: 'GeneratedImage',
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [{ jobId: 'wf-a', blobs }],
+        },
+      });
+    const blobsOf = (id: number) =>
+      (rows.find((r) => r.id === id)?.details as { generatedImages: { blobs: unknown[] }[] })
+        .generatedImages[0].blobs;
+
+    it('is added to a file an unsent report holds without one', async () => {
+      const first = pending([
+        { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'old' },
+        { blobId: 'b2', role: 'output', status: 'excluded' },
+      ]);
+
+      await createCsamReport(
+        filing([
+          {
+            blobId: 'b1',
+            role: 'output',
+            status: 'preserved',
+            sha256: 'new',
+            orchestratorJobId: JOB,
+          },
+          { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: JOB },
+        ])
+      );
+
+      expect(rows).toHaveLength(1);
+      expect(blobsOf(first.id)).toEqual([
+        {
+          blobId: 'b1',
+          role: 'output',
+          status: 'preserved',
+          sha256: 'old',
+          orchestratorJobId: JOB,
+        },
+        { blobId: 'b2', role: 'output', status: 'excluded', orchestratorJobId: JOB },
+      ]);
+    });
+
+    it('is kept when a later copy replaces the file, and never replaced by another', async () => {
+      const first = pending([
+        { blobId: 'b1', role: 'output', status: 'blocked-unreadable', orchestratorJobId: JOB },
+        { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: JOB },
+      ]);
+
+      await createCsamReport(
+        filing([
+          { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'b1' },
+          { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: 'job-2' },
+        ])
+      );
+
+      expect(blobsOf(first.id)).toEqual([
+        { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'b1', orchestratorJobId: JOB },
+        { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: JOB },
+      ]);
+    });
   });
 
   it('files a URL-only generated-image report apart from a preserved-evidence report', async () => {
@@ -581,7 +869,7 @@ describe('a report a send run has claimed', () => {
       expect(rows).toHaveLength(3);
       expect(rows[2]).toMatchObject({ userId: 101, images: [{ id: 4 }], sendClaimId: null });
       expect(skipLines()).toEqual([
-        expect.objectContaining({ reportId: held.id, newReportId: rows[2].id }),
+        expect.objectContaining({ reportId: held.id, payload: { newReportId: rows[2].id } }),
       ]);
     }
   );

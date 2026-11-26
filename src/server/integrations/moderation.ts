@@ -68,19 +68,16 @@ async function moderatePrompt(
   // error anywhere.
   const metricSource = clampExternalModerationSource(source);
 
-  // Read once, into locals, so the guard below narrows them for the fetch. The fetch now runs inside
-  // a callback, and TS cannot carry a narrowing of a mutable object property across a closure
-  // boundary — the values themselves are identical to what the straight-line version read.
-  const endpoint = env.EXTERNAL_MODERATION_ENDPOINT;
-  const token = env.EXTERNAL_MODERATION_TOKEN;
+  const config = externalModerationConfig();
 
-  if (!token || !endpoint) {
+  if (!config) {
     // Counted, not observed on the histogram: no request is issued, so this is not a latency
     // sample. Recorded before the span opens — a deployment with the integration switched off
     // should pay nothing beyond a counter increment.
     recordExternalModerationSkipped(metricSource);
     return { flagged: false, categories: [] };
   }
+  const { endpoint, token } = config;
 
   const preparedPrompt = removeFalsePositiveTriggers(prompt);
 
@@ -146,10 +143,9 @@ async function moderatePrompt(
         // this await — and since it runs inline on every generation submission
         // (`generateFromGraph` → `auditPromptServer`), that parks the whole tRPC request
         // off-CPU for minutes (observed ~194s api-primary tail during a moderation 503/504
-        // wave). The call is already FAIL-SOFT (the caller catches and proceeds with
-        // flagged:false) and the local regex audit still gates regardless, so aborting a
-        // slow call only drops the secondary external layer for that one request — it does
-        // not weaken the primary block. Abort → throws → caller's existing catch fails soft.
+        // wave). Abort → throws → `auditPromptServer` refuses that one submit with a
+        // retry-able 503 (it fails CLOSED on a classifier error), so a slow gateway costs a
+        // bounded wait and a refusal, never an unmoderated submit.
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -229,6 +225,21 @@ function recordOutcome(
 ) {
   observeExternalModeration(source, outcome, durationSeconds);
   setActiveSpanAttributes({ 'moderation.outcome': outcome });
+}
+
+/**
+ * The classifier's endpoint and token, or `null` when either is missing and `moderatePrompt` answers
+ * not-flagged without a request. Read into a value so a fetch inside a callback keeps the narrowing.
+ */
+function externalModerationConfig(): { endpoint: string; token: string } | null {
+  const endpoint = env.EXTERNAL_MODERATION_ENDPOINT;
+  const token = env.EXTERNAL_MODERATION_TOKEN;
+  return endpoint && token ? { endpoint, token } : null;
+}
+
+/** Whether `moderatePrompt` calls the classifier at all; when false it answers not-flagged. */
+export function isExternalModerationConfigured(): boolean {
+  return externalModerationConfig() !== null;
 }
 
 export const extModeration = {

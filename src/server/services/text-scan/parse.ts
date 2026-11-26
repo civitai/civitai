@@ -51,7 +51,7 @@ const labelValidators: Record<TextScanLabel, z.ZodType> = {
   'model-com-face-intent': z.object({ detected: z.boolean(), reason: z.string() }),
 };
 
-function tryParseJson(content: string): unknown {
+export function tryParseJson(content: string): unknown {
   try {
     return JSON.parse(content.trim());
   } catch {

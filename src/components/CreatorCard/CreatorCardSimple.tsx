@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -38,6 +39,9 @@ import { cardGlowOf } from './card-glow';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
+/** The 70px avatar offset plus about 100px of name. */
+const NAME_SIDE_MIN_WIDTH = 170;
+
 export const CreatorCardSimple = memo((props: CreatorCardSimpleProps) => (
   <CreatorCardSimpleContent {...props} />
 ));
@@ -50,6 +54,7 @@ const CreatorCardSimpleContent = ({
   statDisplayOverwrite,
   subText,
   actions,
+  footer,
   ...cardProps
 }: CreatorCardSimpleProps) => {
   const theme = useMantineTheme();
@@ -151,6 +156,8 @@ const CreatorCardSimpleContent = ({
                 left: 0,
                 width: '100%',
                 height: '100%',
+                // Decorative: out of hit-testing so no <video> sits under the name or buttons.
+                pointerEvents: 'none',
               },
             }}
             contain
@@ -191,10 +198,11 @@ const CreatorCardSimpleContent = ({
           </Group>
           <Box className={classes.profileDetailsContainer}>
             <Stack gap="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" justify="space-between" wrap="nowrap" gap="xs">
-                {/* Name side yields (shrinks + clips) so the fixed action icons
-                    below never get pushed off the card on smaller widths. */}
-                <Box style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+              <Group align="center" justify="space-between" wrap="wrap" gap="xs">
+                {/* The name keeps NAME_SIDE_MIN_WIDTH; actions that would squeeze it wrap under it. */}
+                <Box
+                  style={{ minWidth: 0, flex: `1 1 ${NAME_SIDE_MIN_WIDTH}px`, overflow: 'hidden' }}
+                >
                   <UserProfileLink user={creator} linkToProfile>
                     <Group wrap="nowrap">
                       <Box className={classes.avatar}>
@@ -235,7 +243,9 @@ const CreatorCardSimpleContent = ({
                     </Group>
                   </UserProfileLink>
                 </Box>
-                {actions ? <Box style={{ flexShrink: 0 }}>{actions(creator)}</Box> : null}
+                {actions ? (
+                  <Box style={{ flexShrink: 0, marginLeft: 'auto' }}>{actions(creator)}</Box>
+                ) : null}
               </Group>
             </Stack>
           </Box>
@@ -245,9 +255,7 @@ const CreatorCardSimpleContent = ({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
@@ -267,6 +275,16 @@ const CreatorCardSimpleContent = ({
           </Group>
         </Card.Section>
       ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={creatorCardSectionStyle(theme, colorScheme)}
+          py="xs"
+        >
+          {footer}
+        </Card.Section>
+      ) : null}
     </ElementInView>
   );
 };
@@ -278,6 +296,8 @@ export type CreatorCardSimpleProps = {
   useEquippedCosmetics?: boolean;
   statDisplayOverwrite?: string[];
   actions?: (creator: UserCreator) => React.ReactElement;
+  /** Extra content in its own section under a divider, below the links. Nothing renders without it. */
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 type CreatorStats = NonNullable<UserCreator['stats']>;

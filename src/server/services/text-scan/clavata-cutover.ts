@@ -7,7 +7,6 @@ import {
   getTextScanMode,
   isTextScanEnabled,
   readTextScanRollouts,
-  rolloutFor,
 } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
@@ -15,7 +14,16 @@ import { EntityType } from '~/shared/utils/prisma/enums';
 // Never scanned by Clavata, so there is nothing to cut over.
 export type CutoverEntityType = Exclude<
   TextScanEntityType,
-  'Challenge' | 'Crucible' | 'Storyline' | 'ImageCaption' | 'ModelRules'
+  | 'Challenge'
+  | 'Crucible'
+  | 'Storyline'
+  | 'ImageCaption'
+  | 'ServiceOffering'
+  | 'PostText'
+  | 'ModelRules'
+  | 'AppDoc'
+  | 'ServiceDealReview'
+  | 'ServiceDealReviewReply'
 >;
 
 type ClavataTarget = {
@@ -57,8 +65,6 @@ export const CLAVATA_TARGETS: Readonly<Record<CutoverEntityType, ClavataTarget>>
   Post: standard('Post', async () => ids(await dbRead.post.findMany(recent))),
   Bounty: standard('Bounty', async () => ids(await dbRead.bounty.findMany(recent))),
   BountyEntry: standard('BountyEntry', async () => ids(await dbRead.bountyEntry.findMany(recent))),
-  Comment: standard('Comment', async () => ids(await dbRead.comment.findMany(recent))),
-  CommentV2: standard('CommentV2', async () => ids(await dbRead.commentV2.findMany(recent))),
   CommentV3: standard('CommentV3', async () =>
     ids(
       await dbRead.$queryRaw<
@@ -150,7 +156,7 @@ export async function getTextScanOwnedClavataKeys(): Promise<Set<string>> {
     CutoverEntityType,
     ClavataTarget
   ][]) {
-    if (cutover.has(target.clavataKey) && rolloutFor(rollouts, entityType)?.active === 100)
+    if (cutover.has(target.clavataKey) && rollouts[entityType]?.active === 100)
       owned.add(target.clavataKey);
   }
   return owned;
@@ -176,7 +182,7 @@ async function assertActiveEverywhere(entityType: CutoverEntityType, target: Cla
   // The same rule the Clavata job uses to step aside: below it, the drain would delete queued rows
   // for ids that text scan only shadows.
   const [textScanOn, rollouts] = await Promise.all([isTextScanEnabled(), readTextScanRollouts()]);
-  if (!textScanOn || rolloutFor(rollouts, entityType)?.active !== 100)
+  if (!textScanOn || rollouts[entityType]?.active !== 100)
     throw new ClavataCutoverRefused(entityType, 'not-fully-active');
   const probeIds = await target.recentIds();
   if (!probeIds.length) throw new ClavataCutoverRefused(entityType, 'nothing-to-probe');
@@ -198,12 +204,12 @@ export async function disableClavataFor(
 
   await sysRedis.sAdd(REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER, target.clavataKey);
   if (unmoderatedOverride)
-    await logToAxiom({
+    logToAxiom({
       name: 'text-scan-clavata-cutover',
       type: 'warning',
       message: 'Chat cut over without an active text-scan check',
       entityType,
-    }).catch(() => null);
+    });
 
   const drain = target.jobQueueEntityType
     ? await drainModerationQueue(target.jobQueueEntityType)

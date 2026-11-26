@@ -9,6 +9,7 @@ import {
   IconBookmarkEdit,
   IconBriefcase,
   IconBrush,
+  IconBuildingStore,
   IconChartHistogram,
   IconCloudLock,
   IconCube,
@@ -17,6 +18,7 @@ import {
   IconGavel,
   IconHistory,
   IconLink,
+  IconScreenShare,
   IconMoneybag,
   IconPhotoUp,
   IconPlayerPlayFilled,
@@ -35,18 +37,19 @@ import {
   IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { myShopNavVisible } from '~/components/AppLayout/AppHeader/myShopNavVisibility';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
+import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import { getKnightsLink } from '~/shared/constants/knights.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -88,10 +91,6 @@ type UserMenuItemGroup = {
   visible?: boolean;
   items: UserMenuItem[];
 };
-
-const FeatureIntroductionModal = dynamic(
-  () => import('~/components/FeatureIntroduction/FeatureIntroduction')
-);
 
 export function useGetMenuItems(): UserMenuItemGroup[] {
   const router = useRouter();
@@ -151,6 +150,15 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Shop',
+        },
+        {
+          id: 'browse-services',
+          href: '/services',
+          // The page's own SSR gate.
+          visible: features.creatorShop && features.creatorServices,
+          icon: IconBuildingStore,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Browse Services',
         },
         {
           id: 'service-requests',
@@ -338,12 +346,17 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           id: 'knights-of-new',
-          href: '/games/knights-of-new-order',
-          visible: features.newOrderGame,
+          ...getKnightsLink(features),
           icon: IconSword,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
           newUntil: new Date('2025-06-15'),
+        },
+        {
+          id: 'civitai-link',
+          icon: IconScreenShare,
+          label: 'Civitai Link',
+          onClick: () => openCivitaiLinkDialog(),
         },
         {
           id: 'link-app',
@@ -368,12 +381,9 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconPlayerPlayFilled,
           label: 'Getting Started',
           onClick: () => {
-            dialogStore.trigger({
-              component: FeatureIntroductionModal,
-              props: {
-                feature: 'getting-started',
-                contentSlug: ['feature-introduction', 'welcome'],
-              },
+            openDialog(() => import('~/components/FeatureIntroduction/FeatureIntroduction'), {
+              feature: 'getting-started',
+              contentSlug: ['feature-introduction', 'welcome'],
             });
           },
         },

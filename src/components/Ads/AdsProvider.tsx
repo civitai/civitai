@@ -1,8 +1,10 @@
 import { useRouter } from 'next/router';
+import { isAdFreeRoute, isRequestsRoute } from '~/components/Ads/ad-free-routes';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { SparteoTag } from '~/components/Ads/SparteoTag';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -21,6 +23,7 @@ declare global {
     __tcfapi: (...args: any[]) => void;
     googletag: any;
     adngin: any;
+    _hbdbrk?: unknown[];
   }
 }
 
@@ -116,13 +119,6 @@ export function useAdPageNsfwLevel() {
   return useAdProviderStore((state) => state.pageNsfwLevel);
 }
 
-const blockedUrls: string[] = [
-  '/collections/6503138',
-  '/collections/7514194',
-  '/collections/7514211',
-  '/moderator',
-];
-
 export function AdsProvider({
   children,
   gated = false,
@@ -161,8 +157,18 @@ export function AdsProvider({
       !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
-      !blockedUrls.some((url) => router.asPath.includes(url)) &&
-      !router.asPath.split('?')[0].endsWith('/edit');
+      !isAdFreeRoute(router.pathname, router.asPath);
+
+  // Ad scripts loaded on an earlier page keep running after a client-side route change. A request page
+  // holds contact details or a case link, so reaching one that way reloads it without them.
+  const adsLoadedBefore = useRef(false);
+  useEffect(() => {
+    if (adsEnabled) adsLoadedBefore.current = true;
+  }, [adsEnabled]);
+  useEffect(() => {
+    if (adsLoadedBefore.current && isRequestsRoute(router.pathname, router.asPath))
+      window.location.reload();
+  }, [router.pathname, router.asPath]);
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });
@@ -219,6 +225,16 @@ export function AdsProvider({
       window.removeEventListener('adnginLoaderReady', callback);
     };
   }, []);
+
+  const pageType = router.pathname.split('/')[1] || 'home';
+  const path = router.asPath.split('?')[0];
+
+  // Sparteo asks a single-page app to push `_vars` on every route change.
+  useEffect(() => {
+    if (!adsEnabled || useDirectAds) return;
+    window._hbdbrk = window._hbdbrk || [];
+    window._hbdbrk.push(['_vars', { page_type: pageType }]);
+  }, [adsEnabled, useDirectAds, pageType, path]);
 
   return (
     <AdsContext.Provider
@@ -282,6 +298,8 @@ export function AdsProvider({
           onLoad={handleLoaded}
         />
       )}
+      {/* Sparteo, which replaces Snigel, serves nothing from this tag until it activates the site. */}
+      {adsEnabled && !useDirectAds && <SparteoTag />}
       {/* Client-gated: the engine is resolved from sessionStorage, which SSR can't see. */}
       <IsClient>
         {adEngine === 'staging' && (

@@ -55,6 +55,8 @@ describe('previewTextScanNsfw', () => {
       status: 'ok',
       level: NsfwLevel.X,
       reason: 'names nudity',
+      // The face stamp records which prompt passed it.
+      promptId: 2,
     });
   });
 
@@ -106,6 +108,7 @@ describe('previewComFaceIntent', () => {
     await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
       status: 'ok',
       output: { detected: true, reason: 'stub reason' },
+      promptId: 3,
     });
   });
 });

@@ -90,7 +90,7 @@ function readPredicate() {
 
 /**
  * The primary's queries: the per-batch version lookup answers with `versions(batch)`, the model
- * DELETE with `deleteModels(batch)` (by default every model asked for, as no owner is held here),
+ * DELETE with `deleteModels(batch)` (by default every model asked for),
  * and the lookup of models the DELETE left with `stillThere(ids)`.
  */
 const write = {
@@ -105,8 +105,7 @@ const asCall = (first: unknown, values: unknown[]) =>
     : (first as { strings: string[]; values: unknown[] });
 const isModelDelete = (strings: readonly string[]) =>
   strings.join('?').includes('DELETE FROM "Model"');
-const isLeftLookup = (strings: readonly string[]) =>
-  strings.join('?').includes('SELECT id FROM "Model"');
+const isLeftLookup = (strings: readonly string[]) => strings.join('?').includes(' AS moderated');
 
 /** Model ids handed to a given `DELETE FROM "Model"` call. */
 function deleteBatches() {
@@ -133,7 +132,7 @@ beforeEach(() => {
     return isModelDelete(strings)
       ? write.deleteModels(values[0] as number[])
       : isLeftLookup(strings)
-      ? write.stillThere(values[0] as number[])
+      ? write.stillThere(values.at(-1) as number[])
       : write.versions(values[0] as number[]);
   }) as never);
 });
@@ -156,6 +155,8 @@ describe('removeOldDrafts', () => {
 
       expect(readPredicate()).toBe(
         `WHERE m.status IN ('Draft', 'Deleted') ` +
+          // The shared keep rule, a parameter here: its text is pinned in old-draft-reaper-parity.
+          `AND NOT ? ` +
           `AND m."updatedAt" < now() - INTERVAL '30 days' ` +
           `AND mm."downloadCount" < 10 ` +
           `AND m."availability" != 'Private'::"Availability" ` +
@@ -358,24 +359,24 @@ describe('removeOldDrafts', () => {
     });
   });
 
-  // The DELETE itself keeps a held owner's model (behaviour on a real database:
-  // remove-old-drafts-legal-hold.behavior.test.ts); these pin what the job does with what it left.
+  // What the DELETE keeps is pinned on a real database in remove-old-drafts-keep.behavior.test.ts;
+  // these pin what the job does with what it left.
   describe('models the DELETE left', () => {
-    it('reports a kept model as held and neither logs nor deregisters it as removed', async () => {
+    it('reports a kept model and neither logs nor deregisters it as removed', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
       write.versions = () => [versionRow({ id: 100, modelId: 42 })];
       write.deleteModels = async () => [];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
+      expect(axiomEvents('Kept old draft models tied to a CsamReport')).toEqual([
         expect.objectContaining({ modelIds: [42] }),
       ]);
       expect(axiomEvents('Removed old draft models')).toEqual([]);
       expect(mockDeregisterBatch).not.toHaveBeenCalled();
     });
 
-    it('does not report a model another delete removed first as held', async () => {
+    it('does not report a model another delete removed first as kept', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
       write.versions = () => [versionRow({ id: 100, modelId: 42 })];
       write.deleteModels = async () => [];
@@ -383,7 +384,7 @@ describe('removeOldDrafts', () => {
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
+      expect(axiomEvents('Kept old draft models tied to a CsamReport')).toEqual([]);
     });
 
     // The deletes have committed by then, so the batch must still be recorded and deregistered.
@@ -501,7 +502,7 @@ describe('removeOldDrafts', () => {
       expect(mockDeregisterBatch).not.toHaveBeenCalled();
     });
 
-    it('does not deregister a batch whose delete fails, counts the error, and continues', async () => {
+    it('does not deregister a batch whose delete fails, and continues', async () => {
       // 11 models → two batches (BATCH_SIZE=10): [1..10] then [11].
       const models = Array.from({ length: 11 }, (_, i) => ({ id: i + 1, userId: 900 + i }));
       mockDbRead.$queryRaw.mockResolvedValue(models);
@@ -525,15 +526,6 @@ describe('removeOldDrafts', () => {
       expect(mockDeregisterBatch).toHaveBeenCalledTimes(1);
       expect(mockDeregisterBatch).toHaveBeenCalledWith([200]);
       expect(mockDeregisterBatch).not.toHaveBeenCalledWith([100, 101]);
-
-      // errorCount increments → surfaced as the batch-failure Axiom error log.
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          name: 'remove-old-drafts',
-          message: 'Failed to remove batch of old draft models',
-        })
-      );
     });
 
     it('scopes each batch to its own version ids with no cross-batch bleed', async () => {

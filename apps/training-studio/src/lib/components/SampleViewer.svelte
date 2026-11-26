@@ -2,6 +2,8 @@
   import { onMount, untrack } from 'svelte';
   import { IconAlertTriangle, IconCheck } from '@tabler/icons-svelte';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
+  import '$lib/civitai-elements';
+  import { useElementsUi } from '$lib/elements-ui';
   import type { TrainingDetailEpoch } from '$lib/data/trainingRows';
 
   let {
@@ -212,6 +214,7 @@
   const zoomStyle = $derived(
     zoomActive ? `width:${natural!.width * ZOOM_FACTOR}px;height:${natural!.height * ZOOM_FACTOR}px` : ''
   );
+  const elementsUi = useElementsUi();
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -289,7 +292,11 @@
       >
         {#if status === 'loading'}
           <div class="absolute inset-0 grid place-items-center">
-            <Spinner class="size-8 text-dark-2" />
+            {#if elementsUi()}
+              <civitai-loader label="Loading sample"></civitai-loader>
+            {:else}
+              <Spinner class="size-8 text-dark-2" />
+            {/if}
           </div>
         {:else if status === 'error'}
           <div class="absolute inset-0 grid place-items-center px-6 text-center">
@@ -305,7 +312,6 @@
 
         {#key url}
           {#if isVideo}
-            <!-- svelte-ignore a11y_media_has_caption -->
             <video
               src={url}
               loop

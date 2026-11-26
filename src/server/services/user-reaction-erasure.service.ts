@@ -7,13 +7,14 @@ import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metric
 /**
  * Every table a user's reactions live in, with the follow-up the one-at-a-time un-react path
  * (`reaction.service.ts`) runs after its delete, so a bulk erasure leaves the counts where that path
- * would have.
+ * would have. Event points are the exception: the un-react path keeps them, while an erasure removes
+ * them, so an erased account keeps nothing its reactions earned.
  *
  * - `queue`: the Postgres metric whose rows are recomputed only for queued ids.
  * - Image, Article and BountyEntry counts in ClickHouse and Redis follow the DELETE itself: those tables
  *   are REPLICA IDENTITY FULL and the event engine's reaction handlers emit the -1 from CDC.
- * - CommentV2Reaction's and CommentV3Reaction's counts are triggers on their tables. CommentReaction,
- *   ResourceReviewReaction and ClubPostReaction have no counter.
+ * - CommentV3Reaction's counts are a trigger on its table. ResourceReviewReaction and ClubPostReaction
+ *   have no counter.
  *
  * NOT corrected here: a content owner's all-time reactions-received score (ClickHouse
  * `reactions_owner_scores`, read by `UserMetric.reactionCount`), which the un-react path lowers with a
@@ -35,9 +36,7 @@ const TABLES = [
     fk: 'bountyEntryId',
     queue: bountyEntryMetrics,
   },
-  { table: 'CommentV2Reaction', fk: 'commentId' },
   { table: 'CommentV3Reaction', fk: 'commentId' },
-  { table: 'CommentReaction', fk: 'commentId' },
   { table: 'ResourceReviewReaction', fk: 'reviewId' },
   { table: 'ClubPostReaction', fk: 'clubPostId' },
 ] as const;
@@ -94,7 +93,7 @@ async function deleteReturning(
 
 /**
  * Deletes the user's reactions from every table, image reactions up to `IMAGE_ROWS_PER_RUN`, and runs
- * the follow-ups the un-react path runs. Returns what was removed and how many image reactions remain.
+ * the follow-ups the un-react path runs, plus the event-points removal it skips. Returns what was removed and how many image reactions remain.
  */
 export async function removeUserReactions(userId: number): Promise<{
   removed: ReactionCounts;
@@ -151,6 +150,6 @@ async function followUp(
       name: 'user-reaction-erasure-follow-up',
       message: (error as Error).message,
       details: { table, step, entities: entityIds.length },
-    }).catch(() => undefined);
+    });
   }
 }

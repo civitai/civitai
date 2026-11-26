@@ -324,6 +324,83 @@ describe('mergeHomeApps — hidden apps (the single re-appear predicate)', () =>
   });
 });
 
+describe('mergeHomeApps — a row the server dropped as hidden still claims its recents entry', () => {
+  // An OFF-SITE recent stored under an OLDER slug than its listing's
+  // (`prompt-lab-old` vs `prompt-lab`), the hide written under the ROW's slug, and the row no
+  // longer served because the server dropped it. Every id/slug below is pairwise distinct.
+  const drifted = (openedAt?: number) => {
+    const r = recentOffsite(
+      'apl_lab',
+      'prompt-lab-old',
+      'Prompt Lab',
+      'https://promptlab.example.org/app'
+    );
+    return openedAt == null ? r : withOpenedAt(r, openedAt);
+  };
+  const DROPPED = { apl_lab: 'prompt-lab' };
+
+  it('🔴 opened BEFORE the hide → not shown (judged under the row slug, not its stale one)', () => {
+    const tiles = mergeHomeApps({
+      server: [TAGGER],
+      recents: [drifted(T_OPEN_OLD)],
+      canOpenPage: true,
+      hidden: { 'prompt-lab': T_HIDE },
+      removedSlugsByListingId: DROPPED,
+    });
+    expect(tiles.map((t) => t.slug)).toEqual(['tag-wizard']);
+  });
+
+  it('🔴 an entry with no openedAt is no use → not shown', () => {
+    const tiles = mergeHomeApps({
+      server: [],
+      recents: [drifted()],
+      canOpenPage: true,
+      hidden: { 'prompt-lab': T_HIDE },
+      removedSlugsByListingId: DROPPED,
+    });
+    expect(tiles).toEqual([]);
+  });
+
+  it('🔴 opened AFTER the hide → shown ONCE, under the row slug (so a re-remove writes the hide the server reads)', () => {
+    const tiles = mergeHomeApps({
+      server: [TAGGER],
+      recents: [
+        drifted(T_OPEN_NEW),
+        // A second entry for the same listing, under its current slug: must not duplicate.
+        withOpenedAt(
+          recentOffsite('apl_lab', 'prompt-lab', 'Prompt Lab', 'https://promptlab.example.org/app'),
+          T_OPEN_OLD
+        ),
+      ],
+      canOpenPage: true,
+      hidden: { 'prompt-lab': T_HIDE },
+      removedSlugsByListingId: DROPPED,
+    });
+    expect(tiles.map((t) => [t.key, t.slug, t.source, t.launchHref])).toEqual([
+      ['recent:prompt-lab', 'prompt-lab', 'recent', 'https://promptlab.example.org/app'],
+      ['listing:apl_tagger', 'tag-wizard', 'server', '/apps/run/tag-wizard?from=home'],
+    ]);
+  });
+
+  it('an entry whose id is NOT in the map is judged under its own slug, as before', () => {
+    const args = {
+      server: [] as MyAppRow[],
+      recents: [drifted(T_OPEN_OLD)],
+      canOpenPage: true,
+      hidden: { 'prompt-lab': T_HIDE },
+      removedSlugsByListingId: { apl_other: 'prompt-lab' },
+    };
+    // No hide names `prompt-lab-old`, so it shows — and identically with no map at all.
+    const tiles = mergeHomeApps(args);
+    expect(tiles.map((t) => [t.key, t.slug, t.source])).toEqual([
+      ['recent:prompt-lab-old', 'prompt-lab-old', 'recent'],
+    ]);
+    expect(mergeHomeApps({ ...args, removedSlugsByListingId: undefined })).toEqual(tiles);
+    // And a hide under its OWN slug still hides it.
+    expect(mergeHomeApps({ ...args, hidden: { 'prompt-lab-old': T_HIDE } })).toEqual([]);
+  });
+});
+
 describe('mergeHomeApps — launch origin', () => {
   it('🔴 an in-site run link carries ?from=home, preserving an existing query', () => {
     const tiles = mergeHomeApps({
@@ -365,6 +442,13 @@ describe('homeEmptyKind — why an empty home is empty', () => {
     };
     expect(mergeHomeApps(args)).toEqual([]); // precondition: the home IS empty
     expect(homeEmptyKind(args)).toBe('all-removed');
+  });
+
+  it('🔴 the server dropped every app (removedCount > 0, nothing served) → all-removed', () => {
+    const args = { server: [], recents: [], canOpenPage: true, hidden: { 'pixel-forge': T_HIDE } };
+    expect(homeEmptyKind({ ...args, removedCount: 3 })).toBe('all-removed');
+    // Control: the same empty payload without the count is "no apps".
+    expect(homeEmptyKind({ ...args, removedCount: 0 })).toBe('no-apps');
   });
 
   it('nothing at all → no-apps, with or without stale hides', () => {

@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { handleBlockImages, trackImages, holdRemovals } = vi.hoisted(() => ({
-  handleBlockImages: vi.fn(),
-  trackImages: vi.fn(),
-  holdRemovals: vi.fn(),
-}));
+const { handleBlockImages, trackImages, holdRemovals, getOpenImageReportIdsByImage } = vi.hoisted(
+  () => ({
+    getOpenImageReportIdsByImage: vi.fn(),
+    handleBlockImages: vi.fn(),
+    trackImages: vi.fn(),
+    holdRemovals: vi.fn(),
+  })
+);
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
-vi.mock('~/server/services/image.service', () => ({ handleBlockImages }));
+vi.mock('~/server/services/image.service', () => ({
+  handleBlockImages,
+  getOpenImageReportIdsByImage,
+}));
 vi.mock('~/server/services/image-removal-hold.service', () => ({
   holdRemovals,
   heldRemovalSummary: (held: { imageId: number }[]) => held.map(({ imageId }) => ({ imageId })),
@@ -29,7 +35,7 @@ function mockRes() {
 }
 
 const call = async (body: unknown) => {
-  const { default: handler } = await import('~/pages/api/mod/remove-images');
+  const { default: handler } = await import('~/server/api-routes/mod/remove-images');
   const res = mockRes();
   await handler({ method: 'POST', body } as never, res as never);
   return res;
@@ -39,6 +45,8 @@ beforeEach(() => {
   handleBlockImages.mockReset();
   trackImages.mockReset();
   holdRemovals.mockReset();
+  getOpenImageReportIdsByImage.mockReset();
+  getOpenImageReportIdsByImage.mockResolvedValue(new Map());
   holdRemovals.mockImplementation(async (requests: { imageId: number }[]) => ({
     held: [],
     proceed: requests.map((r) => r.imageId),
@@ -55,6 +63,16 @@ describe('/api/mod/remove-images responses', () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledTimes(1);
+    expect(handleBlockImages).not.toHaveBeenCalled();
+  });
+
+  it('refuses an account-wide removal of the feedback capture account, removing nothing', async () => {
+    const res = await call({ userId: -2, moderatorId: 9 });
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: expect.stringMatching(/feedback page captures/),
+    });
     expect(handleBlockImages).not.toHaveBeenCalled();
   });
 
@@ -91,14 +109,27 @@ describe('/api/mod/remove-images re-removal hold', () => {
 
     expect(holdRemovals).toHaveBeenCalledWith(
       [
-        { imageId: 1, violationType: 'gore', violationDetails: undefined },
-        { imageId: 2, violationType: 'gore', violationDetails: undefined },
+        { imageId: 1, violationType: 'gore', violationDetails: undefined, reportIds: [] },
+        { imageId: 2, violationType: 'gore', violationDetails: undefined, reportIds: [] },
       ],
       9,
       'api.removeImages'
     );
     expect(handleBlockImages).toHaveBeenCalledWith({ ids: [1], userId: undefined, moderatorId: 9 });
     expect(res.json).toHaveBeenCalledWith({ images: 1, held: [{ imageId: 2 }] });
+  });
+
+  it("carries each image's open TOS reports on the hold, so a confirm actions them", async () => {
+    getOpenImageReportIdsByImage.mockResolvedValue(new Map([[1, [70, 71]]]));
+    holdRemovals.mockResolvedValue({ held: [{ imageId: 1 }, { imageId: 2 }], proceed: [] });
+
+    await call({ imageIds: [1, 2], moderatorId: 9, violationType: 'gore' });
+
+    expect(getOpenImageReportIdsByImage).toHaveBeenCalledWith([1, 2], 'TOSViolation');
+    expect(holdRemovals.mock.calls[0][0]).toEqual([
+      { imageId: 1, violationType: 'gore', violationDetails: undefined, reportIds: [70, 71] },
+      { imageId: 2, violationType: 'gore', violationDetails: undefined, reportIds: [] },
+    ]);
   });
 
   it('removes nothing when every image is held', async () => {
@@ -127,6 +158,7 @@ describe('/api/mod/remove-images re-removal hold', () => {
     await call({ userId: 5, moderatorId: 9 });
 
     expect(holdRemovals).not.toHaveBeenCalled();
+    expect(getOpenImageReportIdsByImage).not.toHaveBeenCalled();
     expect(handleBlockImages).toHaveBeenCalledTimes(2);
   });
 });

@@ -144,10 +144,8 @@ describe('createAuthVerifier', () => {
     expect(await verifier.verifyToken(token)).toBeNull();
   });
 
-  it('returns null (not throw) on a corrupt legacy token in the JWE branch', async () => {
-    // No JWKS configured + legacySecret set → a non-RS256/garbage token falls to the legacy
-    // next-auth decode, which throws on corrupt input. verifyToken must swallow that → null.
-    const verifier = createAuthVerifier({ issuer, audience, legacySecret: 'legacy-secret' });
+  it('returns null (not throw) on a token that is not ES256', async () => {
+    const verifier = createAuthVerifier({ issuer, audience });
     await expect(verifier.verifyToken('not.a.jwt')).resolves.toBeNull();
   });
 
@@ -229,6 +227,14 @@ describe('createAuthVerifier — 90-day sign-in limit', () => {
     const token = await mint({ iat0: T0, impersonatedBy: 100, impExp: T0 + 4 * 60 * 60 * 1000 });
     expect(await verifierAt(T0 + 60 * 1000).verifyToken(token)).not.toBeNull();
     expect(await verifierAt(T0 + 4 * 60 * 60 * 1000).verifyToken(token)).toBeNull();
+  });
+
+  // Deliberate: every impersonation is minted with impExp, so one without it predates the rule and
+  // is refused. Deploying this ends every impersonation open at the time, once.
+  it('rejects an impersonation token without impExp', async () => {
+    const token = await mint({ iat0: T0, impersonatedBy: 100 });
+    expect(await verifierAt(T0 + 60 * 1000).verifyToken(token)).toBeNull();
+    expect(await verifierAt(T0 + 60 * 1000).verifyToken(await mint({ iat0: T0 }))).not.toBeNull();
   });
 
   it('accepts a token without iat0 unless required', async () => {

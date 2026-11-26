@@ -1,7 +1,8 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useEffect, useMemo, useState, memo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -19,10 +20,12 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
-import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatButton } from '~/components/HatTurf/HatButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -33,6 +36,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -41,9 +45,15 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
+import {
+  getImagesCardFooterHeight,
+  isImagesCardFooterOneRow,
+} from '~/components/Image/Infinite/images-card-footer';
 import classes from './ImagesCard.module.scss';
 
 function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
@@ -52,9 +62,6 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
   const minIndex = index - 50 > -1 ? index - 50 : 0;
   return images.slice(minIndex, index + 50);
 }
-
-/** The masonry adds this to each card's image height for the reaction footer. */
-export const IMAGES_CARD_FOOTER_HEIGHT = 38;
 
 export function ImagesCard({
   data,
@@ -93,6 +100,11 @@ function ImagesCardContent({
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;
+  const {
+    src: retractedSrc,
+    onCdnError,
+    mediaRef,
+  } = useRetractedMedia(image, features.modRetractedMedia ? currentUser : null);
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -156,7 +168,14 @@ function ImagesCardContent({
                   })}
                   className="absolute inset-0"
                 >
-                  {safe ? (
+                  {safe && retractedSrc ? (
+                    <RetractedMedia
+                      src={retractedSrc}
+                      type={image.type}
+                      alt={image.name ?? undefined}
+                      className={clsx(cardClasses.image, { ['opacity-30']: isBlocked })}
+                    />
+                  ) : safe ? (
                     <EdgeMedia2
                       metadata={image.metadata}
                       src={image.url}
@@ -174,6 +193,9 @@ function ImagesCardContent({
                       contain
                       loading="lazy"
                       imageId={image.id}
+                      onError={onCdnError}
+                      mediaRef={mediaRef}
+                      videoProps={{ onError: onCdnError }}
                       // fadeIn
                     />
                   ) : (
@@ -190,6 +212,12 @@ function ImagesCardContent({
                 {/* Steps clear of an event decoration sitting on the corner. */}
                 <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-nowrap items-center gap-1">
                   <HatTurfBadge imageId={image.id} />
+                  {image.turfPlacedAt && (
+                    <HatTimeLeft
+                      placedAt={image.turfPlacedAt}
+                      className="inline-flex h-6 items-center rounded-full bg-black/60 px-2 text-xs font-bold text-white"
+                    />
+                  )}
                   {/* This row's chips take the Hat Turf badge's 24px so they read as one line. */}
                   <ImageGuard2.BlurToggle radius="xl" h={24} style={{ pointerEvents: 'auto' }} />
                   {safe && storyline && (
@@ -269,6 +297,7 @@ function ImagesCardContent({
                         </HoverActionButton>
                       </RemixMenu>
                     )}
+                    <MoreLikeThisButton image={image} />
                     {scheduled && (
                       <Tooltip label="Scheduled">
                         <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
@@ -379,6 +408,7 @@ function ImagesCardContent({
               </div>
               {!contextProps.hideReactions && (
                 <ImageReactions
+                  width={width}
                   image={image}
                   readonly={!safe || (isScanned && isBlocked)}
                   showStickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
@@ -395,55 +425,16 @@ function ImagesCardContent({
 
 export const ImagesCardMemoized = memo(ImagesCard);
 
-/**
- * Reactions that wrap onto the bar's clipped line can't be seen, so they must not take focus or
- * be read out either. Re-checked whenever the bar or its buttons change size or number.
- */
-function useInertClippedReactions() {
-  // State, not a ref: the row can be replaced, and the observers must follow it.
-  const [row, setRow] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!row) return;
-    let bar: Element | null = null;
-    const update = () => {
-      if (!bar) return;
-      const bottom = bar.getBoundingClientRect().bottom;
-      for (const child of Array.from(bar.children) as HTMLElement[]) {
-        child.inert = child.getBoundingClientRect().top >= bottom - 0.5;
-      }
-    };
-    const resize = new ResizeObserver(update);
-    const children = new MutationObserver(() => observe());
-    const observe = () => {
-      resize.disconnect();
-      children.disconnect();
-      bar = row.firstElementChild;
-      if (!bar) return;
-      resize.observe(bar);
-      for (const child of Array.from(bar.children)) resize.observe(child);
-      children.observe(bar, { childList: true });
-      update();
-    };
-    // The bar itself can mount after the row (a card with no reactions yet renders none).
-    const mounts = new MutationObserver(observe);
-    mounts.observe(row, { childList: true });
-    observe();
-    return () => {
-      resize.disconnect();
-      children.disconnect();
-      mounts.disconnect();
-    };
-  }, [row]);
-  return setRow;
-}
-
 // Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
 function ImageReactions({
+  width,
   image,
   readonly,
   showStickerBadge,
   safe,
 }: {
+  /** The card's width: it decides between one footer row and two. */
+  width?: number;
   image: ImagesInfiniteModel;
   readonly: boolean;
   showStickerBadge: boolean;
@@ -453,19 +444,17 @@ function ImageReactions({
   // Read here, not in the card: a hat push re-renders every mounted card's row, but not the card.
   const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
-  const reactionsRef = useInertClippedReactions();
+  const oneRow = isImagesCardFooterOneRow(width);
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
       useLive={inView !== false}
     >
       {(metrics) => {
@@ -483,7 +472,7 @@ function ImageReactions({
         return (
           <div
             className={clsx(cardClasses.footer, classes.actionsFooter)}
-            style={{ ['--footer-height' as string]: `${IMAGES_CARD_FOOTER_HEIGHT}px` }}
+            style={{ ['--footer-height' as string]: `${getImagesCardFooterHeight(width)}px` }}
             onClick={(e) => {
               // The padding around the buttons must not open the card's image link.
               if (!readonly) {
@@ -492,10 +481,17 @@ function ImageReactions({
               }
             }}
           >
-            <div className={clsx(cardClasses.actions, cardClasses.oneLine, classes.fitRow)}>
-              <div ref={reactionsRef} className={cardClasses.actionRow}>
+            <div
+              className={clsx(cardClasses.actions, oneRow && [cardClasses.oneLine, classes.fitRow])}
+            >
+              <div className={cardClasses.actionRow}>
                 <Reactions
-                  className={clsx(cardClasses.reactions, classes.bar, classes.fitReactions)}
+                  className={clsx(
+                    cardClasses.reactions,
+                    classes.bar,
+                    oneRow && classes.fitReactions,
+                    nudge
+                  )}
                   entityId={image.id}
                   entityType="image"
                   reactions={image.reactions}
@@ -521,7 +517,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
-                  {turf && <HatTurfButton imageId={image.id} />}
+                  {turf && <HatButton imageId={image.id} />}
                 </div>
               </div>
             </div>

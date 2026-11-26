@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -119,6 +119,9 @@ beforeEach(async () => {
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   dbHandle.read = null;
 });
+
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
 
 const reportedPosts = async () =>
   (
@@ -245,20 +248,11 @@ describe('enqueueing posts on unpublished resources for review', () => {
     expect(await run(3)).toMatchObject({ ok: true, reported: 3 });
   });
 
-  // An evidence-hold table with its view gone is "drift": the hold legs then hold everyone, so the
-  // job must file nothing rather than file around a hold it cannot read.
-  it('holds every poster when the hold marker has drifted', async () => {
-    await pg.exec(`CREATE TABLE "EvidenceHold" (id int);`);
-
-    const plan = await planEnqueue(REASONS, undefined, PAGE);
-    expect(plan.eligible).toBe(0);
-    expect(plan.excluded.posterHeld).toBe(5);
-  });
-
   // The replica may lag. A real run counts and files from the primary, so a stale replica can
   // neither refuse a correct count nor let a wrong one through.
   it('counts a real run from the primary, not the replica', async () => {
     const replica = await freshPglite();
+    onTestFinished(() => replica.close());
     await replica.exec(SCHEMA);
     dbHandle.read = new Kysely({ dialect: pgliteDialect(replica) });
 

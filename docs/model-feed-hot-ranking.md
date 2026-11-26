@@ -4,11 +4,11 @@ A proposal to replace the model feed's default time window with a Reddit-style *
 models first, with newer ones favoured, and no hard cutoff that can empty a page. `period` stays as an
 optional narrowing the user applies on purpose.
 
-Status: **implemented** in `feat/model-feed-hot-ranking`, not yet merged. Four migrations are applied
+Status: **implemented** in `feat/model-feed-hot-ranking`, not yet merged. Five migrations are applied
 by hand, **in order**. The first three must go in before the code ships, because the deploy names
 their columns in an INSERT list unconditionally — `bulkInsertMetrics` for `ModelMetric`, the upsert in
 `basemodel.metrics.ts` for `ModelBaseModelMetric` — so a missing column takes down the whole metrics
-job, not just the new signal. The fourth needs no deploy at all:
+job, not just the new signal. The fourth and fifth need no deploy at all:
 
 | Migration | What it adds | Backfill | Applied to prod |
 | --- | --- | --- | --- |
@@ -16,6 +16,7 @@ job, not just the new signal. The fourth needs no deploy at all:
 | `20261011120000_model_hot_score_generator_cap` (§14) | `uniqueGeneratorCount`, the cap | `/api/admin/temp/backfill-unique-generators` | 2026-10-08 |
 | `20261012120000_base_model_metric_hot_score` (§15) | per-base-model scoring | `/api/admin/temp/backfill-base-model-hot-score` | 2026-10-12 |
 | `20261013120000_model_hot_score_generator_floor` (§16) | the first generator earns nothing | in-file `CALL` | 2026-10-12 |
+| `20271117190000_model_hot_score_version_credit` (§18) | a version's own, capped credit | in-file `CALL` | not yet |
 
 The last one carries an ordering constraint in the opposite direction from the others: it must go
 **after** both generator backfills, because it makes `uniqueGeneratorCount = 0` mean "no generation
@@ -25,7 +26,7 @@ credit" rather than "not computed yet".
 per-base-model conclusions in §6 and §7; §14 adds the generation cap and §16 then puts a floor under
 it, so the formula in §2 is three revisions out of date; §15 replaces the mirrored per-base-model
 score described in §7, §10, §11 and §12 (Trap 3) with a per-slice one, and drops
-`trg_model_metric_hot_score_fanout`. Where an earlier section states a design as current fact and a
+`trg_model_metric_hot_score_fanout`; §18 reverses §5's "a new version doesn't bump a model". Where an earlier section states a design as current fact and a
 later one reversed it, the later one wins.
 
 The formula as it now stands:
@@ -34,11 +35,15 @@ The formula as it now stands:
 engagement = thumbsUpCount
            + downloadCount / 6.4
            + least(generationCount / 4.1, greatest(uniqueGeneratorCount - 1, 0) * 100)
-hotScore   = round((log10(1 + engagement) + publishedAt_epoch / 2592000) * 10000)
+model     = log10(1 + engagement) + publishedAt_epoch / 2592000
+version   = least(log10(1 + version engagement), 2.0) + version publishedAt_epoch / 2592000
+hotScore  = round(greatest(model, best Published version) * 10000)
 ```
 
 computed per model on `ModelMetric` and per (model, base model) slice on `ModelBaseModelMetric`,
-where `publishedAt` is the slice's earliest published version.
+where `publishedAt` is the slice's earliest published version and only the slice's own versions
+count. A version's engagement is its own `ModelVersionMetric` row; its generation term is capped by
+the model's (or slice's) `uniqueGeneratorCount`. Both triggers call `public.hot_score()`.
 
 Follows from the tag-page soft-404 work in [seo-improvements.md](seo-improvements.md) (§1) and the
 stop-gap in `e60d745f97`.
@@ -299,7 +304,8 @@ With `sort: Hot, period: AllTime` as the default:
   scheduled job and a score that shifts under paging. That was the earlier version of this proposal;
   §17 measures the gap and designs it as a separate signal.
 - **A new version doesn't bump a model.** That's deliberate, since it's the flaw in today's feed. A
-  deliberate "new version" boost would need its own rule.
+  deliberate "new version" boost would need its own rule. **Reversed by §18**, which adds that rule:
+  a version earns recency on its own engagement only, capped.
 - **One more index** on a table that is already mostly index.
 
 ---
@@ -1527,7 +1533,7 @@ source, same target shape — the alias is the only difference. A corrected MV b
 
 That kills the cheap version of this feature. Generation **counts** can be windowed, provided the
 query picks a database deliberately and bounds the upper end (`createdDate <= today()`, as
-`backfill-generation-counts.ts` already does) so a row dated 2120 cannot land in "the last 7 days".
+the since-removed `backfill-generation-counts` route did) so a row dated 2120 cannot land in "the last 7 days".
 Distinct **generators** cannot be windowed at all, at any granularity — and the section below argues the distinct-actor denominator
 is a day-one requirement, not a follow-up. So a trending signal needs new pipeline work whichever
 metric it ranks: either fix the generator view's date, or snapshot the all-time counters daily and diff
@@ -1576,3 +1582,182 @@ as `FeaturedModelVersion` or `FeaturedCollections` — showing ~20 models, not a
 
 Keep "Hot" named Hot either way: it is the Reddit meaning, it is accurate, and the testers have just
 learned it.
+
+## 18. A new version earns its own, capped credit (2026-11-17)
+
+### What prompted it
+
+Creators of long-lived models reported their views falling by roughly half from 2026-10-14, the
+day after Hot became the default, while their newer models gained. Their old models keep shipping
+versions, but every version inherits the model's original publish date, so the age term buries them.
+
+### The rule
+
+```
+version  = least(log10(1 + that version's engagement), C) + that version's publishedAt / 30d
+hotScore = greatest(model term, best Published version)
+```
+
+The model term is unchanged, so no score falls. A version never borrows the model's lifetime
+engagement (superseded by §19, which lends a small, capped share): pairing that with a fresh date is
+the `lastVersionAt` design §2 measured and rejected.
+An empty re-upload therefore ranks like an empty new model. The best version counts, not only the
+newest, so a weak release after a hit does not cost the hit's credit.
+
+### Choosing the damping, measured on a production replica (2026-11-17)
+
+Top 100 of the whole-model feed (Published, SFW browsing level, no POI or minor), recomputed per
+option against the stored scores:
+
+| Option | Version term | New in top 100 | Lifted in top 100 | Of those, model older than 1 year |
+| --- | --- | ---: | ---: | ---: |
+| Undamped | `l` | 52 | 57 | 25 |
+| **C = 2.0 (chosen)** | `least(l, 2.0)` | **0** | **0** | **0** |
+| C = 2.5 | `least(l, 2.5)` | 22 | 23 | 10 |
+| P1 / P2 | `l - 1` / `l - 2` | 0 | 0 | 0 |
+| W5 | `0.5 * l` | 0 | 0 | 0 |
+
+Undamped is the failure §2 recorded, back at half strength. C = 2.0 means a version can rank a model
+at most like a brand-new model with 100 engagement published the same day, which sits below the top
+100: it keeps the top of the feed exactly as it was. It still moves the reported cases a long way.
+A 2024 model with a recent version went from rank ~240,000 to ~730, and a 2022 model whose version
+had shipped that day from ~434,000 to ~1,800 (its version had earned a few hours' engagement). The
+penalty and weight options also left the top 100 alone but placed the same two models at
+10,000–24,000. The cap is also the only option whose top-100 guarantee holds by construction rather
+than by measurement.
+
+The cost is that a genuinely viral new version of an old model ranks no higher than a new model with
+100 engagement. If that becomes the complaint, raise `C` and re-measure the "older than 1 year"
+column; 2.5 let 10 of them in.
+
+### How it is maintained
+
+- Both trigger functions call `public.hot_score()`, so the formula lives in one place. Feed reads,
+  `apps/feed-go` and the indexes are untouched: they read the same column.
+- The trigger reads the model's Published versions and their `ModelVersionMetric` rows on every
+  scored write. The model metrics job writes version rows before model rows, so a run's version
+  counts are visible to the same run's model write. `lastVersionAt` joined the trigger's `UPDATE OF`
+  list so a version publish rescores the model.
+- The per-base-model slice is credited only by versions of its own base model.
+- A version lifts its model the moment it publishes: with no engagement yet it still carries a
+  fresh date, so the model ranks like an empty new model. The engagement part of its credit arrives
+  as the metrics jobs write its counts (model job every minute, base-model job every five).
+- Known gap: a version leaving Published through a raw-SQL sweep that does not also write `Model`
+  keeps its credit until the model's next metrics write, because the score only recomputes when
+  the `ModelMetric` (or slice) row is written. Ranking only; the version itself is not served.
+- A version's generation term is capped by the whole model's (or slice's) distinct-generator count,
+  not its own. Under C = 2.0 that cannot lift a model past what a new model with two generators can
+  reach; re-check it before raising `C`, or the owner's own generations on a new version become a
+  way to lift it.
+- The migration's in-file `CALL` rescores only rows where a version term beats the stored score,
+  then refreshes mirrored slices. Apply it without `--single-transaction`.
+
+## 19. A proven model's new version gets a small head start (2026-11-21)
+
+### What changed and why
+
+§18 credits a version only on its own engagement, so an established model's new release starts
+like an empty new model however proven the model is. This reverses §18's "never borrows" rule on
+purpose, with the §2 failure kept out by a cap and a bar.
+
+```
+qualifying version = least(log10(1 + e_v + 0.01 * max(E - e_v, 0)), 2.2) + publishedAt / 30d
+other versions     = §18's term, unchanged (cap 2.0)
+```
+
+`E` is the model's (or slice's) lifetime engagement and `e_v` the version's own. A version
+qualifies while all three hold:
+
+- its own likes + downloads / 6.4 >= 25. Generations do not count, because a version's generation
+  term is capped by the whole model's generator count, so the owner's own generating could clear
+  the bar.
+- it was published in the last 60 days.
+- `publishedAt < initialPublishedAt + 1 day`, so a version re-dated when a timed paid-access gate
+  ends gets no second head start. As a consequence, a version whose first scheduled date slipped by
+  more than a day gets none at all.
+
+Paid-access versions qualify like free ones, and since §20 their buyers count toward the bar (by
+price since §21).
+
+### Measured before choosing (replica snapshot, 2026-11-20)
+
+| Feed | Top-50 churn | Top-100 churn | Old model, new version in top 1,000 |
+| --- | ---: | ---: | ---: |
+| All levels | 0 | 0 | 31 → 128 |
+| SFW | 0 | 1 | 48 → 110 |
+
+A hypothetical new version with 100 engagement on a proven model ranks about 175 on day 0 and 590
+by day 14 on the all-levels feed, against about 414 and 1,315 under §18. A bigger setting (0.003
+share, cap 2.5) moved 13 of the all-levels top 100 and was rejected for that.
+
+### How it is maintained
+
+- `public.hot_version_score()` holds the version term. Both trigger functions call it. It is one
+  expression with no `FROM`, so the planner inlines it like `hot_score()`.
+- The 60-day window reads `NOW()`, so a stored score keeps its head start until the row's next
+  metrics write; by then its date term is two months old.
+- The migration (`20271121120000_model_hot_score_version_head_start`) is applied by hand. Its
+  `rollback.sql` restores §18 and rescores in both directions. Both refuse to run unless replica
+  lag is visible, and both are run with `psql -X -v ON_ERROR_STOP=1`.
+
+## 20. A paid version's buyers count toward the head-start bar (2026-11-22)
+
+A paid early-access version sells to few people, so §19's bar of 25 likes + downloads / 6.4 rarely
+counts what a sale says about it. Each buyer now counts like a like, in place of one download:
+
+```
+bar = likes + max(downloads - buyers, 0) / 6.4 + buyers >= 25
+```
+
+- A buyer is a user with a live paid purchase of the version: an `EntityAccess` row for it whose
+  `meta` holds a download- or generation-purchase transaction key. The model's owner, gifts and
+  moderator grants (no purchase key) do not count; a refund or a moderator revoke removes the key.
+- Subtracting buyers from downloads keeps a buyer who also downloaded from counting twice. When
+  buyers outnumber downloads (generation-only purchases), the download share is 0.
+- The bar never falls, so a version with no buyers is scored exactly as before. Only the bar
+  changes: a qualifying version earns §19's term, and a buyer adds nothing to `e_v`. A buyer who
+  also liked the version counts twice toward the bar, once as each.
+- A purchase, refund or revoke does not rescore on its own: the bar moves on the model's next
+  metrics write, as it does for a like.
+- `hot_version_score()` takes the buyer count as a tenth argument; the triggers count it per
+  version through the `EntityAccess` primary key, only for a version inside the 60-day window and
+  still under the bar without them.
+- The migration (`20271123120000_model_hot_score_buyer_bar`) is applied by hand like §19's and
+  rescores only the models whose versions its buyers lift over the bar. Its `rollback.sql`
+  restores §19's functions and rescores every model with an access row on a version published since 2026-09-22.
+
+## 21. A buyer counts by what they paid, capped (2026-11-24)
+
+§20 counts every buyer as 1, so a 20,000 Buzz sale and a 100 Buzz sale move the bar alike. A buyer
+now counts by the price they paid, on a log curve with a cap:
+
+```
+bar          = likes + max(downloads - buyers, 0) / 6.4 + sum(buyer weight) >= 25
+buyer weight = least(1 + log2(max(price, 100) / 100) / 3, 3)
+```
+
+| Price (Buzz) | ≤ 100 | 200 | 800 | 3,200 | 6,400 and up |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Weight | 1 | 1.33 | 2 | 2.67 | 3 |
+
+- **Who is a buyer** is §20's rule, unchanged, and each buyer still replaces one download. A buyer
+  holding both a generation and a download purchase counts once, at the dearer one.
+- **The price** is the amount charged, sale discount included. A purchase records it on its grant
+  as `<kind>-amount`, with `<kind>-buzzType` (`EARLY_ACCESS_PURCHASES`). The Buzz ledger is not in
+  Postgres, so a purchase made before these keys existed takes the gate's current price for its
+  kind from `PaidAccess.terms`, with a generation price falling back to the download price as
+  `generationPrice()` does.
+- **Blue Buzz counts 1** at any price, because Blue is granted by rewards. An older purchase on a gate
+  that accepts Blue also counts 1, since its currency was not recorded. An unreadable amount or
+  price counts 1, and never fails the metrics write.
+- **Wash buying.** The owner is still excluded, but the code has no signal that links one account to
+  another, so an alt's purchase counts like anyone's. The cap of 3 is what bounds how much one
+  purchase can move the bar, and Blue purchases stay at 1 because Blue costs nothing to earn.
+- **Known over-count.** A purchase made before this release is priced at the gate's price now, so a
+  creator who raises the price after selling counts those buyers higher, and one who turns Blue off
+  after selling to Blue buyers counts those older purchases at the list price. Both are bounded by
+  the cap, and the 60-day window ends them.
+- The migration (`20271128120100_model_hot_score_buyer_price_weight`) is applied by hand, as §20's
+  is, after the app release that records the amount. It rescores only the models its weights lift
+  over the bar. Its `rollback.sql` restores §20's functions and rescores every model with an access
+  row on a version published since 2026-09-22.

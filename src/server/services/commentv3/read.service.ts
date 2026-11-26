@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { sql } from 'kysely';
 import type { RawBuilder } from 'kysely';
 import { constants } from '~/server/common/constants';
@@ -5,6 +6,7 @@ import { ThreadSort } from '~/server/common/enums';
 import type { kyselyV3Read } from '~/server/db/kyselyDb';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { maskProfanityInHtml, type MaskedText } from '~/server/services/profanity-mask.service';
 
 /**
  * Comment reads on CommentV3 for the v3 comment suite (`docs/plans/comments-v3-article-flip.md`).
@@ -42,11 +44,18 @@ export type CommentV3Item = {
   replyToId: number | null;
   depth: number;
   content: string;
+  /**
+   * `content` with profanity masked, or null when it is clean. See `MaskedText`. Absent only when
+   * masking failed after a write was saved.
+   */
+  maskedContent?: MaskedText;
   createdAt: Date;
   updatedAt: Date;
   pinnedAt: Date | null;
   hidden: boolean;
   tosViolation: boolean;
+  /** Closed to replies below it, by a moderator. */
+  locked: boolean;
   reactionCount: number;
   /** Null on a deleted comment. */
   user: CommentV3Author | null;
@@ -78,6 +87,7 @@ type Row = {
   pinnedAt: Date | null;
   hidden: boolean;
   tosViolation: boolean;
+  locked: boolean;
   reactionCount: number;
   deletedAt: Date | null;
   userId: number;
@@ -89,9 +99,12 @@ type Row = {
 // Arrays travel as one comma-joined string: pg and PGlite send array parameters differently.
 const intArray = (ids: number[]) => sql`string_to_array(${ids.join(',')}, ',')::int[]`;
 
+// A tombstone is never pinned, whatever pinnedAt it kept from before the delete cleared it.
+const PINNED_AT = sql`(CASE WHEN c."deletedAt" IS NULL THEN c."pinnedAt" END)`;
+
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
-  c."pinnedAt", c.hidden, c."tosViolation", c."reactionCount", c."deletedAt", c."userId",
-  u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage"`;
+  ${PINNED_AT} AS "pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
+  u.username, u."deletedAt" AS "userDeletedAt", ${sql.raw(fallbackUserImageColumn)} AS "userImage"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
 const allowedTo = (v: CommentV3Viewer, alias: string) => {
@@ -224,19 +237,24 @@ async function decorate(
   const myReactions = new Map<number, ReviewReactions[]>();
   for (const r of mine.rows)
     myReactions.set(r.commentId, [...(myReactions.get(r.commentId) ?? []), r.reaction]);
+  const masked = await maskProfanityInHtml(
+    rows.map((r) => (r.deletedAt === null ? r.content : ''))
+  );
 
-  return rows.map((r) => ({
+  return rows.map((r, i) => ({
     id: r.id,
     deleted: r.deletedAt !== null,
     parentId: r.parentId,
     replyToId: r.replyToId,
     depth: r.depth,
     content: r.deletedAt === null ? r.content : '',
+    maskedContent: masked[i],
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     pinnedAt: r.pinnedAt,
     hidden: r.deletedAt === null && r.hidden,
     tosViolation: r.deletedAt === null && r.tosViolation,
+    locked: r.locked,
     reactionCount: r.reactionCount,
     user:
       r.deletedAt === null
@@ -259,6 +277,8 @@ export type SectionOptions = {
   repliesPerParent?: number;
   /** Reply levels opened up front. 0 opens none. */
   replyDepth: number;
+  /** Hidden top-level comments left out, or only those; folded into the list when unset. */
+  hidden?: 'exclude' | 'only';
 };
 
 const MAX_PINNED = 20;
@@ -282,19 +302,26 @@ export async function getCommentSection(
   const topLevel = sql`c."entityType" = ${
     entity.entityType
   }::"CommentEntityType" AND c."entityId" = ${entity.entityId}
-    AND c."parentId" IS NULL AND ${visibleTo(viewer)}`;
+    AND c."parentId" IS NULL AND ${visibleTo(viewer)}
+    ${
+      options.hidden === 'exclude'
+        ? sql`AND NOT c.hidden`
+        : options.hidden === 'only'
+        ? sql`AND c.hidden`
+        : sql``
+    }`;
 
   // One more than any page can hold, so a full page knows whether another follows.
   const [pinned, candidates] = await Promise.all([
     options.cursor
       ? ([] as Row[])
       : sql<Row>`SELECT ${COLUMNS} FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
-           WHERE ${topLevel} AND c."pinnedAt" IS NOT NULL
+           WHERE ${topLevel} AND c."pinnedAt" IS NOT NULL AND c."deletedAt" IS NULL
            ORDER BY c."pinnedAt" DESC, c.id DESC LIMIT ${MAX_PINNED}`
           .execute(db)
           .then((r) => r.rows),
     sql<Row>`SELECT ${COLUMNS} FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
-       WHERE ${topLevel} AND c."pinnedAt" IS NULL
+       WHERE ${topLevel} AND ${PINNED_AT} IS NULL
          ${options.cursor ? sql`AND ${afterCursor(sort, options.cursor)}` : sql``}
        ORDER BY ${sort.order} LIMIT ${budget + 1}`
       .execute(db)
@@ -354,9 +381,9 @@ async function openReplies(
   return (
     await sql<Row>`SELECT * FROM (
         SELECT ${COLUMNS}, c."rootId",
-               row_number() OVER (PARTITION BY c."parentId" ORDER BY c."pinnedAt" DESC NULLS LAST, ${
-                 sort.order
-               }) AS rn
+               row_number() OVER (PARTITION BY c."parentId" ORDER BY ${PINNED_AT} DESC NULLS LAST, ${
+      sort.order
+    }) AS rn
           FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
          WHERE c."rootId" = ANY(${intArray(rootIds)}) AND c.depth BETWEEN 1 AND ${replyDepth}
            AND ${visibleTo(viewer)}
@@ -397,12 +424,44 @@ function childrenOf(items: CommentV3Item[], sort: SortSpec): Record<number, Comm
   return children;
 }
 
+/** Top-level comments this viewer may see, split into visible and hidden. */
+export async function countSectionComments(
+  db: CommentV3Db,
+  entity: { entityType: string; entityId: number },
+  viewer: CommentV3Viewer
+) {
+  const { rows } = await sql<{ visible: number; hidden: number }>`
+    SELECT count(*) FILTER (WHERE NOT c.hidden)::int AS visible,
+           count(*) FILTER (WHERE c.hidden)::int AS hidden
+      FROM "CommentV3" c
+     WHERE c."entityType" = ${entity.entityType}::"CommentEntityType" AND c."entityId" = ${
+    entity.entityId
+  }
+       AND c."parentId" IS NULL AND ${visibleTo(viewer)}`.execute(db);
+  return rows[0] ?? { visible: 0, hidden: 0 };
+}
+
 /** The comment's entity, if the comment exists. Whether a viewer may see it is `isShown`. */
 export async function getCommentEntity(db: CommentV3Db, commentId: number) {
   const { rows } = await sql<{ entityType: string; entityId: number; path: string }>`
     SELECT c."entityType", c."entityId", c.path::text AS path FROM "CommentV3" c
      WHERE c.id = ${commentId}`.execute(db);
   return rows[0] ?? null;
+}
+
+/**
+ * The model comment a model-page link names. Links and notifications sent earlier
+ * carry the old v1 id (`modelPageId`), which on another model or surface can be a different
+ * comment's id. On the same model no comment's id is another's v1 id, so a v1 id found there wins,
+ * and any other id is taken as the comment's own.
+ */
+export async function resolveModelPageCommentId(db: CommentV3Db, modelId: number, id: number) {
+  const { rows } = await sql<{ id: number }>`
+    SELECT c.id FROM "CommentV3" c
+     WHERE c."legacyV1Id" = ${id} AND c."entityType" = 'model' AND c."entityId" = ${modelId}`.execute(
+    db
+  );
+  return rows[0]?.id ?? id;
 }
 
 /** Whether the comment and every comment above it are visible to this viewer. */
@@ -431,10 +490,10 @@ export async function getCommentReplies(
        WHERE c."parentId" = ${parentId} AND ${visibleTo(viewer)}
          ${
            options.cursor
-             ? sql`AND c."pinnedAt" IS NULL AND ${afterCursor(sort, options.cursor)}`
+             ? sql`AND ${PINNED_AT} IS NULL AND ${afterCursor(sort, options.cursor)}`
              : sql``
          }
-       ORDER BY c."pinnedAt" DESC NULLS LAST, ${sort.order} LIMIT ${limit + 1}`.execute(db)
+       ORDER BY ${PINNED_AT} DESC NULLS LAST, ${sort.order} LIMIT ${limit + 1}`.execute(db)
   ).rows;
   const page = rows.slice(0, limit);
   const items = await decorate(db, page, viewer);

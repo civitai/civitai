@@ -10,7 +10,7 @@
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
-  import { LINK_CLASS, plural } from '$lib/format';
+  import { LINK_CLASS, plural, shortAge } from '$lib/format';
   import { CSAM_HOLD_STATUS_LABELS, csamHoldFilterParams } from '$lib/csam-holds/hold-filters';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
@@ -216,7 +216,7 @@
       {#snippet coverIcon()}
         {#if row.entityType === 'ChatMessage'}
           <IconMessage aria-hidden="true" />
-        {:else if row.entityType === 'Comment' || row.entityType === 'CommentV2' || row.entityType === 'CommentV3'}
+        {:else if row.entityType === 'CommentV3'}
           <IconMessageCircle aria-hidden="true" />
         {:else if row.entityType === 'UserProfile'}
           <IconUser aria-hidden="true" />
@@ -248,6 +248,12 @@
         {/if}
         {#if row.status !== 'Pending'}
           <MetaChip tone={row.status === 'Dismissed' ? 'neutral' : 'red'}>{decisionLabel(row)}</MetaChip>
+        {/if}
+        {#if row.status === 'Pending' && row.leadReviewAt}
+          <MetaChip tone="violet">lead review</MetaChip>
+        {/if}
+        {#if data.holdFilters.status === 'report-not-filed' && row.decidedAt}
+          <MetaChip tone="red">report not filed · {shortAge(row.decidedAt)} since confirm</MetaChip>
         {/if}
       {/snippet}
     </TriageRow>

@@ -12,6 +12,7 @@ import {
   type BlockMediaUploadInfo,
   type MediaUploadKind,
 } from './mediaUploadLogic';
+import type { ScannedRowsPath } from './generationSourceScannedRows';
 import { mediaUploadErrorMessage, uploadGenerationMedia } from './mediaUploadRun';
 
 const COPY: Record<MediaUploadKind, { title: string; label: string; types: string }> = {
@@ -30,10 +31,13 @@ type UploadStatus = 'idle' | 'uploading' | 'ready' | 'error';
 export default function BlockMediaUploadModal({
   kind,
   onResolved,
+  scannedRows,
 }: {
   kind: MediaUploadKind;
   /** Called once, with the upload, before the modal closes itself. */
   onResolved: (result: BlockMediaUploadInfo) => void;
+  /** An image's scanned-row path (`toGenerationSource`); absent → the blob, as before. */
+  scannedRows?: ScannedRowsPath | null;
 }) {
   const dialog = useDialogContext();
   const [status, setStatus] = useState<UploadStatus>('idle');
@@ -43,14 +47,16 @@ export default function BlockMediaUploadModal({
   const copy = COPY[kind];
   const accept = MEDIA_UPLOAD_ACCEPT[kind];
 
-  // A late upload must not resolve a modal that unmounted or was superseded by a newer pick.
+  // A late upload must not resolve a modal that closed (it stays mounted through its exit
+  // transition) or was superseded by a newer pick.
   const epochRef = useRef(0);
   useEffect(() => {
+    if (!dialog.opened) return;
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
       epochRef.current++;
     };
-  }, []);
+  }, [dialog.opened]);
 
   async function handleFile(picked: File | null) {
     if (!picked || requireSignIn()) return;
@@ -80,7 +86,8 @@ export default function BlockMediaUploadModal({
         kind,
         file,
         checked.contentType,
-        () => epoch === epochRef.current
+        () => epoch === epochRef.current,
+        scannedRows
       );
       if (!result || epoch !== epochRef.current) return;
       setStatus('ready');

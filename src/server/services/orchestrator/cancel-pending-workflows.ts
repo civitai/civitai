@@ -7,8 +7,6 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 
 const PENDING_STATUSES = new Set(['unassigned', 'preparing', 'scheduled', 'processing']);
-// App Block runs carry the generation tag too; trainings do not.
-const APP_BLOCK_TAG = 'app-block';
 const LOOKBACK_MS = 2 * 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 5;
@@ -47,7 +45,8 @@ const isCancellable = (workflow: ListedWorkflow): workflow is ListedWorkflow & {
   !!workflow.id &&
   PENDING_STATUSES.has((workflow.status ?? '').toLowerCase()) &&
   (workflow.tags ?? []).includes(WORKFLOW_TAGS.GENERATION) &&
-  !(workflow.tags ?? []).includes(APP_BLOCK_TAG);
+  // App Block runs carry the generation tag too; trainings do not.
+  !(workflow.tags ?? []).includes(WORKFLOW_TAGS.APP_BLOCK);
 
 async function cancelOne(token: string, userId: number, workflowId: string) {
   let lastError: unknown;

@@ -1,11 +1,20 @@
+import { constants } from '~/server/common/constants';
 import {
+  SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FINAL_EXTENSIONS,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
+  SERVICE_FINAL_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM,
+  SERVICE_FINAL_VIDEO_TOO_LARGE,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
   SERVICE_PREVIEW_MIME_TYPES,
+  SERVICE_PREVIEW_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_VIDEO_MIME_TYPES,
+  isVideoPreviewMime,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -15,6 +24,28 @@ import type {
   ServicePreviewKind,
 } from '~/shared/utils/prisma/enums';
 
+const VIDEO_LIKE_EXTENSIONS = [
+  'mov',
+  'mkv',
+  'avi',
+  'm4v',
+  'wmv',
+  'mpg',
+  'mpeg',
+  'flv',
+  '3gp',
+  'ts',
+  'mts',
+  'm2ts',
+  'mxf',
+  'f4v',
+  'ogv',
+];
+const isVideoLike = (file: { type?: string }, extension: string) =>
+  !!file.type?.startsWith('video/') ||
+  VIDEO_LIKE_EXTENSIONS.includes(extension) ||
+  (SERVICE_FINAL_VIDEO_EXTENSIONS as readonly string[]).includes(extension);
+
 /** The fields of `creatorServiceDealFile.list` these rules read. */
 export type DealFileFacts = {
   id: number;
@@ -23,9 +54,18 @@ export type DealFileFacts = {
   status: ServiceDealFileStatus;
   scanStatus: ServiceDealFileScanStatus | null;
   canDownload: boolean;
+  /** Downloadable, but not from this domain. */
+  downloadOffDomain?: boolean;
 };
 
 const MB = 1024 * 1024;
+
+/** What the preview picker offers: video only where the deal takes a video preview. */
+export const previewAccept = (previewKind: ServicePreviewKind) =>
+  [
+    ...SERVICE_PREVIEW_MIME_TYPES,
+    ...(previewKind === 'Video' ? SERVICE_PREVIEW_VIDEO_MIME_TYPES : []),
+  ].join(',');
 const megabytes = (bytes: number) => `${Math.floor(bytes / MB)} MB`;
 
 /**
@@ -35,11 +75,20 @@ const megabytes = (bytes: number) => `${Math.floor(bytes / MB)} MB`;
  */
 export function uploadRefusal(
   kind: ServiceDealFileKind,
-  file: { name: string; type: string; size: number }
+  file: { name: string; type: string; size: number },
+  previewKind?: ServicePreviewKind
 ) {
+  if (kind === 'Preview' && isVideoPreviewMime(file.type)) {
+    if (previewKind !== 'Video') return 'Previews must be JPEG, PNG, WebP or GIF images.';
+    if (file.size > SERVICE_PREVIEW_VIDEO_MAX_BYTES)
+      return `Preview is too large (max ${megabytes(SERVICE_PREVIEW_VIDEO_MAX_BYTES)}).`;
+    return null;
+  }
   if (kind === 'Preview') {
     if (!(SERVICE_PREVIEW_MIME_TYPES as readonly string[]).includes(file.type))
-      return 'Previews must be JPEG, PNG, WebP or GIF images.';
+      return previewKind === 'Video'
+        ? 'Previews must be MP4 or WebM videos, or JPEG, PNG, WebP or GIF images.'
+        : 'Previews must be JPEG, PNG, WebP or GIF images.';
     // GIF and WebP may be animated, so they get the animated allowance, as on the server.
     const cap =
       file.type === 'image/gif' || file.type === 'image/webp'
@@ -48,11 +97,45 @@ export function uploadRefusal(
     if (file.size > cap) return `Preview is too large (max ${megabytes(cap)}).`;
     return null;
   }
+  const verb = kind === 'Attachment' ? 'attached' : 'delivered';
   const extension = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
+  const finalVideo = (SERVICE_FINAL_VIDEO_EXTENSIONS as readonly string[]).includes(extension);
+  // A video is never sent to a .zip: one inside an archive is refused.
+  if (kind === 'Attachment' && (finalVideo || isVideoLike(file, extension)))
+    return "Videos can't be attached.";
+  if (!finalVideo && isVideoLike(file, extension)) return SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM;
+  if (extension === 'pdf') return SERVICE_FINAL_PDF_REFUSAL;
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
-    return `.${extension || '(none)'} files can't be delivered. Use a .zip for anything else.`;
-  if (file.size > SERVICE_FINAL_MAX_BYTES) return 'That file is too large to deliver (max 2 GB).';
+    return `.${extension || '(none)'} files can't be ${verb}. Use a .zip for anything else.`;
+  if (file.size > SERVICE_FINAL_MAX_BYTES)
+    return `That file is too large to be ${verb} (max 2 GB).`;
+  if (finalVideo && file.size > constants.mediaUpload.maxVideoFileSize)
+    return SERVICE_FINAL_VIDEO_TOO_LARGE;
   return null;
+}
+
+/** A buyer may attach files from the request until the seller delivers; the server enforces it. */
+export const canAttachInStatus = (status: ServiceDealStatus) =>
+  status === 'Requested' || status === 'Accepted' || status === 'InRevision';
+
+/** A closed deal's files are on the retention clock, so its parties are told when they go. */
+export const showsRetentionNotice = (status: ServiceDealStatus) =>
+  status === 'Declined' || status === 'Expired' || status === 'Cancelled' || status === 'Completed';
+
+/** How many more files the buyer may attach to the deal, across all rounds. */
+export const attachmentSlotsLeft = (files: DealFileFacts[]) =>
+  Math.max(
+    0,
+    SERVICE_ATTACHMENT_MAX_FILES - files.filter((file) => file.kind === 'Attachment').length
+  );
+
+/** One attached file as its viewer sees it. The seller only ever receives files that passed. */
+export function attachmentStatus(file: DealFileFacts): { label: string; color: string } {
+  if (file.status === 'Uploading') return { label: 'Uploading', color: 'gray' };
+  if (file.status === 'Failed' || file.scanStatus === 'Failed')
+    return { label: 'Not accepted', color: 'red' };
+  if (file.scanStatus === 'Passed') return { label: 'Shared', color: 'green' };
+  return { label: 'Being checked', color: 'blue' };
 }
 
 /** How many more files of a kind the seller may add to the round in progress. */
@@ -74,12 +157,13 @@ export function uploadSlotsLeft(
 export function sortPicked<T extends { name: string; type: string; size: number }>(
   kind: ServiceDealFileKind,
   picked: T[],
-  slots: number
+  slots: number,
+  previewKind?: ServicePreviewKind
 ) {
   const refused: { name: string; reason: string }[] = [];
   const valid: T[] = [];
   for (const file of picked) {
-    const reason = uploadRefusal(kind, file);
+    const reason = uploadRefusal(kind, file, previewKind);
     if (reason) refused.push({ name: file.name, reason });
     else valid.push(file);
   }
@@ -94,8 +178,9 @@ const PREVIEW_POLL_MS = 10_000;
 const SCAN_POLL_MS = 30_000;
 
 /**
- * How often to re-read the list, or false. While a preview is being prepared, and while a final
- * of a delivered round waits for its check, which decides whether the buyer may accept. Only
+ * How often to re-read the list, or false. While a preview is being prepared, while an attachment
+ * is being checked (only its uploader sees it then), and while a final of a delivered round waits
+ * for its check, which decides whether the buyer may accept. Only
  * then: a pending check anywhere else changes nothing on this page, and each read hits the
  * primary. Not for an Uploading file: an upload the seller abandoned stays Uploading, and the
  * uploader refreshes the list itself when one finishes.
@@ -106,6 +191,13 @@ export function filesPollMs(
 ) {
   if (files.some((file) => file.kind === 'Preview' && file.status === 'Processing'))
     return PREVIEW_POLL_MS;
+  if (
+    files.some(
+      (file) =>
+        file.kind === 'Attachment' && file.status === 'Ready' && file.scanStatus === 'Pending'
+    )
+  )
+    return SCAN_POLL_MS;
   if (
     deal.status === 'Delivered' &&
     files.some(
@@ -140,7 +232,7 @@ export function buyerFinalsState(
   { owned }: { owned: boolean }
 ): FinalsState | null {
   if (finals.length === 0) return null;
-  if (finals.every((file) => file.canDownload)) return 'available';
+  if (finals.every((file) => file.canDownload || file.downloadOffDomain)) return 'available';
   if (finals.some((file) => file.scanStatus === 'Failed')) return 'failed';
   if (finals.some((file) => file.scanStatus !== 'Passed'))
     return owned ? 'checkingOwned' : 'checking';

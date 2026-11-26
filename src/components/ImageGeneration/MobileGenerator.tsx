@@ -1,14 +1,6 @@
-import { Badge, CloseButton, Text, UnstyledButton } from '@mantine/core';
-import { useElementSize, useLocalStorage } from '@mantine/hooks';
-import {
-  IconChevronDown,
-  IconChevronUp,
-  IconChevronsUp,
-  IconHandFinger,
-  IconLayoutGrid,
-  IconLayoutList,
-} from '@tabler/icons-react';
-import clsx from 'clsx';
+import { Badge, Button, CloseButton, Text } from '@mantine/core';
+import { useElementSize } from '@mantine/hooks';
+import { IconChevronDown, IconLayoutGrid, IconLayoutList, IconPlus } from '@tabler/icons-react';
 import { useField } from 'form-graph/react';
 import type { CSSProperties, PointerEvent, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -26,7 +18,10 @@ import { QueueSlots } from '~/components/ImageGeneration/QueueSnackbar';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useHideOnScroll } from '~/hooks/useHideOnScroll';
 import { useHistoryLayer } from '~/hooks/useHistoryLayer';
-import { useVisualViewportBottomInset } from '~/hooks/useVisualViewportBottomInset';
+import {
+  useKeyboardOpen,
+  useVisualViewportBottomInset,
+} from '~/hooks/useVisualViewportBottomInset';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import { useActiveGenerationForm } from '~/store/active-generation-form.store';
@@ -44,17 +39,20 @@ import {
 const TEXT_ENTRY =
   'textarea:not([readonly]), [contenteditable="true"], input:not([readonly], [type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="range"], [type="file"])';
 const isTextEntry = (el: EventTarget | null) => el instanceof Element && el.matches(TEXT_ENTRY);
+/**
+ * How long the footer waits to come back after a field loses focus. A tap blurs the field on its
+ * mousedown, before its click: a footer back at once takes the click meant for what was under it.
+ */
+const FOOTER_RETURN_MS = 300;
 
-const OPEN_DRAG = 24;
 const CLOSE_DRAG = 60;
-// Named for the hint the coach replaced; renaming it would show the coach again to everyone.
-const COACH_KEY = 'mobile-generator-sheet-hint';
 const TITLE_ROW = 'flex min-h-12 items-center gap-2 px-3';
 
 type Props = { form: ReactNode; onClose: () => void; closeLabel: string };
 
 /**
- * The generator on a phone: the results are the screen, and the form is a bottom sheet over them.
+ * The generator on a phone: the results are the screen, and the form is a bottom sheet over them,
+ * opened by a floating Create button.
  * The panel's `view` drives the sheet ('generate' is open), so every way into the generator that
  * asks for the form opens the sheet.
  */
@@ -166,40 +164,33 @@ function FormSheet({
   const sheetRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ startY: number; dy: number; pointerId: number; captured?: boolean }>();
   const [dragging, setDragging] = useState(false);
-  // While a field takes typing, the footer steps aside so the keyboard leaves the field room.
+  // While a field takes typing with the keyboard up, the footer steps aside so the keyboard leaves
+  // the field room. With the keyboard down (dismissed, or a hardware one) the footer stays.
   const [typing, setTyping] = useState(false);
-
-  // The swipe coach: shown while the sheet is closed, until the form has been open once by any
-  // route (Remix opens it too, and a coach after that first submit would cover the results).
-  const [coach, setCoach] = useLocalStorage<'pending' | 'shown' | 'done'>({
-    key: COACH_KEY,
-    defaultValue: 'pending',
-    getInitialValueInEffect: false,
-  });
-  useEffect(() => {
-    if (expanded) {
-      if (coach !== 'done') setCoach('done');
-    } else if (coach === 'pending') setCoach('shown');
-  }, [expanded, coach, setCoach]);
+  const keyboardOpen = useKeyboardOpen();
+  const footerReturn = useRef<ReturnType<typeof setTimeout>>();
+  const setTypingFor = (field: EventTarget | null) => {
+    clearTimeout(footerReturn.current);
+    if (isTextEntry(field)) setTyping(true);
+    else footerReturn.current = setTimeout(() => setTyping(false), FOOTER_RETURN_MS);
+  };
+  useEffect(() => () => clearTimeout(footerReturn.current), []);
 
   const setDragOffset = (dy: number) =>
     sheetRef.current?.style.setProperty('--sheet-drag', `${dy}px`);
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    // The closed bar is itself a button and drags too; the title row's buttons don't.
-    if ((e.target as HTMLElement).closest('button:not([data-sheet-bar])')) return;
+    // The title row's buttons don't drag.
+    if ((e.target as HTMLElement).closest('button')) return;
     drag.current = { startY: e.clientY, dy: 0, pointerId: e.pointerId };
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const current = drag.current;
     if (!current || current.pointerId !== e.pointerId) return;
-    const dy = expanded
-      ? Math.max(0, e.clientY - current.startY)
-      : Math.min(0, e.clientY - current.startY);
+    const dy = Math.max(0, e.clientY - current.startY);
     current.dy = dy;
     if (Math.abs(dy) <= 4) return;
-    // Captured only once it is a drag, so a tap stays a click on what it landed on: opening on the
-    // tap's pointerup would re-render the row, and the click would land on the open form's chevron.
+    // Captured only once it is a drag, so a tap stays a click on what it landed on.
     if (!current.captured) {
       current.captured = true;
       // Throws for a pointer that is no longer down, which the drag can do without.
@@ -216,9 +207,7 @@ function FormSheet({
     drag.current = undefined;
     setDragging(false);
     setDragOffset(0);
-    // A tap opens through the bar's own click.
-    if (expanded && current.dy > CLOSE_DRAG) onClose();
-    else if (!expanded && current.dy < -OPEN_DRAG) onOpen();
+    if (current.dy > CLOSE_DRAG) onClose();
   };
   const onPointerCancel = () => {
     drag.current = undefined;
@@ -227,76 +216,55 @@ function FormSheet({
   };
 
   return (
-    <section
-      ref={sheetRef}
-      className={classes.sheet}
-      data-expanded={expanded || undefined}
-      data-dragging={dragging || undefined}
-      data-typing={typing || undefined}
-      aria-label="Generation form"
-    >
-      {!expanded && coach === 'shown' && (
-        // A tap on the bar also opens the form, for anyone who can't swipe.
+    <>
+      <section
+        ref={sheetRef}
+        className={classes.sheet}
+        data-expanded={expanded || undefined}
+        data-dragging={dragging || undefined}
+        data-typing={(typing && keyboardOpen) || undefined}
+        aria-label="Generation form"
+        {...inert(!expanded)}
+      >
         <div
-          className={classes.coach}
+          className={classes.head}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerCancel}
         >
-          <div className={classes.coachCue} aria-hidden>
-            <IconChevronsUp size={28} className={classes.coachArrow} />
-            <IconHandFinger size={44} className={classes.coachFinger} />
-          </div>
-          <p className={classes.coachText} role="status">
-            Swipe up to open the form
-          </p>
-        </div>
-      )}
-      <div
-        className={classes.head}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-      >
-        {expanded ? (
           <div className={TITLE_ROW}>
             <SheetTitle />
-            <div className="flex shrink-0 items-center gap-1">
-              {presets && <PresetHeaderButton />}
-              <RenderTitleActions className="contents" />
-              <CloseFormButton onClose={onClose} />
-            </div>
+            {expanded && (
+              <div className="flex shrink-0 items-center gap-1">
+                {presets && <PresetHeaderButton />}
+                <RenderTitleActions className="contents" />
+                <CloseFormButton onClose={onClose} />
+              </div>
+            )}
           </div>
-        ) : (
-          <UnstyledButton
-            data-sheet-bar
-            className={clsx(TITLE_ROW, 'w-full text-left')}
-            aria-label="Open the form"
-            onClick={onOpen}
-          >
-            <SheetTitle />
-            <span
-              className={clsx(
-                'flex size-[34px] shrink-0 items-center justify-center',
-                coach === 'shown' && classes.nudge
-              )}
-            >
-              <IconChevronUp size={20} />
-            </span>
-          </UnstyledButton>
-        )}
-      </div>
-      <div
-        className={classes.body}
-        {...inert(!expanded)}
-        onFocus={(e) => setTyping(isTextEntry(e.target))}
-        onBlur={(e) => setTyping(isTextEntry(e.relatedTarget))}
-      >
-        {children}
-      </div>
-    </section>
+        </div>
+        <div
+          className={classes.body}
+          onFocus={(e) => setTypingFor(e.target)}
+          onBlur={(e) => setTypingFor(e.relatedTarget)}
+        >
+          {children}
+        </div>
+      </section>
+      {!expanded && (
+        <Button
+          data-pill
+          className={classes.create}
+          leftSection={<IconPlus size={20} />}
+          h={56}
+          fz={16}
+          onClick={onOpen}
+        >
+          Create
+        </Button>
+      )}
+    </>
   );
 }
 

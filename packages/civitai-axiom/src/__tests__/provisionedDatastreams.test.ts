@@ -176,8 +176,9 @@ describe('the provisioned-dataset guard on the Axiom dual-write', () => {
 
     await logToAxiom(ERR, ABSENT_A);
 
-    expect(seen).toHaveLength(1);
-    expect(seen[0][1]).toBe(ABSENT_A);
+    const events = seen.filter(([body]) => JSON.parse(body).name === ERR.name);
+    expect(events).toHaveLength(1);
+    expect(events[0][1]).toBe(ABSENT_A);
   });
 
   it('a skip is NOT counted as an ingest failure — the wedged-ingest counter must stay clean', async () => {
@@ -198,9 +199,10 @@ describe('the provisioned-dataset guard on the Axiom dual-write', () => {
 
   it('a provisioned datastream still records ingest failures normally', async () => {
     h.ingestEvents.mockRejectedValue(new Error('axiom down'));
-    const { logToAxiom } = createAxiomLogger(BASE);
+    const { logToAxiom, flush } = createAxiomLogger(BASE);
 
     await logToAxiom(ERR, ALLOWED_A);
+    await flush(); // the dual-write's outcome is recorded in the background
 
     // Positive control for the assertion above: the failure path is reachable and still works, so
     // "no axiom-ingest-failed" for the skipped stream is a real result, not a dead probe.

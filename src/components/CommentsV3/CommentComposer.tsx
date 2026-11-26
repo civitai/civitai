@@ -1,4 +1,5 @@
 import { Alert, Button, Text } from '@mantine/core';
+import * as z from 'zod';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
@@ -10,14 +11,14 @@ import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { sectionMuteSchema, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import { commentContentSchema, commentSectionSchema } from '~/server/schema/commentv3.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
 import { useCommentMutations } from './useCommentMutations';
 import classes from '~/components/CommentsV3/CommentComposer.module.scss';
 
-const contentSchema = upsertCommentv2Schema.pick({ content: true });
+const contentSchema = z.object({ content: commentContentSchema });
 
 /**
  * The editor. Writes a new top-level comment, a reply under `parent`, or an edit of `editing`.
@@ -133,14 +134,17 @@ export function CommentEditor({
 }
 
 /**
- * The top-level composer with the states a reader can be in: signed out, read-only, without
- * permission, locked or muted (the section's mute control stays reachable in both), or writing.
+ * The composer with the states a reader can be in: signed out, read-only, without permission,
+ * locked or muted (the section's mute control stays reachable in both), or writing. Top-level, or
+ * a standing reply box under `parent` (a thread dialog's root).
  */
-export function CommentComposer() {
+export function CommentComposer({ parent }: { parent?: CommentV3Comment } = {}) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { entityType, entityId, locked, isMuted, isReadonly, forceLocked } = useCommentSection();
-  const target = sectionMuteSchema.safeParse({ entityType, entityId });
+  const { entityType, entityId, isMuted, isReadonly, forceLocked, focusedThread, ...section } =
+    useCommentSection();
+  const locked = section.locked || (!!parent && (parent.locked || !!focusedThread?.locked));
+  const target = commentSectionSchema.safeParse({ entityType, entityId });
   const sectionMute = useSectionMute({
     target: target.success ? target.data : undefined,
     enabled: true,
@@ -196,7 +200,7 @@ export function CommentComposer() {
   return (
     <div className="flex items-start gap-3">
       <UserAvatar user={currentUser} size="md" />
-      <CommentEditor />
+      <CommentEditor parent={parent} />
       {sectionMute.control}
     </div>
   );

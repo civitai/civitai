@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv';
+import { envTimeoutMs } from '@/utils/env-timeout';
 
 dotenv.config();
 
@@ -19,13 +20,94 @@ export function assertVectorSyncConfig() {
   if (invalidVectorEnv.length) throw new Error(`invalid ${invalidVectorEnv.join(', ')}`);
 }
 
+/** The content search indexes' tables, streamed by CDC_CONTENT_ENABLED. Article already streams. */
+export const CONTENT_CDC_TABLES = [
+  'public.ComicProject',
+  'public.ComicChapter',
+  'public.Challenge',
+  'public.ChallengeEvent',
+  'public.Crucible',
+  'public.Model3D',
+  'public.TagsOnModel3D',
+  'public.Storyline',
+  'public.StorylineChapter',
+  'public.Collection',
+];
+
+/**
+ * Their unbounded text and JSON columns, kept out of the stream: content sync re-reads rows from
+ * Postgres, and a record over the producer's size limit fails the connector task for every table.
+ */
+export const CONTENT_EXCLUDED_COLUMNS = {
+  ComicProject: ['description', 'meta'],
+  ComicChapter: ['earlyAccessConfig'],
+  Challenge: [
+    'description',
+    'invitation',
+    'judgingPrompt',
+    'judgingCategories',
+    'prizes',
+    'entryPrize',
+    'prizeDistribution',
+    'metadata',
+  ],
+  ChallengeEvent: ['description'],
+  Crucible: ['description', 'prizePositions', 'allowedResources', 'takedownReason'],
+  Model3D: ['description', 'licenseDetails', 'generationParams', 'meta', 'gallerySettings'],
+  Collection: ['description', 'metadata'],
+};
+
+/** A positive integer from the environment, else the fallback (blank, malformed, zero or negative). */
+function positiveInt(raw: string | undefined, fallback: number) {
+  const n = raw?.trim() && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  return n > 0 ? n : fallback;
+}
+
+export type SecondaryClickhouseConfig = {
+  /** True only when METRICS_SECONDARY_TEE_ENABLED is exactly 'true' AND a URL is set. */
+  enabled: boolean;
+  url: string;
+  username: string;
+  password: string;
+  database: string;
+  /** Rows held for the secondary destination (queued + in flight) before the oldest are dropped. */
+  maxQueueRows: number;
+};
+
+/**
+ * The optional secondary ClickHouse destination for metric events. Off unless BOTH the switch
+ * and the URL are set; read from the environment like every other event-engine setting, so
+ * turning it off is an env change plus a restart.
+ */
+export function secondaryClickhouseConfig(
+  env: NodeJS.ProcessEnv = process.env
+): SecondaryClickhouseConfig {
+  const url = env.CLICKHOUSE_SECONDARY_URL?.trim() ?? '';
+  return {
+    enabled: env.METRICS_SECONDARY_TEE_ENABLED === 'true' && url !== '',
+    url,
+    username: env.CLICKHOUSE_SECONDARY_USERNAME ?? 'default',
+    password: env.CLICKHOUSE_SECONDARY_PASSWORD ?? '',
+    database: env.CLICKHOUSE_SECONDARY_DATABASE?.trim() || 'metrics',
+    maxQueueRows: positiveInt(env.METRICS_SECONDARY_TEE_MAX_QUEUE_ROWS, 200_000),
+  };
+}
+
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
+    // Bounds on the event processor's pool, so a stalled database turns an awaited handler query into
+    // an error instead of a partition that silently stops moving while its heartbeat keeps it in the
+    // consumer group. connectionTimeoutMs covers both opening a connection and waiting for a free one.
+    // queryTimeoutMs is client-side (pg's query_timeout), so it holds through any connection pooler.
+    // Either set to 0 turns that bound off.
+    connectionTimeoutMs: envTimeoutMs(process.env.PG_CONNECTION_TIMEOUT_MS, 5_000),
+    queryTimeoutMs: envTimeoutMs(process.env.PG_QUERY_TIMEOUT_MS, 30_000),
   },
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
     metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
+    secondary: secondaryClickhouseConfig(),
   },
   redis: {
     url: process.env.REDIS_URL!,
@@ -54,8 +136,6 @@ export const config = {
       'public.ImageReaction',
       'public.ResourceReview',
       'public.CollectionItem',
-      'public.Comment',
-      'public.CommentV2',
       'public.CommentV3',
       'public.ImageResourceNew',
       'public.BuzzTip',
@@ -80,7 +160,12 @@ export const config = {
     // Streamed by the connector but not consumed by the metrics watcher (only by
     // vector-sync). Adding a table here changes the Debezium publication, and the
     // watcher recreates the connector on startup, so each entry is opt-in.
-    cdcOnlyTables: process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : [],
+    cdcOnlyTables: [
+      ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
+      ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
+      // Every content search index at once: each change to this list recreates the connector.
+      ...(process.env.CDC_CONTENT_ENABLED === 'true' ? CONTENT_CDC_TABLES : []),
+    ],
 
     // ClickHouse topics streamed directly to Kafka
     clickhouseTopics: [
@@ -93,8 +178,6 @@ export const config = {
     nodeEnv: process.env.NODE_ENV ?? 'development',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     batchInsertIntervalMs: parseInt(process.env.BATCH_INSERT_INTERVAL ?? '30') * 1000,
-    indexUpdateIntervalMs: parseInt(process.env.INDEX_UPDATE_INTERVAL ?? '300') * 1000,
-    indexUpdateEnabled: process.env.INDEX_UPDATE_ENABLED !== 'false',
     workerPoolSize: parseInt(process.env.WORKER_POOL_SIZE ?? '10'),
     healthCheckPort: parseInt(process.env.HEALTH_CHECK_PORT ?? '3000'),
     // Outbox reconciliation poller. Drains rows a live CDC event never
@@ -149,7 +232,22 @@ export const config = {
   // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
   vectorSync: {
     consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
+    modelConsumerGroup: process.env.VECTOR_MODEL_CONSUMER_GROUP ?? 'model-vector-sync',
+    contentConsumerGroup: process.env.VECTOR_CONTENT_CONSUMER_GROUP ?? 'content-vector-sync',
+    // The content consumer's domains, by name (e.g. "article,comic"); one is added per rollout step.
+    contentDomains: (process.env.VECTOR_CONTENT_DOMAINS ?? '')
+      .split(',')
+      .map((d) => d.trim())
+      .filter(Boolean),
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
+    // Without these a query on a half-open connection never settles: the flush awaiting it holds
+    // every later flush, and the consumer stops with nothing logged.
+    // Longer than the event processor's: a backfill page or a reconcile range read is bigger. 0 = off.
+    pgQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_QUERY_TIMEOUT_MS, 60_000),
+    // Backfill and reconcile Jobs read bigger slices (a reconcile bucket is 100k ids through the
+    // eligibility filter), and a slow one there only delays a Job, so their bound is looser.
+    pgBatchQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_BATCH_QUERY_TIMEOUT_MS, 300_000),
+    pgConnectionTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_CONNECTION_TIMEOUT_MS, 30_000),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
     // embedBlockedReason in vector-sync/sync.ts.
@@ -162,6 +260,27 @@ export const config = {
     // collection while the old one keeps serving.
     collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
     alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Semantic model search, the same way: the search service reads the alias.
+    modelCollection: process.env.VECTOR_MODEL_COLLECTION ?? 'models_wemm2b_256_v1',
+    modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
+    articleCollection: process.env.VECTOR_ARTICLE_COLLECTION ?? 'articles_wemm2b_256_v1',
+    articleAlias: process.env.VECTOR_ARTICLE_ALIAS ?? 'articles_semantic',
+    comicCollection: process.env.VECTOR_COMIC_COLLECTION ?? 'comics_wemm2b_256_v1',
+    comicAlias: process.env.VECTOR_COMIC_ALIAS ?? 'comics_semantic',
+    crucibleCollection: process.env.VECTOR_CRUCIBLE_COLLECTION ?? 'crucibles_wemm2b_256_v1',
+    crucibleAlias: process.env.VECTOR_CRUCIBLE_ALIAS ?? 'crucibles_semantic',
+    challengeCollection: process.env.VECTOR_CHALLENGE_COLLECTION ?? 'challenges_wemm2b_256_v1',
+    challengeAlias: process.env.VECTOR_CHALLENGE_ALIAS ?? 'challenges_semantic',
+    storylineCollection: process.env.VECTOR_STORYLINE_COLLECTION ?? 'storylines_wemm2b_256_v1',
+    storylineAlias: process.env.VECTOR_STORYLINE_ALIAS ?? 'storylines_semantic',
+    model3dCollection: process.env.VECTOR_MODEL3D_COLLECTION ?? 'models3d_wemm2b_256_v1',
+    model3dAlias: process.env.VECTOR_MODEL3D_ALIAS ?? 'models3d_semantic',
+    collectionCollection: process.env.VECTOR_COLLECTION_COLLECTION ?? 'collections_wemm2b_256_v1',
+    collectionAlias: process.env.VECTOR_COLLECTION_ALIAS ?? 'collections_semantic',
+    bountyCollection: process.env.VECTOR_BOUNTY_COLLECTION ?? 'bounties_wemm2b_256_v1',
+    bountyAlias: process.env.VECTOR_BOUNTY_ALIAS ?? 'bounties_semantic',
+    videoCollection: process.env.VECTOR_VIDEO_COLLECTION ?? 'videos_wemm2b_256_v1',
+    videoAlias: process.env.VECTOR_VIDEO_ALIAS ?? 'videos_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
@@ -183,6 +302,16 @@ export const config = {
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
   },
 };
+
+/**
+ * Whether a vector-sync domain may embed: the global switch, then VECTOR_<NAME>_EMBED_ENABLED
+ * ('true' or 'false'), else the domain's default.
+ */
+export function domainEmbedEnabled(name: string, byDefault = false) {
+  if (!config.vectorSync.embedEnabled) return false;
+  const own = process.env[`VECTOR_${name.toUpperCase()}_EMBED_ENABLED`];
+  return own === undefined ? byDefault : own === 'true';
+}
 
 export function validateConfig() {
   const required = ['DATABASE_URL', 'CLICKHOUSE_URL', 'REDIS_URL'];

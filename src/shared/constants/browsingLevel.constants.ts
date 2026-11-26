@@ -1,3 +1,4 @@
+import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -115,6 +116,34 @@ export function getBrowsingLevelLabel(value: number) {
  */
 export const OFFSITE_CONTENT_RATING_LADDER = ['g', 'pg', 'pg13', 'r', 'x'] as const;
 export type OffsiteRatingValue = (typeof OFFSITE_CONTENT_RATING_LADDER)[number];
+
+/**
+ * The rating of ONE image, ascending: one rung per `NsfwLevel` bit from PG to XXX. The spelling
+ * an app workflow output (`BlockWorkflowOutputRating`) and a `store-listing@v1` media item
+ * (`MediaRating`) carry. XXX is a rung of its own here, unlike {@link OFFSITE_CONTENT_RATING_LADDER}
+ * (a listing's rating, where `contentRatingFromNsfwLevel` folds XXX into `x`), which is why that
+ * ladder is a separate one.
+ */
+export const IMAGE_RATING_LADDER = ['pg', 'pg13', 'r', 'x', 'xxx'] as const;
+export type ImageRating = (typeof IMAGE_RATING_LADDER)[number];
+
+/** Each image rating's `NsfwLevel` bit. */
+export const NSFW_LEVEL_BY_IMAGE_RATING: Readonly<Record<ImageRating, NsfwLevel>> = {
+  pg: NsfwLevel.PG,
+  pg13: NsfwLevel.PG13,
+  r: NsfwLevel.R,
+  x: NsfwLevel.X,
+  xxx: NsfwLevel.XXX,
+};
+
+/**
+ * The image rating whose bit `level` is EXACTLY, or null: 0, Blocked, and any flag of several
+ * bits have none. Exact, never "the highest bit", so a value that is not one image's own level is
+ * never given a rating.
+ */
+export function imageRatingOfNsfwLevel(level: number): ImageRating | null {
+  return IMAGE_RATING_LADDER.find((rating) => NSFW_LEVEL_BY_IMAGE_RATING[rating] === level) ?? null;
+}
 
 /**
  * Off-site content rating → its USER-FACING label. The counterpart of
@@ -242,9 +271,36 @@ export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 /** R, X and XXX; unlike nsfwBrowsingLevelsFlag, without Blocked. */
 export const matureBrowsingLevelsFlag = allBrowsingLevelsFlag & ~sfwBrowsingLevelsFlag;
 
-/** A model flagged unsuitable for mature content is held to PG/PG-13 wherever it is shown or used. */
+/**
+ * The levels a model is held to wherever it is shown or used: a model flagged as depicting a minor
+ * by the minor content rule, an SFW-only model to PG/PG-13. The two are kept apart because only the
+ * first is a minor rule.
+ */
 export const modelBrowsingLevelLimit = (model: { minor: boolean; sfwOnly: boolean }) =>
-  model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  model.minor
+    ? minorContentBrowsingLevelsFlag
+    : model.sfwOnly
+    ? sfwBrowsingLevelsFlag
+    : allBrowsingLevelsFlag;
+
+/**
+ * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
+ * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
+ * gallery reads 0 as no cap.
+ */
+export function heldGalleryLevel(
+  stored: number | undefined,
+  model: { minor: boolean; sfwOnly: boolean }
+) {
+  const limit = modelBrowsingLevelLimit(model);
+  return Flags.intersection(stored ?? 0, limit) || limit;
+}
+
+/** The level a minor model's gallery and carousel are forced to for a viewer who is not a moderator. */
+export const forcedMinorModelBrowsingLevel = (signedIn: boolean) =>
+  signedIn
+    ? minorContentBrowsingLevelsFlag
+    : Flags.intersection(minorContentBrowsingLevelsFlag, publicBrowsingLevelsFlag);
 
 export const exceedsModelBrowsingLevelLimit = (
   nsfwLevel: number,
@@ -349,9 +405,9 @@ export function effectiveBrowsingCeiling(
 }
 
 // helpers
+/** `level` held to the browsing levels: no Blocked bit, and nothing above it. */
 export function onlySelectableLevels(level: number) {
-  if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);
-  return level;
+  return level & allBrowsingLevelsFlag;
 }
 
 export function getIsPublicBrowsingLevel(level: number) {

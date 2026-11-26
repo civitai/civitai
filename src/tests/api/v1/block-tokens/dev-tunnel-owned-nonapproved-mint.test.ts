@@ -121,7 +121,11 @@ const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+vi.mock('~/server/db/client', () => ({
+  dbWrite: mockDbWrite,
+  // The minter's own level narrows the dev token; an all-levels author leaves the ceiling as is.
+  dbRead: { user: { findUnique: async () => ({ showNsfw: true, browsingLevel: 31 }) } },
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -520,7 +524,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
         currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
         manifest: { scopes: ['models:read:self'], page: { path: '/', title: 'My App' } },
         approvedScopes: ['models:read:self'],
-        app: { allowedScopes: 4 /* ModelsRead */ },
+        app: { allowedScopes: 4n /* ModelsRead */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -547,7 +551,41 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
       userId: MOD.user.id,
       clientId: 'appblk-my-app',
       scopes: ['ai:write:budgeted', 'user:read:self'],
+      impersonatedBy: null,
     });
+  });
+
+  it('a suspended app whose hub mint is refused falls back to the dev-scoped token, not a hub bearer', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      declaredAuth: 'oauth',
+    });
+    mockDevOauth.mintDevTunnelOauthToken.mockRejectedValueOnce(
+      Object.assign(new Error('This application is not currently available.'), {
+        code: 'access_denied',
+        status: 403,
+      })
+    );
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    expect(res._body.kind).toBe('block');
+    expect(res._body.token).not.toBe('civ_dev_oauth');
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+  });
+
+  it('a hub failure that is not a refusal is still an error, with no fallback token', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      declaredAuth: 'oauth',
+    });
+    mockDevOauth.mintDevTunnelOauthToken.mockRejectedValueOnce(
+      Object.assign(new Error('server_error'), { code: 'server_error', status: 503 })
+    );
+    const res = await invoke(DEV_BODY()).catch((err: unknown) => ({ _status: 500, err }));
+    expect(res._status).toBeGreaterThanOrEqual(500);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
   it('the stored manifest’s auth decides when the CLI declared nothing', async () => {

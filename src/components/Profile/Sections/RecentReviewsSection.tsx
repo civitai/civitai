@@ -46,7 +46,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !resourceReviews.length;
 
-  if (isNullState) {
+  if (isNullState && inView) {
     return null;
   }
 
@@ -106,6 +106,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                   style={{
                                     color: colorScheme === 'dark' ? 'white' : 'black',
                                   }}
+                                  maskedHtml={review.maskedDetails}
                                   withProfanityFilter
                                 />
                               </ContentClamp>

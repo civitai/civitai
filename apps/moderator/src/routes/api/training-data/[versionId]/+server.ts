@@ -1,8 +1,10 @@
 import { error } from '@sveltejs/kit';
+import { sql } from 'kysely';
 import type { RequestHandler } from './$types';
 import { requireIdParam } from '$lib/server/api-guard';
 import { callModEndpoint } from '$lib/server/user-actions.service';
 import { recordModActivity } from '$lib/server/mod-activity';
+import { dbRead } from '$lib/server/db';
 
 /**
  * Streams a version's training-data zip so the review pages can unpack it in the browser.
@@ -17,8 +19,8 @@ import { recordModActivity } from '$lib/server/mod-activity';
  * per-actor rate limit and audit row. A token-guarded route was tried and reverted: a service identity
  * disables exactly those controls, on what is CSAM-adjacent evidence.
  *
- * ⚠️ Like every other `/api/mod/*` call from this app, it therefore needs `CIVITAI_APP_URL` to name a
- * host that trusts this app's auth hub. In local development that means running the main app locally
+ * ⚠️ Like every other `/api/mod/*` call from this app, it therefore needs `CIVITAI_INTERNAL_URL` (outside
+ * production, `CIVITAI_APP_URL`) to name a host that trusts this app's auth hub. In local development that means running the main app locally
  * and pointing at it; against a remote host the relayed session is not accepted and the resolve fails.
  */
 export const GET: RequestHandler = async ({ params, locals, fetch }) => {
@@ -37,6 +39,10 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
   );
   if (!resolved.ok) {
     console.error('[training-data] resolve failed', resolved.error);
+    // The resolver only serves live datasets, so a failure on an all-purged version is expected.
+    // A failed read keeps the resolver's own 502 rather than replacing it with a bare 500.
+    if (await allTrainingDataPurged(versionId).catch(() => false))
+      error(410, 'Training data was purged.');
     error(502, resolved.error);
   }
 
@@ -72,3 +78,14 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
     },
   });
 };
+
+/** bool_and is NULL with no rows, so a version that never had training data reads false. */
+async function allTrainingDataPurged(versionId: number): Promise<boolean> {
+  const row = await dbRead
+    .selectFrom('ModelFile')
+    .select(sql<boolean | null>`bool_and("dataPurged")`.as('purged'))
+    .where('modelVersionId', '=', versionId)
+    .where('type', '=', 'Training Data')
+    .executeTakeFirst();
+  return row?.purged === true;
+}

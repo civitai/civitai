@@ -19,7 +19,9 @@ import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import {
   computeListingProblems,
   listingProblemInput,
+  listingProblemLinksFrom,
 } from '~/server/services/blocks/listing-problems';
+import { readListingProblemLinkMaps } from '~/server/services/blocks/app-listing-issue-tracker.service';
 import type {
   AppRole,
   ListingCapability,
@@ -719,9 +721,8 @@ export type AccessibleAppBlocks = {
  * Enumerate every AppBlock the caller may act on, split by how.
  *
  * 🔴 THIS IS THE ONLY SAFE INPUT TO AN EARNINGS OR ANALYTICS QUERY FOR A NON-OWNER.
- * The pre-existing earnings reads (`getRevenueForOwner`,
- * `getRecentAttributionsForOwner`, `getMyApps`' lifetime groupBy) key on
- * `BlockBuzzAttribution.appOwnerUserId` — a USER-WIDE filter. "Widening" one of those
+ * The owner earnings reads (`getAuthorFeeEarningsForOwner`, `getGoodsSalesForOwner`) key on
+ * the snapshotted `appOwnerUserId` — a USER-WIDE filter. "Widening" one of those
  * for an editor by passing the OWNER's id would hand the editor the owner's ENTIRE
  * PORTFOLIO, including apps they were never invited to. Every collaborator-reachable
  * money/analytics read must instead filter `appBlockId IN allIds`. See
@@ -736,11 +737,11 @@ export type AccessibleAppBlocks = {
  * `backfillAppListings`), and `schema.full.prisma` says in as many words to discriminate
  * on `kind` and never on `appBlockId` nullness. Filtering on nullness alone would let
  * such a row's seat contribute a REAL block id to this set — and this set is the input to
- * `getMyAppsEarnings`, which has no kind gate of its own, so a seat-only holder would be
- * handed real `lifetimeShareCents` on a listing whose kind declares `earnings: false`.
+ * `getMyAppRoles` (the `getMyApps` list), which has no kind gate of its own, so a seat-only
+ * holder would be shown a block on a listing whose kind declares `earnings: false`.
  * The count of such rows is 0 in production today (measured 2026-08-11: offsite 5 rows,
- * 0 with a block), so this gate is PREVENTION — but it guards a money read, which is not
- * where a latent hazard is worth leaving open.
+ * 0 with a block), so this gate is PREVENTION, inherited by any block-scoped read built on
+ * this set.
  *
  * The `earnings: false` cell of {@link CAPABILITIES_BY_KIND} is the declared form of the
  * same rule; this is it expressed as a query predicate.
@@ -871,9 +872,9 @@ export type AccessibleListings = {
  * (`INVALID_REVISION`).
  *
  * 🔴 NO KIND FILTER, and the asymmetry with `resolveAccessibleAppBlockIds` is deliberate.
- * That function filters `kind: 'onsite'` because its result feeds a BLOCK-scoped MONEY
- * read (`getMyAppsEarnings`) where an offsite row's block id would be attributed real
- * cents. This set feeds authoring/navigation surfaces whose capabilities are derived
+ * That function filters `kind: 'onsite'` because its result feeds BLOCK-scoped reads
+ * (`getMyAppRoles`) where an offsite row's block id would surface a block the listing's kind
+ * says it does not have. This set feeds authoring/navigation surfaces whose capabilities are derived
  * per-listing from {@link capabilitiesForKind} at the point of use, so narrowing here
  * would drop exactly the off-site listings the re-key exists to serve.
  */
@@ -1234,6 +1235,12 @@ async function hydrateMyAppListings(
       }))
     ),
   ]);
+  // The trust-link nudge's inputs (source repo + issue tracker), AFTER the reads above and
+  // degrading to "unknown" on any error, so it can only ever add an advisory, never fail the page.
+  const linkMaps = await readListingProblemLinkMaps(
+    rows.map((r: { id: string }) => r.id),
+    dbRead
+  );
   const lastActionByListingId = new Map<string, string>(
     (lastEvents as Array<{ appListingId: string | null; action: string }>)
       .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
@@ -1288,6 +1295,13 @@ async function hydrateMyAppListings(
             kind,
             appRating: r.appBlock?.contentRating,
             assetScans: scansByListingId.get(r.id) ?? [],
+            // 🔴 A PRE-APPROVAL ON-SITE DRAFT (no backing block yet) reports NO link nudge: its
+            // links are manifest-governed: a newly minted draft carries the first submit's, but a
+            // reused draft keeps an earlier submit's until approve, so its columns do not reliably
+            // describe the submitted manifest — and this surface has no manifest
+            // for it. The submit's own readiness reads the submitted manifest instead.
+            links:
+              kind === 'onsite' && !r.appBlockId ? {} : listingProblemLinksFrom(r.id, linkMaps),
           })
         ).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
@@ -1620,16 +1634,35 @@ export async function getAppListingAuthoringContext(opts: {
  * pinned separately in `app-collaborator.public-projection.test.ts`.
  */
 export async function listDisplayedCollaboratorUserIds(appListingId: string): Promise<number[]> {
+  // The batched read for one listing: the store page and the listing stream share its predicate.
+  return (await listDisplayedCollaboratorUserIdsMany([appListingId])).get(appListingId) ?? [];
+}
+
+/**
+ * {@link listDisplayedCollaboratorUserIds} for many listings in one query, by the same two
+ * predicates: listing id → its displayed collaborators' user ids, in seat order (`createdAt asc`). A
+ * listing with none is absent.
+ */
+export async function listDisplayedCollaboratorUserIdsMany(
+  appListingIds: readonly string[]
+): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  if (appListingIds.length === 0) return out;
   const rows = await safeCollaboratorQuery(
     () =>
       dbRead.appCollaborator.findMany({
-        where: { appListingId, status: ACCEPTED, displayed: true },
-        select: { userId: true },
+        where: { appListingId: { in: [...appListingIds] }, status: ACCEPTED, displayed: true },
+        select: { appListingId: true, userId: true },
         orderBy: { createdAt: 'asc' },
       }),
-    [] as { userId: number }[]
+    [] as { appListingId: string; userId: number }[]
   );
-  return rows.map((r: { userId: number }) => r.userId);
+  for (const r of rows as { appListingId: string; userId: number }[]) {
+    const ids = out.get(r.appListingId) ?? [];
+    ids.push(r.userId);
+    out.set(r.appListingId, ids);
+  }
+  return out;
 }
 
 /**

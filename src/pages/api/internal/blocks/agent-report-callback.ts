@@ -2,7 +2,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import { stripImpersonationRecord } from '~/server/services/blocks/app-impersonation.logic';
 import { verifyAgentCallbackToken } from '~/server/services/blocks/review-session';
+import { agentReviewLaneFor } from '~/shared/constants/connect-agent-review.constants';
 import {
   AGENT_REVIEW_SECTIONS,
   type AgentReviewSection,
@@ -55,6 +57,8 @@ async function readRawBody(req: Readable): Promise<Buffer> {
 }
 
 const PUBREQ_RE = /^pubreq_[0-9A-HJKMNP-TV-Z]{26}$/;
+/** An OAuth-connect listing request (the agent review's connect lane). */
+const LISTING_PUBREQ_RE = /^alpr_[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /** Runner-reported statuses. All THREE are now valid persisted statuses (the
  *  report table's CHECK allows running|complete|failed|torn-down|cost-capped), so
@@ -116,6 +120,10 @@ export function buildReportUpdate(body: CallbackBody): Record<string, unknown> {
     const value = body[section];
     if (value !== undefined && value !== null) data[section] = value;
   }
+  // The impersonation record is written by civitai's own check after this callback, never by
+  // the runner: a bundle that got the agent to emit one must not fake a completed check.
+  if (data.securityAudit !== undefined)
+    data.securityAudit = stripImpersonationRecord(data.securityAudit);
   if (body.tokenUsage !== undefined && body.tokenUsage !== null) data.tokenUsage = body.tokenUsage;
   if (typeof body.costUsd === 'number' && Number.isFinite(body.costUsd) && body.costUsd >= 0)
     data.costUsd = body.costUsd;
@@ -152,7 +160,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  if (!body.publishRequestId || !PUBREQ_RE.test(body.publishRequestId)) {
+  if (
+    !body.publishRequestId ||
+    !(PUBREQ_RE.test(body.publishRequestId) || LISTING_PUBREQ_RE.test(body.publishRequestId))
+  ) {
     res.status(400).json({ error: 'Invalid publishRequestId' });
     return;
   }
@@ -186,6 +197,31 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   const data = buildReportUpdate(body);
 
+  // CONNECT LANE: a report for a request a moderator has already decided is not stored. Its row is
+  // marked torn-down and its staged ZIP deleted (the decision's own teardown may have raced a slow
+  // start). What Civitai checked itself lives in its own table and is never written here.
+  if (agentReviewLaneFor(body.publishRequestId) === 'connect') {
+    const { isConnectRequestStillPending, abandonDecidedConnectReview } = await import(
+      '~/server/services/blocks/connect-agent-review.service'
+    );
+    let pending: boolean;
+    try {
+      pending = await isConnectRequestStillPending(body.publishRequestId);
+    } catch (e) {
+      res.status(500).json({ error: 'Request read failed', detail: String(e).slice(0, 240) });
+      return;
+    }
+    if (!pending) {
+      await abandonDecidedConnectReview(body.publishRequestId);
+      res.status(200).json({
+        ok: true,
+        applied: false,
+        reason: 'the submission was decided before this report arrived',
+      });
+      return;
+    }
+  }
+
   // UPDATE the running report row for this review. `updateMany` + the
   // status='running' guard means a torn-down / decided / already-reported review
   // is a no-op (count 0) — never resurrected, never double-written.
@@ -212,4 +248,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   res.status(200).json({ ok: true, applied: true });
+
+  // On-site only: the impersonation check reads an AppBlockPublishRequest, which a connect
+  // listing request is not.
+  if (agentReviewLaneFor(body.publishRequestId) === 'connect') return;
+
+  // The IMPERSONATION check (name, branding, listing art) runs here, once the agent's report
+  // has landed, and writes into that report's security audit. After the response, so the agent
+  // pod is not held open by a second model call; it never throws.
+  const { runImpersonationCheckForRequest } = await import(
+    '~/server/services/blocks/app-impersonation-check.service'
+  );
+  await runImpersonationCheckForRequest(body.publishRequestId);
 });

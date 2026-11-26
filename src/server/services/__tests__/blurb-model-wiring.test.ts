@@ -61,10 +61,14 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventReplicationLag,
 }));
-const { queueComFaceRecheck } = vi.hoisted(() => ({ queueComFaceRecheck: vi.fn() }));
+const { queueComFaceRecheck, queueComFaceRestore } = vi.hoisted(() => ({
+  queueComFaceRecheck: vi.fn(),
+  queueComFaceRestore: vi.fn(),
+}));
 vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ComFaceRecheck>()),
   queueComFaceRecheck,
+  queueComFaceRestore,
 }));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
@@ -424,6 +428,8 @@ describe('applyModelContentChange — the auto-NSFW gate', () => {
       description: EXPANDED_HTML,
       alreadyNsfw: false,
       lockedProperties: [],
+      // Flag off in this file: the shipped list.
+      profanity: expect.objectContaining({ source: 'shipped', filter: expect.anything() }),
     });
   });
 

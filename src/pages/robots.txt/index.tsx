@@ -53,11 +53,38 @@ const ruleSections: { comment?: string[]; rules: string[] }[] = [
     comment: ['# Site-search query URLs — thin/duplicate content, low SEO value'],
     rules: ['Disallow: /*?query=', 'Disallow: /*&query='],
   },
+  {
+    // Each of these tabs is a full server render of a listing that search engines send almost no
+    // visitors to. Disallowing the tab does not block the items it lists, which keep their own
+    // URLs. The profile page and its models, images, videos, posts and collections tabs stay
+    // crawlable: they carry most of the profile search traffic.
+    comment: [
+      '# Low-value profile tabs — the items they list stay crawlable at their own URLs',
+    ],
+    rules: [
+      'Disallow: /user/*/storylines',
+      'Disallow: /user/*/sticker-book',
+      'Disallow: /user/*/comics',
+      'Disallow: /user/*/3d-models',
+      'Disallow: /user/*/articles',
+      'Disallow: /user/*/followers',
+      'Disallow: /user/*/following',
+    ],
+  },
+  {
+    // Image (and video) detail pages are `noindex` on every domain (see ImageDetail2), so a crawl
+    // of one is a server render that cannot earn a search result. Image ids are numeric, so one
+    // rule per leading digit blocks the detail pages while the `/images` index and the static
+    // files in public/images (site logo, app icons, og:images) stay fetchable. Nothing directly
+    // under public/images may start with a digit.
+    comment: ['# Image detail pages — noindex on every domain, so a crawl only costs a render'],
+    rules: Array.from({ length: 10 }, (_, digit) => `Disallow: /images/${digit}`),
+  },
 ];
 
 // AI training crawlers request HTML pages continuously. Crawl-delay asks each of them to wait 30 s
 // between requests; it slows them down, it does not block them.
-const slowCrawlers = ['GPTBot', 'ClaudeBot', 'Amazonbot'];
+const slowCrawlers = ['GPTBot', 'ClaudeBot', 'Amazonbot', 'meta-externalagent'];
 const slowCrawlerDelaySeconds = 30;
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {

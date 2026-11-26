@@ -12,6 +12,7 @@ const STRANGER = 30;
 const OTHER_OWNER = 40;
 const OTHER_MANAGER = 50;
 const ALL_LEVELS = 31;
+const UPLOADER = 60;
 
 let db: PGlite;
 beforeAll(async () => {
@@ -31,21 +32,22 @@ beforeAll(async () => {
     );
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int, status "CollectionItemStatus",
-      "imageId" int, "postId" int, "modelId" int, "articleId" int
+      "imageId" int, "postId" int, "modelId" int, "articleId" int, "addedById" int DEFAULT ${UPLOADER}
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "publishedAt" timestamp(3), availability "Availability" DEFAULT 'Public',
       "nsfwLevel" int DEFAULT 1, metadata jsonb DEFAULT '{}'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "postId" int, "nsfwLevel" int DEFAULT 1, "needsReview" text,
+      id int PRIMARY KEY, "postId" int, "userId" int DEFAULT ${UPLOADER}, "nsfwLevel" int DEFAULT 1, "needsReview" text,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "blockedFor" text,
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
       metadata jsonb DEFAULT '{}', "scanJobs" jsonb DEFAULT '{}', "acceptableMinor" boolean DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, status "ArticleStatus", "publishedAt" timestamp(3),
-      ingestion "ArticleIngestionStatus", "nsfwLevel" int DEFAULT 1
+      ingestion "ArticleIngestionStatus", "nsfwLevel" int DEFAULT 1,
+      availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ModelMetric" (
       "modelId" int PRIMARY KEY, status "ModelStatus", "nsfwLevel" int DEFAULT 1, mode "ModelModifier",
@@ -81,18 +83,32 @@ beforeAll(async () => {
 
     INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "nsfwLevelLocked", "acceptableMinor") VALUES
       (15, 100, 1, 'Pending', true, false),   -- rated by a locked rating before its scan finished
-      (16, 100, 1, 'Scanned', false, true);   -- acceptable in a collection, not in the public feeds
+      (16, 100, 1, 'Scanned', false, true),   -- acceptable in a collection, not in the public feeds
+      (17, 100, 0, 'Pending', false, false),  -- not yet rated, added by someone other than its uploader
+      (18, 100, 1, 'Scanned', false, true);   -- acceptableMinor, added by someone other than its uploader
+
+    INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion) VALUES
+      (19, 100, 0, 'Scanned'),                -- scanned, not yet rated, REVIEW
+      (20, 100, 0, 'Scanned'),                -- scanned, not yet rated, REJECTED
+      (21, 100, 0, 'Scanned'),                -- scanned, not yet rated, in another collection
+      (22, 100, 0, 'Scanned');                -- scanned, not yet rated, ACCEPTED
 
     INSERT INTO "Article" VALUES (200, 'Published', now(), 'Scanned', 1), (201, 'Published', now(), 'Pending', 1);
+    -- 202 follows the article availability rule.
+    INSERT INTO "Article" (id, status, "publishedAt", ingestion, "nsfwLevel", availability)
+      VALUES (202, 'Published', now(), 'Scanned', 1, 'Private');
     INSERT INTO "ModelMetric" VALUES (300, 'Published', 1, NULL, 'Public'), (301, 'Published', 1, NULL, 'Private');
 
     INSERT INTO "CollectionItem" ("collectionId", status, "imageId") VALUES
       (1, 'REVIEW', 1), (1, 'REVIEW', 2), (1, 'REVIEW', 3), (1, 'REVIEW', 4), (1, 'REVIEW', 5),
       (1, 'REVIEW', 6), (1, 'REVIEW', 7), (1, 'REVIEW', 8), (1, 'ACCEPTED', 9), (2, 'REVIEW', 10),
       (1, 'REJECTED', 11), (1, 'REVIEW', 12), (1, 'REVIEW', 13), (1, 'REVIEW', 14),
-      (1, 'REVIEW', 15), (1, 'REVIEW', 16);
+      (1, 'REVIEW', 15), (1, 'REVIEW', 16), (1, 'REVIEW', 19), (1, 'REJECTED', 20), (2, 'REVIEW', 21),
+      (1, 'ACCEPTED', 22);
+    INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES
+      (1, 'REVIEW', 17, ${OWNER}), (1, 'REVIEW', 18, ${OWNER});
     INSERT INTO "CollectionItem" ("collectionId", status, "postId") VALUES (1, 'REVIEW', 100), (1, 'REVIEW', 101);
-    INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201);
+    INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201), (1, 'REVIEW', 202);
     INSERT INTO "CollectionItem" ("collectionId", status, "modelId") VALUES (1, 'REVIEW', 300), (1, 'REVIEW', 301);
   `);
 });
@@ -113,11 +129,10 @@ describe('the images a collection reviewer sees before they are rated', () => {
       )
     ).map((r) => r.id);
 
-  it("shows the owner and a manager the collection's unrated REVIEW and REJECTED submissions", async () => {
-    // The arm judges only rating, membership and permission; the read's other filters, which the
-    // count below mirrors, leave out 14.
-    expect(await visibleTo(OWNER)).toEqual([2, 11, 14]);
-    expect(await visibleTo(MANAGER)).toEqual([2, 11, 14]);
+  it("shows the owner and a manager the collection's reviewed, unrated REVIEW and REJECTED submissions", async () => {
+    // 2 and 11 (Pending) and 14 (Blocked) are the same submissions before a finished scan.
+    expect(await visibleTo(OWNER)).toEqual([19, 20]);
+    expect(await visibleTo(MANAGER)).toEqual([19, 20]);
   });
 
   it('shows nothing to the manager of a different collection', async () => {
@@ -128,10 +143,14 @@ describe('the images a collection reviewer sees before they are rated', () => {
     expect(await visibleTo(STRANGER)).toEqual([]);
   });
 
+  it('does not reach an item someone other than its uploader added', async () => {
+    expect(await visibleTo(OWNER)).not.toContain(17);
+  });
+
   it("does not reach an ACCEPTED item or another collection's items", async () => {
-    expect(await visibleTo(OWNER)).not.toContain(9);
-    expect(await visibleTo(OWNER)).not.toContain(10);
-    expect(await visibleTo(OWNER, 2)).toEqual([10]);
+    expect(await visibleTo(OWNER)).not.toContain(22);
+    expect(await visibleTo(OWNER)).not.toContain(21);
+    expect(await visibleTo(OWNER, 2)).toEqual([21]);
   });
 });
 
@@ -150,12 +169,22 @@ describe('the review queue count', () => {
       )
     ).map((r) => r.id);
 
-  it('counts the submissions the queue shows, rated or not', async () => {
-    expect(await counted('imageId')).toEqual([1, 2, 13, 15, 16]);
+  // Unrated submissions are counted before their scan finishes (2), though the queue's image read
+  // shows them only once reviewed: the count is the badge, the read decides what is shown.
+  it('counts rated submissions the queue shows and every unrated one', async () => {
+    expect(await counted('imageId')).toEqual([1, 2, 13, 15, 16, 19]);
   });
 
   it('counts only the rated images the requesting domain can serve, and the unrated ones', async () => {
-    expect(await counted('imageId', 1)).toEqual([1, 2, 15, 16]);
+    expect(await counted('imageId', 1)).toEqual([1, 2, 15, 16, 19]);
+  });
+
+  it('leaves out unrated and acceptableMinor images someone other than their uploader added', async () => {
+    for (const levels of [ALL_LEVELS, 1]) {
+      const ids = await counted('imageId', levels);
+      expect(ids).not.toContain(17);
+      expect(ids).not.toContain(18);
+    }
   });
 
   it('leaves out posts, articles and models the queue does not show', async () => {
