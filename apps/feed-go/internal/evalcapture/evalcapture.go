@@ -284,7 +284,7 @@ func (r *Recorder) Record(s Sample) string {
 	if err != nil {
 		return OutcomeDropped
 	}
-	stored := StoredRequest{Input: c.Input, Path: c.Path, Query: c.Query, Headers: c.Headers, Credential: c.Credential, Viewer: c.Viewer}
+	stored := StoredRequest{Input: redactSearchText(c.Input), Path: c.Path, Query: c.Query, Headers: c.Headers, Credential: c.Credential, Viewer: c.Viewer}
 	reqJSON, err := json.Marshal(stored)
 	if err != nil {
 		return OutcomeDropped
@@ -473,6 +473,54 @@ func NewWriters(cfg WriterConfig) (samples, cases *chwrite.Writer, err error) {
 		return nil, nil, err
 	}
 	return samples, cases, nil
+}
+
+// SearchPlaceholder replaces a free-text search value in a stored case (searchKeys).
+const SearchPlaceholder = "$search"
+
+// searchKeys are the tRPC input keys holding free text a user typed (model.getAll's `query`). A case
+// lives 90 days or more (forever when pinned), and search text is kept at most 30 days (DESIGN.md
+// §19.6), so a case never stores it: a non-empty string value is replaced by SearchPlaceholder. The
+// shape still records the value's class, so the signature is unchanged; the replay substitutes a
+// search text of its own.
+var searchKeys = []string{"query"}
+
+// redactSearchText is a stored tRPC input (the superjson envelope evalcorpus wrote) with every
+// searchKeys string value that is not empty replaced by SearchPlaceholder. An input with none is
+// returned as it is; one that does not decode as an envelope object is returned as "" (not stored).
+func redactSearchText(input string) string {
+	if input == "" {
+		return ""
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(input), &env); err != nil {
+		return ""
+	}
+	var body map[string]json.RawMessage
+	if raw, ok := env["json"]; !ok || json.Unmarshal(raw, &body) != nil {
+		return input // not an object input: no key to hold search text
+	}
+	changed := false
+	for _, k := range searchKeys {
+		var v string
+		if raw, ok := body[k]; ok && json.Unmarshal(raw, &v) == nil && v != "" {
+			body[k] = json.RawMessage(`"` + SearchPlaceholder + `"`)
+			changed = true
+		}
+	}
+	if !changed {
+		return input
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return ""
+	}
+	env["json"] = b
+	out, err := json.Marshal(env)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 func uniqueSorted(in []string) []string {

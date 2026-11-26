@@ -472,3 +472,58 @@ func TestNewWriters(t *testing.T) {
 		t.Errorf("queries %v", queries)
 	}
 }
+
+// A case never stores search text (model.getAll's `query`): it is replaced by SearchPlaceholder in the
+// stored request and nowhere else in any row, other keys kept; two searches differing only in text
+// share a signature. An empty query and an input without one are stored as they are.
+func TestRecordRedactsSearchText(t *testing.T) {
+	r, samples, cases, _ := newRecorder(Config{})
+	user := evalcorpus.Viewer{Class: evalcorpus.ViewerUser, UserID: 5}
+	search := func(q string) Sample {
+		return Sample{
+			Source: SourceServe, ViewerKnown: true, Viewer: user, ProdResult: ResultServed,
+			Request: evalcorpus.Request{Endpoint: evalcorpus.EndpointModelGetAll, Headers: map[string]string{"host": "green.example.test"},
+				Input: `{"json":{"limit":20,"query":` + q + `,"sort":"Newest"}}`},
+		}
+	}
+	for _, q := range []string{`"private words typed"`, `"other typed words"`, `""`} {
+		if o := r.Record(search(q)); o != OutcomeWritten {
+			t.Fatalf("query %s: %q", q, o)
+		}
+	}
+	all, _ := json.Marshal([]any{samples.rows, cases.rows})
+	if strings.Contains(string(all), "typed") {
+		t.Errorf("search text stored: %s", all)
+	}
+	cs := cases.cases()
+	inputs := make([]string, 0, len(cs))
+	for _, c := range cs {
+		var req StoredRequest
+		_ = json.Unmarshal([]byte(c.Request), &req)
+		inputs = append(inputs, req.Input)
+	}
+	want := []string{
+		`{"json":{"limit":20,"query":"$search","sort":"Newest"}}`,
+		`{"json":{"limit":20,"query":"$search","sort":"Newest"}}`,
+		`{"json":{"limit":20,"query":"","sort":"Newest"}}`,
+	}
+	for i := range want {
+		if inputs[i] != want[i] {
+			t.Errorf("stored input %d = %s, want %s", i, inputs[i], want[i])
+		}
+	}
+	if cs[0].Sig != cs[1].Sig {
+		t.Error("two searches differing only in text have different signatures")
+	}
+	for in, want := range map[string]string{
+		"":                     "",
+		`{"json":{"limit":5}}`: `{"json":{"limit":5}}`,
+		`{"json":null}`:        `{"json":null}`,
+		`not json`:             "",
+		`{"json":{"query":7}}`: `{"json":{"query":7}}`,
+	} {
+		if got := redactSearchText(in); got != want {
+			t.Errorf("redactSearchText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -3832,6 +3832,13 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 - **Node's answer** (`node_body`, `node_headers`) is stored only for a request with no session user
   (anon, or a verified crawler) and no credential of any kind; for every other request a case stores
   the request and the production verdict, a sample the diff categories (paths' categories, no values).
+- **No search text in a case.** Search text may be kept 30 days and a case lives 90 days or more
+  (forever when pinned), so a non-empty `query` (model.getAll's free-text search) is stored as
+  `$search` (`evalcapture.SearchPlaceholder`); the shape keeps its class, so the signature does not
+  change, and the replay supplies a search text of its own. No table stores the text.
+- **Weight caveat.** `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` is the Node sampler's configured rate, an
+  upper bound on its effective rate (its per-second and in-flight limits drop samples), so a weight
+  derived from it is a lower bound until the samples carry their own rate.
 - **Admission** (per pod, per UTC day, reset at midnight): K = 3 cases per (endpoint, signature,
   outcome class: match / mismatch / served / handback / error); a mismatch also needs one of its diff
   categories (`none` when it has none) under 20 cases per (endpoint, category); at most 20 000 cases
