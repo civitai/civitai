@@ -3101,6 +3101,15 @@ async function deleteBannedUserLinks({
   );
 }
 
+async function unchangedUser(id: number) {
+  // primary: the caller decided "no change" from the primary; the row returned must agree with it.
+  const current = await dbWrite.user.findUniqueOrThrow({
+    where: { id },
+    omit: { subscriptionId: true },
+  });
+  return { ...current, changed: false as const };
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3146,14 +3155,7 @@ export const toggleBan = async ({
   const user = await dbWrite.user.findUnique({ where: { id }, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
-  // Already in the asked-for state: nothing is written and no ban side effect runs.
-  if (setTo === !!user.bannedAt) {
-    const current = await dbWrite.user.findUniqueOrThrow({
-      where: { id },
-      omit: { subscriptionId: true },
-    });
-    return { ...current, changed: false };
-  }
+  if (setTo === !!user.bannedAt) return unchangedUser(id);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -3522,13 +3524,7 @@ export const toggleContestBan = async ({
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = userMeta.contestBanDetails?.bannedAt;
-  if (setTo === !!bannedAt) {
-    const current = await dbWrite.user.findUniqueOrThrow({
-      where: { id },
-      omit: { subscriptionId: true },
-    });
-    return { ...current, changed: false };
-  }
+  if (setTo === !!bannedAt) return unchangedUser(id);
 
   const updatedMeta = bannedAt
     ? {

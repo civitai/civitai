@@ -160,7 +160,6 @@ async function setMute(userId, setTo) {
   return await trpcCall('user.toggleMute', { id: userId, setTo }, 'POST');
 }
 
-/** `true` / `false` as the explicit end state, or null for anything else. */
 function parseSetTo(value) {
   const v = value?.toLowerCase();
   return v === 'true' ? true : v === 'false' ? false : null;
