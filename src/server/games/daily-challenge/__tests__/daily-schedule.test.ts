@@ -52,7 +52,7 @@ describe('getDailyPlan', () => {
     });
   });
 
-  // Dec 1-3 are rescheduled under these names before the set map ships; a rename strands them.
+  // Stored plans match on judgeName (planIsCurrent), so renaming a persona strands rows already scheduled under it.
   it.each([
     ['2026-12-01', 'Jolly CivBot'],
     ['2026-12-02', 'Frost CivChan'],

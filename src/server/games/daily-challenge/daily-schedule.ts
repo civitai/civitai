@@ -10,7 +10,7 @@ export const HOLIDAY_JUDGE_BY_SET: Record<DailyRubricSetKey, string> = {
   clever: 'Cracker CivBot',
   action: 'Sleigh Racer CivBot',
   glam: 'Gala CivBot',
-  // Frost Queen; the name predates her, and Dec 2 is scheduled under it.
+  // Frost Queen; the name predates her and is kept so rows already scheduled under it still match.
   craft: 'Frost CivChan',
   comedy: 'Elf CivChan',
   spooky: 'Krampus CivChan',
