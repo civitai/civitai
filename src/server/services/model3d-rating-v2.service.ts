@@ -14,6 +14,7 @@ import {
   rateImagesV2,
 } from '~/server/services/rating-v2.service';
 import { toOrchestratorError } from '~/server/services/training.service';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import { TRPCError } from '@trpc/server';
@@ -35,6 +36,11 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
 };
 /** Across all users, per fixed 24h window: bounds the system-paid preview renders of GLB and PLY
  *  results. */
+/** Per user, one unit per four-angle render asked for. */
+export const MODEL3D_PREVIEW_V2_RATE_LIMIT = {
+  key: 'generation:model3dPreviewV2',
+  rules: usageLimits('model3d-preview.submit', 'model3d-preview.daily'),
+};
 export const MODEL3D_PREVIEW_V2_GLOBAL_LIMIT = {
   key: 'model3d:preview-v2:global',
   max: 500,
@@ -68,6 +74,14 @@ export const ratedSet = (urls: string[]) =>
 /** A clear verdict holds only for the same level and the same images: a tightened level rates again. */
 export const clearStamp = (matureLevel: number, urls: string[]) =>
   `${matureLevel}\n${ratedSet(urls)}`;
+const retryKey = (userId: number, workflowId: string) =>
+  `${REDIS_KEYS.GENERATION.MODEL3D_PREVIEW_V2_RETRY}:${userId}:${workflowId}` as const;
+const WINDOW_GRACE_SECONDS = 60 * 60;
+/** The global preview window a moment falls in: one key per window, so each window counts apart. */
+export const previewWindowKey = (now: number) =>
+  `${MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.key}:${Math.floor(
+    now / 1000 / MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.windowSeconds
+  )}`;
 const pendingPreviewKey = (userId: number, workflowId: string) =>
   `${REDIS_KEYS.GENERATION.MODEL3D_PREVIEW_V2_PENDING}:${userId}:${workflowId}` as const;
 /** How long a mature v2 verdict holds the gate for that workflow without asking again. */
@@ -100,8 +114,20 @@ export type Model3dRatingV2Deps = {
   /** The preview this user already asked for on this result. */
   pendingPreview: (userId: number, workflowId: string) => Promise<PendingPreview | null>;
   setPendingPreview: (userId: number, workflowId: string, value: PendingPreview) => Promise<void>;
-  /** False when the preview's global window refuses. */
-  claimPreview: () => Promise<boolean>;
+  /** Runs `op` while no other click asks for this user's result; null when another one is. */
+  exclusive: <T>(userId: number, workflowId: string, op: () => Promise<T>) => Promise<T | null>;
+  clearPendingPreview: (userId: number, workflowId: string) => Promise<void>;
+  /** The one re-render a result with an empty render gets per user; false once it is spent. */
+  takeRetry: (userId: number, workflowId: string) => Promise<boolean>;
+  /** Spends one of the user's own renders; throws the rate-limit error when that limit refuses. */
+  claimPreviewUser: (
+    user: SessionUser,
+    req: NextApiRequest
+  ) => Promise<{ refund: () => Promise<void> }>;
+  /** The window key the slot was counted in, or null when the global window refuses. */
+  claimPreview: () => Promise<string | null>;
+  /** Gives back a slot, in the window it was counted in. */
+  releasePreview: (windowKey: string) => Promise<void>;
   submitPreview: (
     mesh: { url: string; format: string },
     metadata: Record<string, unknown>
@@ -158,7 +184,7 @@ export async function readModel3DPreview(workflowId: string): Promise<PreviewSta
   return previewState(data);
 }
 
-const defaultDeps: Model3dRatingV2Deps = {
+export const model3dRatingV2Deps: Model3dRatingV2Deps = {
   matureLevel: async (user) =>
     matureLevelOf(
       await getFliptVariant(
@@ -202,9 +228,41 @@ const defaultDeps: Model3dRatingV2Deps = {
       EX: REMEMBER_SECONDS,
     });
   },
+  exclusive: (userId, workflowId, op) =>
+    withDistributedLock(
+      { key: `model3d-preview:${userId}:${workflowId}`, ttl: 60, maxRetries: 0, autoRenew: true },
+      op
+    ),
+  clearPendingPreview: async (userId, workflowId) => {
+    await redis.del(pendingPreviewKey(userId, workflowId));
+  },
+  takeRetry: async (userId, workflowId) =>
+    // SET NX answers null when the key was already there.
+    (await redis.set(retryKey(userId, workflowId), '1', { NX: true, EX: REMEMBER_SECONDS })) !==
+    null,
+  claimPreviewUser: async (user, req) => {
+    const record = await claimRateLimitAttempt({
+      rules: MODEL3D_PREVIEW_V2_RATE_LIMIT.rules,
+      keyName: MODEL3D_PREVIEW_V2_RATE_LIMIT.key,
+      user,
+      req,
+    });
+    await record();
+    return record;
+  },
   claimPreview: async () => {
-    const { key, max, windowSeconds } = MODEL3D_PREVIEW_V2_GLOBAL_LIMIT;
-    return (await checkFixedWindow(key, max, windowSeconds, { failOpen: false })).allowed;
+    const key = previewWindowKey(Date.now());
+    const { max, windowSeconds } = MODEL3D_PREVIEW_V2_GLOBAL_LIMIT;
+    // Kept past its window, so a slot given back after the window ends lands in the window it was
+    // counted in.
+    const counted = await checkFixedWindow(key, max, windowSeconds + WINDOW_GRACE_SECONDS, {
+      failOpen: false,
+    });
+    return counted.allowed ? key : null;
+  },
+  releasePreview: async (windowKey) => {
+    // A key that has expired is recreated by the decrement; it is a past window, so it is dropped.
+    if ((await redis.incrBy(windowKey as never, -1)) < 0) await redis.del(windowKey as never);
   },
   submitPreview: submitModel3DPreview,
   readPreview: readModel3DPreview,
@@ -225,39 +283,105 @@ function rateableMesh(model: Pick<Model3dBlob, 'format' | 'url'>) {
 async function previewAngles(
   {
     user,
+    req,
     mesh,
     workflowId,
-  }: { user: SessionUser; mesh: { url: string; format: string }; workflowId: string },
+  }: {
+    user: SessionUser;
+    req: NextApiRequest;
+    mesh: { url: string; format: string };
+    workflowId: string;
+  },
   deps: Model3dRatingV2Deps
 ): Promise<string[] | 'pending'> {
   const now = deps.now();
   const pending = await deps.pendingPreview(user.id, workflowId).catch(() => null);
-  let state: PreviewState;
   if (pending) {
     // A read that fails is no answer yet: the render may still come back.
-    state = await deps.readPreview(pending.workflowId).catch(() => ({ status: 'running' }));
+    const state: PreviewState = await deps
+      .readPreview(pending.workflowId)
+      .catch(() => ({ status: 'running' }));
     if (state.status === 'running') {
       return now - pending.at > PREVIEW_EXPIRY_SECONDS * 1000 ? [] : 'pending';
     }
-  } else {
-    if (!(await deps.claimPreview().catch(() => false))) return [];
-    try {
-      const submitted = await deps.submitPreview(mesh, {
-        kind: 'model3d-post-preview',
-        userId: user.id,
-        workflowId,
-      });
-      await deps.setPendingPreview(user.id, workflowId, {
-        workflowId: submitted.workflowId,
-        at: now,
-      });
-      state = submitted.state;
-    } catch {
-      return [];
-    }
-    if (state.status === 'running') return 'pending';
+    const urls = state.urls.filter(isRateableMediaUrl);
+    if (urls.length || !(await deps.takeRetry(user.id, workflowId).catch(() => false))) return urls;
+    await deps.clearPendingPreview(user.id, workflowId).catch(() => undefined);
   }
-  return state.urls.filter(isRateableMediaUrl);
+  return submitAngles({ user, req, mesh, workflowId, now }, deps);
+}
+
+/** Asks for the render once: a click while another asks waits for that render, and the user's own
+ *  limit is spent before the shared window. */
+async function submitAngles(
+  args: {
+    user: SessionUser;
+    req: NextApiRequest;
+    mesh: { url: string; format: string };
+    workflowId: string;
+    now: number;
+  },
+  deps: Model3dRatingV2Deps
+): Promise<string[] | 'pending'> {
+  const asked = await deps
+    .exclusive(args.user.id, args.workflowId, () => submitOnce(args, deps))
+    .catch((e) => {
+      if (e instanceof TRPCError && e.code === 'TOO_MANY_REQUESTS') throw e;
+      return [];
+    });
+  if (asked) return asked;
+  // The lock was not taken: another click holds it, unless the store itself cannot be read.
+  return (await deps.pendingPreview(args.user.id, args.workflowId).then(
+    () => true,
+    () => false
+  ))
+    ? 'pending'
+    : [];
+}
+
+async function submitOnce(
+  {
+    user,
+    req,
+    mesh,
+    workflowId,
+    now,
+  }: {
+    user: SessionUser;
+    req: NextApiRequest;
+    mesh: { url: string; format: string };
+    workflowId: string;
+    now: number;
+  },
+  deps: Model3dRatingV2Deps
+): Promise<string[] | 'pending'> {
+  // Another click may have asked between this one's read and taking the lock.
+  if (await deps.pendingPreview(user.id, workflowId)) return 'pending';
+  // The user's own limit is theirs to spend, so its refusal blocks the post rather than letting it
+  // fall back to the front render.
+  const userClaim = await deps.claimPreviewUser(user, req);
+  const windowKey = await deps.claimPreview().catch(() => null);
+  if (!windowKey) {
+    await userClaim.refund();
+    return [];
+  }
+  let submitted: { workflowId: string; state: PreviewState };
+  try {
+    submitted = await deps.submitPreview(mesh, {
+      kind: 'model3d-post-preview',
+      userId: user.id,
+      workflowId,
+    });
+  } catch {
+    await deps.releasePreview(windowKey).catch(() => undefined);
+    await userClaim.refund();
+    return [];
+  }
+  await deps
+    .setPendingPreview(user.id, workflowId, { workflowId: submitted.workflowId, at: now })
+    .catch(() => undefined);
+  if (submitted.state.status === 'running') return 'pending';
+  return submitted.state.urls.filter(isRateableMediaUrl);
 }
 
 /** `unrateable`: the result's own preview set can't be sent, which the user controls, so it can't pass
@@ -283,7 +407,7 @@ export async function rateModel3DByV2(
     coverUrl: string | undefined;
     workflowId: string;
   },
-  deps: Model3dRatingV2Deps = defaultDeps
+  deps: Model3dRatingV2Deps = model3dRatingV2Deps
 ): Promise<Model3dV2Verdict> {
   // Each system-side step failing open keeps the post on its current rating: this rater can only add
   // the gate.
@@ -293,7 +417,7 @@ export async function rateModel3DByV2(
   // A GLB or PLY is rated from its own four-angle render; when none of it comes back, from the renders
   // the result already has.
   const mesh = rateableMesh(primaryModel);
-  const rendered = mesh ? await previewAngles({ user, mesh, workflowId }, deps) : [];
+  const rendered = mesh ? await previewAngles({ user, req, mesh, workflowId }, deps) : [];
   if (rendered === 'pending') return 'pending';
   const angles = (rendered.length ? rendered : previewUrls).slice(0, MAX_ANGLES);
   if (coverUrl && !angles.includes(coverUrl)) angles.push(coverUrl);
@@ -380,7 +504,7 @@ export async function getModel3DPostBlock(
     coverUrl: string | undefined;
     workflowId: string;
   },
-  deps: Model3dRatingV2Deps = defaultDeps
+  deps: Model3dRatingV2Deps = model3dRatingV2Deps
 ): Promise<string | undefined> {
   const block = getPolyGenPostBlock({ primaryModel, effectiveNsfwLevel, allowMatureContent });
   if (block || allowMatureContent !== false || isMature(effectiveNsfwLevel)) return block;
