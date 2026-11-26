@@ -109,7 +109,8 @@ describe('getScheduledPosts cover', () => {
     expect(await calendar(owner)).toEqual({ cover: 'mature', imageCount: 2 });
   });
 
-  it('skips a blocked image for the cover and the count, keeping the metadata hold', async () => {
+  // civitai/civitai#10505: the owner's calendar keeps a blocked image in the count, never its media.
+  it('skips a blocked image for the cover but counts it, keeping the metadata hold', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, "postId", url, index, ingestion, "blockedFor", "nsfwLevel") VALUES
         (1, ${POST}, 'mod-blocked', 0, 'Blocked', 'moderated', 32),
@@ -117,6 +118,15 @@ describe('getScheduledPosts cover', () => {
         (3, ${POST}, 'metadata-hold', 2, 'Blocked', 'AiNotVerified', 1),
         (4, ${POST}, 'clean', 3, 'Scanned', NULL, 1);
     `);
-    expect(await calendar(owner)).toEqual({ cover: 'metadata-hold', imageCount: 2 });
+    expect(await calendar(owner)).toEqual({ cover: 'metadata-hold', imageCount: 4 });
+  });
+
+  it('a post whose every image is blocked has no cover, and still counts them', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "postId", url, index, ingestion, "blockedFor") VALUES
+        (1, ${POST}, 'mod-blocked', 0, 'Blocked', 'moderated'),
+        (2, ${POST}, 'scan-blocked', 1, 'Blocked', NULL);
+    `);
+    expect(await calendar(owner)).toEqual({ cover: null, imageCount: 2 });
   });
 });

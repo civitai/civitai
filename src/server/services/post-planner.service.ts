@@ -139,11 +139,13 @@ export async function getScheduledPosts({
     LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     LEFT JOIN LATERAL (
-      SELECT i.url, i.type, COUNT(*) OVER () AS count FROM "Image" i
+      -- A blocked image counts but is never the cover: the first one with media is.
+      SELECT CASE WHEN ${ownerMediaAllowedSql()} THEN i.url END AS url, i.type,
+        COUNT(*) OVER () AS count
+      FROM "Image" i
       WHERE i."postId" = p.id AND ${servableLevelSql(servableLevels)}
         AND ${notHeldForReviewSql(ownerSeesHeld ? user.id : undefined)}
-        AND ${ownerMediaAllowedSql()}
-      ORDER BY i.index ASC NULLS LAST, i.id ASC
+      ORDER BY ${ownerMediaAllowedSql()} DESC, i.index ASC NULLS LAST, i.id ASC
       LIMIT 1
     ) cover ON TRUE
     WHERE p."userId" = ${user.id}
@@ -216,14 +218,21 @@ export async function getPlannerPostDetail({
     live ? postStatCache.fetch([id]) : null,
   ]);
 
-  const media = post.images.map((image) => ({
-    id: image.id,
-    url: image.url,
-    type: image.type,
-    nsfwLevel: image.nsfwLevel,
-    width: image.width ?? 0,
-    height: image.height ?? 0,
-  }));
+  // A blocked image has no media to show here; the editor carries its notice.
+  const media = post.images.flatMap((image) =>
+    image.url === null
+      ? []
+      : [
+          {
+            id: image.id,
+            url: image.url,
+            type: image.type,
+            nsfwLevel: image.nsfwLevel,
+            width: image.width ?? 0,
+            height: image.height ?? 0,
+          },
+        ]
+  );
   const cover = media[0] ? { url: media[0].url, type: media[0].type } : null;
   const metric = stats?.[id];
 
@@ -233,7 +242,7 @@ export async function getPlannerPostDetail({
     publishedAt: post.publishedAt?.toISOString() ?? '',
     modelVersionId: post.modelVersionId,
     nsfwLevel: post.nsfwLevel,
-    imageCount: media.length,
+    imageCount: post.images.length,
     cover,
     release: releaseOf({
       userId: post.user.id,

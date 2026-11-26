@@ -12,7 +12,6 @@ import {
   isHeldForReview,
   isServableLevelOrOwnUnrated,
   notHeldForReviewWhere,
-  ownerMediaAllowedWhere,
   servableLevelOrOwnUnratedWhere,
 } from '~/server/common/image-visibility';
 import {
@@ -68,6 +67,8 @@ import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { withoutMedia, withoutMediaReferences } from '~/server/utils/image-media-visibility';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -103,6 +104,7 @@ import {
   createImageResources,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
+  feedThumbnailFields,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
@@ -946,14 +948,27 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   const thumbnails = await thumbnailCache.fetch(imageIds);
 
   return _images
-    .map((image) => ({
-      ...image,
-      metadata: image.metadata as PreprocessFileReturnType['metadata'],
-      tags: tags.filter((x) => x.imageId === image.id),
-      tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
-      techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
-      thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
-    }))
+    .map((image) => {
+      const row = {
+        ...image,
+        metadata: image.metadata as PreprocessFileReturnType['metadata'],
+        tags: tags.filter((x) => x.imageId === image.id),
+        tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+        techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
+        // The editor's viewer is the post's owner or a moderator; a blocked thumbnail follows the feed's rule.
+        thumbnailUrl: (feedThumbnailFields(thumbnails[image.id], image.nsfwLevel, user.id, {
+          ownerId: user.id,
+          isModerator: user.isModerator ?? false,
+        }).thumbnailUrl ?? null) as string | null,
+      };
+      if (user.isModerator || ownerMediaAllowed(image)) return row;
+      // The owner keeps a blocked row and its notice (`blockedFor`, `ingestion`), not its media.
+      return {
+        ...withoutMedia(row),
+        thumbnailUrl: null,
+        meta: row.meta ? withoutMediaReferences(row.meta) : row.meta,
+      };
+    })
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
 
@@ -983,7 +998,6 @@ export const getPostEditImages = async ({
       postId: id,
       AND: [
         user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
-        user.isModerator ? {} : ownerMediaAllowedWhere(),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },

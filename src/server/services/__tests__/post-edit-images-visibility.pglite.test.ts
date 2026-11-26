@@ -11,7 +11,7 @@ import {
 import type { SessionUser } from '~/types/session';
 
 // getPostEditImages' own `where`, run by Prisma against real Postgres (PGlite). The editor's
-// heavy select is not under test, so only the ids come back from the database.
+// heavy select is not under test: the ids and block fields come back, with a stand-in url.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -84,9 +84,20 @@ beforeAll(async () => {
       (${RATED_BLOCKED}, ${OWNER}, ${BLOCKED_POST}, 32, 'Scanned', NULL);
   `);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: object }) =>
-    (await harness.prisma.image.findMany({ where: args.where, select: { id: true } })).map(
-      (row) => ({ ...row, index: row.id, tools: [], techniques: [] })
-    )) as never);
+    (
+      await harness.prisma.image.findMany({
+        where: args.where,
+        select: { id: true, nsfwLevel: true, ingestion: true, blockedFor: true },
+      })
+    ).map((row) => ({
+      ...row,
+      url: `media-${row.id}`,
+      meta: { prompt: 'p', image: `https://image.example/source-${row.id}.png` },
+      metadata: null,
+      index: row.id,
+      tools: [],
+      techniques: [],
+    }))) as never);
 });
 afterAll(() => harness.stop());
 
@@ -172,7 +183,7 @@ describe('getPostEditImages: the request level cap', () => {
 });
 
 describe('getPostEditImages: blocked images', () => {
-  const blockedPostIds = async (user: SessionUser) =>
+  const blockedPostRows = async (user: SessionUser) =>
     (
       await getPostEditImages({
         id: BLOCKED_POST,
@@ -180,19 +191,46 @@ describe('getPostEditImages: blocked images', () => {
         servableLevels: allBrowsingLevelsFlag,
         ownerSeesHeld: true,
       })
-    ).map((i) => i.id);
+    ).map(({ id, url, thumbnailUrl, blockedFor, ingestion, meta }) => ({
+      id,
+      url,
+      thumbnailUrl,
+      blockedFor,
+      ingestion,
+      sourceImage: (meta as { image?: string } | null)?.image ?? null,
+    }));
 
-  it('leaves a blocked image out for its owner, and keeps the metadata hold and a Blocked rating', async () => {
-    expect(await blockedPostIds(owner)).toEqual([BLOCKED_POST_CLEAN, METADATA_HOLD, RATED_BLOCKED]);
+  // civitai/civitai#10505: the owner keeps the row and its block notice, not the media.
+  it('keeps a blocked image for its owner as a notice row with no media', async () => {
+    expect(await blockedPostRows(owner)).toEqual([
+      expect.objectContaining({ id: BLOCKED_POST_CLEAN, url: `media-${BLOCKED_POST_CLEAN}` }),
+      {
+        id: MOD_BLOCKED,
+        url: null,
+        thumbnailUrl: null,
+        blockedFor: 'moderated',
+        ingestion: 'Blocked',
+        sourceImage: null,
+      },
+      {
+        id: SCAN_BLOCKED,
+        url: null,
+        thumbnailUrl: null,
+        blockedFor: null,
+        ingestion: 'Blocked',
+        sourceImage: null,
+      },
+      expect.objectContaining({ id: METADATA_HOLD, url: `media-${METADATA_HOLD}` }),
+      expect.objectContaining({ id: RATED_BLOCKED, url: `media-${RATED_BLOCKED}` }),
+    ]);
   });
 
-  it('keeps every one for a moderator', async () => {
-    expect(await blockedPostIds(moderator)).toEqual([
-      BLOCKED_POST_CLEAN,
-      MOD_BLOCKED,
-      SCAN_BLOCKED,
-      METADATA_HOLD,
-      RATED_BLOCKED,
-    ]);
+  it('serves every one with its media to a moderator', async () => {
+    expect((await blockedPostRows(moderator)).map(({ id, url }) => [id, url])).toEqual(
+      [BLOCKED_POST_CLEAN, MOD_BLOCKED, SCAN_BLOCKED, METADATA_HOLD, RATED_BLOCKED].map((id) => [
+        id,
+        `media-${id}`,
+      ])
+    );
   });
 });

@@ -64,10 +64,12 @@ export function keepCrawlerAnswerOutOfEdgeCache(
 }
 
 /** The image with `url` null and external video ids dropped; blur hash, size and rating stay. */
-export function withoutMedia<T extends MediaFields>(image: T): Omit<T, 'url'> & { url: null } {
-  if (!image.metadata) return { ...image, url: null };
+export function withoutMedia<T extends { url: string | null; metadata?: unknown }>(
+  image: T
+): Omit<T, 'url'> & { url: null } {
+  if (!image.metadata || typeof image.metadata !== 'object') return { ...image, url: null };
   const { youtubeVideoId, vimeoVideoId, ...metadata } = image.metadata as VideoMetadata;
-  return { ...image, url: null, metadata };
+  return { ...image, url: null, metadata: metadata as T['metadata'] };
 }
 
 /**
