@@ -38,6 +38,9 @@ describe('daily challenge webhooks', () => {
       } as never);
       // The cover subquery ends with the signed-out report-listed predicate, exactly.
       const term = reportListedImageSql(SIGNED_OUT_REPORT_LISTED).text;
+      // On the cover's own row: the predicate reads the alias the cover subquery binds.
+      expect(term.startsWith('((i.id)::text NOT IN')).toBe(true);
+      expect(issued[0]).toContain('FROM "Image" i WHERE i."id" = a."coverId"');
       expect(issued[0]).toContain(`AND ${term}) as "coverUrl"`);
     }
   );

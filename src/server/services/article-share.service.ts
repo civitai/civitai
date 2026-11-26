@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-body-media';
+import { readerArticleBody } from '~/server/utils/article-body-media';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
@@ -343,18 +343,9 @@ function toSharedArticle(
 ) {
   const { id, title, nsfwLevel, updatedAt } = article;
   // A link holder is a reader: media only its owner and moderators may get leaves the body.
-  const servable = contentImages.filter(
-    (image) => isServableBodyImage(image) && !listedHidden.has(image.id)
-  );
-  const withheld = contentImages
-    .filter((image) => !servable.includes(image))
-    .map((image) => image.url);
-  const content =
-    article.content &&
-    removeBodyMedia(article.content, {
-      withheld,
-      keepEdgeMedia: new Set(servable.map((image) => image.url)),
-    });
+  const body = readerArticleBody(article.content ?? '', contentImages, listedHidden);
+  const servable = body.kept;
+  const content = article.content && body.content;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
   // A link holder is never exempt from the minor rule.
   type Row = NonNullable<typeof article.coverImage>;
