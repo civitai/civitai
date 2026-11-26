@@ -12,6 +12,7 @@ import {
   CHAT_GROUNDABLE_STATUSES,
   createReviewChatTools,
   parseReviewChatRequest,
+  REVIEW_CHAT_CUT_OFF_NOTE,
   runReviewChat,
   SSE_DONE,
   sseChunk,
@@ -167,6 +168,8 @@ export function reviewAgentChat(deps: ReviewAgentChatDeps) {
           first = false;
         },
       });
+      if (finish === 'length')
+        res.write(sseChunk(id, request.modelId, { content: REVIEW_CHAT_CUT_OFF_NOTE }));
       res.write(sseChunk(id, request.modelId, {}, finish));
       res.write(SSE_DONE);
     } catch (err) {

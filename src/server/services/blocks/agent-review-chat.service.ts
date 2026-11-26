@@ -34,8 +34,13 @@ export const REVIEW_AGENT_CHAT_LIMITS = {
   maxToolCallsPerStep: 8,
   /** Conversation messages one request may carry. */
   maxMessages: 60,
-  /** Characters across the conversation's messages. */
-  maxRequestChars: 100_000,
+  /**
+   * Characters of text one reply streams, across its steps. Past it the reply ends as cut off.
+   * Keeps every reply small enough to be re-sent as history (`maxRequestChars`).
+   */
+  maxReplyChars: 32_000,
+  /** Characters across the conversation's messages: several full-length replies and questions. */
+  maxRequestChars: 200_000,
   /** Characters one tool result may hold. */
   toolOutputChars: 12_000,
   /** Characters every tool result of one reply may hold together. */
@@ -491,6 +496,12 @@ type UpstreamToolCall = {
 
 export type ReviewChatFinish = 'stop' | 'length';
 
+/**
+ * Streamed after a reply that stopped at a cap. The element shows a `length` finish like any other,
+ * so without this a cut-off answer reads as complete.
+ */
+export const REVIEW_CHAT_CUT_OFF_NOTE = '\n\n*This answer was cut off. Ask it to continue.*';
+
 export type RunReviewChatArgs = {
   request: ParsedReviewChatRequest;
   systemMessage: string;
@@ -518,6 +529,7 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
     ...request.messages.map((m) => ({ role: m.role, content: m.content })),
   ];
   let wroteText = false;
+  let streamed = 0;
 
   for (let step = 1; step <= L.maxSteps; step++) {
     const lastStep = step === L.maxSteps || tools.spent();
@@ -560,9 +572,13 @@ export async function runReviewChat(args: RunReviewChatArgs): Promise<ReviewChat
           onText('\n\n');
           separated = true;
         }
-        text += piece;
-        onText(neutralizeChatMarkup(piece));
+        const room = L.maxReplyChars - streamed;
+        const kept = piece.slice(0, Math.max(room, 0));
+        text += kept;
+        streamed += kept.length;
+        if (kept) onText(neutralizeChatMarkup(kept));
         wroteText = true;
+        if (kept.length < piece.length) return 'length';
       }
       for (const delta of choice.delta?.tool_calls ?? []) {
         const at = typeof delta.index === 'number' ? delta.index : calls.length;
@@ -641,6 +657,8 @@ export async function* readSseData(body: ReadableStream<Uint8Array>): AsyncGener
       }
     }
   } finally {
+    // A consumer that stops early (the reply cap) also stops the upstream response.
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

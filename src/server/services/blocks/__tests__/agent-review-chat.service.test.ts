@@ -130,12 +130,12 @@ describe('parseReviewChatRequest', () => {
       ok: false,
       refusal: { status: 413 },
     });
-    const huge = [{ role: 'user', content: 'x'.repeat(100_001) }];
+    const huge = [{ role: 'user', content: 'x'.repeat(200_001) }];
     expect(parseReviewChatRequest(body({ messages: huge }))).toMatchObject({
       ok: false,
       refusal: { status: 413 },
     });
-    const atLimit = [{ role: 'user', content: 'x'.repeat(100_000) }];
+    const atLimit = [{ role: 'user', content: 'x'.repeat(200_000) }];
     expect(parseReviewChatRequest(body({ messages: atLimit })).ok).toBe(true);
   });
 
@@ -393,6 +393,16 @@ describe('runReviewChat', () => {
 
   it('passes a reply cut by the token cap through as `length`', async () => {
     expect((await reply([() => say('partial', 'length')])).finish).toBe('length');
+  });
+
+  it('ends a reply at 32,000 characters of text, as cut off, so it can always be re-sent', async () => {
+    // 14 pieces of 3,000: the cap lands inside the 11th, so the cut is mid-piece.
+    const pieces = Array.from({ length: 14 }, (_, i) =>
+      delta({ content: String(i % 10).repeat(3000) })
+    );
+    const r = await reply([() => sse([...pieces, delta({}, 'stop')])]);
+    expect(r.text).toHaveLength(32_000);
+    expect(r.finish).toBe('length');
   });
 
   it('separates the words of two steps', async () => {

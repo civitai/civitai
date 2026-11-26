@@ -357,6 +357,24 @@ describe('what the element receives', () => {
     expect(chunks.at(-1)!.choices[0].finish_reason).toBe('stop');
   });
 
+  it('labels a reply cut off at the token cap, since the element shows it like a finished one', async () => {
+    const { deps } = makeDeps([() => sse([delta({ content: 'Half an' }), delta({}, 'length')])]);
+    const chunks = events((await call(deps)).sse).slice(0, -1) as Array<{
+      choices: Array<{ delta: { content?: string }; finish_reason: string | null }>;
+    }>;
+    expect(chunks.map((c) => c.choices[0].delta.content ?? null)).toEqual([
+      'Half an',
+      '\n\n*This answer was cut off. Ask it to continue.*',
+      null,
+    ]);
+    expect(chunks.at(-1)!.choices[0].finish_reason).toBe('length');
+  });
+
+  it('adds no note to a reply that finished', async () => {
+    const { deps } = makeDeps();
+    expect((await call(deps)).sse).not.toContain('cut off');
+  });
+
   it('reports a failed model call as an error frame, never a 500', async () => {
     const { deps } = makeDeps([
       () => new Response('upstream exploded: key=secret', { status: 500 }),
