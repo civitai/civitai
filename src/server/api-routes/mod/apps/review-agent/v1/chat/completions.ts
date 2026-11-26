@@ -203,7 +203,7 @@ export function reviewAgentChat(deps: ReviewAgentChatDeps) {
         name: 'app-blocks.review.agent-chat',
         type: 'info',
         message: 'review agent chat reply',
-        ...affected,
+        payload: affected,
       });
       return { affected };
     } catch (err) {
@@ -212,9 +212,8 @@ export function reviewAgentChat(deps: ReviewAgentChatDeps) {
         name: 'app-blocks.review.agent-chat',
         type: aborted ? 'info' : 'warning',
         message: aborted ? 'review agent chat reply abandoned' : 'review agent chat reply failed',
-        ...counts,
-        toolChars: tools.used(),
-        ...(aborted ? {} : { error: safeError(err) }),
+        payload: { ...counts, toolChars: tools.used() },
+        error: aborted ? undefined : safeError(err),
       });
       if (!aborted) res.write(sseError('The review agent did not respond. Try again.'));
       return { affected: { ...counts, failed: true, aborted, toolChars: tools.used() } };

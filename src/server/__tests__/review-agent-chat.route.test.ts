@@ -1,5 +1,5 @@
 import type * as CivitaiAuth from '@civitai/auth';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -174,7 +174,7 @@ const events = (stream: string) =>
 /** What the rate limiter's counter reads after this call's increment. */
 const rate = vi.hoisted(() => ({ count: 1, keys: [] as string[], ex: [] as unknown[] }));
 /** The audit row each reply writes; stubbed, since the tracker is a network boundary. */
-let audit: ReturnType<typeof vi.spyOn<Tracker, 'retoolAudit'>>;
+let audit: MockInstance<Tracker['retoolAudit']>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -442,7 +442,7 @@ describe('the per-moderator rate limit and the reply record', () => {
         name: 'app-blocks.review.agent-chat',
         type: 'info',
         message: 'review agent chat reply',
-        ...expected,
+        payload: expected,
       },
     ]);
     expect(audit).toHaveBeenCalledTimes(1);
