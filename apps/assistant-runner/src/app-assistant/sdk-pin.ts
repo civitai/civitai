@@ -36,7 +36,7 @@ const REMEMBERED = 10_000;
 const TARGET_RANGE = `^${CIVITAI_SDK_FLOOR}`;
 const FLOOR_MINOR = CIVITAI_SDK_FLOOR.split('.').slice(0, 2).join('.');
 /** The one line a reply starts with after the runner upgraded its app. */
-export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} so the preview stays awake while you use it.`;
+export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} to match the current Civitai app host.`;
 
 /** What `submit_for_review` answers when the runner upgraded the app's SDK as it was offered. */
 export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;

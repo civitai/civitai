@@ -208,7 +208,7 @@ describe('an SDK upgrade lands before the submit offer, never after it', () => {
     const first = await call(tools, 'submit_for_review');
     app.steps.push('submit answered');
     expect(first).toMatchObject({
-      error: `Not submitted yet: the runner just updated this app's Civitai SDK to ${CURRENT} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: Updated this app's Civitai SDK to ${CURRENT_MINOR} so the preview stays awake while you use it. Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`,
+      error: `Not submitted yet: the runner just updated this app's Civitai SDK to ${CURRENT} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: Updated this app's Civitai SDK to ${CURRENT_MINOR} to match the current Civitai app host. Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`,
     });
     expect(app.steps).toEqual(['install', 'submit answered']);
     expect(app.pkg).toContain(`"@civitai/sdk": "${CURRENT}"`);

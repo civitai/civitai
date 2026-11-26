@@ -95,10 +95,10 @@ importers:
         version: link:packages/civitai-buzz
       '@civitai/components':
         specifier: ^0.13.0
-        version: 0.13.0(@civitai/sdk@0.24.0)
+        version: 0.13.0(@civitai/sdk@0.32.0)
       '@civitai/components-chat':
         specifier: ^0.35.1
-        version: 0.35.1(@civitai/sdk@0.24.0)(lit@3.3.3)(zod@4.6.7)
+        version: 0.35.1(@civitai/sdk@0.32.0)(lit@3.3.3)(zod@4.6.7)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0(patch_hash=b5c92914227f8e97ba962a6763022ab306cdab165a2c34a834b4d182e51a8846)
@@ -127,8 +127,8 @@ importers:
         specifier: 0.2.8
         version: 0.2.8
       '@civitai/sdk':
-        specifier: ^0.24.0
-        version: 0.24.0
+        specifier: ^0.32.0
+        version: 0.32.0
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
@@ -906,7 +906,7 @@ importers:
         version: link:../../packages/civitai-app-assistant
       '@civitai/components-chat':
         specifier: 0.35.0
-        version: 0.35.0(@civitai/sdk@0.24.0)(lit@3.3.3)(zod@4.6.7)
+        version: 0.35.0(@civitai/sdk@0.32.0)(lit@3.3.3)(zod@4.6.7)
       '@dbos-inc/dbos-sdk':
         specifier: 5.3.0
         version: 5.3.0
@@ -1642,7 +1642,7 @@ importers:
         version: link:../../packages/civitai-buzz
       '@civitai/components':
         specifier: 0.13.0
-        version: 0.13.0(@civitai/sdk@0.24.0)
+        version: 0.13.0(@civitai/sdk@0.32.0)
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
@@ -1913,7 +1913,7 @@ importers:
     dependencies:
       '@civitai/components':
         specifier: 0.9.2
-        version: 0.9.2(@civitai/sdk@0.24.0)
+        version: 0.9.2(@civitai/sdk@0.32.0)
       '@civitai/shared':
         specifier: workspace:*
         version: link:../civitai-shared
@@ -2569,8 +2569,8 @@ packages:
     resolution: {integrity: sha512-VRF+6UIQIXNBDsEBQle3xnAHKVCgT51QB1Bn+lu4aMKPRQOCHj3oJMxleuVO5DsS4gS73/3mnx3knc33JHws/A==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/sdk@0.24.0':
-    resolution: {integrity: sha512-eoflUOqn82Jpz5fbBCVddCeFe9CH/Z7R48JJ1DfVydvjX4HU858VWfI4jWWuxs4SYdFcqQE2sCASI2v8j+9LTg==}
+  '@civitai/sdk@0.32.0':
+    resolution: {integrity: sha512-FxqYSNi42PdT+QqOdEJDzjZ+iLp0V3B6FqODCyrRatUrhkm+ZUFJc1dUASEGofEmkraXzUfvMpwtOafOnPNVpA==}
     engines: {node: '>=20'}
 
   '@civitai/theme@0.5.2':
@@ -13554,11 +13554,11 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@civitai/components-chat@0.35.0(@civitai/sdk@0.24.0)(lit@3.3.3)(zod@4.6.7)':
+  '@civitai/components-chat@0.35.0(@civitai/sdk@0.32.0)(lit@3.3.3)(zod@4.6.7)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.6.7)
-      '@civitai/components': 0.13.0(@civitai/sdk@0.24.0)
-      '@civitai/sdk': 0.24.0
+      '@civitai/components': 0.13.0(@civitai/sdk@0.32.0)
+      '@civitai/sdk': 0.32.0
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.7)
       ai: 6.0.289(zod@4.6.7)
       dompurify: 3.4.17
@@ -13570,11 +13570,11 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components-chat@0.35.1(@civitai/sdk@0.24.0)(lit@3.3.3)(zod@4.6.7)':
+  '@civitai/components-chat@0.35.1(@civitai/sdk@0.32.0)(lit@3.3.3)(zod@4.6.7)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.6.7)
-      '@civitai/components': 0.13.0(@civitai/sdk@0.24.0)
-      '@civitai/sdk': 0.24.0
+      '@civitai/components': 0.13.0(@civitai/sdk@0.32.0)
+      '@civitai/sdk': 0.32.0
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.7)
       ai: 6.0.289(zod@4.6.7)
       dompurify: 3.4.17
@@ -13586,19 +13586,19 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components@0.13.0(@civitai/sdk@0.24.0)':
+  '@civitai/components@0.13.0(@civitai/sdk@0.32.0)':
     dependencies:
       '@civitai/theme': 0.5.2
       lit: 3.3.3
     optionalDependencies:
-      '@civitai/sdk': 0.24.0
+      '@civitai/sdk': 0.32.0
 
-  '@civitai/components@0.9.2(@civitai/sdk@0.24.0)':
+  '@civitai/components@0.9.2(@civitai/sdk@0.32.0)':
     dependencies:
       '@civitai/theme': 0.5.2
       lit: 3.3.3
     optionalDependencies:
-      '@civitai/sdk': 0.24.0
+      '@civitai/sdk': 0.32.0
 
   '@civitai/cybertipline-tools@0.1.0(patch_hash=b5c92914227f8e97ba962a6763022ab306cdab165a2c34a834b4d182e51a8846)':
     dependencies:
@@ -13620,7 +13620,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/sdk@0.24.0':
+  '@civitai/sdk@0.32.0':
     dependencies:
       '@civitai/orchestration-client': 0.2.8
 

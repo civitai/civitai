@@ -25,7 +25,7 @@ const STALE = '^0.19.1';
 const INSTALL = 'cd my-app && npm install --no-audit --no-fund';
 const INSTALLED = 'my-app/node_modules/@civitai/sdk/package.json';
 /** The words the reply is told to start with after an upgrade. */
-const USER_LINE = `Updated this app's Civitai SDK to ${CURRENT_MINOR} so the preview stays awake while you use it.`;
+const USER_LINE = `Updated this app's Civitai SDK to ${CURRENT_MINOR} to match the current Civitai app host.`;
 
 let fake: FakeSandboxService;
 let logs: { level: string; object: object; message: string | undefined }[];
@@ -354,6 +354,21 @@ describe('the runner upgrades an app on an old @civitai/sdk itself', () => {
     expect(state.writes).toEqual([]);
     expect(installCount()).toBe(1);
     expect(state.installed).toBe(CURRENT_VERSION);
+  });
+
+  it('the page-elements scaffold pin (^0.30.0, 0.30.1 installed) is lifted to ^0.32.0, the app-data transport', async () => {
+    // Literal, not read from the root manifest, so a floor below 0.32.0 fails here; move it with
+    // the next floor bump.
+    fake.add('my-app');
+    const state = app({ pkg: pkg4('^0.30.0'), installed: '0.30.1' });
+    const tools = await open(provider());
+    expect(state.writes).toEqual([pkg4('^0.32.0')]);
+    expect(state.installed).toBe('0.32.0');
+    expect(installCount()).toBe(1);
+    expect(tools.instructions).toContain(
+      "Updated this app's Civitai SDK to 0.32 to match the current Civitai app host."
+    );
+    expect(failed()).toEqual([]);
   });
 
   it('a current pin with a current SDK installed makes no change at all', async () => {

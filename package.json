@@ -186,7 +186,7 @@
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/orchestration-client": "0.2.8",
-    "@civitai/sdk": "^0.24.0",
+    "@civitai/sdk": "^0.32.0",
     "@civitai/shared": "workspace:*",
     "@civitai/storage": "workspace:*",
     "@clavata/sdk": "^0.2.3",
