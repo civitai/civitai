@@ -249,6 +249,10 @@ func checkClaims(c map[string]any, now int64, anonymous bool) error {
 	if _, present := c["privateRunAudience"]; present || !absentOrFalse(c, "privateRun") {
 		return localRefusal("private run")
 	}
+	// A runner token (mintOrigin) is only valid for a site workflow submit; refuse it here.
+	if _, present := c["mintOrigin"]; present {
+		return localRefusal("runner token")
+	}
 	if float64(now)-iat > blockMaxAge+blockClockSkew {
 		return localRefusal("too old")
 	}

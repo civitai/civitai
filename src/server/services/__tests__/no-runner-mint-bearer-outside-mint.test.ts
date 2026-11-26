@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 const LEDGER: Record<string, number> = {
   // the option type and the refusal
   'src/server/auth/bearer-token.ts': 2,
+  // the block-token mint's runner path
+  'src/server/services/blocks/runner-mint-handler.ts': 1,
 };
 
 function mentions(): Record<string, number> {

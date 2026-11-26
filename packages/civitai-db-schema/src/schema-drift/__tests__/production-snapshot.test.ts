@@ -298,7 +298,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271125130000_service_deal_buyer_disclosure`
     //   the three `ServiceOffering` request-form columns and the three `ServiceDeal` form columns:
     //     `20271128130000_service_request_form` — drop these at the next catalog recapture.
+    //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
     const inFlightColumns = new Set([
+      'OauthConsent.offlineBuzzLimit',
+      'OauthConsent.offlineBuzzPeriod',
       'ServiceDealFileEntry.copyDeleteStartedAt',
       'ServiceOffering.requestForm',
       'ServiceOffering.requestFormVersion',
