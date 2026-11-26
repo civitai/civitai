@@ -3517,7 +3517,7 @@ const getAllImagesUncaptured = async (
       ${imageOnSiteSql()} as "onSite",
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
+      image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -4765,7 +4765,7 @@ export const getImage = async ({
       u."deletedAt",
       u."profilePictureId",
       COALESCE(p."availability", 'Public') "availability",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
+      image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") "publishedAt",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
