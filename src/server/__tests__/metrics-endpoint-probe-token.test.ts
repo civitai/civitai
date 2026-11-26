@@ -1,23 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as PromClient from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 // The real ProbeEndpoint wraps the real /api/metrics handler here, so a scrape is authorized the way
-// Prometheus's is. Same seams as webhook-endpoint-probe-token.test.ts and
-// metrics-endpoint-prisma-failure.test.ts.
-vi.mock('@civitai/next-axiom', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  withAxiom: (handler: unknown) => handler,
-}));
-vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  instrumentApiResponse: () => undefined,
-}));
-vi.mock('~/server/prom/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromClient>()),
-}));
+// Prometheus's is.
 const poolStub = () => ({ totalCount: 0, idleCount: 0, waitingCount: 0 });
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: poolStub(),
