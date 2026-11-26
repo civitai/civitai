@@ -112,6 +112,9 @@ CREATE TABLE "Appeal" (
 );
 CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER UNIQUE, "removalLabel" TEXT);
 CREATE TABLE "ModActivity" (id SERIAL PRIMARY KEY, "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
+CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+CREATE TABLE "Report" (id INTEGER PRIMARY KEY, status "ReportStatus" NOT NULL);
+INSERT INTO "Report" (id, status) VALUES (7, 'Pending'), (8, 'Processing');
 `;
 
 const REQUESTER = 2;
@@ -512,6 +515,19 @@ describe('deciding a held removal', () => {
       [7, true],
       [8, true],
     ]);
+  });
+
+  it('leaves a report a moderator reviewed since the hold as it is', async () => {
+    const id = await hold();
+    await db.query(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 8`);
+
+    await confirmRemoval({ id, userId: CONFIRMER });
+
+    expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
+    // The write itself is guarded too, for a review landing between this read and the write.
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ fromStatuses: ['Pending', 'Processing'] })
+    );
   });
 
   it('runs the removal once when two moderators confirm', async () => {

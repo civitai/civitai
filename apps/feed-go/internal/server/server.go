@@ -26,6 +26,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/devalue"
@@ -224,6 +225,11 @@ type Server struct {
 	// SearchFallback serves what the public `/api/search/*` route does not (FEED_GO_SEARCH_FALLBACK_URL:
 	// the Node app answering it). The route is mounted only when it is set.
 	SearchFallback http.Handler
+	// EvalMode is FEED_GO_EVAL_MODE (default off; config.LoadEval, DESIGN.md §19.7): every request a
+	// public route hands back is answered with the hand-back stub (handBack: HandbackStatus and
+	// HandbackReasonHeader) instead of being proxied, so no fallback upstream is ever dialled; and the
+	// internal shadow and probe routes are not mounted (InternalMux).
+	EvalMode bool
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -411,7 +417,7 @@ func (s *Server) prepareViewer(ctx context.Context, r *http.Request) (feed.Reque
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	cap := browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))
 
 	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned}
@@ -448,20 +454,11 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 	return out, nil
 }
 
-// prepareInfinite is computeInfinite up to the handler call, and whether createContext makes the
-// answer edge-cacheable (no session user at all, and no verified crawler); the Go-first probe runs
-// the same steps. A verified crawler (verifiedCrawler) counts as signed in for the domain cap where
-// NSFW is viewable (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
-func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
-	req, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
-	if err != nil {
-		return feed.InfiniteRequest{}, false, err
-	}
-	return req, user == nil && !crawler, nil
-}
-
-// prepareInfiniteViewer is prepareInfinite with the session user it resolved (nil: none) and whether
-// the request is a verified crawler's, instead of the cacheable verdict the two make.
+// prepareInfiniteViewer is computeInfinite up to the handler call, with the session user it resolved
+// (nil: none) and whether the request is a verified crawler's (createContext makes the answer
+// edge-cacheable with neither); the Go-first probe runs the same steps. A verified crawler
+// (verifiedCrawler) counts as signed in for the domain cap where NSFW is viewable
+// (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
 func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (feed.InfiniteRequest, *auth.SessionUser, bool, error) {
 	if s.Infinite == nil {
 		return feed.InfiniteRequest{}, nil, false, fallback.New("infinite-unconfigured")
@@ -491,7 +488,7 @@ func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (fe
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	canViewNsfw := browsing.CanViewNsfw(color, restricted, isModerator)
 	req := feed.InfiniteRequest{
 		Input:      in,
@@ -537,14 +534,8 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	return out, nil
 }
 
-// prepareModelGetAll is computeModelGetAll up to the handler call, and whether there is no session
-// user at all; the Go-first probe runs the same steps.
-func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, bool, error) {
-	req, user, err := s.prepareModelGetAllViewer(ctx, r)
-	return req, user == nil, err
-}
-
-// prepareModelGetAllViewer is prepareModelGetAll with the session user it resolved (nil: none).
+// prepareModelGetAllViewer is computeModelGetAll up to the handler call, with the session user it
+// resolved (nil: none); the Go-first probe runs the same steps.
 func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) (modelfeed.Request, *auth.SessionUser, error) {
 	if s.Models == nil {
 		return modelfeed.Request{}, nil, fallback.New("model-getall-unconfigured")
@@ -570,7 +561,7 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	req := modelfeed.Request{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
 	if authorized {
 		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
@@ -623,7 +614,7 @@ func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool
 		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
 		viewerUsername = user.Username
 	}
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	ans, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
 		Input: in, Viewer: viewer, ViewerUsername: viewerUsername, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
 	})
@@ -715,13 +706,20 @@ func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *comput
 // answer (trpc.WriteResult; the app's private default unless the answer is edge-cacheable).
 func (s *Server) apiRequestPolicy(r *http.Request) error {
 	// IsRegionRestricted is isRegionBlocked's match over any rule list (same region key and date).
-	if browsing.IsRegionRestricted(s.RegionBlockRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now()) {
+	if regionMatches(s.RegionBlockRules, r) {
 		return errRegionBlocked
 	}
 	if apipolicy.IsCrawlerUserAgent(r.Header.Get("User-Agent")) {
 		return fallback.New("crawler-user-agent")
 	}
 	return nil
+}
+
+// regionMatches is IsRegionRestricted over rules for r's region (countryOf, cf-region-code), at the
+// clock answers are computed at (clock.Now: FEED_GO_EVAL_NOW in eval mode, else the wall clock). Every
+// region rule a route reads goes through it, so a dated rule is read at one instant everywhere.
+func regionMatches(rules []browsing.RegionRule, r *http.Request) bool {
+	return browsing.IsRegionRestricted(rules, countryOf(r), r.Header.Get("cf-region-code"), clock.Now())
 }
 
 func countryOf(r *http.Request) string {
@@ -1053,16 +1051,44 @@ func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint,
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}
-	if s.Fallback == nil {
+	if s.Fallback == nil && !s.EvalMode {
 		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
 	}
-	// Set before the proxy copies the Node app's headers in, so it is on the proxy's own 502 too.
-	w.Header().Set(ServedByHeader, ServedByNode)
 	// The original request (and its context): the budget bounded only this service's own compute.
-	s.proxy(w, r, endpoint)
+	s.handBack(s.Fallback, w, r, endpoint, err)
 	s.sampleServeCapture(r, endpoint, viewer, err) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
+}
+
+// HandbackStatus and HandbackReasonHeader are eval mode's hand-back stub (EvalMode): a request a
+// public route would proxy to the Node app is answered with HandbackStatus, an empty body, and the
+// fallback reason in HandbackReasonHeader (fallback.Reason; HandbackReasonError for a compute error,
+// which has none). 599 is outside every status the app or this service answers, so a replay can never
+// mistake the stub for an answer.
+const (
+	HandbackStatus       = 599
+	HandbackReasonHeader = "X-Feed-Go-Handback-Reason"
+	HandbackReasonError  = "error"
+)
+
+// handBack hands a public request this service did not answer (err: the fallback, or the compute
+// error) to upstream, the route's Node app. Every public route's hand-back goes through it, so eval
+// mode's stub covers them all: with EvalMode the stub is written and upstream is never called (it may
+// be nil). Otherwise ServedByHeader says the Node app answered (set before the proxy copies the app's
+// headers in, so it is on the proxy's own 502 too) and the request is proxied.
+func (s *Server) handBack(upstream http.Handler, w http.ResponseWriter, r *http.Request, endpoint string, err error) {
+	w.Header().Set(ServedByHeader, ServedByNode)
+	if s.EvalMode {
+		reason := fallback.Reason(err)
+		if reason == "" {
+			reason = HandbackReasonError
+		}
+		w.Header().Set(HandbackReasonHeader, reason)
+		w.WriteHeader(HandbackStatus)
+		return
+	}
+	s.proxyVia(upstream, w, r, endpoint)
 }
 
 // serveFallback records a public request that was not answered here (err, a fallback or an error)

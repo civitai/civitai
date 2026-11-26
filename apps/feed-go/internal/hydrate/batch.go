@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 )
 
 // Batch collects the cache reads of one dependency stage and sends them in ONE Pipelined call per
@@ -98,7 +100,7 @@ func (r *PackedRead) read() (map[int]Entry, map[int]bool) {
 		}
 		return out, writable
 	}
-	now := time.Now()
+	now := clock.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}

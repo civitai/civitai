@@ -1029,7 +1029,7 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
    The caveats on misses Go computes (the cosmetic lower bound, the stale tag-ids entry, the tag-ids
    gate) apply equally to a raced entry on such a cache: since it is costed and classified as a miss
    there (below), whatever over- or understates that miss's reads or verdict does the same for it;
-3. records the result in `feed_go_gofirst_total{feed_endpoint,result}`:
+3. records the result in `feed_go_gofirst_total{feed_endpoint,result,viewer}`:
    - `would_serve`: every cache answered, or missed only where Go answers the miss itself
      (`Sources.MissReason` is `""`): from the replica (basic users, profile pictures, thumbnails,
      cosmetic records) or, with the miss computation on (`FEED_GO_COMPUTE_MISSES`, default on), by
@@ -1054,6 +1054,20 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      `feed_go_fallback_total{mode="probe"}`;
    - `error`: a store read failed (a miss it cannot tell from one), a panic
      (`feed_go_panics_total{where="probe"}`), or a malformed probe;
+
+   each also under `viewer`, the request's viewer class: on the three tRPC feeds the class the
+   shadow counts per viewer (`server.FeedViewerClasses`: `anon`, `crawler`, `banned`, `user`,
+   `moderator`, from the same `feedViewerClass` over the session user the probe resolved). Serving
+   parses the input before it reads the session, so a probe that stops on a method or input fallback
+   reads the session for the label alone (`server.probeViewer`, read-only, the result unchanged): an
+   `unsupported` input fallback is counted under its viewer like any other probe. `unknown`
+   (`server.GoFirstViewerUnknown`) is left for a malformed probe, a probe whose viewer cannot be
+   resolved (an API credential: `bearer-token`; a verified bot on as-posts or model.getAll; a
+   session-cache miss), and every `GET /api/v1/images` probe (an endpoint that reports no viewer
+   class; its probe falls back on a session cookie before computing). Every (endpoint, result,
+   viewer) series is seeded at 0 (`server.GoFirstViewers`). The go-first share of signed-out viewers
+   reads `viewer="anon"` alone (below); its denominator holds only the probes whose viewer was
+   resolved (a signed-out request has no session to miss), so read the `unknown` volume beside it;
 
    and, once per probe for each cache that missed at least one id (whatever the result),
    `feed_go_gofirst_miss_total{feed_endpoint,cache}`, so the caches that block serving read in
@@ -1153,6 +1167,10 @@ sum(rate(feed_go_shadow_compare_total{feed_endpoint="as-posts",result="match"}[1
 #    (`raced` is not served).
 sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="would_serve"}[1h]))
   / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts"}[1h]))
+#    The same share for signed-out viewers alone (`viewer="anon"`, input fallbacks included; probes
+#    whose viewer cannot be resolved are `viewer="unknown"`, in neither side).
+sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="would_serve",viewer="anon"}[1h]))
+  / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",viewer="anon"}[1h]))
 
 # 3. Reported, with the decision: database reads per served page, by cache and in total.
 sum by (cache) (rate(feed_go_gofirst_db_reads_total{feed_endpoint="as-posts"}[1h]))
@@ -3878,3 +3896,64 @@ undone by feed-go. Within a pod a case id is admitted at most once per day; acro
 request on the same day may be inserted twice, with the same version and the same request (only
 `node_body` can differ: either is a recorded Node answer), and ReplacingMergeTree keeps one. The
 90-day TTL then counts from the start of the capture day unless the harness bumps the case.
+
+### 19.7 Eval mode (`FEED_GO_EVAL_MODE`, default off; `FEED_GO_EVAL_NOW`)
+
+A pod the replay harness runs cases against, never one serving users. Code: `internal/config/eval.go`
+(`LoadEval`), `internal/clock`, `server.handBack`. Off, nothing here changes what the service does.
+
+**The hand-back stub.** With eval mode on, every request a public route would hand to the Node app
+is answered here instead: status **599**, an empty body, `X-Feed-Go-Served: node`, and
+**`X-Feed-Go-Handback-Reason: <reason>`**, the `feed_go_fallback_total` reason the request fell back
+for (`model-getall-off`, `origin`, `bulkhead`, `deadline`, `region-blocked`, …), or **`error`** for a
+compute error, which has no reason. 599 is outside every status the app or this service answers, so a
+stub can never be read as an answer: the harness records a case Go hands back as a gap with its
+reason, and never replays it to Node through this pod. Every public route ends a request it does not
+answer at `handBack` (the one caller of the proxy), so no route can reach an upstream past the stub:
+`TestEvalModeStubsEveryPublicRoute` drives every route `PublicMux` mounts (a ledger of the route
+set), and `TestProxyViaIsCalledOnlyFromHandBack` pins that the proxy has no other caller. Every
+public route is mounted in eval mode whether its fallback URL is set or not (an unmounted route would
+answer the mux's 404, which a harness could read as Node's own 404); the URLs are never dialled, and a
+pod with none still listens publicly and answers every route's stubs. A client gone before the
+hand-back (`canceled`) is answered nothing, as off. Answers written here rather than handed back
+(`FEED_GO_ANSWER_REGION_BLOCKED`'s 451, `FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE`'s 503) are
+answers, not hand-backs, and are written as off.
+
+**Never sampled.** The internal shadow and Go-first probe routes are not mounted (404), and startup
+refuses eval mode beside any switch that sends this pod's traffic, or a copy of it, to the Node app or
+to the corpus (`config.EvalConflicts`): `FEED_GO_SHADOW_WORKERS` (the shadow's only switch on this
+side), `FEED_GO_SERVE_PARITY_SAMPLE_RATE`, `FEED_GO_EVAL_CAPTURE` and `FEED_GO_EVAL_CAPTURE_SERVE_RATE`
+(§19.6), and `FEED_GO_CACHE_WRITEBACK` (write-back stamps entries with the wall clock while an eval
+pod reads staleness on the frozen one, and writes caches other pods read). Each must be unset or an explicit off (`0`, `false`, `no`, `off`); junk counts as on, so the
+refusal errs towards not starting. A `FEED_GO_EVAL_MODE` that is neither on (`true`, `1`, `yes`) nor
+off (unset, `false`, `0`, `no`) is refused too: a typo must not leave an eval pod proxying, nor a
+serving pod stubbing.
+
+**The clock.** `FEED_GO_EVAL_NOW` (RFC3339) freezes `clock.Now` at startup; it is refused without eval
+mode (a frozen clock on a serving pod would serve stale answers) and when it does not parse. Frozen,
+not offset: a corpus run answers every case at one instant however long the run takes and in whatever
+order the cases run, so two runs of one corpus compute the same answers. `clock.Now` is read wherever
+the time decides what an answer holds: publish and schedule filters (`feed` gallery, image.getInfinite,
+both `/api/v1/images` paths; model.getAll; `/api/v1/models`; the promotions window), cache-entry
+staleness (`hydrate`'s ordered, batch, official-models and showcase reads; the new-creators board),
+session-token times (`auth.Verifier.tokenNow`) and API-key expiry, and every dated region rule (one
+helper, `server.regionMatches`). What paces this process stays on the wall clock: durations, memo
+TTLs (blocked tags, flags), the key set's refetch and staleness, log rate limits, the search circuit,
+write budgets, and the miss computer's `cachedAt` stamps and recent-answer memo: freezing them would
+freeze the process, not the answer. `internal/clock`'s ledger test pins every `clock.Now` read by file
+(a read put back on `time.Now` fails it), and the `TestEvalClockReaches*` tests (auth, feed, hydrate,
+server) show each package's answer move with the frozen instant, at instants the wall clock cannot
+reach. The ledger guards the known sites only: it cannot see a new `time.Now()` or a SQL `now()`.
+
+**Known unfrozen: the database's clock.** These queries compare against Postgres's own `now()`, which
+`FEED_GO_EVAL_NOW` does not reach: the published-before-now filter and the period window of the
+Postgres feed path (`feed/query.go`), the review visibility filter (`feed/gallery.go`), and the paid
+access and subscription windows (`modelfeed/query.go`, `v1models/raw.go`, `v1models/stores.go`). On
+those paths an eval answer selects rows at the database's wall time and builds them at the frozen
+instant, so a case near a publish or subscription boundary can answer differently between two runs.
+Binding the instant as a query parameter is a later change (it moves every fixture's query text); until
+then a harness should freeze the clock near the corpus's capture time and treat boundary cases as
+unstable.
+
+Not in scope here: what the eval pod reads (its stores, flags, caches) and whether its cache
+write-back is on are the harness's environment's to set.

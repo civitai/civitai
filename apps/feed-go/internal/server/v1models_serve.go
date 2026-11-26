@@ -99,8 +99,7 @@ func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, e
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}
-	w.Header().Set(ServedByHeader, ServedByNode)
-	s.proxyVia(s.V1Fallback, w, r, endpoint)
+	s.handBack(s.V1Fallback, w, r, endpoint, err)
 	s.sampleServeCapture(r, endpoint, viewer, err) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
 }
 

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -101,7 +100,7 @@ func (s *Server) prepareAssociated(ctx context.Context, r *http.Request) (modelf
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	restricted := regionMatches(s.RegionRules, r)
 	req := modelfeed.AssocRequest{
 		Input:  in,
 		Banned: user != nil && user.Banned,

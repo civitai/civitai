@@ -123,13 +123,9 @@ func PublicEndpoint(path string) string {
 	return ""
 }
 
-// proxy hands r to the fallback proxy, inside a client span `fallback-proxy <endpoint>` when tracing
-// is on, so the proxy's injected traceparent makes the Node app's span its child.
-func (s *Server) proxy(w http.ResponseWriter, r *http.Request, endpoint string) {
-	s.proxyVia(s.Fallback, w, r, endpoint)
-}
-
-// proxyVia is proxy to upstream (Fallback, or V1Fallback for the REST model routes).
+// proxyVia hands r to upstream (a route's fallback proxy), inside a client span
+// `fallback-proxy <endpoint>` when tracing is on, so the proxy's injected traceparent makes the Node
+// app's span its child. Only handBack calls it (eval mode's stub is decided there).
 func (s *Server) proxyVia(upstream http.Handler, w http.ResponseWriter, r *http.Request, endpoint string) {
 	if s.Tracer == nil {
 		upstream.ServeHTTP(w, r)

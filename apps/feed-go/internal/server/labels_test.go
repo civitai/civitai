@@ -114,9 +114,9 @@ func TestProbeRunsUnderProfileLabels(t *testing.T) {
 	env, fx, _ := probeEnv(t)
 	got := make(chan [2]string, 1)
 	orig := probes[Procedure]
-	probes[Procedure] = probeSpec{endpoint: orig.endpoint, run: func(_ *Server, ctx context.Context, _ ProbeRequest, _ *hydrate.PresenceProbe) error {
+	probes[Procedure] = probeSpec{endpoint: orig.endpoint, run: func(_ *Server, ctx context.Context, _ ProbeRequest, _ *hydrate.PresenceProbe) (string, error) {
 		got <- profileLabelsOf(ctx)
-		return nil
+		return "", nil
 	}}
 	t.Cleanup(func() { probes[Procedure] = orig })
 	mux := InternalMux(env.server, http.NotFoundHandler(), false)
