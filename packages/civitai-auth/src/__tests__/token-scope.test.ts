@@ -239,6 +239,34 @@ describe('AppsRead and AppDataRead (opt-in user scopes past bit 30 — NOT part 
   });
 });
 
+describe('RunnerMint (recipe-runner only — refused by every grant and parser)', () => {
+  it('is bit 33 = 8589934592', () => {
+    expect(TokenScope.RunnerMint).toBe(8589934592n);
+  });
+
+  it('is outside Full, every preset and ALL_SCOPES, so parseTokenScope refuses it', () => {
+    expect(TokenScope.Full & TokenScope.RunnerMint).toBe(0n);
+    for (const [name, preset] of Object.entries(TokenScopePresets)) {
+      expect(preset & TokenScope.RunnerMint, `preset ${name}`).toBe(0n);
+    }
+    expect(ALL_SCOPES & TokenScope.RunnerMint).toBe(0n);
+    expect(parseTokenScope(TokenScope.RunnerMint)).toBeNull();
+    expect(parseTokenScope((TokenScope.RunnerMint | TokenScope.UserRead).toString())).toBeNull();
+  });
+
+  it('is a non-user scope: never consentable and never a client_credentials scope', () => {
+    expect(NON_USER_SCOPES & TokenScope.RunnerMint).toBe(TokenScope.RunnerMint);
+    expect(consentableScopes(TokenScope.RunnerMint | TokenScope.UserRead)).toBe(
+      TokenScope.UserRead
+    );
+    expect(CLIENT_CREDENTIALS_MAX_SCOPE & TokenScope.RunnerMint).toBe(0n);
+  });
+
+  it('has no label, so no scope picker or consent list built from the labels offers it', () => {
+    expect(tokenScopeLabel(TokenScope.RunnerMint)).toBeUndefined();
+  });
+});
+
 describe('parseTokenScope (untrusted wire values)', () => {
   it('reads a number, a bigint and a decimal string, bits 31 and 32 included', () => {
     expect(parseTokenScope(6442450945)).toBe(6442450945n);
