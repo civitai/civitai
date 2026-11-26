@@ -17,9 +17,10 @@ const STORED = [
   { t: null, text: 'Sun on the floor' },
 ];
 const ALIGNED = [
-  { index: 0, text: '[Verse]', status: 'ignored', startTime: null, words: [] },
+  { index: 0, text: '[Verse]', status: 'ignored', startTime: 0.5, words: [] },
   { index: 1, text: 'Rain on the window', status: 'aligned', startTime: 12.3456, words: [] },
-  { index: 2, text: '', status: 'ignored', startTime: null, words: [] },
+  // An ignored line stays untimed even when it comes back with a time.
+  { index: 2, text: '', status: 'ignored', startTime: 15, words: [] },
   { index: 3, text: 'Sun on the floor', status: 'lowConfidence', startTime: 18.5, words: [] },
 ];
 

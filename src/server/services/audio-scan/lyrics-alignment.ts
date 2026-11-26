@@ -4,6 +4,7 @@ import {
 } from '@civitai/orchestration-client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { lyricLineSchema, type LyricLine } from '~/server/schema/media.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
@@ -44,20 +45,32 @@ export async function alignTrackLyrics({ imageId, url }: { imageId: number; url:
   const lines = lyricLineSchema.array().safeParse(stored?.lines).data;
   if (!stored || !lines?.length) return false;
 
-  const { data, response } = await invokeLyricsAlignmentStepTemplate({
+  const { data, error, response } = await invokeLyricsAlignmentStepTemplate({
     client: internalOrchestratorClient,
     body: {
       mediaUrl: getEdgeUrl(normalizeImageScanUrl(url), { type: MediaType.audio }),
       lyrics: stored.text,
     },
   });
-  if (response?.status === 204 || !data?.lines) return false;
+  if (response?.status === 204) return false;
+  // Logged: a recipe that keeps failing, or starts reshaping the text, would leave every song untimed.
+  if (!data?.lines) {
+    logAlignment(imageId, 'failed', { status: response?.status, error });
+    return false;
+  }
   const timed = toAlignedLines(lines, data.lines);
-  if (!timed) return false;
+  if (!timed) {
+    logAlignment(imageId, 'unmatched', { stored: lines.length, aligned: data.lines.length });
+    return false;
+  }
 
   const { count } = await dbWrite.trackLyrics.updateMany({
     where: { imageId, text: stored.text },
     data: { lines: timed, source: TrackLyricsSource.aligned },
   });
   return count > 0;
+}
+
+function logAlignment(imageId: number, outcome: string, details: Record<string, unknown>) {
+  void logToAxiom({ type: 'warning', name: 'lyrics-alignment', imageId, outcome, ...details });
 }
