@@ -80,3 +80,42 @@ export function articleTextScanFields(title: string | null, content: string | nu
     { heading: 'Content', text: content ? removeTags(content) : null },
   ];
 }
+
+/**
+ * `Article.metadata.ingestionError`: one Error episode of a Published or Processing article, kept
+ * until it reaches Scanned or Blocked. A retry round sends its images back to Rescan, which can
+ * recompute the article through Pending, so the episode outlives a stay in Pending.
+ */
+export type ArticleIngestionErrorState = {
+  enteredAt: number;
+  rounds: number;
+  lastRoundAt?: number;
+  exhaustedAt?: number;
+};
+
+/** Days after the article entered Error that each retry round is due. */
+export const INGESTION_ERROR_ROUND_DAYS = [1, 3, 7];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function readIngestionErrorState(metadata: unknown): ArticleIngestionErrorState | null {
+  const state = (metadata as { ingestionError?: unknown } | null)?.ingestionError as
+    | Partial<ArticleIngestionErrorState>
+    | undefined;
+  if (typeof state?.enteredAt !== 'number') return null;
+  return { ...state, enteredAt: state.enteredAt, rounds: Number(state.rounds) || 0 };
+}
+
+/**
+ * What the reconcile job does with an article still at Error: `start` an episode it never recorded,
+ * `round` when the next retry is due, `exhaust` once after the last one, else nothing.
+ */
+export function ingestionErrorStep(
+  state: ArticleIngestionErrorState | null,
+  now: number
+): 'start' | 'wait' | 'round' | 'exhaust' | 'done' {
+  if (!state) return 'start';
+  if (state.rounds >= INGESTION_ERROR_ROUND_DAYS.length) return state.exhaustedAt ? 'done' : 'exhaust';
+  return now >= state.enteredAt + INGESTION_ERROR_ROUND_DAYS[state.rounds] * DAY_MS
+    ? 'round'
+    : 'wait';
+}
