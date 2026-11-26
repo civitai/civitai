@@ -1,4 +1,5 @@
 import { headBlob } from '@civitai/orchestration-client';
+import { parseBlobVerdictHeaders } from '~/shared/orchestrator/blob-verdict-headers';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import {
@@ -69,7 +70,10 @@ export const HEADER_PASS_DEADLINE_MS = 15_000;
 /** Entries the extraction step extracts; the rest come back rejected, so the zip is not fully rated. */
 export const TRAINING_DATA_MAX_RATED_ENTRIES = 2_000;
 
-/** The blob's level as the orchestrator serves it, which waits for the blob's scan verdict. */
+/**
+ * The blob's level as the orchestrator serves it, which waits for the blob's scan verdict. A block
+ * (by header or placeholder) is no level, whatever level the response also carries.
+ */
 async function blobHeaderLevel(air: string | undefined, workflowId: string, deadline: number) {
   const blobId = air?.split('@').pop();
   const timeout = Math.min(HEADER_TIMEOUT_MS, deadline - Date.now());
@@ -81,7 +85,9 @@ async function blobHeaderLevel(air: string | undefined, workflowId: string, dead
       query: { workflowId },
       signal: fetchTimeoutSignal(timeout),
     });
-    return response?.ok ? response.headers.get('x-nsfw-level') : null;
+    if (!response) return null;
+    const verdict = parseBlobVerdictHeaders(response.headers, response.status);
+    return verdict.status === 'rated' && !verdict.blockedReason ? verdict.nsfwLevel : null;
   } catch {
     return null;
   }
@@ -107,8 +113,7 @@ export async function extractionRating(output: ExtractionOutput, workflowId: str
     rated.push(
       ...(await Promise.all(
         batch.map(async (entry) => {
-          // A text entry the orchestrator leveled or blocked was treated as media: it counts as
-          // media, not as a caption (an image named like a caption may come back typed text).
+          // An image named like a caption may come back typed text.
           const textAsMedia =
             entry.mediaType === 'text' && (!!entry.blob?.nsfwLevel || !!entry.blob?.blockedReason);
           return {

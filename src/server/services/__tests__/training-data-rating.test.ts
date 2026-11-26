@@ -166,6 +166,35 @@ describe('extractionRating over a captioned zip', () => {
     expect(mockHeadBlob).toHaveBeenCalledTimes(2);
   });
 
+  it('counts an image whose header says it is blocked as unrated, whatever level it carries', async () => {
+    mockHeadBlob.mockResolvedValueOnce({
+      response: new Response(null, {
+        headers: { 'x-nsfw-level': 'pg', 'x-blocked-reason': 'tos' },
+      }),
+    });
+    mockHeadBlob.mockResolvedValueOnce({
+      response: new Response(null, {
+        status: 200,
+        headers: { 'x-nsfw-level': 'pg', location: '/v2/consumer/blobs/blocked/token' },
+      }),
+    });
+    const unleveled2 = { ...unleveled, air: 'urn:air:other:other:orchestrator:blob@03.png' };
+    expect(await extractionRating({ entries: [image04, unleveled, unleveled2] }, 'wf-1')).toEqual({
+      nsfwLevel: NsfwLevel.PG,
+      fullyRated: false,
+    });
+    // Control: the orchestrator's 'none' is not a block.
+    mockHeadBlob.mockResolvedValueOnce({
+      response: new Response(null, {
+        headers: { 'x-nsfw-level': 'pg', 'x-blocked-reason': 'none' },
+      }),
+    });
+    expect(await extractionRating({ entries: [image04, unleveled] }, 'wf-1')).toEqual({
+      nsfwLevel: NsfwLevel.PG,
+      fullyRated: true,
+    });
+  });
+
   it('counts a rejected entry as unrated', async () => {
     expect(
       await extractionRating({ entries: [image04, caption], rejected: [{ air: 'x' }] }, 'wf-1')
