@@ -219,10 +219,14 @@ type CustomOpenRouter = OpenRouter & {
   // Free-TEXT sibling of getJsonCompletion — a single non-streaming completion
   // that returns the assistant's plain text (NOT parsed as JSON). For grounded
   // Q&A / chat turns where the reply is prose citing evidence, not a JSON object.
-  // Falls back to `message.reasoning` when a reasoning model returns null content.
-  getTextCompletion: (
-    params: GetTextCompletionInput
-  ) => Promise<{ content: string; usage: TokenUsage }>;
+  // `content` is only ever the model's answer (`message.content`), never its
+  // reasoning: a null content returns ''. `finishReason` is the provider's reason
+  // the generation stopped; `'length'` means the reply hit `maxTokens` and is cut.
+  getTextCompletion: (params: GetTextCompletionInput) => Promise<{
+    content: string;
+    usage: TokenUsage;
+    finishReason: string | null;
+  }>;
   runAgentLoop: (params: RunAgentLoopInput) => Promise<AgentLoopResult>;
 };
 
@@ -339,7 +343,7 @@ function createOpenRouterClient() {
     temperature = 1,
     maxTokens = 1024,
     signal,
-  }: GetTextCompletionInput): Promise<{ content: string; usage: TokenUsage }> => {
+  }: GetTextCompletionInput) => {
     const sdkMessages = messages.map(toSDKMessage);
     const response = await client.chat.send(
       {
@@ -352,12 +356,10 @@ function createOpenRouterClient() {
       signal ? { signal } : undefined
     );
     const usage = extractUsage(response);
-    const message = response.choices?.[0]?.message as
-      | { content?: unknown; reasoning?: unknown }
-      | undefined;
-    const raw = message?.content ?? message?.reasoning ?? '';
-    const content = typeof raw === 'string' ? raw : String(raw ?? '');
-    return { content, usage };
+    const choice = response.choices?.[0];
+    const raw = (choice?.message as { content?: unknown } | undefined)?.content ?? '';
+    const content = typeof raw === 'string' ? raw : String(raw);
+    return { content, usage, finishReason: choice?.finishReason ?? null };
   };
 
   customClient.runAgentLoop = async ({
