@@ -21,8 +21,7 @@ import (
 
 // THE SERVICE TOKEN as main wires it (serviceSource): minted as the service client, never the relay
 // client; at the relay's endpoint and resource; one self-check fetch at start, logged without the
-// token; every fetch counted by outcome. Fails on the commit before it: there is no serviceSource
-// (the test does not compile); there, run minted the token with the relay client's credentials.
+// token; every fetch counted by outcome.
 
 type syncBuf struct {
 	mu sync.Mutex

@@ -5327,6 +5327,18 @@ export interface KnightsPlayer {
   recapDismissedFor: Date | null;
   startAtSeen: Date | null;
   recapPopupOptOut: boolean;
+  yesNoQuestions: boolean | null;
+  hiddenTagGroups: string[];
+}
+
+export interface KnightsUnsure {
+  id: bigint;
+  playerId: number;
+  itemId: number | null;
+  yesNoReferenceId: number | null;
+  questionKey: string;
+  imageId: number;
+  createdAt: Date;
 }
 
 export interface KnightsLegacyPlayerDay {

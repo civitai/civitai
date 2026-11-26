@@ -38,8 +38,6 @@ func (l *ackLog) take() []acked {
 
 // Each acknowledged create, put and delete reaches Acked with the writing token, the stream's schema
 // (the named major, else 1) and what the store answered; nothing else does.
-// Fails on origin/main: Forwarder has no Acked field there (the test does not compile); the
-// behavioural assertion is one ack per acknowledged write.
 func TestEachAcknowledgedWriteIsHandedToAcked(t *testing.T) {
 	log := &ackLog{}
 	r := newRig(t, func(f *Forwarder) { f.Acked = log.add })

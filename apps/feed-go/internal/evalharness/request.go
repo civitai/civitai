@@ -69,12 +69,11 @@ func Prepare(c Case, creds Credentials) (*Prepared, string) {
 			p.RawQuery += "&" + pair
 		}
 	}
+	p.Host = caseHost(req)
 	for k, v := range req.Headers {
-		if strings.EqualFold(k, "host") {
-			p.Host = v
-			continue
+		if !strings.EqualFold(k, "host") {
+			p.Header.Set(k, v)
 		}
-		p.Header.Set(k, v)
 	}
 	if p.Host != "" {
 		p.Header.Set("Referer", "https://"+p.Host+"/")
@@ -86,6 +85,17 @@ func Prepare(c Case, creds Credentials) (*Prepared, string) {
 		p.Header.Set("Authorization", "Bearer "+creds.Bearer)
 	}
 	return p, ""
+}
+
+// caseHost is a stored request's Host header ("": none stored): the host a case is replayed to, and
+// so the site whose session token replays it (Accounts.Resolve).
+func caseHost(req evalcapture.StoredRequest) string {
+	for k, v := range req.Headers {
+		if strings.EqualFold(k, "host") {
+			return v
+		}
+	}
+	return ""
 }
 
 func placeholderReason(err error) string {

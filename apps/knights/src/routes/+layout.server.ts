@@ -8,10 +8,10 @@ import { db } from '$lib/server/db';
 import { feedbackEnabled } from '$lib/server/feedback/enabled';
 import { ladderRows } from '$lib/server/ladder';
 import { PROGRESSION } from '$lib/server/progression/config';
-import { getPlayerStatus } from '$lib/server/player-status';
+import type { PlayerStatus } from '$lib/server/player-status';
+import { requestPlayerStatus, requestStanding } from '$lib/server/request-reads';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
-import { getStanding } from '$lib/server/standing';
 import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import type { LayoutServerLoad } from './$types';
 
@@ -32,10 +32,11 @@ async function recapUnseen(playerId: number | undefined): Promise<boolean> {
 // The header's gold and rank pills and the streak chip, for every page. A page that loads its own `status`/`daily` overrides
 // these in page data (play keeps its live copy); the rest get them here, so no page can forget the header's stats. A failed
 // read only costs what failed: the pills when the status is gone, the streak alone when only the daily read failed.
-async function headerStats(playerId: number) {
-  let status: Awaited<ReturnType<typeof getPlayerStatus>>;
+async function headerStats(locals: App.Locals) {
+  const playerId = locals.user.id;
+  let status: PlayerStatus | null;
   try {
-    status = await getPlayerStatus(db, playerId);
+    status = await requestPlayerStatus(db, locals);
   } catch (error) {
     console.error('knights: could not read the header stats', { error });
     return { status: null, daily: null };
@@ -56,43 +57,54 @@ async function headerStats(playerId: number) {
 }
 
 // Muted players can't send feedback, so the flag alone doesn't open the control. The standing is read only when the flag is on.
-async function feedbackOpen(user: NonNullable<App.Locals['user']>): Promise<boolean> {
-  return (await feedbackEnabled(user)) && !(await getStanding(db, user.id)).muted;
+async function feedbackOpen(
+  user: NonNullable<App.Locals['user']>,
+  locals: App.Locals
+): Promise<boolean> {
+  return (await feedbackEnabled(user)) && !(await requestStanding(db, locals)).muted;
 }
 
 // Not tied to the URL, so a client navigation keeps this data. It re-runs when something invalidates 'knights:header'
 // (leaving /play, whose votes move the stats) or 'app:recap', and after every form action and restart (`invalidateAll`).
+const NO_BADGES: Awaited<ReturnType<typeof rankBadgeUrls>> = { small: {}, large: {} };
+
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
   depends('app:recap');
   depends('knights:header');
   const civitaiUrl = civitaiSiteUrl();
-  // Only a player has a career to restart, which the account menu offers.
-  const player = locals.user
-    ? await db
+  const user = locals.user;
+  const inquisitor = await inquisitorQueueOpen(user);
+  const playerRow = user
+    ? db
         .selectFrom('NewOrderPlayer')
         .select('userId')
-        .where('userId', '=', locals.user.id)
+        .where('userId', '=', user.id)
         .executeTakeFirst()
-    : undefined;
-  const inquisitor = await inquisitorQueueOpen(locals.user);
+    : Promise.resolve(undefined);
+  const [player, shopOpen, feedback, badges, recap, header] = await Promise.all([
+    playerRow,
+    shopEnabled(),
+    user ? feedbackOpen(user, locals) : false,
+    user ? rankBadgeUrls(db) : NO_BADGES,
+    inquisitor ? false : recapUnseen(user?.id),
+    user && !inquisitor ? playerRow.then((row) => (row ? headerStats(locals) : null)) : null,
+  ]);
   return {
     civitaiUrl,
     // Keys the player's own sound setting in the browser; never shown.
-    userId: locals.user?.id ?? null,
-    player: playerBadge(locals.user, civitaiUrl, imageUrl),
+    userId: user?.id ?? null,
+    player: playerBadge(user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
-    shopOpen: await shopEnabled(),
-    feedbackOpen: locals.user ? await feedbackOpen(locals.user) : false,
+    shopOpen,
+    feedbackOpen: feedback,
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),
     // Fervor is a rolling window, not a calendar week; labels name its length.
     fervorWindowDays: PROGRESSION.fervorWindowDays,
-    // A signed-out visitor (the welcome page, a 404) wears no badge, so the cosmetics are not read for them.
-    badges: locals.user ? await rankBadgeUrls(db) : { small: {}, large: {} },
+    badges,
     inquisitor,
-    recapUnseen: inquisitor ? false : await recapUnseen(locals.user?.id),
-    headerStats:
-      !inquisitor && player !== undefined && locals.user ? await headerStats(locals.user.id) : null,
+    recapUnseen: recap,
+    headerStats: header,
   };
 };

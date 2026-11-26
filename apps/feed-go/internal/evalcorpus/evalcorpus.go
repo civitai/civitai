@@ -118,6 +118,41 @@ func HasCredential(req Request) bool {
 	return dropped
 }
 
+// MayNameViewer reports whether req holds a value Capture tests against the viewer's own identity:
+// a tRPC input's top-level userIDKeys, usernameKeys or collectionKeys key, or a `*UserIds` key (any
+// value), or a REST query pair named by userIDKeys or usernameKeys. A caller that knows a request was
+// signed in but not who signed in (an imported Tempo row says only `authed`) refuses such a request:
+// it cannot tell whether the value names the viewer, so it could not keep the viewer's id out of a
+// case. The key sets are Capture's own, so the two cannot drift.
+func MayNameViewer(req Request) bool {
+	rules, ok := endpointRules[req.Endpoint]
+	if !ok {
+		return false
+	}
+	if rules.rest {
+		for _, p := range splitQuery(req.Query) {
+			if userIDKeys[p.key] || usernameKeys[p.key] {
+				return true
+			}
+		}
+		return false
+	}
+	var env map[string]json.RawMessage
+	if json.Unmarshal([]byte(req.Input), &env) != nil {
+		return false // not stored at all (trpcShape)
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(env["json"], &m) != nil {
+		return false // no object: no key to name anyone
+	}
+	for k := range m {
+		if userIDKeys[k] || usernameKeys[k] || collectionKeys[k] || strings.HasSuffix(k, "UserIds") {
+			return true
+		}
+	}
+	return false
+}
+
 // Viewer is who made the request, as the caller resolved it from the session. The identity fields
 // are read only to decide `self` and are never copied into a Case.
 type Viewer struct {

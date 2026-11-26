@@ -7,7 +7,25 @@ import { seenStore } from './seen-runtime';
 
 /** The player's status, or a redirect to the home page, where a user joins, if they have no player row. */
 export async function requireMember(db: Kysely<DB>, userId: number): Promise<PlayerStatus> {
-  const status = await getPlayerStatus(db, userId);
+  return memberOrRedirect(await getPlayerStatus(db, userId));
+}
+
+/**
+ * The player's rank alone, or the redirect to the home page. Cheaper than the full status for an action that only checks
+ * the rank.
+ */
+export async function requireMemberRank(db: Kysely<DB>, userId: number): Promise<string> {
+  const player = await db
+    .selectFrom('NewOrderPlayer')
+    .select('rankType')
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  if (!player) redirect(303, '/home');
+  return player.rankType;
+}
+
+/** A status read for a user, or the redirect to the home page when they have no player row. */
+export function memberOrRedirect(status: PlayerStatus | null): PlayerStatus {
   if (!status) redirect(303, '/home');
   return status;
 }

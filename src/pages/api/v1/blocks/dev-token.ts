@@ -536,11 +536,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       res,
       appRateLimitMeta('apps.dev-token', retryAfterSecondsOf(retryAfter, RATE_LIMIT.windowSeconds)),
       'Rate limit exceeded',
-      {
-        retryAfterSeconds: retryAfter,
-        limit: rateMax,
-        windowSeconds: RATE_LIMIT.windowSeconds,
-      }
+      { retryAfterSeconds: retryAfter }
     );
     return;
   }

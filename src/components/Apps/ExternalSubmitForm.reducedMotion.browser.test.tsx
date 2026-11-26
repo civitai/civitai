@@ -71,15 +71,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
-// `ExternalSubmitForm` reads `useCurrentUser` to pick which OAuth-client picker to render,
-// and that hook THROWS ("missing CivitaiSessionContext") because the harness mounts no
-// session context. Unmocked it takes the whole render down (empty <body>) and every
-// assertion below fails by burning its timeout. `null` = the non-moderator path, which is
-// the own-clients `apps-offsite-client-select` dropdown this test drives.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/hooks/useCFImageUpload', () => ({
-  useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
+  useCFImageUpload: () => ({
+    uploadToCF: vi.fn(),
+    files: [],
+    resetFiles: vi.fn(),
+    removeImage: vi.fn(),
+  }),
 }));
 
 vi.mock('~/utils/notifications', () => ({

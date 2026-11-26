@@ -1,3 +1,8 @@
+import {
+  assertMayLoosenImages,
+  assertMayLoosenImagesAs,
+  withheldImageIds,
+} from '~/server/services/moderator-withheld.service';
 import { Prisma } from '@prisma/client';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { queueNeverScannedRescan } from '~/server/services/judge-collection-rescan.service';
@@ -1081,6 +1086,7 @@ export const saveItemInCollections = async ({
     type,
     userId,
     isModerator,
+    csamReview = false,
     removeFromCollectionIds,
     canAccessUserChallenges,
     ...input
@@ -1089,6 +1095,7 @@ export const saveItemInCollections = async ({
   input: AddCollectionItemInput & {
     userId: number;
     isModerator?: boolean;
+    csamReview?: boolean;
     canAccessUserChallenges?: boolean;
   };
 }) => {
@@ -1192,6 +1199,18 @@ export const saveItemInCollections = async ({
       isModerator,
     });
   }
+
+  // Before the contest gates too: they can charge an entry fee.
+  if (
+    isModerator &&
+    input.imageId != null &&
+    upsertCollectionItems.some(
+      (upsert) =>
+        !unwrittenCollectionIds.has(upsert.collectionId) &&
+        submissionStatus(permissionsMap.get(upsert.collectionId)!) === CollectionItemStatus.ACCEPTED
+    )
+  )
+    await assertMayLoosenImages([input.imageId], { csamReview });
 
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = writableCollections.filter(
@@ -3005,10 +3024,12 @@ export const updateCollectionItemsStatus = async ({
   isModerator,
   isSystem,
   rejectionDetail,
+  csamReview = false,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  csamReview?: boolean;
   /**
    * In-process callers (the AI review job) act as the system user, which holds no contributor row.
    * Never accept this from a tRPC input.
@@ -3021,7 +3042,8 @@ export const updateCollectionItemsStatus = async ({
    */
   rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status, rejectionReason } = input;
+  const { collectionId, status, rejectionReason } = input;
+  let { collectionItemIds } = input;
 
   const isRejection = status === CollectionItemStatus.REJECTED;
   const persistedReason = isRejection ? rejectionReason ?? null : null;
@@ -3052,6 +3074,25 @@ export const updateCollectionItemsStatus = async ({
       throw throwAuthorizationError(
         'You do not have permissions to manage contributor item status.'
       );
+  }
+
+  // Ahead of every write, the rescan an approval queues included.
+  if (status === CollectionItemStatus.ACCEPTED && collectionItemIds.length > 0) {
+    const imageItems = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT id, "imageId" FROM "CollectionItem"
+      WHERE "collectionId" = ${collectionId} AND id = ANY(${collectionItemIds}::int[])
+        AND "imageId" IS NOT NULL
+    `;
+    const imageIds = imageItems.map((item) => item.imageId);
+    if (!isSystem) await assertMayLoosenImagesAs(imageIds, { isModerator, csamReview });
+    else {
+      // The AI review accepts the rest and leaves a withheld entry as it is.
+      const withheld = await withheldImageIds(imageIds, { csamReview: false });
+      const withheldItemIds = new Set(
+        imageItems.filter((item) => withheld.has(item.imageId)).map((item) => item.id)
+      );
+      collectionItemIds = collectionItemIds.filter((id) => !withheldItemIds.has(id));
+    }
   }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
@@ -3830,6 +3871,7 @@ export const bulkSaveItems = async ({
     postIds = [],
     tagId,
     isModerator,
+    csamReview = false,
     canAccessUserChallenges,
   },
   permissions,
@@ -3837,6 +3879,7 @@ export const bulkSaveItems = async ({
   input: BulkSaveCollectionItemsInput & {
     userId: number;
     isModerator?: boolean;
+    csamReview?: boolean;
     canAccessUserChallenges?: boolean;
   };
   permissions: CollectionContributorPermissionFlags;
@@ -3847,6 +3890,12 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  if (
+    isModerator &&
+    submissionStatus(permissions) === CollectionItemStatus.ACCEPTED &&
+    imageIds.length > 0
+  )
+    await assertMayLoosenImages(imageIds, { csamReview });
   for (const [itemKey, ids] of [
     ['imageId', imageIds],
     ['postId', postIds],
@@ -4498,7 +4547,13 @@ export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
   userId,
-}: SetCollectionItemNsfwLevelInput & { userId: number }) => {
+  isModerator,
+  csamReview = false,
+}: SetCollectionItemNsfwLevelInput & {
+  userId: number;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) => {
   const collectionItem = await getCollectionItemById({ id: collectionItemId });
 
   if (!collectionItem) {
@@ -4553,6 +4608,8 @@ export const setCollectionItemNsfwLevel = async ({
   if (image.needsReview != null)
     throw throwBadRequestError('This image is waiting for moderator review.');
   if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  // Both branches can send the image back through the scan.
+  await assertMayLoosenImagesAs([imageId], { isModerator, csamReview });
   if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
     const { failed } = await queueNeverScannedRescan(
       [imageId],

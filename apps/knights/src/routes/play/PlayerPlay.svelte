@@ -19,6 +19,8 @@
   import Countdown from '$lib/Countdown.svelte';
   import { limitPhrase } from '$lib/vote-limit-copy';
   import Icon from '$lib/Icon.svelte';
+  import QuestionTime from './QuestionTime.svelte';
+  import { QUESTIONS_DONE_MS, runCue } from './question-run';
   import AnswerPill from '$lib/AnswerPill.svelte';
   import '$lib/answer-row.css';
   import { sound } from '$lib/sound';
@@ -26,7 +28,7 @@
   import { heartsLeft, landVote, pendingGoldVotes, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
+  import { answerForKey, answerForKeyPress, isYesNoApprentice, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
@@ -71,6 +73,7 @@
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
+  let settledSubmit = $state<HTMLButtonElement>();
   // What is on screen. Right after a vote it is the item fetched ahead (`local`), not what `load` returns, so the next
   // image never waits for the vote to land; `local` is dropped whenever the page must show the server's own view.
   let local = $state<PickedItem | null>(null);
@@ -84,7 +87,7 @@
   let yesNo = $derived(
     data.mode === 'queue'
       ? view?.question.kind === 'bool'
-      : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
+      : isYesNoApprentice({ apprentice: data.apprentice })
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
   const guide = $state<GuideState>({ reopened: false, dismissed: false });
@@ -103,6 +106,30 @@
   let settledItem = $state<string | null>(null);
   let settledOnScreen = $derived(!!view && settledItem === view.item.key);
   let settledReady = $state(false);
+  // Question time before a run of yes/no questions, and the "Questions done" banner on the first rating after one, each
+  // keyed to the item it came up with so it goes when that item does.
+  let questionTimeItem = $state<string | null>(null);
+  let questionsDoneItem = $state<string | null>(null);
+  let questionTimeShowing = $derived(!!view && questionTimeItem === view.item.key);
+  let questionsDoneShowing = $derived(!!view && questionsDoneItem === view.item.key);
+  let cuedItem: string | null = null;
+  let lastWasQuestion: boolean | null = null;
+  // Before the DOM updates, so the first frame of a run never shows live answers.
+  $effect.pre(() => {
+    if (!view || view.item.key === cuedItem) return;
+    const isQuestion = view.question.kind === 'bool';
+    const cue = runCue(lastWasQuestion, isQuestion);
+    cuedItem = view.item.key;
+    lastWasQuestion = isQuestion;
+    if (cue === 'question-time') questionTimeItem = view.item.key;
+    if (cue === 'questions-done') questionsDoneItem = view.item.key;
+  });
+  $effect(() => {
+    if (!questionsDoneItem) return;
+    const timer = setTimeout(() => (questionsDoneItem = null), QUESTIONS_DONE_MS);
+    return () => clearTimeout(timer);
+  });
+  const startQuestions = () => (questionTimeItem = null);
   let blockReason = $state<BlockReason | null>(null);
   // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
   const rulingNotice = dismissible(
@@ -144,6 +171,14 @@
       if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
         event.preventDefault();
         if (!event.repeat) continueFromSettled();
+      }
+      return;
+    }
+    if (questionTimeShowing) {
+      if ((event.target as HTMLElement | null)?.closest('header')) return;
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        startQuestions();
       }
       return;
     }
@@ -584,7 +619,7 @@
   function continueFromSettled() {
     if (!settledOnScreen || !settledReady) return;
     settledItem = null;
-    skipForm?.requestSubmit();
+    skipForm?.requestSubmit(settledSubmit);
   }
 
   // Live keys dropped lately: a refill or reload already in flight when the drop came must not bring the item back.
@@ -676,6 +711,8 @@
       if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
       return { kind: 'no-practice' as const };
     }
+    // A reset that is due outranks a mute, a pace lockout and anything still buffered: it is what happens to the career next.
+    if (shown.resetPending) return { kind: 'reset' as const };
     if (shown.muted) return { kind: 'muted' as const };
     if (shown.lockoutSeconds)
       return {
@@ -684,7 +721,7 @@
         limit: limitPhrase(shown.lockoutWindowSeconds ?? null),
       };
     if (view) return { kind: 'queue-stage' as const, view };
-    return { kind: shown.resetPending ? ('none' as const) : ('clear' as const), daily: shown.daily };
+    return { kind: 'clear' as const, daily: shown.daily };
   });
   // The player's own clock and zone: rendered only in the browser, so the server's zone never shows.
   // A primitive, so a stats signal that rebuilds `screen` does not move the time while the countdown holds still.
@@ -735,6 +772,13 @@
         }
       : undefined}
   />
+{/snippet}
+
+{#snippet practiceFields(item: { kind: string; referenceId: number; version: string | null })}
+  <input type="hidden" name="kind" value={item.kind} />
+  <input type="hidden" name="referenceId" value={item.referenceId} />
+  <input type="hidden" name="version" value={item.version ?? ''} />
+  {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
 {/snippet}
 
 {#snippet soundToggle()}
@@ -831,10 +875,6 @@
   <div class="main">
   {#if !rulingInStage}{@render ruling(false)}{/if}
 
-  {#if shown.mode === 'queue' && shown.resetPending}
-    <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
-  {/if}
-
   {#if screen.kind === 'apprentice-question'}
     {@const apprentice = screen.apprentice}
     <div class="column">
@@ -859,10 +899,7 @@
       </div>
       <div class="controls" class:yesno={yesNo}>
         <form class="answers answer-row" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
-          <input type="hidden" name="kind" value={apprentice.item.kind} />
-          <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
-          <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
-          {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+          {@render practiceFields(apprentice.item)}
           {#each apprentice.options as option, index (option.value)}
             {@render pill(option, index, false, false)}
           {/each}
@@ -894,6 +931,13 @@
         <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
       </section>
     </div>
+  {:else if screen.kind === 'reset'}
+    <div class="panel">
+      <section class="lockout" role="status" aria-label="Career reset">
+        <h2>Your career is being reset</h2>
+        <p>All your hearts are lost, so the Order is starting your career over. It takes a moment; come back shortly.</p>
+      </section>
+    </div>
   {:else if screen.kind === 'muted'}
     <div class="panel">
       <section class="lockout" role="status" aria-label="Judging unavailable">
@@ -920,25 +964,29 @@
   {:else if screen.kind === 'queue-stage'}
     {@const shown = screen.view}
     <div class="column">
-      <div class="qrow">
-      <p class="question" title={shown.question.prompt}>
-        <span class="eyebrow">
-          Question
-          {#if shown.category}
-            <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
-            {#key shown.category.heading}
-              <span class="category" class:glow={shown.banner !== null}>
-                <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
-              </span>
-            {/key}
-          {/if}
-        </span>
-        <span class="text">{shown.question.prompt}</span>
-      </p>
-      {@render questionTools()}
+      <div class="qrow" class:locked={questionTimeShowing}>
+        <p class="question" title={shown.question.prompt}>
+          <span class="eyebrow" class:glow={questionsDoneShowing}>
+            Question
+            {#if shown.category}
+              <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
+              {#key shown.category.heading}
+                <span class="category" class:glow={shown.banner !== null}>
+                  <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
+                </span>
+              {/key}
+            {/if}
+          </span>
+          <span class="text">{shown.question.prompt}</span>
+        </p>
+        {@render questionTools()}
       </div>
       <span class="vh" role="status" aria-live="polite"
-        >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
+        >{shown.banner
+          ? `New questions: ${shown.banner.heading}`
+          : questionsDoneShowing
+            ? 'Questions done, back to rating'
+            : ''}</span
       >
       <div class="stagewrap">
         {#key shown.item.key}
@@ -952,6 +1000,13 @@
             onfail={() => (failedItem = itemKey)}
           />
         {/key}
+        {#if questionTimeShowing}
+          <QuestionTime category={shown.category?.heading ?? null} paused={dialogOpen} onstart={startQuestions} />
+        {:else if questionsDoneShowing}
+          <p class="questions-done" aria-hidden="true">
+            <Icon name="check" size={14} /><b>Questions done</b><span aria-hidden="true">·</span>back to rating
+          </p>
+        {/if}
         {@render levelToast(true)}
         {@render ruling(true)}
         {#if settledOnScreen}
@@ -967,22 +1022,38 @@
           <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
-      <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
+      <div class="controls" class:yesno={yesNo} class:failed={imageFailed} class:locked={questionTimeShowing}>
         <form class="answers answer-row" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed || settledOnScreen, asksBlockReason(shown.question.key))}
+            {@render pill(option, index, imageFailed || settledOnScreen || questionTimeShowing, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={shown.item.id} />
-          <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
-            <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
-          </button>
+          <button type="submit" name="settled" value="1" hidden tabindex="-1" aria-label="Continue" bind:this={settledSubmit}></button>
+          {#if yesNo}
+            <!-- Same action as Skip (no pay, no smite), named for what it means on a question; Space still sends it. -->
+            <AnswerPill
+              option={{ value: 'unsure', label: 'Not sure' }}
+              index={0}
+              yesNo
+              icon="circle-help"
+              keyHint="Space"
+              hint="Not sure (Space)"
+              disabled={submitting || settledOnScreen || questionTimeShowing}
+            />
+          {:else}
+            <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
+              <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
+            </button>
+          {/if}
         </form>
-        <span class="rowtool">
-          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
-        </span>
+        {#if !yesNo}
+          <span class="rowtool">
+            <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+          </span>
+        {/if}
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -1165,19 +1236,25 @@
     min-width: 0;
     margin: 0;
   }
+  /* One line: a long category is cut short rather than wrapping under "Question" with its separator leading the line. */
   .eyebrow {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0 8px;
+    gap: 8px;
+    min-width: 0;
     color: var(--io-gold);
     font: 600 11px/1.4 var(--io-font-ui);
     letter-spacing: 2px;
     text-transform: uppercase;
+    white-space: nowrap;
   }
   .category {
-    display: inline-flex;
-    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
     color: var(--io-parchment-muted);
+    text-overflow: ellipsis;
+  }
+  .category > [aria-hidden='true'] {
+    margin-right: 8px;
   }
   .text {
     min-width: 0;
@@ -1188,6 +1265,9 @@
   }
   .category.glow {
     animation: category-glow 1.8s ease-out 1;
+  }
+  .eyebrow.glow {
+    animation: category-glow var(--motion-milestone-min) var(--ease-out-quart) 1;
   }
   @keyframes category-glow {
     0% {
@@ -1218,8 +1298,15 @@
     align-items: center;
     gap: 16px;
   }
+  .controls.yesno,
   .controls.yesno .answers {
     gap: 12px;
+  }
+  /* Question time is up: the question and every answer sit back evenly, and nothing reads as loading. */
+  .qrow.locked,
+  .controls.locked :global(.pill:disabled) {
+    opacity: 0.35;
+    cursor: default;
   }
   .skip {
     display: contents;
@@ -1241,6 +1328,60 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+  /* "Not sure" is an answer a player gives, so it reads as one: an answer pill after Yes and No, narrower than they are. */
+  .controls.yesno .skip {
+    display: flex;
+    flex: none;
+    width: 180px;
+  }
+  .questions-done {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    height: 36px;
+    padding: 0 14px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--io-bg) 90%, transparent);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    color: var(--io-parchment-muted);
+    font: 13px/1.2 var(--io-font-ui);
+    white-space: nowrap;
+    transform: translateX(-50%);
+    animation: questions-done-in var(--motion-base) var(--ease-out-quart) both;
+  }
+  .questions-done b {
+    color: var(--io-parchment);
+    font-weight: 600;
+  }
+  .questions-done :global(svg) {
+    color: var(--io-verdigris);
+  }
+  @keyframes questions-done-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -8px);
+    }
+  }
+  @keyframes fade-in-only {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .questions-done {
+      animation-name: fade-in-only;
+      animation-duration: var(--motion-fast);
+    }
+    .eyebrow.glow {
+      animation: none;
+    }
   }
   .quiet.guide {
     color: var(--io-gold);
@@ -1333,6 +1474,25 @@
     }
     .controls.yesno .skiplabel {
       display: inline;
+    }
+    /* No room for a third pill beside Yes and No: Not sure takes the full width under them. */
+    .controls.yesno {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .controls.yesno .answers {
+      gap: 8px;
+    }
+    .controls.yesno .answers,
+    .controls.yesno .skip {
+      flex: 1 1 100%;
+      width: auto;
+    }
+    .controls.yesno :global(.pill) {
+      height: 44px;
+    }
+    .controls.yesno .skip :global(.key) {
+      display: none;
     }
     .space {
       display: none;

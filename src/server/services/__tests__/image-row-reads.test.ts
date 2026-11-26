@@ -74,6 +74,7 @@ describe('image rows returned to non-moderators', () => {
   it('the acceptable-minor update returns no scanJobs', async () => {
     const image = await updateImageAcceptableMinor({
       csamReview: true,
+      isModerator: true,
       id: IMAGE.id,
       collectionId: 1,
       acceptableMinor: true,

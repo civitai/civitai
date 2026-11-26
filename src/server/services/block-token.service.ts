@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, createPublicKey, KeyObject, randomBytes } from 'crypto';
+import { createHash, createPrivateKey, createPublicKey, randomBytes, type KeyObject } from 'crypto';
 import { SignJWT } from 'jose';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -281,11 +281,12 @@ export interface SignBlockTokenInput {
    */
   privateRunAudience?: PrivateRunAudience;
   /**
-   * A recipe-runner token for one run: stamps `mintOrigin: 'runner'` and `runId`, and lives
+   * A recipe-runner token for one run: stamps `mintOrigin: 'runner'`, the run, and the
+   * authorization and run key the mint checked (submit re-checks them under the ledger lock). Lives
    * the `runner` lifetime. Only for a signed-in subject, and never with `dev`,
    * `reviewRunForReal` or `privateRun` (the verifier refuses those combinations too).
    */
-  runner?: { runId: string };
+  runner?: { runId: string; authorizationId: string; runKey: string };
 }
 
 export interface SignBlockTokenResult {
@@ -388,6 +389,8 @@ export class BlockTokenService {
     if (input.runner) {
       claims.mintOrigin = 'runner';
       claims.runId = input.runner.runId;
+      claims.authorizationId = input.runner.authorizationId;
+      claims.runKey = input.runner.runKey;
     }
     // RUN-FOR-REAL marker — stamped ONLY for a mod's consent-gated review
     // run-for-real token. Read (after signature validation) by the runtime spend

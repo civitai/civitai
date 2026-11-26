@@ -84,10 +84,6 @@ vi.mock('~/components/Apps/useAppsNavSections', () => ({
   useAppsNavSections: () => [],
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 10, username: 'owner' }),
-}));
-
 vi.mock('~/components/AppLayout/NotFound', () => ({
   NotFound: () => <div data-testid="not-found">Not found</div>,
 }));
@@ -210,7 +206,7 @@ beforeEach(() => {
 describe('🔴 the page hands `lastModerationAction` to the tab derivation', () => {
   test('🔴 an OWNER-UNPUBLISHED listing renders the Details and Media tabs', async () => {
     state.context = contextFor({ lastModerationAction: 'owner-unpublish' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-edit-tab-media')).toBeInTheDocument();
@@ -224,7 +220,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     // this is the shape a real `delist`/`purge` produces on the wire. This is the arm that
     // fails if someone widens `AUTHORABLE_LISTING_STATUSES` instead of branching.
     state.context = contextFor({ lastModerationAction: 'other' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-publishing')).toBeInTheDocument();
     expect(page.getByTestId('apps-edit-tab-details').elements()).toHaveLength(0);
@@ -236,7 +232,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
 
   test('🔴 a removed listing with NO moderation event fails closed', async () => {
     state.context = contextFor({ lastModerationAction: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-publishing')).toBeInTheDocument();
     expect(renderedTabs()).toEqual(['publishing', 'history']);
@@ -247,7 +243,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     // absence is the branch split alone and not a collapsed payload. The two tabs that DO
     // render are the control that the page is not simply empty.
     state.context = contextFor({ lastModerationAction: 'owner-unpublish' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
     for (const tab of ['collaborators', 'manifest', 'earnings']) {
@@ -261,7 +257,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     // `details` to fall back to.
     openListing('collaborators');
     state.context = contextFor({ lastModerationAction: 'owner-unpublish' });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
     expect(page.getByTestId('apps-edit-panel-collaborators').elements()).toHaveLength(0);
@@ -272,7 +268,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     // listing renders the full strip. Without it, every arm above could be passing because
     // the mock serves a frozen payload and the page renders one fixed set.
     state.context = contextFor({ status: 'approved', lastModerationAction: null });
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-collaborators')).toBeInTheDocument();
     expect(renderedTabs()).toEqual([
@@ -297,7 +293,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
 
   test('🔴 no feedback: no tab', async () => {
     state.context = live();
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
     expect(page.getByTestId('apps-edit-tab-feedback').elements()).toHaveLength(0);
@@ -307,7 +303,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
   test('🔴 one row: the tab, LAST, and the rest of the strip unchanged', async () => {
     state.context = live();
     state.feedback = { hasAny: true };
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-feedback')).toBeInTheDocument();
     expect(renderedTabs()).toEqual([
@@ -326,7 +322,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
     openListing('feedback');
     state.context = contextFor({ role: 'editor', kind: 'offsite', lastModerationAction: 'other' });
     state.feedback = { hasAny: true };
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('stub-feedback')).toHaveTextContent(LISTING_ID);
     expect(renderedTabs()).toEqual(['history', 'feedback']);
@@ -335,7 +331,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
   test('🔴 `?tab=feedback` with NO feedback falls back to the default tab, not an empty inbox', async () => {
     openListing('feedback');
     state.context = live();
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
     expect(page.getByTestId('stub-feedback').elements()).toHaveLength(0);
@@ -347,7 +343,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
     state.context = live();
     state.feedback = null;
     state.feedbackError = { message: 'nope', data: { code: 'INTERNAL_SERVER_ERROR' } };
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
     expect(page.getByTestId('apps-edit-tab-feedback').elements()).toHaveLength(0);
@@ -357,7 +353,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
     openListing('feedback');
     state.context = live();
     state.feedback = null;
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     // Positive control: the page rendered its loading state (so the absences below are read off
     // a rendered page, not an empty tree).
@@ -372,7 +368,7 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
   // cache itself cannot be exercised here: this pins the option that makes every visit re-ask.
   test('the presence read is never served from an earlier visit (gcTime: 0)', async () => {
     state.context = live();
-    renderWithProviders(<AppListingEditPage />);
+    renderWithProviders(<AppListingEditPage />, { user: { id: 10, username: 'owner' } });
 
     await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
     expect(state.feedbackOpts.at(-1)).toMatchObject({ gcTime: 0 });

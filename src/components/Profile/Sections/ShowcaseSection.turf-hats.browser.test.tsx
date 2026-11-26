@@ -86,7 +86,6 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
     <img src={PICTURE} className={className} style={{ width: '100%', height: '100%' }} alt="" />
   ),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: () => undefined,
@@ -159,7 +158,8 @@ describe('Hat Turf hats in a profile Showcase', () => {
     await renderWithProviders(
       <div style={{ width: 900 }}>
         <ShowcaseSection user={user} />
-      </div>
+      </div>,
+      { user: { id: 1 } }
     );
     const hats = () => [...document.body.querySelectorAll('[data-testid="hat-turf-hat"]')];
     await vi.waitFor(() => expect(hats()).toHaveLength(1));
@@ -187,7 +187,8 @@ describe('View all on a profile Showcase', () => {
     const screen = await renderWithProviders(
       <div style={{ width: 1440 }}>
         <ShowcaseSection user={user} />
-      </div>
+      </div>,
+      { user: { id: 1 } }
     );
 
     const shown = () =>

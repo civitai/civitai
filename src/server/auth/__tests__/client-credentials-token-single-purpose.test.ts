@@ -238,6 +238,8 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     runnerClientId: RUNNER_CLIENT,
     kind: 'standing',
     runId: null,
+    recipeVersionHash: 'r',
+    paramsHash: 'p',
     maxAmountPerRun: 50,
     maxRunsPerPeriod: 3,
     period: 'day',
@@ -326,7 +328,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   });
 
   it('refuses a runner client over its shared per-client limit', async () => {
-    // Only the per-client counter (`block-token-runner:<client>`) is over 600.
+    // Only the per-client counter (`block-token-runner:<client>`) is over its limit.
     redisMock.redis.incrBy.mockImplementation(async (key: string) =>
       /block-token-runner:[^:]+$/.test(key) ? 601 : 1
     );
@@ -336,7 +338,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   });
 
   it('refuses a caller over the per-user limit, with Retry-After', async () => {
-    // One over the handler's PER_USER_LIMIT (10/min); the per-IP and per-client limits admit it.
+    // One over the handler's PER_USER_LIMIT; the per-IP and per-client limits admit it.
     redisMock.redis.incrBy.mockResolvedValue(11);
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(429);
@@ -345,7 +347,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   });
 
   it('refuses an address over the per-IP limit before reading the credential', async () => {
-    // One over the handler's PER_IP_LIMIT (1200/min).
+    // One over the handler's PER_IP_LIMIT.
     redisMock.redis.incrBy.mockResolvedValue(1201);
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(429);
@@ -410,6 +412,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     expect((await mint(RUNNER_TOKEN, { runner: { ...body.runner, amount: 0 } })).statusCode).toBe(
       400
     );
+    expect(dbMock.dbWrite.apiKey.findFirst).not.toHaveBeenCalled();
   });
 });
 

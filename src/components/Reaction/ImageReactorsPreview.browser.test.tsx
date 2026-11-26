@@ -24,8 +24,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: { reaction: { getImageReactors: { useQuery: mocks.useQuery } } },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 100 }) }));
-
 vi.mock('~/components/UserAvatar/UserHoverCard', async (importOriginal) => ({
   ...(await importOriginal<typeof UserHoverCardModule>()),
   useHoverCapable: () => mocks.hoverCapable,
@@ -54,7 +52,8 @@ const renderBar = () =>
   renderWithProviders(
     <ImageReactorsPreview imageId={IMAGE_ID} ownerId={100}>
       <button type="button">Like reaction</button>
-    </ImageReactorsPreview>
+    </ImageReactorsPreview>,
+    { user: { id: 100 } }
   );
 
 beforeEach(() => {

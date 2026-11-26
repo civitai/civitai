@@ -8,7 +8,6 @@ import type * as TrpcModule from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({ setSettings: vi.fn() }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appTour: false }),
 }));
@@ -53,7 +52,8 @@ const renderProbe = () =>
   renderWithProviders(
     <ToursProvider>
       <Probe />
-    </ToursProvider>
+    </ToursProvider>,
+    { user: { id: 1 } }
   );
 
 describe('pauseTour', () => {
@@ -150,7 +150,8 @@ describe('the helpers handed to consumers', () => {
     renderWithProviders(
       <ToursProvider>
         <CallProbe />
-      </ToursProvider>
+      </ToursProvider>,
+      { user: { id: 1 } }
     );
 
     await expect.element(page.getByTestId('called')).toHaveTextContent('done');

@@ -16,7 +16,7 @@ import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
 import type { RankPerks } from '$lib/rank-up';
-import { getStanding, mutedFailure } from '$lib/server/standing';
+import { mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
 import { ratingExamples, withExamples } from '$lib/server/rating-examples';
@@ -47,6 +47,7 @@ import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
+import { recordUnsure } from '$lib/server/yesno/unsure';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
 import { crossedMilestone } from '$lib/server/apprenticeship/standing';
 import { acolyteLevelGoldSince } from '$lib/server/apprenticeship/level-gold';
@@ -60,6 +61,7 @@ import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
 import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
+import { requestStanding, requireRequestMember } from '$lib/server/request-reads';
 import type { Actions, PageServerLoad } from './$types';
 
 const BLOCK_REASON_TEXT = 'Choose a reason from the list when you block an image.';
@@ -124,8 +126,8 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
   if (await inquisitorQueueOpen(locals.user)) return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
-    requireMember(db, locals.user.id),
-    getStanding(db, locals.user.id),
+    requireRequestMember(db, locals),
+    requestStanding(db, locals),
   ]);
   await requireConsent(locals.user.id);
   const now = queueDeps.now();
@@ -400,7 +402,7 @@ export const actions: Actions = {
   vote: async (event) => {
     const arrivedAt = queueDeps.now().getTime();
     const userId = event.locals.user.id;
-    if ((await getStanding(db, userId)).muted) {
+    if ((await requestStanding(db, event.locals)).muted) {
       refused('muted', null, userId);
       return mutedFailure();
     }
@@ -429,7 +431,7 @@ export const actions: Actions = {
   skip: async ({ request, locals }) => {
     const skipRefused = (reason: string) =>
       metrics.voteRefused(reason, 'unknown', locals.user.id, null, 'skip');
-    if ((await getStanding(db, locals.user.id)).muted) {
+    if ((await requestStanding(db, locals)).muted) {
       skipRefused('muted');
       return mutedFailure();
     }
@@ -437,7 +439,8 @@ export const actions: Actions = {
       skipRefused('no-consent');
       return consentFailure();
     }
-    const token = (await request.formData()).get('item');
+    const form = await request.formData();
+    const token = form.get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
       if (typeof token === 'string') ref = openItem(feedSecret(), locals.user.id, token);
@@ -448,7 +451,12 @@ export const actions: Actions = {
       skipRefused('bad-token');
       return fail(400, { message: 'That one cannot be skipped.' });
     }
-    await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
+    const now = queueDeps.now();
+    await recordSkip(skipStore, locals.user.id, ref, now);
+    // On a question the skip is the "Not sure" answer, counted per question; the reply stays the same for every kind.
+    // Dismissing a question other players settled posts the same skip (`settled`), and is no answer at all.
+    if (ref.kind === 'yesno' && form.get('settled') !== '1')
+      await recordUnsure(db, { playerId: locals.user.id, itemId: ref.id, now });
     return { success: true };
   },
 
@@ -503,7 +511,7 @@ export const actions: Actions = {
   },
 
   apprentice: async ({ request, locals }) => {
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if ((await requestStanding(db, locals)).muted) return mutedFailure();
     if (!(await consented(locals.user.id))) return consentFailure();
     const form = await request.formData();
     const kind = form.get('kind');
@@ -519,6 +527,10 @@ export const actions: Actions = {
     }
 
     const onCard = await standingOnCard(form, locals.user.id);
+    const deps = {
+      ...apprenticeDeps,
+      skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+    };
     try {
       const result = await answerApprentice(
         db,
@@ -529,10 +541,7 @@ export const actions: Actions = {
           version: typeof version === 'string' ? version : null,
           answer,
         },
-        {
-          ...apprenticeDeps,
-          skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
-        }
+        deps
       );
       if (result.status === 'rejected') {
         return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });

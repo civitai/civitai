@@ -41,7 +41,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
     <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
   ),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // Same spread, same reason as the FeatureFlagsProvider factory above — and this one is the
 // case that actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through

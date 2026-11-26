@@ -49,10 +49,6 @@ const mocks = vi.hoisted(() => ({
   detail: undefined as unknown,
 }));
 
-// The chrome gates its platform-nav "Review" item on the viewer's moderator flag and
-// would otherwise throw for want of a CivitaiSessionContext. Anon, non-mod.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 BOTH FLAG HOOKS, TO THE SAME OBJECT. `AppNameCrumb` and `ChromeReviewEntry` read
 // through `useOptionalFeatureFlags` (fail-closed outside a provider); overriding only
 // `useFeatureFlags` would leave them resolving the real null and every store-card

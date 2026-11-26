@@ -388,7 +388,7 @@ describe('standings rows (A7)', () => {
     expect(spot).toHaveLength(0);
   });
 
-  // Ellie review (2026-10-09): each hat on its own card like a standings row, and on a wide page
+  // Design review (2026-10-09): each hat on its own card like a standings row, and on a wide page
   // two columns filled downwards, so 1 to 5 sit on the left and 6 to 10 on the right.
   it('puts each top hat on its own card row, in two columns filled downwards when wide', () => {
     const top = Array.from({ length: 12 }, (_, i) => ({

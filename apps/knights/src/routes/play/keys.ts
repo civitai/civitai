@@ -17,7 +17,7 @@ export function answerForKeyPress(options: Option[], key: string, yesNo: boolean
 
 type Screen = {
   question?: { options: Option[] } | null;
-  apprentice?: { kind: string; options?: Option[] } | null;
+  apprentice?: { kind: string; options?: Option[]; item?: { kind: string } } | null;
 };
 
 /** The options the number keys answer: the queue question's, or the apprenticeship question's; none on a recap. */
@@ -25,6 +25,10 @@ export function optionsOnScreen({ question, apprentice }: Screen): Option[] | nu
   if (question) return question.options;
   return apprentice?.kind === 'question' ? apprentice.options ?? null : null;
 }
+
+/** An apprenticeship practice pair is on screen (a yes/no question, graded like every practice item). */
+export const isYesNoApprentice = ({ apprentice }: Screen): boolean =>
+  apprentice?.kind === 'question' && apprentice.item?.kind === 'yesno';
 
 /** Space skips a queue item; in the apprenticeship (no skip) it stays the browser's, pressing a focused button. */
 export const spaceSkips = ({ question }: Screen): boolean => !!question;

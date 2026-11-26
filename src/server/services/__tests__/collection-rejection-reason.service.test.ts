@@ -34,6 +34,7 @@ function mockContestCollection() {
 type PriorRejection = {
   rejectionReason?: CollectionItemRejectionReason | null;
   rejectionDetail?: string | null;
+  imageId?: number | null;
 };
 
 function mockPriorItem(
@@ -47,7 +48,7 @@ function mockPriorItem(
       status,
       rejectionReason: prior.rejectionReason ?? null,
       rejectionDetail: prior.rejectionDetail ?? null,
-      imageId: 1234,
+      imageId: prior.imageId === undefined ? 1234 : prior.imageId,
       articleId: null,
       modelId: null,
       postId: null,
@@ -134,7 +135,7 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
   // Without this, an item rejected and later accepted keeps a stale reason that the
   // read-back UI would happily show next to an ACCEPTED badge.
   it('clears the reason when the item is accepted', async () => {
-    mockPriorItem(CollectionItemStatus.REJECTED);
+    mockPriorItem(CollectionItemStatus.REJECTED, { imageId: null });
 
     await updateCollectionItemsStatus({
       input: {

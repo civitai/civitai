@@ -18,6 +18,8 @@ import (
 
 // record is one input line: a feed-bench capture row, plus the optional REST fields.
 type record struct {
+	// T is the request's start, epoch milliseconds (import-tempo: the case's day).
+	T        int64  `json:"t"`
 	Host     string `json:"host"`
 	Input    string `json:"input"`
 	Authed   bool   `json:"authed"`
