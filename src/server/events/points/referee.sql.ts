@@ -30,7 +30,10 @@
 //
 // Params: event, seasonStart, recomputeFrom, cut, removeCut, cap, types (Array(String)), weights (Array(UInt32),
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), restrictedFrom
-// (Array(Int64), epoch ms, aligned with restrictedUsers), newAccountMinId.
+// (Array(Int64), epoch ms, aligned with restrictedUsers), newAccountMinId, actorShards and
+// actorShard (only actors with cityHash64(actorId) % actorShards = actorShard; see referee-shards.ts).
+//
+// Every rule above is per actor, so one actor shard's rows sum with the others' to the whole answer.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
   -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
@@ -41,12 +44,14 @@ WITH
       AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
       AND NOT has({dailyTypes:Array(String)}, type)
+      AND cityHash64(actorId) % {actorShards:UInt32} = {actorShard:UInt32}
     UNION ALL
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {recomputeFrom:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
       AND has({dailyTypes:Array(String)}, type)
+      AND cityHash64(actorId) % {actorShards:UInt32} = {actorShard:UInt32}
   ),
   firsts AS (
     SELECT
