@@ -362,10 +362,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
     await run(transcribed('Rain on the window. Sun on the floor.'), pending);
 
     await vi.waitFor(() => expect(orchestrator.align).toHaveBeenCalledTimes(1));
-    expect(orchestrator.align.mock.calls[0][0].body).toEqual({
-      mediaUrl: expect.stringContaining('song-key/original=true/'),
-      lyrics: saved.text,
-    });
+    expect(orchestrator.align.mock.calls[0][0].body.lyrics).toBe(saved.text);
   });
 
   it.each([

@@ -107,8 +107,8 @@ async function awaitLyrics({
 }
 
 /**
- * Gives a song without lyrics the scan's transcript as its lyrics, then times them. A failure leaves
- * the song without lyrics, decided on its audio alone.
+ * Gives a song without lyrics the scan's transcript as its lyrics, then times them. A failed save
+ * leaves the song without lyrics, decided on its audio alone; a failed alignment leaves them untimed.
  */
 async function promoteTranscript(imageId: number, transcript: string) {
   try {
@@ -141,7 +141,7 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
   const image = await loadImageForScan(imageId);
   let lyrics = await readLyricsVerdict(imageId);
   if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return;
-  // Only while undecided: the lyrics verdict decides only such a song (above).
+  // Never on a rescan: the lyrics verdict would not decide a song past its first decision (above).
   if (
     !fromLyrics &&
     UNDECIDED.includes(image.ingestion) &&
