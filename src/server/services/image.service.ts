@@ -4764,7 +4764,7 @@ export const getImage = async ({
       u."deletedAt",
       u."profilePictureId",
       COALESCE(p."availability", 'Public') "availability",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
+      image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") "publishedAt",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"

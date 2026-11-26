@@ -5,18 +5,25 @@ import { ImagesFeed } from '@/common/feeds/images.feed';
 
 type FeedArgs = ConstructorParameters<typeof ImagesFeed>;
 
-// The image_sort_at the Image trigger uses, from the one file that defines it.
-const TRIGGERS = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
-);
-const imageSortAtSql = () => {
-  const match = readFileSync(TRIGGERS, 'utf8').match(
-    /CREATE OR REPLACE FUNCTION image_sort_at\([\s\S]*?\$\$;/
+const SQL_ROOT = path.resolve(__dirname, '../../../..');
+const TRIGGERS = 'packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql';
+const FEED_GO_SCHEMA = 'apps/feed-go/testdata/integration/schema.sql';
+const imageSortAtSql = (file: string) => {
+  const match = readFileSync(path.join(SQL_ROOT, file), 'utf8').match(
+    /CREATE (?:OR REPLACE )?FUNCTION image_sort_at\([\s\S]*?\$\$;/
   );
-  if (!match) throw new Error('image_sort_at not found in image_post_triggers.sql');
+  if (!match) throw new Error(`image_sort_at not found in ${file}`);
   return match[0];
 };
+
+// feed-go's integration Postgres has its own copy; its sortAt test means nothing once they differ.
+test("feed-go integration schema has the Image trigger's image_sort_at", () => {
+  const body = (file: string) =>
+    imageSortAtSql(file)
+      .replace(/^.*?FUNCTION/, '')
+      .replace(/\s+/g, ' ');
+  expect(body(FEED_GO_SCHEMA)).toBe(body(TRIGGERS));
+});
 
 describe('image feed document sortAt, against the real query', () => {
   test('a released held image sorts at its first-visible time; others keep GREATEST', async () => {
@@ -35,7 +42,7 @@ describe('image feed document sortAt, against the real query', () => {
       CREATE TABLE "Model" (id int, type text, poi boolean);
       CREATE TABLE "ModelVersion" (id int, "modelId" int, "baseModel" text);
       CREATE TABLE "ImageResourceNew" ("imageId" int, "modelVersionId" int, detected boolean);
-      ${imageSortAtSql()}
+      ${imageSortAtSql(TRIGGERS)}
       INSERT INTO "Post" VALUES (1, '2026-01-01 00:00:00', 'Public', NULL);
       INSERT INTO "Image" (id, index, "postId", url, "nsfwLevel", "aiNsfwLevel", "nsfwLevelLocked",
         width, height, hash, "hideMeta", type, "userId", minor, poi, "acceptableMinor",
