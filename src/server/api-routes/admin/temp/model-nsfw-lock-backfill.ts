@@ -63,6 +63,11 @@ export const backfillSchema = z
     limit: z.number().int().min(1).max(500).default(300),
     afterId: z.number().int().min(0).default(0),
     /**
+     * profanity-locks unlock writes: the ids the approved dry run listed (at most 200). The write
+     * unlocks only those of them a fresh selection still takes, never an id outside the list.
+     */
+    ids: z.array(z.number().int().positive()).min(1).max(200).optional(),
+    /**
      * profanity-locks only. An unlock takes one set per run: `attributed` (the default: the filter's
      * marker, or an unmarked lock the entity-change log attributes to it) or `unattributed` (an
      * unmarked lock with no such record). A revert must name its scope, `all` included, so leaving
@@ -77,6 +82,12 @@ export const backfillSchema = z
         code: 'custom',
         path: ['selector'],
         message: 'a profanity-locks revert must name its scope: attributed, unattributed or all',
+      });
+    if (input.action === 'unlock' && !input.dryRun && !input.ids)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ids'],
+        message: 'a profanity-locks unlock write must list the ids it may unlock',
       });
     if (input.action === 'unlock' && input.selector === 'all')
       ctx.addIssue({
@@ -220,18 +231,41 @@ export const PROFANITY_MODERATOR_LOG_QUERY = `
       AND actorRole = 'moderator'
 `;
 
+/** The same queries, counted, so a short (truncated) read is caught. */
+export const PROFANITY_ATTRIBUTION_COUNT_QUERY = `SELECT count() AS n FROM (${PROFANITY_ATTRIBUTION_QUERY})`;
+export const PROFANITY_MODERATOR_LOG_COUNT_QUERY = `SELECT count() AS n FROM (${PROFANITY_MODERATOR_LOG_QUERY})`;
+
+/**
+ * The fewest filter records a read may return. The filter stopped writing unmarked locks once it
+ * stamped its marker, so the record count can only fall if records go missing: 834 when this was
+ * written (attributed + superseded), less a margin for a dropped duplicate.
+ */
+export const ATTRIBUTION_RECORD_FLOOR = 800;
+
 const positiveIds = (rows: { id: number | string }[]) =>
   rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
 
 /** Reads the attribution from ClickHouse; throws, so nothing is written, when it cannot. */
-export async function readProfanityAttribution(): Promise<Attribution> {
+export async function readProfanityAttribution({
+  floor = ATTRIBUTION_RECORD_FLOOR,
+}: { floor?: number } = {}): Promise<Attribution> {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
-  const rows = await clickhouse.$query<{ id: number | string; superseded: number | boolean }>(
-    PROFANITY_ATTRIBUTION_QUERY
-  );
-  const moderatorRows = await clickhouse.$query<{ id: number | string }>(
-    PROFANITY_MODERATOR_LOG_QUERY
-  );
+  const [rows, [attributionCount], moderatorRows, [moderatorCount]] = await Promise.all([
+    clickhouse.$query<{ id: number | string; superseded: number | boolean }>(
+      PROFANITY_ATTRIBUTION_QUERY
+    ),
+    clickhouse.$query<{ n: number | string }>(PROFANITY_ATTRIBUTION_COUNT_QUERY),
+    clickhouse.$query<{ id: number | string }>(PROFANITY_MODERATOR_LOG_QUERY),
+    clickhouse.$query<{ n: number | string }>(PROFANITY_MODERATOR_LOG_COUNT_QUERY),
+  ]);
+  if (rows.length !== Number(attributionCount?.n))
+    throw new Error(`attribution read truncated: ${rows.length} rows of ${attributionCount?.n}`);
+  if (moderatorRows.length !== Number(moderatorCount?.n))
+    throw new Error(
+      `moderator-log read truncated: ${moderatorRows.length} rows of ${moderatorCount?.n}`
+    );
+  if (rows.length < floor)
+    throw new Error(`attribution read below the floor: ${rows.length} records, at least ${floor}`);
   const attributed: number[] = [];
   const superseded: number[] = [];
   for (const row of rows) {
@@ -295,6 +329,10 @@ function exclusionsOf(
   // attributed or superseded lock would look unattributed.
   if (!attribution.attributed.length && !attribution.superseded.length)
     throw new Error('The unattributed selection needs an attribution read that found records');
+  // Its moderator-trace skip is only as good as the moderator-log read: one that found nothing
+  // would drop the skip silently, so it is refused the same way.
+  if (!attribution.moderatorLogged.length)
+    throw new Error('The unattributed selection needs a moderator-log read that found records');
   return {
     ...shared,
     attributed: Prisma.sql`(${unmarkedProfanitySql} AND m.id = ANY(${attribution.attributed}::int[]))`,
@@ -682,14 +720,16 @@ export async function runBackfill(
   const { bucket, action, dryRun, afterId } = input;
   const profanity = bucket === 'profanity-locks';
   const limit = profanity ? Math.min(input.limit, PROFANITY_BATCH_LIMIT) : input.limit;
-  // An unlock defaults to the attributed set; a profanity revert must name its scope, so only the
-  // scan bucket has no selector here. Checked again past the schema, for a caller that skips it.
+  // Re-checked past the schema, for a caller that skips it.
   if (profanity && action === 'revert' && !input.selector)
     throw new Error(
       'a profanity-locks revert must name its scope: attributed, unattributed or all'
     );
   if (profanity && action === 'unlock' && input.selector === 'all')
     throw new Error('an unlock takes one set: attributed or unattributed');
+  const listed = profanity && action === 'unlock' && !dryRun ? input.ids : undefined;
+  if (profanity && action === 'unlock' && !dryRun && !listed?.length)
+    throw new Error('a profanity-locks unlock write must list the ids it may unlock');
   const selector: Selector | undefined =
     !profanity || input.selector === 'all'
       ? undefined
@@ -697,10 +737,13 @@ export async function runBackfill(
   // Read once per call, and used by both the batch query and the UPDATE's own re-check.
   const attribution =
     profanity && action === 'unlock' ? await effects.readProfanityAttribution() : NO_ATTRIBUTION;
-  const ids =
-    action === 'revert'
-      ? await nextRevertBatch(bucket, afterId, limit, selector)
-      : await nextUnlockBatch(bucket, afterId, limit, attribution, selector);
+  // A write given its list unlocks only those ids, each re-checked in the UPDATE against the fresh
+  // selection; it never builds a batch of its own.
+  const ids = listed
+    ? [...new Set(listed)].sort((a, b) => a - b)
+    : action === 'revert'
+    ? await nextRevertBatch(bucket, afterId, limit, selector)
+    : await nextUnlockBatch(bucket, afterId, limit, attribution, selector);
   const nextAfterId = ids.length ? ids[ids.length - 1] : afterId;
   const skippedRatingChanged =
     // A scan of every unlocked model, so once per pass: on its first call.
@@ -729,6 +772,7 @@ export async function runBackfill(
       action,
       dryRun: true as const,
       selector: profanity ? selector ?? 'all' : undefined,
+      listed: undefined,
       limit,
       counts,
       skippedRatingChanged,
@@ -768,6 +812,13 @@ export async function runBackfill(
     limit,
     ids,
     changed,
+    listed: listed
+      ? {
+          count: ids.length,
+          unlocked: changed.length,
+          droppedByFreshCheck: ids.filter((id) => !changed.includes(id)),
+        }
+      : undefined,
     scans,
     skippedRatingChanged,
     nextAfterId,
@@ -778,13 +829,14 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
   summary:
     'One-off: lift the nsfw lock the text scan or the profanity filter set on models, keeping the rating; or revert it.',
   returns:
-    '{ bucket, action, dryRun, selector?, limit, counts?, ids, changed?, scans?, skippedRatingChanged?, nextAfterId }',
+    '{ bucket, action, dryRun, selector?, limit, counts?, ids, changed?, listed?, scans?, skippedRatingChanged?, nextAfterId }',
   notes: [
     'dryRun defaults to true: the next batch of ids (and, for unlock, the counts), no writes.',
     'A write run re-checks every id in the UPDATE, so a row that changed since the dry run is skipped.',
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
     'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again at its prior rating (scans.relocked; scans.ratingRestored where an owner change was undone). Benign skips (not-public, too-short) relock on every pass.',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
+    'profanity-locks unlock write: must carry ids, the list the approved dry run gave (at most 200); it unlocks only those a fresh selection still takes, and reports listed.count / unlocked / droppedByFreshCheck. The attribution read is refused when a count of the same query disagrees with the rows returned, or when it holds fewer than ATTRIBUTION_RECORD_FLOOR records.',
     'profanity-locks selector: "attributed" (the default for an unlock) or "unattributed" (unmarked locks the entity-change log does not record, with every other exclusion still applied; counts.attributed is the set it leaves to the other selector). The record names its selector; a revert must name its scope (attributed, unattributed or all) and is refused without one. The response echoes the selector ("all" for a revert of both); an unattributed run also skips any model the log records a moderator changing the lock or rating on (counts.moderatorLogged).',
     'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); an unmarked lock is taken only where the entity-change log records the filter setting it and nothing changing the lock or rating since (counts.unattributed, counts.attributionSuperseded, counts.attributionRecords), and skips one a moderator marked (counts.moderatorSignal: an actioned report, a decline or review flag, an unpublish by someone else); counts.eligibleByProfanityMatches is what is left of them; it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable). If ClickHouse cannot be read, the call fails and writes nothing.',
   ],

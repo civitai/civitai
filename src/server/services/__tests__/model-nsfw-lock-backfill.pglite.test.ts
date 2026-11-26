@@ -36,7 +36,10 @@ const {
   NO_ATTRIBUTION,
   readProfanityAttribution: readAttributionFromClickhouse,
   PROFANITY_ATTRIBUTION_QUERY,
+  PROFANITY_ATTRIBUTION_COUNT_QUERY,
   PROFANITY_MODERATOR_LOG_QUERY,
+  PROFANITY_MODERATOR_LOG_COUNT_QUERY,
+  ATTRIBUTION_RECORD_FLOOR,
   nextRevertBatch,
   nextUnlockBatch,
   ratingChangedSinceUnlock,
@@ -855,11 +858,14 @@ describe('model nsfw lock backfill: profanity locks', () => {
   });
 
   describe('the forced scan in the unlock call', () => {
-    const unlockRun = (limit?: number) =>
-      runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, dryRun: false, ...(limit ? { limit } : {}) }),
+    // A write carries the list its dry run gave, as an approved card would.
+    const unlockRun = async () => {
+      const dry = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
+      return runBackfill(
+        backfillSchema.parse({ bucket: PROFANITY, dryRun: false, ids: dry.ids }),
         effects
       );
+    };
 
     it('submits one forced scan per changed id and records each on the row', async () => {
       const result = await unlockRun();
@@ -988,6 +994,27 @@ describe('model nsfw lock backfill: profanity locks', () => {
     });
   });
   describe('the attribution query (ClickHouse, never run here, so pinned)', () => {
+    /** ClickHouse as the reader sees it: 7 filter rows (5 usable ids), 4 moderator rows (2 usable). */
+    const serveClickhouse = (counts: { attributionCount?: number; moderatorCount?: number } = {}) =>
+      clickhouseQuery.mockImplementation(async (query: string) => {
+        if (query === PROFANITY_ATTRIBUTION_QUERY)
+          return [
+            { id: '5', superseded: 1 },
+            { id: 6, superseded: 0 },
+            { id: 7, superseded: false },
+            { id: '8', superseded: true },
+            { id: -1, superseded: 0 },
+            { id: 'x', superseded: 0 },
+            { id: 2.5, superseded: 0 },
+          ];
+        if (query === PROFANITY_ATTRIBUTION_COUNT_QUERY)
+          return [{ n: String(counts.attributionCount ?? 7) }];
+        if (query === PROFANITY_MODERATOR_LOG_QUERY)
+          return [{ id: '9' }, { id: 10 }, { id: 0 }, { id: 'y' }];
+        if (query === PROFANITY_MODERATOR_LOG_COUNT_QUERY)
+          return [{ n: counts.moderatorCount ?? 4 }];
+        throw new Error(`unexpected query: ${query}`);
+      });
     const query = PROFANITY_ATTRIBUTION_QUERY.replace(/\s+/g, ' ').trim();
     it('is the reviewed text, byte for byte up to whitespace', () => {
       expect(query).toBe(
@@ -1007,17 +1034,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(PROFANITY_ATTRIBUTION_QUERY).not.toContain('${');
     });
     it('maps rows to attributed and superseded ids, dropping any id that is not a positive integer', async () => {
-      clickhouseQuery.mockResolvedValueOnce([
-        { id: '5', superseded: 1 },
-        { id: 6, superseded: 0 },
-        { id: 7, superseded: false },
-        { id: '8', superseded: true },
-        { id: -1, superseded: 0 },
-        { id: 'x', superseded: 0 },
-        { id: 2.5, superseded: 0 },
-      ]);
-      clickhouseQuery.mockResolvedValueOnce([{ id: '9' }, { id: 10 }, { id: 0 }, { id: 'y' }]);
-      expect(await readAttributionFromClickhouse()).toEqual({
+      serveClickhouse();
+      expect(await readAttributionFromClickhouse({ floor: 0 })).toEqual({
         attributed: [6, 7],
         superseded: [5, 8],
         moderatorLogged: [9, 10],
@@ -1033,8 +1051,36 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(PROFANITY_MODERATOR_LOG_QUERY).not.toContain('${');
     });
     it('throws when ClickHouse fails, so the call writes nothing', async () => {
-      clickhouseQuery.mockRejectedValueOnce(new Error('timeout'));
-      await expect(readAttributionFromClickhouse()).rejects.toThrow('timeout');
+      clickhouseQuery.mockRejectedValue(new Error('timeout'));
+      await expect(readAttributionFromClickhouse({ floor: 0 })).rejects.toThrow('timeout');
+    });
+    it('refuses a short read: rows fewer than a count of the same query', async () => {
+      serveClickhouse({ attributionCount: 8 });
+      await expect(readAttributionFromClickhouse({ floor: 0 })).rejects.toThrow(
+        'attribution read truncated'
+      );
+      serveClickhouse({ moderatorCount: 5 });
+      await expect(readAttributionFromClickhouse({ floor: 0 })).rejects.toThrow(
+        'moderator-log read truncated'
+      );
+    });
+    it('refuses a read below the record floor, which defaults to ATTRIBUTION_RECORD_FLOOR', async () => {
+      serveClickhouse();
+      await expect(readAttributionFromClickhouse({ floor: 8 })).rejects.toThrow('below the floor');
+      await expect(readAttributionFromClickhouse()).rejects.toThrow(
+        `at least ${ATTRIBUTION_RECORD_FLOOR}`
+      );
+      expect(await readAttributionFromClickhouse({ floor: 7 })).toMatchObject({
+        attributed: [6, 7],
+      });
+    });
+    it('counts exactly the queries it reads', () => {
+      expect(PROFANITY_ATTRIBUTION_COUNT_QUERY).toBe(
+        `SELECT count() AS n FROM (${PROFANITY_ATTRIBUTION_QUERY})`
+      );
+      expect(PROFANITY_MODERATOR_LOG_COUNT_QUERY).toBe(
+        `SELECT count() AS n FROM (${PROFANITY_MODERATOR_LOG_QUERY})`
+      );
     });
   });
 
@@ -1106,11 +1152,20 @@ describe('model nsfw lock backfill: profanity locks', () => {
       const before = await row(UNATTRIBUTED);
       await expect(
         runBackfill(
-          backfillSchema.parse({ bucket: PROFANITY, selector: 'unattributed', dryRun: false }),
+          backfillSchema.parse({
+            bucket: PROFANITY,
+            selector: 'unattributed',
+            dryRun: false,
+            ids: [UNATTRIBUTED],
+          }),
           effects
         )
       ).rejects.toThrow('attribution read');
       expect(await row(UNATTRIBUTED)).toEqual(before);
+      // A moderator-log read that found nothing is refused too: the moderator-trace skip would vanish.
+      await expect(
+        nextUnlockBatch(PROFANITY, 0, 100, { ...ATTR, moderatorLogged: [] }, 'unattributed')
+      ).rejects.toThrow('moderator-log read');
       // The attributed run on the same empty read fails closed the other way: no unmarked lock.
       expect(await nextUnlockBatch(PROFANITY, 0, 100, empty)).not.toContain(UNATTRIBUTED);
       await expect(
@@ -1133,7 +1188,12 @@ describe('model nsfw lock backfill: profanity locks', () => {
 
       const before = await row(UNATTRIBUTED);
       const result = await runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, selector: 'unattributed', dryRun: false }),
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          selector: 'unattributed',
+          dryRun: false,
+          ids: dry.ids,
+        }),
         effects
       );
       expect(result.changed).toEqual([UNATTRIBUTED, MODERATOR_LOCK_OLD_MATCHES]);
@@ -1152,13 +1212,60 @@ describe('model nsfw lock backfill: profanity locks', () => {
       });
     });
 
+    it('a write unlocks only the ids it lists, never another selectable one, and reports drops', async () => {
+      const before = await row(MODERATOR_LOCK_OLD_MATCHES);
+      const result = await runBackfill(
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          selector: 'unattributed',
+          dryRun: false,
+          // UNMARKED is listed but belongs to the other set: the fresh check drops it.
+          ids: [UNATTRIBUTED, UNMARKED],
+        }),
+        effects
+      );
+      expect(result.changed).toEqual([UNATTRIBUTED]);
+      expect(result.listed).toEqual({ count: 2, unlocked: 1, droppedByFreshCheck: [UNMARKED] });
+      // Selectable, but not on the list: untouched.
+      expect(await row(MODERATOR_LOCK_OLD_MATCHES)).toEqual(before);
+      expect((await row(UNMARKED)).lockedProperties).toEqual(['nsfw']);
+    });
+
+    it('refuses a profanity unlock write that lists no ids, and writes nothing', async () => {
+      const before = await row(UNATTRIBUTED);
+      expect(
+        backfillSchema.safeParse({ bucket: PROFANITY, selector: 'unattributed', dryRun: false })
+          .success
+      ).toBe(false);
+      await expect(
+        runBackfill(
+          {
+            bucket: PROFANITY,
+            action: 'unlock',
+            selector: 'unattributed',
+            dryRun: false,
+            limit: 200,
+            afterId: 0,
+          } as never,
+          effects
+        )
+      ).rejects.toThrow('must list the ids');
+      expect(await row(UNATTRIBUTED)).toEqual(before);
+      expect(scanModelText).not.toHaveBeenCalled();
+    });
+
     it('relocks an unattributed unlock whose scan was not submitted, to exactly the prior meta', async () => {
       const before = await row(UNATTRIBUTED);
       scanModelText.mockImplementation(async (id: number) =>
         id === UNATTRIBUTED ? 'threw' : 'submitted'
       );
       const result = await runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, selector: 'unattributed', dryRun: false }),
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          selector: 'unattributed',
+          dryRun: false,
+          ids: [UNATTRIBUTED, MODERATOR_LOCK_OLD_MATCHES],
+        }),
         effects
       );
       expect(result.scans?.relocked).toEqual([UNATTRIBUTED]);
@@ -1249,7 +1356,7 @@ describe('model nsfw lock backfill: profanity locks', () => {
         id === UNMARKED ? 'not-active/shadow' : 'submitted'
       );
       const result = await runBackfill(
-        backfillSchema.parse({ bucket: PROFANITY, dryRun: false }),
+        backfillSchema.parse({ bucket: PROFANITY, dryRun: false, ids: [UNMARKED] }),
         effects
       );
       expect(result.changed).toContain(UNMARKED);
@@ -1317,7 +1424,10 @@ describe('model nsfw lock backfill: profanity locks', () => {
       const before = await row(UNMARKED);
       const marked = await row(ELIGIBLE);
       await expect(
-        runBackfill(backfillSchema.parse({ bucket: PROFANITY, dryRun: false }), effects)
+        runBackfill(
+          backfillSchema.parse({ bucket: PROFANITY, dryRun: false, ids: [UNMARKED] }),
+          effects
+        )
       ).rejects.toThrow('ClickHouse');
       expect(await row(UNMARKED)).toEqual(before);
       expect(await row(ELIGIBLE)).toEqual(marked);
