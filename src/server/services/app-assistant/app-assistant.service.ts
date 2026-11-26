@@ -10,6 +10,7 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { stampDirectPreviewActivity } from '~/server/services/blocks/dev-tunnel.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
+import { reopenBanDisabledClient } from '~/server/services/oauth-ban-marker';
 import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
 import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
@@ -220,29 +221,26 @@ export async function enableAppAssistant(userId: number): Promise<void> {
   const clientId = appAssistantClientId(userId);
   const scope = appAssistantTokenScope('chat');
 
-  const client = await dbWrite.oauthClient.findUnique({
+  // The whole shape on every call, so a hand-edited row is put back.
+  // accessMode is deliberately absent so the upsert never undoes a staff or ban disable.
+  const shape = {
+    secret: null,
+    name: 'App Assistant',
+    description: 'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
+    redirectUris: [],
+    allowedOrigins: [],
+    isConfidential: false,
+    grants: [],
+    allowedScopes: scope,
+  };
+  await dbWrite.oauthClient.upsert({
     where: { id: clientId },
-    select: { allowedScopes: true },
+    create: { id: clientId, ...shape, userId },
+    update: shape,
+    select: { id: true },
   });
-  if (client?.allowedScopes !== scope)
-    await dbWrite.oauthClient.upsert({
-      where: { id: clientId },
-      create: {
-        id: clientId,
-        secret: null,
-        name: 'App Assistant',
-        description:
-          'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
-        redirectUris: [],
-        allowedOrigins: [],
-        isConfidential: false,
-        grants: [],
-        allowedScopes: scope,
-        userId,
-      },
-      update: { allowedScopes: scope },
-      select: { id: true },
-    });
+
+  await reopenBanDisabledClient(clientId);
 
   const existing = await dbWrite.oauthConsent.findUnique({
     where: { userId_clientId: { userId, clientId } },

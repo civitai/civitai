@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -14,7 +14,7 @@ vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
   instrumentApiResponse: () => undefined,
 }));
 
-const { WebhookEndpoint } = await import('~/server/utils/endpoint-helpers');
+const { AdminTokenEndpoint, WebhookEndpoint } = await import('~/server/utils/endpoint-helpers');
 const refreshSessions = (await import('~/server/api-routes/admin/refresh-sessions')).default;
 const refreshUserSessions = (await import('~/server/api-routes/admin/refresh-user-sessions'))
   .default;
@@ -30,12 +30,23 @@ const audited = WebhookEndpoint(
 const CURRENT = 'c'.repeat(40);
 const PREVIOUS = 'p'.repeat(40);
 const WRONG = 'w'.repeat(40);
+const RESET = 'r'.repeat(40);
+const PROBE = 'b'.repeat(40);
+const JOB = 'j'.repeat(40);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 
 async function call(
   handler: unknown,
-  opts: { path: string; query?: Record<string, string>; bearer?: string; body?: unknown }
+  opts: {
+    path: string;
+    query?: Record<string, string>;
+    bearer?: string;
+    adminToken?: string;
+    webhookHeader?: string;
+    method?: string;
+    body?: unknown;
+  }
 ) {
   const res = {
     statusCode: 200,
@@ -48,7 +59,7 @@ async function call(
   const query = opts.query ?? {};
   const qs = new URLSearchParams(query).toString();
   const req = {
-    method: opts.body === undefined ? 'GET' : 'POST',
+    method: opts.method ?? (opts.body === undefined ? 'GET' : 'POST'),
     url: qs ? `${opts.path}?${qs}` : opts.path,
     query,
     body: opts.body,
@@ -58,6 +69,8 @@ async function call(
       'cf-ray': 'abc123-DFW',
       'user-agent': 'curl/8.4.0',
       ...(opts.bearer === undefined ? {} : { authorization: `Bearer ${opts.bearer}` }),
+      ...(opts.adminToken === undefined ? {} : { 'x-admin-token': opts.adminToken }),
+      ...(opts.webhookHeader === undefined ? {} : { 'x-webhook-token': opts.webhookHeader }),
     },
   };
   await (handler as Handler)(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
@@ -77,7 +90,16 @@ function onlyAuditRecord() {
   return records[0];
 }
 
+// The refused-call cap is per process; each test starts in a fresh window.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  vi.advanceTimersByTime(60_000);
   resetEnv();
   setEnv({ WEBHOOK_TOKEN: CURRENT, WEBHOOK_TOKEN_PREVIOUS: PREVIOUS });
   logToAxiom.mockClear();
@@ -108,12 +130,12 @@ describe('admin endpoint audit record', () => {
   });
 
   it('records a rejected token without the presented value or any configured one', async () => {
-    const path = '/api/admin/refresh-sessions';
-    expect(await call(refreshSessions, { path, bearer: WRONG, query: { token: WRONG } })).toBe(401);
+    const path = '/api/admin/test-action';
+    expect(await call(audited, { path, bearer: WRONG, query: { token: WRONG } })).toBe(401);
 
     const record = onlyAuditRecord();
     expect(record).toMatchObject({
-      action: 'refresh-sessions',
+      action: 'test-action',
       slot: 'none',
       presented: ['bearer', 'query'],
       outcome: 'rejected',
@@ -127,20 +149,17 @@ describe('admin endpoint audit record', () => {
     expect(serialized).not.toContain(PREVIOUS);
   });
 
-  it('records the previous slot and the body of refresh-user-sessions', async () => {
-    const path = '/api/admin/refresh-user-sessions';
-    // An empty list is refused by the route's schema before any session is touched.
-    expect(await call(refreshUserSessions, { path, bearer: PREVIOUS, body: { userIds: [] } })).toBe(
-      400
-    );
+  it('records the previous slot and the body', async () => {
+    const path = '/api/admin/test-action';
+    expect(await call(audited, { path, bearer: PREVIOUS, body: { userIds: [] } })).toBe(200);
 
     const record = onlyAuditRecord();
     expect(record).toMatchObject({
-      action: 'refresh-user-sessions',
+      action: 'test-action',
       slot: 'previous',
       presented: ['bearer'],
       outcome: 'accepted',
-      status: 400,
+      status: 200,
     });
     expect(JSON.parse(record.params as string)).toEqual({ query: {}, body: { userIds: [] } });
     expect(JSON.stringify(record)).not.toContain(PREVIOUS);
@@ -216,8 +235,8 @@ describe('admin endpoint audit record', () => {
   });
 
   it('records a raw text body by type and length only', async () => {
-    const path = '/api/admin/refresh-user-sessions';
-    await call(refreshUserSessions, { path, bearer: CURRENT, body: `{"t":"${WRONG}"}` });
+    const path = '/api/admin/test-action';
+    await call(audited, { path, bearer: CURRENT, body: `{"t":"${WRONG}"}` });
     const record = onlyAuditRecord();
     expect(JSON.parse(record.params as string).body).toEqual({ unparsed: 'string', length: 48 });
     expect(JSON.stringify(record)).not.toContain(WRONG);
@@ -243,5 +262,153 @@ describe('admin endpoint audit record', () => {
     await call(plain, { path: '/api/webhooks/plain', query: { token: CURRENT } });
     await call(plain, { path: '/api/webhooks/plain', query: { token: WRONG } });
     expect(auditRecords()).toHaveLength(0);
+  });
+});
+
+describe('session-reset routes', () => {
+  const resetPath = '/api/admin/refresh-sessions';
+  const userPath = '/api/admin/refresh-user-sessions';
+
+  beforeEach(() => setEnv({ SESSION_RESET_TOKEN: RESET, PROBE_TOKEN: PROBE, JOB_TOKEN: JOB }));
+
+  const resetAudited = AdminTokenEndpoint(
+    'SESSION_RESET_TOKEN',
+    async (_req, res) => {
+      res.status(200).json({ ok: true });
+    },
+    { audit: 'reset-action' }
+  );
+
+  it('accepts SESSION_RESET_TOKEN in x-admin-token and records it without the value', async () => {
+    const path = '/api/admin/reset-action';
+    const body = { note: RESET, job: JOB, probe: PROBE };
+    expect(await call(resetAudited, { path, adminToken: RESET, body })).toBe(200);
+    const record = onlyAuditRecord();
+    expect(record).toMatchObject({
+      action: 'reset-action',
+      slot: 'admin',
+      presented: ['admin-header'],
+      outcome: 'accepted',
+      status: 200,
+    });
+    const serialized = JSON.stringify(record);
+    for (const secret of [RESET, JOB, PROBE]) expect(serialized).not.toContain(secret);
+  });
+
+  it('refuses GET on refresh-user-sessions', async () => {
+    expect(await call(refreshUserSessions, { path: userPath, adminToken: RESET })).toBe(405);
+  });
+
+  it('lets SESSION_RESET_TOKEN through to refresh-user-sessions', async () => {
+    // An empty list is refused by the route's schema before any session is touched.
+    const status = await call(refreshUserSessions, {
+      path: userPath,
+      adminToken: RESET,
+      body: { userIds: [] },
+    });
+    expect(status).toBe(400);
+    expect(onlyAuditRecord()).toMatchObject({
+      action: 'refresh-user-sessions',
+      slot: 'admin',
+      outcome: 'accepted',
+      status: 400,
+    });
+  });
+
+  it.each([
+    ['the current webhook token in x-admin-token', { adminToken: CURRENT }, 401],
+    ['the previous webhook token in x-admin-token', { adminToken: PREVIOUS }, 401],
+    ['the current webhook token as a bearer', { bearer: CURRENT }, 401],
+    ['the previous webhook token as a bearer', { bearer: PREVIOUS }, 401],
+    ['the webhook token in x-webhook-token', { webhookHeader: CURRENT }, 401],
+    ['the probe token in x-admin-token', { adminToken: PROBE }, 401],
+    ['the job token in x-admin-token', { adminToken: JOB }, 401],
+    ['SESSION_RESET_TOKEN as a bearer', { bearer: RESET }, 401],
+    ['SESSION_RESET_TOKEN in x-webhook-token', { webhookHeader: RESET }, 401],
+    ['the webhook token in the query string', { query: { token: CURRENT } }, 400],
+    ['SESSION_RESET_TOKEN in the query string', { query: { token: RESET } }, 400],
+  ] as const)('refuses %s and records it', async (_name, opts, status) => {
+    expect(await call(refreshSessions, { path: resetPath, ...opts })).toBe(status);
+    const record = onlyAuditRecord();
+    expect(record).toMatchObject({ slot: 'none', outcome: 'rejected', status });
+    const serialized = JSON.stringify(record);
+    for (const secret of [CURRENT, PREVIOUS, RESET, PROBE, JOB])
+      expect(serialized).not.toContain(secret);
+  });
+
+  it.each([
+    ['unset', undefined],
+    ['equal to the current webhook token', CURRENT],
+    ['equal to the previous webhook token', PREVIOUS],
+    ['shorter than 32 characters', 'r'.repeat(31)],
+    ['padded with whitespace', ` ${RESET}`],
+    ['equal to the probe token', PROBE],
+    ['equal to the job token', JOB],
+    [
+      'equal to another admin endpoint token',
+      'k'.repeat(40),
+      { SYSTEM_ACCOUNT_KEY_TOKEN: 'k'.repeat(40) },
+    ],
+    ['equal to another token but for a trailing newline', JOB, { JOB_TOKEN: `${JOB}\n` }],
+  ] as [string, string | undefined, Record<string, string>?][])(
+    'answers 404 while SESSION_RESET_TOKEN is %s, and records it',
+    async (_name, value, extra) => {
+      setEnv({ SESSION_RESET_TOKEN: value, ...extra });
+      const presented = value ?? RESET;
+      expect(await call(refreshSessions, { path: resetPath, adminToken: presented })).toBe(404);
+      expect(
+        await call(refreshUserSessions, {
+          path: userPath,
+          adminToken: presented,
+          body: { userIds: [1] },
+        })
+      ).toBe(404);
+      expect(auditRecords()).toMatchObject([
+        { action: 'refresh-sessions', outcome: 'rejected', status: 404 },
+        { action: 'refresh-user-sessions', outcome: 'rejected', status: 404 },
+      ]);
+    }
+  );
+});
+
+describe('refused-call cap', () => {
+  it('writes the first 20 refused calls in a minute, then one count when the minute ends', async () => {
+    for (let i = 0; i < 25; i++)
+      await call(audited, { path: '/api/admin/test-action', query: { token: WRONG } });
+    expect(auditRecords()).toHaveLength(20);
+
+    vi.advanceTimersByTime(60_000);
+    const records = auditRecords();
+    expect(records).toHaveLength(21);
+    expect(records[20]).toMatchObject({
+      summary: true,
+      outcome: 'rejected',
+      dropped: 5,
+      byKey: { 'test-action': 5 },
+      clientIps: ['203.0.113.7'],
+    });
+  });
+
+  it('starts each minute with a full allowance, and writes no summary when nothing was dropped', async () => {
+    for (let i = 0; i < 25; i++)
+      await call(audited, { path: '/api/admin/test-action', query: { token: WRONG } });
+    vi.advanceTimersByTime(60_000);
+    logToAxiom.mockClear();
+
+    for (let i = 0; i < 20; i++)
+      await call(audited, { path: '/api/admin/test-action', query: { token: WRONG } });
+    vi.advanceTimersByTime(60_000);
+    const records = auditRecords();
+    expect(records).toHaveLength(20);
+    expect(records.some((record) => record.summary)).toBe(false);
+  });
+
+  it('never drops an accepted call', async () => {
+    for (let i = 0; i < 25; i++)
+      await call(audited, { path: '/api/admin/test-action', query: { token: CURRENT } });
+    vi.advanceTimersByTime(60_000);
+    const records = auditRecords();
+    expect(records).toHaveLength(25);
+    expect(records.every((record) => record.outcome === 'accepted')).toBe(true);
   });
 });

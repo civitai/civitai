@@ -8,7 +8,7 @@ import {
   buildPreviewRevokeRequest,
   clearQueuedBanRevoke,
   drainPreviewRevokeQueue,
-  PREVIEW_REVOKE_MAX_AGE_MS,
+  releaseHoldsForUnbannedUser,
   revokePreviewSession,
   revokePreviewsForBannedUser,
 } from '~/server/services/blocks/preview-revoke.service';
@@ -249,15 +249,98 @@ describe('the reaper drains the queue', () => {
     });
   });
 
-  // 8 h: PREVIEW_REVOKE_MAX_AGE_MS in preview-revoke.service.ts.
-  it('one older than the 8 h cap is dropped unsent, and the drop is logged', async () => {
+  // The retry windows in preview-revoke.service.ts: PREVIEW_REVOKE_SESSION_MAX_AGE_MS (8 h) for a
+  // per-session revoke, PREVIEW_REVOKE_BAN_MAX_AGE_MS (7 days) for a "*" revoke or a hold release.
+  // Literal ms, never derived from the constants, so a change to a bound is a change to this test.
+  const MINUTE_MS = 60_000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const DAY_MS = 24 * HOUR_MS;
+  /** A distinct 32-hex preview id per index. */
+  const pid = (i: number) => i.toString(16).padStart(32, 'a');
+
+  it('the queue key lives 7 days from an enqueue', async () => {
     answer(503);
     await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    expect(lua.pttl(QUEUE)).toBe(604_800_000);
+  });
+
+  it('a per-session revoke queued 7 h 59 m ago is still sent', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    const later = NOW_MS + 7 * HOUR_MS + 59 * MINUTE_MS;
+    lua.nowMs = later;
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toMatchObject({ sent: 1, dropped: 0 });
+    expect(sentBodies()).toEqual([{ userId: USER, previewId: PID, reason: 'r' }]);
+  });
+
+  it('a per-session revoke queued 9 h ago is dropped unsent, and the drop is logged', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    const later = NOW_MS + 9 * HOUR_MS;
+    lua.nowMs = later;
     fetchMock.mockClear();
     loggingMock.logToAxiom.mockClear();
-    expect(await drainPreviewRevokeQueue(NOW_MS + PREVIEW_REVOKE_MAX_AGE_MS + 1)).toEqual({
+    expect(await drainPreviewRevokeQueue(later)).toEqual({ sent: 0, dropped: 1, retrying: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queued()).toEqual({});
+    expect(logged()).toEqual([
+      {
+        type: 'app-assistant.preview-revoke.expired',
+        userId: USER,
+        reason: 'r',
+        payload: { ageMs: 32_400_000 },
+      },
+    ]);
+  });
+
+  it('a ban revoke queued 6 d 23 h ago is still in Redis and is sent, signed at send time', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    const later = NOW_MS + 6 * DAY_MS + 23 * HOUR_MS;
+    lua.nowMs = later; // the queue key's own TTL runs too
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toEqual({
+      sent: 1,
+      dropped: 0,
+      retrying: 0,
+      lastStatus: 200,
+    });
+    const init = fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+    expect(init.headers['x-preview-revoke-timestamp']).toBe(String(later / 1000));
+    expect(init.headers['x-preview-revoke-signature']).toBe(
+      buildPreviewRevokeRequest(
+        { userId: USER, previewId: '*', issuedAt: NOW_MS + 120_000, reason: 'ban' },
+        SECRET,
+        later
+      ).headers['x-preview-revoke-signature']
+    );
+    expect(queued()).toEqual({});
+  });
+
+  it('a hold release queued 6 d 23 h ago is still in Redis and is sent', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    const later = NOW_MS + 6 * DAY_MS + 23 * HOUR_MS;
+    lua.nowMs = later;
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toMatchObject({ sent: 1, dropped: 0 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+  });
+
+  // The Redis clock is left at the enqueue, so the age check (not the key TTL) is what drops them.
+  it('a ban revoke and a hold release queued 7 d 1 h ago are dropped unsent and logged', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 1, NOW_MS);
+    fetchMock.mockClear();
+    loggingMock.logToAxiom.mockClear();
+    expect(await drainPreviewRevokeQueue(NOW_MS + 7 * DAY_MS + HOUR_MS)).toEqual({
       sent: 0,
-      dropped: 1,
+      dropped: 2,
       retrying: 0,
     });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -266,10 +349,36 @@ describe('the reaper drains the queue', () => {
       {
         type: 'app-assistant.preview-revoke.expired',
         userId: USER,
-        reason: 'r',
-        payload: { ageMs: PREVIEW_REVOKE_MAX_AGE_MS + 1 },
+        reason: 'ban',
+        payload: { ageMs: 608_400_000 },
+      },
+      {
+        type: 'app-assistant.preview-revoke.expired',
+        userId: USER + 1,
+        reason: 'unban',
+        payload: { ageMs: 608_400_000 },
       },
     ]);
+  });
+
+  it('55 per-session revokes stuck on 404 cannot starve a "*" revoke or a hold release queued after them', async () => {
+    answer(404);
+    for (let i = 0; i < 55; i++)
+      await revokePreviewSession({ userId: USER, previewId: pid(i), reason: 'r' }, NOW_MS);
+    await revokePreviewsForBannedUser(USER + 1, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 2, NOW_MS);
+    expect(Object.keys(queued())).toHaveLength(57);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { previewId?: string };
+      const priority = String(url).endsWith('/internal/v1/holds/release') || body.previewId === '*';
+      return new Response('{}', { status: priority ? 200 : 404 });
+    });
+    const out = await drainPreviewRevokeQueue(NOW_MS + MINUTE_MS);
+    expect(out.sent).toBe(2);
+    expect(Object.keys(queued())).not.toContain(`${USER + 1}:*`);
+    expect(Object.keys(queued())).not.toContain(`${USER + 2}:release`);
+    expect(Object.keys(queued())).toHaveLength(55);
   });
 });
 
@@ -316,5 +425,66 @@ describe('unban', () => {
     await clearQueuedBanRevoke(USER);
     expect(Object.keys(queued()).sort()).toEqual([`${USER}:${PID}`, `${USER + 1}:*`]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// The sandbox service's hold release (HOLD_RELEASE_PATH): an unban lifts the hold the ban's "*"
+// revoke placed, signed and queued exactly like a revoke.
+describe('unban: the hold release', () => {
+  it('🔴 exact body bytes over its own path, and the independently computed signature', () => {
+    const req = buildPreviewRevokeRequest(
+      { userId: USER, previewId: '', reason: 'unban', op: 'release' },
+      SECRET,
+      NOW_MS
+    );
+    expect(req.body).toBe('{"userId":4101,"reason":"unban"}');
+    expect(req.headers['x-preview-revoke-timestamp']).toBe('1795046400');
+    // HMAC-SHA256 over "v1\nPOST\n/internal/v1/holds/release\n<ts>\n<sha256(body)>", computed
+    // independently (Python hmac/hashlib), so a revoke signature can never authorize a release.
+    expect(req.headers['x-preview-revoke-signature']).toBe(
+      'v1=02ae4841560da26de4cac5eec4c37090fd9e7a485be9fd9fb49ab492f0ce5c12'
+    );
+  });
+
+  it('🔴 is sent to the release path, and leaves nothing queued on a 200', async () => {
+    answer(200);
+    expect(await releaseHoldsForUnbannedUser(USER, NOW_MS)).toBe('sent');
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+    expect(sentBodies()).toEqual([{ userId: USER, reason: 'unban' }]);
+    expect(queued()).toEqual({});
+  });
+
+  it('🔴 fails safe: a 503 queues it (the hold stays meanwhile) and the reaper sends it to the release path', async () => {
+    answer(503);
+    expect(await releaseHoldsForUnbannedUser(USER, NOW_MS)).toBe('retry');
+    expect(Object.keys(queued())).toEqual([`${USER}:release`]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'app-assistant.preview-revoke.retry', status: 503 })
+    );
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(NOW_MS + 60_000)).toMatchObject({ sent: 1 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+    expect(queued()).toEqual({});
+  });
+
+  it('🔴 a later BAN drops a release still queued, so it cannot lift the new hold', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 1, NOW_MS);
+    await revokePreviewsForBannedUser(USER, NOW_MS + 1_000);
+    expect(Object.keys(queued()).sort()).toEqual([`${USER}:*`, `${USER + 1}:release`]);
+  });
+
+  it('🔴 the unban clearer (toggleBan’s unban branch) sends it, even when its own block reads fail', async () => {
+    const { clearBlockInstancesForPublisher } = await import(
+      '~/server/services/blocks/publisher-ban-revocation.service'
+    );
+    answer(200);
+    await clearBlockInstancesForPublisher({ userId: USER }).catch(() => undefined);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(
+      `${BASE}/internal/v1/holds/release`
+    );
+    expect(sentBodies()).toContainEqual({ userId: USER, reason: 'unban' });
   });
 });

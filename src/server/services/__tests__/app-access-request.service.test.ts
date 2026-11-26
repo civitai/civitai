@@ -51,6 +51,8 @@ const {
   listAppAccessRequests,
   submitAppAccessRequest,
 } = await import('../app-access-request.service');
+// The ban leg lives in a leaf module (user.service's import cycle), but writes these same rows.
+const { revokeAppAccessForBannedUser } = await import('../ban-access-cleanup.service');
 
 /**
  * `AppAccessRequest` against REAL rows: the hand-applied migration runs on an in-process Postgres,
@@ -69,10 +71,13 @@ const MIGRATIONS = [
 ].map((dir) => join(MIGRATIONS_DIR, dir, 'migration.sql'));
 
 // A stand-in for the real `User` table, cut to what the queue and the auto-approval checks read
-// (same column names and types as the real table).
+// (same column names and types as the real table). `createdAt` defaults to a year ago here, unlike
+// the real table, so every seeded account is old enough for an auto-approval unless a test makes it
+// young on purpose.
 const PRELUDE = `CREATE TABLE "User" (
   "id" SERIAL PRIMARY KEY,
   "username" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP - INTERVAL '365 days'),
   "emailVerified" TIMESTAMP(3),
   "bannedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false,
@@ -494,6 +499,44 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     expect(await submit(mira, MIRA_IDEA)).toMatchObject({ status: 'approved' });
   });
 
+  // The rule is APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS (7) in
+  // `~/shared/constants/app-access-request.constants`; the ages below bracket it. Policy decided in
+  // civitai#10463.
+  describe('account age: at least APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS (7) days', () => {
+    const createdAgo = (userId: number, interval: string) =>
+      pg.query(`UPDATE "User" SET "createdAt" = CURRENT_TIMESTAMP - $2::interval WHERE "id" = $1`, [
+        userId,
+        interval,
+      ]);
+
+    it.each(['0 seconds', '1 day', '6 days 23 hours'])(
+      '🔴 an account created %s ago stays PENDING, with no audit row and no session refresh',
+      async (age) => {
+        await createdAgo(mira, age);
+        flag.on.add(String(mira));
+        const row = await submit(mira, MIRA_IDEA);
+        expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+        expect(await isApproved(mira)).toBe(false);
+        expect(await auditRows()).toEqual([]);
+        expect(refreshSession).not.toHaveBeenCalled();
+      }
+    );
+
+    it('🔴 the young account is QUEUED, not refused: a moderator can still approve it', async () => {
+      await createdAgo(mira, '1 day');
+      flag.on.add(String(mira));
+      const row = await submit(mira, MIRA_IDEA);
+      await decide(row.id, 'approved');
+      expect(await isApproved(mira)).toBe(true);
+    });
+
+    it('an account created 7 days and 1 hour ago is approved', async () => {
+      await createdAgo(mira, '7 days 1 hour');
+      flag.on.add(String(mira));
+      expect(await submit(mira, MIRA_IDEA)).toMatchObject({ status: 'approved' });
+    });
+  });
+
   it('🔴 an auto-approval writes exactly ONE audit row: system actor, the request, autoApproveAppAccess', async () => {
     flag.on.add(String(mira));
     const row = await submit(mira, MIRA_IDEA);
@@ -579,6 +622,71 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     await expect(submit(tomasz, '')).resolves.toMatchObject({ status: 'pending', whatToBuild: '' });
     flag.on.add(String(mira));
     await expect(submit(mira, '')).resolves.toMatchObject({ status: 'approved', whatToBuild: '' });
+  });
+});
+
+describe('revokeAppAccessForBannedUser', () => {
+  const reviewOf = async (userId: number) =>
+    (
+      await pg.query<{
+        status: string;
+        reviewedById: number | null;
+        reviewSource: string | null;
+        reviewedAt: Date | null;
+      }>(
+        'SELECT "status", "reviewedById", "reviewSource", "reviewedAt" FROM "AppAccessRequest" WHERE "userId" = $1 ORDER BY "id"',
+        [userId]
+      )
+    ).rows;
+
+  it('🔴 declines an APPROVED grant (auto or moderator), attributed to the banning moderator', async () => {
+    flag.on.add(String(mira));
+    await submit(mira, MIRA_IDEA); // auto-approved
+    expect(await isApproved(mira)).toBe(true);
+
+    expect(await revokeAppAccessForBannedUser({ userId: mira, actorId: moderator })).toBe(1);
+    expect(await isApproved(mira)).toBe(false);
+    expect(await reviewOf(mira)).toEqual([
+      expect.objectContaining({
+        status: 'declined',
+        reviewedById: moderator,
+        reviewSource: 'moderator',
+        reviewedAt: expect.any(Date),
+      }),
+    ]);
+  });
+
+  it('🔴 declines a PENDING request too, and an unban cannot be followed by an auto-approval', async () => {
+    await submit(mira, MIRA_IDEA);
+    expect(await revokeAppAccessForBannedUser({ userId: mira, actorId: moderator })).toBe(1);
+    expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['declined']);
+    // After the ban is lifted, a new submit with the flag on waits for a moderator.
+    flag.on.add(String(mira));
+    expect(await submit(mira, MIRA_IDEA_AGAIN)).toMatchObject({ status: 'pending' });
+    expect(await isApproved(mira)).toBe(false);
+  });
+
+  it('a ban by the system account is recorded as system, with no reviewer', async () => {
+    const r = await submit(mira, MIRA_IDEA);
+    await decide(r.id, 'approved');
+    await revokeAppAccessForBannedUser({ userId: mira, actorId: -1 });
+    expect(await reviewOf(mira)).toEqual([
+      expect.objectContaining({ status: 'declined', reviewedById: null, reviewSource: 'system' }),
+    ]);
+  });
+
+  it('touches only the banned user, is idempotent, and notifies nobody', async () => {
+    const m = await submit(mira, MIRA_IDEA);
+    await decide(m.id, 'approved');
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    notifyAppAccessDecision.mockClear();
+
+    expect(await revokeAppAccessForBannedUser({ userId: mira, actorId: moderator })).toBe(1);
+    expect(await revokeAppAccessForBannedUser({ userId: mira, actorId: moderator })).toBe(0);
+    expect(await isApproved(mira)).toBe(false);
+    expect(await isApproved(tomasz)).toBe(true);
+    expect(notifyAppAccessDecision).not.toHaveBeenCalled();
   });
 });
 

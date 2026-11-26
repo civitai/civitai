@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 
 // Mock the endpoints' collaborators (producer / verifier / signer). `isInternalRequest` is left real — it
 // reads AUTH_INTERNAL_TOKEN via the $env stub (process.env), set per-test below.
@@ -182,6 +182,18 @@ describe('POST /api/auth/identity audit record', () => {
     return event;
   };
 
+  // The refused-call cap is per process; each test starts in a fresh window.
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+  beforeEach(() => {
+    vi.advanceTimersByTime(60_000);
+    h.logToAxiom.mockClear();
+  });
+
   it('records an accepted scope:"all" call with its caller', async () => {
     await POST(withCaller(ev({ auth: 'Bearer secret-123', body: { scope: 'all' } })));
     expect(audits()).toEqual([
@@ -210,6 +222,38 @@ describe('POST /api/auth/identity audit record', () => {
   it('does not record an accepted per-user bust', async () => {
     await POST(ev({ auth: 'Bearer secret-123', body: { userId: 5 } }));
     expect(audits()).toHaveLength(0);
+  });
+
+  it('records a mass invalidation that fails as a 500, and still fails', async () => {
+    h.invalidateAll.mockRejectedValueOnce(new Error('registry down'));
+    await expect(POST(ev({ auth: 'Bearer secret-123', body: { scope: 'all' } }))).rejects.toThrow(
+      'registry down'
+    );
+    expect(audits()).toEqual([expect.objectContaining({ internal: true, status: 500 })]);
+  });
+
+  it('writes the first 20 refused calls in a minute, then one count when the minute ends', async () => {
+    for (let i = 0; i < 25; i++)
+      await POST(withCaller(ev({ auth: 'Bearer wrong', body: { scope: 'all' } })));
+    expect(audits()).toHaveLength(20);
+
+    vi.advanceTimersByTime(60_000);
+    expect(audits()).toHaveLength(21);
+    expect(audits()[20]).toMatchObject({
+      summary: true,
+      internal: false,
+      dropped: 5,
+      byKey: { post: 5 },
+      // The socket peer, not the caller's cf-connecting-ip.
+      clientIps: ['10.0.0.9'],
+    });
+  });
+
+  it('never drops an accepted mass invalidation', async () => {
+    for (let i = 0; i < 25; i++)
+      await POST(ev({ auth: 'Bearer secret-123', body: { scope: 'all' } }));
+    vi.advanceTimersByTime(60_000);
+    expect(audits()).toEqual(Array(25).fill(expect.objectContaining({ internal: true })));
   });
 });
 

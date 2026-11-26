@@ -52,7 +52,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   ModelMetric: { subject: ['userId'] },
   ModelSelfGeneration: { subject: ['userId'] },
   DownloadHistory: { subject: ['userId'] },
-  Report: { subject: ['userId'] },
+  Report: { subject: ['userId'], staff: ['statusSetBy'] },
   ResourceReview: { subject: ['userId'] },
   ResourceReviewReaction: { subject: ['userId'] },
   Post: { subject: ['userId'] },

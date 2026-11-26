@@ -5,7 +5,6 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
@@ -13,8 +12,9 @@
   import type { CoreSetItem } from '$lib/server/knights/coreset.service';
   import LevelPicker from './LevelPicker.svelte';
   import RetireButton from './RetireButton.svelte';
+  import TrialMedia from './TrialMedia.svelte';
 
-  let { item, mode }: { item: CoreSetItem; mode: 'core' | 'fresh' } = $props();
+  let { item, mode }: { item: CoreSetItem & { restricted: boolean }; mode: 'core' | 'fresh' } = $props();
 
   const level = $derived(Number(item.answer));
   const retired = $derived(item.status === 'retired');
@@ -43,9 +43,8 @@
     : ''}"
 >
   <a href={imageLookupUrl(item.imageId)} class="shrink-0 self-start">
-    <EdgeMedia
-      src={item.imageKey}
-      name={item.imageName}
+    <TrialMedia
+      {item}
       width={240}
       alt="Image {item.imageId}"
       class="max-h-64 rounded-md"

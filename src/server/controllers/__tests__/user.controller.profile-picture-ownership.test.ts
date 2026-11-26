@@ -27,6 +27,7 @@ vi.mock('~/server/services/held-image-keys', () => ({ anyImageHeldOrBlocked: moc
 
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
+  revokeCivitaiUserTokens: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: vi.fn().mockResolvedValue(undefined) },
