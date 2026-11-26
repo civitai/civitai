@@ -1200,6 +1200,18 @@ export const saveItemInCollections = async ({
     });
   }
 
+  // Before the contest gates too: they can charge an entry fee.
+  if (
+    isModerator &&
+    input.imageId != null &&
+    upsertCollectionItems.some(
+      (upsert) =>
+        !unwrittenCollectionIds.has(upsert.collectionId) &&
+        submissionStatus(permissionsMap.get(upsert.collectionId)!) === CollectionItemStatus.ACCEPTED
+    )
+  )
+    await assertMayLoosenImages([input.imageId], { csamReview });
+
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = writableCollections.filter(
     (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
@@ -1332,13 +1344,6 @@ export const saveItemInCollections = async ({
       })
     )
   ).filter(isDefined);
-
-  if (
-    isModerator &&
-    input.imageId != null &&
-    data.some((item) => item.status === CollectionItemStatus.ACCEPTED)
-  )
-    await assertMayLoosenImages([input.imageId], { csamReview });
 
   const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [];
   let removedCount = 0;
@@ -4603,8 +4608,9 @@ export const setCollectionItemNsfwLevel = async ({
   if (image.needsReview != null)
     throw throwBadRequestError('This image is waiting for moderator review.');
   if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  // Both branches can send the image back through the scan.
+  await assertMayLoosenImagesAs([imageId], { isModerator, csamReview });
   if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
-    await assertMayLoosenImagesAs([imageId], { isModerator, csamReview });
     const { failed } = await queueNeverScannedRescan(
       [imageId],
       Prisma.sql`p."collectionId" = ${collectionItem.collectionId}`

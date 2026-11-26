@@ -668,6 +668,25 @@ describe('a moderator adding an image to a collection as accepted', () => {
     await notForbidden(bulk([CLEAN]));
   });
 
+  it('refuses a withheld image before a contest can charge its entry fee', async () => {
+    const contest = { ...collectionRow, mode: 'Contest' };
+    dbMock.dbRead.collection.findMany.mockResolvedValue([contest] as never);
+    const save = (imageId: number) =>
+      saveItemInCollections({
+        input: {
+          type: 'Image',
+          imageId,
+          collections: [{ collectionId: COLLECTION }],
+          userId: 1,
+          isModerator: true,
+        } as never,
+      });
+    await forbidden(save(WITHHELD));
+    expect(dbMock.dbWrite.challenge.findFirst).not.toHaveBeenCalled();
+    await notForbidden(save(CLEAN));
+    expect(dbMock.dbWrite.challenge.findFirst).toHaveBeenCalled();
+  });
+
   it('refuses saving a withheld image into a collection, and writes nothing', async () => {
     const save = (imageId: number, csamReview = false) =>
       saveItemInCollections({
@@ -722,6 +741,30 @@ describe('setCollectionItemNsfwLevel on an image the scan has not finished', () 
     expect(await settle(rate(WITHHELD, {}))).toMatchObject({ code: 'UNAUTHORIZED' });
     await forbidden(rate(WITHHELD, { isModerator: true }));
     expect(queuedRescan()).toBe(false);
+  });
+
+  it('refuses a judge rating on a scanned withheld image before the update', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('?').includes('AS scanned')
+        ? [
+            {
+              postCollectionId: 902,
+              ingestion: 'Scanned',
+              nsfwLevel: 1,
+              blockedFor: null,
+              needsReview: null,
+              scanned: true,
+            },
+          ]
+        : []) as never);
+    const updated = () =>
+      dbMock.dbWrite.$queryRaw.mock.calls.some((call) =>
+        (call[0] as unknown as string[]).join('?').includes('UPDATE "Image"')
+      );
+    expect(await settle(rate(WITHHELD, {}))).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(updated()).toBe(false);
+    await settle(rate(CLEAN, {}));
+    expect(updated()).toBe(true);
   });
 
   it('queues it for a clean image, and for a moderator with the grant', async () => {
