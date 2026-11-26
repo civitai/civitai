@@ -12,7 +12,8 @@ import {
  * A moderator without the `csamReports` grant may not loosen an image `moderatorWithheldSql`
  * withholds from them: each writer below refuses it with FORBIDDEN before it writes, and still
  * writes a clean image, or the same image for a moderator with the grant. The rule runs for real on
- * PGlite; the Prisma reads and writes around it are the shared db mock.
+ * PGlite; the Prisma reads and writes around it are the shared db mock. The refusals to a
+ * non-moderator, the AI review's skip and the tag downvote are civitai/civitai#10583.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -485,8 +486,13 @@ describe('updateCollectionItemsStatus accepting contest entries', () => {
       userId: MANAGER,
       ...who,
     });
+  // The UPDATE's one bound list: the item ids it accepts.
   const acceptedItemIds = () =>
-    (dbMock.dbWrite.$executeRaw.mock.calls[0]?.[8] as { values: number[] } | undefined)?.values;
+    (
+      dbMock.dbWrite.$executeRaw.mock.calls[0]?.find((arg) =>
+        Array.isArray((arg as { values?: unknown })?.values)
+      ) as { values: number[] } | undefined
+    )?.values;
 
   it('refuses a moderator without the grant, and writes nothing', async () => {
     await forbidden(accept([CLEAN, WITHHELD], { isModerator: true }));
