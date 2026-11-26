@@ -4,7 +4,13 @@ import {
   childSafetyPostCase,
   childSafetyPostFinding,
 } from '@civitai/db-queries/child-safety-case';
-import { liftKeptHides, selectLifted, type LiftedRow } from '@civitai/db-queries/content-deletion';
+import {
+  liftKeptHides,
+  lockForLift,
+  selectLifted,
+  type LiftedRow,
+} from '@civitai/db-queries/content-deletion';
+import { sql } from 'kysely';
 import { uniq } from 'lodash-es';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -67,6 +73,21 @@ export function disarmAccountDeletionImagePurge(userId: number) {
         WHERE i."userId" = ${userId} AND (i."metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
       )
   `;
+}
+
+/**
+ * Locks this account's items the drain queued, for `releaseAccountDeletionPendingDeletes` to read in a
+ * later statement of the same transaction (`lockForLift`). A `PrismaPromise`.
+ */
+export function lockAccountDeletionPendingDeletes(userId: number) {
+  const queued = (entityType: 'Image' | 'Post') => sql`SELECT q."entityId" FROM "JobQueue" q
+    WHERE q.type = 'PendingDelete' AND q."entityType" = ${entityType}::"EntityType"
+      AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
+      AND q."entityId" IN (SELECT id FROM ${sql.table(entityType)} WHERE "userId" = ${userId})`;
+  return dbWrite.$executeRaw`
+    WITH images AS (${toPrismaSql(lockForLift('Image', queued('Image')))}),
+      posts AS (${toPrismaSql(lockForLift('Post', queued('Post')))})
+    SELECT (SELECT count(*) FROM images) + (SELECT count(*) FROM posts) AS locked`;
 }
 
 /**

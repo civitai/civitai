@@ -409,10 +409,22 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
         ingestion: 'Blocked',
         nsfwLevel: 32,
         blockedFor: 'moderated',
-        metadata: { width: 1 },
+        metadata: { width: 1, keptHide: expect.any(String) },
       },
-      { id: OWN, ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated', metadata: null },
-      { id: CSAM_BLOCKED, ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'CSAM', metadata: null },
+      {
+        id: OWN,
+        ingestion: 'Blocked',
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        metadata: { keptHide: expect.any(String) },
+      },
+      {
+        id: CSAM_BLOCKED,
+        ingestion: 'Blocked',
+        nsfwLevel: 32,
+        blockedFor: 'CSAM',
+        metadata: { keptHide: expect.any(String) },
+      },
     ]);
     // The CSAM review flag stays, so the image stays in the CSAM queue.
     const flag = await pg.query(`SELECT "needsReview" FROM "Image" WHERE id = ${IMAGE}`);
@@ -1272,7 +1284,8 @@ describe('releasePendingDeletes', () => {
     await closeCase();
     return before;
   };
-  const release = () => releasePendingDeletes(db, 'Image', [IMAGE]);
+  const release = () =>
+    db.transaction().execute((tx) => releasePendingDeletes(tx, 'Image', [IMAGE]));
   /** Its case closed with nothing found, as when a queued delete is let go. */
   const closeCase = () => pg.exec(`UPDATE "Report" SET status = 'Unactioned'`);
 
@@ -1357,6 +1370,23 @@ describe('releasePendingDeletes', () => {
       `UPDATE "JobQueue" SET data = jsonb_set(data, '{deletedBy}', '"moderator:99"')
         WHERE "entityId" = ${IMAGE}`,
     ],
+    // A block written since with the hide's own columns, which logs no moderator activity.
+    [
+      'written since the hide, its marker kept',
+      `UPDATE "Image" SET "updatedAt" = "updatedAt" + interval '1 millisecond' WHERE id = ${IMAGE}`,
+    ],
+    [
+      'whose marker a later block dropped, at the same instant',
+      `UPDATE "Image" SET metadata = metadata - 'keptHide' WHERE id = ${IMAGE}`,
+    ],
+    [
+      "marked by another hide's id",
+      `UPDATE "Image" SET metadata = jsonb_set(metadata, '{keptHide}', '"other"') WHERE id = ${IMAGE}`,
+    ],
+    [
+      'whose record has no stamp',
+      `UPDATE "JobQueue" SET data = data #- '{prior,stamp}' WHERE "entityId" = ${IMAGE}`,
+    ],
   ])('leaves hidden an image %s', async (_, change) => {
     await hideFor();
     await pg.exec(change);
@@ -1364,6 +1394,36 @@ describe('releasePendingDeletes', () => {
 
     const lifted = await release();
 
+    expect(lifted.images).toEqual([]);
+    expect(await imageState()).toEqual(hidden);
+  });
+
+  // One connection, so "committed while the release waited for its lock" is a change run right after
+  // the lock statement returns, inside the release's transaction.
+  it.each([
+    [
+      'a moderator acted on it',
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (99, 'review', 'image', ${IMAGE})`,
+    ],
+    ['its case opened again', `UPDATE "Report" SET status = 'Pending'`],
+  ])('leaves hidden an image when, while the release waits for its lock, %s', async (_, change) => {
+    await hideFor();
+    const hidden = await imageState();
+    let statements = 0;
+    const afterLock = db.withPlugin({
+      transformQuery: ({ node }) => node,
+      transformResult: async ({ result }) => {
+        if (++statements === 1) await pg.exec(change);
+        return result;
+      },
+    });
+
+    const lifted = await afterLock
+      .transaction()
+      .execute((tx) => releasePendingDeletes(tx, 'Image', [IMAGE]));
+
+    expect(statements).toBe(2);
     expect(lifted.images).toEqual([]);
     expect(await imageState()).toEqual(hidden);
   });
@@ -1423,7 +1483,7 @@ describe('releasePendingDeletes', () => {
     await deletePostRows(db, { ids: [60], actor: drain });
     await closeCase();
 
-    const lifted = await releasePendingDeletes(db, 'Post', [60]);
+    const lifted = await db.transaction().execute((tx) => releasePendingDeletes(tx, 'Post', [60]));
 
     expect(lifted.postIds).toEqual([60]);
     const { rows } = await pg.query(
@@ -1439,7 +1499,7 @@ describe('releasePendingDeletes', () => {
     await pg.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
       VALUES (99, 'unpublish', 'post', 60)`);
 
-    const lifted = await releasePendingDeletes(db, 'Post', [60]);
+    const lifted = await db.transaction().execute((tx) => releasePendingDeletes(tx, 'Post', [60]));
 
     expect(lifted.postIds).toEqual([]);
     const { rows } = await pg.query(

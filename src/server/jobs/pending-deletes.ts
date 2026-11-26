@@ -263,16 +263,20 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       waiting,
       failed,
     });
-    // Its own statement, so a failure leaves only these rows for the next run.
-    await releasePendingDeletes(db(), kind, kept).then(refreshLiftedKeptHides, (error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'pending-deletes',
-        message: 'release failed; the rows stay queued',
-        ids: kept,
-        error: (error as Error).message,
+    // Its own transaction, so a failure leaves only these rows for the next run.
+    await dbWrite
+      .$transaction((tx) => releasePendingDeletes(kyselyOver(tx), kind, kept), {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
       })
-    );
+      .then(refreshLiftedKeptHides, (error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'pending-deletes',
+          message: 'release failed; the rows stay queued',
+          ids: kept,
+          error: (error as Error).message,
+        })
+      );
 
     result[kind] = {
       queued: ids.length,

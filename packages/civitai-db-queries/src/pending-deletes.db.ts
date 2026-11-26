@@ -29,13 +29,24 @@ export const PENDING_DELETES_ACTOR = { system: 'pending-deletes' } as const;
  */
 export const KEPT_HIDE_PRIOR = 'prior';
 
-/** An image's columns as they were before the kept-delete hide, and when it ran. */
+/**
+ * The key of an image's `metadata` that the kept-delete hide sets to its `hide` id. Any other write that
+ * blocks the image drops it.
+ */
+export const KEPT_HIDE_MARKER = 'keptHide';
+
+/**
+ * An image's columns as they were before the kept-delete hide, and when it ran: `hide` is the id it
+ * wrote to `KEPT_HIDE_MARKER`, `stamp` the "updatedAt" it wrote, as text.
+ */
 export type KeptHidePrior = {
   ingestion: string;
   nsfwLevel: number;
   blockedFor: string | null;
   needsReview: string | null;
   at: string;
+  hide: string;
+  stamp: string;
 };
 
 /**
@@ -123,17 +134,24 @@ export const ownerInGoodStanding = (userId: RawBuilder<unknown>) =>
   sql<boolean>`NOT EXISTS (SELECT 1 FROM "User" kh_u WHERE kh_u.id = ${userId}
     AND (kh_u."bannedAt" IS NOT NULL OR kh_u."deletedAt" IS NOT NULL))`;
 
+/** A `timestamp(3)` written as text, or NULL when it is not one. */
+const stampOr = (text: RawBuilder<unknown>) =>
+  sql`CASE WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,3})?$'
+    THEN (${text})::timestamp(3) END`;
+
 /**
- * The image (`image`, an alias) is still as the kept-delete hide recorded in `data` left it: blocked
- * by it and nothing since, no CSAM block or review now or recorded, a readable record, no moderator
- * activity on it or its owner and no scan since the hide, its case closed with nothing found, and its
- * owner in good standing.
+ * The image (`image`, an alias) is still as the kept-delete hide recorded in `data` left it: no write
+ * since the hide (its marker and "updatedAt" are the hide's own), no CSAM block or review now or
+ * recorded, a readable record, no moderator activity on it or its owner and no scan since the hide, its
+ * case closed with nothing found, and its owner in good standing. Never NULL.
  */
 export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
   const col = (name: string) => sql.ref(`${image}.${name}`);
   const prior = (key: keyof KeptHidePrior) => keptHidePrior(data, key);
-  return sql<boolean>`(
-    ${col('ingestion')} = 'Blocked' AND ${col('blockedFor')} = 'moderated'
+  return sql<boolean>`COALESCE((
+    ${col('metadata')}->>${KEPT_HIDE_MARKER}::text = ${prior('hide')}
+    AND ${col('updatedAt')} = ${stampOr(prior('stamp'))}
+    AND ${col('ingestion')} = 'Blocked' AND ${col('blockedFor')} = 'moderated'
     AND ${col('nsfwLevel')} = ${NSFW_LEVEL_BLOCKED}
     AND (${col('needsReview')} IS NULL OR ${col('needsReview')} = 'appeal')
     AND ${prior('ingestion')} = ANY(${Object.values(ImageIngestionStatus)}::text[])
@@ -148,7 +166,7 @@ export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
     AND NOT ${childSafetyImageCase(image)}
     AND (${childSafetyImageFinding(image)}) IS FALSE
     AND ${ownerInGoodStanding(col('userId'))}
-  )`;
+  ), false)`;
 };
 
 /**

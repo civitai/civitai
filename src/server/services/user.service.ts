@@ -159,6 +159,7 @@ import { bustModelSaleCacheForModels } from '~/server/services/paid-access.servi
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  lockAccountDeletionPendingDeletes,
   releaseAccountDeletionPendingDeletes,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
@@ -1823,13 +1824,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         ),
       ]
     : [];
-  const [, , lifted, reclaimed] = await dbWrite
+  const [, , , lifted, reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      lockAccountDeletionPendingDeletes(id),
       releaseAccountDeletionPendingDeletes(id),
       ...reclaim,
     ])

@@ -38,11 +38,16 @@ vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-import { deleteImages, imagesPendingDeletion } from '~/server/services/image.service';
+import {
+  deleteImages,
+  imagesPendingDeletion,
+  writeModeratorBlock,
+} from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { pendingDeletes } from '~/server/jobs/pending-deletes';
 import {
   ACCOUNT_DELETION_DRAIN,
+  lockAccountDeletionPendingDeletes,
   releaseAccountDeletionPendingDeletes,
 } from '~/server/services/account-deletion-images';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
@@ -147,12 +152,15 @@ const failingDeletes = new Set<number>();
 const heldTextPosts = new Set<number>();
 // Runs once, before the next image DELETE: what changes while a job run is under way.
 let beforeNextImageDelete: (() => Promise<unknown>) | undefined;
+/** Runs every statement on the database, for a caller whose writes the filter above would drop. */
+let passAllSql = false;
 
 beforeEach(async () => {
   vi.clearAllMocks();
   failingDeletes.clear();
   heldTextPosts.clear();
   beforeNextImageDelete = undefined;
+  passAllSql = false;
   vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
   // Only the statements that read or write the rows under test reach Postgres; the rest
@@ -164,6 +172,7 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
+      !passAllSql &&
       !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"|FROM "ServiceDealFileEntry"/.test(
         sql.text
       )
@@ -816,6 +825,46 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await rows()).toEqual(before);
     expect(await pending()).toEqual([]);
   });
+
+  // The remove-images webhook without a moderator id, and the account-wide block, write no
+  // ModActivity: only the block's own write can tell the lift it is not the hide's.
+  it.each([
+    ['the remove-images webhook', { violationType: 'tos' }],
+    ['the account-wide block', undefined],
+  ])(
+    'keeps the takedown %s writes, with no moderator id, on a kept image once its case closes',
+    async (_, deferFor) => {
+      await holder.db.exec(`
+        ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "pHash" bigint;
+        CREATE TABLE IF NOT EXISTS "ImageDeferredBlockEffect" (
+          "imageId" int PRIMARY KEY, "violationType" text, "notifyOwner" boolean,
+          "reportReason" text, "blockedBy" int);
+        INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+        INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+      `);
+      const before = await imageRow(imageOf(PLAIN));
+      await deleteImages([imageOf(PLAIN)], {
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        onlyWhere: Prisma.sql`true`,
+      });
+      const hidden = await imageRow(imageOf(PLAIN));
+      // Reads as removed already (image-removal-confirmation), so the takedown goes through.
+      expect(hidden).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+      passAllSql = true;
+      await writeModeratorBlock([imageOf(PLAIN)], deferFor);
+      passAllSql = false;
+      // The account is restored, so a no-finding close lets the drain's delete go.
+      expect(await lockAccountDeletionPendingDeletes(PLAIN)).toEqual([{ locked: 1 }]);
+      await releaseAccountDeletionPendingDeletes(PLAIN);
+      await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+      await runJob();
+
+      // The takedown stands, and the restored account's delete is let go.
+      expect(await imageRow(imageOf(PLAIN))).toEqual(hidden);
+      expect(hidden).not.toEqual(before);
+      expect(await pending()).toEqual([]);
+    }
+  );
 
   it('takes the stamp off a drained post a restore releases, which stays unpublished', async () => {
     await holder.db.exec(`

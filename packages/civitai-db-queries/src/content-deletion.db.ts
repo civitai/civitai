@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { GRACE_PRIOR_KEYS } from '@civitai/shared/account-deletion-grace';
@@ -11,6 +12,7 @@ import {
   childSafetyPostFinding,
 } from './child-safety-case.db';
 import {
+  KEPT_HIDE_MARKER,
   KEPT_HIDE_PRIOR,
   keptHidePrior,
   keptHideStands,
@@ -129,12 +131,15 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   ];
   // What the hide below is about to overwrite, recorded on the queued row so a release can put it
   // back (`liftKeptHides`). Read from the locked row, before the hide in the same statement.
+  // The id this hide marks its images with, so a lift can tell its block from a later one.
+  const hideId = randomUUID();
   const queued = hides
     ? sql`pending || CASE WHEN ${
         skipBlocked ? sql`ingestion IS DISTINCT FROM 'Blocked'` : sql`true`
       } THEN jsonb_build_object(${KEPT_HIDE_PRIOR}::text, jsonb_build_object(
           'ingestion', ingestion, 'nsfwLevel', "nsfwLevel", 'blockedFor', "blockedFor",
-          'needsReview', "needsReview", 'at', now()))
+          'needsReview', "needsReview", 'at', now(), 'hide', ${hideId}::text,
+          'stamp', (now()::timestamp(3))::text))
         ELSE '{}'::jsonb END`
     : sql`pending`;
   // The job's own delete leaves a row already in the queue as it is (the upsert would add a system ask
@@ -166,6 +171,8 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
             GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
             sql` - `
           )} - 'ruleId' - 'ruleReason'
+            || jsonb_build_object(${KEPT_HIDE_MARKER}::text, ${hideId}::text)
+          WHEN metadata IS NULL THEN jsonb_build_object(${KEPT_HIDE_MARKER}::text, ${hideId}::text)
           ELSE metadata END,
         "updatedAt" = now()
       WHERE id IN (SELECT id FROM doomed WHERE blocked)
@@ -233,6 +240,7 @@ export function liftKeptHides(released: string) {
         -- The hide's kept appeal flag, or the recorded review, whichever ranks higher.
         "needsReview" = CASE WHEN i."needsReview" = 'appeal'
             AND ${rank(sql`'appeal'`)} < ${rank(keptReview)} THEN 'appeal' ELSE ${keptReview} END,
+        metadata = i.metadata - ${KEPT_HIDE_MARKER}::text,
         "updatedAt" = now()
       FROM ${r} r
       WHERE r."entityType" = 'Image' AND i.id = r."entityId" AND ${notModeratorAsk(
@@ -284,16 +292,31 @@ export function splitLifted(rows: LiftedRow[]): LiftedKeptHides {
 }
 
 /**
+ * Locks the `entityType` rows (`ids`) a lift may write. `liftKeptHides` runs in a later statement of
+ * the same transaction: its snapshot is taken after the lock, so it reads every moderator action and
+ * case committed before it, where a lock inside its own statement would re-check only the locked row.
+ */
+export const lockForLift = (entityType: 'Image' | 'Post', ids: RawBuilder<unknown>) =>
+  sql`SELECT id FROM ${sql.table(entityType)} WHERE id IN (${ids}) ORDER BY id FOR UPDATE`;
+
+/**
  * Drops these pending deletes of `entityType` without carrying them out, and undoes the kept-delete
  * hide of what they kept (`liftKeptHides`), in one statement so the record and the row go together.
+ * Run it on a read committed transaction, so the lock it takes first holds until the lift commits and
+ * the lift's statement reads past it.
  */
 export async function releasePendingDeletes(
-  db: Kysely<DB>,
+  tx: Kysely<DB>,
   entityType: 'Image' | 'Post',
   ids: number[]
 ): Promise<LiftedKeptHides> {
   if (!ids.length) return { images: [], postIds: [] };
-  const { rows } = await sql<LiftedRow>`
+  await lockForLift(entityType, sql`SELECT unnest(${ids}::int[])`).execute(tx);
+  const { rows } = await releaseStatement(entityType, ids).execute(tx);
+  return splitLifted(rows);
+}
+
+const releaseStatement = (entityType: 'Image' | 'Post', ids: number[]) => sql<LiftedRow>`
     WITH released AS (
       DELETE FROM "JobQueue" WHERE type = 'PendingDelete' AND "entityType" = ${entityType}::"EntityType"
         AND "entityId" = ANY(${ids}::int[])
@@ -301,9 +324,7 @@ export async function releasePendingDeletes(
     ),
     ${liftKeptHides('released')}
     ${selectLifted}
-  `.execute(db);
-  return splitLifted(rows);
-}
+  `;
 
 /** A kept image a moderator's delete blocked, and the post it is still in. */
 export type HiddenImage = { id: number; userId: number; postId: number | null };
@@ -374,6 +395,7 @@ export async function deleteImageRows(
     gone AS (
       ${remove}
       RETURNING id, url, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "blockedFor", "scannedAt",
+        metadata, "updatedAt",
         CASE WHEN metadata->>'parentId' ~ '^[0-9]{1,10}$' THEN
           CASE WHEN (metadata->>'parentId')::bigint <= 2147483647 THEN (metadata->>'parentId')::int END
         END AS "parentId"
