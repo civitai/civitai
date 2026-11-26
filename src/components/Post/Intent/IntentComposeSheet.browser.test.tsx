@@ -1,22 +1,14 @@
-import { describe, expect, test, vi } from 'vitest';
-import type * as AppProviderModule from '~/providers/AppProvider';
+import { afterEach, describe, expect, test } from 'vitest';
+import { IntentComposeSheet } from './IntentComposeSheet';
+import { installTrpcWire, renderWithTrpcWire } from '../../../../test/trpcWireHarness';
 
-vi.mock('~/providers/AppProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof AppProviderModule>()),
-  useMaybeAppContext: () => ({
-    host: 'civitai.red',
-    serverDomains: {
-      blue: { primary: 'civitai.com', aliases: [] },
-      red: { primary: 'civitai.red', aliases: [] },
-    },
-  }),
-}));
-
-const { IntentComposeSheet } = await import('./IntentComposeSheet');
-const { renderWithProviders } = await import('../../../../test/component-setup');
+// The harness mounts the real AppProvider on this page's host, with civitai.red as another of ours.
+let wire: ReturnType<typeof installTrpcWire> | undefined;
+afterEach(() => wire?.restore());
 
 async function sourceHref(sourceLink: string) {
-  const screen = await renderWithProviders(
+  wire = installTrpcWire({});
+  const screen = await renderWithTrpcWire(
     <IntentComposeSheet
       media={[]}
       values={{ title: '', description: '', tags: [] }}
@@ -24,14 +16,17 @@ async function sourceHref(sourceLink: string) {
       sourceLink={sourceLink}
       primaryLabel="Post"
       onPrimary={() => undefined}
-    />
+    />,
+    { viewer: { id: 1, username: 'ann' }, flags: {} }
   );
   return screen.container.querySelector(`a[target="_blank"]`)?.getAttribute('href');
 }
 
-describe('IntentComposeSheet source link on civitai.red', () => {
+describe('IntentComposeSheet source link', () => {
   test('opens a source on another of our sites on the site being read', async () => {
-    expect(await sourceHref('https://civitai.com/models/1')).toBe('https://civitai.red/models/1');
+    expect(await sourceHref('https://civitai.red/models/1')).toBe(
+      `https://${window.location.host}/models/1`
+    );
   });
 
   test('leaves a third-party source as written', async () => {
