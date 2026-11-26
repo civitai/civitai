@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MatureRepriceError } from '$lib/mature-charge';
+import { DatasetUnreadableError, MatureRepriceError } from '$lib/mature-charge';
 import { FilesProcessingError, FILES_PROCESSING_CODE } from '$lib/files-processing';
 import { TrainingBatchValidationError, TrainingSubmitError } from '$lib/train-core';
 
@@ -38,6 +38,23 @@ describe('POST /api/train', () => {
       status: 409,
       body: { message: refusal.message, matureCount: 3 },
     });
+  });
+
+  it('answers 503 with the retry message and logs the count when dataset images cannot be read', async () => {
+    logToAxiom.mockClear();
+    const refusal = new DatasetUnreadableError(2);
+    submitTrainingBatch.mockRejectedValueOnce(refusal);
+    await expect(post({ runs: [] })).rejects.toMatchObject({
+      status: 503,
+      body: { message: refusal.message },
+    });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'training-studio-dataset-unreadable',
+        userId: 1,
+        payload: { unreadable: 2 },
+      })
+    );
   });
 
   it("passes the user's Kohya gate to the submit", async () => {
