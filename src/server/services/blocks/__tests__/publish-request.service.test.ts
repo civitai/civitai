@@ -901,16 +901,31 @@ describe('submitVersion — draft links from the manifest', () => {
       expect(issueTrackerWrites()).toEqual([[BUGS, draft.id]]);
     });
 
-    it('a failed tracker WRITE does not fail the submit', async () => {
+    it('a failed tracker WRITE is absorbed by its own best-effort wrapper', async () => {
+      // The whole draft block is already log-and-continue, so "the submit still succeeds" cannot
+      // see the wrapper. What can: the failure is logged as the tracker write's own skip, and
+      // NOT as the draft block's catch-all "draft create failed".
       armColumns({ sourceRepo: 'present', issueTracker: 'present' });
       dbMocks.writeExecuteRaw.mockRejectedValue(new Error('db blip'));
-      const res = await submitVersion({
-        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
-        submittedByUserId: 1,
-        submitterIsModerator: false,
-      });
-      expect(res.slug).toBe('my-app');
-      expect(createdDraft().sourceRepoUrl).toBe(STORED_REPO);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const res = await submitVersion({
+          bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+          submittedByUserId: 1,
+          submitterIsModerator: false,
+        });
+        expect(res.slug).toBe('my-app');
+        expect(createdDraft().sourceRepoUrl).toBe(STORED_REPO);
+        const lines = warn.mock.calls.map((c) => String(c[0]));
+        expect(
+          lines.filter((l) => l.startsWith('[issue-tracker] submit draft my-app:'))
+        ).toHaveLength(1);
+        expect(
+          lines.filter((l) => l.includes('pre-approval draft AppListing create failed'))
+        ).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 });
