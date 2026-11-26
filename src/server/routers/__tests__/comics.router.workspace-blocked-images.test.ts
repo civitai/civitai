@@ -1,17 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
-import type * as ImageService from '~/server/services/image.service';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { signalClient } from '~/utils/signal-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { BlockedReason, NsfwLevel, OnboardingSteps } from '~/server/common/enums';
 import { comicsRouter } from '../comics.router';
 import { ownerMediaAllowedWhere } from '~/server/common/image-visibility';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageService>()),
-  createImage: vi.fn(async () => ({ id: 900 })),
-  createImageResources: vi.fn(async () => undefined),
-}));
-vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => undefined } }));
+// A panel signal would reach the signals service.
+beforeEach(() => {
+  vi.spyOn(signalClient, 'send').mockResolvedValue(undefined as never);
+  dbMock.dbWrite.image.create.mockResolvedValue({ id: 900 } as never);
+});
 
 // A Blocked rating stays with its uploader (civitai/civitai#9809); a block does not.
 const OWNER = 5;
@@ -700,38 +699,6 @@ describe('the rest of the panel and reference responses', () => {
   /** The Image rows behind the panel's keys: the second key's image is blocked, or it has none. */
   const keyRows = (blocked: boolean) => (blocked ? [blockedRow('blocked-key')] : []);
 
-  it('selecting an image returns no candidate key that backs a blocked image', async () => {
-    const select = async (blocked: boolean) => {
-      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({
-        id: 7,
-        projectId: 3,
-        workflowId: null,
-        prompt: 'p',
-        metadata: twoKeys(),
-        chapter: { project: { userId: OWNER } },
-      } as never);
-      dbMock.dbWrite.image.findMany
-        .mockResolvedValueOnce([] as never)
-        .mockResolvedValueOnce(keyRows(blocked) as never);
-      dbMock.dbWrite.comicPanel.update.mockResolvedValue({
-        id: 7,
-        status: 'Ready',
-        imageUrl: 'panel-key',
-        metadata: twoKeys(),
-      } as never);
-      const panel = await callerFor(UPLOADER).selectPanelImage({
-        panelId: 7,
-        selectedImageKey: 'panel-key',
-      });
-      return { imageUrl: panel.imageUrl, keys: keysOf(panel.metadata) };
-    };
-    expect(await select(true)).toEqual({ imageUrl: 'panel-key', keys: ['panel-key', null] });
-    expect(await select(false)).toEqual({
-      imageUrl: 'panel-key',
-      keys: ['panel-key', 'blocked-key'],
-    });
-  });
-
   it('a duplicate of a clean panel carries no candidate key that backs a blocked image', async () => {
     const duplicate = async (blocked: boolean) => {
       dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue({
@@ -819,17 +786,6 @@ describe('the rest of the panel and reference responses', () => {
     expect(shownImages(ref)).toEqual(cleanOnly);
   });
 
-  it('adding images to a reference returns none that is blocked', async () => {
-    dbMock.dbRead.comicReference.findUnique.mockResolvedValue({ id: 11, userId: OWNER } as never);
-    dbMock.dbWrite.comicReferenceImage.findFirst.mockResolvedValue(null as never);
-    dbMock.dbWrite.comicReference.update.mockResolvedValue(reference() as never);
-    const ref = await callerFor(UPLOADER).addReferenceImages({
-      referenceId: 11,
-      images: [{ url: '0a1b2c3d-1111-4222-8333-444455556666', width: 64, height: 64 }],
-    });
-    expect(shownImages(ref)).toEqual(cleanOnly);
-  });
-
   it("the project shell's references leave out a blocked image, without its block fields", async () => {
     dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
       id: 3,
@@ -914,19 +870,6 @@ describe('a stored context key never leaves a panel response', () => {
       [{ data: { metadata: unknown } }]
     ][];
     expect(contextFree(data.metadata)).toEqual(clean);
-  });
-
-  it('by selectPanelImage', async () => {
-    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(row({ imageUrl: null }) as never);
-    dbMock.dbWrite.image.findMany
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([blockedRow('ctx-blocked')] as never);
-    dbMock.dbWrite.comicPanel.update.mockResolvedValue(row({ imageUrl: 'clean-key' }) as never);
-    const panel = await callerFor(UPLOADER).selectPanelImage({
-      panelId: 7,
-      selectedImageKey: 'clean-key',
-    });
-    expect(contextFree(panel.metadata)).toEqual(clean);
   });
 
   it('by replacePanelImage', async () => {

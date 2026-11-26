@@ -1,10 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { viewerCanSeeSourceMedia } from '~/server/utils/image-media-visibility';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-
-vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: async () => false }));
 
 /** A blocked source never counts as seen by anyone but a moderator, its owner and the image's owner included. */
 
