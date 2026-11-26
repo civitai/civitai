@@ -395,6 +395,25 @@ describe('the rating block', () => {
     expect(outcome.blockedFor).toBe('CSAM');
   });
 
+  // Decision: the reason reported for a rating block comes from the row as stored when the scan
+  // finishes, never the loaded copy. A lift made while the scan ran must not report the old block.
+  it('🔴 reports the rating reason, not the loaded CSAM, when the block was lifted mid-scan', async () => {
+    await blockImageFromRating({ imageId: CSAM, blockedReason: 'tos' });
+    const image = await loaded(CSAM);
+    // A moderator lifts the CSAM block after the scan loaded the image.
+    await holder.db.query(
+      `UPDATE "Image" SET ingestion = 'Scanned', "blockedFor" = NULL, "nsfwLevel" = 1 WHERE id = $1`,
+      [CSAM]
+    );
+    const outcome = await resolveScanOutcome({
+      image,
+      blocked: { reason: 'tos' },
+      workflowId: 'wf',
+    });
+    expect(image.blockedFor).toBe('CSAM');
+    expect(outcome.blockedFor).toBe('tos');
+  });
+
   // The orchestrator's rating can carry no reason (`mediaRating.blockedReason` undefined).
   it('blocks but keeps the stored reason when the rating gives none', async () => {
     await unblockBoth();

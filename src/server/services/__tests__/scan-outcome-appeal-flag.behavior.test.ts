@@ -148,10 +148,11 @@ beforeEach(async () => {
     ...values: unknown[]
   ) => {
     const text = strings.join('');
-    // The grid's fresh read of the row and its ban/hold check run on the real row.
+    // The scan's fresh read of the row runs on the real row in every test; the grid's ban/hold
+    // check does too.
     if (
-      holder.verdict &&
-      (text.includes('FROM "Image" i WHERE i.id') || text.includes(' AS kept '))
+      text.includes('FROM "Image" i WHERE i.id') ||
+      (holder.verdict && text.includes(' AS kept '))
     ) {
       const flat = Prisma.sql(strings, ...(values as never[]));
       return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
@@ -691,21 +692,35 @@ describe('the review a scan verdict leaves', () => {
     }
   );
 
-  it('a CSAM block lifted while the scan ran is not written back with an appeal review', async () => {
+  // Decision: the appeal branch keeps the block the row holds NOW, never the loaded copy's. A
+  // moderator's lift while the scan ran must stand; the old code wrote the loaded CSAM block back.
+  it('🔴 a CSAM block lifted while the scan ran stays lifted under an appeal', async () => {
     const row = await rescan('clean', {
       needsReview: 'appeal',
       appeal: true,
       csamBlocked: 'liftedAfterLoad',
     });
-    const { blockedFor } = (
-      await holder.db.query<{ blockedFor: string | null }>(
-        `SELECT "blockedFor" FROM "Image" WHERE id = $1`,
+    const stored = (
+      await holder.db.query<{ blockedFor: string | null; ingestion: string; nsfwLevel: number }>(
+        `SELECT "blockedFor", ingestion, "nsfwLevel" FROM "Image" WHERE id = $1`,
         [GRID_ID]
       )
     ).rows[0];
-    // Control: the scan wrote the loaded block back.
-    expect(blockedFor).toBe('CSAM');
-    expect(row.needsReview).toBeNull();
+    expect(stored.blockedFor).toBeNull();
+    expect(stored.ingestion).not.toBe('Blocked');
+    expect(stored.nsfwLevel).not.toBe(32);
+    expect(row.needsReview).toBe('appeal');
+  });
+
+  it('CONTROL: a CSAM block still stored when the scan writes is kept under an appeal', async () => {
+    await rescan('clean', { needsReview: 'appeal', appeal: true, csamBlocked: 'loaded' });
+    const { blockedFor, ingestion } = (
+      await holder.db.query<{ blockedFor: string | null; ingestion: string }>(
+        `SELECT "blockedFor", ingestion FROM "Image" WHERE id = $1`,
+        [GRID_ID]
+      )
+    ).rows[0];
+    expect({ blockedFor, ingestion }).toEqual({ blockedFor: 'CSAM', ingestion: 'Blocked' });
   });
 
   it('a blocking verdict on a csam review under appeal keeps csam', async () => {
