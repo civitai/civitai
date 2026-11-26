@@ -111,9 +111,10 @@ describe('runnerMintReads over the migration', () => {
     expect(await reads.capUsed(OTHER_USER, CLIENT, SINCE)).toBe(0);
   });
 
-  it('runsSince counts distinct runs holding a live or settled attempt in the window', async () => {
-    // run_live_reserved, run_live_unknown, run_settled, run_live_submitted; not failed, refunded or old.
-    expect(await reads.runsSince('rra_a', SINCE)).toBe(4);
+  it('runsSince counts distinct runs holding a live, settled or charged-failed attempt in the window', async () => {
+    // run_live_reserved, run_live_unknown, run_settled, run_live_submitted, run_failed_charged;
+    // not a free failure, refunded or old.
+    expect(await reads.runsSince('rra_a', SINCE)).toBe(5);
     expect(await reads.runsSince('rra_b', SINCE)).toBe(1);
   });
 
@@ -123,6 +124,13 @@ describe('runnerMintReads over the migration', () => {
     expect(await reads.hasLiveAttempt('run_failed_charged')).toBe(false);
     expect(await reads.hasLiveAttempt('run_refunded')).toBe(false);
     expect(await reads.hasLiveAttempt('run_never')).toBe(false);
+  });
+
+  it('hasSpentAttempt is true only for a run with a failed attempt that was charged', async () => {
+    expect(await reads.hasSpentAttempt('run_failed_charged')).toBe(true);
+    expect(await reads.hasSpentAttempt('run_failed_free')).toBe(false);
+    expect(await reads.hasSpentAttempt('run_refunded')).toBe(false);
+    expect(await reads.hasSpentAttempt('run_settled')).toBe(false);
   });
 
   // The `AT TIME ZONE 'UTC'` in this read is not observable here: PGlite returns a zoneless

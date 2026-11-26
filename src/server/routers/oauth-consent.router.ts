@@ -4,6 +4,7 @@ import { protectedProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
+import { markRunnerClientRevoked } from '~/server/services/blocks/runner-submit.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { buzzLimitSchema, type BuzzLimit } from '~/server/schema/api-key.schema';
@@ -117,6 +118,11 @@ export const oauthConsentRouter = router({
         clientId: input.clientId,
         reason: 'disconnected',
       });
+      // Refuses runner submits with a token minted before now. Best-effort: the consent row deleted
+      // below is what a submit reads first.
+      await markRunnerClientRevoked(ctx.user.id, input.clientId).catch((error) =>
+        logToAxiom({ name: 'runner-revoke-marker', type: 'error', error: safeError(error) })
+      );
 
       // Delete all tokens for this client+user
       await dbWrite.apiKey.deleteMany({

@@ -6634,6 +6634,8 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     const RUN = 'run_t1';
     const LEDGER_MIGRATION =
       'packages/civitai-db-schema/prisma/migrations/20271204120000_recipe_runner_ledger/migration.sql';
+    const RESERVATION_MIGRATION =
+      'packages/civitai-db-schema/prisma/migrations/20271205120000_recipe_runner_reservation/migration.sql';
 
     function runnerClaims(over: Record<string, unknown> = {}) {
       return ccPageClaims({
@@ -6692,6 +6694,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         INSERT INTO app_blocks VALUES ('apb_test', 'app_test', 'blk_test', 'approved');
       `);
       await runnerPg.current.exec(readFileSync(LEDGER_MIGRATION, 'utf8'));
+      await runnerPg.current.exec(readFileSync(RESERVATION_MIGRATION, 'utf8'));
       const h = await authorizedHashes();
       await runnerPg.current.query(
         `INSERT INTO runner_client_bindings (runner_client_id, app_block_id, created_by_user_id)
@@ -6788,6 +6791,107 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
       expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('records the reserved legs on the attempt and writes no settle record', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      await submit();
+      const { rows } = await runnerPg.current!.query<{ reservation: Record<string, unknown> }>(
+        `SELECT reservation FROM runner_run_attempts`
+      );
+      expect(rows).toEqual([
+        {
+          reservation: {
+            buzzCapKey: expect.stringContaining('42'),
+            consentBudgetKey: null,
+            appSpendKey: expect.any(String),
+            amount: 90,
+          },
+        },
+      ]);
+      // A poll or cancel by another of the user's tokens must find nothing to settle.
+      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+
+    it('reserves no dev-session leg for a runner, even with an active dev tunnel', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      happyCcResources();
+      happySubmit();
+      expect(await submit()).toMatchObject({ runner: { state: 'submitted' } });
+      expect(mockReserveDevSessionBuzz).not.toHaveBeenCalled();
+    });
+
+    it('refuses a token minted before the user disconnected the runner client', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      mockRedis.get.mockImplementation((async (key: string) =>
+        key === `blocks:runner-revoked:42:${RUNNER_CLIENT}` ? '1' : null) as never);
+      try {
+        await expect(submit()).rejects.toMatchObject({
+          code: 'FORBIDDEN',
+          message: 'runner submit refused: revoked',
+        });
+      } finally {
+        mockRedis.get.mockImplementation((async () => null) as never);
+      }
+      expect(await attemptRows()).toEqual([]);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a new run submits under its own externalId, never the previous run’s', async () => {
+      await runnerPg.current!.exec(`
+        INSERT INTO runner_run_authorizations (id, user_id, runner_client_id, kind, run_id,
+            recipe_version_hash, params_hash, max_amount_per_run, created_at, expires_at)
+          SELECT 'rra_t2', user_id, runner_client_id, kind, 'run_t2', recipe_version_hash,
+            params_hash, max_amount_per_run, created_at, expires_at
+          FROM runner_run_authorizations WHERE id = 'rra_t'`);
+      happyCcResources();
+      happySubmit();
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      await submit();
+      mockVerifyBlockToken.mockResolvedValue(
+        runnerClaims({ runId: 'run_t2', runKey: 'run_t2', authorizationId: 'rra_t2', jti: 'jti_2' })
+      );
+      await submit({ idempotencyKey: 'run_t2' });
+      const [first, second] = mockSubmitWorkflow.mock.calls.map((c) => c[0].body.externalId);
+      expect(first).toContain(RUN);
+      expect(second).toContain('run_t2');
+      expect(second).not.toBe(first);
+    });
+
+    it('fails closed when the revocation marker cannot be read', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      mockRedis.get.mockImplementation((async (key: string) => {
+        if (key.startsWith('blocks:runner-revoked:')) throw new Error('redis down');
+        return null;
+      }) as never);
+      try {
+        await expect(submit()).rejects.toThrow('redis down');
+      } finally {
+        mockRedis.get.mockImplementation((async () => null) as never);
+      }
+      expect(await attemptRows()).toEqual([]);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('adopts an attempt the sweeper moved to unknown while its submit was in flight', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      mockSubmitWorkflow.mockImplementation((async () => {
+        await runnerPg.current!.exec(`UPDATE runner_run_attempts SET state = 'unknown'`);
+        return {
+          id: 'wf_cc_1',
+          status: 'processing',
+          steps: [{ $type: 'customComfy', output: { blobs: [] } }],
+          cost: { total: 0 },
+        };
+      }) as never);
+      expect(await submit()).toMatchObject({ runner: { state: 'submitted' } });
+      expect(await attemptRows()).toEqual([
+        { state: 'submitted', workflow_id: 'wf_cc_1', reserved_amount: 90 },
+      ]);
     });
 
     it('a lost response to the submitting move sends nothing and refunds no leg', async () => {

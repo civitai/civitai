@@ -506,6 +506,7 @@ import {
   reserveRunnerAttempt,
   transitionRunnerAttempt,
   type RunnerAttemptState,
+  type RunnerReservation,
 } from '~/server/services/blocks/runner-ledger.service';
 import {
   claimRunnerSubmitJti,
@@ -12038,7 +12039,8 @@ async function submitCustomComfyWorkflow(opts: {
   // persisted in the settle record below. This is what makes adding the third
   // reservation safe (it can't over-count the session for the 25h TTL).
   let devSessionReserve: { sessionId: string; cost: number } | null = null;
-  {
+  // Not for a runner: a runner run is no dev session, and its attempt row names no such leg.
+  if (!runner) {
     const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
       '~/server/services/blocks/dev-tunnel.service'
     );
@@ -12098,8 +12100,17 @@ async function submitCustomComfyWorkflow(opts: {
   // writer moved it, or the ledger failed): never sent.
   if (reservation.runner) {
     const { attemptId } = reservation.runner;
+    // The move records the legs just reserved, so the sweeper and reconciler settle from the row.
+    const legs: RunnerReservation = {
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      amount: Math.ceil(ceiling),
+    };
     const moved = await ledgerDb()
-      .then((db) => transitionRunnerAttempt(db, attemptId, 'reserved', 'submitting'))
+      .then((db) =>
+        transitionRunnerAttempt(db, attemptId, 'reserved', 'submitting', { reservation: legs })
+      )
       .catch((error: unknown) => {
         logRunnerLedgerError('submitting', attemptId, error);
         return false;
@@ -12203,9 +12214,22 @@ async function submitCustomComfyWorkflow(opts: {
         return false;
       });
     // Not recorded: the attempt stays `submitting` and keeps counting.
+    // Lost to the sweeper, which moved it to `unknown` while the submit was in flight: adopt it.
+    const adopted =
+      !moved &&
+      (await ledgerDb()
+        .then((db) =>
+          transitionRunnerAttempt(db, attemptId, 'unknown', 'submitted', {
+            workflowId: snapshot.workflowId,
+          })
+        )
+        .catch((error: unknown) => {
+          logRunnerLedgerError('adopt', attemptId, error);
+          return false;
+        }));
     if (!moved) {
       logToAxiom({
-        name: 'runner-attempt-unrecorded',
+        name: adopted ? 'runner-attempt-adopted' : 'runner-attempt-unrecorded',
         type: 'error',
         payload: { attemptId, workflowId: snapshot.workflowId },
       });
@@ -12225,20 +12249,24 @@ async function submitCustomComfyWorkflow(opts: {
   // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
   // submit persists the SAME record shape it did before (settle no-ops that leg).
   if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
-    await persistCustomComfySettle({
-      workflowId: snapshot.workflowId,
-      buzzCapKey,
-      // The consent-budget leg, when the viewer set a per-app budget. Absent
-      // otherwise, so the record shape is unchanged for everyone else.
-      consentBudgetKey: reservation.consent?.key ?? null,
-      appSpendKey: appSpendReserve?.key ?? null,
-      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
-      ceiling,
-      // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
-      engine,
-      recipe: recipeId,
-      submittedAt,
-    });
+    // No settle record for a runner: the reconciler settles it from the attempt row, so a poll or
+    // cancel of the same workflow (by another of the user's tokens) has nothing to settle.
+    if (!runner) {
+      await persistCustomComfySettle({
+        workflowId: snapshot.workflowId,
+        buzzCapKey,
+        // The consent-budget leg, when the viewer set a per-app budget. Absent
+        // otherwise, so the record shape is unchanged for everyone else.
+        consentBudgetKey: reservation.consent?.key ?? null,
+        appSpendKey: appSpendReserve?.key ?? null,
+        ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+        ceiling,
+        // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
+        engine,
+        recipe: recipeId,
+        submittedAt,
+      });
+    }
     // G6 — persistent output queue (best-effort, non-dev). Same posture as
     // txt2img so a customComfy gen rebuilds in listMyWorkflows on reload.
     if (claims.dev !== true) {

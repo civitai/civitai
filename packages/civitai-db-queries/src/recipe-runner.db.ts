@@ -86,9 +86,11 @@ export interface RunnerMintReads {
   consent(userId: number, clientId: string): Promise<RunnerConsentRow | null>;
   authorization(id: string): Promise<RunnerAuthorizationRow | null>;
   hasLiveAttempt(runId: string): Promise<boolean>;
+  /** Whether an attempt of the run failed after being charged: the run is over. */
+  hasSpentAttempt(runId: string): Promise<boolean>;
   /** Spend counted against the offline cap since `since`, for (user, client). */
   capUsed(userId: number, clientId: string, since: Date): Promise<number>;
-  /** Runs of `authorizationId` that hold or held a live attempt since `since`. */
+  /** Runs of `authorizationId` that hold or held a live attempt, or spent one, since `since`. */
   runsSince(authorizationId: string, since: Date): Promise<number>;
 }
 
@@ -135,6 +137,14 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
           WHERE run_id = ${runId} AND state = ANY(${RUNNER_CAP_STATES})
         ) AS live`)
       )?.live !== false,
+    hasSpentAttempt: async (runId) =>
+      (
+        await one<{ spent: boolean }>(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM runner_run_attempts
+          WHERE run_id = ${runId} AND state = 'failed' AND charged_amount > 0
+        ) AS spent`)
+      )?.spent !== false,
     capUsed: async (userId, clientId, since) => {
       const row = await one<{ used: string | number | null }>(sql`
         SELECT COALESCE(SUM(
@@ -153,7 +163,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
         SELECT COUNT(DISTINCT run_id) AS runs
         FROM runner_run_attempts
         WHERE authorization_id = ${authorizationId} AND created_at > ${since}
-          AND state = ANY(${RUNNER_CAP_STATES})`);
+          AND (state = ANY(${RUNNER_CAP_STATES}) OR (state = 'failed' AND charged_amount > 0))`);
       return row ? Number(row.runs) : Number.POSITIVE_INFINITY;
     },
   };

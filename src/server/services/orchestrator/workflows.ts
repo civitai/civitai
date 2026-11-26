@@ -804,10 +804,21 @@ function timeoutSignal(ms: number) {
 export async function cancelWorkflow({
   workflowId,
   token,
-}: z.infer<typeof workflowIdSchema> & { token: string }) {
+  throwOnError,
+}: z.infer<typeof workflowIdSchema> & {
+  token: string;
+  /** Surface a non-2xx cancel as a throw, as `deleteWorkflow`; OFF keeps every existing caller. */
+  throwOnError?: boolean;
+}) {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body: { status: 'canceled' } });
+  const result = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body: { status: 'canceled' },
+  });
+  if (throwOnError && result?.error)
+    throw new Error(`cancelWorkflow failed for ${workflowId}: ${JSON.stringify(result.error)}`);
 }
 
 export async function deleteWorkflow({
