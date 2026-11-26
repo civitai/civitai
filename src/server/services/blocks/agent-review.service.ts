@@ -27,6 +27,7 @@ import {
   type AgentReviewModelOption,
 } from '~/shared/constants/agent-review-model.constants';
 import type { AgentReviewModelRefusal } from '~/server/services/blocks/agent-review-models.service';
+import { AGENT_REVIEW_CHAT_ASSISTANT_MAX_CHARS } from '~/server/schema/blocks/publish-request.schema';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
@@ -1010,9 +1011,11 @@ export async function deleteAgentReviewResources(args: {
  *  under this; 120s covers the slow tail without hanging the request. */
 export const AGENT_REVIEW_CHAT_TIMEOUT_MS = 120_000;
 
-/** Upper bound on the reply length (tokens). A single follow-up answer citing
- *  file:line is short; this keeps a runaway generation bounded. */
-export const AGENT_REVIEW_CHAT_MAX_TOKENS = 1024;
+/** Upper bound on the reply length (tokens). Room for a detailed answer (a walk
+ *  through several findings, a quoted call site) while keeping a runaway
+ *  generation bounded and well inside AGENT_REVIEW_CHAT_TIMEOUT_MS. A reply that
+ *  reaches it comes back with `truncated: true` so the UI can say so. */
+export const AGENT_REVIEW_CHAT_MAX_TOKENS = 4096;
 
 /** Model civitai calls DIRECTLY (via OpenRouter) to answer mod follow-ups,
  *  grounded on the persisted report. A reliable, cheap instruction-follower for
@@ -1046,7 +1049,12 @@ export type AgentReviewChatArgs = {
   reportId?: string;
 };
 
-export type AgentReviewChatResult = { reply: string };
+export type AgentReviewChatResult = {
+  reply: string;
+  /** The reply stopped before the model finished: it hit AGENT_REVIEW_CHAT_MAX_TOKENS,
+   *  or was clipped to the length the next turn may re-send. */
+  truncated: boolean;
+};
 
 /**
  * Build the grounding SYSTEM message: the report summary + structured verdicts,
@@ -1161,8 +1169,9 @@ export async function agentReviewChat(args: AgentReviewChatArgs): Promise<AgentR
   });
 
   let reply: string;
+  let truncated: boolean;
   try {
-    const { content } = await Promise.race([
+    const { content, finishReason } = await Promise.race([
       openrouter.getTextCompletion({
         model: AGENT_REVIEW_CHAT_MODEL,
         messages: chatMessages,
@@ -1173,6 +1182,7 @@ export async function agentReviewChat(args: AgentReviewChatArgs): Promise<AgentR
       timeout,
     ]);
     reply = content;
+    truncated = finishReason === 'length';
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -1183,5 +1193,13 @@ export async function agentReviewChat(args: AgentReviewChatArgs): Promise<AgentR
     throw new TRPCError({ code: 'BAD_GATEWAY', message: 'the review agent did not respond' });
   }
 
-  return { reply };
+  // The client re-sends this reply as history on the next turn, where the schema
+  // caps an assistant message at AGENT_REVIEW_CHAT_ASSISTANT_MAX_CHARS. Never hand
+  // back a reply the next turn would be rejected for.
+  if (reply.length > AGENT_REVIEW_CHAT_ASSISTANT_MAX_CHARS) {
+    reply = reply.slice(0, AGENT_REVIEW_CHAT_ASSISTANT_MAX_CHARS);
+    truncated = true;
+  }
+
+  return { reply, truncated };
 }
