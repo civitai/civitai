@@ -3,11 +3,6 @@ title: DMCA Takedown Notice
 description: "File a DMCA Takedown Request for content visible on Civitai.com"
 ---
 
-<iframe
-  class="clickup-embed clickup-dynamic-height"
-  src="https://forms.clickup.com/8459928/f/825mr-5904/HX69YZMDH2N3JJA1R4"
-  style="width: 100%; min-height: 1200px; border: none; background: transparent;"
-  frameborder="0"
-  allowfullscreen>
-</iframe>
-<script async src="https://app-cdn.clickup.com/assets/js/forms-embed/v1.js"></script>
+To report content on Civitai that you believe infringes your copyright, fill in our [DMCA takedown notice form](/requests/dmca-notice).
+
+If the form doesn't load, email your notice to [dmca@civitai.com](mailto:dmca@civitai.com). See our [DMCA Policy](/content/dmca) for what a notice must include.

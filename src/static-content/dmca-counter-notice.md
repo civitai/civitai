@@ -3,11 +3,6 @@ title: DMCA Counter Notice
 description: "The owner of allegedly infringing content may submit a DMCA Counter-Notice via this form."
 ---
 
-<iframe
-  class="clickup-embed clickup-dynamic-height"
-  src="https://forms.clickup.com/8459928/f/825mr-5924/JAD56X4R6XQ61Y8MP0"
-  style="width: 100%; min-height: 1200px; border: none; background: transparent;"
-  frameborder="0"
-  allowfullscreen>
-</iframe>
-<script async src="https://app-cdn.clickup.com/assets/js/forms-embed/v1.js"></script>
+If your content was removed in response to a DMCA notice and you believe that was a mistake or misidentification, fill in our [DMCA counter-notice form](/requests/dmca-counter-notice).
+
+If the form doesn't load, email your counter-notice to [dmca@civitai.com](mailto:dmca@civitai.com). See our [DMCA Policy](/content/dmca) for what a counter-notice must include.
