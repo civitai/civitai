@@ -14,6 +14,8 @@ import type {
   ListAppAccessRequestsInput,
   SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
+import { intervalDays } from '~/server/utils/sql-interval';
+import { APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS } from '~/shared/constants/app-access-request.constants';
 import type {
   AppAccessRequestStatus,
   AppAccessReviewSource,
@@ -101,16 +103,10 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
 }
 
 /**
- * The basic account checks an instant approval needs: the account exists and is not deleted, is
- * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
- * of the site applies, {@link requiresEmailVerification}: only an account stamped at onboarding as
- * having to prove its email fails it until it does; an older account with no verified email
- * passes; the person has no declined request, so a moderator's decline or revoke is never undone by
- * the next submit; and the account is in good standing by its active strikes, the same {@link
- * accountStandingFromPoints} rule the profile and the moderator tools show. Every field is read
- * from the PRIMARY at submit time rather than from the session, which can be hours old: a ban, a
- * mute or a verification since must count. A person who fails any check still gets a request,
- * pending, for a moderator to decide.
+ * The account checks an instant approval needs (the conditions below, in the order applied). Every
+ * field is read from the PRIMARY, not the session (which can be hours old), so a ban, mute or
+ * verification since then counts. A failing check yields a pending request for a moderator, never a
+ * decline.
  */
 async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
   const [row] = await dbWrite.$queryRaw<
@@ -120,6 +116,9 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
       "deletedAt" IS NULL
       AND "bannedAt" IS NULL
       AND "muted" = FALSE
+      AND "createdAt" <= CURRENT_TIMESTAMP - ${intervalDays(
+        APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS
+      )}
       AND NOT EXISTS (
         SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'declined'
       )

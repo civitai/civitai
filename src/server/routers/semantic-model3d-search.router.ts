@@ -3,6 +3,7 @@ import { rateLimit } from '~/server/middleware.trpc';
 import { semanticModel3DSearchSchema } from '~/server/schema/semantic-model3d-search.schema';
 import { searchSemanticModels3D } from '~/server/services/semantic-model3d-search.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 
 export const semanticModel3DSearchRouter = router({
   search: publicProcedure
@@ -16,6 +17,7 @@ export const semanticModel3DSearchRouter = router({
       ])
     )
     .input(semanticModel3DSearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticModels3D({ input, user: ctx.user, track: ctx.track });

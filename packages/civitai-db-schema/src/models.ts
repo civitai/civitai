@@ -3210,6 +3210,14 @@ export interface FeaturePageCommentMirror {
   contentAt: Date;
   removeWantedAt: Date | null;
   restrictedAt: Date | null;
+  scanHiddenAt: Date | null;
+  scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
+  modHideSentAt: Date | null;
+  modHideOrigin: string | null;
+  liftGrantedAt: Date | null;
+  liftGrantedBy: number | null;
+  liftGrantedVersion: number | null;
   nextPushAt: Date | null;
   leaseUntil: Date | null;
   createdAt: Date;

@@ -1,32 +1,24 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { AdminTokenEndpoint } from '~/server/utils/endpoint-helpers';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
 // Refresh sessions for a targeted list of users — re-derives each user's session
 // payload from the DB on their next request and signals active clients to
 // refresh. Use when invalidateAllSessions (site-wide) is overkill.
 //
-// GET /api/admin/refresh-user-sessions?token=$WEBHOOK_TOKEN&userIds=1,2,3
-// (also accepts a JSON body { "userIds": [1, 2, 3] } via POST)
+// POST /api/admin/refresh-user-sessions with header `x-admin-token: $SESSION_RESET_TOKEN` and a
+// JSON body { "userIds": [1, 2, 3] }. No query string is accepted.
 const schema = z.object({
-  userIds: z.preprocess(
-    (v) =>
-      typeof v === 'string'
-        ? v
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : v,
-    z.array(z.coerce.number().int().positive()).min(1)
-  ),
+  userIds: z.array(z.coerce.number().int().positive()).min(1),
 });
 
-export default WebhookEndpoint(
+export default AdminTokenEndpoint(
+  'SESSION_RESET_TOKEN',
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
-    const source = req.method === 'POST' ? req.body : req.query;
-    const result = schema.safeParse(source);
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    const result = schema.safeParse(req.body);
     if (!result.success) {
       return res.status(400).json({ ok: false, error: result.error.flatten() });
     }
