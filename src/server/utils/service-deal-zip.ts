@@ -203,16 +203,16 @@ function isMpegTs(head: Buffer, anywhere: boolean) {
 /** Leading ID3v2 tags read past; a file with more is refused, since what follows is unread. */
 export const MAX_ID3_TAGS = 8;
 
-/**
- * The length of the ID3v2 tag `head` opens with (header, body and footer), or 0 if it opens with
- * none. A player skips the tag and plays whatever follows it, whatever that is.
- */
 const PDF_HEADER = Buffer.from('%PDF-');
 /** How far into a file a PDF reader looks for its header. */
 export const PDF_HEADER_WINDOW = 1024;
 export const holdsPdfHeader = (bytes: Buffer) =>
   bytes.subarray(0, PDF_HEADER_WINDOW).includes(PDF_HEADER);
 
+/**
+ * The length of the ID3v2 tag `head` opens with (header, body and footer), or 0 if it opens with
+ * none. A player skips the tag and plays whatever follows it, whatever that is.
+ */
 export function id3TagLength(head: Buffer) {
   if (head.length < 10 || head.subarray(0, 3).toString('latin1') !== 'ID3') return 0;
   if (head[3] === 0xff || head[4] === 0xff) return 0;
@@ -309,10 +309,10 @@ function isOggAudio(head: Buffer) {
   return streams > 0;
 }
 
-/** What the first bytes of an entry are, whatever its name says. */
 /**
- * `tsAnywhere: false` looks for a transport stream only where a file of one starts (byte 0, or 4
- * with a timecode), for bytes that are not a file of their own, such as a checkpoint's tensors.
+ * What the first bytes of an entry are, whatever its name says. `tsAnywhere: false` looks for a
+ * transport stream only where a file of one starts (byte 0, or 4 with a timecode), for bytes that
+ * are not a file of their own, such as a checkpoint's tensors.
  */
 export function sniffEntry(
   head: Buffer,
