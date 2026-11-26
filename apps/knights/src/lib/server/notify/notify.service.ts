@@ -242,24 +242,27 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
   for (const { rank, stages } of worked) {
     const items = waiting.filter((w) => (stages as string[]).includes(w.minRank));
     if (items.length === 0) continue;
-    const rows = await recipients(db, 'new-images', day)
-      .select('pl.userId')
-      .where('pl.rankType', '=', rank)
-      // Daily for players who voted recently; others at most once per window, to bring them back.
-      .where(
-        sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
+    // Without JIT or parallel workers: the plan is priced as a walk of the whole list per player, but stops at the first hit.
+    const rows = await readWithoutJit(db, (trx) =>
+      recipients(trx, 'new-images', day)
+        .select('pl.userId')
+        .where('pl.rankType', '=', rank)
+        // Daily for players who voted recently; others at most once per window, to bring them back.
+        .where(
+          sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
           or not exists (select 1 from "KnightsNotificationSend" s where s."playerId" = pl."userId" and s."kind" = 'new-images' and s."day" > ${lastNudgeAfter}))`
-      )
-      .where(
-        // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
-        sql<boolean>`exists (
+        )
+        .where(
+          // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
+          sql<boolean>`exists (
           select 1 from unnest(${items.map((w) => w.imageId)}::int[], ${items.map(
-          (w) => w.questionKey
-        )}::text[], ${items.map((w) => w.userId)}::int[]) as w("imageId", "questionKey", "userId")
+            (w) => w.questionKey
+          )}::text[], ${items.map((w) => w.userId)}::int[]) as w("imageId", "questionKey", "userId")
           where w."userId" is distinct from pl."userId"
             and not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = w."imageId" and j."questionKey" = w."questionKey"))`
-      )
-      .execute();
+        )
+        .execute()
+    );
     found.push(...rows.map((r) => r.userId));
   }
   return found;
