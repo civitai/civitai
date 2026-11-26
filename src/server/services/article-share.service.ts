@@ -24,11 +24,11 @@ import {
   revokeAccessToken,
 } from '~/server/services/access-token.service';
 import {
-  articleContentImageSelect,
   articleHasText,
   submitSharedArticleText,
   updateArticleImageScanStatus,
 } from '~/server/services/article.service';
+import { articleContentImageSelect } from '~/server/selectors/article.selector';
 import { sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { shareTokenSchema } from '~/server/schema/article.schema';
 import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';

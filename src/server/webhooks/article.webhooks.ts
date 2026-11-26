@@ -5,7 +5,10 @@ import {
   withoutMinorFlag,
 } from '~/server/common/image-visibility';
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
-import { articleDetailSelect } from '~/server/selectors/article.selector';
+import {
+  articleContentImageSelect,
+  articleDetailSelect,
+} from '~/server/selectors/article.selector';
 import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
 import { readerArticleBody } from '~/server/utils/article-body-media';
 import { getArticleImageHolds } from '~/server/services/article-image-holds';
@@ -48,18 +51,7 @@ export const articleWebhooks = createWebhookProcessor({
         },
         select: {
           entityId: true,
-          image: {
-            select: {
-              id: true,
-              url: true,
-              nsfwLevel: true,
-              ingestion: true,
-              needsReview: true,
-              tosViolation: true,
-              modelRestricted: true,
-              minor: true,
-            },
-          },
+          image: { select: { ...articleContentImageSelect, minor: true } },
         },
       });
       const { withheldByModel: withheld, listedHidden: listed } = await getArticleImageHolds({

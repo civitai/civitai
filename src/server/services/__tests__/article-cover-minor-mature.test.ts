@@ -383,6 +383,7 @@ describe('getArticleById follows the article availability rule', () => {
   });
 });
 
+// civitai/civitai#10514: article images follow the report-listed rule.
 describe('the article page under the report-listed rule', () => {
   // The rule's per-viewer answer is pinned on real SQL in article-card-cover.behavior.test.ts;
   // here the database names the image as hidden, and the page must drop it.
@@ -431,6 +432,7 @@ describe('the article page under the report-listed rule', () => {
   );
 });
 
+// civitai/civitai#10514: article images follow the report-listed rule.
 describe('the article page body under the report-listed rule', () => {
   // Body image ids, each listed on a report: one the article's owner uploaded, one someone else did.
   const OWN_BODY = 601;

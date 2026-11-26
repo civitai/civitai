@@ -59,7 +59,10 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { OFFICIAL_ARTICLE_TAG } from '~/shared/constants/article.constants';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
-import { articleDetailSelect } from '~/server/selectors/article.selector';
+import {
+  articleContentImageSelect,
+  articleDetailSelect,
+} from '~/server/selectors/article.selector';
 import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import type {
   ContentDecorationCosmetic,
@@ -873,20 +876,6 @@ export const isArticleProcessing = async ({ id }: GetByIdInput) => {
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
-/** A body image's row, with what `RenderRichText`'s `imageGuard` needs to guard it by level. */
-export const articleContentImageSelect = {
-  id: true,
-  url: true,
-  ingestion: true,
-  nsfwLevel: true,
-  userId: true,
-  hash: true,
-  width: true,
-  height: true,
-  needsReview: true,
-  tosViolation: true,
-  modelRestricted: true,
-} satisfies Prisma.ImageSelect;
 
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
