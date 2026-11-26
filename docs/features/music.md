@@ -26,6 +26,11 @@ moderators and `music` flag holders. feed-go reads the
   by the orchestrator's `lyricsAlignment` recipe (`alignTrackLyrics`, not awaited), which sets
   `source: aligned`. Labels stay untimed; a song it can't align (204), or whose lyrics changed
   while it ran, keeps them untimed. The text is unchanged, so its scan stands.
+  A song with no lyrics of its own (Sonilo, a post without a generation workflow, a failed save)
+  takes the song scan's transcript once its audio is clean: one line per sentence, `source:
+  transcribed`. Those lyrics go through the lyrics scan, so the song stays Pending until they have
+  a verdict, and are then aligned the same way. A later rescan that reports no audio for that song
+  fails it as it does any song with lyrics (`songVerdict`).
 - **Visibility:** a song shows only once it is reviewed (`songReviewedSql` / `imageReviewedSql` in
   `src/server/common/image-visibility.ts`), which for a song includes the verdict on its lyrics text.
 
@@ -93,8 +98,8 @@ pieces live in `src/components/Music/SongDetail/`.
 | Blurred by the image guard               | Title only: no cover, no lyrics, no play button until revealed.                                                                                                                                                                                                                                                                                                                                                                          |
 
 The lyrics come from `image.getSongLyrics` (`src/server/services/track-lyrics.service.ts`). It returns the
-lines only when the viewer may open the song and the song is reviewed and not blocked, for every viewer
-including the owner and moderators; otherwise null. It refuses an image or video, and refuses everyone
+lines only when the viewer may open the song, the song is reviewed and not blocked, and the lyrics
+have their own clean verdict, for every viewer including the owner and moderators; otherwise null. It refuses an image or video, and refuses everyone
 while the flag is off. It is rate limited like `image.getSongCovers`.
 
 Covers, the backdrop, the Up next panel and the More-from list read at the viewer's own browsing level

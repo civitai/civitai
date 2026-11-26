@@ -38,6 +38,37 @@ export async function saveGeneratedTrackLyrics({
   return true;
 }
 
+/** A transcript as lyric text: one line per sentence, keeping the transcriber's own line breaks. */
+export function transcriptToLyrics(transcript: string) {
+  return transcript
+    .split(/\r?\n/)
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Saves the song scan's transcript as the lyrics of a song that has none, untimed. A row written
+ * meanwhile (the generator's lyrics) is kept. Resolves whether the transcript was saved.
+ */
+export async function saveTranscribedTrackLyrics({
+  imageId,
+  transcript,
+}: {
+  imageId: number;
+  transcript: string;
+}) {
+  const text = capLyrics(transcriptToLyrics(transcript));
+  const lines = parseLyricLines(text);
+  if (!text || !lines) return false;
+  const { count } = await dbWrite.trackLyrics.createMany({
+    data: [{ imageId, text, lines, source: TrackLyricsSource.transcribed }],
+    skipDuplicates: true,
+  });
+  return count > 0;
+}
+
 /**
  * Sends a song's lyrics for their verdict: the text scan while it is active for them, XGuard
  * otherwise, so a verdict always comes.
