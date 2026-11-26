@@ -64,7 +64,6 @@ export function JudgeSettingsPanel() {
 
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
-  // Drafts persist in the browser across sessions, so an old edit can sit unnoticed under a judge.
   const hasDraft = draft != null && Object.keys(draft).length > 0;
 
   // Derive current values: draft overrides server data
