@@ -400,6 +400,13 @@ async function getChallengeCoverImages(coverImageIds: number[], viewerId: number
   return images.filter((image) => !listed.has(image.id));
 }
 
+/** A cover the editor may not see: its id, so a save keeps it, and nothing that shows it. */
+const withoutCoverSource = <T extends { url: string; hash: string | null }>(image: T): T => ({
+  ...image,
+  url: '',
+  hash: null,
+});
+
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
 // A cover the site's rating ceiling allows for this viewer, else null. A blocked cover is withheld
@@ -959,7 +966,10 @@ export async function getInfiniteChallenges(
 async function buildChallengeDetail(
   challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>,
   green?: { isGreen?: boolean; viewerId?: number },
-  { forEdit = false }: { forEdit?: boolean } = {}
+  {
+    forEdit = false,
+    seesReportListed = false,
+  }: { forEdit?: boolean; seesReportListed?: boolean } = {}
 ) {
   const id = challenge.id;
 
@@ -998,12 +1008,12 @@ async function buildChallengeDetail(
 
   // Fetch cover image
   const coverListed =
-    !forEdit &&
+    !seesReportListed &&
     !!challenge.coverImageId &&
     (await getReportListedHiddenImageIds([challenge.coverImageId], SIGNED_OUT_REPORT_LISTED)).size >
       0;
   const fetchedCover =
-    challenge.coverImageId && !coverListed
+    challenge.coverImageId && (forEdit || !coverListed)
       ? await dbRead.image.findFirst({
           where: {
             id: challenge.coverImageId,
@@ -1020,10 +1030,12 @@ async function buildChallengeDetail(
           select: imageSelect,
         })
       : null;
-  const coverImage = coverWithinSite(fetchedCover, {
+  const shownCover = coverWithinSite(fetchedCover, {
     isGreen: green?.isGreen ?? false,
     viewerId: green?.viewerId,
   });
+  // The edit form keeps a listed cover's id, so a save keeps the cover, but never its source.
+  const coverImage = shownCover && coverListed ? withoutCoverSource(shownCover) : shownCover;
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
@@ -1208,12 +1220,16 @@ export async function getChallengeDetail(
  * ones needed for the edit form (judging prompt, theme elements, etc.).
  * Bypasses visibility checks.
  */
-export async function getChallengeForEdit(id: number): Promise<ChallengeDetailForEdit | null> {
+export async function getChallengeForEdit(
+  id: number,
+  { seesReportListed = false }: { seesReportListed?: boolean } = {}
+): Promise<ChallengeDetailForEdit | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge, undefined, {
     forEdit: true,
+    seesReportListed,
   });
   return { ...detail, ..._internal };
 }
@@ -3284,16 +3300,26 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 async function getEventCoverImages(
   coverImageIds: (number | null)[],
   site: SiteViewer,
-  { forEdit = false }: { forEdit?: boolean } = {}
+  {
+    forEdit = false,
+    seesReportListed = false,
+  }: { forEdit?: boolean; seesReportListed?: boolean } = {}
 ) {
   const ids = coverImageIds.filter(isDefined);
   if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
-  const images = forEdit
-    ? await dbRead.image.findMany({ where: { id: { in: ids } }, select: imageSelect })
-    : await getChallengeCoverImages(ids, site.viewerId);
+  const [images, listed] = forEdit
+    ? await Promise.all([
+        dbRead.image.findMany({ where: { id: { in: ids } }, select: imageSelect }),
+        seesReportListed
+          ? new Set<number>()
+          : getReportListedHiddenImageIds(ids, SIGNED_OUT_REPORT_LISTED),
+      ])
+    : [await getChallengeCoverImages(ids, site.viewerId), new Set<number>()];
   const map = new Map<number, ChallengeCoverImage>();
-  for (const img of images) {
-    if (!coverWithinSite(img, site)) continue;
+  for (const found of images) {
+    if (!coverWithinSite(found, site)) continue;
+    // As on the challenge edit form: the id round-trips, the source does not.
+    const img = listed.has(found.id) ? withoutCoverSource(found) : found;
     map.set(img.id, {
       id: img.id,
       url: img.url,
@@ -3592,7 +3618,10 @@ export async function getChallengeEventById(
 /**
  * Get all challenge events (for moderator management).
  */
-export async function getChallengeEvents(input: GetChallengeEventsInput) {
+export async function getChallengeEvents(
+  input: GetChallengeEventsInput,
+  { seesReportListed = false }: { seesReportListed?: boolean } = {}
+) {
   const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
   const events = await dbRead.challengeEvent.findMany({
     where,
@@ -3617,7 +3646,7 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
   const coverMap = await getEventCoverImages(
     events.map((e) => e.coverImageId),
     { isGreen: false },
-    { forEdit: true }
+    { forEdit: true, seesReportListed }
   );
   return events.map(({ coverImageId, ...e }) => ({
     ...e,
