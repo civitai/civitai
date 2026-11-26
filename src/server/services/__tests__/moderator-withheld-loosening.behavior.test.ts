@@ -21,8 +21,8 @@ vi.mock('~/server/db/kyselyDb', () => {
   return { kyselyRead: db, kyselyWrite: db };
 });
 
-const WITHHELD = 101; // in the CSAM review queue
-const SIBLING = 102; // clean itself, but shares its url with a row blocked as CSAM
+const WITHHELD = 101; // queued
+const SIBLING = 102; // withheld from a moderator without the grant
 const CLEAN = 103;
 const OWNER = 7;
 
@@ -92,7 +92,7 @@ const notForbidden = async (p: Promise<unknown>) => {
 };
 
 describe('withheldImageIds', () => {
-  it('names the queued image and the one sharing a CSAM-blocked url, not the clean one', async () => {
+  it('names both withheld images, not the clean one', async () => {
     const ids = await withheldImageIds([WITHHELD, SIBLING, CLEAN], { csamReview: false });
     expect([...ids].sort()).toEqual([WITHHELD, SIBLING]);
   });
@@ -282,7 +282,13 @@ describe('article.rescanImage', () => {
     } as never);
   });
   const rescan = (imageId: number, isModerator: boolean) =>
-    rescanArticleImage({ articleId: 1, imageId, userId: 1, isModerator, csamReview: false });
+    rescanArticleImage({
+      articleId: 1,
+      imageId,
+      userId: isModerator ? 1 : OWNER,
+      isModerator,
+      csamReview: false,
+    });
 
   it("refuses a moderator's rescan of a withheld image", async () => {
     await forbidden(rescan(WITHHELD, true));
@@ -290,6 +296,14 @@ describe('article.rescanImage', () => {
 
   it("passes a moderator's rescan of a clean image", async () => {
     await notForbidden(rescan(CLEAN, true));
+  });
+
+  it("refuses the owner's rescan of their own withheld image", async () => {
+    await forbidden(rescan(WITHHELD, false));
+  });
+
+  it("passes the owner's rescan of their own clean image", async () => {
+    await notForbidden(rescan(CLEAN, false));
   });
 });
 

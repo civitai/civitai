@@ -3895,14 +3895,12 @@ export async function rescanArticle({
 
   // --- Re-queue already-processed images for rescan ---
   let candidates = await articleRescanCandidates(article);
-  // A moderator's rescan skips what is withheld from them.
-  if (isModerator) {
-    const withheld = await withheldImageIds(
-      candidates.map((image) => image.id),
-      { csamReview }
-    );
-    candidates = candidates.filter((image) => !withheld.has(image.id));
-  }
+  // A rescan, the owner's included, skips what is withheld from its caller.
+  const withheld = await withheldImageIds(
+    candidates.map((image) => image.id),
+    { csamReview }
+  );
+  candidates = candidates.filter((image) => !withheld.has(image.id));
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
   await rearmArticleImages(candidates, article.userId, 'article-rescan-image');
@@ -4008,7 +4006,7 @@ export async function rescanArticleImage({
     }));
   if (!belongs)
     throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
-  if (isModerator) await assertMayLoosenImages([imageId], { csamReview });
+  await assertMayLoosenImages([imageId], { csamReview });
 
   // --- Rate limit (owners only, mods bypass) ---
   const cacheKey = `${REDIS_KEYS.ARTICLE.RESCAN}:image:${imageId}` as const;

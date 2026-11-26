@@ -259,7 +259,7 @@ export const articleRouter = router({
       rescanArticle({
         ...input,
         isModerator: ctx.user.isModerator,
-        csamReview: !!ctx.features?.csamReports,
+        csamReview: ctx.user.isModerator && !!ctx.features?.csamReports,
       })
     ),
   // Author-facing scan detail: per-image URLs, `blockedFor` moderation labels, scan failure
@@ -293,7 +293,7 @@ export const articleRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
-        csamReview: !!ctx.features?.csamReports,
+        csamReview: ctx.user.isModerator && !!ctx.features?.csamReports,
       })
     ),
   reframeQuote: protectedProcedure

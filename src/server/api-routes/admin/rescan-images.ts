@@ -11,9 +11,9 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const { imageIds } = schema.parse(req.query);
 
-  // A system caller holding the webhook token, not a moderator: nothing is withheld from it.
+  // The token names no moderator, so no grant reaches here: a withheld image is reported failed.
   const results = await Promise.allSettled(
-    imageIds.map((id) => rescanImageById({ id, csamReview: true }))
+    imageIds.map((id) => rescanImageById({ id, csamReview: false }))
   );
 
   const submitted: number[] = [];
