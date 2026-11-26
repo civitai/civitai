@@ -7,7 +7,6 @@ import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
   apiKeyRowScope,
   carriesClientCredentialsOnlyScope,
-  carriesRunnerOnlyScope,
   hasScope,
 } from '$lib/server/oauth/scope';
 import { setWildcardCors } from '$lib/server/oauth/http';
@@ -51,13 +50,13 @@ const userinfo: RequestHandler = async ({ request }) => {
     .executeTakeFirst();
 
   const tokenScope = apiKey ? apiKeyRowScope(apiKey) : null;
-  // A client-credentials or runner token is single-purpose: it identifies no user here.
+  // A client-credentials token is single-purpose: it identifies no user here. A runner token does,
+  // as its consent screen says it reads the profile and email.
   if (
     !apiKey ||
     tokenScope === null ||
     isMemorializedFlags(apiKey.flags) ||
-    carriesClientCredentialsOnlyScope(tokenScope) ||
-    carriesRunnerOnlyScope(tokenScope)
+    carriesClientCredentialsOnlyScope(tokenScope)
   ) {
     return json(
       { error: 'invalid_token', error_description: 'Invalid or expired token' },

@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import { SIMPLE_BUZZ_LIMIT_PERIOD_DAYS, SIMPLE_BUZZ_LIMIT_PERIODS } from '@civitai/auth/buzz-limit';
-import type { RunnerAppBlockRow, RunnerMintReads } from '@civitai/db-queries/recipe-runner';
+import {
+  isRunnerClient,
+  type RunnerAppBlockRow,
+  type RunnerMintReads,
+} from '@civitai/db-queries/recipe-runner';
 import { constants } from '~/server/common/constants';
-import { DEVICE_CODE_GRANT } from '~/server/services/blocks/connect-agent-review.logic';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** `OauthClient.userId` of a Civitai-owned (system) client. */
@@ -60,21 +63,6 @@ export type RunnerMintDecision =
   | { ok: false; refusal: RunnerMintRefusal };
 
 /**
- * The client may hold runner tokens at all: Civitai-owned, confidential, consented, no device
- * flow, and open (a disabled or testers-only client mints nothing).
- */
-export function isRunnerClient(client: Awaited<ReturnType<RunnerMintReads['client']>>): boolean {
-  return (
-    client != null &&
-    client.userId === SYSTEM_CLIENT_OWNER_ID &&
-    client.isConfidential === true &&
-    client.skipConsent === false &&
-    !client.grants.includes(DEVICE_CODE_GRANT) &&
-    client.accessMode === 'open'
-  );
-}
-
-/**
  * Whether a recipe runner may mint a block token for one run of a user who granted it offline
  * access, and with what budget. Every check fails closed. The ledger peek here is advisory and
  * reserves nothing; the submit path has to be the authority on budget.
@@ -93,7 +81,8 @@ export async function decideRunnerMint(
   const { userId, clientId, request, now } = input;
 
   if (input.tokenScope !== RUNNER_TOKEN_SCOPE) return refuse('scope');
-  if (!isRunnerClient(await reads.client(clientId))) return refuse('client');
+  if (!isRunnerClient(await reads.client(clientId), SYSTEM_CLIENT_OWNER_ID))
+    return refuse('client');
 
   const binding = await reads.binding(clientId);
   if (!binding || binding.status !== 'active') return refuse('binding');

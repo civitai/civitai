@@ -11,6 +11,27 @@ export interface RunnerClientRow {
   grants: string[];
   accessMode: string;
 }
+/**
+ * A client that may hold runner tokens at all: Civitai-owned (`systemUserId`), confidential,
+ * consented, open (a disabled or testers-only client mints nothing), and no device flow.
+ * `grants` stores the URN; the bare name is refused too, so a hand-written row cannot slip past.
+ * The one copy of this rule: the auth hub's issuance and the main app's mint both call it.
+ */
+export function isRunnerClient(
+  client: RunnerClientRow | null | undefined,
+  systemUserId: number
+): boolean {
+  return (
+    client != null &&
+    client.userId === systemUserId &&
+    client.isConfidential === true &&
+    client.skipConsent === false &&
+    client.accessMode === 'open' &&
+    !client.grants.includes('urn:ietf:params:oauth:grant-type:device_code') &&
+    !client.grants.includes('device_code')
+  );
+}
+
 export interface RunnerBindingRow {
   appBlockId: string;
   status: string;
@@ -122,4 +143,47 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
       return row ? Number(row.runs) : Number.POSITIVE_INFINITY;
     },
   };
+}
+
+// Built with the query builder, not `sql`, so the auth hub's in-memory Kysely fake can run them.
+type RunnerTables = {
+  runner_client_bindings: { runner_client_id: string; status: string };
+  runner_run_authorizations: {
+    user_id: number;
+    runner_client_id: string;
+    revoked_at: Date | null;
+    revoked_reason: string | null;
+  };
+};
+
+/** The runner client's binding status (`active` | `suspended`), or null when unbound. Pass a primary client. */
+export async function readRunnerBindingStatus(
+  db: Kysely<DB>,
+  clientId: string
+): Promise<string | null> {
+  const row = await db
+    .withTables<RunnerTables>()
+    .selectFrom('runner_client_bindings')
+    .select('status')
+    .where('runner_client_id', '=', clientId)
+    .executeTakeFirst();
+  return row?.status ?? null;
+}
+
+export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected';
+
+/** Revoke every live run authorization the user gave the runner client; returns how many. */
+export async function revokeRunnerAuthorizations(
+  db: Kysely<DB>,
+  opts: { userId: number; clientId: string; reason: RunnerAuthorizationRevokeReason; now?: Date }
+): Promise<number> {
+  const result = await db
+    .withTables<RunnerTables>()
+    .updateTable('runner_run_authorizations')
+    .set({ revoked_at: opts.now ?? new Date(), revoked_reason: opts.reason })
+    .where('user_id', '=', opts.userId)
+    .where('runner_client_id', '=', opts.clientId)
+    .where('revoked_at', 'is', null)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows);
 }

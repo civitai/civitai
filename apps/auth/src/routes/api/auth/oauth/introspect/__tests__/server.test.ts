@@ -114,6 +114,8 @@ vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => h.clientIp }));
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { POST } from '../+server';
+import { RUNNER_TOKEN_SCOPE } from '$lib/server/oauth/runner-client';
+import { scopeNames } from '$lib/server/oauth/token-exchange';
 
 const LINK_SCOPE =
   TokenScope.UserRead | TokenScope.VaultRead | TokenScope.VaultWrite | TokenScope.LinkConnect;
@@ -318,13 +320,33 @@ describe('introspect — active tokens', () => {
   });
 });
 
+// Deliberate (civitai/civitai#10562): a runner token reads active:true, on the condition that its
+// scope names neither AIServicesRead nor AIServicesWrite, the only names the orchestrator grants
+// AI spend on.
+describe('introspect — a recipe-runner token', () => {
+  it('reads as active, with a scope that names no AIServices permission', async () => {
+    const res = await post({
+      token: 'civitai_runner',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    const body = (await res.json()) as { active: boolean; scope: string };
+    expect(body).toMatchObject({ active: true, sub: '77', client_id: 'recipe-runner' });
+    expect(body.scope).toBe(String(RUNNER_TOKEN_SCOPE));
+    expect(scopeNames(BigInt(body.scope))).not.toMatch(/AIServices/);
+  });
+
+  it('control: an AIServices token names it, so the check above can fail', () => {
+    expect(scopeNames(TokenScope.UserRead | TokenScope.AIServicesWrite)).toMatch(/AIServicesWrite/);
+  });
+});
+
 describe('introspect — inactive tokens all answer 200 {active:false}', () => {
   it.each([
     ['an expired access token', 'civitai_expired'],
     ['a refresh token (wrong type)', 'civitai_refresh'],
     ['an unknown token', 'civitai_nope'],
     ['a client-credentials token (single-purpose)', 'civitai_catalog'],
-    ['a recipe-runner token (single-purpose)', 'civitai_runner'],
     ['a missing token parameter', ''],
   ])('%s', async (_label, token) => {
     const res = await post({ token, client_id: CALLER, client_secret: CALLER_SECRET });

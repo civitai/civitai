@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ApiKeySpend from '~/server/http/orchestrator/api-key-spend';
@@ -11,14 +12,21 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * (catalog sync). The withdraw itself is executed on real rows in
  * `src/server/services/blocks/__tests__/app-sub-listing-catalog-creator.behavior.test.ts`; this
  * pins that revoking an app runs it, for the right user and client, after the consent is gone,
- * and that a failure never blocks the revoke.
+ * and that a failure never blocks the revoke. It also revokes the user's recipe-run authorizations
+ * for the client, which must succeed before the consent goes.
  */
 
-const { withdrawMock, deleteSubjectMock, invalidateMock } = vi.hoisted(() => ({
+const { withdrawMock, deleteSubjectMock, invalidateMock, pgRef } = vi.hoisted(() => ({
   withdrawMock: vi.fn(),
   deleteSubjectMock: vi.fn(async () => undefined),
   invalidateMock: vi.fn(async () => undefined),
+  pgRef: { current: null as PGlite | null },
 }));
+// The recipe runner's run authorizations, revoked over real SQL.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { kyselyWrite: pgliteKysely(() => pgRef.current!) };
+});
 vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubListingService>()),
   withdrawCatalogSubListingsForRevokedConsent: withdrawMock,
@@ -54,7 +62,28 @@ const caller = createCallerFactory(oauthConsentRouter)({
   res: undefined,
 } as never);
 
-beforeEach(() => {
+const authorization = (id: string, userId: number, clientId: string) =>
+  pgRef.current!.query(
+    `INSERT INTO runner_run_authorizations (id, user_id, runner_client_id) VALUES ($1, $2, $3)`,
+    [id, userId, clientId]
+  );
+const authorizations = async () =>
+  Object.fromEntries(
+    (
+      await pgRef.current!.query<{ id: string; revoked: boolean; reason: string | null }>(
+        `SELECT id, revoked_at IS NOT NULL AS revoked, revoked_reason AS reason FROM runner_run_authorizations`
+      )
+    ).rows.map((r) => [r.id, { revoked: r.revoked, reason: r.reason }])
+  );
+
+beforeEach(async () => {
+  pgRef.current = await PGlite.create();
+  await pgRef.current.exec(`
+    CREATE TABLE runner_run_authorizations (
+      id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, runner_client_id TEXT NOT NULL,
+      revoked_at TIMESTAMPTZ, revoked_reason TEXT
+    );
+  `);
   withdrawMock.mockReset();
   withdrawMock.mockResolvedValue(3);
   invalidateMock.mockClear();
@@ -71,7 +100,31 @@ beforeEach(() => {
   dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ appId: CLIENT_ID });
 });
 
+afterEach(async () => {
+  await pgRef.current?.close();
+  pgRef.current = null;
+});
+
 describe('oauthConsent.revokeApp', () => {
+  it("revokes the user's run authorizations for that client, and no one else's", async () => {
+    await authorization('mine', USER_ID, CLIENT_ID);
+    await authorization('other-client', USER_ID, 'other-runner');
+    await authorization('other-user', USER_ID + 1, CLIENT_ID);
+    await caller.revokeApp({ clientId: CLIENT_ID });
+    expect(await authorizations()).toEqual({
+      mine: { revoked: true, reason: 'disconnected' },
+      'other-client': { revoked: false, reason: null },
+      'other-user': { revoked: false, reason: null },
+    });
+  });
+
+  it('changes nothing when the revoke fails, so the user can retry', async () => {
+    await pgRef.current!.exec(`DROP TABLE runner_run_authorizations`);
+    await expect(caller.revokeApp({ clientId: CLIENT_ID })).rejects.toThrow();
+    expect(dbMock.dbWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.oauthConsent.delete).not.toHaveBeenCalled();
+  });
+
   it("withdraws the user's catalog items for that client, after deleting the consent", async () => {
     await expect(caller.revokeApp({ clientId: CLIENT_ID })).resolves.toEqual({
       success: true,
