@@ -1,8 +1,66 @@
 import { includesInappropriate, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
-import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
+import {
+  SEARCH_REFUSED_CODE,
+  type SearchRefusedBy,
+} from '~/shared/constants/search-refusal.constants';
 
-export type SearchRefusal = 'illegal' | 'profanity' | 'poi' | 'blocked-words';
+/** `policy`: refused by the server, which names no check to anyone but a moderator. */
+export type SearchRefusal = 'illegal' | 'profanity' | 'poi' | 'blocked-words' | 'policy';
+
+/**
+ * The server's refusal of a semantic search, read from its first page: never from a placeholder
+ * page the previous search left showing. `refusedBy` is there for a moderator only.
+ */
+export function pageRefusal(
+  page: { refused?: boolean; refusedBy?: SearchRefusedBy } | undefined,
+  isPlaceholderData?: boolean
+): { refusedBy?: SearchRefusedBy } | undefined {
+  if (isPlaceholderData || page?.refused !== true) return undefined;
+  return page.refusedBy ? { refusedBy: page.refusedBy } : {};
+}
+
+/**
+ * A search page the server refused, rethrown as the refusal the search clients already read
+ * (`isSearchRefusedError`), so the search pages show it instead of "no results".
+ */
+export function throwIfRefused<T extends object>(page: T): T {
+  if ((page as { refused?: unknown }).refused === true)
+    throw Object.assign(new Error(SEARCH_REFUSED_CODE), { code: SEARCH_REFUSED_CODE });
+  return page;
+}
+
+/**
+ * What a searched feed shows in place of results: the browser's own refusal first, then the
+ * server's profanity refusal (an error), then a page the server refused. `refusedBy` is the
+ * server's moderator view, and only for the server's page.
+ */
+export function shownRefusalOf(
+  refusal: SearchRefusal | undefined,
+  error: unknown,
+  serverRefusal: { refusedBy?: SearchRefusedBy } | undefined
+): { refusal: SearchRefusal; refusedBy?: SearchRefusedBy } | undefined {
+  if (refusal) return { refusal };
+  if (isSearchRefusedError(error)) return { refusal: 'profanity' };
+  if (serverRefusal) return { refusal: 'policy', refusedBy: serverRefusal.refusedBy };
+  return undefined;
+}
+
+/** The check a refusal decided in the browser names, for a moderator's line. */
+export function refusedByOf(refusal: SearchRefusal): SearchRefusedBy | undefined {
+  switch (refusal) {
+    case 'illegal':
+      return 'minor';
+    case 'profanity':
+      return 'profanity';
+    case 'poi':
+      return 'real people';
+    case 'blocked-words':
+      return 'blocked words';
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Whether the browser runs its own profanity check on a search: not where every request reaches

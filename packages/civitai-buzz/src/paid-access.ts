@@ -231,6 +231,10 @@ export const raisesOverCap = (
   cap: number
 ): boolean => next != null && next > cap && next > current;
 
+/** What a buyer pays to get in: the download price, or the generation price on a generation-only gate. */
+export const accessPrice = (terms: ModelVersionTerms | undefined | null): number | undefined =>
+  terms?.download?.price ?? (terms ? paidGenerationGrant(terms)?.price : undefined);
+
 /** A gate's two chargeable prices (0 when absent). */
 export function gatePrices(terms: ModelVersionTerms | undefined | null): {
   download: number;

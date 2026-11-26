@@ -332,10 +332,22 @@ export async function runRatingJob(
   };
 }
 
-const activeJobs = new Map<number, Promise<void>>();
+interface WarmRequest {
+  token: string;
+  matureLevel: number;
+  blobKeys: string[];
+  cookie: string;
+  deadlineMs: number;
+}
 
-/** Start rating a dataset's unrated images in the background, one job per user per pod at a time (a
- *  second call while one runs starts nothing; Review asks again). Never throws. */
+/** Per user per pod: the running job, whether it is the one rerun, and the latest request that came in
+ *  while it ran. */
+const activeJobs = new Map<number, { rerun: boolean; next?: WarmRequest }>();
+
+/** Start rating a dataset's unrated images in the background, one job per user per pod at a time. A
+ *  call while a job runs is kept (only the latest) and rated by ONE more job when it ends, so images
+ *  uploaded mid-job are not skipped; a call during that rerun starts nothing, and the next look asks
+ *  again. The allowances and limits apply to every job. Never throws. */
 export function warmDatasetRating(
   token: string,
   userId: number,
@@ -344,10 +356,23 @@ export function warmDatasetRating(
   cookie: string | null,
   deadlineMs: number = DATASET_RATING_DEADLINE_MS
 ): void {
-  const images = blobKeys.filter(isRateableKey);
   // No session to call the main app with (the dev-login preview): nothing is rated.
-  if (cookie === null || images.length === 0 || activeJobs.has(userId)) return;
-  const job = unsentKeys(matureLevel, images)
+  if (cookie === null || !blobKeys.some(isRateableKey)) return;
+  const request = { token, matureLevel, blobKeys, cookie, deadlineMs };
+  const active = activeJobs.get(userId);
+  if (active) {
+    if (!active.rerun) active.next = request;
+    return;
+  }
+  startJob(userId, request, false);
+}
+
+function startJob(userId: number, request: WarmRequest, rerun: boolean): void {
+  const { token, matureLevel, blobKeys, cookie, deadlineMs } = request;
+  const images = blobKeys.filter(isRateableKey);
+  const entry: { rerun: boolean; next?: WarmRequest } = { rerun };
+  activeJobs.set(userId, entry);
+  void unsentKeys(matureLevel, images)
     .then(async (unsent) => {
       // Allowance only for images that will be sent: one already sent never takes a slot.
       const { granted, key } = await claimAllowance('calls', userId, unsent.length);
@@ -359,7 +384,7 @@ export function warmDatasetRating(
       );
       // Images the job didn't reach go back to today's allowance, for the next look.
       await returnDaily(key, granted - summary.calls);
-      // alreadySent is not an Axiom field on this dataset, so it rides in payload.
+      // alreadySent and rerun are not Axiom fields on this dataset, so they ride in payload.
       const { alreadySent, ...counts } = summary;
       void logToAxiom({
         name: 'training-studio-dataset-rating',
@@ -370,7 +395,7 @@ export function warmDatasetRating(
         images: blobKeys.length,
         skipped: blobKeys.length - images.length,
         overDailyCap: unsent.length - granted,
-        payload: { alreadySent: alreadySent + images.length - unsent.length },
+        payload: { alreadySent: alreadySent + images.length - unsent.length, rerun },
       });
     })
     .catch((err) => {
@@ -382,6 +407,8 @@ export function warmDatasetRating(
         error: safeError(err),
       });
     })
-    .finally(() => activeJobs.delete(userId));
-  activeJobs.set(userId, job);
+    .finally(() => {
+      activeJobs.delete(userId);
+      if (entry.next) startJob(userId, entry.next, true);
+    });
 }

@@ -36,7 +36,7 @@ import {
 } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import { isSearchRefusedError, type SearchRefusal } from '~/components/Search/search-refusal';
+import { shownRefusalOf, type SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import { MoreLikeThisPrefer } from '~/components/Image/Infinite/MoreLikeThisPrefer';
 import {
@@ -102,15 +102,10 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const similarTo = useImageFeedSimilarTo();
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic', 'semantic');
+  const { refusal } = useSearchRefusal(query, 'images_semantic', 'semantic');
   // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
   const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
-  return (
-    <ImagesFeed
-      {...props}
-      feedSearch={{ query, similarTo, sort, refusal, profanityMatches, period }}
-    />
-  );
+  return <ImagesFeed {...props} feedSearch={{ query, similarTo, sort, refusal, period }} />;
 }
 
 type FeedSearch = {
@@ -119,7 +114,6 @@ type FeedSearch = {
   similarTo?: number;
   sort?: ImageFeedSearchSort;
   refusal?: SearchRefusal;
-  profanityMatches: string[];
   /** The saved feed period while `useSearchPeriod` is still writing it. */
   period?: MetricTimeframe;
 };
@@ -346,11 +340,8 @@ function ImagesFeed({
     />
   );
 
-  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
-  if (shownRefusal)
-    return (
-      <SearchRefusalNotice refusal={shownRefusal} profanityMatches={feedSearch?.profanityMatches} />
-    );
+  const shown = shownRefusalOf(refusal, search.error, search.serverRefusal);
+  if (shown) return <SearchRefusalNotice {...shown} />;
 
   return (
     <>
