@@ -1254,7 +1254,8 @@ with what Go served.
   that is a tRPC result but not a superjson envelope (Node answered devalue: a web release without
   the marker) is `compared` with result `bad_request`.
 - **Same comparator, same series.** A compared replay runs `compareAnswer`, the function the shadow
-  path runs (`shadow.Compare`, the route's classifier, the response headers of
+  path runs, with the endpoint's `server.CompareSelection` (`shadow.Compare`, the route's classifier;
+  the one selection the eval harness also makes, §19.8), the response headers of
   `shadow.ComparedHeaders` picked as the Node sampler picks them), into the same families:
   `feed_go_shadow_compare_total`, `feed_go_shadow_field_diffs_total` and
   `feed_go_shadow_response_total`, each with a `source` label, `shadow` for a Node sample and
@@ -3725,12 +3726,13 @@ Node); the Go implementation is expected to differ exactly where it hands a requ
 Node endpoint is deleted, the frozen corpus with Node's recorded answers is what tells a later change
 to the Go endpoint whether it broke a caller.
 
-This section is the request side: what a case is, how cases are grouped, and what is never stored,
-and the capture that writes them (§19.6). Code: `internal/evalcorpus` (pure, no I/O), the offline
-estimator `cmd/feed-eval`, and the capture `internal/evalcapture` with its taps in `internal/server`
-(behind `FEED_GO_EVAL_CAPTURE`, default off). The replay harness is a later change. The corpus itself
-lives in private storage, never in this repository: this repository holds the code and synthetic
-tests only.
+This section is what a case is, how cases are grouped, and what is never stored (§19.1–19.4), the
+capture that writes them (§19.6), the eval mode Go is replayed in (§19.7) and the harness that
+replays and reports them (§19.8). Code: `internal/evalcorpus` (pure, no I/O), `cmd/feed-eval`
+(`signatures`, offline; `run` and `publish`, the harness), the capture `internal/evalcapture` with
+its taps in `internal/server` (behind `FEED_GO_EVAL_CAPTURE`, default off), and the harness
+`internal/evalharness` (nothing runs unless invoked). The corpus itself lives in private storage,
+never in this repository: this repository holds the code and synthetic tests only.
 
 First wave, the endpoints closest to having their Node implementation deleted: `as-posts`,
 `infinite`, `model-getall` and `v1-models-id` (`evalcorpus.Endpoints`).
@@ -4002,3 +4004,96 @@ unstable.
 
 Not in scope here: what the eval pod reads (its stores, flags, caches) and whether its cache
 write-back is on are the harness's environment's to set.
+
+### 19.8 The harness (`feed-eval run`, `feed-eval publish`)
+
+Code: `internal/evalharness`, wired by `cmd/feed-eval`. Nothing runs unless a subcommand is invoked;
+the job that invokes it (a nightly pod with its own Node app and an eval-mode feed-go as localhost
+sidecars, egress only to the production backends) is the environment's, not this repository's.
+
+**One comparison.** `server.CompareSelection(endpoint)` is the one choice of body comparator,
+classifier and compared header names. The shadow's `compare`, the serve-side parity replay and the
+harness all take it, so a case the harness passes is one production counts as a match, and a
+production mismatch on a shape the harness passes is an eval bug. `TestCompareSelectionPinsEveryEndpoint`
+pins each endpoint's functions by name. `TestCompareSelectionLedger` pins three lists to one set: the
+endpoint constants passed to `shadowHandler` in the package's non-test source, the pinned selections,
+and `server.CompareSelectionEndpoints` (what `HasCompareSelection` accepts); it does not see an
+endpoint compared some other way (the parity replay's `ParityEndpoints` are a subset it already
+holds). `TestScoreAgreesWithServerSelection` pins the harness's verdict and class to the server's on
+the same pairs. A run refuses an endpoint `HasCompareSelection` does not accept, so the harness never
+scores by the selection's gallery default.
+
+**Run** (`FEED_EVAL_CLICKHOUSE_URL`, its path the database, `_USER`, `_PASSWORD`, all three required;
+`NODE_URL`, `GO_URL`; `FEED_EVAL_ACCOUNTS_FILE`). It reads `cases` and `samples` and writes only
+`results` (one row per case taken) and `runs` (one row when it ends). It never writes `cases`:
+pinning a case (the §19.6 harness rule) is a later subcommand. A row ClickHouse did not acknowledge
+(refused, failed after retries, never queued) fails the run (non-zero exit, the rows lost per table).
+The live phase leaves `FEED_GO_EVAL_NOW` unset: the eval feed-go answers at the wall clock, as the
+live Node app does.
+
+- **Selection.** Per endpoint, one case per signature: signatures by traffic weight (the sum of
+  `samples.weight` over `--lookback`, default 30 days; `corpus_from`/`corpus_to` on the run row),
+  at most `--cap` (default 1500); a signature's exemplar is the case with the least
+  `cityHash64(case_id, <run day>)`, so it rotates nightly and is fixed within a day. Every value is
+  a ClickHouse query parameter. Endpoints are interleaved, so a run cut short still covers each
+  one's heaviest signatures.
+- **Viewer** (`MapViewer`, first rule wins): moderator or banned, `not_replayable`; a credential
+  class with `header` or `query`, the read-only API key, presented the same way (`Authorization:
+  Bearer`, a `token` pair; plus its owner's cookie when the class also holds `session`); anon or
+  crawler, signed out (a stored verified-crawler header is sent as stored); a user: `self`
+  member-owner, else hidden preferences member-filtered, else mature (`showNsfw`, or a level past
+  `browsing.SFWLevels`) member-mature, else member-default. `results.viewer_used` records it.
+- **Accounts.** Member accounts (the mapping asks for the four roles above; the file may name more)
+  and one API key owned by one of them, secrets in mounted files the accounts file names, never logged. Each session token's `exp` is read unverified: within 5 days, a warning; past,
+  that account's cases are `not_replayable` (`account-expired:<role>`); no usable member account at
+  all, the run is refused (a signed-out-only run would read as coverage it is not). Expiring,
+  expired and exp-less accounts are also recorded in `runs.settings` (`accounts`: role, exp, state)
+  and listed on the index page; never a token.
+- **Placeholders**, replaced in the stored text before anything decodes it: `$self` is the
+  account's username under `username`/`user`, else its user id, a JSON number, or a decimal string
+  where the path is annotated `bigint`; `$self-collection` its collection; `$search` its search
+  text. Any depth (a `*UserIds` member, an object in a list); REST query values too.
+- **The sandwich.** Node, Go, Node, back to back (one case takes its three tokens at once): the same
+  path and query, `Host`, the stored headers, a same-site Referer and credentials on all three; the
+  Node calls carry `X-Feed-Go-Parity-Replay` (never sampled, superjson). A tRPC answer is compared
+  as its `result.data`, a REST one as its body; `evalcorpus.Masks` are removed from every body first.
+- **Scoring** (`Score`, first rule wins): the run cancelled while the case was in flight,
+  `infra_miss` `canceled` (a per-call timeout is told apart from it: only the call's own deadline is a
+  timeout); either Node call failed (transport, timeout, 5xx), their statuses differ (a 200 then a
+  404 is `infra_miss`, not `node_unstable`: Node's answer changed under it), or a Node tRPC 200 is not
+  a result, `infra_miss`; Node's two bodies differ, `node_unstable`, with the differing
+  categories as proposed masks (`[*]` for indices; `unstable_paths`); Go's 599 with
+  `X-Feed-Go-Handback-Reason`, `gap` with that reason (`invalid-reason` when it is not shaped as a
+  fallback reason); any other Go 5xx, timeout or transport error,
+  `error`; otherwise Go is compared with each Node answer on body, compared headers (picked as the
+  Node sampler picks them, Set-Cookie as presence) and status: either matching on all three is
+  `pass`, else `bug` with the first comparison's class and categories (no values). An answer with no
+  comparable body (a tRPC error) is compared on status and headers only.
+- **Guards.** One token bucket paces every outbound call (`--rps` 3, `--burst` 3), `--concurrency`
+  2 cases in flight. The window (`--window`, default 03:00–08:00 UTC): the run refuses to start
+  outside it and stops scheduling when it closes; `--force-window` ignores it both ways. Health:
+  each `--health 'name=<promql>;max=<f>'` (or `--health-file`) is an instant query to `--prom-url`,
+  every `--health-interval` (30 s); a sample over max, no sample, or Prometheus unreachable pauses
+  scheduling; paused past `--max-pause` (30 m) ends the run (`health:<name>:<why>`), so the job must
+  reach Prometheus or its run ends. A run with no check is refused unless `--allow-no-health`. Budget: `--max-cases` (10 000), `--max-duration` (5 h).
+- **The run row.** `run_id` `live-<UTC yyyymmddThhmmssZ>-<6 hex>`; `settings` the effective
+  settings (no URL, no PromQL, no account), the cases selected per endpoint, the verdict counts, and
+  `end_reason` (`done`, `window-closed`, `max-cases`, `max-duration`, `canceled`, `health:…`).
+
+**Publish** reads the newest `--runs` (31) live runs, their verdict counts, the newest run's results
+and the samples' weights over its corpus window, and renders one static page per endpoint and an
+index (`html/template`): verdict totals raw and traffic-weighted, gaps by reason (traffic share,
+example case ids), bugs by diff category, Node-unstable proposed masks, not_replayable by reason
+(traffic share), the trend, and coverage: the traffic-weighted share of signatures whose case
+exercised Go (pass, bug, gap, error; not_replayable, infra_miss and node_unstable are shown apart). Each page is PUT to `{HQ_URL}/api/v1/pages/{id}`
+(`HQ_TOKEN` or `HQ_TOKEN_FILE`; `viewers` only with `--viewers`), ids `--prefix` (`feed-eval`) and
+`<prefix>-<endpoint>`, `[a-z][a-z0-9-]{0,39}`; `--dry-run <dir>` writes the files instead.
+
+**Never published.** No request input, response body, search text, account or credential: publish
+selects none of those columns, and the pages are rendered from types with no field to hold one. A
+reason, category, path or run id that is not a plain token is shown as `(redacted)`; a token-shaped
+one is shown by design (a fallback reason or the harness's own; an answer's key path).
+`TestPublishNeverShowsAnInputValue` feeds token-shaped canaries (nothing `(redacted)` would catch) in
+every value-bearing column, sent with every row selected or not, and asserts no page holds one,
+beside a positive control of what each page must show (token-shaped reason, category and path
+included); `TestReportTypesHoldNoValueField` pins the report types' fields.

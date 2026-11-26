@@ -21,6 +21,9 @@ internal/dbpool 95
 internal/devalue 91
 internal/evalcapture 91
 internal/evalcorpus 90
+# Unmeasured at introduction (tests run in CI only): a conservative floor; ratchet to the value the
+# first CI run prints.
+internal/evalharness 75
 internal/feed 76
 internal/fallback 91
 internal/flipt 88
