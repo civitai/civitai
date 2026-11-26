@@ -73,7 +73,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
     );
 
-    // Backstop: the filter above already excludes Blocked rows.
+    // Backstop: trg_blocked_image_delete_queue arms purge on a Blocked row; the update above
+    // excludes them.
     await dropBlockedImageDeleteQueue(unblockedIds);
 
     // Update search index for the unblocked images

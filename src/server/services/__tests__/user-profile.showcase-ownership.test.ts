@@ -239,6 +239,7 @@ describe('assertShowcaseItemsOwned', () => {
     });
   });
 
+  // OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts) leaves the owner an AiNotVerified image.
   it("accepts the owner's image blocked only for an unverified AI claim", async () => {
     db.image.findMany.mockResolvedValueOnce([
       { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'AiNotVerified' },
