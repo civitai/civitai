@@ -7,7 +7,14 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer as seedPlayerRow } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
 import { typeOf, type NotifyKind } from './config';
-import { BatchRejected, sendNotifications, type NotificationBatch } from './notify.service';
+import {
+  BatchRejected,
+  plannable,
+  runIncomplete,
+  sendNotifications,
+  type NotificationBatch,
+  type NotifyResult,
+} from './notify.service';
 
 const Q = 'knights.image.nsfwLevel';
 const TODAY = '2026-12-17';
@@ -344,6 +351,47 @@ describe('sendNotifications', () => {
         'knights: could not plan new-images notifications (57014)',
         expect.objectContaining({ code: '57014' })
       );
+    });
+
+    // A player the failed lookup would have found must not spend the day's slot on a lesser type.
+    it('plans nothing below a failed streak lookup', () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      expect(
+        plannable([
+          ['verdicts', { status: 'fulfilled', value: [1] }],
+          ['streak', { status: 'rejected', reason: statementTimeout() }],
+          ['new-images', { status: 'fulfilled', value: [2, 3] }],
+        ])
+      ).toEqual({ found: [[1], [], []], unplanned: ['streak', 'new-images'] });
+    });
+
+    it('plans nothing at all when the verdicts lookup fails', () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      expect(
+        plannable([
+          ['verdicts', { status: 'rejected', reason: statementTimeout() }],
+          ['streak', { status: 'fulfilled', value: [2] }],
+          ['new-images', { status: 'fulfilled', value: [3] }],
+        ])
+      ).toEqual({ found: [[], [], []], unplanned: ['verdicts', 'streak', 'new-images'] });
+    });
+
+    it('reports the run as incomplete when a type could not be planned', () => {
+      const clean: NotifyResult = {
+        sent: { verdicts: 1, streak: 1, 'new-images': 1 },
+        failed: 0,
+        unconfirmed: 0,
+        halted: false,
+        confirmFailed: 0,
+        skipped: false,
+        accessUnknown: false,
+        unplanned: [],
+      };
+
+      expect(runIncomplete(clean)).toBe(false);
+      expect(runIncomplete({ ...clean, unplanned: ['new-images'] })).toBe(true);
     });
   });
 

@@ -229,6 +229,36 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
 }
 
 /**
+ * The players each lookup found, given in priority order. A failed lookup leaves its type and every
+ * type below it unplanned: their players may be the failed type's, and would take its one slot of the day.
+ */
+export function plannable(outcomes: [NotifyKind, PromiseSettledResult<number[]>][]): {
+  found: number[][];
+  unplanned: NotifyKind[];
+} {
+  for (const [kind, outcome] of outcomes) {
+    if (outcome.status === 'fulfilled') continue;
+    const code = (outcome.reason as { code?: unknown } | null)?.code ?? 'no code';
+    console.error(`knights: could not plan ${kind} notifications (${code})`, outcome.reason);
+  }
+  const failed = outcomes.findIndex(([, outcome]) => outcome.status === 'rejected');
+  const cut = failed === -1 ? outcomes.length : failed;
+  return {
+    found: outcomes.map(([, outcome], at) =>
+      at < cut && outcome.status === 'fulfilled' ? outcome.value : []
+    ),
+    unplanned: outcomes.slice(cut).map(([kind]) => kind),
+  };
+}
+
+/** What a run left undone, so the job reports it as failed. */
+export const runIncomplete = (result: NotifyResult) =>
+  result.failed + result.unconfirmed + result.confirmFailed > 0 ||
+  result.unplanned.length > 0 ||
+  result.skipped ||
+  result.accessUnknown;
+
+/**
  * At most one per player per UTC day: verdicts, then streak (from `streakWarningHourUtc`), then new
  * images. Before that hour an at-risk player is held back from new images so the warning keeps the slot.
  */
@@ -240,23 +270,19 @@ export async function planNotifications(
   const day = utcDay(now);
   const warningOpen =
     now >= new Date(dayStart(day).getTime() + NOTIFY.streakWarningHourUtc * 3_600_000);
-  // A type whose lookup fails is skipped for this run, so a slow query for one cannot sink the others.
-  const unplanned: NotifyKind[] = [];
-  const lookups: [NotifyKind, Promise<number[]>][] = [
-    ['verdicts', withNewVerdicts(db, day, now)],
-    ['streak', withStreakAtRisk(db, day)],
-    ['new-images', withImagesWaiting(db, day)],
-  ];
-  const [allVerdicts, allAtRisk, allWaiting] = (
-    await Promise.allSettled(lookups.map(([, lookup]) => lookup))
-  ).map((outcome, at) => {
-    if (outcome.status === 'fulfilled') return outcome.value;
-    const kind = lookups[at][0];
-    const code = (outcome.reason as { code?: unknown } | null)?.code ?? 'no code';
-    console.error(`knights: could not plan ${kind} notifications (${code})`, outcome.reason);
-    unplanned.push(kind);
-    return [];
-  });
+  const outcomes = await Promise.allSettled([
+    withNewVerdicts(db, day, now),
+    withStreakAtRisk(db, day),
+    withImagesWaiting(db, day),
+  ]);
+  const {
+    found: [allVerdicts, allAtRisk, allWaiting],
+    unplanned,
+  } = plannable([
+    ['verdicts', outcomes[0]],
+    ['streak', outcomes[1]],
+    ['new-images', outcomes[2]],
+  ]);
   const blocked = await resetPending(db);
   const silenced = await silencedAmong(
     db,
