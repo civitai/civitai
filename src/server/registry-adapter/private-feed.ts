@@ -43,11 +43,12 @@
  * that subject check.
  *
  * A record's URN carries its stored `record_id`, not its key: a private key is unique only within
- * one user's key space. The key itself travels beside the body, as the entity's `key`, and so does
- * the document's `seq`, the entity's `seq` ({@link PRIVATE_BODY_FORMAT}): the body stays the
- * document its schemas claim, and a private stream belongs to one user's token, so neither reaches
- * another user. The public feeds carry none. The HTTP binding sends both (an SSE upsert is the whole
- * entity); the gRPC binding's `Entity` message has no field for them.
+ * one user's key space. The key itself travels beside the body, as the entity's `key`, and so do
+ * the document's `seq`, the entity's `seq`, and its store `version`, the entity's `version` (the
+ * number a write's `ifVersion` is compared against; {@link PRIVATE_BODY_FORMAT}): the body stays
+ * the document its schemas claim, and a private stream belongs to one user's token, so none of them
+ * reaches another user. The public feeds carry none. The HTTP binding sends all three (an SSE
+ * upsert is the whole entity); the gRPC binding's `Entity` message has no field for them.
  *
  * THE HEAD. Each poll reads the app namespace's write head (`usage_app.last_seq`, one counter for
  * every collection of the app, `PrivateDocSource.head`) BEFORE its keyset, never after: every write
@@ -188,12 +189,12 @@ export const PRIVATE_PAGE = 500;
 const STATE_FORMAT = 'p1';
 /**
  * The version of what a private entity carries: `k1` was the body plus the record's storage `key`;
- * `k2` adds the document's `seq`. It is folded into every private `rev` and into the poll's read
- * digest, so a cursor saved under an earlier format resumes as a change: its read digest no longer
- * matches, every record's rev differs, and each is sent again, now with its key and seq. No cursor
- * has to be expired for it.
+ * `k2` added the document's `seq`; `k3` adds its store `version`. It is folded into every private
+ * `rev` and into the poll's read digest, so a cursor saved under an earlier format resumes as a
+ * change: its read digest no longer matches, every record's rev differs, and each is sent again, now
+ * with its key, seq and version. No cursor has to be expired for it.
  */
-export const PRIVATE_BODY_FORMAT = 'k2';
+export const PRIVATE_BODY_FORMAT = 'k3';
 
 /**
  * A private entity's rev: the document feed's `docRev`, under {@link PRIVATE_BODY_FORMAT}, the key
@@ -402,6 +403,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         body: d.data,
         key: d.key,
         seq: d.seq,
+        version: d.version,
       });
     }
     return {
