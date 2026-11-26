@@ -245,8 +245,8 @@ export async function removalLowersLevel(
 }
 
 /**
- * `SET LOCAL jit = off` and `SET LOCAL max_parallel_workers_per_gather = 0` as one statement: one round trip instead of
- * two. Exported so test harnesses can tell a read that ran with JIT off.
+ * Turns JIT and parallel workers off for the current transaction in one statement (`set_config(..., true)` is the
+ * transaction-local form). Exported so test harnesses can tell a read that ran with JIT off.
  */
 export const JIT_OFF_STATEMENT =
   "SELECT set_config('jit', 'off', true), set_config('max_parallel_workers_per_gather', '0', true)";

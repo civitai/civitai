@@ -131,9 +131,6 @@ async function progressOf(db: Executor, playerId: number): Promise<ApprenticePro
   return (await standingOf(db, playerId)).progress;
 }
 
-/**
- * The player's progress, and whether a checkpoint recap waits for them, in one query.
- */
 async function standingOf(
   db: Executor,
   playerId: number
