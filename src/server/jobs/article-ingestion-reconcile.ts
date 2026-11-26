@@ -19,6 +19,7 @@ import {
 import {
   ingestionErrorStep,
   readIngestionErrorState,
+  silentIngestionErrorState,
   textCheckSpentRetries,
   type ArticleIngestionErrorState,
 } from '~/server/services/article-ingestion.helpers';
@@ -302,6 +303,29 @@ async function updateErrorState(
     .execute();
 }
 
+async function textCheckOnPrimary(id: number) {
+  // primary: the recompute just before may have read a newer verdict than the replica holds.
+  return dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+    select: { status: true, retryCount: true },
+  });
+}
+
+/** Moves an article the job could not act on to the back of the queue, so it cannot block the rest. */
+async function markChecked(id: number, checkedAt: number) {
+  await kyselyWrite
+    .withoutPlugins()
+    .updateTable('Article')
+    .set({
+      metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', COALESCE(metadata->'ingestionError', ${JSON.stringify(
+        silentIngestionErrorState(checkedAt)
+      )}::jsonb) || ${JSON.stringify({ checkedAt })}::jsonb)`,
+    })
+    .where('id', '=', id)
+    .where('ingestion', '=', ArticleIngestionStatus.Error)
+    .execute();
+}
+
 async function runErrorRetries(now: Date) {
   return retryErrorArticles(now).catch((e) => {
     logToAxiom({
@@ -372,7 +396,10 @@ async function retryErrorArticles(now: Date) {
       }
       // The recompute records an episode for every article it leaves at Error.
       const state = readIngestionErrorState(article.metadata);
-      if (!state) continue;
+      if (!state) {
+        await markChecked(id, checkedAt);
+        continue;
+      }
       const step = ingestionErrorStep(state, checkedAt);
 
       if (step === 'exhaust') {
@@ -406,10 +433,7 @@ async function retryErrorArticles(now: Date) {
       counts.images += images.sent;
 
       const moderation = articleHasText(article.title, article.content)
-        ? await dbRead.entityModeration.findUnique({
-            where: { entityType_entityId: { entityType: 'Article', entityId: id } },
-            select: { status: true, retryCount: true },
-          })
+        ? await textCheckOnPrimary(id)
         : null;
       const resendText = textCheckSpentRetries(moderation);
       if (resendText) {
@@ -454,6 +478,7 @@ async function retryErrorArticles(now: Date) {
         message: `error retry failed: ${(e as Error).message}`,
         articleId: id,
       });
+      await markChecked(id, checkedAt).catch(() => undefined);
     }
   }
   return counts;
