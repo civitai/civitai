@@ -1,4 +1,5 @@
 import { MantineProvider, Popover } from '@mantine/core';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { describe, expect, test, vi } from 'vitest';
@@ -66,9 +67,11 @@ function renderTable(extra?: React.ReactNode) {
     </>,
     {
       wrapper: ({ children }: { children: React.ReactNode }) => (
-        <QueryClientProvider client={queryClient}>
-          <MantineProvider theme={theme}>{children}</MantineProvider>
-        </QueryClientProvider>
+        <SignedOutSessionProvider>
+          <QueryClientProvider client={queryClient}>
+            <MantineProvider theme={theme}>{children}</MantineProvider>
+          </QueryClientProvider>
+        </SignedOutSessionProvider>
       ),
     }
   );

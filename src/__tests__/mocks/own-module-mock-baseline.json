@@ -437,7 +437,7 @@
   "src/components/Comics/__tests__/PanelCard.unlock-cap.render.test.ts": 8,
   "src/components/CommentsV3/__tests__/CommentEditor.browser.test.tsx": 6,
   "src/components/CommentsV3/__tests__/CommentEditor.popup.browser.test.tsx": 6,
-  "src/components/CommentsV3/__tests__/CommentSection.browser.test.tsx": 10,
+  "src/components/CommentsV3/__tests__/CommentSection.browser.test.tsx": 11,
   "src/components/CommentsV3/__tests__/comment-abilities.test.ts": 2,
   "src/components/Consent/ThirdPartyConsentProvider.browser.test.tsx": 1,
   "src/components/Consent/ThirdPartyConsentProvider.ssrHydration.browser.test.tsx": 1,

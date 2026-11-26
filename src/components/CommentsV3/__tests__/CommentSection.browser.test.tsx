@@ -117,6 +117,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ canWrite: true }),
 }));
