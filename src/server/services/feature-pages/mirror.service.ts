@@ -344,9 +344,6 @@ const textKey = (row: FpMirrorFactsRow, body: Record<string, unknown>) =>
 const retractAt = (row: FpMirrorFactsRow) =>
   (row.goneAt ?? row.contentAt ?? row.createdAt ?? new Date(0)).toISOString();
 
-// A deleted author needs no check here: fpCommentState makes the comment 'erased' first.
-const authorInStanding = (row: FpMirrorFactsRow) => !row.bannedAt && !row.muted;
-
 /** The platform refuses an all-digit or empty authorName. */
 const sendableName = (username: string | null) => !!username && !/^\d+$/.test(username);
 
@@ -473,7 +470,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
       return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
     if (scan === 'pending') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
-    if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
+    if (!row.authorInStanding) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
   const sendText = async () => {
@@ -917,7 +914,7 @@ export function reconcileAction(
     seen === 'hidden' &&
     item.verdict?.source === 'moderator' &&
     e.row.liftGranted &&
-    authorInStanding(e.row) &&
+    e.row.authorInStanding &&
     !!e.row.modHideSentAt &&
     Date.parse(item.verdict.at ?? '') === e.row.modHideSentAt.getTime()
   )
