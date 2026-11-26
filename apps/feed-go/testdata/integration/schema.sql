@@ -86,8 +86,7 @@ CREATE TABLE "Image" (
   "firstVisibleAt"    timestamp(3)
 );
 
--- source: packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql (the sortAt the
--- Image trigger writes; the image query computes it the same way).
+-- source: packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql
 CREATE FUNCTION image_sort_at(
   published_at timestamp, scanned_at timestamp, created_at timestamp, first_visible_at timestamp
 ) RETURNS timestamp

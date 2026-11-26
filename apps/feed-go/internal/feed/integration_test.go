@@ -787,9 +787,6 @@ func TestIntegrationAddonSource(t *testing.T) {
 	}
 }
 
-// sortAt is image_sort_at, as the Image trigger writes it: an image held from upload and released
-// later sorts at its first-visible time, and a row without one keeps GREATEST(publishedAt,
-// scannedAt, createdAt).
 func TestIntegrationSortAtFirstVisible(t *testing.T) {
 	pool := integtest.Postgres(t)
 	integtest.Exec(t, pool, `
