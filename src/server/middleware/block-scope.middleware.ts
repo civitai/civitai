@@ -217,6 +217,12 @@ export interface BlockTokenClaims {
    * an owner, which is the wrong direction for a guard to fail in.
    */
   privateRunAudience?: PrivateRunAudience;
+  /**
+   * `'runner'` on a token minted for a recipe runner acting on a user's offline grant.
+   * Such a token may only submit a workflow: `verifyBlockToken` refuses it unless the
+   * caller opts in with `admitRunner`, and only `submitWorkflow` does.
+   */
+  mintOrigin?: 'runner';
 }
 
 /**
@@ -969,7 +975,15 @@ const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-d
 const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
 const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
 
-export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
+export interface VerifyBlockTokenOptions {
+  /** Accept a `mintOrigin: 'runner'` token. Only `submitWorkflow` passes it. */
+  admitRunner?: boolean;
+}
+
+export async function verifyBlockToken(
+  token: string,
+  options: VerifyBlockTokenOptions = {}
+): Promise<BlockTokenClaims | null> {
   // L-VERIFY: require a kid and verify against exactly that one key. The
   // signer (BlockTokenService.sign) has stamped a `kid` (sha256 of the key
   // modulus) on every block token since the first App Blocks commit
@@ -1118,6 +1132,19 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         if (claims.privateRun !== true) return null;
         // (b) Must be a member of the closed set.
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
+      }
+      if (claims.mintOrigin !== undefined) {
+        // Runner tokens carry none of the dev/review/private-run/anonymous markers.
+        if (claims.mintOrigin !== 'runner') return null;
+        if (options.admitRunner !== true) return null;
+        if (claims.sub === ANON_SUBJECT) return null;
+        if (
+          claims.dev !== undefined ||
+          claims.reviewRunForReal !== undefined ||
+          claims.privateRun !== undefined
+        ) {
+          return null;
+        }
       }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
       // already enforced the real lifetime in jwtVerify; this re-checks the age
