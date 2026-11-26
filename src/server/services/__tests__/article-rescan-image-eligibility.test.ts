@@ -311,7 +311,7 @@ describe("retryArticleErrorImages, the reconcile job's retry round", () => {
       ...over,
     });
 
-  // Moderation Lead condition 1 (2026-11-26): the retry never re-submits an image under review.
+  // Agreed with the Moderation Lead (#10522): the retry never re-submits an image under review.
   it('never re-submits a failed image a moderator has yet to review', async () => {
     storeImages({ connected: [image(32, { ingestion: 'Error', needsReview: 'minor' })] });
 

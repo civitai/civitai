@@ -252,7 +252,7 @@ describe('an Error episode under way', () => {
   });
 });
 
-// Moderation Lead condition 2, scope A (2026-11-26): the hold applies at the way out of Error only.
+// Agreed with the Moderation Lead (#10522): the hold applies only while an Error episode lasts.
 describe('an Error episode ending', () => {
   it('goes public, and drops the episode, once every image is scanned', async () => {
     await seed({ ingestion: 'Error', metadata: EPISODE, content: { ingestion: 'Scanned' } });

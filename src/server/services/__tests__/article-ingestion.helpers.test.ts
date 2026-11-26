@@ -124,7 +124,7 @@ describe('deriveArticleIngestionState', () => {
   });
 });
 
-// Rounds at about 1, 3 and 7 days, agreed with the moderation team (see the PR).
+// Rounds at about 1, 3 and 7 days, agreed with the Moderation Lead (#10522).
 describe('ingestionErrorStep, the Error retry schedule', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const enteredAt = Date.UTC(2026, 10, 1);
