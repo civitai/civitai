@@ -1542,11 +1542,21 @@ export const ONSITE_MANIFEST_COPY_MESSAGE =
   'listing takes them when that version is approved.';
 
 /**
- * 🔴 An ON-SITE listing's `name` / `tagline` / `description` and `sourceRepoUrl` /
+ * The refusal for an edit of an on-site listing's category. Not "set it in the manifest": the
+ * listing takes the APP's category (`AppBlock.category`), which an approve fills from the
+ * manifest only while it is unset, so a moderator's curation survives version bumps.
+ */
+export const ONSITE_MANIFEST_CATEGORY_MESSAGE =
+  "An on-site app's category comes from the `category` key in block.manifest.json while the " +
+  'app has no category yet; once one is set, a moderator changes it. The listing takes it when ' +
+  'a version is approved.';
+
+/**
+ * 🔴 An ON-SITE listing's `name` / `tagline` / `description` / `category` and `sourceRepoUrl` /
  * `issueTrackerUrl` are MANIFEST-GOVERNED: the draft is minted with them at submit and every
- * block-version approve re-syncs all five from the manifest (`buildListingScalarSync` and the
- * issue-tracker sync in `publish-request.service`), and an on-site revision apply copies assets
- * only. A listing write of any of them would therefore be overwritten at the next approve
+ * block-version approve re-syncs all six (`buildListingScalarSync` — `category` from the app's
+ * own column — and the issue-tracker sync in `publish-request.service`), and an on-site revision
+ * apply copies assets only. A listing write of any of them would therefore be overwritten at the next approve
  * (draft / pending / owner-unpublished) or dropped by the revision apply (approved) while
  * reporting success, so it is refused up front instead. The key being PRESENT is the trigger —
  * an explicit `null` clear is refused too. Off-site listings, whose copy and links the author
@@ -1557,12 +1567,15 @@ export function assertNoOnsiteManifestPatch(
   kind: string | null,
   patch: Pick<
     UpdateListingPatch,
-    'name' | 'tagline' | 'description' | 'sourceRepoUrl' | 'issueTrackerUrl'
+    'name' | 'tagline' | 'description' | 'category' | 'sourceRepoUrl' | 'issueTrackerUrl'
   >
 ): void {
   if (kind !== 'onsite') return;
   if (patch.name !== undefined || patch.tagline !== undefined || patch.description !== undefined) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_COPY_MESSAGE });
+  }
+  if (patch.category !== undefined) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_CATEGORY_MESSAGE });
   }
   if (patch.sourceRepoUrl !== undefined || patch.issueTrackerUrl !== undefined) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_LINK_MESSAGE });
@@ -1750,8 +1763,8 @@ export async function updateListing(opts: {
       //
       // The feature this branch exists for is untouched: `tagline`, `description` and
       // `category` are not material, so "unpublish → fix your copy → republish" still works.
-      // (Off-site only for tagline/description: an on-site listing's copy comes from its
-      // manifest and `assertNoOnsiteManifestPatch` refused it above.)
+      // (Off-site only: an on-site listing's copy and category come from its app and
+      // `assertNoOnsiteManifestPatch` refused them above.)
       const material = materialPatchChanges(effectivePatch, {
         externalUrl: listing.externalUrl,
         name: listing.name,
@@ -1768,11 +1781,11 @@ export async function updateListing(opts: {
             `because that change needs moderator review and an unpublished listing has no ` +
             `way to reach it. Republish the listing first, then edit ` +
             `${material.length > 1 ? 'those fields' : 'that field'} — the edit will be ` +
-            `staged for review. ` +
-            // On-site tagline/description are manifest-governed and refused above.
+            `staged for review.` +
+            // On-site tagline/description/category are manifest-governed and refused above.
             (listing.kind === 'onsite'
-              ? `Category can be edited now.`
-              : `Tagline, description and category can be edited now.`)
+              ? ``
+              : ` Tagline, description and category can be edited now.`)
         );
       }
       // Everything left is trivial, so edit IN PLACE exactly like draft/pending: the

@@ -1080,13 +1080,13 @@ describe('🔴 an ON-SITE listing refuses an author edit of its manifest-governe
     armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
     const res = await updateListing({
       listingId: 'apl_parent',
-      patch: { category: 'games' },
+      patch: { contentRating: 'pg13' },
       userId: OWNER,
     });
     expect(res.requiresReview).toBe(false);
     expect(mockWrite.appListing.update).toHaveBeenCalledWith({
       where: { id: 'apl_parent' },
-      data: { category: 'games' },
+      data: { contentRating: 'pg13' },
     });
   });
 
@@ -1117,6 +1117,54 @@ const ONSITE_COPY_REFUSAL =
   "An on-site app's name, tagline and description come from the `name`, `tagline` and " +
   '`description` keys in block.manifest.json. Set them there and submit a new version; the ' +
   'listing takes them when that version is approved.';
+
+/** Written out, not imported, for the reason `REFUSAL_MESSAGE` gives. */
+const ONSITE_CATEGORY_REFUSAL =
+  "An on-site app's category comes from the `category` key in block.manifest.json while the " +
+  'app has no category yet; once one is set, a moderator changes it. The listing takes it when ' +
+  'a version is approved.';
+
+describe('🔴 an ON-SITE listing refuses an edit of its category', () => {
+  const onsiteDraft = () => approvedParent({ kind: 'onsite', status: 'draft', externalUrl: null });
+
+  it.each([
+    ['a category value', { category: 'games' as const }],
+    ['a category clear', { category: null }],
+  ])('updateListing: %s → BAD_REQUEST, and nothing is written', async (_label, patch) => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('an APPROVED on-site listing: refused before any write (category was a live in-place edit)', async () => {
+    armShadowColumnPresent(approvedParent({ kind: 'onsite', externalUrl: null }), LIVE_REPO);
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch: { category: 'games' }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('updateRevisionDraft on an ON-SITE shadow: refused, nothing written', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({ shadowId: 'apl_shadow', userId: OWNER, patch: { category: 'games' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: the same category edit on an OFF-SITE draft is accepted', async () => {
+    armShadowColumnPresent(approvedParent({ status: 'draft' }), null);
+    await updateListing({ listingId: 'apl_parent', patch: { category: 'games' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { category: 'games' },
+    });
+  });
+});
 
 describe('🔴 an ON-SITE listing refuses an author edit of its manifest-governed copy', () => {
   const onsiteDraft = () => approvedParent({ kind: 'onsite', status: 'draft', externalUrl: null });

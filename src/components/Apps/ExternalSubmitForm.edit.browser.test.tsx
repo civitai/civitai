@@ -764,6 +764,16 @@ describe('ExternalSubmitForm (edit) — ON-SITE name, tagline and description co
     }
   });
 
+  test('🔴 the category renders READ-ONLY with where it comes from', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    const category = page.getByTestId('apps-offsite-edit-category-manifest');
+    await expect.element(category).toBeDisabled();
+    await expect
+      .element(page.getByText(/Comes from "category" in block\.manifest\.json while your app/))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-category').elements()).toHaveLength(0);
+  });
+
   test('a save of an on-site listing never sends name, tagline or description', async () => {
     renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
     await page.getByRole('checkbox', { name: /This app is in beta/ }).click();
@@ -774,12 +784,15 @@ describe('ExternalSubmitForm (edit) — ON-SITE name, tagline and description co
     expect('name' in arg.patch).toBe(false);
     expect('tagline' in arg.patch).toBe(false);
     expect('description' in arg.patch).toBe(false);
+    expect('category' in arg.patch).toBe(false);
   });
 
   test('CONTROL: an off-site listing keeps the editable inputs and no manifest note', async () => {
     renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'offsite' })} />);
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByTestId('apps-offsite-edit-name')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-edit-category')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-category-manifest').elements()).toHaveLength(0);
     await expect.element(page.getByRole('textbox', { name: /^Tagline/ })).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-edit-name-manifest').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-offsite-edit-tagline-manifest').elements()).toHaveLength(0);

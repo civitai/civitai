@@ -196,26 +196,28 @@ describe('updateListing — the fork opt-in', () => {
     await expect(
       updateListing({
         listingId: LISTING,
-        patch: { forkable: true, category: 'games' },
+        patch: { forkable: true, contentRating: 'pg13' },
         userId: OWNER,
       })
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: FORKABLE_UNAVAILABLE_MESSAGE });
-    // Hoisted: the category half was not applied either.
+    // Hoisted: the content-rating half was not applied (nor staged) either.
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
     expect(forkableWrites()).toEqual([]);
   });
 
-  // On-site tagline/description are manifest-governed (refused), so the trivial edit here is the
-  // category, which an on-site listing still takes in place.
-  it('rides along with a trivial edit: the category in place, the opt-in on the same live row', async () => {
+  // On-site name/tagline/description/category are manifest-governed (refused), so the in-place
+  // edit here is a DRAFT's content rating (a draft takes every edit in place).
+  it('rides along with an in-place edit: the rating in place, the opt-in on the same row', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(onsiteListing({ status: 'draft' }));
     await updateListing({
       listingId: LISTING,
-      patch: { category: 'games', forkable: true },
+      patch: { contentRating: 'pg13', forkable: true },
       userId: OWNER,
     });
     expect(mockWrite.appListing.update).toHaveBeenCalledWith({
       where: { id: LISTING },
-      data: { category: 'games' },
+      data: { contentRating: 'pg13' },
     });
     expect(forkableWrites()).toEqual([[true, LISTING]]);
   });

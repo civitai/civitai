@@ -48,8 +48,7 @@ import {
   isApprovedEdit,
   isOwnerEdit,
   listingEditHeaderCopy,
-  listingCopyFromManifest,
-  listingLinksFromManifest,
+  listingFieldsFromManifest,
   MANIFEST_COPY_FIELD_NOTE,
   MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
@@ -123,10 +122,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
-  // On-site: both links come from block.manifest.json and render read-only here.
-  const linksFromManifest = listingLinksFromManifest(edit);
-  // On-site: name, tagline and description come from block.manifest.json too.
-  const copyFromManifest = listingCopyFromManifest(edit);
+  // On-site: name, tagline, description, category and both links come from the app and
+  // render read-only here.
+  const fromManifest = listingFieldsFromManifest(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -257,14 +255,13 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     const nextErrors = validateOffsiteSubmitForm(values);
     // A read-only link is never sent, so a stored value the current rules reject must not
     // block saving the fields the author CAN change.
-    if (linksFromManifest) {
+    if (fromManifest) {
       delete nextErrors.sourceRepoUrl;
       delete nextErrors.issueTrackerUrl;
-    }
-    if (copyFromManifest) {
       delete nextErrors.name;
       delete nextErrors.tagline;
       delete nextErrors.description;
+      delete nextErrors.category;
     }
     // SENSITIVE-only justification model (parity with create): every sensitive scope
     // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
@@ -524,7 +521,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 approve would overwrite (or, on a live listing, the assets-only revision apply
                 would drop). The server refuses the keys too. `data-material-field` stays on the
                 name so the repair-state ledger still sees every material field as disabled. */}
-              {copyFromManifest ? (
+              {fromManifest ? (
                 <TextInput
                   label="Name"
                   description={MANIFEST_COPY_FIELD_NOTE.name}
@@ -560,7 +557,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 data-testid="apps-offsite-edit-slug"
               />
 
-              {copyFromManifest ? (
+              {fromManifest ? (
                 <>
                   <TextInput
                     label="Tagline"
@@ -610,7 +607,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 </>
               )}
 
-              {linksFromManifest ? (
+              {fromManifest ? (
                 <>
                   {/* 🔴 ON-SITE: both links are MANIFEST-GOVERNED (minted at submit, re-synced
                     on every approve from `repository` / `bugs`), so they are shown read-only
@@ -722,18 +719,33 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               )}
 
               <Group grow align="flex-start">
-                <Select
-                  label="Category"
-                  placeholder="No category"
-                  data={OFFSITE_CATEGORY_OPTIONS}
-                  value={values.category}
-                  onChange={(v: string | null) =>
-                    setField('category', (v as MarketplaceCategory) || null)
-                  }
-                  error={errors.category}
-                  clearable
-                  data-testid="apps-offsite-edit-category"
-                />
+                {fromManifest ? (
+                  // 🔴 ON-SITE: the listing takes the app's category on every approve, so it is
+                  // read-only here like the name and links; the note says where it comes from.
+                  <Select
+                    label="Category"
+                    description={MANIFEST_COPY_FIELD_NOTE.category}
+                    placeholder="Not set"
+                    data={OFFSITE_CATEGORY_OPTIONS}
+                    value={values.category}
+                    readOnly
+                    disabled
+                    data-testid="apps-offsite-edit-category-manifest"
+                  />
+                ) : (
+                  <Select
+                    label="Category"
+                    placeholder="No category"
+                    data={OFFSITE_CATEGORY_OPTIONS}
+                    value={values.category}
+                    onChange={(v: string | null) =>
+                      setField('category', (v as MarketplaceCategory) || null)
+                    }
+                    error={errors.category}
+                    clearable
+                    data-testid="apps-offsite-edit-category"
+                  />
+                )}
                 <Select
                   label="Content rating"
                   data={OFFSITE_CONTENT_RATING_OPTIONS}

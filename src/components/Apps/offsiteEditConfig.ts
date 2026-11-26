@@ -231,9 +231,9 @@ export function materialEditBlockedReason(
   }
 
   // 🔴 ON-SITE: the only material field this form can still change is the content rating. The
-  // name, tagline, description and both links come from block.manifest.json
-  // (`listingCopyFromManifest` / `listingLinksFromManifest`) and are never editable here, in
-  // any status, so they are neither "locked until republish" nor "editable now".
+  // name, tagline, description, category and both links come from the app
+  // (`listingFieldsFromManifest`) and are never editable here, in any status, so they are
+  // neither "locked until republish" nor "editable now".
   if (isOnsiteEdit(ctx)) {
     const onsiteWayOut = isOwnerEdit(ctx)
       ? `Republish the app from the Publishing tab first, then edit it — the edit is staged ` +
@@ -244,7 +244,7 @@ export function materialEditBlockedReason(
       `This app is unpublished, so its ${fields} is locked. Changing it needs moderator ` +
       `review, and an unpublished listing has no way to reach it. ${onsiteWayOut} Its name, ` +
       `tagline, description, source repository and issue tracker come from ` +
-      `block.manifest.json. Category can be edited now.`
+      `block.manifest.json, and its category is set by the manifest or a moderator.`
     );
   }
 
@@ -373,17 +373,18 @@ export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
 }
 
 /**
- * Do this listing's source-repository and issue-tracker links come from `block.manifest.json`
- * rather than from this form? PURE.
+ * Do this listing's name, tagline, description, category and source-repository / issue-tracker
+ * links come from the app rather than from this form? PURE.
  *
- * True for an ON-SITE listing: its links are minted from the manifest's `repository` / `bugs`
- * at submit and re-synced from them on every approve, so an edit here would be overwritten (or,
- * on a live listing, dropped by the assets-only revision apply). The form then shows both
- * read-only, `buildScalarPatch` never emits them, and the server refuses them
- * (`assertNoOnsiteManifestPatch`). Off-site listings own their links, so they stay editable.
- * Inherits `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
+ * True for an ON-SITE listing. The draft is minted from `block.manifest.json` at submit and every
+ * block-version approve re-syncs all of them (`buildListingScalarSync` and the issue-tracker
+ * sync), while an on-site revision apply copies assets only. So an edit here is either
+ * overwritten at the next approve or, on a live listing (staged on a revision), dropped. The form
+ * shows them read-only, `buildScalarPatch` never emits them, and the server refuses them
+ * (`assertNoOnsiteManifestPatch`). Off-site listings own them, so they stay editable. Inherits
+ * `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
  */
-export function listingLinksFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+export function listingFieldsFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
   return isOnsiteEdit(ctx);
 }
 
@@ -398,23 +399,14 @@ export const MANIFEST_LINK_FIELD_NOTE = {
 } as const;
 
 /**
- * Do this listing's name, tagline and description come from `block.manifest.json` rather than
- * from this form? PURE.
+ * The explanation the read-only on-site name / tagline / description / category fields carry.
  *
- * True for an ON-SITE listing, for the reason {@link listingLinksFromManifest} gives for the
- * links: the draft is minted with the manifest's `name` / `tagline` / `description` at submit
- * and every block-version approve re-syncs all three (`buildListingScalarSync`), while an on-site
- * revision apply copies assets only. So an edit here is either overwritten at the next approve or
- * (on a live listing, staged on a revision) dropped. The form shows the three read-only,
- * `buildScalarPatch` never emits them, and the server refuses them
- * (`assertNoOnsiteManifestPatch`). Off-site listings own their copy, so it stays editable.
- * Inherits `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
+ * 🔴 CATEGORY IS NOT A STRAIGHT MANIFEST COPY, so its note does not say "change it there". The
+ * listing takes the APP's category (`AppBlock.category`) on every approve, and an approve copies
+ * the manifest's `category` onto the app only while the app has none, so a moderator's curated
+ * category (`setMarketplaceMeta`) survives version bumps. Once one is set, the manifest key no
+ * longer moves it.
  */
-export function listingCopyFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
-  return isOnsiteEdit(ctx);
-}
-
-/** The explanation the read-only on-site name / tagline / description fields carry. */
 export const MANIFEST_COPY_FIELD_NOTE = {
   name:
     'Comes from "name" in block.manifest.json. Change it there and submit a new ' +
@@ -425,6 +417,9 @@ export const MANIFEST_COPY_FIELD_NOTE = {
   description:
     'Comes from "description" in block.manifest.json. Change it there and submit a new ' +
     'version; the listing takes it when that version is approved.',
+  category:
+    'Comes from "category" in block.manifest.json while your app has no category yet; once ' +
+    'one is set, a moderator changes it. The listing takes it when a version is approved.',
 } as const;
 
 /**
@@ -501,10 +496,10 @@ export function buildScalarPatch(
   const original = editContextToForm(ctx);
   const patch: UpdateListingPatchInput = {};
 
-  // 🔴 NEVER on an ON-SITE listing: the manifest owns name, tagline and description
-  // (`listingCopyFromManifest`), and the server refuses the keys outright.
-  const copyFromManifest = listingCopyFromManifest(ctx);
-  if (!copyFromManifest) {
+  // 🔴 NEVER on an ON-SITE listing: name, tagline, description, category and both links come
+  // from the app (`listingFieldsFromManifest`), and the server refuses the keys outright.
+  const fromManifest = listingFieldsFromManifest(ctx);
+  if (!fromManifest) {
     const name = current.name.trim();
     if (name !== original.name.trim()) patch.name = name;
   }
@@ -530,8 +525,8 @@ export function buildScalarPatch(
   // write rather than a needless mod re-review.
   //
   // 🔴 NEVER on an ON-SITE listing, for either link: the manifest owns both
-  // (`listingLinksFromManifest`), and the server refuses the key outright.
-  if (!listingLinksFromManifest(ctx)) {
+  // (`listingFieldsFromManifest`), and the server refuses the key outright.
+  if (!fromManifest) {
     const sourceRepoUrl = current.sourceRepoUrl.trim();
     const originalSourceRepoUrl = original.sourceRepoUrl.trim();
     if (sourceRepoUrl !== originalSourceRepoUrl) {
@@ -577,7 +572,7 @@ export function buildScalarPatch(
     }
   }
 
-  if (!copyFromManifest) {
+  if (!fromManifest) {
     const tagline = current.tagline.trim();
     const originalTagline = original.tagline.trim();
     if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
@@ -588,7 +583,7 @@ export function buildScalarPatch(
       patch.description = description.length > 0 ? description : null;
   }
 
-  if ((current.category ?? null) !== (original.category ?? null)) {
+  if (!fromManifest && (current.category ?? null) !== (original.category ?? null)) {
     patch.category = current.category ?? null;
   }
 
