@@ -48,8 +48,18 @@ describe('getDailyPlan', () => {
       source: 'schedule',
       setKey: entry.set,
       occasion: { name: entry.occasion, brief: entry.brief },
-      judgeName: entry.judge,
+      judgeName: 'Jolly CivBot',
     });
+  });
+
+  // Stored plans match on judgeName (planIsCurrent), so renaming a persona strands rows already scheduled under it.
+  it.each([
+    ['2026-12-01', 'Jolly CivBot'],
+    ['2026-12-02', 'Frost CivChan'],
+    ['2026-12-05', 'Krampus CivChan'],
+    ['2026-12-31', 'Gala CivBot'],
+  ])('judges %s with %s, the persona of its set', (date, judgeName) => {
+    expect(getDailyPlan(utc(date)).judgeName).toBe(judgeName);
   });
 
   it('falls back to the rotation with the default judge off the schedule', () => {
