@@ -36,7 +36,7 @@ export async function rewardReportReporters(input: {
       // skipped row yet, so this line is what a backfill finds them by.
       logAxiomError(tierError, {
         event: 'reportAccepted reward skipped: multiplier unavailable',
-        retryable: true,
+        payload: { retryable: true },
         reportId: input.reportId,
         reporterIds: skipped,
       });
@@ -163,10 +163,12 @@ async function getBaseRewardsMultipliers(
       name: 'buzz-rewards',
       type: 'error',
       message: 'Rewards multiplier cache read failed; read it from Postgres instead',
-      failedReads: failedReads.length,
-      errorClasses: [...new Set(failedReads.map((f) => f.errorClass))],
       error: failedReads[0].error,
-      slots: [...new Set(failedReads.map((f) => f.slot))],
+      payload: {
+        failedReads: failedReads.length,
+        errorClasses: [...new Set(failedReads.map((f) => f.errorClass))],
+        slots: [...new Set(failedReads.map((f) => f.slot))],
+      },
     });
   }
   if (!unresolved.length) return { tiers };

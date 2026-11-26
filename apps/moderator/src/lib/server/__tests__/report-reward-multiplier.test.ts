@@ -318,11 +318,10 @@ describe('rewardReportReporters multiplier', () => {
     const payload = axiom.mock.calls[0][0];
     expect(payload).toMatchObject({
       type: 'error',
-      failedReads: 2,
-      errorClasses: ['TypeError'],
       error: 'socket closed',
+      payload: { failedReads: 2, errorClasses: ['TypeError'] },
     });
-    expect([...(payload.slots as number[])].sort()).toEqual(
+    expect([...(payload.payload.slots as number[])].sort()).toEqual(
       [
         ...new Set(
           [42, 43].map((id) => keyHashSlot(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${id}`))
@@ -410,7 +409,7 @@ describe('rewardReportReporters multiplier', () => {
       .find((payload) => payload.event === 'reportAccepted reward skipped: multiplier unavailable');
     expect(skipped).toMatchObject({
       type: 'error',
-      retryable: true,
+      payload: { retryable: true },
       reportId: 990100008,
       reporterIds: [42],
       message: 'replica unavailable',
