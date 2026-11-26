@@ -71,7 +71,9 @@ const { rescanChallenge, playgroundReviewImage } = await import(
   '~/server/services/challenge.service'
 );
 const { rescanArticleImage } = await import('~/server/services/article.service');
-const { addTagVotes, disableTags } = await import('~/server/services/tag.service');
+const { addTagVotes, disableTags, voteImageTagsAsModerator } = await import(
+  '~/server/services/tag.service'
+);
 const {
   bulkSaveItems,
   saveItemInCollections,
@@ -728,5 +730,38 @@ describe('setCollectionItemNsfwLevel on an image the scan has not finished', () 
     vi.clearAllMocks();
     await notForbidden(rate(WITHHELD, { isModerator: true, csamReview: true }));
     expect(queuedRescan()).toBe(true);
+  });
+});
+
+describe('voteImageTagsAsModerator (the mod image.tagVote route)', () => {
+  const batch = (votes: { imageId: number; vote: number }[], csamReview = false) =>
+    voteImageTagsAsModerator({
+      votes: votes.map((v, i) => ({ ...v, tagId: 5 + i })),
+      userId: 1,
+      csamReview,
+    });
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ count: 0 }]);
+  });
+
+  it('refuses a batch with a downvote on a withheld image, and writes no vote', async () => {
+    await forbidden(
+      batch([
+        { imageId: CLEAN, vote: -1 },
+        { imageId: WITHHELD, vote: -1 },
+      ])
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('writes upvotes on a withheld image with a clean downvote, and the withheld downvote with the grant', async () => {
+    await batch([
+      { imageId: WITHHELD, vote: 1 },
+      { imageId: CLEAN, vote: -1 },
+    ]);
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(2);
+    vi.clearAllMocks();
+    await batch([{ imageId: WITHHELD, vote: -1 }], true);
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 });

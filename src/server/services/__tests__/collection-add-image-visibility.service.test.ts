@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
@@ -31,6 +31,29 @@ const { assertVisible } = vi.hoisted(() => ({
     }
   ),
 }));
+import { PGlite } from '@electric-sql/pglite';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+
+// The withheld rule reads its own database, where nothing is withheld.
+const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+vi.mock('~/server/db/kyselyDb', () => {
+  const db = pgliteKysely(() => withheld.db);
+  return { kyselyRead: db, kyselyWrite: db };
+});
+beforeAll(async () => {
+  withheld.db = new PGlite();
+  await withheld.db.exec(`
+    ${CSAM_LINK_TABLES_SQL}
+    ${WITHHELD_TABLES_SQL}
+    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
+      "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
+  `);
+}, 60_000);
+
 vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageVisibility>()),
   assertImagesVisibleToViewer: assertVisible,

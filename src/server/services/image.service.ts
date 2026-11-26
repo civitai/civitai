@@ -6899,9 +6899,7 @@ export async function updateImageNsfwLevel({
     if (activity === 'setNsfwLevelKono') {
       // The write itself refuses a consensus that loosens a withheld image, as the webhook's does.
       const written = await dbWrite.$executeRaw`
-        UPDATE "Image" i
-        SET "nsfwLevel" = ${nsfwLevel}, "nsfwLevelLocked" = TRUE,
-            "metadata" = ${JSON.stringify(updatedMetadata)}::jsonb, "updatedAt" = NOW()
+        UPDATE "Image" i SET "nsfwLevel" = ${nsfwLevel}, "nsfwLevelLocked" = TRUE
         WHERE i.id = ${id}
           AND NOT (
             ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
@@ -6909,11 +6907,14 @@ export async function updateImageNsfwLevel({
           )
       `;
       if (!written) return image.nsfwLevel;
-    } else
-      await dbWrite.image.update({
-        where: { id },
-        data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
-      });
+    }
+    await dbWrite.image.update({
+      where: { id },
+      data:
+        activity === 'setNsfwLevelKono'
+          ? { metadata: updatedMetadata }
+          : { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
+    });
     await afterImageNsfwLevelSet({
       id,
       postId: image.postId,
