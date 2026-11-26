@@ -2,7 +2,7 @@ import {
   childSafetyImageFinding,
   childSafetyPostFinding,
 } from '@civitai/db-queries/child-safety-case';
-import { imageNotUsed } from '@civitai/db-queries/content-deletion';
+import { imageNotUsed, releasePendingDeletes } from '@civitai/db-queries/content-deletion';
 import {
   cleanupBlocked,
   imageDeleteBlocked,
@@ -20,7 +20,7 @@ import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { deleteImages } from '~/server/services/image.service';
+import { deleteImages, refreshLiftedKeptHides } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { heldPostTextPostIds } from '~/server/services/post-text-hold';
 
@@ -249,6 +249,10 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       else if (threw.has(id)) failed.push(id);
       else done.push(id);
     }
+    // Done but still here (released, in use again, given away): the queue row goes, and the item gets
+    // back what the kept delete's hide took.
+    const kept = done.filter((id) => after.get(id)?.present);
+    await refreshLiftedKeptHides(await releasePendingDeletes(db(), kind, kept));
     await settleDeletes(db(), kind, { done, waiting, failed });
 
     result[kind] = {

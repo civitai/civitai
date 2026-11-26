@@ -5,6 +5,12 @@ import { IMAGE_USES, IMAGE_USES_WITHOUT_RELATION } from '../content-deletion.db'
  * read, with only the columns they read, added to whatever the test already created.
  */
 export const imageUseTablesSql = [
+  // The kept-delete lift casts a recorded ingestion to it, whatever type the test gave the column.
+  `DO $$ BEGIN
+    CREATE TYPE "ImageIngestionStatus" AS ENUM (
+      'Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan'
+    );
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
   `CREATE TABLE IF NOT EXISTS "Image" (id int PRIMARY KEY, "userId" int NOT NULL)`,
   `ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text`,
   `ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "postId" int`,
@@ -40,6 +46,12 @@ export const imageUseTablesSql = [
   `CREATE TABLE IF NOT EXISTS "ItemDefinition" (id serial PRIMARY KEY)`,
   `ALTER TABLE "ItemDefinition" ADD COLUMN IF NOT EXISTS "imageUrl" text`,
   `CREATE TABLE IF NOT EXISTS "ImageCdnShopTakedown" (url text PRIMARY KEY)`,
+  `CREATE TABLE IF NOT EXISTS "ModActivity" (id serial PRIMARY KEY)`,
+  `ALTER TABLE "ModActivity" ADD COLUMN IF NOT EXISTS "userId" int`,
+  `ALTER TABLE "ModActivity" ADD COLUMN IF NOT EXISTS activity text`,
+  `ALTER TABLE "ModActivity" ADD COLUMN IF NOT EXISTS "entityType" text`,
+  `ALTER TABLE "ModActivity" ADD COLUMN IF NOT EXISTS "entityId" int`,
+  `ALTER TABLE "ModActivity" ADD COLUMN IF NOT EXISTS "createdAt" timestamp(3) NOT NULL DEFAULT now()`,
   ...[...Object.values(IMAGE_USES), ...Object.values(IMAGE_USES_WITHOUT_RELATION)].flatMap(
     ([table, column]) => [
       `CREATE TABLE IF NOT EXISTS "${table}" ()`,

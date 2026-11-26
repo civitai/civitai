@@ -28,7 +28,7 @@ passes, runs one statement that:
 1. locks the listed rows the actor may delete and the caller's condition allows;
 2. leaves each locked row in an open case, or the actor's own row under `ownerReportHold`, and
    queues it as a `PendingDelete`;
-3. blocks each image it keeps, whoever deletes it (an owner, a moderator, any system
+3. blocks each image it queues, whoever deletes it (an owner, a moderator, any system
    caller, or the job replaying a delete), as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
    Blocked, `blockedFor = 'moderated'` unless it is `CSAM`, every review flag but `csam` cleared, and `appeal` kept while an appeal is pending), and
    drops its account-deletion grace markers, so it leaves feeds, search and the review queues while
@@ -37,7 +37,9 @@ passes, runs one statement that:
    as it is, so a takedown keeps its reason and an account-deletion grace block stays liftable by a
    restore. Blocking queues the image for `remove-blocked-images` (`trg_blocked_image_delete_queue`); unless a
    moderator's delete did the blocking, a second statement drops that queue row, so the queued delete,
-   not the purge's retention clock, decides when it goes;
+   not the purge's retention clock, decides when it goes. The queued row records what the block
+   overwrote (`data.prior`: `ingestion`, `nsfwLevel`, `blockedFor`, `needsReview`, and when), from the
+   locked row in the same statement; a later ask keeps the first record;
 4. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
 5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it
@@ -56,17 +58,27 @@ reads as a plain unpublished post, and a publish goes through and drops the stam
 (`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
 still open, marked `releasedOnRestore`, so it cannot make that content publishable: the content stays
 hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content) only if the case found nothing and the account has
-not been deleted again; a released image stays hidden until a moderator lifts its block or the owner
-appeals it; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
+not been deleted again; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
 child-safety report on the image, its post or its review) it carries out the delete as queued, and
 an image carried out on a finding takes the mark off its post's delete, so the post goes too. Another
 ask queued on a marked row (through `PENDING_DELETE_UPSERT`) replaces the drain's withdrawn ask, so
-that ask alone decides how the row is carried out (a cleanup is still re-checked as one).
+that ask alone decides how the row is carried out (a cleanup is still re-checked as one, reading a
+block the kept delete wrote as the image was before it).
+
+A row dropped without carrying out its delete (`releasePendingDeletes`, and the restore's own release)
+undoes the block that delete wrote (`liftKeptHides`): an image gets back its recorded columns, and a
+post loses its `pending-delete` stamp and stays unpublished, for its owner or a moderator to publish.
+The job does this for every row it is done with whose item is still there (released, in use again,
+given away). Only while the item is as the block left it, with no `ModActivity` on it since, and
+never for a moderator's delete: a later decision stands. `refreshLiftedKeptHides` busts what the
+lift made stale.
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
 `deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
 post can't be published right now.
-`deletePost` deletes a post's images first, so those a case keeps are blocked. An owner's image blocked this way is no longer a plain owner delete when the
-queued delete runs, so it does not keep an object shop artwork uses.
+`deletePost` deletes a post's images first, so those a case keeps are blocked. When the owner's
+queued delete runs, `plainOwnerDeleteSql` reads such an image by the owner's ask and its record: it
+keeps an object shop artwork uses only if the image was plain before the block, the block still
+stands, and the case found nothing.
 
 Lifting a block (a moderator's unblock, an approved appeal, an account restore's lift of a grace
 block) releases any moderator's pending delete on that image: both apps'
@@ -78,8 +90,8 @@ outranked in the merge is already gone, so the lift drops it too. A review queue
 A row the caller's condition or the actor's ownership excludes is in none of the lists, and is
 neither deleted nor queued: the condition is checked once, here, and never replayed later.
 
-Some callers do not queue what they keep (`queueKept: false`), because a queued delete is carried
-out without their condition or outside their own run:
+Some callers neither queue nor block what they keep (`queueKept: false`), because a queued delete is
+carried out without their condition or outside their own run; the row stays exactly as it was:
 
 - both deletes in `image-ingestion.ts`'s `removeBlockedImages`: a kept row's `BlockedImageDelete`
   row stays for a later run, and only that job's run may send a takedown's retraction;

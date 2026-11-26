@@ -1,5 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { ImageIngestionStatus } from '@civitai/db-schema/enums';
 import {
   childSafetyImageCase,
   childSafetyPostCase,
@@ -19,6 +20,22 @@ import {
 export type DeleteReplay = { moderatorDelete?: true; keepStoredFiles?: true };
 
 export const PENDING_DELETES_ACTOR = { system: 'pending-deletes' } as const;
+
+/**
+ * The key of a queued row's `data` that holds what the kept-delete hide overwrote on its image, so a
+ * release that drops the delete can put it back (`liftKeptHides`). On the queue row, not the image:
+ * only the server reads it.
+ */
+export const KEPT_HIDE_PRIOR = 'prior';
+
+/** An image's columns as they were before the kept-delete hide, and when it ran. */
+export type KeptHidePrior = {
+  ingestion: string;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  at: string;
+};
 
 /**
  * The pending delete a kept row is queued as: the deleter's own, or anyone else's delete (a moderator's
@@ -64,7 +81,10 @@ export const PENDING_DELETE_UPSERT = sql`
         THEN EXCLUDED."data" ELSE "JobQueue"."data" END
       || jsonb_strip_nulls(jsonb_build_object(
         'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'),
-        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy')))) END,
+        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy')))) END
+      -- The first hide's record stays: a later ask finds the row already blocked.
+      || jsonb_strip_nulls(jsonb_build_object(${KEPT_HIDE_PRIOR}::text, COALESCE(
+        "JobQueue"."data"->${KEPT_HIDE_PRIOR}::text, EXCLUDED."data"->${KEPT_HIDE_PRIOR}::text))),
       "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")
     WHERE ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
       OR (EXCLUDED."data" ? 'ownerId' AND NOT "JobQueue"."data" ? 'ownerId')
@@ -74,12 +94,74 @@ export const PENDING_DELETE_UPSERT = sql`
 /** `NsfwLevel.Blocked`. */
 export const NSFW_LEVEL_BLOCKED = 32;
 
-/** Moderation still open on an image: a review other than CSAM, any block, or an open report. */
+/** `key` of the kept-delete record in a queued row's `data`, as text. */
+export const keptHidePrior = (data: RawBuilder<unknown>, key: keyof KeptHidePrior) =>
+  sql`(${data}->${KEPT_HIDE_PRIOR}::text->>${key}::text)`;
+
+/** A cast that reads a malformed value as NULL instead of failing the statement. */
+const timestampOr = (text: RawBuilder<unknown>) =>
+  sql`CASE WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+Z?$' THEN (${text})::timestamptz END`;
+
+/** A moderator has acted on the item since `since` (text), or `since` is unreadable. */
+export const moderatorActedSince = (
+  entityType: 'image' | 'post',
+  id: RawBuilder<unknown>,
+  since: RawBuilder<unknown>
+) =>
+  sql<boolean>`EXISTS (SELECT 1 FROM "ModActivity" ma WHERE ma."entityType" = ${entityType}
+    AND ma."entityId" = ${id} AND ma."createdAt" >= COALESCE(${timestampOr(since)}, '-infinity'))`;
+
+/**
+ * The image (`image`, an alias) is still as the kept-delete hide recorded in `data` left it: blocked
+ * by it and nothing since, no CSAM block or review now or recorded, a readable record, and no
+ * moderator activity on it since the hide.
+ */
+export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  const prior = (key: keyof KeptHidePrior) => keptHidePrior(data, key);
+  return sql<boolean>`(
+    ${col('ingestion')} = 'Blocked' AND ${col('blockedFor')} = 'moderated'
+    AND ${col('nsfwLevel')} = ${NSFW_LEVEL_BLOCKED}
+    AND (${col('needsReview')} IS NULL OR ${col('needsReview')} = 'appeal')
+    AND ${prior('ingestion')} = ANY(${Object.values(ImageIngestionStatus)}::text[])
+    AND ${prior('nsfwLevel')} ~ '^[0-9]{1,2}$'
+    AND ${prior('blockedFor')} IS DISTINCT FROM 'CSAM'
+    AND ${prior('needsReview')} IS DISTINCT FROM 'csam'
+    AND ${prior('at')} IS NOT NULL
+    AND NOT ${moderatorActedSince('image', col('id'), prior('at'))}
+  )`;
+};
+
+/**
+ * Moderation was open on the image before a kept delete hid it, by its record: a review other than
+ * CSAM, or any block.
+ */
+const priorModerationOpen = (data: RawBuilder<unknown>) => sql<boolean>`(
+  COALESCE(${keptHidePrior(data, 'needsReview')} <> 'csam', false)
+  OR ${keptHidePrior(data, 'blockedFor')} IS NOT NULL
+  OR ${keptHidePrior(data, 'ingestion')} = 'Blocked'
+  OR ${keptHidePrior(data, 'nsfwLevel')} = ${String(NSFW_LEVEL_BLOCKED)}
+)`;
+
+/**
+ * Moderation still open on an image: a review other than CSAM, any block, or an open report. A block
+ * only a kept delete's hide put there, still standing, is read as the image was before it.
+ */
 const moderationOpen = sql<boolean>`(
-  ("Image"."needsReview" IS NOT NULL AND "Image"."needsReview" <> 'csam')
-  OR "Image"."blockedFor" IS NOT NULL
-  OR "Image".ingestion = 'Blocked'
-  OR "Image"."nsfwLevel" = ${NSFW_LEVEL_BLOCKED}
+  (
+    (
+      ("Image"."needsReview" IS NOT NULL AND "Image"."needsReview" <> 'csam')
+      OR "Image"."blockedFor" IS NOT NULL
+      OR "Image".ingestion = 'Blocked'
+      OR "Image"."nsfwLevel" = ${NSFW_LEVEL_BLOCKED}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "JobQueue" pd_q
+      WHERE pd_q.type = 'PendingDelete' AND pd_q."entityType" = 'Image' AND pd_q."entityId" = "Image".id
+        AND ${keptHideStands('Image', sql.ref('pd_q.data'))}
+        AND NOT ${priorModerationOpen(sql.ref('pd_q.data'))}
+    )
+  )
   OR EXISTS (
     SELECT 1 FROM "ImageReport" pd_ir JOIN "Report" pd_r ON pd_r.id = pd_ir."reportId"
     WHERE pd_ir."imageId" = "Image".id AND pd_r.status IN ('Pending', 'Processing')
@@ -98,6 +180,7 @@ export type PendingDelete = DeleteReplay & {
   cleanup?: true;
   /** The account-deletion drain's ask, released by an account restore while a case held the row. */
   releasedOnRestore?: true;
+  prior?: KeptHidePrior;
 };
 
 const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;

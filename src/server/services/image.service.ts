@@ -376,14 +376,18 @@ import {
   queuePostNsfwLevelUpdates,
   type DeleteActor,
   type DeleteOutcome,
+  type LiftedKeptHides,
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
   dealFileImageSql,
 } from '@civitai/db-queries/content-deletion';
 import {
   imagesPendingDeletion as readImagesPendingDeletion,
+  keptHidePrior,
+  keptHideStands,
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
+import { childSafetyImageFinding } from '@civitai/db-queries/child-safety-case';
 import { sql, type RawBuilder } from 'kysely';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -903,6 +907,45 @@ export function attachTagsToImages<TImage extends { id: number }, TTag extends {
 
 type KeptImage = { imageId: number; userId: number; postId: number | null };
 
+/**
+ * After `liftKeptHides`: each image is unblocked again and each post unstamped, so what the hide
+ * busted is stale the other way. A failure is logged: the lift has committed.
+ */
+export async function refreshLiftedKeptHides({ images, postIds }: LiftedKeptHides) {
+  if (!images.length && !postIds.length) return;
+  const ids = images.map((x) => x.id);
+  const posts = uniq([...postIds, ...images.map((x) => x.postId).filter(isDefined)]);
+  const results = await Promise.allSettled([
+    ...(ids.length
+      ? [
+          queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+          invalidateManyImageExistence(ids),
+          imageMetaCache.refresh(ids),
+          imageMetadataCache.refresh(ids),
+          refreshImageLevelCaches(ids),
+          userImageVideoCountCaches.bust(uniq(images.map((x) => x.userId))),
+        ]
+      : []),
+    ...(posts.length
+      ? [
+          queuePostNsfwLevelUpdates(kyselyOver(dbWrite), posts),
+          bustCachesForPosts(posts),
+          postMetrics.queueUpdate(posts),
+        ]
+      : []),
+  ]);
+  const errors = results.flatMap((r) => (r.status === 'rejected' ? [safeError(r.reason)] : []));
+  if (errors.length)
+    logToAxiom({
+      type: 'error',
+      name: 'lift-kept-hide-refresh-failed',
+      message: 'a lifted image or post may still be cached as hidden',
+      imageIds: ids,
+      payload: { postIds },
+      errors,
+    });
+}
+
 /** A hidden image is now blocked, so the caches a delete busts are stale too. */
 async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
   const ids = kept.map((x) => x.imageId);
@@ -1011,15 +1054,34 @@ type ImageDeleteOptions = {
  * takedown or moderator delete always removes it, since a non-persisted CDN deny lapses and the
  * bytes would be served again. Scanned and unreported, so a delete cannot outrun a verdict. Read
  * against the deleted row (`gone` in `deleteImageRows`).
+ *
+ * An image its owner's earlier delete kept for a child-safety case was blocked by that delete, not by
+ * a verdict: it is read as the delete recorded it, while that block still stands and the case found
+ * nothing.
  */
-const plainOwnerDeleteSql = (deletedById: number, reported: number[]) =>
-  fromPrismaSql<boolean>(Prisma.sql`(
+const plainOwnerDeleteSql = (deletedById: number, reported: number[]) => {
+  const plain = (state: RawBuilder<unknown> | null) =>
+    state
+      ? sql<boolean>`(${keptHidePrior(state, 'ingestion')} = ${ImageIngestionStatus.Scanned}
+          AND ${keptHidePrior(state, 'needsReview')} IS NULL
+          AND ${keptHidePrior(state, 'blockedFor')} IS NULL
+          AND ${keptHidePrior(state, 'nsfwLevel')} <> ${String(NsfwLevel.Blocked)})`
+      : sql<boolean>`(ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+          AND "needsReview" IS NULL
+          AND NOT ${fromPrismaSql<boolean>(hasBlockMarkerSql('gone'))})`;
+  return sql<boolean>`(
     "userId" = ${deletedById}
-    AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-    AND "needsReview" IS NULL
     AND NOT (id = ANY(${reported}::int[]))
-    AND NOT ${hasBlockMarkerSql('gone')}
-  )`);
+    AND (${plain(null)} OR EXISTS (
+      SELECT 1 FROM "JobQueue" own_q
+      WHERE own_q.type = 'PendingDelete' AND own_q."entityType" = 'Image' AND own_q."entityId" = gone.id
+        AND own_q.data->'ownerId' = to_jsonb(${deletedById}::int)
+        AND ${keptHideStands('gone', sql.ref('own_q.data'))}
+        AND ${plain(sql.ref('own_q.data'))}
+        AND (${childSafetyImageFinding('gone')}) IS FALSE
+    ))
+  )`;
+};
 
 /**
  * 🔴 A NAMED options object. What `retractPublicBlobs` turns on deletes an image's public copies, so

@@ -164,12 +164,12 @@ describe('restoreUser and a banned account', () => {
   it('reports how many models the reclaim moved, and none when there was nothing to reclaim', async () => {
     deleted(null);
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }, { id: 502 }, { id: 503 }]);
-    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, 0, { count: 2 }, 2]);
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, [], { count: 2 }, 2]);
     await expect(
       restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
     ).resolves.toMatchObject({ modelsRestored: 2, modelIds: [501, 502, 503] });
 
-    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, 0]);
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, []]);
     await expect(restore('back')).resolves.toMatchObject({ modelsRestored: 0, modelIds: [] });
   });
 

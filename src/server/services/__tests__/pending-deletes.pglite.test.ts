@@ -4,6 +4,7 @@ import {
   deleteImageRows,
   deletePostRows,
   queueImageDeletes,
+  releasePendingDeletes,
 } from '@civitai/db-queries/content-deletion';
 import { childSafetyImageCase, childSafetyPostCase } from '@civitai/db-queries/child-safety-case';
 import {
@@ -60,7 +61,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
-  await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport",
+  await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport", "ModActivity",
     "CsamReport", "CsamQueueSetAside", "ImageConnection", "ServiceDealReviewImage",
     "ServiceDealReviewReport", "Appeal"`);
   await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${PLAIN}, ${OWNER})`);
@@ -259,7 +260,8 @@ describe('childSafetyImageCase', () => {
 const pending = async () =>
   (
     await pg.query<{ entityId: number; entityType: string; data: unknown }>(
-      `SELECT "entityId", "entityType"::text AS "entityType", data FROM "JobQueue"
+      // What the hide recorded is read on its own (`recorded`).
+      `SELECT "entityId", "entityType"::text AS "entityType", data - 'prior' AS data FROM "JobQueue"
        WHERE type = 'PendingDelete' ORDER BY "entityType", "entityId"`
     )
   ).rows;
@@ -545,21 +547,33 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect((await pending()).map((row) => row.entityId)).toEqual([IMAGE]);
   });
 
-  // docs/features/pending-deletes.md: a delete that keeps an image hides it, whoever deletes it.
-  it('blocks what a caller that does not queue keeps', async () => {
-    await addImage({ needsReview: 'csam' });
+  // A caller that retries from its own queue re-checks the row there (remove-replaced-images, which
+  // drops one re-adopted meanwhile), so nothing is pending to hide it for.
+  it.each([
+    ['leaves what a caller that does not queue keeps as it was', false, []],
+    [
+      'control: hides the same image for a caller that queues it',
+      undefined,
+      [{ id: IMAGE, userId: OWNER, postId: null }],
+    ],
+  ])('%s', async (_, queueKept, hiddenRows) => {
+    await addImage({ needsReview: 'tag', nsfwLevel: 4 });
+    await report(1);
+    await pg.exec(`INSERT INTO "ImageReport" VALUES (${IMAGE}, 1)`);
+    const columns = `SELECT ingestion, "nsfwLevel", "blockedFor", "needsReview" FROM "Image" WHERE id = ${IMAGE}`;
+    const { rows: before } = await pg.query(columns);
 
     const { kept, hidden } = await deleteImageRows(db, {
       ids: [IMAGE],
       actor: { system: 'remove-replaced-images' },
-      queueKept: false,
+      queueKept,
     });
 
     expect(kept).toEqual([IMAGE]);
-    expect(hidden).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
-    const { rows } = await pg.query(`SELECT ingestion FROM "Image" WHERE id = ${IMAGE}`);
-    expect(rows).toEqual([{ ingestion: 'Blocked' }]);
-    expect(await pending()).toEqual([]);
+    expect(hidden).toEqual(hiddenRows);
+    const { rows } = await pg.query(columns);
+    if (queueKept === false) expect(rows).toEqual(before);
+    else expect(rows).not.toEqual(before);
   });
 
   it('keeps without queueing for a caller that retries from its own queue', async () => {
@@ -940,26 +954,24 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
       ]);
     });
 
-    it('lets its owner publish a kept post no queued delete owns (a caller that retries itself)', async () => {
+    // Its queue re-checks it, so nothing is pending to hide it for (job-queue-clean-if-empty).
+    it.each([
+      ['leaves a post a caller that retries itself keeps as it was', false, true],
+      ['control: unpublishes the same post for a caller that queues it', undefined, false],
+    ])('%s', async (_, queueKept, published) => {
       await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (52, ${OWNER}, now());
         INSERT INTO "PostReport" VALUES (52, 1)`);
-      await deletePostRows(db, {
+      const { kept } = await deletePostRows(db, {
         ids: [52],
         actor: { system: 'job-queue-clean-if-empty' },
-        queueKept: false,
-      });
-      expect((await posts()).find((p) => p.id === 52)).toEqual({
-        id: 52,
-        published: false,
-        reason: 'pending-delete',
+        queueKept,
       });
 
-      await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id = 52`);
-
+      expect(kept).toEqual([52]);
       expect((await posts()).find((p) => p.id === 52)).toEqual({
         id: 52,
-        published: true,
-        reason: null,
+        published,
+        reason: published ? null : 'pending-delete',
       });
     });
 
@@ -1233,5 +1245,177 @@ describe('the shared CSAM report sets', () => {
   it('names the subject and secondary user of the reports the filter passes', async () => {
     expect(await rows(csamReportNamedUserIdsSql(() => 'true'))).toEqual(['10', '11', '12', '13']);
     expect(await rows(csamReportNamedUserIdsSql(unsentOnly))).toEqual(['10', '11']);
+  });
+});
+
+// What a kept delete's hide took, put back when its queued delete is let go (an account restore, a
+// case closed with nothing found, a cleanup that no longer applies).
+describe('releasePendingDeletes', () => {
+  const state = `SELECT ingestion, "nsfwLevel", "blockedFor", "needsReview" FROM "Image" WHERE id = ${IMAGE}`;
+  const imageState = async () => (await pg.query(state)).rows[0];
+  const drain = { system: 'remove-deleted-user-images' };
+  /** The image as it was, kept for an open report and hidden by `actor`'s delete. */
+  const hideFor = async (
+    actor: Parameters<typeof deleteImageRows>[1]['actor'] = drain,
+    replay?: { moderatorDelete: true }
+  ) => {
+    await addImage({ ingestion: 'Pending', nsfwLevel: 4, needsReview: 'tag' });
+    await report(1);
+    await pg.exec(`INSERT INTO "ImageReport" VALUES (${IMAGE}, 1)`);
+    const before = await imageState();
+    const { hidden } = await deleteImageRows(db, { ids: [IMAGE], actor, replay });
+    expect(hidden.map(({ id }) => id)).toEqual([IMAGE]);
+    expect(await imageState()).not.toEqual(before);
+    return before;
+  };
+  const release = () => releasePendingDeletes(db, 'Image', [IMAGE]);
+
+  it('puts back what the hide recorded, and drops the queued delete', async () => {
+    const before = await hideFor();
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
+    expect(await imageState()).toEqual(before);
+    expect(await pending()).toEqual([]);
+  });
+
+  it('keeps the record of the first hide when a later ask finds the image already hidden', async () => {
+    const before = await hideFor();
+    await deleteImageRows(db, { ids: [IMAGE], actor: owner });
+
+    await release();
+
+    expect(await imageState()).toEqual(before);
+  });
+
+  it('leaves the image hidden once a moderator has acted on it since', async () => {
+    await hideFor();
+    const hidden = await imageState();
+    await pg.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+      VALUES (99, 'review', 'image', ${IMAGE})`);
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([]);
+    expect(await imageState()).toEqual(hidden);
+  });
+
+  it('counts only moderator activity since the hide', async () => {
+    const before = await hideFor();
+    await pg.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+      VALUES (99, 'review', 'image', ${IMAGE}, now() - interval '1 day')`);
+
+    await release();
+
+    expect(await imageState()).toEqual(before);
+  });
+
+  it.each([
+    [
+      'blocked for CSAM since the hide',
+      `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${IMAGE}`,
+    ],
+    [
+      'under CSAM review since the hide',
+      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${IMAGE}`,
+    ],
+    [
+      'recorded under CSAM review',
+      `UPDATE "JobQueue" SET data = jsonb_set(data, '{prior,needsReview}', '"csam"') WHERE "entityId" = ${IMAGE}`,
+    ],
+    [
+      'recorded blocked for CSAM',
+      `UPDATE "JobQueue" SET data = jsonb_set(data, '{prior,blockedFor}', '"CSAM"') WHERE "entityId" = ${IMAGE}`,
+    ],
+  ])('never lifts an image %s', async (_, change) => {
+    await hideFor();
+    await pg.exec(change);
+    const now = await imageState();
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([]);
+    expect(await imageState()).toEqual(now);
+  });
+
+  it('never lifts an image kept under CSAM review when it was hidden', async () => {
+    await addImage({ needsReview: 'csam', nsfwLevel: 4 });
+    await deleteImageRows(db, { ids: [IMAGE], actor: drain });
+    const hidden = await imageState();
+    expect(hidden).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam' });
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([]);
+    expect(await imageState()).toEqual(hidden);
+  });
+
+  it("leaves a moderator's delete to the moderator", async () => {
+    await hideFor({ id: 99, isModerator: true }, { moderatorDelete: true });
+    const hidden = await imageState();
+
+    await release();
+
+    expect(await imageState()).toEqual(hidden);
+  });
+
+  it('takes the stamp off a released post, which stays unpublished', async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (60, ${OWNER}, now());
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM'); INSERT INTO "PostReport" VALUES (60, 1)`);
+    await deletePostRows(db, { ids: [60], actor: drain });
+
+    const lifted = await releasePendingDeletes(db, 'Post', [60]);
+
+    expect(lifted.postIds).toEqual([60]);
+    const { rows } = await pg.query(
+      `SELECT "publishedAt", metadata->>'unpublishedReason' AS reason FROM "Post" WHERE id = 60`
+    );
+    expect(rows).toEqual([{ publishedAt: null, reason: null }]);
+  });
+
+  it("leaves a released post's stamp once a moderator has acted on it since", async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (60, ${OWNER}, now());
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM'); INSERT INTO "PostReport" VALUES (60, 1);`);
+    await deletePostRows(db, { ids: [60], actor: drain });
+    await pg.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+      VALUES (99, 'unpublish', 'post', 60)`);
+
+    const lifted = await releasePendingDeletes(db, 'Post', [60]);
+
+    expect(lifted.postIds).toEqual([]);
+    const { rows } = await pg.query(
+      `SELECT metadata->>'unpublishedReason' AS reason FROM "Post" WHERE id = 60`
+    );
+    expect(rows).toEqual([{ reason: 'pending-delete' }]);
+  });
+});
+
+// The delete's two statements (the hide and its purge-row drop) run in one transaction when it hides
+// what no moderator decided on (`withDeleteTransaction`): a failed second statement takes back the hide.
+describe('a hiding delete whose second statement fails', () => {
+  it.each([
+    ['rolls back the hide and the queued delete', true],
+    ['control: keeps both when it succeeds', false],
+  ])('%s', async (_, fails) => {
+    await addImage({ needsReview: 'csam' });
+    if (fails)
+      await pg.exec(`CREATE FUNCTION fail_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'statement failed'; END $$;
+        CREATE TRIGGER fail_delete BEFORE DELETE ON "JobQueue" FOR EACH STATEMENT EXECUTE FUNCTION fail_delete()`);
+    await pg.exec('BEGIN');
+    try {
+      await deleteImageRows(db, { ids: [IMAGE], actor: { system: 'remove-deleted-user-images' } });
+      await pg.exec('COMMIT');
+    } catch {
+      await pg.exec('ROLLBACK');
+    } finally {
+      if (fails)
+        await pg.exec(`DROP TRIGGER fail_delete ON "JobQueue"; DROP FUNCTION fail_delete()`);
+    }
+
+    const { rows } = await pg.query(`SELECT ingestion FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ ingestion: fails ? 'Scanned' : 'Blocked' }]);
+    expect((await pending()).length).toBe(fails ? 0 : 1);
   });
 });

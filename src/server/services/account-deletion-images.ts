@@ -4,6 +4,7 @@ import {
   childSafetyPostCase,
   childSafetyPostFinding,
 } from '@civitai/db-queries/child-safety-case';
+import { liftKeptHides, selectLifted, type LiftedRow } from '@civitai/db-queries/content-deletion';
 import { uniq } from 'lodash-es';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -75,10 +76,12 @@ export function disarmAccountDeletionImagePurge(userId: number) {
  * on, stays, marked `releasedOnRestore`, so the restore cannot
  * make it publishable; `pending-deletes` releases it once the case closes with no finding, and
  * deletes it otherwise.
+ * A row released outright gets back what the drain's kept-delete hide took (`liftKeptHides`); the
+ * result names what was lifted, for `refreshLiftedKeptHides` once the transaction commits.
  * A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
  */
 export function releaseAccountDeletionPendingDeletes(userId: number) {
-  return dbWrite.$executeRaw`
+  return dbWrite.$queryRaw<LiftedRow[]>`
     WITH drained AS (
       SELECT q."entityType", q."entityId", q.data ?| array['ownerId', 'cleanup'] AS "askedElse",
         CASE WHEN q."entityType" = 'Image'
@@ -107,10 +110,16 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
       UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
         AND q."entityId" = d."entityId" AND NOT d."askedElse" AND d."inCase"
-    )
-    DELETE FROM "JobQueue" q USING drained d
-    WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
-      AND q."entityId" = d."entityId" AND NOT d."askedElse" AND NOT d."inCase"
+    ),
+    released AS (
+      DELETE FROM "JobQueue" q USING drained d
+      WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
+        AND q."entityId" = d."entityId" AND NOT d."askedElse" AND NOT d."inCase"
+      RETURNING q."entityType", q."entityId", q.data
+    ),
+    -- What the drain's hide took goes back with its ask (refreshLiftedKeptHides after the commit).
+    ${toPrismaSql(liftKeptHides('released'))}
+    ${toPrismaSql(selectLifted)}
   `;
 }
 
