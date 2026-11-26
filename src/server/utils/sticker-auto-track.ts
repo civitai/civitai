@@ -17,8 +17,8 @@ import { throwRateLimited } from '~/server/utils/rate-limit-error';
 // subject under a sticker and returns a v1 track.
 // Keep COMFY_IMAGE on the image the workers serve: a run pinned to an image they have dropped
 // waits minutes while one is fetched. After changing COMFY_IMAGE or NODE_PACK, submit one run
-// before deploying: the orchestrator briefly caches a brand-new layer as missing, so the first
-// run that builds it fails its track step.
+// before deploying and check it succeeds: the first run that built the v2.7.65 layer failed its
+// track step with no reason given, and runs passed once the layer existed.
 const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.65';
 const NODE_PACK = 'urn:air:comfy:nodepack:comfyregistry:civitai/civitai-sticker-track@1.3.0';
 const INSTALL_STEP = 'install';
