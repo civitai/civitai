@@ -59,7 +59,9 @@ export async function alignTrackLyrics({ imageId, url }: { imageId: number; url:
   }
   const timed = toAlignedLines(lines, data.lines);
   if (!timed) {
-    logAlignment(imageId, 'unmatched', { stored: lines.length, aligned: data.lines.length });
+    logAlignment(imageId, 'unmatched', {
+      payload: { stored: lines.length, aligned: data.lines.length },
+    });
     return false;
   }
 
