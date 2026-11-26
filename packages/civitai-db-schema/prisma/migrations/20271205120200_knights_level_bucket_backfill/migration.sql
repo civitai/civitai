@@ -1,5 +1,5 @@
 -- One-time backfill of "KnightsQueueItem"."levelBucket" for the open rating items, after
--- 20271129120000_knights_level_bucket and before the Knights release that reads it. The Knights tick then keeps the
+-- 20271205120000_knights_level_bucket and before the Knights release that reads it. The Knights tick then keeps the
 -- column filled (`syncLevelBuckets`, which also corrects drifted values), so the backfill only spares the first ticks after the
 -- release from serving the backlog through the bounded NULL fallback.
 --
