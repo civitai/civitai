@@ -5851,6 +5851,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.poll', pollRate.retryAfterSeconds),
           },
         };
       }
@@ -6187,6 +6189,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
           },
         };
       }

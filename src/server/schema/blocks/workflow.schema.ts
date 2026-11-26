@@ -25,6 +25,7 @@ import {
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
 import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 import {
@@ -1668,6 +1669,15 @@ export type BlockWorkflowSnapshot = {
    * never carries it. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
    */
   throttled?: true;
+  /**
+   * The retry meta of the rate limit that refused this request: which limit, when to retry
+   * and, for a limit that publishes them, its counts. Present on a `failed` snapshot the host
+   * built from a rate-limited refusal (`failureSnapshot`), and on a `throttled` reply when a
+   * rate limit shed the poll or cancel. Absent on every other snapshot. The same shape as the
+   * `rateLimit` on a bridge error reply. 🔴 WIRE CONTRACT: additive; mirrored by
+   * `@civitai/app-sdk`.
+   */
+  rateLimit?: RateLimitMeta;
 };
 
 /**
