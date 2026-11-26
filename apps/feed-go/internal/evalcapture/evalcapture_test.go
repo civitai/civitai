@@ -479,7 +479,8 @@ func TestNewWriters(t *testing.T) {
 
 // A case never stores search text (model.getAll's `query`): it is replaced by SearchPlaceholder in the
 // stored request and nowhere else in any row, other keys kept; two searches differing only in text
-// share a signature. An empty query and an input without one are stored as they are.
+// share a signature and, once redacted, are the same case (the second is deduped). An empty query and
+// an input without one are stored as they are.
 func TestRecordRedactsSearchText(t *testing.T) {
 	r, samples, cases, _ := newRecorder(Config{})
 	user := evalcorpus.Viewer{Class: evalcorpus.ViewerUser, UserID: 5}
@@ -490,9 +491,11 @@ func TestRecordRedactsSearchText(t *testing.T) {
 				Input: `{"json":{"limit":20,"query":` + q + `,"sort":"Newest"}}`},
 		}
 	}
-	for _, q := range []string{`"private words typed"`, `"other typed words"`, `""`} {
-		if o := r.Record(search(q)); o != OutcomeWritten {
-			t.Fatalf("query %s: %q", q, o)
+	for _, c := range []struct{ q, want string }{
+		{`"private words typed"`, OutcomeWritten}, {`"other typed words"`, OutcomeDeduped}, {`""`, OutcomeWritten},
+	} {
+		if o := r.Record(search(c.q)); o != c.want {
+			t.Fatalf("query %s: %q, want %q", c.q, o, c.want)
 		}
 	}
 	all, _ := json.Marshal([]any{samples.rows, cases.rows})
@@ -508,16 +511,18 @@ func TestRecordRedactsSearchText(t *testing.T) {
 	}
 	want := []string{
 		`{"json":{"limit":20,"query":"$search","sort":"Newest"}}`,
-		`{"json":{"limit":20,"query":"$search","sort":"Newest"}}`,
 		`{"json":{"limit":20,"query":"","sort":"Newest"}}`,
+	}
+	if len(inputs) != len(want) {
+		t.Fatalf("stored inputs %v, want %v", inputs, want)
 	}
 	for i := range want {
 		if inputs[i] != want[i] {
 			t.Errorf("stored input %d = %s, want %s", i, inputs[i], want[i])
 		}
 	}
-	if cs[0].Sig != cs[1].Sig {
-		t.Error("two searches differing only in text have different signatures")
+	if ss := samples.samples(); len(ss) != 3 || ss[0].Sig != ss[1].Sig || ss[1].CaseID != 0 {
+		t.Errorf("samples %+v: want 3, the two searches sharing a signature, the second not admitted", ss)
 	}
 	for in, want := range map[string]string{
 		"":                     "",
