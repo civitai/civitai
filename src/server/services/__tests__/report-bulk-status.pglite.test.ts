@@ -39,6 +39,9 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    -- No Feature Pages mirror table: a set holding no Feature Pages comment report never reads it.
+    CREATE TABLE "CommentV3" (id int PRIMARY KEY, "entityType" text NOT NULL);
+    CREATE TABLE "CommentV3Report" ("reportId" int PRIMARY KEY, "commentId" int NOT NULL);
     CREATE TABLE "Report" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,

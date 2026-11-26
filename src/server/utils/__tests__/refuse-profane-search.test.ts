@@ -7,6 +7,12 @@ import { semanticBountySearchRouter } from '~/server/routers/semantic-bounty-sea
 import { semanticComicSearchRouter } from '~/server/routers/semantic-comic-search.router';
 import { semanticImageSearchRouter } from '~/server/routers/semantic-image-search.router';
 import { semanticModelSearchRouter } from '~/server/routers/semantic-model-search.router';
+import { semanticChallengeSearchRouter } from '~/server/routers/semantic-challenge-search.router';
+import { semanticCrucibleSearchRouter } from '~/server/routers/semantic-crucible-search.router';
+import { semanticCollectionSearchRouter } from '~/server/routers/semantic-collection-search.router';
+import { semanticStorylineSearchRouter } from '~/server/routers/semantic-storyline-search.router';
+import { semanticModel3DSearchRouter } from '~/server/routers/semantic-model3d-search.router';
+import { challengeRouter } from '~/server/routers/challenge.router';
 import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
 import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 import { publicProcedure, router } from '~/server/trpc';
@@ -40,6 +46,15 @@ const features = {
   semanticBountySearch: true,
   imageSearch: true,
   semanticVideoSearch: true,
+  challengePlatform: true,
+  semanticChallengeSearch: true,
+  crucible: true,
+  semanticCrucibleSearch: true,
+  profileCollections: true,
+  semanticCollectionSearch: true,
+  storylines: true,
+  semanticStorylineSearch: true,
+  semanticModel3DSearch: true,
 };
 const req = { headers: {}, socket: { remoteAddress: '10.0.0.9' } };
 const ctx = (overrides: object = {}) =>
@@ -64,6 +79,18 @@ const procedures = {
   'semanticImageSearch.search': () => semanticImageSearchRouter.createCaller(ctx()).search,
   'semanticImageSearch.searchVideos': () =>
     semanticImageSearchRouter.createCaller(ctx()).searchVideos,
+  'semanticChallengeSearch.search': () => semanticChallengeSearchRouter.createCaller(ctx()).search,
+  'semanticCrucibleSearch.search': () => semanticCrucibleSearchRouter.createCaller(ctx()).search,
+  'semanticCollectionSearch.search': () =>
+    semanticCollectionSearchRouter.createCaller(ctx()).search,
+  'semanticStorylineSearch.search': () => semanticStorylineSearchRouter.createCaller(ctx()).search,
+  'semanticModel3DSearch.search': () => semanticModel3DSearchRouter.createCaller(ctx()).search,
+  // challenge.getInfinite is the fallback when the challenges feed's semantic search fails (a
+  // refusal included), so it must refuse the same text. getCompletedWithWinners is a text search
+  // of its own.
+  'challenge.getInfinite': () => challengeRouter.createCaller(ctx()).getInfinite,
+  'challenge.getCompletedWithWinners': () =>
+    challengeRouter.createCaller(ctx()).getCompletedWithWinners,
 };
 
 describe('semantic search, flag on, civitai.com', () => {
