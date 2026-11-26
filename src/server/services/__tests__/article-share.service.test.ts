@@ -838,6 +838,7 @@ describe('moderators and share links', () => {
   });
 });
 
+// civitai/civitai#10514: the share-link view follows the signed-out report-listed rule.
 describe('getArticleByShareToken: images listed on a report', () => {
   const COVER = 5;
   const BANNER = 6;

@@ -664,18 +664,16 @@ describe('the article page body under the report-listed rule', () => {
       expect(content).not.toContain(uuid(OWN_BODY));
     });
 
-    it.each<[string, Viewer, typeof SESSION]>([
-      [
-        'a held-media viewer',
-        { id: MOD, isModerator: true },
-        { ...SESSION, seesReportListed: true },
-      ],
-      ['the owner reading the page', { id: OWNER }, SESSION],
-    ])('is the page read for %s (control)', async (_, viewer, reportListedViewer) => {
+    it('is the page read for a held-media viewer (control)', async () => {
+      const viewer = { id: MOD, isModerator: true };
+      const reportListedViewer = { ...SESSION, seesReportListed: true };
       const page = await editRead(viewer, reportListedViewer, false);
-      if (reportListedViewer.seesReportListed)
-        expect(await editRead(viewer, reportListedViewer)).toBe(page);
+      expect(await editRead(viewer, reportListedViewer)).toBe(page);
       expect(placeholders(page)).toEqual([]);
+    });
+
+    it("gives no placeholder on the owner's page read (control)", async () => {
+      expect(placeholders(await editRead({ id: OWNER }, SESSION, false))).toEqual([]);
     });
   });
 });
