@@ -301,13 +301,17 @@ function sendComicPanelSignal(
 async function getOwnedImageOrThrow(imageId: number, userId: number) {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
-    select: { id: true, userId: true, url: true },
+    select: { id: true, userId: true, url: true, ingestion: true, blockedFor: true },
   });
   if (!image || image.userId !== userId) {
     throw throwAuthorizationError();
   }
+  // Attached, a blocked image's media would reach its owner through the row it backs.
+  if (!ownerMediaAllowed(image))
+    throw throwBadRequestError('This image is blocked and cannot be used here.');
   await assertNotDealFileImages([imageId], 'used here');
-  return image;
+  const { ingestion: _ingestion, blockedFor: _blockedFor, ...owned } = image;
+  return owned;
 }
 
 // Middleware to check project ownership
@@ -697,12 +701,12 @@ async function assertReferencePanelImageUnblocked(
 // Shared helper: resolve a reference's images for generation
 /** A panel's stored media for the request's viewer: none of it when `blockLeavesMedia` refuses its
  *  image, candidate keys included. */
-function panelMediaFor(
+async function panelMediaFor(
   panel: { imageUrl: string | null; metadata: unknown; image: PanelImageRow | null },
   ctx: Parameters<typeof actsAsModerator>[0]
 ) {
   if (!panel.image || blockLeavesMedia(panel.image, ctx.user?.id, actsAsModerator(ctx)))
-    return { imageUrl: panel.imageUrl, metadata: panel.metadata };
+    return { imageUrl: panel.imageUrl, metadata: await withoutRefusedKeys(panel.metadata, ctx) };
   return {
     imageUrl: null,
     metadata: viewerPanelMetadata(panel.metadata, {
@@ -713,6 +717,53 @@ function panelMediaFor(
   };
 }
 type PanelImageRow = Parameters<typeof blockLeavesMedia>[0];
+
+/** The stored keys in `values` whose Image rows the viewer may not be served: each row must pass
+ *  `isImageServable` and `blockLeavesMedia`. A key with no Image row is not refused. */
+async function refusedImageKeys(values: string[], ctx: Parameters<typeof actsAsModerator>[0]) {
+  if (!values.length) return new Set<string>();
+  const rows = await primarySourceRows(values);
+  const moderator = actsAsModerator(ctx);
+  return new Set(
+    rows
+      .filter(
+        (row) =>
+          !isImageServable(row, ctx.user?.id) || !blockLeavesMedia(row, ctx.user?.id, moderator)
+      )
+      .map((row) => row.url)
+  );
+}
+
+/** A panel's raw `metadata` with every candidate key and the source image a block refuses the
+ *  viewer taken out. Other keys are left as they are. */
+async function withoutRefusedKeys(metadata: unknown, ctx: Parameters<typeof actsAsModerator>[0]) {
+  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return metadata;
+  const record = metadata as Record<string, unknown>;
+  const candidates = Array.isArray(record.candidateImages) ? record.candidateImages : [];
+  const keyOf = (entry: unknown) =>
+    typeof entry === 'string'
+      ? entry
+      : typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as { key?: unknown }).key === 'string'
+      ? (entry as { key: string }).key
+      : null;
+  const source = panelSourceImageUrl(metadata);
+  const keys = [...new Set([...candidates.map(keyOf), source].filter((k): k is string => !!k))];
+  const refused = await refusedImageKeys(keys, ctx);
+  if (!refused.size) return metadata;
+  const out: Record<string, unknown> = { ...record };
+  if (Array.isArray(record.candidateImages))
+    out.candidateImages = candidates.map((entry) => {
+      const key = keyOf(entry);
+      if (!key || !refused.has(key)) return entry;
+      if (typeof entry === 'string') return { nsfwLevel: null };
+      const { key: _key, ...rest } = entry as Record<string, unknown>;
+      return rest;
+    });
+  if (source && refused.has(source)) delete out.sourceImageUrl;
+  return out;
+}
 
 /** Refuses copying a panel whose image a block refuses the viewer: the copy would carry its media. */
 function assertPanelCopyable(
@@ -1391,6 +1442,15 @@ export const comicsRouter = router({
         ),
       ];
       const sourceRows = sources.length ? await primarySourceRows(sources) : [];
+      const candidateKeys = chapter.panels.flatMap((p) => {
+        const entries = (p.metadata as { candidateImages?: unknown } | null)?.candidateImages;
+        return Array.isArray(entries)
+          ? entries
+              .map((e) => (typeof e === 'string' ? e : (e as { key?: unknown } | null)?.key))
+              .filter((k): k is string => typeof k === 'string')
+          : [];
+      });
+      const refusedCandidateKeys = await refusedImageKeys([...new Set(candidateKeys)], ctx);
       const keepSourceImage = (value: string) => {
         const rows = sourceRows.filter((row) => row.url === value);
         return (
@@ -1411,6 +1471,7 @@ export const comicsRouter = router({
             isOwner,
             keepSourceImage,
             withheld: withheld(panel),
+            keepCandidateKey: (key) => !refusedCandidateKeys.has(key),
           }),
         })),
       };
@@ -2138,7 +2199,7 @@ export const comicsRouter = router({
         imageUrl: newPanel.imageUrl,
       });
 
-      return newPanel;
+      return { ...newPanel, ...(await panelMediaFor({ ...newPanel, image: panel.image }, ctx)) };
     }),
 
   duplicateChapter: comicProtectedProcedure
@@ -2397,9 +2458,7 @@ export const comicsRouter = router({
           images: {
             orderBy: { position: 'asc' },
             include: {
-              image: {
-                select: { id: true, url: true, width: true, height: true, ingestion: true },
-              },
+              image: { select: referenceImageSelect },
             },
           },
         },
@@ -2412,7 +2471,7 @@ export const comicsRouter = router({
       return {
         id: reference.id,
         status: reference.status,
-        images: reference.images,
+        images: withServableReferenceImages(reference, ctx).images,
       };
     }),
 
@@ -2736,7 +2795,7 @@ export const comicsRouter = router({
         include: { image: { select: panelImageVisibilitySelect } },
       });
 
-      return { ...updated, ...panelMediaFor({ ...updated, image }, ctx) };
+      return { ...updated, ...(await panelMediaFor({ ...updated, image }, ctx)) };
     }),
 
   replacePanelImage: comicProtectedProcedure
@@ -2748,7 +2807,7 @@ export const comicsRouter = router({
         where: { id: input.panelId },
         include: {
           chapter: { include: { project: { select: { userId: true, id: true } } } },
-          image: { select: { url: true } },
+          image: { select: { url: true, ...panelImageVisibilitySelect } },
         },
       });
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
@@ -2758,7 +2817,8 @@ export const comicsRouter = router({
       const unchanged =
         input.imageUrl === panel.imageUrl &&
         (!isBareUploadKey(input.imageUrl) || linked?.url === input.imageUrl);
-      if (unchanged) return stored;
+      if (unchanged)
+        return { ...stored, ...(await panelMediaFor({ ...stored, image: linked }, ctx)) };
       assertBareUploadKeys([input.imageUrl]);
 
       const image = await createImage({
@@ -2861,9 +2921,7 @@ export const comicsRouter = router({
                   name: true,
                   images: {
                     orderBy: { position: 'asc' },
-                    include: {
-                      image: { select: { id: true, url: true, width: true, height: true } },
-                    },
+                    include: { image: { select: referenceImageSelect } },
                   },
                 },
               },
@@ -2920,7 +2978,7 @@ export const comicsRouter = router({
           status: panel.status,
           prompt: panel.prompt,
           enhancedPrompt: panel.enhancedPrompt,
-          ...panelMediaFor(panel, ctx),
+          ...(await panelMediaFor(panel, ctx)),
           workflowId: panel.workflowId,
           errorMessage: panel.errorMessage,
           createdAt: panel.createdAt,
@@ -2932,7 +2990,7 @@ export const comicsRouter = router({
         references: panelReferences.map((ref) => ({
           id: ref.id,
           name: ref.name,
-          images: ref.images,
+          images: withServableReferenceImages(ref, ctx).images,
         })),
         generation: (() => {
           const mc = getComicModelConfig(panel.chapter.project.baseModel);
@@ -3886,7 +3944,7 @@ export const comicsRouter = router({
         imageUrl: updated.imageUrl,
       });
 
-      return updated;
+      return { ...updated, ...(await panelMediaFor({ ...updated, image: null }, ctx)) };
     }),
 
   // Iterative panel editor — generate image without creating a panel record
