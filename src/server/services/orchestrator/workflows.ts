@@ -807,9 +807,12 @@ export async function cancelWorkflow({
   throwOnError,
 }: z.infer<typeof workflowIdSchema> & {
   token: string;
-  /** Surface a non-2xx cancel as a throw, as `deleteWorkflow`; OFF keeps every existing caller. */
+  /**
+   * Surface a non-2xx cancel as a throw carrying the HTTP `status`, as `deleteWorkflow`; OFF keeps
+   * every existing caller.
+   */
   throwOnError?: boolean;
-}) {
+}): Promise<number | undefined> {
   const client = createOrchestratorClient(token);
 
   const result = await clientUpdateWorkflow({
@@ -817,8 +820,14 @@ export async function cancelWorkflow({
     path: { workflowId },
     body: { status: 'canceled' },
   });
-  if (throwOnError && result?.error)
-    throw new Error(`cancelWorkflow failed for ${workflowId}: ${JSON.stringify(result.error)}`);
+  const status = result?.response?.status;
+  if (throwOnError && result?.error) {
+    throw Object.assign(
+      new Error(`cancelWorkflow failed for ${workflowId}: ${JSON.stringify(result.error)}`),
+      { status }
+    );
+  }
+  return status;
 }
 
 export async function deleteWorkflow({

@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Workflow } from '@civitai/orchestration-client';
+import type { CustomComfyStep, Workflow } from '@civitai/orchestration-client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { env } from '~/env/server';
@@ -28,11 +28,14 @@ export const RUNNER_ATTEMPT_STALE_MS =
 export const RUNNER_UNKNOWN_ALARM_MS = 60 * 60 * 1000;
 const BATCH = 200;
 const CANCEL_MARKER_TTL_SECONDS = 60 * 60;
+/** A held row is GET again after this: each GET wakes the workflow's grain and its recovery paths. */
+const HELD_BACKOFF_SECONDS = 15 * 60;
 
 export interface RunnerReconcileDeps {
   /** The workflow, or null when the orchestrator has none by that id. */
   getWorkflow(workflowId: string): Promise<Workflow | null>;
-  cancelWorkflow(workflowId: string): Promise<void>;
+  /** The HTTP status of the cancel; throws (with `status`) on a non-2xx. */
+  cancelWorkflow(workflowId: string): Promise<number | undefined>;
   /** The `block_workflows` read model. */
   markWorkflowStatus(workflowId: string, status: string): Promise<unknown>;
   reverseAuthorFee(workflowId: string, terminalStatus: string): Promise<unknown>;
@@ -124,8 +127,8 @@ async function reconcileAttempt(
       workflowId: row.workflowId,
       reason,
     });
-    // To the back of the queue, so held rows cannot fill every batch.
-    await touchRunnerAttempt(db, row.attemptId, 'submitted');
+    // Out of the next passes, so held rows cannot fill every batch or poll the orchestrator hot.
+    await touchRunnerAttempt(db, row.attemptId, 'submitted', HELD_BACKOFF_SECONDS);
     return 'held' as const;
   };
   if (!row.workflowId) return await held('no_workflow_id');
@@ -148,7 +151,8 @@ async function reconcileAttempt(
     status !== 'expired' &&
     status !== 'canceled'
   ) {
-    if (actual > row.reservedAmount) await cancelOverCeiling(deps, row, actual);
+    const observed = Math.max(actual, liveCustomComfyCost(workflow));
+    if (observed > row.reservedAmount) await cancelOverCeiling(deps, row, observed);
     return 'running';
   }
 
@@ -209,12 +213,28 @@ async function cancelOverCeiling(
     reason: 'over_reserved_ceiling',
   };
   try {
-    await deps.cancelWorkflow(row.workflowId!);
-    alarm('runner-attempt-over-ceiling', { ...payload, outcome: 'canceled' });
+    const status = await deps.cancelWorkflow(row.workflowId!);
+    alarm('runner-attempt-over-ceiling', { ...payload, outcome: 'canceled', status });
   } catch (error) {
     await redis.del(key);
-    alarm('runner-attempt-over-ceiling', { ...payload, outcome: 'cancel_failed' }, error);
+    const status = (error as { status?: number }).status ?? null;
+    alarm('runner-attempt-over-ceiling', { ...payload, outcome: 'cancel_failed', status }, error);
   }
+}
+
+/**
+ * What a running customComfy workflow has accrued. `cost.total` prices finished attempts only, so
+ * mid-run it reads 0; each step's `usage.estimatedCost` covers the current attempt too, as fresh as
+ * the worker's last runtime report. Runner tips are 0.
+ */
+function liveCustomComfyCost(workflow: Workflow): number {
+  let total = 0;
+  for (const step of workflow.steps ?? []) {
+    if (step.$type !== 'customComfy') continue;
+    const estimated = (step as CustomComfyStep).output?.usage?.estimatedCost;
+    if (typeof estimated === 'number' && estimated > 0) total += Math.ceil(estimated);
+  }
+  return total;
 }
 
 /**

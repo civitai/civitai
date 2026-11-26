@@ -147,14 +147,18 @@ export async function transitionRunnerAttempt(
   return Number(result.numAffectedRows ?? 0) > 0;
 }
 
-/** Bump `updated_at` of an attempt still in `state`, moving it to the back of `listRunnerAttempts`. */
+/**
+ * Set `updated_at` of an attempt still in `state` to `delaySeconds` from now: `listRunnerAttempts`
+ * skips it until then, and lists it last after.
+ */
 export async function touchRunnerAttempt(
   db: Kysely<DB>,
   attemptId: string,
-  state: RunnerAttemptState
+  state: RunnerAttemptState,
+  delaySeconds: number
 ): Promise<void> {
   await sql`
-    UPDATE runner_run_attempts SET updated_at = now()
+    UPDATE runner_run_attempts SET updated_at = now() + ${delaySeconds}::int * interval '1 second'
     WHERE attempt_id = ${attemptId} AND state = ${state}`.execute(db);
 }
 

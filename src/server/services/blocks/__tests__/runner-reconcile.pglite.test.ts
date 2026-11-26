@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import { envMock } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   reconcileRunnerAttempts,
@@ -70,7 +71,7 @@ const row = async (id: string) =>
 function orchestrator(workflow: Record<string, unknown> | null) {
   const deps = {
     getWorkflow: vi.fn(async (id: string) => (workflow ? { id, ...workflow } : null)),
-    cancelWorkflow: vi.fn(async () => undefined),
+    cancelWorkflow: vi.fn(async (): Promise<number | undefined> => 200),
     markWorkflowStatus: vi.fn(async () => 1),
     reverseAuthorFee: vi.fn(async () => ({ reversed: false })),
   };
@@ -156,22 +157,46 @@ describe('reconcileRunnerAttempts', () => {
     expect(await row('rat_r')).toMatchObject({ state: 'settled', charged_amount: 30 });
   });
 
-  it('moves a held attempt to the back of the queue, so held rows cannot fill a batch', async () => {
-    const before = new Date('2026-11-26T11:00:00Z');
-    await insertAttempt({ id: 'rat_h', state: 'submitted', updatedAt: before });
-    await reconcileRunnerAttempts(db, orchestrator(null), NOW);
-    const { rows } = await pg.query<{ state: string; updated_at: Date }>(
-      `SELECT state, updated_at FROM runner_run_attempts WHERE attempt_id = 'rat_h'`
+  it('backs a held attempt off, so it is not polled again in the next passes', async () => {
+    await insertAttempt({ id: 'rat_h', state: 'submitted' });
+    const deps = orchestrator(null);
+    expect(await reconcileRunnerAttempts(db, deps, new Date())).toMatchObject({ held: 1 });
+    expect(await reconcileRunnerAttempts(db, deps, new Date())).toMatchObject({ held: 0 });
+    expect(deps.getWorkflow).toHaveBeenCalledTimes(1);
+    expect((await row('rat_h')).state).toBe('submitted');
+  });
+
+  it('cancels on the live usage estimate while cost.total still reads 0', async () => {
+    await insertAttempt({ id: 'rat_live', state: 'submitted' });
+    const deps = orchestrator({
+      status: 'processing',
+      tags: ['app-block:app_r'],
+      cost: { total: 0 },
+      steps: [{ $type: 'customComfy', output: { usage: { estimatedCost: 91.2 } } }],
+    });
+    deps.cancelWorkflow.mockResolvedValueOnce(200);
+    await reconcileRunnerAttempts(db, deps, NOW);
+    expect(deps.cancelWorkflow).toHaveBeenCalledWith(`${USER}-wf-rat_live`);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'runner-attempt-over-ceiling',
+        payload: expect.objectContaining({ observedCost: 92, ceiling: 90, status: 200 }),
+      })
     );
-    expect(rows[0].state).toBe('submitted');
-    expect(rows[0].updated_at.getTime()).toBeGreaterThan(before.getTime());
   });
 
   it('a cancel the orchestrator refuses releases its marker, so the next run retries it', async () => {
     await insertAttempt({ id: 'rat_cf', state: 'submitted' });
     const deps = orchestrator(done(95, 'processing'));
-    deps.cancelWorkflow.mockRejectedValueOnce(new Error('cancelWorkflow failed'));
+    deps.cancelWorkflow.mockRejectedValueOnce(
+      Object.assign(new Error('cancelWorkflow failed'), { status: 403 })
+    );
     await reconcileRunnerAttempts(db, deps, NOW);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ outcome: 'cancel_failed', status: 403 }),
+      })
+    );
     expect(redisMock.redis.del).toHaveBeenCalledWith('blocks:runner-over-ceiling-cancel:rat_cf');
     await reconcileRunnerAttempts(db, deps, NOW);
     expect(deps.cancelWorkflow).toHaveBeenCalledTimes(2);
