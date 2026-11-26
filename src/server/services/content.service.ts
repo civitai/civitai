@@ -184,6 +184,14 @@ const tosHashOverrideMap: Record<string, string> = {
   // tos.green.md
   '8717cd9f90718d1ffc722eb1b561484da43978e0a734428e6ab721832fdcf161':
     'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
+  // 2026-11-26 §18.3 accepts an arbitration opt-out by email as well as by letter. It only adds a
+  // way to opt out, so it is not an adverse change and needs no site-wide re-accept.
+  // tos.md (blue/red)
+  '302a3e539a37af931feea30c347954ac6b63d7c2599cf555b2c1049738cdffd6':
+    '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  // tos.green.md
+  aaab47657f840af067b8b4f1454c4c7d60cf8a6f8d3a5ee650e5f32387784c84:
+    'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 /**

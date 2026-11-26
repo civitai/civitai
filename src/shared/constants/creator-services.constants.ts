@@ -169,6 +169,10 @@ export const SERVICE_FINAL_VIDEO_IN_ZIP =
 export const SERVICE_FINAL_OVER_LEVEL_REASON =
   "This file is rated above this deal's content level.";
 
+/** Why a PDF was refused, as a Final, an Attachment or an entry in a .zip. */
+export const SERVICE_FINAL_PDF_REFUSAL =
+  "PDF files can't be delivered or attached, on their own or inside a .zip.";
+
 /**
  * What a seller may deliver as a Final. Everything else is refused up front: a file type we cannot
  * inspect is not delivered. Archives are limited to .zip, the one format the unpack step reads;
@@ -191,7 +195,7 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'wav',
   'flac',
   'ogg',
-  'pdf',
+  // An inline preview of the text types must strip or refuse embedded data: images.
   'txt',
   'md',
   'json',

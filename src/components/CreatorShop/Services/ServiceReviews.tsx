@@ -1,10 +1,17 @@
 import { Badge, Button, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import { IconMoodHappy, IconMoodNeutral } from '@tabler/icons-react';
+import type { CSSProperties } from 'react';
 import { useMemo } from 'react';
+import {
+  reviewImageLayout,
+  reviewRowTileStyle,
+} from '~/components/CreatorShop/Services/review-image-layout';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportServiceReviewButton } from '~/components/CreatorShop/Services/ReportServiceReviewButton';
 import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
@@ -114,6 +121,7 @@ export function ServiceReviews({
 
 function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }) {
   const happy = review.verdict === ServiceDealReviewVerdict.Happy;
+  const next = !!useOptionalFeatureFlags()?.creatorServicesNext;
   return (
     <Stack gap={6}>
       <Group gap="xs" align="center" wrap="wrap">
@@ -141,13 +149,16 @@ function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }
           {review.comment}
         </Text>
       )}
-      {review.images.length > 0 && (
-        <div className="grid max-w-md grid-cols-4 gap-2">
-          {review.images.map((image) => (
-            <ReviewThumb key={image.id} image={image} />
-          ))}
-        </div>
-      )}
+      {review.images.length > 0 &&
+        (next ? (
+          <ReviewImages images={review.images} />
+        ) : (
+          <div className="grid max-w-md grid-cols-4 gap-2">
+            {review.images.map((image) => (
+              <ReviewThumb key={image.id} image={image} />
+            ))}
+          </div>
+        ))}
       {review.sellerReply && (
         <Stack gap={2} className="ml-4 border-l-2 border-gray-3 pl-3 dark:border-dark-4">
           <Text size="xs" fw={600}>
@@ -162,31 +173,104 @@ function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }
   );
 }
 
-function ReviewThumb({ image }: { image: Omit<ReviewImage, 'reviewId'> }) {
+export function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>[] }) {
+  const layout = reviewImageLayout(images.length);
+  const linkLabel = (index: number) => `Open review image ${index + 1} of ${images.length}`;
+  if (layout === 'single')
+    return (
+      <div className="max-w-[360px]">
+        {images.map((image, index) => (
+          <ReviewThumb
+            key={image.id}
+            image={image}
+            className="aspect-[4/3]"
+            linkLabel={linkLabel(index)}
+          />
+        ))}
+      </div>
+    );
+  if (layout === 'row')
+    return (
+      <div className="flex max-w-md gap-2">
+        {images.map((image, index) => (
+          <ReviewThumb
+            key={image.id}
+            image={image}
+            fit="contain"
+            linkLabel={linkLabel(index)}
+            style={reviewRowTileStyle(image)}
+            className="min-w-0"
+          />
+        ))}
+      </div>
+    );
+  return (
+    <div className="grid max-w-md grid-cols-4 gap-2">
+      {images.map((image, index) => (
+        <ReviewThumb
+          key={image.id}
+          image={image}
+          className="aspect-square"
+          linkLabel={linkLabel(index)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ReviewThumb({
+  image,
+  className = 'aspect-square',
+  style,
+  fit = 'cover',
+  linkLabel,
+}: {
+  image: Omit<ReviewImage, 'reviewId'>;
+  className?: string;
+  style?: CSSProperties;
+  fit?: 'cover' | 'contain';
+  /** Links the tile, named this, to the image's own page, which decides whether this viewer may see it. */
+  linkLabel?: string;
+}) {
   const media = {
     ...image,
     type: image.type as MediaType,
     metadata: image.metadata as MixedObject,
   };
+  const tileClass = `relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5 ${className}`;
+  const content = (
+    <ImageGuard2 image={media} explain={false}>
+      {(safe) =>
+        safe ? (
+          <EdgeMedia2
+            src={media.url}
+            name={media.name ?? media.id.toString()}
+            alt=""
+            type={media.type}
+            metadata={media.metadata}
+            width={300}
+            className={fit === 'contain' ? 'size-full object-contain' : 'size-full object-cover'}
+          />
+        ) : (
+          <MediaHash {...media} />
+        )
+      }
+    </ImageGuard2>
+  );
+  if (linkLabel)
+    return (
+      <NextLink
+        href={`/images/${image.id}`}
+        aria-label={linkLabel}
+        className={`block ${tileClass}`}
+        style={style}
+      >
+        {content}
+      </NextLink>
+    );
   return (
-    <div className="relative aspect-square overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5">
-      <ImageGuard2 image={media} explain={false}>
-        {(safe) =>
-          safe ? (
-            <EdgeMedia2
-              src={media.url}
-              name={media.name ?? media.id.toString()}
-              alt=""
-              type={media.type}
-              metadata={media.metadata}
-              width={300}
-              className="size-full object-cover"
-            />
-          ) : (
-            <MediaHash {...media} />
-          )
-        }
-      </ImageGuard2>
+    <div className={tileClass} style={style}>
+      {content}
     </div>
   );
 }

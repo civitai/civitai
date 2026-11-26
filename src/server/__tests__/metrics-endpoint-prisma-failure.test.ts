@@ -19,7 +19,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // so none of that graph is needed. Same seam as
 // src/server/metrics/__tests__/metrics-endpoint-seeds-substitutions.test.ts.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 // src/__tests__/setup.ts wholesale-mocks this module and omits

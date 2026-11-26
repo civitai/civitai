@@ -22,10 +22,6 @@ const h = vi.hoisted(() => ({
   record: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 42, username: 'tester' }),
-}));
-
 vi.mock('~/utils/consumer-blob-upload', async (importOriginal) => ({
   ...(await importOriginal<typeof BlobUploadMod>()),
   uploadConsumerBlob: h.upload,
@@ -181,7 +177,8 @@ async function mountReady(props: Partial<typeof baseProps> & { reviewMode?: bool
     <>
       <PageBlockHost {...baseProps} {...props} />
       <DialogProvider />
-    </>
+    </>,
+    { user: { id: 42, username: 'tester' } }
   );
   await vi.waitFor(() => {
     if (!iframe().contentWindow) throw new Error('not mounted yet');

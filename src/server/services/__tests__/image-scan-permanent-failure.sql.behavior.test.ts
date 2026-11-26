@@ -62,6 +62,9 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityType" text, "entityId" int);
     CREATE TABLE "Article" (id int PRIMARY KEY, status "ArticleStatus");
     CREATE TABLE "JobQueue" (type "JobQueueType", "entityType" "EntityType", "entityId" int);
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
   const raw = pgliteRaw(pg);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);

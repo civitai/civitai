@@ -2,7 +2,7 @@ import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { aspectRatioMap } from '~/components/CardTemplates/AspectRatioCard';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconLink, IconQuestionMark, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -210,6 +210,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
+          editForm: true,
           userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
@@ -273,9 +274,9 @@ export function ArticleUpsertForm({ article }: Props) {
         return;
       }
 
-      openConfirmModal({
+      openConfirm({
         title: 'Article Image Processing',
-        children: (
+        message: (
           <Stack gap="sm">
             <Text>
               Your article contains {newImages.length} new embedded image
@@ -309,9 +310,9 @@ export function ArticleUpsertForm({ article }: Props) {
       return;
     }
 
-    openConfirmModal({
+    openConfirm({
       title: 'Moderator rating will be re-evaluated',
-      children: (
+      message: (
         <Text>
           A moderator previously set this article&apos;s rating manually. Saving will trigger a
           rescan and may reset that rating. Continue?
@@ -735,7 +736,9 @@ function ActionButtons({
       ...(scanStatus.images?.error || []),
     ];
 
-    return problematicImages.some((img) => currentContentUrls.has(img.url));
+    // A blocked image sent without its url cannot be matched to the content, so it holds the
+    // publish until a save drops it from the scan.
+    return problematicImages.some((img) => img.url === null || currentContentUrls.has(img.url));
   }, [scanStatus, currentContentUrls]);
 
   const publishDisabled = publishButtonProps.disabled || hasProblematicImages;

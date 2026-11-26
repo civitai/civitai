@@ -93,7 +93,8 @@ export const getServerSideProps = createServerSideProps<ReviewDetailPageProps>({
 export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageProps) {
   const features = useFeatureFlags();
   // After a decision: the next oldest pending submission, or "No more app submissions waiting".
-  const { openNext, caughtUp } = useNextPendingReview(publishRequestId);
+  const { openNext, skip, caughtUp, skippedPending, moreBeyondPage, reviewSkipped } =
+    useNextPendingReview(publishRequestId);
 
   const query = trpc.blocks.getPublishRequest.useQuery(
     { publishRequestId },
@@ -177,7 +178,11 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
           </Stack>
 
           {caughtUp ? (
-            <AllCaughtUp />
+            <AllCaughtUp
+              skippedPending={skippedPending}
+              moreBeyondPage={moreBeyondPage}
+              onReviewSkipped={reviewSkipped}
+            />
           ) : query.isLoading ? (
             <Center py="xl">
               <Loader size="sm" />
@@ -197,6 +202,8 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
               // "No more app submissions waiting" when none is left. (Was: back to the queue, which cost a
               // click and a scan per review.)
               onClose={openNext}
+              // "Skip": the next submission, this one left pending and undecided.
+              onSkip={skip}
             />
           )}
         </Stack>

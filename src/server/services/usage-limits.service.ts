@@ -34,7 +34,13 @@ const USAGE_LIMIT_AREAS = Object.entries(SHARED_KEY_BY_AREA).map(([area, sharedK
   area,
   sharedKey,
   ids: usageLimitDefs
-    .filter((def) => def.area === area && def.kind === 'product' && isBucketCountable(def.window))
+    .filter(
+      (def) =>
+        def.area === area &&
+        def.kind === 'product' &&
+        isBucketCountable(def.window) &&
+        !('countedBy' in def)
+    )
     .map((def) => def.id),
 }));
 

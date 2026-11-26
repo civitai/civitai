@@ -1,0 +1,32 @@
+{
+  "name": "collections-viewer-level",
+  "description": "Signed in on the mature host at the SFW levels: no cap, but collection covers and items are held to the viewer's own level, and srcs (SFW article covers) are kept.",
+  "request": {
+    "path": "/api/search/indexes/collections_v3/search",
+    "body": "{\"q\":\"c\"}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": {
+    "id": 1003,
+    "username": "sfwlevels",
+    "isModerator": false,
+    "browsingLevel": 3,
+    "showNsfw": true
+  },
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[{\"srcs\":[\"s1\"],\"id\":511,\"image\":{\"id\":611,\"nsfwLevel\":4},\"images\":[{\"id\":612,\"nsfwLevel\":2},{\"id\":613,\"nsfwLevel\":4}],\"user\":{\"id\":208,\"image\":\"u\",\"profilePicture\":{\"nsfwLevel\":4}},\"_formatted\":{\"srcs\":[\"s1\"],\"image\":{\"id\":\"611\"},\"images\":[{\"id\":\"612\"},{\"id\":\"613\"}]}}],\"query\":\"c\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/collections_v3/search",
+      "body": {
+        "q": "c"
+      }
+    },
+    "body": "{\"hits\":[{\"id\":511,\"image\":null,\"images\":[{\"id\":612,\"nsfwLevel\":2}],\"user\":{\"id\":208,\"image\":\"u\",\"profilePicture\":{\"nsfwLevel\":4}},\"_formatted\":{\"image\":null,\"images\":[{\"id\":\"612\"}],\"srcs\":[\"s1\"]},\"srcs\":[\"s1\"]}],\"query\":\"c\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  }
+}

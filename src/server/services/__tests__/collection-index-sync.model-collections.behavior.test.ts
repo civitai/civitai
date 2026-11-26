@@ -26,6 +26,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "postId" int, ingestion text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "blockedFor" text, "tosViolation" boolean NOT NULL DEFAULT false,

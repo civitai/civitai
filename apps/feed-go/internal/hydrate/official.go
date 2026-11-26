@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 )
@@ -56,7 +57,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 	if err == nil {
 		cached, cachedAt, hasEntry = parseOfficialEntry(raw)
 	}
-	now := time.Now()
+	now := clock.Now()
 	if s.Packed.Now != nil {
 		now = s.Packed.Now()
 	}

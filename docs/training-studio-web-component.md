@@ -84,6 +84,9 @@ interface TrainingStudioHost {
      *  evaluate them and pass the enabled keys (the main app maps them in
      *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model, and Kohya, is hidden. */
     enabledModelFlags?: string[];
+    /** The signed-in user's id. Keys the New training flow's autosave (IndexedDB on the host
+     *  page's origin), so a reload or remount offers the dataset back. Omit and nothing is autosaved. */
+    userId?: number;
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps
@@ -120,12 +123,24 @@ interface TrainingStudioHost {
     shareDataset?: boolean;
   }): string;
 
+  /** The same entry with `&target=existing` (`publishSearchParams({ ...req, asVersion: true })`):
+   *  the main app asks which of the owner's LoRA models to add the run to as a new draft version,
+   *  then drops the user into that version's wizard. Optional — omit to show only Publish. */
+  publishVersionUrl?(req: {
+    workflowId: string;
+    epoch: number;
+    ownRights?: boolean;
+    shareDataset?: boolean;
+  }): string;
+
   /** URL for the run's model page, draft or published. The main app stamps
    *  `{ modelId, modelVersionId }` into the workflow's metadata when the publish entry creates the
    *  draft, and adds `published: true` when the model actually publishes; runs carrying a modelId
-   *  render a "View draft" / "View your model page" link through this. Optional — omit to hide
-   *  the affordance. Same URL semantics as `generateUrl`. */
-  modelPageUrl?(req: { modelId: number }): string;
+   *  render a "View draft" / "View your model page" link through this. `modelVersionId` is the
+   *  run's own version (on a model the run was added to, not the first); for a draft made before
+   *  versions carried the link, it can be another version of that model. Optional — omit to
+   *  hide the affordance. Same URL semantics as `generateUrl`. */
+  modelPageUrl?(req: { modelId: number; modelVersionId?: number }): string;
 
   /** Whether that model still counts for this user (`GET /api/training-studio/model-status`): false
    *  once the owner deleted it, since the stamped modelId outlives the delete. The run page asks

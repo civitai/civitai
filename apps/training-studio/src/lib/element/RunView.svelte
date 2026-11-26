@@ -1,9 +1,13 @@
 <script lang="ts">
   import RunDetail from '../../routes/RunDetail.svelte';
+  import RunDetailElements from '../../routes/RunDetailElements.svelte';
+  import { useElementsUi } from '$lib/elements-ui';
   import { backend } from '$lib/host';
   import type { TrainingDetail } from '$lib/data/trainingRows';
 
   let { workflowId }: { workflowId: string } = $props();
+  const useElements = useElementsUi();
+  const Run = $derived(useElements() ? RunDetailElements : RunDetail);
 
   // First load per run: a new workflowId derives a new promise and the template re-awaits it.
   const initial = $derived(backend().getRunDetail(workflowId));
@@ -32,7 +36,7 @@
 {#await initial}
   <p class="p-6 font-mono text-sm text-dark-2">Loading training…</p>
 {:then loaded}
-  <RunDetail detail={refreshed ?? loaded} {onRefresh} />
+  <Run detail={refreshed ?? loaded} {onRefresh} />
 {:catch err}
   <p class="p-6 font-mono text-sm text-red-400">
     Could not load this training: {err instanceof Error ? err.message : String(err)}

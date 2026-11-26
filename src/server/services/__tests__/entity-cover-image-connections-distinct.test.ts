@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 
 /**
  * The `CONNECTIONS` branch of `getEntityCoverImage`'s UNION is the only one of the
@@ -275,6 +276,11 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         'AND (i."blockedFor" IS NULL) ' +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
+        // Every cover type follows the bounty search index's report-listed exclusion.
+        `AND ((i.id)::text NOT IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL.replace(
+          /\s+/g,
+          ' '
+        ).trim()})) ` +
         'AND ( ?::boolean ' +
         `OR ( e."entityType" IN ('Bounty', 'BountyEntry') ` +
         `AND (b.availability <> 'Private' OR (?::boolean AND b."userId" = ?)) ) ` +

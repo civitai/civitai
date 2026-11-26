@@ -3,7 +3,7 @@
 // and another app's rows. Shared by the PGlite and real-Postgres files.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Harness } from './doc-store.harness';
-import { APPDATA_TABLES } from './doc-store.sql-scan';
+import { APPDATA_SCHEMA_TABLES } from './doc-store.sql-scan';
 
 const RLS_A = 'ab_RLSPROBEA';
 const RLS_B = 'ab_RLSPROBEB';
@@ -34,7 +34,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('row-level security (second isolation layer)', () => {
-    it('every appdata table has RLS enabled AND forced, with the scope policy, the two review-maintenance policies, the account-wipe read on usage_user and doc_mark only, and the app-purge read on doc and usage_app only', async () => {
+    it('every appdata table has RLS enabled AND forced, with the scope policy, the two review-maintenance policies, the account-wipe read on usage_user, doc_mark and maint_run only, and the app-purge read on doc and usage_app only', async () => {
       const rows = await h.raw(
         `SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
                 (SELECT string_agg(p.policyname || ':' || p.cmd, ',' ORDER BY p.policyname)
@@ -42,12 +42,14 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
            FROM pg_class c WHERE c.relnamespace = 'appdata'::regnamespace AND c.relkind = 'r' ORDER BY c.relname`
       );
       expect(rows).toEqual(
-        [...APPDATA_TABLES].sort().map((t) => ({
+        [...APPDATA_SCHEMA_TABLES].sort().map((t) => ({
           relname: t,
           relrowsecurity: true,
           relforcerowsecurity: true,
           policies:
-            (t === 'usage_user' || t === 'doc_mark' ? 'appdata_account_wipe_read:SELECT,' : '') +
+            (t === 'usage_user' || t === 'doc_mark' || t === 'maint_run'
+              ? 'appdata_account_wipe_read:SELECT,'
+              : '') +
             (t === 'doc' || t === 'usage_app' ? 'appdata_app_purge_read:SELECT,' : '') +
             'appdata_review_delete:DELETE,appdata_review_read:SELECT,appdata_scope:ALL',
         }))
@@ -168,7 +170,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           [app, ns]
         );
         await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, ns]);
-        // One row in each of the other five tables too, so every table's policy is probed.
+        // One row in each of the other six tables too, so every table's policy is probed.
         await h.raw(
           `INSERT INTO appdata.doc_index (app_id, ns, coll, scope_uid, key, name, v_type, v_text)
            VALUES ($1, $2, 'c', 0, 'k', 'i', 'string', 'v')`,
@@ -191,10 +193,27 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           app,
           ns,
         ]);
+        await h.raw(
+          `INSERT INTO appdata.mark_head (app_id, ns, last_mark_seq) VALUES ($1, $2, 3)`,
+          [app, ns]
+        );
+        await h.raw(
+          `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+           VALUES ($1, $2, 'c', 'mark_migration', 'vote', 'frozen')`,
+          [app, ns]
+        );
       }
     });
 
-    const OTHER_TABLES = ['doc_index', 'doc_tally', 'doc_mark', 'doc_tomb', 'usage_user'];
+    const OTHER_TABLES = [
+      'doc_index',
+      'doc_tally',
+      'doc_mark',
+      'doc_tomb',
+      'mark_head',
+      'maint_run',
+      'usage_user',
+    ];
 
     it('every table: bound to a request, reads only its review rows; bound to none, reads nothing outside doc and usage_app', async () => {
       const c = await h.rawAsRole();
@@ -223,7 +242,8 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
 
     it('positive control: the superuser sees every seeded row', async () => {
       const want = SEED.map(([a, n]) => `${a}|${n}`).sort();
-      for (const t of APPDATA_TABLES) expect({ t, rows: await all(t) }).toEqual({ t, rows: want });
+      for (const t of APPDATA_SCHEMA_TABLES)
+        expect({ t, rows: await all(t) }).toEqual({ t, rows: want });
     });
 
     it('on, bound to a request: reads and deletes ONLY that request’s review rows — never prod or dev', async () => {
@@ -341,7 +361,15 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         .map(([a, n, u]) => `${a}|${n}|${u}`)
         .sort();
     const PER_USER = ['usage_user', 'doc_mark'];
-    const OTHERS = ['doc', 'doc_index', 'doc_tally', 'doc_tomb', 'usage_app'];
+    const OTHERS = [
+      'doc',
+      'doc_index',
+      'doc_tally',
+      'doc_tomb',
+      'mark_head',
+      'maint_run',
+      'usage_app',
+    ];
     const count = async (t: string) =>
       Number(
         (
@@ -386,6 +414,12 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       for (const app of [APP_1, APP_2]) {
         for (const ns of NAMESPACES) {
           await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, ns]);
+          await h.raw(`INSERT INTO appdata.mark_head (app_id, ns) VALUES ($1, $2)`, [app, ns]);
+          await h.raw(
+            `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+             VALUES ($1, $2, 'c', 'mark_migration', 'vote', 'frozen')`,
+            [app, ns]
+          );
         }
       }
     });
@@ -406,7 +440,10 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         });
       }
       for (const t of OTHERS)
-        expect({ t, n: await count(t) }).toEqual({ t, n: t === 'usage_app' ? 8 : 16 });
+        expect({ t, n: await count(t) }).toEqual({
+          t,
+          n: t === 'usage_app' || t === 'mark_head' || t === 'maint_run' ? 8 : 16,
+        });
     });
 
     it('bound to one user: a predicate-less read of usage_user and doc_mark returns exactly that user’s rows in every app and namespace — and nothing of any other table', async () => {

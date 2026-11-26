@@ -44,6 +44,9 @@
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       dataPolicyUrl: `${data.civitaiUrl}/content/training/data-policy`,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — the session user is fixed for the page's life
+      userId: data.userId,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
@@ -54,7 +57,10 @@
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
     publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
-    modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
+    publishVersionUrl: (req) =>
+      `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams({ ...req, asVersion: true })}`,
+    modelPageUrl: ({ modelId, modelVersionId }) =>
+      `${data.civitaiUrl}/models/${modelId}${modelVersionId ? `?modelVersionId=${modelVersionId}` : ''}`,
   });
 
   setElementsUi(() => data.elementsUi);

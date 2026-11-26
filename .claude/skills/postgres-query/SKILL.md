@@ -1,6 +1,6 @@
 ---
 name: postgres-query
-description: Run PostgreSQL queries for testing, debugging, and performance analysis. Use when you need to query the database directly, run EXPLAIN ANALYZE, compare query results, or test SQL optimizations. Always pass a target — `--prod` or `--dev` — because prod and dev are different databases and the default is prod. Always uses read-only connections unless explicitly directed otherwise.
+description: Run PostgreSQL queries for testing, debugging, and performance analysis. Use when you need to query the database directly, read a query plan (EXPLAIN or EXPLAIN ANALYZE), compare query results, or test SQL optimizations. Always pass a target — `--prod` or `--dev` — because prod and dev are different databases and the default is prod. Always uses read-only connections unless explicitly directed otherwise.
 ---
 
 # PostgreSQL Query Testing
@@ -74,12 +74,21 @@ Two checks make the wrong database fail loudly instead of answering:
 
 | Flag | Description |
 |------|-------------|
-| `--explain` | Run EXPLAIN ANALYZE on the query |
+| `--explain` | Show the query plan (`EXPLAIN`) without running the query |
+| `--explain-analyze` | Run the query and show the plan with actual timings (`EXPLAIN ANALYZE`) |
 | `--writable` | Use the primary connection instead of the read replica (requires user permission) |
 | `--timeout <s>`, `-t` | Query timeout in seconds (default: 30) |
 | `--file`, `-f` | Read query from a file |
 | `--json` | Output results as JSON |
 | `--quiet`, `-q` | Minimal output, only results |
+
+`--explain-analyze` executes the statement, so it costs what the query costs. Use `--explain` to see
+the plan and estimated cost of a query you have not yet decided to run.
+
+`--timeout` is enforced by the server on every read (`SET LOCAL statement_timeout` inside the
+read-only transaction), so a pooled connection cannot drop it. A `--writable` run has no wrapping
+transaction and relies on the `statement_timeout` connection option, which a transaction pooler
+may ignore.
 
 `--writable` combined with `--data-packet` or `--notifications` is an error — both are read-only
 replicas, so the combination can only mean a mistake.
@@ -93,7 +102,7 @@ node .claude/skills/postgres-query/query.mjs --prod "SELECT id, username FROM \"
 # Same query against the dev database
 node .claude/skills/postgres-query/query.mjs --dev "SELECT id, username FROM \"User\" LIMIT 5"
 
-# Check query performance
+# Show the query plan (estimates only; --explain-analyze for actual timings)
 node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT * FROM \"Model\" WHERE id = 1"
 
 # Override default 30s timeout for longer queries
@@ -207,11 +216,13 @@ Only use the `--writable` flag when:
 To compare two query approaches — same target on both runs, or the comparison is meaningless:
 
 ```bash
-# Run first approach
+# Estimated cost of each approach (plans only, nothing runs)
 node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT ... (approach 1)"
-
-# Run second approach
 node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT ... (approach 2)"
+
+# Actual timings: runs each query
+node .claude/skills/postgres-query/query.mjs --dev --explain-analyze "SELECT ... (approach 1)"
+node .claude/skills/postgres-query/query.mjs --dev --explain-analyze "SELECT ... (approach 2)"
 
 # Compare actual results
 node .claude/skills/postgres-query/query.mjs --prod --json "SELECT ... (approach 1)" > /tmp/q1.json

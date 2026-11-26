@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { recordFastSuperjsonWrite } from '~/server/prom/trpc-fast-superjson.metrics';
 import { canDecodeDevalueResponse } from '~/server/utils/client-version-saturation';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 import { fastSuperjsonSerialize } from '~/server/trpc/superjson-fast-serialize';
 import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
 import { pickServerWriteSerialize, WRITE_DEVALUE } from '~/shared/utils/trpc-union-transformer';
@@ -16,7 +17,8 @@ import { pickServerWriteSerialize, WRITE_DEVALUE } from '~/shared/utils/trpc-uni
  * (`src/pages/api/trpc/[trpc].ts`) seeds this request-scoped store from the request headers,
  * and the server transformer (`src/server/trpc.ts`) reads it at serialize time.
  *
- * The response is devalue only when ALL of these hold, superjson otherwise:
+ * The response is devalue only when ALL of these hold, superjson otherwise (and always superjson
+ * for a feed-go parity replay, `feed-go-parity-replay.ts`):
  *  1. `TRPC_WRITE_DEVALUE=true` on this pool (the master switch — off means no store at all);
  *  2. `canDecodeDevalueResponse(headers)` — a web bundle new enough to decode it;
  *  3. the response is NOT edge-cacheable (`pinResponseWriteToSuperjson`, called from the
@@ -46,7 +48,9 @@ type RequestHeaders = Parameters<typeof canDecodeDevalueResponse>[0];
  * header check.
  */
 export function runWithResponseWriteFormat<T>(headers: RequestHeaders, fn: () => T): T {
-  if (!WRITE_DEVALUE || !canDecodeDevalueResponse(headers)) return fn();
+  // A feed-go parity replay is compared as superjson (feed-go-parity-replay.ts).
+  if (!WRITE_DEVALUE || !canDecodeDevalueResponse(headers) || isFeedGoParityReplay(headers))
+    return fn();
   return writeFormatStorage.run({ devalue: true }, fn);
 }
 

@@ -74,6 +74,7 @@ export async function searchSemanticCollections({
     items: [] as HydratedCollection[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,

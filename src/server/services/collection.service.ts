@@ -1,3 +1,8 @@
+import {
+  assertMayLoosenImages,
+  assertMayLoosenImagesAs,
+  withheldImageIds,
+} from '~/server/services/moderator-withheld.service';
 import { Prisma } from '@prisma/client';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { queueNeverScannedRescan } from '~/server/services/judge-collection-rescan.service';
@@ -119,6 +124,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
@@ -164,6 +170,7 @@ import {
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
@@ -1096,6 +1103,7 @@ export const saveItemInCollections = async ({
     type,
     userId,
     isModerator,
+    csamReview = false,
     removeFromCollectionIds,
     canAccessUserChallenges,
     folderAccess,
@@ -1105,6 +1113,7 @@ export const saveItemInCollections = async ({
   input: AddCollectionItemInput & {
     userId: number;
     isModerator?: boolean;
+    csamReview?: boolean;
     canAccessUserChallenges?: boolean;
     folderAccess?: FolderWriteAccess;
   };
@@ -1223,6 +1232,18 @@ export const saveItemInCollections = async ({
       isModerator,
     });
   }
+
+  // Before the contest gates too: they can charge an entry fee.
+  if (
+    isModerator &&
+    input.imageId != null &&
+    upsertCollectionItems.some(
+      (upsert) =>
+        !unwrittenCollectionIds.has(upsert.collectionId) &&
+        submissionStatus(permissionsMap.get(upsert.collectionId)!) === CollectionItemStatus.ACCEPTED
+    )
+  )
+    await assertMayLoosenImages([input.imageId], { csamReview });
 
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = writableCollections.filter(
@@ -1591,6 +1612,8 @@ export const upsertCollection = async ({
     isMember?: boolean;
     /** Only `createFolder` sets this; the client input can never make a folder. */
     asFolder?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
   };
   /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
   coverViewer?: { id?: number; isModerator?: boolean };
@@ -1598,6 +1621,7 @@ export const upsertCollection = async ({
   const {
     userId,
     isModerator,
+    asModerator = false,
     isMember,
     id,
     name,
@@ -1739,6 +1763,8 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
+      if (existingCover && existingCover.id !== currentCollection.image?.id)
+        await assertCoverMediaAllowed(existingCover.id, asModerator, tx);
       if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
         if (image.url !== newCoverUrl)
@@ -2109,12 +2135,38 @@ export const upsertCollection = async ({
   return collection;
 };
 
+/**
+ * Refuses an image as a collection cover when its block refuses its owner the media
+ * (`ownerMediaAllowed`), since the cover serves it; a moderator view (`actsAsModerator`) may set it.
+ * The visibility checks keep an owner's blocked row, so without this an owner could set their own
+ * blocked image as a cover and have it served.
+ */
+async function assertCoverMediaAllowed(
+  imageId: number,
+  asModerator: boolean,
+  db: Pick<Prisma.TransactionClient, 'image'> = dbWrite
+) {
+  if (asModerator) return;
+  // primary: a block from moments ago must refuse it.
+  const image = await db.image.findUnique({
+    where: { id: imageId },
+    select: { ingestion: true, blockedFor: true },
+  });
+  if (image && !ownerMediaAllowed(image))
+    throw throwBadRequestError('This image is blocked and cannot be used here.');
+}
+
 export const updateCollectionCoverImage = async ({
   input,
 }: {
-  input: UpdateCollectionCoverImageInput & { userId: number; isModerator?: boolean };
+  input: UpdateCollectionCoverImageInput & {
+    userId: number;
+    isModerator?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
+  };
 }) => {
-  const { id, imageId, userId, isModerator } = input;
+  const { id, imageId, userId, isModerator, asModerator = false } = input;
   const permission = await getUserCollectionPermissionsById({
     id,
     userId,
@@ -2131,6 +2183,8 @@ export const updateCollectionCoverImage = async ({
     isModerator,
     confirmBlockOnPrimary: true,
   });
+  await assertCoverMediaAllowed(imageId, asModerator);
+  await assertNotDealFileImages([imageId], 'used here');
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
@@ -3025,10 +3079,12 @@ export const updateCollectionItemsStatus = async ({
   isModerator,
   isSystem,
   rejectionDetail,
+  csamReview = false,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  csamReview?: boolean;
   /**
    * In-process callers (the AI review job) act as the system user, which holds no contributor row.
    * Never accept this from a tRPC input.
@@ -3041,7 +3097,8 @@ export const updateCollectionItemsStatus = async ({
    */
   rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status, rejectionReason } = input;
+  const { collectionId, status, rejectionReason } = input;
+  let { collectionItemIds } = input;
 
   const isRejection = status === CollectionItemStatus.REJECTED;
   const persistedReason = isRejection ? rejectionReason ?? null : null;
@@ -3072,6 +3129,25 @@ export const updateCollectionItemsStatus = async ({
       throw throwAuthorizationError(
         'You do not have permissions to manage contributor item status.'
       );
+  }
+
+  // Ahead of every write, the rescan an approval queues included.
+  if (status === CollectionItemStatus.ACCEPTED && collectionItemIds.length > 0) {
+    const imageItems = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT id, "imageId" FROM "CollectionItem"
+      WHERE "collectionId" = ${collectionId} AND id = ANY(${collectionItemIds}::int[])
+        AND "imageId" IS NOT NULL
+    `;
+    const imageIds = imageItems.map((item) => item.imageId);
+    if (!isSystem) await assertMayLoosenImagesAs(imageIds, { isModerator, csamReview });
+    else {
+      // The AI review accepts the rest and leaves a withheld entry as it is.
+      const withheld = await withheldImageIds(imageIds, { csamReview: false });
+      const withheldItemIds = new Set(
+        imageItems.filter((item) => withheld.has(item.imageId)).map((item) => item.id)
+      );
+      collectionItemIds = collectionItemIds.filter((id) => !withheldItemIds.has(id));
+    }
   }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
@@ -3850,6 +3926,7 @@ export const bulkSaveItems = async ({
     postIds = [],
     tagId,
     isModerator,
+    csamReview = false,
     canAccessUserChallenges,
     folderAccess,
   },
@@ -3858,6 +3935,7 @@ export const bulkSaveItems = async ({
   input: BulkSaveCollectionItemsInput & {
     userId: number;
     isModerator?: boolean;
+    csamReview?: boolean;
     canAccessUserChallenges?: boolean;
     folderAccess?: FolderWriteAccess;
   };
@@ -3885,6 +3963,12 @@ export const bulkSaveItems = async ({
         items: { type, ids },
       });
   }
+  if (
+    isModerator &&
+    submissionStatus(permissions) === CollectionItemStatus.ACCEPTED &&
+    imageIds.length > 0
+  )
+    await assertMayLoosenImages(imageIds, { csamReview });
   for (const [itemKey, ids] of [
     ['imageId', imageIds],
     ['postId', postIds],
@@ -4553,7 +4637,13 @@ export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
   nsfwLevel,
   userId,
-}: SetCollectionItemNsfwLevelInput & { userId: number }) => {
+  isModerator,
+  csamReview = false,
+}: SetCollectionItemNsfwLevelInput & {
+  userId: number;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) => {
   const collectionItem = await getCollectionItemById({ id: collectionItemId });
 
   if (!collectionItem) {
@@ -4608,6 +4698,8 @@ export const setCollectionItemNsfwLevel = async ({
   if (image.needsReview != null)
     throw throwBadRequestError('This image is waiting for moderator review.');
   if (scanFailed(image.ingestion)) throw throwBadRequestError(SCAN_FAILED_ERROR);
+  // Both branches can send the image back through the scan.
+  await assertMayLoosenImagesAs([imageId], { isModerator, csamReview });
   if (image.ingestion !== ImageIngestionStatus.Scanned || !image.scanned) {
     const { failed } = await queueNeverScannedRescan(
       [imageId],

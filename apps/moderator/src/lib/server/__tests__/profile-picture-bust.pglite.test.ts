@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import {
@@ -51,6 +52,7 @@ vi.mock('../image-moderation-effects', () => ({
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
   bustPostGalleryCaches: vi.fn(async () => undefined),
+  queueComicsForImages: vi.fn(async () => undefined),
   trackImageRestore: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
@@ -59,7 +61,6 @@ vi.mock('../mod-activity', () => ({
   recordModActivity: vi.fn(async () => undefined),
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
@@ -94,12 +95,11 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
 CREATE TYPE "JobQueueType" AS ENUM (
-  'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
+  'PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
 );
 CREATE TABLE "JobQueue" ("type" "JobQueueType", "entityType" "EntityType", "entityId" INTEGER,
   "data" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
@@ -123,6 +123,10 @@ CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL 
   WHERE id = ANY(ids) AND "ingestion" IS DISTINCT FROM 'Blocked' AND "blockedFor" IS NULL
 $$;
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+CREATE TABLE "ImageRatingRequest" (
+  "imageId" INTEGER NOT NULL, "userId" INTEGER NOT NULL, "nsfwLevel" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending', PRIMARY KEY ("imageId", "userId")
+);
 CREATE FUNCTION queue_cdn_access_sync(entity_id INTEGER, entity_type TEXT, payload JSONB)
   RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
@@ -149,6 +153,7 @@ beforeEach(async () => {
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   await db.query(
     `INSERT INTO "Image" ("id", "url", "type", "userId", "nsfwLevel") VALUES
       ($1, 'avatar-key', 'image', $3, 1), ($2, 'other-key', 'image', $3, 1)`,
@@ -211,6 +216,19 @@ describe('moderator writes to an image that is a profile picture', () => {
     expect(bustedKeys()).toContain(avatarKey);
   });
 
+  it("a re-rate that leaves User.image alone still evicts the owner's session", async () => {
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+
+    expect((await ownerRow()).image).toBe('https://cdn.example/avatar-key/width=96');
+    expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
+  });
+
+  it('a re-rate of an image that is nobody’s picture evicts no session', async () => {
+    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+
+    expect(bustedKeys().filter((key) => key.startsWith(`${REDIS_KEYS.USER.SESSION}:`))).toEqual([]);
+  });
+
   it('an image delete evicts it, though the row naming the avatar is gone', async () => {
     await deleteImages([AVATAR_ID]);
 
@@ -221,6 +239,28 @@ describe('moderator writes to an image that is a profile picture', () => {
     await acceptImage({ imageId: AVATAR_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
+  });
+
+  it('records the new rating on an image under an account-deletion grace block', async () => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorNsfwLevel": 1, "accountDeletionPriorNsfwLevelLocked": false}' WHERE "id" = $1`,
+      [OTHER_IMAGE_ID]
+    );
+
+    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 32, userId: 1 });
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+
+    const { rows } = await db.query<{ id: number; metadata: Record<string, unknown> | null }>(
+      `SELECT "id", "metadata" FROM "Image" WHERE "id" IN ($1, $2)`,
+      [OTHER_IMAGE_ID, AVATAR_ID]
+    );
+    const byId = new Map(rows.map((row) => [row.id, row.metadata ?? {}]));
+    expect(byId.get(OTHER_IMAGE_ID)).toMatchObject({
+      accountDeletionPriorNsfwLevel: 32,
+      accountDeletionPriorNsfwLevelLocked: true,
+    });
+    // Control: an image with no grace block gets no recorded rating.
+    expect(byId.get(AVATAR_ID)).not.toHaveProperty('accountDeletionPriorNsfwLevel');
   });
 
   it("evicts nothing for an image that is nobody's avatar", async () => {
@@ -257,5 +297,39 @@ describe('a moderator block of an image a stale User.image names', () => {
 
     expect(await ownerRow()).toEqual({ image: null, meta: {} });
     expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
+  });
+});
+
+describe('updateImageNsfwLevel rating requests', () => {
+  const requests = async () =>
+    (
+      await db.query<{ imageId: number; userId: number; status: string }>(
+        `SELECT "imageId", "userId", "status" FROM "ImageRatingRequest" ORDER BY "imageId", "userId"`
+      )
+    ).rows;
+
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel", "status") VALUES
+        ($1, 7, 4, 'Pending'), ($1, 8, 4, 'Unactioned'), ($2, 7, 4, 'Pending')`,
+      [AVATAR_ID, OTHER_IMAGE_ID]
+    );
+  });
+
+  // An Inquisitor ruling passes a status: left Pending, the requests return to the rating queue on unlock.
+  it("settles only the image's Pending requests with the status given", async () => {
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 4, status: 'Actioned', userId: 1 });
+
+    expect(await requests()).toEqual([
+      { imageId: AVATAR_ID, userId: 7, status: 'Actioned' },
+      { imageId: AVATAR_ID, userId: 8, status: 'Unactioned' },
+      { imageId: OTHER_IMAGE_ID, userId: 7, status: 'Pending' },
+    ]);
+  });
+
+  it('leaves every request alone without a status', async () => {
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 4, userId: 1 });
+
+    expect((await requests()).map((r) => r.status)).toEqual(['Pending', 'Unactioned', 'Pending']);
   });
 });

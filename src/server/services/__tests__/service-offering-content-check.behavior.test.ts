@@ -1429,3 +1429,30 @@ describe('a moderator dismissing the csam hold on a service offering', () => {
     expect(report.createReport).not.toHaveBeenCalled();
   });
 });
+
+describe("the text the offering's content check reads", () => {
+  it('holds the request form labels with the title and description', async () => {
+    // An earlier test can leave a one-off reply queued on this mock.
+    dbMock.dbRead.serviceOffering.findMany.mockReset();
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([
+      {
+        id: 7,
+        title: 'Portraits',
+        description: 'desc',
+        licenseCustomText: null,
+        requestForm: {
+          questions: [
+            {
+              type: 'pickAny',
+              id: 'x',
+              label: 'Extras',
+              options: [{ id: 'a', label: 'Flagged extra', price: 0, days: 0 }],
+            },
+          ],
+        },
+      },
+    ] as never);
+    const content = await serviceOfferingModerationAdapter.resolveContent!([7]);
+    expect(content.get(7)).toBe('Portraits desc Extras Flagged extra');
+  });
+});

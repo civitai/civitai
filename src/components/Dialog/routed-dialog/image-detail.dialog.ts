@@ -1,15 +1,11 @@
-import dynamic from 'next/dynamic';
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
+import type ImageDetailModal from '~/components/Image/Detail/ImageDetailModal';
+import { routedDialog } from '~/components/Dialog/routed-dialog/utils';
 import {
   parseIdListParam,
   STORYLINE_CHAPTER_PARAM,
   STORYLINE_VIA_PARAM,
   storylineReadHref,
 } from '~/components/Storyline/storyline-mode.utils';
-
-const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'), {
-  ssr: false,
-});
 
 // A history entry inherits the previous entry's state, so a detail opened from inside another
 // one (the remix card) would otherwise arrive with the first one's feed. Cleared unless named.
@@ -22,8 +18,7 @@ const FEED_STATE_RESET = {
   hideReactions: undefined,
 };
 
-const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
-  component: ImageDetailModal,
+export const imageDetailDialog = routedDialog<typeof ImageDetailModal>({
   target: '#main',
   resolve: (query, { imageId, storylineChapterId, storylineVia, ...state }) => {
     // An image opened from inside the reader (a remix, say) is not in the storyline: drop the
@@ -56,5 +51,3 @@ const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
     };
   },
 });
-
-export type ImageDetailDialog = typeof imageDetailDialog;

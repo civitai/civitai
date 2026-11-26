@@ -480,8 +480,8 @@ per-ecosystem handlers into `src/server/services/orchestrator/form-graph/`.
 | audio hub | ecosystem scoped 'audio', default Ace; no quantity/priority/outputFormat (image/video concerns) |
 | model3d: polygen (Meshy v6/v7) | `version` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
 | model3d: tripo | `version` (h3.1 default / v2.5); h3.1 adds text-to-3D and 1–4 image views (multiviewTo3D), v2.5-on-text clamps to h3.1 |
-| model3d: hunyuan3d / pixal3d / trellis2 | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes) |
-| model3d hub | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
+| model3d: pixal3d / trellis2 | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes) |
+| model3d hub | ecosystem scoped 'model3d', default PolyGen; the three newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
 | standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate / preprocess, img2meta, prompt:enhance) | eight arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from `~/shared/generation/preprocess-specs` (they mirror @civitai/orchestration-client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
 
 ---

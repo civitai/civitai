@@ -69,3 +69,45 @@ describe('upsertArticleHandler — articleScheduling flag', () => {
     expect(mockUpsertArticle).toHaveBeenCalledTimes(1);
   });
 });
+
+// A save keeps a cover or banner the editor's form never had, under the same report-listed view
+// the read applied (#10489).
+describe('upsertArticleHandler — report-listed viewer', () => {
+  beforeEach(() => {
+    mockUpsertArticle.mockReset();
+    mockUpsertArticle.mockResolvedValue({ id: 5, publishedAt: null });
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ publishedAt: null });
+  });
+
+  const viewerFor = async (credential: Record<string, unknown>) => {
+    await upsertArticleHandler({
+      input: input(),
+      ctx: {
+        user: { id: 1, isModerator: true },
+        features: { articleImageScanning: false, articleScheduling: false, csamReports: true },
+        req: undefined,
+        track: { article: vi.fn(async () => undefined) },
+        ...credential,
+      } as never,
+    });
+    return mockUpsertArticle.mock.calls.at(-1)![0].reportListedViewer;
+  };
+
+  it("passes a grant-holding moderator's session view to the save", async () => {
+    expect(await viewerFor({ apiKeyId: null })).toEqual({
+      seesReportListed: true,
+      ownerSeesReportListed: true,
+    });
+  });
+
+  it('passes neither view for a scoped key', async () => {
+    expect(
+      await viewerFor({
+        apiKeyId: 9,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: 1n,
+      })
+    ).toEqual({ seesReportListed: false, ownerSeesReportListed: false });
+  });
+});

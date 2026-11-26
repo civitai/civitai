@@ -82,6 +82,11 @@ export const MONEY_MARKERS = [
   // against a cap, so a disclosing estimate region that reached it would be reserving.
   'reservePrivateRunBuzzSpend(',
   'reserveReviewRunForRealBuzzSpend(',
+  // Recipe runner spend: the Redis legs, the ledger attempt, and their refunds.
+  'reservePlatformAndConsentLegs(',
+  'reserveRunnerAttempt(',
+  'reserveRunnerLeg(',
+  'refundRunnerLeg(',
   'settleCustomComfySpend(',
 ] as const;
 

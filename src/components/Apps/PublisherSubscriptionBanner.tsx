@@ -1,7 +1,7 @@
 import { Alert, Anchor, Button, Group, Stack, Text } from '@mantine/core';
 import { IconPlugConnected, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -50,7 +50,7 @@ export function PublisherSubscriptionBanner({ modelId, modelType }: Props) {
       await utils.blocks.listForModel.invalidate();
       showSuccessNotification({
         title: 'Disabled',
-        message: 'The block won\'t show on this model anymore.',
+        message: "The block won't show on this model anymore.",
       });
     },
     onError: (e) =>
@@ -111,12 +111,12 @@ export function PublisherSubscriptionBanner({ modelId, modelType }: Props) {
                 leftSection={<IconX size={12} />}
                 loading={installMutation.isPending || toggleMutation.isPending}
                 onClick={() =>
-                  openConfirmModal({
+                  openConfirm({
                     title: `Disable "${sub.manifest.name ?? sub.blockId}" for this model only?`,
-                    children: (
+                    message: (
                       <Text size="sm">
-                        The block will still show on your other models. You can re-enable it
-                        anytime by removing the per-model opt-out.
+                        The block will still show on your other models. You can re-enable it anytime
+                        by removing the per-model opt-out.
                       </Text>
                     ),
                     labels: { confirm: 'Disable for this model', cancel: 'Cancel' },

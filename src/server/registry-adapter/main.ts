@@ -51,6 +51,27 @@
  *                                  space-separated) whose subscriptions may read the `store-listing@v1`
  *                                  stream (`listing-stream.ts`). Unset or empty, the default: the
  *                                  schema is not served, and the catalog read is unchanged
+ *   REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS
+ *                                  the OAuth client ids (comma- or space-separated) whose SERVICE
+ *                                  tokens may read the shared-collection LEVEL STREAMS, by naming
+ *                                  a level in a subscription's `meta` (`level-feed.ts`). Each must
+ *                                  also be on REGISTRY_ADAPTER_SERVICE_CLIENTS. Unset or empty, the
+ *                                  default: no level stream exists, and every subscription is
+ *                                  routed as before. The level-stream fill gauges are then served
+ *                                  on /metrics (REGISTRY_ADAPTER_METRICS_PORT)
+ *   REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS
+ *                                  a level stream's record bound, an integer above 2000 (default
+ *                                  2500); past it a stream holds its newest documents by key
+ *   REGISTRY_ADAPTER_VIEWER_STREAMS
+ *                                  "1" (with REGISTRY_ADAPTER_PRIVATE_RELAYS) serves the
+ *                                  shared-collection PER-VIEWER streams to the private relays'
+ *                                  users (`viewer-feed.ts`): each viewer's own documents of a
+ *                                  shared collection and their level mask. Unset (the default):
+ *                                  off, and a per-viewer URN is not served
+ *   REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS
+ *                                  a per-viewer stream's record bound, an integer above 10000
+ *                                  (default 20000); past it the stream ends `too_large`. Read
+ *                                  only while per-viewer streams are on
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
  *                                  headers; set only once the gateway sets those keys itself
  *                                  (`request-origin.ts`)
@@ -75,18 +96,23 @@
  * stream's set of collection schemas (the fixed entity schemas go to everyone); the `service`
  * stream is the same for everyone.
  */
-import { readCatalog } from '~/server/registry-adapter/catalog-source';
-import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
+import { readCatalog, readDocStreamApps } from '~/server/registry-adapter/catalog-source';
+import {
+  liveCatalogReadDeps,
+  liveDocStreamReadDeps,
+} from '~/server/registry-adapter/catalog-source.live';
 import { createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
 import { abortableSleep } from '~/utils/errorHandling';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
-import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
+import { liveLevelDocSource, liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
+import { composeAdapter, docStreamResolvers } from '~/server/registry-adapter/doc-streams';
 import {
-  composeAdapter,
-  resolveFromCatalog,
-  resolvePrivateFromCatalog,
-} from '~/server/registry-adapter/doc-streams';
+  createLevelFeed,
+  createLevelStreamFill,
+  createLevelStreamMetrics,
+  parseLevelStreamConfig,
+} from '~/server/registry-adapter/level-feed';
 import {
   PRIVATE_STATE_RETENTION_SECONDS,
   createPrivateDocFeed,
@@ -97,7 +123,13 @@ import {
   liveInstanceRevoked,
   livePrivateDocSource,
   liveRunGateReadable,
+  liveViewerDocSource,
 } from '~/server/registry-adapter/private-feed.live';
+import {
+  createViewerFeed,
+  parseViewerStreamMaxRecords,
+  viewerStreamsOn,
+} from '~/server/registry-adapter/viewer-feed';
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import {
@@ -208,25 +240,31 @@ function main() {
       : 'registry-adapter: listing stream off (REGISTRY_ADAPTER_LISTING_RELAYS unset)'
   );
   const served = servedSchemas({ listings });
-  // The listing stream's cap counter, on the policy shadow's /metrics when it is on, else on a
-  // /metrics of its own (REGISTRY_ADAPTER_METRICS_PORT), only while the listing stream is.
+  // The listing stream's cap counter and the level streams' fill gauges, on the policy shadow's
+  // /metrics when it is on, else on one /metrics of their own (REGISTRY_ADAPTER_METRICS_PORT),
+  // only while either of them is on.
+  const metricsRegistry = policyRegistry ?? new Registry();
+  let metricsServed = !!policyRegistry;
+  const serveMetrics = (what: string) => {
+    if (metricsServed) return;
+    metricsServed = true;
+    const metricsPort = Number(process.env.REGISTRY_ADAPTER_METRICS_PORT) || DEFAULT_METRICS_PORT;
+    createMetricsServer(metricsRegistry)
+      .on('error', (err: NodeJS.ErrnoException) =>
+        console.warn(
+          `registry-adapter: WARNING: ${what} /metrics not served on :${metricsPort} (${
+            err.code ?? err.message
+          })`
+        )
+      )
+      .listen(metricsPort, () =>
+        console.log(`registry-adapter: ${what} /metrics on :${metricsPort}`)
+      );
+  };
   let onSubListingsCapped: ((listingId: string, omitted: number) => void) | undefined;
   if (listings) {
-    const { dropped, registry } = createListingStreamMetrics(policyRegistry ?? new Registry());
-    if (!policyRegistry) {
-      const metricsPort = Number(process.env.REGISTRY_ADAPTER_METRICS_PORT) || DEFAULT_METRICS_PORT;
-      createMetricsServer(registry)
-        .on('error', (err: NodeJS.ErrnoException) =>
-          console.warn(
-            `registry-adapter: WARNING: listing /metrics not served on :${metricsPort} (${
-              err.code ?? err.message
-            })`
-          )
-        )
-        .listen(metricsPort, () =>
-          console.log(`registry-adapter: listing stream /metrics on :${metricsPort}`)
-        );
-    }
+    const { dropped } = createListingStreamMetrics(metricsRegistry);
+    serveMetrics('listing stream');
     onSubListingsCapped = reportSubListingsCapped(
       dropped,
       (line) => console.warn(line),
@@ -236,6 +274,15 @@ function main() {
   const deps = liveCatalogReadDeps({ listings, onSubListingsCapped });
   // Every subscription polls; they share one catalog read per half poll interval.
   const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
+  // The private, per-viewer and level streams read every approved app, not the public catalog
+  // (see readDocStreamApps).
+  const docStreamDeps = liveDocStreamReadDeps();
+  const readDocApps = sharedRead(() => readDocStreamApps(docStreamDeps), pollMs / 2);
+  const resolvers = docStreamResolvers({
+    readCatalogApps: readApps,
+    readDocStreamApps: readDocApps,
+    docLevelsOn: isSharedDocLevelsOn,
+  });
   const store = createRedisSnapshotStore();
   const polling = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
@@ -255,10 +302,7 @@ function main() {
   const docs = createDocFeed({
     source: liveSharedDocSource(),
     // Export only what content levels gate: an app whose levels flag is off publishes nothing.
-    resolve: resolveFromCatalog(readApps, undefined, {
-      docLevelsOn: isSharedDocLevelsOn,
-      requireDocLevels: true,
-    }),
+    resolve: resolvers.exported,
     store,
     pollMs,
     sleep: abortableSleep,
@@ -275,7 +319,7 @@ function main() {
       ? createPrivateDocFeed({
           relays: privateRelays,
           source: livePrivateDocSource(),
-          resolve: resolvePrivateFromCatalog(readApps),
+          resolve: resolvers.private,
           decide: liveDecideCollectionRead,
           runGateReadable: liveRunGateReadable,
           instanceRevoked: liveInstanceRevoked,
@@ -289,7 +333,67 @@ function main() {
           onError,
         })
       : undefined;
-  const adapter = composeAdapter(entities, docs, privateDocs);
+  // The bound is read only while the allowlist names a client: a bad value cannot stop the
+  // adapter while level streams are off, and refuses to start once they are on.
+  const levelConfig = parseLevelStreamConfig({
+    clients: process.env.REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS,
+    maxRecords: process.env.REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS,
+  });
+  console.log(
+    levelConfig
+      ? `registry-adapter: level streams ON for clients: ${[...levelConfig.clients].join(
+          ', '
+        )} (bound ${levelConfig.maxRecords} records)`
+      : 'registry-adapter: level streams off (REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS unset)'
+  );
+  let levelDocs: ReturnType<typeof createLevelFeed> | undefined;
+  if (levelConfig) {
+    const fill = createLevelStreamFill();
+    createLevelStreamMetrics(metricsRegistry, fill);
+    serveMetrics('level stream');
+    levelDocs = createLevelFeed({
+      clients: levelConfig.clients,
+      source: liveLevelDocSource(),
+      resolve: resolvers.level,
+      store,
+      pollMs,
+      sleep: abortableSleep,
+      maxRecords: levelConfig.maxRecords,
+      fill,
+      onError,
+    });
+  }
+  const viewerOn = viewerStreamsOn(process.env.REGISTRY_ADAPTER_VIEWER_STREAMS);
+  console.log(
+    viewerOn && privateRelays.size > 0
+      ? 'registry-adapter: per-viewer streams ON for the private relays'
+      : viewerOn
+      ? 'registry-adapter: WARNING: REGISTRY_ADAPTER_VIEWER_STREAMS=1 but no private relay is listed: per-viewer streams off'
+      : 'registry-adapter: per-viewer streams off (REGISTRY_ADAPTER_VIEWER_STREAMS unset)'
+  );
+  const viewerDocs =
+    viewerOn && privateRelays.size > 0
+      ? createViewerFeed({
+          relays: privateRelays,
+          source: liveViewerDocSource(),
+          resolve: resolvers.viewer,
+          maxRecords: parseViewerStreamMaxRecords(
+            process.env.REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS
+          ),
+          decide: liveDecideCollectionRead,
+          runGateReadable: liveRunGateReadable,
+          instanceRevoked: liveInstanceRevoked,
+          store: createRedisSnapshotStore(
+            undefined,
+            STATES_KEPT_PER_STREAM,
+            PRIVATE_STATE_RETENTION_SECONDS
+          ),
+          pollMs,
+          sleep: abortableSleep,
+          onError,
+        })
+      : undefined;
+  const adapter = composeAdapter(entities, docs, privateDocs, levelDocs, viewerDocs);
 
   const server = createRegistryServer(adapter, {
     onError,

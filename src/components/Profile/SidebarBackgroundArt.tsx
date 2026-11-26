@@ -31,8 +31,8 @@ export function SidebarBackgroundArt({
         type={data.type ?? 'image'}
         alt=""
         anim
-        // 450 covers the sidebar on a high-density screen, as the creator card does.
-        width={450}
+        // Twice the 320px sidebar, for high-density screens: art is made at 640×480.
+        width={640}
         optimized
         loading={loading}
         wrapperProps={{ style: { height: '100%' } }}

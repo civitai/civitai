@@ -28,6 +28,7 @@ const viewers = {
   owner: { userId: OWNER, ownerSeesHeld: true },
   ownerOnScopedKey: { userId: OWNER },
   moderator: { userId: 30, isModerator: true },
+  moderatorWithGrant: { userId: 31, isModerator: true, seesReportListed: true },
 };
 
 // One image per bounty entry, so each entry's result is that image or nothing.
@@ -40,6 +41,9 @@ const HELD_CSAM = 106;
 const HELD_MINOR = 107;
 const OTHER_REVIEW = 108;
 const ACCEPTABLE_MINOR = 9001;
+const TOS_VIOLATION = 9002;
+// Listed on a report and not blocked, as an image unblocked after its filing is.
+const REPORT_LISTED = 9003;
 
 let db: PGlite;
 
@@ -54,9 +58,11 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean NOT NULL DEFAULT false,
-      "acceptableMinor" boolean NOT NULL DEFAULT false
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES
       (${RATED}, 1, 'Scanned'), (${UNRATED}, 0, 'Scanned'), (${UNRATED_PENDING}, 0, 'Pending');
     INSERT INTO "Image" (id, "nsfwLevel", minor) VALUES (${MINOR_R}, 4, true), (${UNFLAGGED_R}, 4, false);
@@ -66,15 +72,24 @@ beforeAll(async () => {
       (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry'),
       (${MINOR_R}, 4, 'BountyEntry'), (${UNFLAGGED_R}, 5, 'BountyEntry'),
       (${HELD_CSAM}, 6, 'BountyEntry'), (${HELD_MINOR}, 7, 'BountyEntry'), (${OTHER_REVIEW}, 8, 'BountyEntry'),
-      (${ACCEPTABLE_MINOR}, 9, 'BountyEntry');
+      (${ACCEPTABLE_MINOR}, 9, 'BountyEntry'), (${TOS_VIOLATION}, 10, 'BountyEntry');
     INSERT INTO "Image" (id, "acceptableMinor") VALUES (${ACCEPTABLE_MINOR}, true);
+    INSERT INTO "Image" (id, "tosViolation") VALUES (${TOS_VIOLATION}, true);
+    INSERT INTO "Image" (id) VALUES (${REPORT_LISTED});
+    INSERT INTO "ImageConnection" VALUES (${REPORT_LISTED}, 11, 'BountyEntry');
+    INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": ${REPORT_LISTED}}]');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
 });
 
 async function imageOf(entryId: number, viewer: (typeof viewers)[keyof typeof viewers]) {
-  const images = await getImagesByEntity({ id: entryId, type: 'BountyEntry', ...viewer });
+  const images = await getImagesByEntity({
+    id: entryId,
+    type: 'BountyEntry',
+    seesReportListed: false,
+    ...viewer,
+  });
   return images.map((image) => image.id);
 }
 
@@ -147,7 +162,36 @@ describe('getImagesByEntity', () => {
     }
   );
 
+  it.each(['anonymous', 'stranger'] as const)(
+    'withholds an image removed for a ToS violation from the %s',
+    async (who) => {
+      expect(await imageOf(10, viewers[who])).toEqual([]);
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    'serves an image removed for a ToS violation to the %s',
+    async (who) => {
+      expect(await imageOf(10, viewers[who])).toEqual([TOS_VIOLATION]);
+    }
+  );
+
   it('serves the owner their own image under another review', async () => {
     expect(await imageOf(8, viewers.owner)).toEqual([OTHER_REVIEW]);
   });
+
+  // Report-listed images follow the bounty search index's exclusion (#10483).
+  it.each(['anonymous', 'stranger', 'ownerOnScopedKey', 'moderator'] as const)(
+    'withholds an image listed on a report from the %s',
+    async (who) => {
+      expect(await imageOf(11, viewers[who])).toEqual([]);
+    }
+  );
+
+  it.each(['owner', 'moderatorWithGrant'] as const)(
+    'serves an image listed on a report to the %s',
+    async (who) => {
+      expect(await imageOf(11, viewers[who])).toEqual([REPORT_LISTED]);
+    }
+  );
 });

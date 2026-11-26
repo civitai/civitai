@@ -26,7 +26,7 @@ import (
 const (
 	headerGoldenDir = "../../testdata/golden/v1-models-headers"
 	// The cases gen-v1-models-headers.mjs writes: fewer found means the glob matched the wrong place.
-	headerGoldenMin = 9
+	headerGoldenMin = 10
 )
 
 type headerGolden struct {
@@ -36,6 +36,8 @@ type headerGolden struct {
 		Headers map[string]string `json:"headers"`
 	} `json:"request"`
 	Expect struct {
+		// Status is the status Node answers the case with (0: 200; the body fixture's).
+		Status  int               `json:"status"`
 		Headers map[string]string `json:"headers"`
 	} `json:"expect"`
 }
@@ -84,6 +86,12 @@ func headerGoldenRun(t *testing.T, hc *headerGolden) {
 	ans, err := goldenServe(context.Background(), env, fx)
 	if err != nil {
 		t.Fatalf("compute: %v (fallback reason %q)", err, fallback.Reason(err))
+	}
+	if hc.Expect.Status != fx.Expect.Status {
+		t.Fatalf("the case's status %d is not its body fixture's %d", hc.Expect.Status, fx.Expect.Status)
+	}
+	if err := fx.sameStatus(ans); err != nil {
+		t.Fatal(err)
 	}
 	plain, err := superjson.Plain(ans.Body)
 	if err != nil {

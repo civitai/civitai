@@ -7,6 +7,10 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -40,7 +44,6 @@ import {
   recordChallengeScanResult,
   recordChallengeReviewRequested,
   recordChallengeCompleted,
-  recordChallengeVoided,
   recordChallengeDeleted,
   recordChallengePrizePaidBuzz,
   recordChallengeWinnerDuplicatePick,
@@ -91,7 +94,6 @@ import {
   ImageIngestionStatus,
   PoolTrigger,
   PrizeMode,
-  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
@@ -212,13 +214,20 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
-import { createPrizes, voidPrizes } from '~/server/services/prize.service';
+import { createPrizes } from '~/server/services/prize.service';
+import {
+  notifyEntrantsOfCancellation,
+  voidChallenge,
+} from '~/server/games/daily-challenge/challenge-void';
+
+export { voidChallenge };
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { AIModel } from '~/server/services/ai/openrouter';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
+import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
 
 /**
  * Get judging config efficiently using cached default judge when possible.
@@ -372,9 +381,29 @@ const challengeCardQuery = Prisma.sql`
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
     LEFT JOIN "User" ju ON ju.id = cj."userId"`;
 
-// Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
-// ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
-// of the two is shown as the author is a client concern (see getChallengeDisplayUser).
+/** The challenge covers a card or list may show, as the challenge's own cover read does. */
+async function getChallengeCoverImages(coverImageIds: number[], viewerId: number | undefined) {
+  if (!coverImageIds.length) return [];
+  const [images, listed] = await Promise.all([
+    dbRead.image.findMany({
+      where: {
+        id: { in: coverImageIds },
+        AND: [imageNotRestrictedWhere({ viewerId }), challengeCoverWhere()],
+      },
+      select: imageSelect,
+    }),
+    getReportListedHiddenImageIds(coverImageIds, SIGNED_OUT_REPORT_LISTED),
+  ]);
+  return images.filter((image) => !listed.has(image.id));
+}
+
+/** A cover the editor may not see: its id, so a save keeps it, and nothing that shows it. */
+const withoutCoverSource = <T extends { url: string; hash: string | null }>(image: T): T => ({
+  ...image,
+  url: '',
+  hash: null,
+});
+
 // The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
@@ -389,6 +418,9 @@ function coverWithinSite<
     : cover;
 }
 
+// Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
+// ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
+// of the two is shown as the author is a client concern (see getChallengeDisplayUser).
 async function mapChallengeRowsToCards(
   items: ChallengeCardRow[],
   site: SiteViewer
@@ -406,13 +438,7 @@ async function mapChallengeRowsToCards(
   ]);
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages = await dbRead.image.findMany({
-    where: {
-      id: { in: coverImageIds },
-      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
-    },
-    select: imageSelect,
-  });
+  const coverImages = await getChallengeCoverImages(coverImageIds, site.viewerId);
 
   return items.map((item) => {
     const coverImage = coverWithinSite(
@@ -941,7 +967,10 @@ export async function getInfiniteChallenges(
 async function buildChallengeDetail(
   challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>,
   green?: { isGreen?: boolean; viewerId?: number },
-  { forEdit = false }: { forEdit?: boolean } = {}
+  {
+    forEdit = false,
+    seesReportListed = false,
+  }: { forEdit?: boolean; seesReportListed?: boolean } = {}
 ) {
   const id = challenge.id;
 
@@ -979,27 +1008,36 @@ async function buildChallengeDetail(
   const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
-  const fetchedCover = challenge.coverImageId
-    ? await dbRead.image.findFirst({
-        where: {
-          id: challenge.coverImageId,
-          // The edit form must round-trip the cover it keeps, or a save would drop it.
-          ...(forEdit
-            ? {}
-            : {
-                AND: [
-                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
-                  challengeCoverWhere(),
-                ],
-              }),
-        },
-        select: imageSelect,
-      })
-    : null;
-  const coverImage = coverWithinSite(fetchedCover, {
+  const [listedCover, readCover] = await Promise.all([
+    !seesReportListed && challenge.coverImageId
+      ? getReportListedHiddenImageIds([challenge.coverImageId], SIGNED_OUT_REPORT_LISTED)
+      : new Set<number>(),
+    challenge.coverImageId
+      ? dbRead.image.findFirst({
+          where: {
+            id: challenge.coverImageId,
+            // The edit form must round-trip the cover it keeps, or a save would drop it.
+            ...(forEdit
+              ? {}
+              : {
+                  AND: [
+                    imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                    challengeCoverWhere(),
+                  ],
+                }),
+          },
+          select: imageSelect,
+        })
+      : null,
+  ]);
+  const coverListed = listedCover.size > 0;
+  const fetchedCover = forEdit || !coverListed ? readCover : null;
+  const shownCover = coverWithinSite(fetchedCover, {
     isGreen: green?.isGreen ?? false,
     viewerId: green?.viewerId,
   });
+  // A listed cover keeps its id for the edit form but loses its source.
+  const coverImage = shownCover && coverListed ? withoutCoverSource(shownCover) : shownCover;
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
@@ -1184,12 +1222,16 @@ export async function getChallengeDetail(
  * ones needed for the edit form (judging prompt, theme elements, etc.).
  * Bypasses visibility checks.
  */
-export async function getChallengeForEdit(id: number): Promise<ChallengeDetailForEdit | null> {
+export async function getChallengeForEdit(
+  id: number,
+  { seesReportListed = false }: { seesReportListed?: boolean } = {}
+): Promise<ChallengeDetailForEdit | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge, undefined, {
     forEdit: true,
+    seesReportListed,
   });
   return { ...detail, ..._internal };
 }
@@ -2114,9 +2156,11 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
 export async function rescanChallenge({
   id,
   moderatorId,
+  csamReview,
 }: {
   id: number;
   moderatorId: number;
+  csamReview: boolean;
 }): Promise<void> {
   // Primary, not the replica: a mod who edits then immediately rescans would otherwise submit the
   // pre-edit text and cache a verdict against content that no longer exists.
@@ -2136,6 +2180,7 @@ export async function rescanChallenge({
 
   let coverRequeued = false;
   if (challenge.coverImageId) {
+    await assertMayLoosenImages([challenge.coverImageId], { csamReview });
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
       select: { id: true, url: true, type: true, ingestion: true },
@@ -3089,144 +3134,6 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
 }
 
 /**
- * Distinct paying entrants for a challenge — owners of images *currently* entered into its
- * collection, excluding the creator. This is an approximation of "who actually got refunded",
- * not an exact match, and the divergence is accepted rather than re-architected to query the
- * buzz ledger: a moderator-added entry has a CollectionItem row despite its fee charge being
- * bypassed, so that user may be notified without having paid; and a paid entry removed from the
- * collection before the void still has its pool fee reversed by `refundUserChallengeFunds`
- * (matched by transaction-id prefix, independent of this query) but won't appear here, so that
- * payer won't be notified. The refund itself is unaffected either way — only this courtesy
- * notification is approximate.
- */
-async function getPayingEntrantUserIds(collectionId: number, createdById: number | null) {
-  const rows = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT DISTINCT i."userId"
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    WHERE ci."collectionId" = ${collectionId}
-  `;
-  return rows.map((r) => r.userId).filter((userId) => userId !== createdById);
-}
-
-/** Notify every distinct paying entrant that their challenge was cancelled/refunded. Call only
- * after a refund has actually happened (`refundedEntries > 0`) so no-fee/no-entrant/System
- * challenges never fire this. Best-effort: the refund has already succeeded by the time this
- * runs, so a failure here is logged and swallowed rather than propagating and blocking the
- * status flip to Cancelled/Completed. */
-async function notifyEntrantsOfCancellation(challenge: {
-  id: number;
-  title: string;
-  collectionId: number | null;
-  createdById: number | null;
-  entryFee: number;
-}) {
-  if (!challenge.collectionId) return;
-  try {
-    const entrantUserIds = await getPayingEntrantUserIds(
-      challenge.collectionId,
-      challenge.createdById
-    );
-    if (entrantUserIds.length === 0) return;
-
-    await createNotification({
-      type: 'challenge-cancelled',
-      category: NotificationCategory.System,
-      key: `challenge-cancelled:${challenge.id}`,
-      userIds: entrantUserIds,
-      details: {
-        challengeId: challenge.id,
-        challengeTitle: challenge.title,
-        refundedBuzz: getEntryPoolContribution(challenge.entryFee),
-      },
-    });
-    log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
-  } catch (err) {
-    logToAxiom({
-      type: 'error',
-      name: 'challenge-cancelled-notification',
-      challengeId: challenge.id,
-      message: (err as Error).message,
-    });
-  }
-}
-
-/**
- * Void/cancel a challenge without picking winners.
- * Closes the collection and marks the challenge as Cancelled.
- */
-export async function voidChallenge(
-  challengeId: number,
-  // Telemetry-only: why the void was triggered. Normalized to a closed set in the metric helper
-  // (moderator|nsfw|activation|other); does not affect behavior.
-  reason: 'moderator' | 'nsfw' | 'activation' | 'other' = 'other'
-) {
-  // Get the challenge
-  const challenge = await getChallengeById(challengeId);
-  if (!challenge) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
-  }
-
-  // Validate status. Cancelled is allowed so a void whose refund threw mid-way can be re-run to
-  // finish the (idempotent) refund, rather than stranding the funds.
-  if (
-    challenge.status !== ChallengeStatus.Active &&
-    challenge.status !== ChallengeStatus.Scheduled &&
-    challenge.status !== ChallengeStatus.Cancelled
-  ) {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: `Cannot void challenge with status "${String(
-        challenge.status
-      )}". Challenge must be Active, Scheduled, or Cancelled.`,
-    });
-  }
-
-  log('Voiding challenge:', challengeId);
-
-  // Claim the row (Active/Scheduled -> Cancelled) BEFORE refunding, unless it is already Cancelled
-  // (a retry of a prior void whose refund failed — skip the claim and just re-refund idempotently).
-  // The claim stops (a) two concurrent voids from both refunding, and (b) — critically — a void from
-  // refunding a pool the completion cron is simultaneously claiming to pay to winners, which would
-  // mint (the cron's own Active->Completing claim can no longer win once we've flipped to Cancelled).
-  // If the claim is lost, another void or completion advanced the row; do not refund here — a
-  // stranded refund is recovered by re-running void, which lands on the Cancelled branch below.
-  if (challenge.status !== ChallengeStatus.Cancelled) {
-    const claimed = await dbWrite.challenge.updateMany({
-      where: {
-        id: challengeId,
-        status: { in: [ChallengeStatus.Active, ChallengeStatus.Scheduled] },
-      },
-      data: { status: ChallengeStatus.Cancelled },
-    });
-    if (claimed.count !== 1) {
-      log('Void claim lost (completion or a concurrent void won); skipping refund');
-      // `voided: false` so callers can tell "nothing was refunded" from a real void — reporting a
-      // refund that never happened would tell entrants they got their Buzz back.
-      return { success: true, voided: false };
-    }
-    log('Challenge status updated to Cancelled');
-  }
-
-  // A completion that awarded prizes and then failed is reset to Active, so it can still be voided
-  // here; the pool is refunded below, so what it awarded must not also be claimable.
-  await voidPrizes(PrizeSourceType.Challenge, challengeId);
-
-  // Close the collection if exists
-  await closeChallengeCollection(challenge);
-  log('Collection closed');
-
-  const { refundedEntries } = await refundUserChallengeFunds(challengeId, 'void');
-  log(`Refunded ${refundedEntries} entry fees`);
-  if (refundedEntries > 0) {
-    await notifyEntrantsOfCancellation(challenge);
-  }
-
-  recordChallengeVoided({ source: challenge.source, reason });
-  return { success: true, voided: true };
-}
-
-/**
  * Get active ChallengeJudge records for the moderator dropdown.
  */
 export type ActiveJudge = {
@@ -3398,22 +3305,26 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 async function getEventCoverImages(
   coverImageIds: (number | null)[],
   site: SiteViewer,
-  { forEdit = false }: { forEdit?: boolean } = {}
+  {
+    forEdit = false,
+    seesReportListed = false,
+  }: { forEdit?: boolean; seesReportListed?: boolean } = {}
 ) {
   const ids = coverImageIds.filter(isDefined);
   if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
-  const images = await dbRead.image.findMany({
-    where: {
-      id: { in: ids },
-      ...(forEdit
-        ? {}
-        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
-    },
-    select: imageSelect,
-  });
+  const [images, listed] = forEdit
+    ? await Promise.all([
+        dbRead.image.findMany({ where: { id: { in: ids } }, select: imageSelect }),
+        seesReportListed
+          ? new Set<number>()
+          : getReportListedHiddenImageIds(ids, SIGNED_OUT_REPORT_LISTED),
+      ])
+    : [await getChallengeCoverImages(ids, site.viewerId), new Set<number>()];
   const map = new Map<number, ChallengeCoverImage>();
-  for (const img of images) {
-    if (!coverWithinSite(img, site)) continue;
+  for (const found of images) {
+    if (!coverWithinSite(found, site)) continue;
+    // As on the challenge edit form: the id round-trips, the source does not.
+    const img = listed.has(found.id) ? withoutCoverSource(found) : found;
     map.set(img.id, {
       id: img.id,
       url: img.url,
@@ -3552,18 +3463,9 @@ export async function getActiveEvents(
   ]);
 
   const coverImageIds = allChallenges.map((c) => c.coverImageId).filter(isDefined);
-  const coverImages =
-    coverImageIds.length > 0
-      ? await dbRead.image
-          .findMany({
-            where: {
-              id: { in: coverImageIds },
-              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
-            },
-            select: imageSelect,
-          })
-          .then((imgs) => new Map(imgs.map((img) => [img.id, img])))
-      : new Map();
+  const coverImages = new Map(
+    (await getChallengeCoverImages(coverImageIds, site.viewerId)).map((img) => [img.id, img])
+  );
 
   // Get entry counts for all challenges
   const collectionIds = allChallenges.map((c) => c.collectionId).filter(isDefined);
@@ -3721,7 +3623,10 @@ export async function getChallengeEventById(
 /**
  * Get all challenge events (for moderator management).
  */
-export async function getChallengeEvents(input: GetChallengeEventsInput) {
+export async function getChallengeEvents(
+  input: GetChallengeEventsInput,
+  { seesReportListed = false }: { seesReportListed?: boolean } = {}
+) {
   const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
   const events = await dbRead.challengeEvent.findMany({
     where,
@@ -3746,7 +3651,7 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
   const coverMap = await getEventCoverImages(
     events.map((e) => e.coverImageId),
     { isGreen: false },
-    { forEdit: true }
+    { forEdit: true, seesReportListed }
   );
   return events.map(({ coverImageId, ...e }) => ({
     ...e,
@@ -4002,7 +3907,9 @@ export async function playgroundGenerateContent(input: PlaygroundGenerateContent
 /**
  * Playground: Review an image with a judge.
  */
-export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
+export async function playgroundReviewImage(
+  input: PlaygroundReviewImageInput & { csamReview: boolean }
+) {
   const config = await getChallengeConfig();
   const judgeId = input.judgeId ?? config.defaultJudgeId ?? 1;
   let judgingConfig = await getJudgingConfig(judgeId);
@@ -4020,6 +3927,7 @@ export async function playgroundReviewImage(input: PlaygroundReviewImageInput) {
     select: { url: true, user: { select: { username: true } } },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+  await assertMayLoosenImages([input.imageId], { csamReview: input.csamReview });
 
   const imageUrl = getEdgeUrl(image.url, { width: 1200, name: 'image', optimized: true });
 
@@ -4279,7 +4187,7 @@ export async function getCompletedChallengesWithWinners(
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
-  // Cursor-based pagination: "endsAt:id"
+  // The "endsAt:id" cursor points to the first challenge on the next page.
   if (cursor) {
     const lastColon = cursor.lastIndexOf(':');
     if (lastColon !== -1) {
@@ -4289,7 +4197,7 @@ export async function getCompletedChallengesWithWinners(
       const endsAt = new Date(endsAtStr);
       if (!isNaN(id) && !isNaN(endsAt.getTime())) {
         conditions.push(
-          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id < ${id}))`
+          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id <= ${id}))`
         );
       }
     }
@@ -4468,16 +4376,7 @@ export async function getCompletedChallengesWithWinners(
 
   // Fetch cover images
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages =
-    coverImageIds.length > 0
-      ? await dbRead.image.findMany({
-          where: {
-            id: { in: coverImageIds },
-            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
-          },
-          select: imageSelect,
-        })
-      : [];
+  const coverImages = await getChallengeCoverImages(coverImageIds, currentUserId);
 
   // Transform results
   const coverImageMap = new Map(coverImages.map((img) => [img.id, img]));

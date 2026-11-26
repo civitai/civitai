@@ -122,6 +122,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
         listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
+        // The approve bar's version re-rate notice (renders nothing without data).
+        getVersionListingRatingPreview: { useQuery: () => ({ data: undefined }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },
         previewRequest: { useMutation: mutation('preview') },
@@ -236,8 +238,8 @@ beforeEach(() => {
   router.pathname = '/apps/review/[publishRequestId]';
 });
 
-describe('the seven tabs', () => {
-  test('🔴 all seven render, in the ledger order', async () => {
+describe('the eight tabs', () => {
+  test('🔴 all eight render, in the ledger order', async () => {
     render();
     await expect.element(page.getByTestId('apps-review-detail-tabs')).toBeInTheDocument();
     const labels = Array.from(document.querySelectorAll('[role="tab"]')).map((el) =>
@@ -557,6 +559,44 @@ describe('the Preview tab’s mode gates — one implementation, both clauses', 
       await expect.element(page.getByText(text)).toBeInTheDocument();
     }
   );
+});
+
+describe('the Build sessions tab', () => {
+  test('🔴 reads the moderator trace API for THIS request, and only once the tab is opened', async () => {
+    const fetchSpy = vi.fn(async (_url: string) =>
+      Response.json({ request: { id: 'pubreq_01HZX' }, trace: null, links: [] })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      router.query = { tab: 'permissions' };
+      const { rerender } = await renderWithProviders(
+        <ReviewDetailView
+          selection={{ request: PENDING as never, mode: 'pending' }}
+          onClose={vi.fn()}
+        />
+      );
+      await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
+      const traceCalls = () =>
+        fetchSpy.mock.calls.filter(([url]) =>
+          String(url).startsWith('/api/mod/apps/assistant-trace/')
+        );
+      expect(traceCalls()).toHaveLength(0);
+
+      router.query = { tab: 'sessions' };
+      await rerender(
+        <ReviewDetailView
+          selection={{ request: PENDING as never, mode: 'pending' }}
+          onClose={vi.fn()}
+        />
+      );
+      await expect.element(page.getByTestId('apps-review-sessions-empty')).toBeInTheDocument();
+      expect(traceCalls().map(([url]) => String(url))).toEqual([
+        `/api/mod/apps/assistant-trace/request?publishRequestId=${PENDING.id}`,
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('panel laziness', () => {

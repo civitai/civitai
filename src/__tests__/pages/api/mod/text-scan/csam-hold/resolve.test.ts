@@ -289,7 +289,13 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalledWith({
         ids: [55],
         actor: { id: 7, ip: undefined },
+        fromStatuses: expect.any(Array),
       });
+      const [{ fromStatuses }] = mocks.bulkSetCommentV3TosViolation.mock.calls[0] as [
+        { fromStatuses: string[] }
+      ];
+      expect(fromStatuses).toEqual(expect.arrayContaining(['Pending', 'Processing', 'Unactioned']));
+      expect(fromStatuses).not.toContain('Actioned');
       expect(mocks.createStrike).not.toHaveBeenCalled();
       expect(mocks.toggleBan).not.toHaveBeenCalled();
       expect(updateMany.mock.calls[0][0].data).toMatchObject({

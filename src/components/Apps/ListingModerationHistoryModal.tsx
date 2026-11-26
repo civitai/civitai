@@ -7,6 +7,7 @@ import {
   retryableOfflineCutEventId,
 } from '~/components/Apps/appListingModerationView';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   showErrorNotification,
@@ -195,9 +196,10 @@ export function listingModerationHistoryDialogId(appListingId: string): string {
  */
 export function openListingModerationHistory(listing: ModerationHistoryTarget): void {
   const id = listingModerationHistoryDialogId(listing.appListingId);
-  dialogStore.trigger({
-    id,
-    component: ListingModerationHistoryModal,
-    props: { listing, onClose: () => dialogStore.closeById(id) },
-  });
+  openDialog(
+    () => import('~/components/Apps/ListingModerationHistoryModal'),
+    'ListingModerationHistoryModal',
+    { listing, onClose: () => dialogStore.closeById(id) },
+    { id }
+  );
 }

@@ -19,7 +19,6 @@ const storeImage = (id: number, modelVersionIds: number[]) => ({
   },
 });
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7, muted: false }) }));
 vi.mock('~/components/Post/EditV2/PostEditProvider', () => ({
   usePostEditStore: (select: (s: { images: unknown[] }) => unknown) =>
     select({ images: store.images }),
@@ -59,7 +58,8 @@ beforeEach(() => {
 describe('ResourceReviewEditButton', () => {
   test('opens the stepper with every image of the post, not just the row owner and its siblings', async () => {
     await renderWithProviders(
-      <ResourceReviewEditButton postId={1} ownerId={7} modelVersionId={5} modelName="Model 5" />
+      <ResourceReviewEditButton postId={1} ownerId={7} modelVersionId={5} modelName="Model 5" />,
+      { user: { id: 7, muted: false } }
     );
     await page.getByRole('button', { name: 'Write a review of Model 5' }).click();
     expect(openStepper).toHaveBeenCalledWith({

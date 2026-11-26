@@ -5,6 +5,7 @@ import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilis
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { withoutUserImage } from '~/server/search-index/search-index-user';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import {
@@ -21,7 +22,7 @@ import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import { getPublicWithheldImageIds } from '~/server/services/article-image-holds';
 
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -80,21 +81,21 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 export const transformData = async ({
   articles,
   cosmetics,
-  modelWithheldImageIds = new Set(),
+  withheldImageIds = new Set(),
 }: {
   articles: Article[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
-  /** Cover or banner images their model withholds: a withheld cover leaves no card image. */
-  modelWithheldImageIds?: Set<number>;
+  /** From `getPublicWithheldImageIds`: a withheld cover leaves no card image. */
+  withheldImageIds?: Set<number>;
 }) => {
   // A restricted minor image, or one restricted by its base model, is withheld like one its model
   // withholds: the index has no viewer.
   const withheld = (image: NonNullable<Article['coverImage']>) =>
-    modelWithheldImageIds.has(image.id) || isMinorMatureImage(image) || isRestrictedImage(image);
+    withheldImageIds.has(image.id) || isMinorMatureImage(image) || isRestrictedImage(image);
   const servable = (image: Article['coverImage']) =>
     image && !withheld(image) ? servableArticleImage(image) : null;
   const records = articles
-    .map(({ tags, stats, bannerImage, ...articleRecord }) => {
+    .map(({ tags, stats, bannerImage, user, ...articleRecord }) => {
       // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
       // article stays searchable.
       const cover = articleRecord.coverImage;
@@ -105,6 +106,7 @@ export const transformData = async ({
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
+        user: withoutUserImage(user),
         // The legacy `cover` is the same image's key. Null, not absent: an update merges into the
         // stored document.
         ...(coverWithheld && { cover: null }),
@@ -262,7 +264,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled cosmetics`);
 
-    const modelWithheldImageIds = await getModelWithheldImageIds(
+    const withheldImageIds = await getPublicWithheldImageIds(
       articles.flatMap((a) => [a.coverImage?.id, a.bannerImage?.id]).filter(isDefined),
       db
     );
@@ -270,7 +272,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     return {
       articles,
       cosmetics,
-      modelWithheldImageIds,
+      withheldImageIds,
     };
   },
   transformData,

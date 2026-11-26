@@ -1,6 +1,6 @@
 import { ActionIcon, Alert, Button, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconDotsVertical,
   IconDownload,
@@ -74,9 +74,9 @@ export function AppError({ error }: { error: unknown }) {
 
 /** The confirmation every delete of an app asks for first. */
 export function confirmDeleteApp(app: string, onConfirm: () => void) {
-  openConfirmModal({
+  openConfirm({
     title: `Delete ${app}?`,
-    children: (
+    message: (
       <Text size="sm">
         Everything in this app is deleted, including files the assistant has not shown you. This
         cannot be undone.

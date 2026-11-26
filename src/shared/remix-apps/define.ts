@@ -43,6 +43,13 @@ export type RemixAsk =
       maxLength: number;
       /** Answerable with '' (a Skip), which the app gets as ''. */
       optional?: boolean;
+    }
+  | {
+      /** One of the viewer's own images, gated as the source is. Declarative apps only. */
+      kind: 'image';
+      prompt: string;
+      /** Answerable with '' (a Skip), which the app gets as `null`. */
+      optional?: boolean;
     };
 
 /**
@@ -53,8 +60,15 @@ export type RemixViewerAsk =
   | Exclude<RemixAsk, { kind: 'pick' }>
   | { kind: 'pick'; prompt: string; images: (RemixImage | null)[] };
 
-/** `choice` answers with an option's value, `pick` with an image index, `text` with the text. */
-export type RemixAnswerOf<A extends RemixAsk> = A extends { kind: 'pick' } ? number : string;
+/**
+ * `choice` answers with an option's value, `pick` with an image index, `text` with the text. An
+ * `image` is answered with an image id; the app gets that image, as the host loaded and checked it.
+ */
+export type RemixAnswerOf<A extends RemixAsk> = A extends { kind: 'pick' }
+  ? number
+  : A extends { kind: 'image' }
+  ? RemixImage | null
+  : string;
 export type RemixAnswer = string | number;
 
 export type RemixCtx = {

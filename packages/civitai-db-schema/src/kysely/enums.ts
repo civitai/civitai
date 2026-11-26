@@ -454,6 +454,7 @@ export const CommentEntityType = {
   crucible: 'crucible',
   storyline: 'storyline',
   postText: 'postText',
+  featurePage: 'featurePage',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {

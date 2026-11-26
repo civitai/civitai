@@ -9,7 +9,7 @@ import {
   MIGRATION_APP_PURGE_UP,
   type Harness,
 } from './doc-store.harness';
-import { ctx, freshApp, NS_PROD, POSTS, PREFS, TALLIES } from './doc-store.functional';
+import { ctx, freshApp, NS_PROD, POSTS, PREFS } from './doc-store.functional';
 import { APPDATA_TABLES } from './doc-store.sql-scan';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -61,7 +61,7 @@ async function docsOf(h: Harness, appId: string, uid: number): Promise<number> {
   return Number(r.n);
 }
 
-/** Alice and Bob each write private + shared docs, a mark and a counter in prod; Alice in dev. */
+/** Alice and Bob each write private + shared docs and a report in prod; Alice in dev. */
 async function seed(store: DocStore, appId: string, docsEach = 3): Promise<void> {
   for (const uid of [ALICE, BOB]) {
     const c = ctx(appId, NS_PROD, uid);
@@ -70,11 +70,10 @@ async function seed(store: DocStore, appId: string, docsEach = 3): Promise<void>
       await store.put(c, POSTS, `post-${uid}-${i}`, { status: 'open' });
     }
   }
-  // Each marks the other's post (after both exist), and both count a play.
+  // Each reports the other's post (after both exist).
   for (const uid of [ALICE, BOB]) {
     const c = ctx(appId, NS_PROD, uid);
-    await store.mark(c, POSTS, `post-${uid === ALICE ? BOB : ALICE}-0`, 'vote');
-    await store.increment(c, TALLIES, 'game', 'plays', 1);
+    await store.report(c, POSTS, `post-${uid === ALICE ? BOB : ALICE}-0`);
   }
   await store.put(ctx(appId, DEV_NS, ALICE), PREFS, 'dev-pref', { a: 1 });
 }

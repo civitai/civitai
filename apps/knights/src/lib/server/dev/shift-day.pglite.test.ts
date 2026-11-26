@@ -15,7 +15,8 @@ let pg: PGlite;
 let db: Kysely<DB>;
 
 beforeAll(async () => {
-  ({ pg, db } = await createQueueDb());
+  // A /dev tool (assertDevOnly keeps it out of production), so it runs as the superuser, not the Knights role.
+  ({ pg, db } = await createQueueDb({ asSuperuser: true }));
   await ensureVotePartitions(db, { now: NOW, monthsAhead: 1 });
 });
 afterAll(async () => {

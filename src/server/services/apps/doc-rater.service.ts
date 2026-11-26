@@ -63,7 +63,7 @@ import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 export type RateResult =
   | { status: 'rated'; level: number }
   | { status: 'media-pending' }
-  | { status: 'changed' | 'gone' | 'hidden' | 'counter' };
+  | { status: 'changed' | 'gone' | 'hidden' };
 
 /** A document's texts, line by line: where its image references are looked for. */
 function lines(fields: readonly TextScanField[]): string[] {

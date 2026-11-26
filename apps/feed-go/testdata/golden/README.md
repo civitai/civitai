@@ -93,7 +93,7 @@ modelTagCache) are held out of its cache: the mirror runs the cache's lookup ove
 the rows its queries return (`db.modelDataVersions`, `db.modelHashes`, `db.tagsOnModels`) and what
 the fetch writes (`expect.writes`); the harness runs every served fixture with write-back off (the
 cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
-`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username). Raise
+`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username), each `paidAccess` row with the gated model's `versionIds` (what Hide Paid drops). Raise
 `goldenMinModels` with the count.
 
 ## model-assoc
@@ -180,3 +180,28 @@ BigInt, JSON.parse'd values); `internal/devalue/golden_test.go` builds the same 
 ```bash
 GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-devalue.mjs
 ```
+
+## region-blocked
+
+`region-blocked/responses.json` is the Node app's answer to a request from a blocked region (`cf-ipcountry:
+GB` on the default `REGION_BLOCK_CONFIG`) on each public route: status, every response header but the
+transport ones (lowercased), and body. It is written by hand and held to the app by
+`src/server/__tests__/feed-go-region-blocked-451.test.ts`, which runs the real tRPC route over a socket
+and the real `/api/v1` proxy middleware chain, adds the next.config.mjs headers the router sets in a
+production build, and fails when the app's answer differs from the file. `internal/server/region_blocked_test.go`
+requires feed-go's answer with `FEED_GO_ANSWER_REGION_BLOCKED` on to equal it on every route
+(DESIGN.md §6.2). When the Node test fails, correct the file from the app's answer; never from feed-go's.
+
+## `site-search/`
+
+One file per `POST /api/search/*` case: `request` (`path`, the JSON `body` as text, `host`:
+`green.example.test` is the SFW site, `red.example.test` the mature one), `viewer` (the session
+user's `id`, `isModerator`, `browsingLevel`, `showNsfw`; null when signed out), `config.passthrough`
+(`site-search-passthrough`), `upstream` (the search backend's `status` and `body` text), and
+`expect`: either `call` (the backend path and the JSON body Node sends, compared as values) and `body`
+(the exact text Node writes), or `fallback` (the reason feed-go's public route must hand the
+request back with; the harness runs those fixtures as the public route) and
+`nodeStatus` (what Node then answers). Written by hand from the Node code; held to the real handler by
+`src/server/__tests__/feed-go-site-search.golden.test.ts`, whose failure prints `GOLDEN-ACTUAL` — set a
+fixture's expectation from that output only. `internal/server/sitesearch_golden_test.go` runs feed-go
+over the same files. Upstream bodies are written in `JSON.stringify`'s form, so the bytes compare equal.

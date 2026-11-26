@@ -12,7 +12,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconArrowUp,
   IconCircle,
@@ -452,10 +452,9 @@ export const ModelMyBidCard = memo(function ModelMyBidCard({
   });
 
   const handleDelete = () => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete bid',
-      children: 'Are you sure you want to delete this bid?',
-      centered: true,
+      message: 'Are you sure you want to delete this bid?',
       labels: { confirm: 'Delete', cancel: 'No, keep it' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -635,10 +634,9 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
   });
 
   const handleDelete = () => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete bid',
-      children: 'Are you sure you want to delete this recurring bid?',
-      centered: true,
+      message: 'Are you sure you want to delete this recurring bid?',
       labels: { confirm: 'Delete', cancel: 'No, keep it' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -655,10 +653,9 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
   const handleMoveToLatest = () => {
     if (data.moveToLatest?.status !== 'available') return;
     const { targetName } = data.moveToLatest;
-    openConfirmModal({
+    openConfirm({
       title: 'Move bid to latest version',
-      children: `Are you sure you want to move this recurring bid to "${targetName}"? Today's bid is not affected — the new version will be used starting tomorrow.`,
-      centered: true,
+      message: `Are you sure you want to move this recurring bid to "${targetName}"? Today's bid is not affected — the new version will be used starting tomorrow.`,
       labels: { confirm: 'Move', cancel: 'No, keep it' },
       onConfirm: () => {
         moveRecurringBid({ bidId: data.id });
@@ -667,12 +664,11 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
   };
 
   const handleTogglePause = () => {
-    openConfirmModal({
+    openConfirm({
       title: `${data.isPaused ? 'Resume' : 'Pause'} bid`,
-      children: `Are you sure you want to ${
+      message: `Are you sure you want to ${
         data.isPaused ? 'resume' : 'temporarily pause'
       } this recurring bid?`,
-      centered: true,
       labels: { confirm: 'Yes', cancel: 'No' },
       confirmProps: { color: data.isPaused ? 'green' : 'orange' },
       onConfirm: () => {

@@ -96,6 +96,7 @@ import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { POST as TOKEN } from '../+server';
 import { GET as AUTHORIZE_GET, POST as AUTHORIZE_POST } from '../../authorize/+server';
+import { grantOffline } from '$lib/server/oauth/offline-grant';
 
 const USER = 41;
 const OTHER_USER = 42;
@@ -104,6 +105,8 @@ const OTHER_CLIENT = 'other-app';
 const DEVICE_CLIENT = 'cli-app';
 const SYSTEM_CLIENT = 'system-app';
 const DUAL_CLIENT = 'dual-app';
+const RUNNER_CLIENT = 'recipe-runner';
+const UNBOUND_CLIENT = 'system-confidential-app';
 const REDIRECT = 'https://app.example/callback';
 const NOW = new Date('2026-11-20T12:00:00.000Z');
 const DAY = 86_400_000;
@@ -147,7 +150,12 @@ function seed() {
     }),
     // A confidential app owned by the system account (-1) that skips the consent screen.
     client(SYSTEM_CLIENT, { isConfidential: true, secret: 'x', userId: -1, skipConsent: true }),
+    // A recipe runner: system-owned, confidential, consented, open, no device grant, and bound.
+    client(RUNNER_CLIENT, { isConfidential: true, secret: 'x', userId: -1 }),
+    // The same shape with no binding: an ordinary app.
+    client(UNBOUND_CLIENT, { isConfidential: true, secret: 'x', userId: -1 }),
   ];
+  h.tables.runner_client_bindings = [{ runner_client_id: RUNNER_CLIENT, status: 'active' }];
   h.tables.ApiKey = [];
   h.tables.OauthConsent = [];
 }
@@ -355,18 +363,84 @@ describe('flag on: the offline grant', () => {
   });
 
   it('unticking the line clears an earlier grant, deletes that app’s refresh tokens, and issues none', async () => {
-    consent({ offlineGrantedAt: new Date(NOW.getTime() - DAY) });
+    consent({
+      offlineGrantedAt: new Date(NOW.getTime() - DAY),
+      offlineBuzzLimit: 200,
+      offlineBuzzPeriod: 'week',
+    });
     const held = legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
     const otherClient = legacyRefresh(new Date(NOW.getTime() + 20 * DAY), USER, OTHER_CLIENT);
     const otherUser = legacyRefresh(new Date(NOW.getTime() + 20 * DAY), OTHER_USER, CLIENT);
+    const earlierRevoke = new Date(NOW.getTime() - 2 * DAY);
+    h.tables.runner_run_authorizations = [
+      {
+        id: 'live',
+        user_id: USER,
+        runner_client_id: CLIENT,
+        revoked_at: null,
+        revoked_reason: null,
+      },
+      {
+        id: 'other-client',
+        user_id: USER,
+        runner_client_id: OTHER_CLIENT,
+        revoked_at: null,
+        revoked_reason: null,
+      },
+      {
+        id: 'other-user',
+        user_id: OTHER_USER,
+        runner_client_id: CLIENT,
+        revoked_at: null,
+        revoked_reason: null,
+      },
+      {
+        id: 'already',
+        user_id: USER,
+        runner_client_id: CLIENT,
+        revoked_at: earlierRevoke,
+        revoked_reason: 'disconnected',
+      },
+    ];
     const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`);
     const res = await exchangeCode(await authorize(params, { remember: 'true' }));
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('refresh_token');
-    expect(h.tables.OauthConsent[0].offlineGrantedAt).toBeNull();
+    expect(h.tables.OauthConsent[0]).toMatchObject({
+      offlineGrantedAt: null,
+      offlineBuzzLimit: null,
+      offlineBuzzPeriod: null,
+    });
     expect(row(held)).toBeUndefined();
     expect(row(otherClient)).toBeDefined();
     expect(row(otherUser)).toBeDefined();
+    const auths = Object.fromEntries(h.tables.runner_run_authorizations.map((a) => [a.id, a]));
+    expect(auths.live).toMatchObject({ revoked_reason: 'offline_declined' });
+    expect(auths.live.revoked_at).toBeInstanceOf(Date);
+    expect(auths['other-client'].revoked_at).toBeNull();
+    expect(auths['other-user'].revoked_at).toBeNull();
+    expect(auths.already).toMatchObject({
+      revoked_at: earlierRevoke,
+      revoked_reason: 'disconnected',
+    });
+  });
+
+  it('unticking the line when the authorization revoke fails changes nothing, so a retry runs it all', async () => {
+    const granted = new Date(NOW.getTime() - DAY);
+    consent({ offlineGrantedAt: granted, offlineBuzzLimit: 200, offlineBuzzPeriod: 'week' });
+    const held = legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
+    h.tables.runner_run_authorizations = {
+      filter() {
+        throw new Error('db down');
+      },
+    } as never;
+    const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`);
+    await expect(authorize(params, { remember: 'true' })).rejects.toThrow('db down');
+    expect(h.tables.OauthConsent[0]).toMatchObject({
+      offlineGrantedAt: granted,
+      offlineBuzzLimit: 200,
+    });
+    expect(row(held)).toBeDefined();
   });
 
   it('unticking the line with no earlier grant leaves the app’s (grandfathered) refresh tokens alone', async () => {
@@ -421,6 +495,39 @@ describe('flag on: the offline grant', () => {
     expect(res.body).not.toHaveProperty('refresh_token');
   });
 
+  it('re-approving under an unbroken grant keeps its start time', async () => {
+    const earlier = new Date(NOW.getTime() - 3 * DAY);
+    consent({ offlineGrantedAt: earlier });
+    await authorize(authorizeParams(`offline_access ${TokenScope.ModelsRead}`), {
+      offline: 'true',
+    });
+    expect(h.tables.OauthConsent[0].offlineGrantedAt).toEqual(earlier);
+  });
+
+  it('a decline landing between the consent read and the write is not undone: the grant starts now', async () => {
+    const earlier = new Date(NOW.getTime() - 3 * DAY);
+    consent();
+    // The grant's first read sees the old grant; the decline clears it before the upsert runs.
+    let stored: Date | null = null;
+    let reads = 0;
+    Object.defineProperty(h.tables.OauthConsent[0], 'offlineGrantedAt', {
+      configurable: true,
+      enumerable: true,
+      get: () => (reads++ === 0 ? earlier : stored),
+      set: (v: Date | null) => (stored = v),
+    });
+    await grantOffline({
+      userId: USER,
+      clientId: CLIENT,
+      scope: TokenScope.UserRead,
+      rememberScope: false,
+      proposed: null,
+      submitted: null,
+      now: NOW,
+    });
+    expect(stored).toEqual(NOW);
+  });
+
   it('re-consent keeps a custom (multi-budget) cap when the fields are left blank, and busts nothing', async () => {
     const custom = [
       { type: 'sliding', limit: 300, window: 'hour', unit: 1 },
@@ -460,6 +567,59 @@ describe('flag on: the offline grant', () => {
       { type: 'sliding', limit: 900, window: 'day', unit: 1 },
     ]);
     expect(h.fetches).toEqual([BUST_LIMIT]);
+  });
+
+  it("a recipe runner's cap goes to the offline cap columns: buzzLimit is untouched and nothing is busted", async () => {
+    const live = [{ type: 'sliding', limit: 50, window: 'day', unit: 1 }];
+    consent({ clientId: RUNNER_CLIENT, buzzLimit: live });
+    const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`, {
+      client_id: RUNNER_CLIENT,
+      offline_buzz_limit: '500',
+    });
+    const approve = (limit: string, period: string) =>
+      authorize(params, { offline: 'true', offline_cap_limit: limit, offline_cap_period: period });
+
+    await approve('2000', 'week');
+    expect(h.tables.OauthConsent[0]).toMatchObject({
+      offlineGrantedAt: NOW,
+      offlineBuzzLimit: 2000,
+      offlineBuzzPeriod: 'week',
+      buzzLimit: live,
+    });
+    expect(h.fetches).toEqual([]);
+
+    await approve('900', 'day');
+    expect(h.tables.OauthConsent[0]).toMatchObject({
+      offlineBuzzLimit: 900,
+      offlineBuzzPeriod: 'day',
+      buzzLimit: live,
+    });
+
+    // Cleared: both null, which refuses every runner mint.
+    await approve('', 'day');
+    expect(h.tables.OauthConsent[0]).toMatchObject({
+      offlineBuzzLimit: null,
+      offlineBuzzPeriod: null,
+      buzzLimit: live,
+    });
+    expect(h.fetches).toEqual([]);
+  });
+
+  it('a runner-shaped client with no binding keeps the ordinary cap: buzzLimit, busted', async () => {
+    consent({ clientId: UNBOUND_CLIENT });
+    const params = authorizeParams(`offline_access ${TokenScope.ModelsRead}`, {
+      client_id: UNBOUND_CLIENT,
+    });
+    await authorize(params, {
+      offline: 'true',
+      offline_cap_limit: '2000',
+      offline_cap_period: 'week',
+    });
+    expect(JSON.parse(String(h.tables.OauthConsent[0].buzzLimit))).toEqual([
+      { type: 'sliding', limit: 2000, window: 'day', unit: 7 },
+    ]);
+    expect(h.tables.OauthConsent[0].offlineBuzzLimit).toBeUndefined();
+    expect(h.fetches).toHaveLength(1);
   });
 
   it('a skip-consent app gets the grant implied once; a later sign-in writes nothing', async () => {

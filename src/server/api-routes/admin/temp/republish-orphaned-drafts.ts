@@ -39,7 +39,6 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { booleanString } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -99,7 +98,6 @@ export const publishOrphanedDraftSql = (modelId: number, publishedAt: Date) => P
         WHERE id = ${modelId}
           AND "status" = 'Draft'
           AND "deletedAt" IS NULL
-          AND ${notRemovedWithOwnerSql('meta')}
       `;
 
 async function republishOne(c: Candidate): Promise<Result> {
@@ -228,7 +226,6 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
       AND COALESCE(m.minor, false) = false
       AND (m.meta->>'needsReview')   IS NULL
       AND (m.meta->>'cannotPublish') IS NULL
-      AND ${notRemovedWithOwnerSql('m.meta')}
       AND (mv.meta->>'needsReview')  IS NULL
     ORDER BY mv.id, p."publishedAt" ASC
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}

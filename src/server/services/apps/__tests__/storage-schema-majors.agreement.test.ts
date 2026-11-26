@@ -4,7 +4,14 @@ import type {
   CatalogReadDeps,
 } from '~/server/registry-adapter/catalog-source';
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
-import { resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import {
+  resolveFromCatalog,
+  resolvePrivateFromCatalog,
+  resolveSharedLevelFromCatalog,
+} from '~/server/registry-adapter/doc-streams';
+import type { DocStreamApp } from '~/server/registry-adapter/entities';
+import { buildEntities } from '~/server/registry-adapter/entities';
+import { JSON_SCHEMA_DIALECT } from '~/server/registry-adapter/collection-schema';
 import { createSchemaMajorResolver } from '~/server/services/apps/doc-store-schema-major';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
@@ -101,7 +108,93 @@ async function adapterMajor(approved: CatalogApprovedRequest[], head: unknown): 
   // The family of any published major is the whole family; @v1 always exists.
   const stream = await resolve(V(1));
   if (!stream) throw new Error('the adapter published no cards stream');
+  // The major the streams NAME (`currentMajor` in their meta) is the family's newest.
+  expect(stream.currentMajor).toBe(stream.family.length);
   return stream.family.length;
+}
+
+/**
+ * The `currentMajor` the adapter's private and level streams NAME for `cards` (what app-data-go
+ * reads a no-major read at), from the document-stream read's app as given: the approved requests
+ * in the order handed over, never sorted first, so the adapter's own ordering is what is tested.
+ */
+async function namedMajors(
+  approved: CatalogApprovedRequest[],
+  head: unknown
+): Promise<{ private: number | undefined; level: number | undefined }> {
+  const app = (visibility: string): DocStreamApp => {
+    const asVisible = (m: unknown) => {
+      const decl = (m as { storage: { collections: { cards: S } } }).storage.collections.cards;
+      return manifest({
+        ...decl,
+        visibility,
+        ...(visibility === 'private' ? { write: undefined, registry: undefined } : {}),
+      });
+    };
+    return {
+      listing: { contentRating: 'pg' },
+      block: {
+        id: APP,
+        blockId: SLUG,
+        version: '1.0.0',
+        status: 'approved',
+        contentRating: 'pg',
+        manifest: asVisible(head),
+      },
+      approved: approved.map((r) => ({ ...r, slug: SLUG, manifest: asVisible(r.manifest) })),
+    };
+  };
+  const priv = await resolvePrivateFromCatalog(async () => [app('private')])(V(1));
+  const level = await resolveSharedLevelFromCatalog(
+    async () => [app('shared')],
+    async () => false
+  )(V(1));
+  return { private: priv?.currentMajor, level: level?.currentMajor };
+}
+
+/**
+ * The newest `cards` schema major the app entity set PUBLISHES (`buildEntities`), from the app as
+ * given: its approved requests in the order handed over, never sorted first, so the entity build's
+ * own ordering is what is tested.
+ */
+function publishedMajor(approved: CatalogApprovedRequest[], head: unknown): number {
+  const sets = buildEntities(
+    [
+      {
+        listing: {
+          slug: SLUG,
+          kind: 'onsite',
+          name: 'Pixel Garden',
+          tagline: null,
+          category: null,
+          contentRating: 'pg',
+          iconUrl: null,
+          creatorUsername: null,
+          externalUrl: null,
+          sourceRepoUrl: null,
+          forkOf: null,
+        },
+        block: {
+          id: APP,
+          blockId: SLUG,
+          version: '1.0.0',
+          status: 'approved',
+          contentRating: 'pg',
+          manifest: head,
+        },
+        approved: approved.map(({ appBlockId: _appBlockId, ...r }) => r),
+      },
+    ],
+    {
+      baseUrl: 'https://site.example',
+      features: { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true },
+    }
+  );
+  const majors = (sets.get(JSON_SCHEMA_DIALECT) ?? [])
+    .map((e) => /\/cards@v([0-9]+)$/.exec(e.urn)?.[1])
+    .filter((m): m is string => m !== undefined)
+    .map(Number);
+  return Math.max(0, ...majors);
 }
 
 /** The store's major for `cards`: what a production write is stamped with. */
@@ -187,5 +280,11 @@ describe('store and registry adapter derive the same current major', () => {
     const adapter = await adapterMajor(approved, head);
     const store = await storeMajor(approved, head);
     expect({ adapter, store }).toEqual({ adapter: expected, store: expected });
+    // 🔴 The major the private and level streams NAME is the one a write is stamped with, over
+    // the same rows handed over unsorted (newest first, ties out of id order).
+    expect(await namedMajors(approved, head)).toEqual({ private: store, level: store });
+    // 🔴 And the schema entities the app entity set publishes end at that major, over the same
+    // unsorted rows: the entity build and the streams order the history by one function.
+    expect(publishedMajor(approved, head)).toBe(store);
   });
 });

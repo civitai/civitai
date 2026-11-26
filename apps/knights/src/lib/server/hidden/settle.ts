@@ -1,5 +1,6 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_SOURCE, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
+import { readWithoutJit, REFERENCE_SOURCE, REFERENCE_STATUS } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -45,19 +46,21 @@ export async function gradeHiddenVotes(
     .forUpdate()
     .execute();
 
-  // A check whose image has since gone (removed, blocked, unpublished, Private post) is not graded: nothing is paid or penalised.
+  // A check whose image has since gone (removed, blocked, unpublished, on a post Knights does not show) is not graded: nothing is paid or penalised.
   const known = new Map(
     (
-      await trx
-        .selectFrom('KnightsReferenceImage as r')
-        .innerJoin('Image as img', 'img.id', 'r.imageId')
-        .innerJoin('Post as p', 'p.id', 'img.postId')
-        .select(['r.id', 'r.answer'])
-        .where('r.id', 'in', [...new Set(due.map((v) => -v.itemId))])
-        // A reference retired after the answer (e.g. a bad ruling pulled) no longer grades anyone.
-        .where('r.status', '=', REFERENCE_STATUS.active)
-        .where(servableImage)
-        .execute()
+      await readWithoutJit(trx, (trx) =>
+        trx
+          .selectFrom('KnightsReferenceImage as r')
+          .innerJoin('Image as img', 'img.id', 'r.imageId')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select(['r.id', 'r.answer'])
+          .where('r.id', 'in', [...new Set(due.map((v) => -v.itemId))])
+          // A reference retired after the answer (e.g. a bad ruling pulled) no longer grades anyone.
+          .where('r.status', '=', REFERENCE_STATUS.active)
+          .where(servableImage)
+          .execute()
+      )
     ).map((r) => [r.id, r.answer])
   );
   const gradedVotes = due.map((v) => {
@@ -106,10 +109,30 @@ export async function gradeHiddenVotes(
       .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
       .where('id', 'in', counted)
       .where('status', '=', REFERENCE_STATUS.active)
-      .where('source', '!=', REFERENCE_SOURCE.core)
+      .where('source', 'not in', [REFERENCE_SOURCE.core, REFERENCE_SOURCE.inquisitor])
       .where('answers', '>=', settings.retireMinAnswers)
       .where(sql<SqlBool>`"failures" > "answers" * ${settings.retireFailureRate}::float8`)
       .execute();
+    // Acolytes answer mod-confirmed checks too, by exact match, so the shared counters would let them retire a check two
+    // moderators agreed on. These retire on Knights' own hard failures in the ledger instead (close answers are inconclusive),
+    // counted from when the row entered the pool (`harvestedAt`), so votes on its earlier life do not count.
+    const failedByKnights = await trx
+      .updateTable('KnightsReferenceImage as r')
+      .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+      .where('r.id', 'in', counted)
+      .where('r.status', '=', REFERENCE_STATUS.active)
+      .where('r.source', '=', REFERENCE_SOURCE.inquisitor)
+      .where(
+        sql<SqlBool>`(
+          SELECT count(*) FILTER (WHERE v."verdict" IN ('correct', 'failed')) >= ${settings.retireMinAnswers}
+             AND count(*) FILTER (WHERE v."verdict" = 'failed')
+               > count(*) FILTER (WHERE v."verdict" IN ('correct', 'failed')) * ${settings.retireFailureRate}::float8
+          FROM "KnightsVote" v
+          WHERE v."itemId" = -"r"."id" AND v."createdAt" >= "r"."harvestedAt"
+        )`
+      )
+      .executeTakeFirst();
+    metrics.skillChecksRetired('failures', Number(failedByKnights.numUpdatedRows));
   }
 
   const paid = await payOutVotes(trx, gradedVotes, now);

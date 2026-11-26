@@ -3,10 +3,17 @@ import { queryWithTimeout } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import type { CommentEntityType } from '~/shared/utils/prisma/enums';
-import { prismaRunner, setCommentFlags } from '~/server/services/commentv3/write.service';
+import { hideComments, prismaRunner } from '~/server/services/commentv3/write.service';
 
-/** The ids of the sections of each type that `owner` owns. */
-export const SECTION_OWNERS: Record<CommentEntityType, (owner: string) => string> = {
+/**
+ * The ids of the sections of each type that `owner` owns. A Feature Pages topic has no civitai
+ * owner, so it has no entry; leaving it out also keeps its enum label out of this SQL, which runs
+ * before the label exists.
+ */
+export const SECTION_OWNERS: Record<
+  Exclude<CommentEntityType, 'featurePage'>,
+  (owner: string) => string
+> = {
   image: (o) => `SELECT id FROM "Image" WHERE "userId" = ${o}`,
   post: (o) => `SELECT id FROM "Post" WHERE "userId" = ${o}`,
   article: (o) => `SELECT id FROM "Article" WHERE "userId" = ${o}`,
@@ -43,8 +50,9 @@ ${Object.entries(SECTION_OWNERS)
 )
 SELECT c.id FROM owned o
 JOIN "CommentV3" c ON c."entityType" = o.t AND c."entityId" = o.id
-WHERE c."userId" = $1 AND NOT c.hidden AND c."deletedAt" IS NULL
-ORDER BY c.id
+WHERE c."userId" = $1 AND c."deletedAt" IS NULL
+-- Visible ones first: hidden ones take only the ceiling the visible ones leave.
+ORDER BY c.hidden, c.id
 LIMIT $3`;
 
 export type BlockHideCommentsResult =
@@ -74,10 +82,9 @@ export async function hideBlockedUserCommentsOnOwnContent({
     const ids = rows.map((r) => r.id);
     for (let i = 0; i < ids.length; i += BLOCK_HIDE_BATCH_SIZE) {
       const batch = ids.slice(i, i + BLOCK_HIDE_BATCH_SIZE);
-      const updated = await dbWrite.$transaction((tx) =>
-        setCommentFlags(prismaRunner(tx), batch, { hidden: true })
-      );
-      count += updated.length;
+      // Every candidate, hidden already or not, so its hide is this block's from here on.
+      const rows = await dbWrite.$transaction((tx) => hideComments(prismaRunner(tx), batch));
+      count += rows.filter((r) => !r.wasHidden).length;
     }
     return { status: 'hidden', count, capped: ids.length >= BLOCK_HIDE_MAX_COMMENTS };
   } catch (error) {

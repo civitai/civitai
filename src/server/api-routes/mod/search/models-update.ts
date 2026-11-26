@@ -9,6 +9,7 @@ import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getModelVersionsForSearchIndex } from '~/server/selectors/modelVersion.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userRefreshDocuments } from '~/server/search-index/search-index-user';
 import { withRetries } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { dataProcessor } from '~/server/db/db-helpers';
@@ -98,7 +99,7 @@ const updateUser = (idOffset: number) =>
       return -1;
     }
 
-    const updateIndexReadyRecords = records;
+    const updateIndexReadyRecords = userRefreshDocuments(records);
 
     if (updateIndexReadyRecords.length === 0) {
       return -1;

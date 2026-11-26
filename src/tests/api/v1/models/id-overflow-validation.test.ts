@@ -40,6 +40,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   // IS_DATAPACKET is false below → the handler takes the direct-build branch and
   // never touches this, but it must resolve at import time.
   fetchThroughCache: vi.fn(),
+  createCachedObject: vi.fn(),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   withBlockScope: (handler: any) => (req: any, res: any) => {
@@ -52,7 +53,9 @@ vi.mock('~/server/utils/region-blocking', () => ({
   isRegionRestricted: () => false,
 }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
-vi.mock('~/server/services/file.service', () => ({ getDownloadFilename: () => 'file.safetensors' }));
+vi.mock('~/server/services/file.service', () => ({
+  getDownloadFilename: () => 'file.safetensors',
+}));
 
 // --- shared / mini/[id] handler graph ---
 vi.mock('~/server/utils/endpoint-helpers', () => ({

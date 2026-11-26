@@ -1,7 +1,9 @@
 import { sql, type Kysely } from 'kysely';
 import {
   countOpenServableKnightItems,
-  postNotPrivate,
+  imageSourceVisible,
+  postShownToKnights,
+  readWithoutJit,
   servableImageContent,
 } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
@@ -17,8 +19,10 @@ import {
   type EnqueueOptions,
 } from '~/server/services/knights/enqueue.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { chunkIds } from '~/utils/array-helpers';
 
 export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
+export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
 
 /**
  * Both samplers (a scan result, the publish sweep): only a live post, and an image is asked about at most once ever, so a
@@ -27,6 +31,11 @@ export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
 export const KNIGHTS_SAMPLE_ENQUEUE_OPTIONS: EnqueueOptions = {
   requirePublished: true,
   oncePerImage: true,
+};
+
+export const KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS: EnqueueOptions = {
+  requirePublished: true,
+  stillImagesOnly: true,
 };
 
 /**
@@ -54,6 +63,9 @@ const POST_LIMIT = 200;
 /** Posts re-read in the overlap per run, nearest the cursor first. */
 const OVERLAP_POST_LIMIT = 2000;
 const ENQUEUE_CHUNK = 1000;
+/** Ids per sampler statement: posts (a post holds a bounded number of images), or images by id. */
+const SAMPLE_POST_PAGE = 200;
+const SAMPLE_IMAGE_PAGE = 5000;
 
 /** The last post a run read, in publish order: `(publishedAt, id)`, so posts sharing one instant drain across runs. */
 export type PublishSampleCursor = { publishedAt: Date; postId: number };
@@ -63,6 +75,9 @@ export type PublishSampleResult = {
   cursor: PublishSampleCursor;
   /** New posts read past the cursor (not counting the overlap re-read). */
   posts: number;
+  /** Owner ratings queued: those are never drawn or capped. */
+  ownerRatings: number;
+  /** Sampled images queued. */
   enqueued: number;
   /** Stopped at the intake cap (`maxOpen`), like a scan sample. */
   capped: boolean;
@@ -78,7 +93,8 @@ const later = (a: Date, b: Date) => (a.getTime() >= b.getTime() ? a : b);
  * scanned is left to the scan path, which samples it once its post is live. SFW and NSFW are split on `Image.nsfwLevel`
  * the way the scan splits them, and each image is drawn with `knightsSampleDraw` against its pool's rate. Images that
  * already had an item are dropped before the cap is counted, so re-reads cost no room; the run then queues at most as many
- * as keep the open count within `maxOpen`.
+ * as keep the open count within `maxOpen`. An image its owner asked to rate skips the draw and the cap
+ * (`offerImagesToKnights`).
  *
  * Republishing restores a post's earlier `publishedAt`, usually outside the window, and its images that already had an
  * item are refused anyway (`oncePerImage`).
@@ -105,6 +121,7 @@ export async function sampleNewlyLivePostsForKnights(
         ? cursor
         : { publishedAt: upTo, postId: 0 },
     posts: 0,
+    ownerRatings: 0,
     enqueued: 0,
     capped: false,
   };
@@ -154,46 +171,110 @@ export async function sampleNewlyLivePostsForKnights(
   const postIds = [...fresh, ...overlap].map((p) => p.id);
   if (postIds.length === 0) return result;
 
-  const images = await db
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select(['img.id', 'img.nsfwLevel'])
-    .where('img.postId', 'in', postIds)
-    .where(servableImageContent)
-    .where(postNotPrivate)
-    .where('img.ingestion', '=', 'Scanned')
-    .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
-    .orderBy('img.id', 'asc')
+  const offered = await offerImagesToKnights(db, { scope: { postIds }, now, config });
+  result.ownerRatings = offered.ownerRatings;
+  result.enqueued = offered.enqueued;
+  result.capped = offered.capped;
+  return result;
+}
+
+/** The images a sampler reads: those of some posts, some images by id, or the posts of some model versions. */
+export type KnightsSampleScope =
+  | { postIds: number[] }
+  | { imageIds: number[] }
+  | { modelVersionIds: number[] };
+
+/** The column a scope filters on (`Image as img` joined to `Post as p`) and its ids. */
+export function scopeFilter(scope: KnightsSampleScope) {
+  if ('postIds' in scope) return { column: 'img.postId' as const, ids: scope.postIds };
+  if ('imageIds' in scope) return { column: 'img.id' as const, ids: scope.imageIds };
+  return { column: 'p.modelVersionId' as const, ids: scope.modelVersionIds };
+}
+
+/**
+ * A scope as the ids its statements filter on. A model version's are its posts' ids, read once through the version's
+ * index: filtering `Image` on `p.modelVersionId`, or paging `Post` by id, lets the planner walk a primary key.
+ */
+async function byIds(
+  db: Kysely<DB>,
+  scope: KnightsSampleScope
+): Promise<{ postIds: number[] } | { imageIds: number[] }> {
+  if (!('modelVersionIds' in scope)) return scope;
+  const posts = await db
+    .selectFrom('Post')
+    .select('id')
+    .where('modelVersionId', 'in', scope.modelVersionIds)
     .execute();
+  return { postIds: posts.map((p) => p.id).sort((a, b) => a - b) };
+}
 
-  const drawn = images
-    .map(({ id, nsfwLevel }) => ({ imageId: id, nsfw: nsfwLevel > sfwBrowsingLevelsFlag }))
-    .filter(
-      ({ imageId, nsfw }) => knightsSampleDraw(imageId) < (nsfw ? config.nsfwRate : config.sfwRate)
-    );
-  if (drawn.length === 0) return result;
+/** `ids` in batches for one statement each: posts (a post holds a bounded number of images), or images by id. */
+const batches = ({ column, ids }: ReturnType<typeof scopeFilter>) =>
+  chunkIds(ids, column === 'img.postId' ? SAMPLE_POST_PAGE : SAMPLE_IMAGE_PAGE);
 
-  // `KnightsQueueItem_imageId_idx`: the overlap re-reads mostly images already asked about.
-  const asked = new Set(
-    (
-      await db
-        .selectFrom('KnightsQueueItem')
-        .select('imageId')
-        .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-        .where('isHiddenCheck', '=', false)
-        .where(
-          'imageId',
-          'in',
-          drawn.map((d) => d.imageId)
-        )
+/**
+ * The publish sweep's sampling over `scope`. Images that already had an item are dropped before the `maxOpen` room is
+ * counted, so re-reads cost no room.
+ */
+export async function sampleImagesForKnights(
+  db: Kysely<DB>,
+  { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
+): Promise<{ enqueued: number; capped: boolean }> {
+  const result = { enqueued: 0, capped: false };
+  if (!config.enabled || scopeFilter(scope).ids.length === 0) return result;
+  const filter = scopeFilter(await byIds(db, scope));
+
+  const todo: { imageId: number; nsfw: boolean }[] = [];
+  let room: number | undefined;
+  for (const ids of batches(filter)) {
+    const images = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(['img.id', 'img.nsfwLevel'])
+        .where(filter.column, 'in', ids)
+        .where(servableImageContent)
+        .where(postShownToKnights)
+        .where(imageSourceVisible)
+        .where('img.ingestion', '=', 'Scanned')
+        .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
+        .orderBy('img.id', 'asc')
         .execute()
-    ).map((row) => row.imageId)
-  );
-  const todo = drawn.filter((d) => !asked.has(d.imageId));
-  if (todo.length === 0) return result;
+    );
+    const drawn = images
+      .map(({ id, nsfwLevel }) => ({ imageId: id, nsfw: nsfwLevel > sfwBrowsingLevelsFlag }))
+      .filter(
+        ({ imageId, nsfw }) =>
+          knightsSampleDraw(imageId) < (nsfw ? config.nsfwRate : config.sfwRate)
+      );
+    if (drawn.length > 0) {
+      // `KnightsQueueItem_imageId_idx`: the overlap re-reads mostly images already asked about.
+      const asked = new Set(
+        (
+          await db
+            .selectFrom('KnightsQueueItem')
+            .select('imageId')
+            .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+            .where('isHiddenCheck', '=', false)
+            .where(
+              'imageId',
+              'in',
+              drawn.map((d) => d.imageId)
+            )
+            .execute()
+        ).map((row) => row.imageId)
+      );
+      todo.push(...drawn.filter((d) => !asked.has(d.imageId)));
+    }
+    if (todo.length > 0 && room === undefined) {
+      const maxOpen = knightsSourcesMaxOpen(config);
+      room = Math.max(0, maxOpen - (await countOpenServableKnightItems(db, maxOpen + 1)));
+    }
+    // One more due than fits is enough to know the run is capped.
+    if (room !== undefined && todo.length > room) break;
+  }
+  if (room === undefined || todo.length === 0) return result;
 
-  const maxOpen = knightsSourcesMaxOpen(config);
-  const room = Math.max(0, maxOpen - (await countOpenServableKnightItems(db, maxOpen + 1)));
   result.capped = todo.length > room;
   const admitted = todo.slice(0, room);
 
@@ -213,6 +294,61 @@ export async function sampleNewlyLivePostsForKnights(
     result.enqueued += outcomes.filter((o) => o.outcome === 'enqueued').length;
   }
   return result;
+}
+
+/**
+ * For images whose post has just gone live or stopped being Private: queues the owner's own rating if the image never had
+ * an item, whatever the rates and the cap, then samples the rest. An owner usually rates in the post editor before
+ * publishing, when the owner-rating hook refuses the image as `unpublished`.
+ */
+export async function offerImagesToKnights(
+  db: Kysely<DB>,
+  { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
+): Promise<{ ownerRatings: number; enqueued: number; capped: boolean }> {
+  if (!config.enabled || scopeFilter(scope).ids.length === 0)
+    return { ownerRatings: 0, enqueued: 0, capped: false };
+  const resolved = await byIds(db, scope);
+  const filter = scopeFilter(resolved);
+
+  let ownerRatings = 0;
+  for (const ids of batches(filter)) {
+    const rated = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .innerJoin('ImageRatingRequest as r', (join) =>
+          join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
+        )
+        .select('img.id')
+        .where(filter.column, 'in', ids)
+        .where('r.status', '=', 'Pending')
+        // As when the owner rates: a moderator-locked level is not asked about.
+        .where('img.nsfwLevelLocked', '=', false)
+        // The sampling half's content and source rules.
+        .where(servableImageContent)
+        .where(imageSourceVisible)
+        .where('img.ingestion', '=', 'Scanned')
+        .orderBy('img.id', 'asc')
+        .execute()
+    );
+    if (rated.length === 0) continue;
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: KNIGHTS_SOURCE_OWNER_RATING,
+        questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+        items: rated.map(({ id }) => ({ imageId: id, priority: 1 })),
+      },
+      now,
+      { ...KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS, oncePerImage: true }
+    );
+    ownerRatings += outcomes.filter((o) => o.outcome === 'enqueued').length;
+  }
+
+  return {
+    ownerRatings,
+    ...(await sampleImagesForKnights(db, { scope: resolved, now, config })),
+  };
 }
 
 /**

@@ -57,14 +57,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 import * as imageService from '~/server/services/image.service';
-import * as postService from '~/server/services/post.service';
-import {
-  imageMetaCache,
-  imageMetadataCache,
-  thumbnailCache,
-  userImageVideoCountCaches,
-} from '~/server/redis/caches';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { imageMetaCache, thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -120,44 +113,33 @@ describe('deleteImages — one image', () => {
     expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
   });
 
-  // A hold marker's delete trigger kept the row, blocked it and took it out of its post: every
-  // cache a delete busts is stale for it too, its post's included.
-  it("busts a kept row's caches and its post's", async () => {
-    const postBust = vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined);
-    const metaRefresh = vi.spyOn(imageMetaCache, 'refresh').mockResolvedValue(undefined as never);
-    const metadataRefresh = vi
-      .spyOn(imageMetadataCache, 'refresh')
-      .mockResolvedValue(undefined as never);
-    // Answers the kept-record lookup only for the id it binds.
-    mockDbWrite.$queryRaw.mockImplementation((async (
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) =>
-      strings.join('?').includes('"EvidenceHoldImage"') &&
-      JSON.stringify(values).includes(String(IMAGE_ID))
-        ? [{ imageId: IMAGE_ID, userId: OWNER_ID, postId: POST_ID }]
-        : []) as never);
+  // A model showcase can feature the image; its rows have no foreign key, so it is found by id.
+  it('looks up the model showcases that featured the image', async () => {
+    deleteReturns({
+      id: IMAGE_ID,
+      url: 'some-url',
+      postId: POST_ID,
+      nsfwLevel: 1,
+      userId: OWNER_ID,
+    });
 
-    await expect(deleteImages([IMAGE_ID], { actor: { system: 'test' } })).resolves.toEqual([]);
+    await deleteImages([IMAGE_ID], { actor: { system: 'test' } });
 
-    expect(vi.mocked(imagesMetricsSearchIndex.queueUpdate)).toHaveBeenCalledWith([
-      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
-    expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
-    expect(postBust).toHaveBeenCalledWith([POST_ID]);
-    expect(metaRefresh).toHaveBeenCalledWith([IMAGE_ID]);
-    expect(metadataRefresh).toHaveBeenCalledWith([IMAGE_ID]);
-    // The existence cache is what takes a blocked image off the site.
-    expect(vi.mocked(redisMock.sysRedis.packed.set)).toHaveBeenCalledWith(
-      expect.stringMatching(new RegExp(`:${IMAGE_ID}$`)),
-      'false',
-      expect.anything()
+    const showcaseReads = mockDbWrite.$queryRaw.mock.calls.filter(([strings]) =>
+      Array.from(strings as TemplateStringsArray)
+        .join('?')
+        .includes('FROM "ModelVersionShowcaseItem"')
     );
+    expect(showcaseReads).toHaveLength(1);
+    expect((showcaseReads[0][1] as { values: unknown[] }).values).toEqual([IMAGE_ID]);
   });
 
-  // Already gone: no kept record, so it leaves search and nothing else runs for it.
-  it('drops a row the delete did not remove from search, and stops there', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
+  // Already gone: no row, so it leaves search and nothing else runs for it.
+  it('drops a row that was already gone from search, and stops there', async () => {
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+        ? [{ id: IMAGE_ID, outcome: 'gone' }]
+        : []) as never);
 
     await expect(deleteImages([IMAGE_ID], { actor: { system: 'test' } })).resolves.toEqual([]);
 

@@ -10,8 +10,7 @@ import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBa
 import type { JudgingCategory } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useServerDomains } from '~/providers/AppProvider';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -116,9 +115,7 @@ export function WinnerPodiumCard({
   // genuinely removed image (no hash).
   const isGatedThumb = !!winner.imageId && !winner.imageUrl && !!winner.imageHash;
   // Cross-domain link to the image on the mature site, mirroring the Gated MatureContentRedirect CTA.
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
-  const redImageUrl = syncAccount(`//${redDomain}/images/${winner.imageId}`);
+  const redImageUrl = useRedHref()(`/images/${winner.imageId}`);
 
   return (
     <div

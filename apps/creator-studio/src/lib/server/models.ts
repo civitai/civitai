@@ -3,6 +3,7 @@ import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
 import {
   acceptsBlueBuzz,
+  accessPrice,
   hasCurrentRightsAffirmation,
   type ModelVersionTerms,
 } from '@civitai/buzz';
@@ -72,14 +73,26 @@ export async function countComFaceReadyModels(userId: number) {
   return Number(row?.count ?? 0);
 }
 
+function siteListingParts(alias: string) {
+  const m = sql.raw(`${alias}.`);
+  return {
+    listed: sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`,
+    onCom: sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`,
+    hiddenOnRed: sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`,
+  };
+}
+
+/** Listed on civitai.com or civitai.red: the union of the `siteFilterSql` sites. */
+export function shownOnSomeSiteSql(alias: string) {
+  const { listed, onCom, hiddenOnRed } = siteListingParts(alias);
+  return sql<boolean>`(${listed} and (${onCom} or not ${hiddenOnRed}))`;
+}
+
 // The SQL twin of `siteListing`: a change to one is a change to both.
 function siteFilterSql(alias: string, site: SiteFilter) {
   if (site === 'com-face') return hasComFaceSql(alias);
   if (site === 'com-ready') return comFaceReadySql(alias);
-  const m = sql.raw(`${alias}.`);
-  const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
-  const onCom = sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`;
-  const hiddenOnRed = sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`;
+  const { listed, onCom, hiddenOnRed } = siteListingParts(alias);
   if (site === 'both') return sql<boolean>`(${listed} and ${onCom} and not ${hiddenOnRed})`;
   if (site === 'com') return sql<boolean>`(${listed} and ${onCom} and ${hiddenOnRed})`;
   return sql<boolean>`(${listed} and not ${onCom} and not ${hiddenOnRed})`;
@@ -92,12 +105,10 @@ function paidAccessToConfig(timeframeDays: number | null, terms: unknown): PaidA
   if (!t) return null;
   const gen = t.generation;
   const paidGen = gen && !('free' in gen) ? gen : undefined;
-  // "Price for access" is the download price when downloadable; for a gen-only version (no download tier)
-  // it's the generation price. The separate generation-only tier only exists alongside a download bundle.
   return {
     timeframe: timeframeDays ?? 0,
     permanent: timeframeDays == null,
-    accessPrice: t.download?.price ?? paidGen?.price,
+    accessPrice: accessPrice(t),
     generationPrice: t.download ? paidGen?.price : undefined,
     freeGeneration: !!gen && 'free' in gen,
     acceptsBlueBuzz: acceptsBlueBuzz(t),

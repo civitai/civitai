@@ -73,7 +73,7 @@ function UserFoldersPage() {
             variant="default"
             radius="xl"
             leftSection={<IconPencil size={14} />}
-            onClick={() => openManageFoldersModal({ props: { userId: user.id } })}
+            onClick={() => openManageFoldersModal({ userId: user.id })}
           >
             Manage folders
           </Button>
@@ -90,7 +90,7 @@ function UserFoldersPage() {
           {isOwner && (
             <Button
               leftSection={<IconFolderPlus size={16} />}
-              onClick={() => openManageFoldersModal({ props: { userId: user.id } })}
+              onClick={() => openManageFoldersModal({ userId: user.id })}
             >
               Create your first folder
             </Button>

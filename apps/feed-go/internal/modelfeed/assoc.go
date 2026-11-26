@@ -2,11 +2,11 @@ package modelfeed
 
 import (
 	"context"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -163,7 +163,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 			fv = &feed.Viewer{ID: viewer.ID, IsModerator: viewer.IsModerator}
 		}
 		if on, known := d.Promotions.For(fv, false); on || !known {
-			now := time.Now()
+			now := clock.Now()
 			if d.Now != nil {
 				now = d.Now()
 			}
@@ -377,10 +377,10 @@ func assocCards(ctx context.Context, d *AssocDeps, ids []int, level int, viewer 
 
 // resolveCanGenerate is resolveCanGenerateForVersions for the shown cards (the cards it drops change
 // nothing on the wire): getResourceCanGenerate && isGenerationEligible per first version, then the
-// hidden gate rules over the versions that would generate. A Wildcards card (its own gate: a visible
-// System wildcard set) falls back.
+// hidden gate rules (version and ecosystem targets) over the versions that would generate. A
+// Wildcards card (its own gate: a visible System wildcard set) falls back.
 func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, viewer *Viewer) error {
-	candidates := map[int]bool{}
+	candidates := map[int]string{}
 	for _, c := range cards {
 		if c.it.row.Type == "Wildcards" {
 			return fallback.New("model-assoc-wildcards")
@@ -388,7 +388,8 @@ func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, v
 		ok := assocBaseCanGenerate(c.it, viewer, d.Config.CoverageNext)
 		c.canGenerate = ok
 		if ok {
-			candidates[c.it.versionID] = true
+			bm, _ := recField(c.it.version, "baseModel").(string)
+			candidates[c.it.versionID] = bm
 		}
 	}
 	if len(candidates) == 0 {

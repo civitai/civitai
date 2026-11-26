@@ -63,8 +63,9 @@ type LoadResult = {
   sourcesNotLoaded: number[];
 };
 const runLoad = (search = '') =>
-  (load as unknown as (e: { url: URL }) => Promise<LoadResult>)({
+  (load as unknown as (e: { url: URL; locals: object }) => Promise<LoadResult>)({
     url: new URL(`https://moderator.example/audit/generator-restrictions${search}`),
+    locals: { user: { id: 7 } },
   });
 
 const formEvent = (fields: Record<string, string>) => {
@@ -268,7 +269,7 @@ describe('generator-restrictions load — deep link', () => {
 
     await runLoad('?selected=99');
 
-    expect(getRemixSources).toHaveBeenCalledWith([77]);
+    expect(getRemixSources).toHaveBeenCalledWith([77], { id: 7 });
   });
 });
 
@@ -583,8 +584,9 @@ describe('generator-restrictions load — origin and sources', () => {
     sourcesFailed: boolean;
   };
   const run = (search = '') =>
-    (load as unknown as (e: { url: URL }) => Promise<TriageResult>)({
+    (load as unknown as (e: { url: URL; locals: object }) => Promise<TriageResult>)({
       url: new URL(`https://moderator.example/audit/generator-restrictions${search}`),
+      locals: { user: { id: 7 } },
     });
 
   it('passes a known origin filter to the list and to the facets', async () => {
@@ -629,7 +631,7 @@ describe('generator-restrictions load — origin and sources', () => {
 
     const data = await run();
 
-    expect(getRemixSources).toHaveBeenCalledWith([11, 12]);
+    expect(getRemixSources).toHaveBeenCalledWith([11, 12], { id: 7 });
     expect(Object.keys(data.sources)).toEqual(['11']);
     expect(data.sourcesFailed).toBe(false);
   });
@@ -645,5 +647,58 @@ describe('generator-restrictions load — origin and sources', () => {
 
     expect(data.sourcesFailed).toBe(true);
     expect(data.sources).toEqual({});
+  });
+
+  // A remix's input images can be its source's own file.
+  const remixRow = () =>
+    row({
+      triggers: [
+        {
+          key: 'a',
+          prompt: 'p',
+          origin: { remix: { imageId: 11, verified: true, promptMatch: 'edited' } },
+          inputImages: ['https://cdn.test/source-input'],
+          inputVideo: 'https://cdn.test/source-video',
+        },
+      ],
+    });
+  const inputsOf = (data: unknown) =>
+    (data as { items: { triggers: { inputImages?: string[]; inputVideo?: string }[] }[] }).items[0]
+      .triggers[0];
+
+  it('takes the input images off a trigger whose remix source is withheld', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockResolvedValue([
+      { id: 11, url: '', type: 'image', nsfwLevel: 1, prompt: null, restricted: true },
+    ]);
+
+    const trigger = inputsOf(await run());
+
+    expect(trigger.inputImages).toBeUndefined();
+    expect(trigger.inputVideo).toBeUndefined();
+  });
+
+  it('takes them off when the source read fails', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockRejectedValue(new Error('down'));
+
+    expect(inputsOf(await run()).inputImages).toBeUndefined();
+  });
+
+  // Past the lookup cap, or missing: nothing cleared it, so its inputs stay off.
+  it('takes them off when the source was not read', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockResolvedValue([]);
+
+    expect(inputsOf(await run()).inputImages).toBeUndefined();
+  });
+
+  it('keeps them for a source the moderator can see', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockResolvedValue([
+      { id: 11, url: 'u', type: 'image', nsfwLevel: 1, prompt: 'x' },
+    ]);
+
+    expect(inputsOf(await run()).inputImages).toEqual(['https://cdn.test/source-input']);
   });
 });

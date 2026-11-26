@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -16,14 +17,14 @@ import (
 func TestServeDetailLeavesOutMinorMatureShowcaseImages(t *testing.T) {
 	w := newTestWorld()
 	cached := superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)}
-	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
+	w.entries[hydrate.KeyVersionImages+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
 		meta("id", int64(8001), "url", "u1", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
 		meta("id", int64(8002), "url", "u2", "nsfwLevel", int64(4), "type", "image", "poi", false, "minor", true),
 		meta("id", int64(8003), "url", "u3", "nsfwLevel", int64(2), "type", "image", "poi", false, "minor", true),
 		meta("id", int64(8004), "url", "u4", "nsfwLevel", int64(4), "type", "image", "poi", false, "minor", false),
 	}), cached)
 	for _, id := range []string{"8002", "8003", "8004"} {
-		w.entries[KeyTagIDsForImages+":"+id] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
+		w.entries[hydrate.KeyTagIDs+":"+id] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
 	}
 	d := w.deps(t)
 	w.sys.SetString("system:browsing-setting-addons", []byte(`[{"type":"some","nsfwLevels":[1,2,4,8,16],"disablePoi":true,"excludedTagIds":[9901]}]`))
@@ -49,11 +50,11 @@ func TestServeDetailLeavesOutMinorMatureShowcaseImages(t *testing.T) {
 func TestServeDetailShowcaseLevels(t *testing.T) {
 	w := newTestWorld()
 	cached := superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)}
-	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
+	w.entries[hydrate.KeyVersionImages+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
 		meta("id", int64(8001), "url", "u1", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
 		meta("id", int64(8005), "url", "u5", "nsfwLevel", int64(32), "type", "image", "poi", false, "minor", false),
 	}), cached)
-	w.entries[KeyTagIDsForImages+":8005"] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
+	w.entries[hydrate.KeyTagIDs+":8005"] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
 	d := w.deps(t)
 	w.sys.SetString("system:browsing-setting-addons", []byte(`[{"type":"some","nsfwLevels":[1,2,4,8,16],"disablePoi":true,"excludedTagIds":[9901]}]`))
 	ans, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"})
@@ -75,13 +76,13 @@ func TestServeDetailShowcaseLevels(t *testing.T) {
 	// 8006 (X) shows the pass-through works.
 	w = newTestWorld()
 	w.usernames["artist_one"] = 1001
-	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
+	w.entries[hydrate.KeyVersionImages+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
 		meta("id", int64(8001), "url", "u1", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
 		meta("id", int64(8005), "url", "u5", "nsfwLevel", int64(32), "type", "image", "poi", false, "minor", false),
 		meta("id", int64(8006), "url", "u6", "nsfwLevel", int64(8), "type", "image", "poi", false, "minor", false),
 	}), cached)
 	for _, id := range []string{"8005", "8006"} {
-		w.entries[KeyTagIDsForImages+":"+id] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
+		w.entries[hydrate.KeyTagIDs+":"+id] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
 	}
 	d = w.deps(t)
 	list, err := ServeList(context.Background(), d, d.Sources, ListRequest{Query: "username=Artist%20One&nsfw=true", Path: "/api/v1/models", Host: "site.example.test"})

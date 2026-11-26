@@ -17,6 +17,7 @@ export const MOD_ACTION = {
   abuseReport: 'abuse-report',
   relabelBuildBatch: 'relabel-build-batch',
   feedbackTriage: 'feedback-triage',
+  imageTagModerate: 'image-tag-moderate',
   caseDefinitions: 'case-definitions',
   caseIntake: 'case-intake',
   casePartyView: 'case-party-view',
@@ -353,6 +354,43 @@ export const feedbackTriageResponse = z.object({
     z.object({ ok: z.literal(false), reason: z.string() }),
   ]),
 });
+
+// image-tag-moderate (`MOD_ACTION.imageTagModerate`) — Knights writes back a Paladin consensus on one flagged tag of the
+// moderator tag review queue: keep it (`disable: false`) or remove it (`disable: true`), through the same
+// `moderateImageTags` the queue's Keep/Remove buttons call, in its guarded mode.
+//
+// 🔴 The one action whose `userId` is NOT a moderator: it is the player whose vote completed the consensus, asserted
+// by Knights. The handler grants that id nothing beyond the one tag write and its `moderateTagKono` activity row.
+export const imageTagModerateInput = z.object({
+  imageId: z.number().int().positive().max(MAX_INT4),
+  tagId: z.number().int().positive().max(MAX_INT4),
+  disable: z.boolean(),
+  userId: z.number().int().positive().max(MAX_INT4),
+  /** The consensus closed on exactly the votes its stage needs (the 2-0 rule). A removal that would now lower the
+   *  image's rating is then refused, since such a removal needs the stricter rule. */
+  settledAtMinimum: z.boolean(),
+});
+export type ImageTagModerateInput = z.infer<typeof imageTagModerateInput>;
+
+/**
+ * `applied`: the tag was kept or removed. `already-ruled`: the tag is no longer flagged (a moderator ruled first, or it
+ * was disabled or removed). `ineligible`: the image or tag is staff-only now, or the removal needs the stricter rule;
+ * the tag stays in the moderators' queue. `missing`: the image is gone.
+ */
+export const IMAGE_TAG_MODERATE_OUTCOMES = [
+  'applied',
+  'already-ruled',
+  'ineligible',
+  'missing',
+] as const;
+export type ImageTagModerateOutcome = (typeof IMAGE_TAG_MODERATE_OUTCOMES)[number];
+export const imageTagModerateResult = z.object({
+  outcome: z.enum(IMAGE_TAG_MODERATE_OUTCOMES),
+  reason: z.string().optional(),
+});
+export type ImageTagModerateResult = z.infer<typeof imageTagModerateResult>;
+/** What the action answers: the result inside `modActionResponse`. */
+export const imageTagModerateResponse = z.object({ result: imageTagModerateResult });
 
 // Called by the main app's public /requests pages, signed out as well as in. Nothing here carries an
 // acting moderator: the submitter is a member of the public, so the spoke verifies Turnstile itself and

@@ -9,7 +9,6 @@ const {
   mockSafeError,
   mockGetJobDate,
   mockRefreshProfilePictures,
-  markerView,
 } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
   mockQueueSearchIndex: vi.fn(async () => undefined),
@@ -22,8 +21,6 @@ const {
   })),
   mockGetJobDate: vi.fn(),
   mockRefreshProfilePictures: vi.fn(async (_userIds: number[]) => undefined),
-  // Whether the database has the hold marker's view; prod does.
-  markerView: { present: true },
 }));
 
 vi.mock('~/server/services/image.service', () => ({
@@ -51,6 +48,8 @@ import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
 } from '~/server/utils/image-removal-mode';
 import {
   removeDeletedUserImages,
@@ -59,7 +58,6 @@ import {
   FRESH_CURSOR_KEY as FRESH_KEY,
   BACKLOG_CURSOR_KEY as BACKLOG_KEY,
 } from '~/server/jobs/remove-deleted-user-images';
-import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockSysRedis = redisMock.sysRedis;
@@ -88,20 +86,10 @@ type Fixture = {
   meta?: Record<string, string>;
   /** `User.meta` as the primary holds it, when the two have not converged yet. */
   primaryMeta?: Record<string, string>;
-  /** Under a hold on the primary, as the statement-level guards see it. */
-  heldOnPrimary?: boolean;
-  /** Held as the worklist (a replica read) sees it: its mode is 'grace' whatever the account chose. */
-  worklistHeld?: boolean;
-  /** Left out of the worklist: an unarchived report names the account. */
-  worklistSkipped?: boolean;
-  /** What the primary hold read answers; absent is 'follow' the account's choice. */
-  primaryAction?: 'skip' | 'block';
-  /** Comes under a hold in the window between the job's image read and its delete. */
-  holdAfterRead?: boolean;
-  /** One of the account's images carries the moderator-only review flag, as the replica sees it. */
-  csamFlagged?: boolean;
-  /** The flag as the primary holds it, when it lands after the worklist read. */
-  primaryCsamFlagged?: boolean;
+  /** Per-image `nsfwLevel`; an id absent from here is 1. */
+  nsfwLevel?: Record<number, number>;
+  /** Per-image `nsfwLevelLocked`; an id absent from here is unlocked. */
+  nsfwLevelLocked?: Record<number, boolean>;
   /** Per-image `ingestion`; an id absent from here is `Scanned`. */
   ingestion?: Record<number, string>;
   /** Per-image `blockedFor`; an id absent from here holds NULL. */
@@ -125,7 +113,6 @@ type Fixture = {
   graceAfterBatches?: number;
 };
 
-let holdReadFails = false;
 let fixtures: Record<number, Fixture> = {};
 let cursorStore: Record<string, Date> = {};
 let cursorSets: Record<string, Date[]> = {};
@@ -182,8 +169,7 @@ function metaHolds(condition: string, meta: Record<string, string> | undefined) 
 /**
  * Evaluates the worklist's mode expression from its last branch, the account's own choice, instead
  * of pattern-matching one accepted spelling of it, so a `CASE` that normalizes the wrong way reads
- * as the wrong mode. Which holds pick 'grace' is proven against Postgres in the legal-hold behavior
- * suite; here `worklistHeld` stands in for them.
+ * as the wrong mode.
  */
 function modeExpression(sql: string, values: unknown[]) {
   const fragment = values.find(
@@ -199,43 +185,8 @@ function modeExpression(sql: string, values: unknown[]) {
   if (!branches) throw new Error(`unrecognized mode expression: ${text}`);
 
   const [, condition, whenTrue, whenFalse] = branches;
-  return (fixture: Fixture) =>
-    fixture.worklistHeld ? 'grace' : metaHolds(condition, fixture.meta) ? whenTrue : whenFalse;
+  return (fixture: Fixture) => (metaHolds(condition, fixture.meta) ? whenTrue : whenFalse);
 }
-
-const isLegalHold = (value: unknown) =>
-  typeof (value as { sql?: unknown })?.sql === 'string' &&
-  (value as { sql: string }).sql.includes(legalHoldUserIdsSql.sql);
-
-/**
- * Answers the shared legal hold off the statement that carries it, as the `NOT <hold>` fragment the
- * job embeds. Which users the fragment covers is run against Postgres in the hold-guard behavior
- * test; here `heldOnPrimary` stands in for it. A statement carrying no hold
- * is answered as unguarded, so dropping it from the job shows up as the fixture handing back rows.
- */
-function blockedByLegalHold(sql: string, values: unknown[], held = false) {
-  const at = values.findIndex(isLegalHold);
-  if (at < 0) return false;
-  return /NOT\s*$/.test(sql.split('?')[at]) ? held : !held;
-}
-
-/** The same, for a `deleteImages` `onlyWhere`, which arrives as one flattened fragment. */
-function keptByOnlyWhere(onlyWhere: { sql: string } | undefined, fixture: Fixture) {
-  if (!onlyWhere || !isLegalHold(onlyWhere)) return false;
-  const held =
-    !!fixture.heldOnPrimary || blockedByReviewFlag('', [onlyWhere], flaggedOnPrimary(fixture));
-  return /^\s*NOT\b/.test(onlyWhere.sql) ? held : !held;
-}
-
-/** The per-account review-flag hold, as the account hold carried in a statement spells it. */
-const REVIEW_FLAG_HOLD =
-  /SELECT 1 FROM "Image" hr WHERE hr\."userId" = (?:\?(?:::int)?|u\.id) AND hr\."needsReview" = 'csam'/;
-const blockedByReviewFlag = (sql: string, values: unknown[], flagged: boolean | undefined) =>
-  !!flagged &&
-  [sql, ...values.filter(isLegalHold).map((v) => (v as { sql: string }).sql)].some((text) =>
-    REVIEW_FLAG_HOLD.test(text.replace(/\s+/g, ' '))
-  );
-const flaggedOnPrimary = (fixture: Fixture) => fixture.primaryCsamFlagged ?? fixture.csamFlagged;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
 function passesPrimaryChoice(sql: string, fixture: Fixture) {
@@ -309,6 +260,8 @@ function resolveMetadata(
       if (column === 'ingestion') return [key, ingestionOf(fixture, id)];
       if (column === 'blockedFor') return [key, blockedForOf(fixture, id)];
       if (column === 'needsReview') return [key, fixture.reviewFlags?.[id] ?? null];
+      if (column === 'nsfwLevel') return [key, fixture.nsfwLevel?.[id] ?? 1];
+      if (column === 'nsfwLevelLocked') return [key, fixture.nsfwLevelLocked?.[id] ?? false];
       throw new Error(`unhandled metadata source: ${source}`);
     })
   );
@@ -339,7 +292,6 @@ function applyImageUpdate(sql: string, values: unknown[]) {
   const userId = values[joined + 1] as number;
   const fixture = fixtures[userId];
   if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
-  if (blockedByLegalHold(sql, values, fixture.heldOnPrimary)) return [];
 
   const row = parseSetClause(sql, values);
   // Only the WHERE clause selects rows; the SET clause names the same columns.
@@ -424,7 +376,6 @@ function seed(next: Record<number, Fixture>) {
     return Promise.resolve(
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
-        .filter((id) => !fixtures[id].worklistSkipped)
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -451,22 +402,12 @@ function seed(next: Record<number, Fixture>) {
       const sql = strings.join('?');
 
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
-      if (sql.includes('to_regclass')) return Promise.resolve([{ present: markerView.present }]);
       if (sql.includes('DELETE FROM "Post"')) return Promise.resolve(deletePosts(sql, values));
 
       const userId = values[0] as number;
       const fixture = fixtures[userId];
       const gated = sql.includes('u."deletedAt" IS NOT NULL');
 
-      // The per-account hold read that picks skip, block or the account's own choice.
-      if (sql.includes('AS skip')) {
-        if (holdReadFails) return Promise.reject(new Error('primary unreachable'));
-        const hold = values[0] as { values: unknown[] };
-        const { primaryAction } = fixtures[hold.values[0] as number];
-        return Promise.resolve([
-          { skip: primaryAction === 'skip', accountHeld: primaryAction === 'block' },
-        ]);
-      }
       if (sql.includes('"hasImages"')) {
         const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
         if (fixture.restoredAfterCheck) fixture.restored = true;
@@ -491,8 +432,6 @@ function seed(next: Record<number, Fixture>) {
         imageLimits.push(limit);
         if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
           return Promise.resolve([]);
-        if (blockedByLegalHold(sql, values, fixture.heldOnPrimary)) return Promise.resolve([]);
-        if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -500,7 +439,6 @@ function seed(next: Record<number, Fixture>) {
         }));
         pagedImageIds.push(...page.map((row) => row.id));
         for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
-        if (fixture.holdAfterRead) fixture.heldOnPrimary = true;
         return Promise.resolve(page);
       }
       if (sql.includes('FROM "Post"'))
@@ -519,7 +457,6 @@ function seed(next: Record<number, Fixture>) {
         const fixture = fixtures[userId];
         if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored)
           return Promise.resolve(0);
-        if (blockedByLegalHold(sql, values, fixture.heldOnPrimary)) return Promise.resolve(0);
         const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
         const eligible = fixture.images.filter(
           (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
@@ -531,34 +468,27 @@ function seed(next: Record<number, Fixture>) {
     }
   );
 
-  /** `deletePostRows`: its id list comes first, then the owner the job's condition names. */
+  /** `deletePostRows`: its id list comes first; the first number after it is the owner the job's
+   *  condition names (the child-safety case's parameters are text). */
   function deletePosts(sql: string, values: unknown[]) {
     const ids = values[0] as number[];
-    const fixture = fixtures[values[1] as number];
+    const fixture = fixtures[values.find((v, i) => i > 0 && typeof v === 'number') as number];
     if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
     if (!passesPrimaryChoice(sql, fixture)) return [];
-    // The hold arrives inlined in the text, opening `(<id> = <placeholder owner> OR`; what decides
-    // is whether a NOT stands right before it.
-    const hold = sql.lastIndexOf('(', sql.indexOf(' = ? OR '));
-    const negated = /\bNOT\s*$/.test(sql.slice(0, hold));
-    if (keptByOnlyWhere({ sql: `${negated ? 'NOT ' : ''}${sql.slice(hold)}` }, fixture)) return [];
     const deleted = ids.filter((id) => (fixture.posts ?? []).includes(id));
     deletedPostIds.push(...deleted);
     fixture.posts = (fixture.posts ?? []).filter((id) => !deleted.includes(id));
     return deleted.map((id) => ({ id }));
   }
 
-  mockDeleteImages.mockImplementation(
-    async (ids: number[], opts?: { onlyWhere?: { sql: string } }) => {
-      const deleted: number[] = [];
-      for (const fixture of Object.values(fixtures)) {
-        if (keptByOnlyWhere(opts?.onlyWhere, fixture)) continue;
-        deleted.push(...fixture.images.filter((id) => ids.includes(id)));
-        fixture.images = fixture.images.filter((id) => !ids.includes(id));
-      }
-      return deleted.map((id) => ({ id }));
+  mockDeleteImages.mockImplementation(async (ids: number[]) => {
+    const deleted: number[] = [];
+    for (const fixture of Object.values(fixtures)) {
+      deleted.push(...fixture.images.filter((id) => ids.includes(id)));
+      fixture.images = fixture.images.filter((id) => !ids.includes(id));
     }
-  );
+    return deleted.map((id) => ({ id }));
+  });
 }
 
 const ids = (count: number, offset = 0) => Array.from({ length: count }, (_, i) => offset + i + 1);
@@ -630,7 +560,6 @@ beforeEach(() => {
   deletedPostIds = [];
   blockedUpdates = [];
   batchChecks = {};
-  markerView.present = true;
   // The compiled default is inert, so a run only happens if something names a budget: every test
   // that is not about the budget itself gets a generous one here.
   mockSysRedis.get.mockResolvedValue('500');
@@ -649,29 +578,6 @@ afterEach(() => {
 });
 
 describe('removeDeletedUserImages', () => {
-  it('drains nothing on a database without the hold marker view', async () => {
-    markerView.present = false;
-    // One account of each removal choice: an immediate one is deleted, a grace one is blocked.
-    seed({
-      7: { deletedAt: NEWER, images: ids(150), posts: [900] },
-      8: { deletedAt: NEWER, meta: { imageRemoval: 'grace' }, images: ids(10, 500) },
-    });
-
-    const result = await run();
-
-    expect(result).toMatchObject({
-      skipped: 'hold-marker-view-missing',
-      deletedImages: 0,
-      blockedImages: 0,
-      deletedUsers: 0,
-    });
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(deletedPostIds).toEqual([]);
-    expect(blockedUpdates).toEqual([]);
-    // Neither cursor moves, so a later run with the view picks up where the last one left off.
-    expect(cursorSets).toEqual({});
-  });
-
   it('deletes a deleted user images in batches of 100 and then removes their posts', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({ 7: { deletedAt: NEWER, images: ids(150), posts: [900] } });
@@ -1086,7 +992,6 @@ describe('grace mode', () => {
         meta: { imageRemoval: 'grace' },
         images: [70, 71],
         reviewFlags: { 70: 'csam', 71: 'minor' },
-        primaryCsamFlagged: true,
       },
     });
 
@@ -1380,16 +1285,21 @@ describe('grace mode restore breadcrumbs', () => {
         meta: { imageRemoval: 'grace' },
         images: [1],
         ingestion: { 1: 'Pending' },
+        nsfwLevel: { 1: 4 },
+        nsfwLevelLocked: { 1: true },
       },
     });
 
     await run();
 
-    // Restoring these to a flat `Scanned` would promote an image past the scan it never had.
+    // Restoring these to a flat `Scanned` would promote an image past the scan it never had, and
+    // re-rating it would drop a moderator's rating lock.
     expect(blockedRows()[0].metadata).toEqual({
       [PRIOR_INGESTION_KEY]: 'Pending',
       [PRIOR_BLOCKED_FOR_KEY]: null,
       [PRIOR_NEEDS_REVIEW_KEY]: null,
+      [PRIOR_NSFW_LEVEL_KEY]: 4,
+      [PRIOR_NSFW_LOCKED_KEY]: true,
     });
   });
 
@@ -1434,6 +1344,8 @@ describe('grace mode restore breadcrumbs', () => {
       [PRIOR_INGESTION_KEY]: 'Blocked',
       [PRIOR_BLOCKED_FOR_KEY]: AI_NOT_VERIFIED,
       [PRIOR_NEEDS_REVIEW_KEY]: null,
+      [PRIOR_NSFW_LEVEL_KEY]: 1,
+      [PRIOR_NSFW_LOCKED_KEY]: false,
     });
   });
 
@@ -1444,7 +1356,6 @@ describe('grace mode restore breadcrumbs', () => {
         meta: { imageRemoval: 'grace' },
         images: [70, 71],
         reviewFlags: { 70: 'csam', 71: 'minor' },
-        primaryCsamFlagged: true,
       },
     });
 
@@ -1503,106 +1414,4 @@ describe('removal choice re-read on the destructive path', () => {
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
     expect(result.deletedImages).toBe(100);
   });
-});
-
-describe('holds: skip, block or follow', () => {
-  it('blocks a held account in both worklists rather than deleting it', async () => {
-    cursorStore[FRESH_KEY] = NEWER;
-    const held = { worklistHeld: true, primaryAction: 'block' } as const;
-    seed({
-      7: { deletedAt: RECENT, images: ids(10), posts: [900], ...held },
-      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], ...held },
-    });
-
-    const result = await run();
-
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(deletedPostIds).toEqual([]);
-    expect(result.deletedImages).toBe(0);
-    // Held: hidden and kept, never deleted, its posts left alone.
-    expect(result.blockedImages).toBe(20);
-  });
-
-  it('blocks instead of deleting when the primary finds a hold the worklist did not', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryAction: 'block' } });
-
-    const result = await run();
-
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(result.blockedImages).toBe(10);
-    expect(result.deletedImages).toBe(0);
-    expect(deletedPostIds).toEqual([]);
-  });
-
-  it('follows the account choice when the primary finds no hold', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900] } });
-
-    const result = await run();
-
-    expect(result.deletedImages).toBe(10);
-    expect(deletedPostIds).toEqual([900]);
-    expect(result.deletedUsers).toBe(1);
-  });
-
-  it('deletes and blocks nothing when the hold cannot be read on the primary', async () => {
-    holdReadFails = true;
-    try {
-      seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900] } });
-
-      const result = await run();
-
-      expect(mockDeleteImages).not.toHaveBeenCalled();
-      expect(deletedPostIds).toEqual([]);
-      expect(result.blockedImages).toBe(0);
-    } finally {
-      holdReadFails = false;
-    }
-  });
-
-  it('runs nothing for an account the worklist leaves out', async () => {
-    cursorStore[FRESH_KEY] = NEWER;
-    const skipped = { worklistSkipped: true, primaryAction: 'skip' } as const;
-    seed({
-      7: { deletedAt: RECENT, images: ids(10), posts: [900], ...skipped },
-      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], ...skipped },
-    });
-
-    const result = await run();
-
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(deletedPostIds).toEqual([]);
-    expect(result.deletedImages).toBe(0);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
-  });
-
-  it('stops the delete itself for a hold placed after the image read', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], holdAfterRead: true } });
-
-    const result = await run();
-
-    expect(mockDeleteImages).toHaveBeenCalled();
-    expect(result.deletedImages).toBe(0);
-    expect(deletedPostIds).toEqual([]);
-  });
-
-  it.each([
-    ['an immediate account', {}, ids(10)],
-    ['an immediate account with only posts left', {}, []],
-    ['a grace account', { imageRemoval: 'grace' }, ids(10)],
-  ])(
-    'skips %s the primary skips: nothing deleted, blocked or removed',
-    async (_label, meta, images) => {
-      seed({ 7: { deletedAt: NEWER, meta, images, posts: [900], primaryAction: 'skip' } });
-
-      const result = await run();
-
-      // An unarchived report skips the account whatever it chose: the NCMEC archive falls back to
-      // the edge copy for a passthrough url or a missing original, and a block makes the image
-      // server refuse that copy.
-      expect(mockDeleteImages).not.toHaveBeenCalled();
-      expect(deletedPostIds).toEqual([]);
-      expect(result.blockedImages).toBe(0);
-      expect(result.deletedUsers).toBe(0);
-    }
-  );
 });

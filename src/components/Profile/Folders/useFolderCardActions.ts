@@ -1,5 +1,4 @@
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openFolderEditModal } from '~/components/Profile/Folders/folder-dialogs';
 import type { FolderCardActions } from '~/components/Profile/Folders/FolderCard';
 import type { FolderRowSchema } from '~/server/schema/profile-folders.schema';
@@ -40,7 +39,7 @@ export function useFolderCardActions({
   });
 
   return {
-    onEdit: (folder) => openFolderEditModal({ props: { folder, user } }),
+    onEdit: (folder) => openFolderEditModal({ folder, user }),
     onToggleHidden: (folder) => {
       // Rows as shown, with this folder flipped; an unplaced folder is placed where it shows.
       const next: FolderRowSchema[] = rows.map((row, i) => ({
@@ -54,16 +53,13 @@ export function useFolderCardActions({
       setRows.mutate({ rows: next, ...(storedRows ? { ifUnchangedFrom: storedRows } : {}) });
     },
     onDelete: (folder) =>
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: `Delete ${folder.name}?`,
-          message:
-            'The folder goes away for good. What was in it stays on your account and anywhere else you put it.',
-          labels: { cancel: 'Cancel', confirm: 'Delete folder' },
-          confirmProps: { color: 'red' },
-          onConfirm: () => remove.mutateAsync({ id: folder.id }),
-        },
+      openConfirm({
+        title: `Delete ${folder.name}?`,
+        message:
+          'The folder goes away for good. What was in it stays on your account and anywhere else you put it.',
+        labels: { cancel: 'Cancel', confirm: 'Delete folder' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => remove.mutateAsync({ id: folder.id }),
       }),
   };
 }

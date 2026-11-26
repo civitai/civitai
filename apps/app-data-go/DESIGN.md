@@ -26,7 +26,12 @@ Authorization: Bearer <the app's hub access token for the user>
 
 1. Validate `slug`, `collection` and `major`, and build the collection's schema URN,
    `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>` (`internal/urn`, pinned to the adapter's
-   `registryUrn` by golden vectors).
+   `registryUrn` by golden vectors). With no `major`, the read is of the collection's CURRENT major:
+   it opens the stream at the major the streams last named for the collection on this replica (1 the
+   first time), and the stream's `meta` names the current one (`currentMajor`, which the adapter's
+   private and level feeds send on `live` and `progress`). A stream that names another major is read
+   again at it, once; one that names none is answered at the major it was opened at (`internal/api/major.go`, THE CURRENT MAJOR). Neither service needs
+   the other released first.
 2. If the registry path is on and the token is one the hub can exchange (below), read the token's
    stream for that schema (`internal/session`). A read:
 
@@ -179,7 +184,10 @@ as a replay, so `exchange.BlockCache` sits in front of the block exchange:
   first"), so it never reaches the hub or spends this service's one exchange budget there, which its
   user exchanges share.
 - **Failed** (the hub unreachable, a `5xx`, a `429`, a timeout): forgotten, so a later read may try
-  again after the stream cooldown. The hub issued nothing, and gives back a claim it made (including
+  again after the stream cooldown. A `429` also holds back every exchange, user and block, for the
+  wait the hub named (the longest of `Retry-After` and the body's `rateLimit.retryAfterSeconds` or
+  `retry_after`, at least 1 s, at most 15 minutes): the budget is this client's, so no exchange
+  reaches the hub until the wait is over, and each one in it fails the same way. The hub issued nothing, and gives back a claim it made (including
   one whose replay-store write timed out). If this service timed out after the hub did issue, the
   retry is refused as a replay and remembered: that block token reads REST.
 - Entries are keyed by SHA-256 of the whole token, never by its `jti`: a token that merely reuses
@@ -204,10 +212,13 @@ user (ban, delete) still applies. Nothing else outlives the exchanged token, at 
 reasons (`block_spent`, `block_cache_full`), not the registry's `error`; both still cool the key
 down for 30 s. Each block exchange is counted in
 `app_data_block_exchanges_total{outcome,error}` (`issued`, `reused`, `refused`, `remembered`,
-`failed`, `spent`, `full`, `unverifiable`; `error` is the hub's OAuth code for `refused` and
+`failed`, `spent`, `full`, `unverifiable`, `rate_limited`: a `429` or its hold; `error` is the hub's OAuth code for `refused` and
 `remembered`, or `local` for a token refused here, else `none`). Every outcome but `issued`, `reused`,
 `unverifiable` and a `local` refusal is logged with that code (those are counted only, so a flood or a
-JWKS outage is not a flood of log lines). Neither carries a token, user or app.
+JWKS outage is not a flood of log lines), and with what the read does instead (`read`): `rest` with
+`APP_DATA_WRITES` off, the fallback above; `refused` with it on, where no read has a REST fallback
+(WRITES-DESIGN.md, the cut-over private read and the shared read) and the read answers its refusal.
+Neither carries a token, user or app.
 
 **No wider than REST.** The site's document store reads a block token's own block, holds mature
 ratings to the token's ceiling, and refuses at once a token whose install was uninstalled, turned
@@ -334,7 +345,9 @@ Tests prove it with pairwise-distinct fixtures (`TestRecordsNeverCrossFromOneTok
 | `LIVE_WAIT_MS`           | 1500    | how long a read waits for a new stream's `Live`                      |
 | `REQUEST_DEADLINE_MS`    | 4000    | one read, REST included                                              |
 | `MAX_RECORDS_PER_STREAM` | 1000    | a stream whose cache outgrows this is closed; reads go to REST       |
-| `MAX_BYTES_PER_STREAM`   | 2 MiB   | likewise, by approximate size; caches hold at most streams × this    |
+| `MAX_BYTES_PER_STREAM`   | 2 MiB   | likewise, by approximate size                                        |
+| `MAX_SUBSCRIPTIONS`      | 100     | streams of every kind (private, level, per-viewer) open together     |
+| `CACHE_BUDGET_BYTES`     | 224 MiB | bytes every open stream reserves together (its own byte bound each)  |
 | `REST_MAX_INFLIGHT`      | 64      | concurrent REST reads; over it a read answers 503 with `Retry-After` |
 
 A read that would open a stream over either cap opens nothing and reads REST (`capacity`,
@@ -488,7 +501,11 @@ carry no key. The HTTP binding sends it (an SSE upsert is the whole entity); the
 body format (`k1`), so a cursor saved before keys were carried resumes as a change: each record is
 sent again, with its key, and no cursor is expired.
 
-This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"data":…}`.
+This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"version"?:…,"data":…}`.
+The adapter's body format `k3` adds the document's store `version` beside the key and seq
+(`Entity.version`), and a read answers it as the item's `version`, the number a write's `ifVersion`
+is compared against; a REST item carries the store's `version` too (and, as before, the same number
+as its `rev`). An item from a stream before `k3` omits `version`.
 `?keyPrefix=P` (a key's grammar, at most 128 characters) keeps the records whose key starts with `P`
 on the registry path and is sent on as the store's own `keyPrefix` on REST. A stream whose records
 carry no key cannot be filtered: a `keyPrefix` read of it goes to REST (`unkeyed`). A prefix that

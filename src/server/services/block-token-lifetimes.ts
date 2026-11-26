@@ -15,6 +15,8 @@ export const BLOCK_TOKEN_LIFETIMES_SECONDS = {
   settings: 300,
   /** dev:live pasted tokens — mod-only, self-bound, budget-capped */
   dev: 4 * 60 * 60,
+  /** a recipe runner's token: one submit */
+  runner: 180,
 } as const;
 
 export const MAX_BLOCK_TOKEN_LIFETIME_SECONDS = Math.max(

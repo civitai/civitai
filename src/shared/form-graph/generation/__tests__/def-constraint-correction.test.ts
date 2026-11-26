@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { selectDef } from '../../defs';
 import { generationHub } from '../hub.graph';
 import { MAX_PROMPT_LENGTH, samplers } from '~/shared/constants/generation.constants';
 import { SONILO_MAX_PROMPT_LENGTH } from '~/shared/constants/sonilo.constants';
@@ -58,6 +59,15 @@ describe('def constraint correction', () => {
 
       expectValid(store);
       expect(state(store).sampler).toBe('DPM++ 2M Karras');
+    });
+
+    it('an untrusted parse maps an alias onto its option, or the default when not offered', () => {
+      const def = selectDef({
+        options: ['euler', 'heun'],
+        aliases: { Heun: 'heun', LMS: 'lms' },
+      });
+      expect(def.input.parse('Heun')).toBe('heun');
+      expect(def.input.parse('LMS')).toBe('euler');
     });
   });
 

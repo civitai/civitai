@@ -2,6 +2,8 @@ import { fail, redirect } from '@sveltejs/kit';
 import { findRecap, getDailyStatus } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
+import { moderatorStats } from '$lib/server/inquisitor/context';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
@@ -11,7 +13,7 @@ import { seenStore } from '$lib/server/seen-runtime';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import type { Actions, PageServerLoad } from './$types';
 
-// The recap card and the fervor position are extras: a failed read leaves them out instead of failing the home page.
+// The recap card, the fervor position and the Inquisitor's stats are extras: a failed read leaves them out instead of failing the home page.
 const optional = <T>(what: string, read: () => Promise<T>): Promise<T | null> =>
   Promise.resolve()
     .then(read)
@@ -21,6 +23,24 @@ const optional = <T>(what: string, read: () => Promise<T>): Promise<T | null> =>
     });
 
 export const load: PageServerLoad = async ({ locals }) => {
+  if (await inquisitorQueueOpen(locals.user)) {
+    return {
+      username: locals.user.username ?? null,
+      player: null,
+      status: null,
+      daily: null,
+      recap: null,
+      fervorPosition: null,
+      whatsNew: null,
+      needsConsent: false,
+      inquisitor: {
+        stats: await optional('inquisitor stats', () =>
+          moderatorStats(db, { moderatorId: locals.user.id, now: queueDeps.now() })
+        ),
+      },
+    };
+  }
+
   const player = await db
     .selectFrom('NewOrderPlayer')
     .select(['rankType', 'exp', 'startAt'])
@@ -56,6 +76,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     whatsNew:
       status && !needsConsent && seen?.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     needsConsent,
+    inquisitor: null,
   };
 };
 

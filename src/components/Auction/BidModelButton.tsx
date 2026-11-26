@@ -5,8 +5,7 @@ import { IconGavel } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -51,24 +50,21 @@ export const BidModelButton = ({
 
   const handle = () => {
     if (isCheckpoint && !canAuctionForGeneration) {
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Please Note! ',
-          message: (
-            <div className="flex flex-col gap-2">
-              <Text>Bidding on this model will not make it active for Generation!</Text>
-              <Text>
-                {entityData.baseModel} is not currently available for Generation on the Civitai
-                Generator. You may still place a bid if you wish to promote this model to the Home
-                Page Featured Model section.
-              </Text>
-            </div>
-          ),
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          onConfirm: setAuction,
-          size: 600,
-        },
+      openConfirm({
+        title: 'Please Note! ',
+        message: (
+          <div className="flex flex-col gap-2">
+            <Text>Bidding on this model will not make it active for Generation!</Text>
+            <Text>
+              {entityData.baseModel} is not currently available for Generation on the Civitai
+              Generator. You may still place a bid if you wish to promote this model to the Home
+              Page Featured Model section.
+            </Text>
+          </div>
+        ),
+        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+        onConfirm: setAuction,
+        size: 600,
       });
     } else {
       setAuction();

@@ -70,7 +70,7 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
       )}${mantineInk}}`,
     // Wider gutters so the background frames the content; panels frost it lightly, so it still shows.
     background &&
-      '[data-profile-content]{padding-left:24px;padding-right:24px}:root{--profile-card-blur:blur(4px)}',
+      '[data-profile-content]{padding-left:24px;padding-right:24px}:root{--profile-card-blur:blur(2px)}',
   ].filter(Boolean);
 
   return (

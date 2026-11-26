@@ -8,14 +8,26 @@ import { postHoldsHeldTextSql, unheldPostTextUpdateSql } from '~/server/services
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * The "PostText" delete trigger and `post_text_held`, run as written in the migration: held text,
+ * The "PostText" delete trigger and `post_text_held`, run as written in the migrations: held text,
  * and the post that holds it, can't be deleted until the hold is released, by any path.
  */
 
-const MIGRATION = path.resolve(
+const MIGRATIONS = path.resolve(
   __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+  '../../../../packages/civitai-db-schema/prisma/migrations'
 );
+const MIGRATION = path.join(MIGRATIONS, '20270108093000_post_text/migration.sql');
+/** `post_text_held` as defined by the `20271127130000_drop_legal_hold_triggers` migration. */
+const postTextHeldSql = () => {
+  const text = readFileSync(
+    path.join(MIGRATIONS, '20271127130000_drop_legal_hold_triggers/migration.sql'),
+    'utf8'
+  );
+  const start = text.indexOf('CREATE OR REPLACE FUNCTION post_text_held(');
+  const end = text.indexOf('pg_temp;', start);
+  if (start < 0 || end < 0) throw new Error('drop_legal_holds migration has no post_text_held');
+  return text.slice(start, end + 'pg_temp;'.length);
+};
 
 const SCHEMA = `
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
@@ -31,8 +43,6 @@ CREATE TABLE "TextScanHold" (
   "label" TEXT NOT NULL, "status" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
--- Stands in for the view: the trigger only reads its "userId".
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 `;
 
 const AUTHOR = 7;
@@ -59,6 +69,7 @@ beforeAll(async () => {
   await pg.exec(`SET TimeZone = 'America/New_York'`);
   await pg.exec(SCHEMA);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
+  await pg.exec(postTextHeldSql());
 });
 
 afterAll(async () => {
@@ -67,7 +78,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pg.exec(`
-    DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "TextScanHold";
+    DELETE FROM "CsamReport"; DELETE FROM "TextScanHold";
     UPDATE "PostText" SET "csamHeld" = false;
     DELETE FROM "PostText"; DELETE FROM "Post";
     INSERT INTO "Post" ("id", "userId") VALUES (1, ${AUTHOR}), (2, ${AUTHOR});
@@ -99,81 +110,6 @@ describe('PostText delete trigger', () => {
     );
     expect(await texts()).toEqual([id]);
     expect(await posts()).toEqual([1, 2]);
-  });
-
-  it("holds text while an evidence hold covers its author, and not once it doesn't", async () => {
-    const id = await addText(1);
-    await pg.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [AUTHOR]);
-    await expect(pg.query(`DELETE FROM "Post" WHERE id = 1`)).rejects.toThrow(/held/);
-    await pg.query(`DELETE FROM "EvidenceHeldUser"`);
-    await pg.query(`DELETE FROM "Post" WHERE id = 1`);
-    expect(await texts()).not.toContain(id);
-  });
-
-  it('holds text while a report that still holds names its author or quotes its post', async () => {
-    const id = await addText(1);
-    await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [AUTHOR]);
-    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
-
-    await pg.query(`UPDATE "CsamReport" SET "userId" = $1`, [OTHER]);
-    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
-      JSON.stringify({ contextText: [{ source: 'postDescription', id: 1, postId: 1 }] }),
-    ]);
-    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
-
-    // Sent, it holds for a year from submission, and until it is archived.
-    await pg.query(
-      `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '364 days', "archivedAt" = now()`
-    );
-    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
-    await pg.query(
-      `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days', "archivedAt" = NULL`
-    );
-    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
-    await pg.query(`UPDATE "CsamReport" SET "archivedAt" = now()`);
-    await pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
-    expect(await texts()).toEqual([]);
-  });
-
-  it('holds by a sent report naming the author, and works without "EvidenceHeldUser"', async () => {
-    const id = await addText(1);
-    await pg.query(`ALTER TABLE "EvidenceHeldUser" RENAME TO "EvidenceHeldUserGone"`);
-    try {
-      await pg.query(`INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES ($1, now())`, [
-        AUTHOR,
-      ]);
-      await expect(pg.query(`DELETE FROM "Post" WHERE id = 1`)).rejects.toThrow(
-        /cannot be deleted while it is held/
-      );
-      // The evidence leg is skipped, with one warning per session that the view is gone.
-      await pg.query(`DELETE FROM "CsamReport"`);
-      const notices: string[] = [];
-      const onNotice = (n: { severity?: string; message?: string }) =>
-        notices.push(`${n.severity}: ${n.message}`);
-      await addText(2);
-      await pg.query(`DELETE FROM "Post" WHERE id = 1`, [], { onNotice });
-      await pg.query(`DELETE FROM "Post" WHERE id = 2`, [], { onNotice });
-      expect(await texts()).toEqual([]);
-      expect(notices).toEqual([
-        expect.stringMatching(/^WARNING: post_text_held: "EvidenceHeldUser" is missing/),
-      ]);
-    } finally {
-      await pg.query(`ALTER TABLE "EvidenceHeldUserGone" RENAME TO "EvidenceHeldUser"`);
-    }
-  });
-
-  it('holds every text while the evidence-hold table stands without its view', async () => {
-    const id = await addText(1);
-    await pg.query(`ALTER TABLE "EvidenceHeldUser" RENAME TO "EvidenceHeldUserGone"`);
-    await pg.query(`CREATE TABLE "EvidenceHold" ("userId" INTEGER)`);
-    try {
-      await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(
-        /cannot be deleted while it is held/
-      );
-    } finally {
-      await pg.query(`DROP TABLE "EvidenceHold"`);
-      await pg.query(`ALTER TABLE "EvidenceHeldUserGone" RENAME TO "EvidenceHeldUser"`);
-    }
   });
 
   it("doesn't hold text over a report on someone else quoting another post", async () => {
@@ -217,15 +153,13 @@ describe('a CSAM hold on the text', () => {
     });
   const citing = capture();
 
-  it("holds it, once confirmed with a report quoting its post, for the report's retention and then lets it go", async () => {
+  it('lets it go once confirmed with a report quoting its post', async () => {
     const id = await addText(1, { csamHeld: true });
     await decide(id, 'Confirmed');
     await pg.query(
-      `INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt") VALUES ($1, $2, now() - interval '364 days', now())`,
+      `INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt") VALUES ($1, $2, now() - interval '1 day', NULL)`,
       [OTHER, citing]
     );
-    await expect(del(id)).rejects.toThrow(/held/);
-    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days'`);
     await del(id);
     expect(await texts()).toEqual([]);
   });

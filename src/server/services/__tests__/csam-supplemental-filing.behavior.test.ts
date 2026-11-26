@@ -10,6 +10,8 @@ import {
 } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import * as imageService from '~/server/services/image.service';
+import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
  * Filing a supplemental report: which images it may attach, and how many it says it left
@@ -75,7 +77,8 @@ const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "needsReview" TEXT,
-  "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
+  "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "nsfwLevel" INTEGER, "blockedFor" TEXT,
+  "metadata" JSONB
 );
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportedById" INTEGER NOT NULL DEFAULT ${MOD},
@@ -147,7 +150,15 @@ const file = (imageIds: number[], supplementalOf = PRIOR) =>
     imageIds,
     supplementalOf,
     details: { minorDepiction: 'non-real' },
+    blockListedImages: true,
   });
+// The images a filing blocked as CSAM. A refused filing must block none.
+const blocked = async () =>
+  (
+    await db.pg.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE "blockedFor" = 'CSAM' AND ingestion = 'Blocked' ORDER BY id`
+    )
+  ).rows.map((r) => r.id);
 
 const filed = async () =>
   (
@@ -182,10 +193,27 @@ describe('a supplemental report', () => {
     await view(101);
     await image(102);
 
+    // As an account's self-deletion with the grace option leaves it.
+    await db.pg.query(
+      `UPDATE "Image" SET metadata = jsonb_build_object($1::text, 'Scanned') WHERE id IN (101, 102)`,
+      [PRIOR_INGESTION_KEY]
+    );
+
+    const sharedBlock = vi.spyOn(imageService, 'blockImagesAsCsamInTransaction');
+
     await file([101]);
 
+    // Through the one CSAM block every filing path runs.
+    expect(sharedBlock).toHaveBeenCalledWith([101], expect.anything());
     const [row] = await filed();
     expect(row.images).toEqual([{ id: 101 }]);
+    // Only the listed image, in the report's own transaction, and its grace breadcrumb with it.
+    expect(await blocked()).toEqual([101]);
+    const { rows: breadcrumbs } = await db.pg.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE metadata ? $1 ORDER BY id`,
+      [PRIOR_INGESTION_KEY]
+    );
+    expect(breadcrumbs).toEqual([{ id: 102 }]);
     expect(row.details).toEqual({
       minorDepiction: 'non-real',
       supplemental: {
@@ -247,6 +275,7 @@ describe('a supplemental report', () => {
 
     await expect(file([101, 102])).rejects.toThrow('Not reviewed on screen: #101');
     expect(await filed()).toEqual([]);
+    expect(await blocked()).toEqual([]);
   });
 
   it('counts a view only of the kinds a send counts', async () => {
@@ -285,6 +314,7 @@ describe('a supplemental report', () => {
 
     await expect(file([105])).rejects.toThrow("Not this user's images: #105");
     await expect(file([100])).rejects.toThrow('Already in a report: #100');
+    expect(await blocked()).toEqual([]);
   });
 
   it.each([
@@ -299,6 +329,25 @@ describe('a supplemental report', () => {
     await view(101);
 
     await expect(file([101], 2)).rejects.toThrow('is not a sent image report on this user');
+    expect(await blocked()).toEqual([]);
+  });
+
+  it('refuses a supplemental of another type, blocking nothing', async () => {
+    await image(101);
+    await view(101);
+
+    await expect(
+      createSupplementalCsamReport({
+        reportedById: MOD,
+        userId: OWNER,
+        type: 'TrainingData',
+        imageIds: [101],
+        supplementalOf: PRIOR,
+        details: {},
+        blockListedImages: true,
+      } as never)
+    ).rejects.toThrow('Only an image report on a user can be supplemental');
+    expect(await blocked()).toEqual([]);
   });
 
   it('refuses while another supplemental report on the user waits to send, and never folds into it', async () => {
@@ -310,6 +359,7 @@ describe('a supplemental report', () => {
 
     await expect(file([102])).rejects.toThrow('is waiting to send');
     expect((await filed()).map((r) => r.images)).toEqual([[{ id: 101 }]]);
+    expect(await blocked()).toEqual([101]);
   });
 
   it('is not held back by a supplemental report already sent', async () => {

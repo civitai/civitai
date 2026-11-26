@@ -42,8 +42,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => mocks.features,
   useOptionalFeatureFlags: () => mocks.features,
 }));
-// `DaysFromNow` (in a review row) throws 'missing IsClientContext' outside the app shell.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({

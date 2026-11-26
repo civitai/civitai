@@ -49,4 +49,18 @@ describe('ratingExamples', () => {
     expect(Object.keys(examples)).toEqual(['1']);
     expect(examples[1].map((e) => e.id)).toEqual([3, 1, 6, 5]);
   });
+
+  it('keeps the last examples through failed reads for 30 minutes, then shows none', async () => {
+    const minute = 60_000;
+    const read = 1_000_000_000;
+    expect(Object.keys(await ratingExamples(db, read))).toEqual(['1']);
+    await pg.exec(`ALTER TABLE "KnightsRatingGuideItem" RENAME TO "KnightsRatingGuideItemGone"`);
+    try {
+      expect(Object.keys(await ratingExamples(db, read + 11 * minute))).toEqual(['1']);
+      expect(Object.keys(await ratingExamples(db, read + 29 * minute))).toEqual(['1']);
+      expect(await ratingExamples(db, read + 31 * minute)).toEqual({});
+    } finally {
+      await pg.exec(`ALTER TABLE "KnightsRatingGuideItemGone" RENAME TO "KnightsRatingGuideItem"`);
+    }
+  });
 });

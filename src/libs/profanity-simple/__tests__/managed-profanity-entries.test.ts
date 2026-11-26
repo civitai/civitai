@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { blockedWords } from '@civitai/mod-utils/profanity/lists';
 import {
   cleanWord,
@@ -24,19 +25,42 @@ describe('managedProfanityEntries', () => {
     [MIN_MANAGED_PROFANITY_ENTRIES, true],
     [MIN_MANAGED_PROFANITY_ENTRIES + 1, true],
   ])('%i usable entries: enforced %s', (count, enforced) => {
-    expect(managedProfanityEntries(usable(count))).toEqual({ usable: usable(count), enforced });
+    expect(managedProfanityEntries(usable(count))).toEqual({
+      usable: usable(count),
+      distinct: count,
+      enforced,
+    });
   });
 
   it('does not count unusable entries toward the floor, and drops them', () => {
     const entries = [...usable(MIN_MANAGED_PROFANITY_ENTRIES - 1), ...UNUSABLE];
     expect(managedProfanityEntries(entries)).toEqual({
       usable: usable(MIN_MANAGED_PROFANITY_ENTRIES - 1),
+      distinct: MIN_MANAGED_PROFANITY_ENTRIES - 1,
+      enforced: false,
+    });
+  });
+
+  it('counts each entry once toward the floor', () => {
+    const entries = usable(MIN_MANAGED_PROFANITY_ENTRIES - 1);
+    const respelled = [...entries, entries[0].toUpperCase(), `(${entries[1]})`];
+    expect(managedProfanityEntries(respelled)).toMatchObject({
+      distinct: MIN_MANAGED_PROFANITY_ENTRIES - 1,
       enforced: false,
     });
   });
 });
 
-// Pins that a managed copy of today's shipped list matches it (#10081).
+// Editing the shipped list changes what a managed copy of it enforces. Before updating this
+// digest, check the change against the managed list with the moderation team.
+it('shipped list edits are checked against the managed list', () => {
+  expect(createHash('sha256').update(JSON.stringify(blockedWords)).digest('hex')).toBe(
+    'c942c038ac20c6265353b72510a0f4f5a7a9bdce424a2bb82d68b8444e86f15e'
+  );
+});
+
+// Pins that keeping only usable entries changes nothing a managed copy of the shipped list enforces
+// (#10081). Both sides are managed lists, so neither loads the library dataset.
 describe('a managed copy of the shipped list', () => {
   const managedWords = managedProfanityEntries(blockedWords).usable;
 
@@ -51,7 +75,10 @@ describe('a managed copy of the shipped list', () => {
   });
 
   it('matches the shipped list on every entry', () => {
-    const shipped = createProfanityFilter({ moderatorWhitelist: null, moderatorBlocklist: null });
+    const shipped = createProfanityFilter({
+      moderatorWhitelist: null,
+      moderatorBlocklist: [...blockedWords],
+    });
     const managed = createProfanityFilter({
       moderatorWhitelist: null,
       moderatorBlocklist: managedWords,

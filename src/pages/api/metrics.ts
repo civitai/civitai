@@ -84,6 +84,8 @@ import { seedAppBlockSourceMetrics } from '~/server/prom/app-block-source.metric
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+// Seeds civitai_app_block_review_boot_checks_total's series at 0 (same reason).
+import { ensureRegisterAppBlockBootCheckMetrics } from '~/server/prom/app-block-boot-check.metrics';
 import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-review-autodeploy.metrics';
 import { ensureRegisterFeedbackHqSyncMetrics } from '~/server/prom/feedback-hq-sync.metrics';
 // Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
@@ -94,7 +96,7 @@ import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics
 // Seeds civitai_provider_download_total at 0 for every live provider. The providers are read on each
 // scrape, so a new one is seeded by the first scrape after it is minted.
 import { seedProviderDownloadMetrics } from '~/server/prom/provider-download.metrics';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { ProbeEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
 seedGenerationValidationMetrics();
@@ -102,6 +104,7 @@ ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterSearchUploadMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterAppBlockBootCheckMetrics();
 ensureRegisterAppReviewAutodeployMetrics();
 ensureRegisterFeedbackHqSyncMetrics();
 ensureRegisterThreadCpuMetrics();
@@ -236,7 +239,7 @@ async function collectRegistryMetrics(
   }
 }
 
-const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+const handler = ProbeEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();

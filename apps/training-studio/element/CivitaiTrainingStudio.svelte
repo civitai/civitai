@@ -26,6 +26,10 @@
   $effect(() => {
     const root = document.createElement('div');
     root.setAttribute('data-cts-portal', '');
+    // The overlays inside are only `z-50`; the main site's header is `z-[199]` and would paint over
+    // a dialog's top edge and its ✕. A stacking context at Mantine's modal layer (200) lifts them all.
+    root.style.position = 'relative';
+    root.style.zIndex = '200';
     const syncTheme = () => root.classList.toggle('light', element.classList.contains('light'));
     syncTheme();
     const observer = new MutationObserver(syncTheme);
@@ -64,12 +68,14 @@
         pricingUrl: h.config.pricingUrl,
         supportUrl: h.config.supportUrl,
         dataPolicyUrl: h.config.dataPolicyUrl,
+        userId: h.config.userId,
       },
       hrefFor: (loc) => h.hrefFor(loc),
       navigate: (loc, opts) => h.navigate(loc, opts),
       generate: h.generate?.bind(h),
       generateUrl: h.generateUrl?.bind(h),
       publishUrl: h.publishUrl?.bind(h),
+      publishVersionUrl: h.publishVersionUrl?.bind(h),
       modelPageUrl: h.modelPageUrl?.bind(h),
       pickModel: h.pickModel?.bind(h),
       refresh: async () => {

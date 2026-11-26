@@ -107,7 +107,7 @@ function UserFolderPage() {
             variant="default"
             radius="xl"
             leftSection={<IconPencil size={14} />}
-            onClick={() => openFolderEditModal({ props: { folder, user: profileUser } })}
+            onClick={() => openFolderEditModal({ folder, user: profileUser })}
           >
             Edit folder
           </Button>

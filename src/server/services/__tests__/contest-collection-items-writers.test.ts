@@ -127,6 +127,11 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     busts: 0,
     why: 'one-off migration of model likes; model rows only',
   },
+  'scripts/oneoffs/backfill-liked-models.ts': {
+    writes: 1,
+    busts: 0,
+    why: 'one-off backfill of model likes into Model bookmark collections; model rows only',
+  },
   'src/server/api-routes/admin/migrate-likes-models.ts': {
     writes: 1,
     busts: 0,

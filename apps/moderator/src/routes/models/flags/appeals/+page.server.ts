@@ -4,7 +4,7 @@ import { canViewTrainingData } from '$lib/server/access';
 import { appealActions, loadAppealQueue } from '$lib/server/minor-flag-queue';
 
 export const load: PageServerLoad = async ({ url, locals }) => ({
-  ...(await loadAppealQueue(url)),
+  ...(await loadAppealQueue(url, locals.user)),
   canViewTrainingData: canViewTrainingData(locals.user),
 });
 

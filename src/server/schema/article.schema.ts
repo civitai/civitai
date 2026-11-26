@@ -67,13 +67,21 @@ export const getInfiniteArticlesSchema = infiniteQuerySchema
   .merge(userPreferencesForArticlesSchema)
   .merge(articleWhereSchema);
 
+/** An article body, sanitized on the way in. */
+export const articleContentSchema = getSanitizedStringSchema({ allowBlurbs: true }).refine(
+  (data) => data && data.length > 0 && data !== '<p></p>',
+  'Cannot be empty'
+);
+
 export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  // Omitted on an update keeps the stored body (the article page's Publish sends none).
+  content: articleContentSchema.optional(),
+  // The save comes from the edit form, whose placeholders are the only way to remove a body
+  // image the saver may not see. It guards against losing one by accident, not as authorization.
+  editForm: z.boolean().optional(),
   coverImage: imageReferenceInputSchema.nullish(),
   // Omitted leaves the banner as it is; null removes it.
   bannerImage: imageReferenceInputSchema.nullish(),
@@ -123,6 +131,8 @@ export type ArticleMetadata = {
   challengeType?: string;
   entryPrizeRequirements?: number;
   unpublishedReason?: string;
+  /** `ArticleIngestionErrorState`, as far as the article page reads it. */
+  ingestionError?: { rounds: number; exhaustedAt?: number };
   customMessage?: string;
   unpublishedAt?: string;
   unpublishedBy?: number;
@@ -159,3 +169,6 @@ export const getSharedArticleSchema = z.object({ articleId: z.number().int().pos
 export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
 // Each create submits the draft text for a scan, so this bounds scan load.
 export const articleShareCreateRateLimits: RateLimit[] = [{ limit: 10, period: CacheTTL.hour }];
+
+/** `edit`: the read the edit form opens, where a body image the editor may not see is a placeholder. */
+export const getArticleByIdSchema = z.object({ id: z.number(), edit: z.boolean().optional() });

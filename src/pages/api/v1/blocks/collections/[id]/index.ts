@@ -24,6 +24,7 @@ import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/collections/[id]?cursor&limit
@@ -45,7 +46,12 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
  *
  * Response: `{ collection: { id, name, description, curator:{ userId, username },
  *   isPublic, followed }, items: [{ mediaId, type:'image'|'video', url, width,
- *   height, creator:{ userId, username }, nsfwLevel, reactTicket? }], nextCursor }`.
+ *   height, creator:{ userId, username }, nsfwLevel, addedAt, duration?,
+ *   reactTicket? }], nextCursor }`.
+ *
+ * `addedAt` is when the item was added to the collection (`CollectionItem.createdAt`),
+ * ISO 8601, or `null` when unknown. `duration` is the video length in seconds, present
+ * only on a video item with a known positive length; omitted otherwise.
  *
  * `reactTicket` is the provenance ticket `blocks.setReactionFromApp` requires before an app may
  * set the viewer's reaction on that item (`react-ticket.service.ts`). Bound to this app and this
@@ -108,8 +114,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       endpoint: 'collection',
       retryAfterSeconds: rateLimit.retryAfterSeconds,
     });
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 
@@ -179,10 +188,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       Parameters<typeof isPublicCollectionImage>[0];
     const items = expanded
       .filter((it) => it.type === 'image')
-      .map((it) => it.data as ImageItem)
-      .filter((image) => isPublicCollectionImage(image, browsingLevel))
-      .map((image) => {
-        const media = mapImageItemToMedia(image);
+      .map((it) => ({ item: it, image: it.data as ImageItem }))
+      .filter(({ image }) => isPublicCollectionImage(image, browsingLevel))
+      .map(({ item, image }) => {
+        // `item.createdAt` is when it was added to the collection (not the image's upload time).
+        const media = mapImageItemToMedia(image, item);
         const reactTicket = reactTicketForImage(claims, media.mediaId);
         return reactTicket ? { ...media, reactTicket } : media;
       });

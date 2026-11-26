@@ -13,6 +13,11 @@ export const studioWithheldWorkflowIdsSql = (userId: number, workflowIds: string
     WHERE m."userId" = ${userId}
       AND mv.meta->>'trainingWorkflowId' = ANY(${workflowIds}::text[])
     UNION ALL
+    SELECT mv.meta->>'trainingStudioWorkflowId', m.status, m.mode, m."deletedBy"
+    FROM "Model" m JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    WHERE m."userId" = ${userId}
+      AND mv.meta->>'trainingStudioWorkflowId' = ANY(${workflowIds}::text[])
+    UNION ALL
     SELECT mf.metadata->'trainingResults'->>'workflowId', m.status, m.mode, m."deletedBy"
     FROM "Model" m
     JOIN "ModelVersion" mv ON mv."modelId" = m.id

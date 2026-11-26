@@ -253,6 +253,13 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'apps:storage',
     allowOpaqueOrigin: true,
   },
+  // The report moderation API: the document store's own scope and opaque-origin argument; a
+  // POST only, so no extra preflight methods.
+  {
+    module: '~/pages/api/v1/blocks/moderation/reports',
+    requiredScope: 'apps:storage',
+    allowOpaqueOrigin: true,
+  },
   {
     module: '~/pages/api/v1/blocks/shared-storage/append',
     requiredScope: 'apps:storage:shared:write',
@@ -453,12 +460,10 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
         );
         // CORS-only change: the per-user authorization gate must be unchanged.
         expect(opts.requiredScope, `${module} requiredScope`).toBe(requiredScope);
-        // PUT/DELETE/PATCH in the preflight: only the document store writes with them, and a
-        // browser refuses a cross-origin PUT, DELETE or PATCH the preflight does not allow.
+        // PUT/DELETE in the preflight: only the document store writes with them, and a browser
+        // refuses a cross-origin PUT or DELETE the preflight does not allow.
         expect(opts.extraCorsMethods, `${module} extraCorsMethods`).toEqual(
-          module === '~/pages/api/v1/blocks/storage/[[...path]]'
-            ? ['PUT', 'DELETE', 'PATCH']
-            : undefined
+          module === '~/pages/api/v1/blocks/storage/[[...path]]' ? ['PUT', 'DELETE'] : undefined
         );
       });
     }
@@ -488,5 +493,42 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
         '`allowOpaqueOrigin: true` from it would break the unverified-block fetch with this ' +
         'whole suite green. Add it, with its scope.'
     ).toEqual(scopedRoutesFromSource());
+  });
+});
+
+/**
+ * The document store's INTERNAL route (app-data-go's forwarded writes,
+ * `src/server/services/apps/doc-store-internal-route.ts`) must hand `withBlockScope` the public
+ * route's options: the same required scope, refusal envelope, endpoint label and CORS. Compared
+ * as VALUES (functions by identity), so an option changed on one side only, whatever its
+ * spelling, fails here.
+ */
+describe('the internal storage route passes withBlockScope the public route’s options', () => {
+  it('deep-equals the public storage route’s options', { timeout: 60000 }, async () => {
+    for (const { module } of ENDPOINTS) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      await import(module);
+    }
+    const publicIndex = ENDPOINTS.findIndex(
+      (e) => e.module === '~/pages/api/v1/blocks/storage/[[...path]]'
+    );
+    const publicOpts = captured[publicIndex];
+    expect(publicOpts?.requiredScope).toBe('apps:storage');
+
+    const { createInternalStorageRoute } = await import(
+      '~/server/services/apps/doc-store-internal-route'
+    );
+    const before = captured.length;
+    createInternalStorageRoute();
+    expect(captured).toHaveLength(before + 1);
+    const internalOpts = captured[before];
+
+    expect(Object.keys(internalOpts).sort()).toEqual(Object.keys(publicOpts).sort());
+    expect(internalOpts).toEqual(publicOpts);
+    // Negative control: the comparison sees a difference between two other routes' options.
+    const otherIndex = ENDPOINTS.findIndex(
+      (e) => e.module === '~/pages/api/v1/blocks/shared-storage/append'
+    );
+    expect(captured[otherIndex]).not.toEqual(publicOpts);
   });
 });

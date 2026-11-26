@@ -4,6 +4,7 @@ import { env } from '$env/dynamic/private';
 import { isAccessTokenJwt } from '@civitai/auth';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
+import { isMemorializedFlags } from '@civitai/shared/memorial';
 import {
   checkOAuthRateLimit,
   oauthRetryAfter,
@@ -110,6 +111,7 @@ export const POST: RequestHandler = async ({ request }) => {
       'ApiKey.clientId',
       'ApiKey.expiresAt',
       'User.username',
+      'User.flags',
     ])
     .where('ApiKey.key', '=', hash)
     .where('ApiKey.type', '=', 'Access')
@@ -122,8 +124,13 @@ export const POST: RequestHandler = async ({ request }) => {
     .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
-  // A client-credentials token is single-purpose, so it reads as inactive like an unknown one.
-  if (!row || carriesClientCredentialsOnlyScope(apiKeyRowScope(row))) {
+  // A client-credentials token is single-purpose, so it reads as inactive. A runner token stays
+  // active: its scope bitmask has neither AIServices bit set.
+  if (
+    !row ||
+    isMemorializedFlags(row.flags) ||
+    carriesClientCredentialsOnlyScope(apiKeyRowScope(row))
+  ) {
     return json({ active: false }, { headers: NO_STORE });
   }
 

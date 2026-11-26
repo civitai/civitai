@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   notifyAppealResolved: vi.fn(async (_n: unknown) => undefined),
   clearStrikeReviewFlag: vi.fn(async (_u: number) => undefined),
   recordModActivity: vi.fn(async (_a: unknown) => undefined),
-  sendEmail: vi.fn(async (_e: unknown) => undefined),
+  sendEmail: vi.fn(async (_e: unknown, _tags?: unknown) => undefined),
   setBanned: vi.fn(),
   setMuted: vi.fn(),
   callModEndpoint: vi.fn(),
@@ -392,7 +392,8 @@ describe('resolveSiteAppeal', () => {
       details: { category: 'Account', restored: false },
     });
     expect(h.sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 'one@test', category: 'Account', approved: false })
+      expect.objectContaining({ to: 'one@test', category: 'Account', approved: false }),
+      { userId: 1 }
     );
   });
 
@@ -430,14 +431,17 @@ describe('resolveSiteAppeal', () => {
         details: { category: 'Account', restored: true },
       })
     );
-    expect(h.sendEmail).toHaveBeenCalledWith({
-      to: 'one@test',
-      username: 'banned-and-muted',
-      category: 'Account',
-      approved: true,
-      restored: true,
-      appealUrl: 'https://civitai.test/appeal',
-    });
+    expect(h.sendEmail).toHaveBeenCalledWith(
+      {
+        to: 'one@test',
+        username: 'banned-and-muted',
+        category: 'Account',
+        approved: true,
+        restored: true,
+        appealUrl: 'https://civitai.test/appeal',
+      },
+      { userId: 1 }
+    );
   });
 
   it('skips the email for an appellant with no address', async () => {

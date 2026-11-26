@@ -3,9 +3,13 @@ import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
+import {
+  entryImageGone,
+  SCANNED_FILE_KINDS,
+} from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  acceptedAsVideo,
   getFinalScanReading,
   isFinalsMalwareScanOn,
   submitFinalScan,
@@ -17,6 +21,8 @@ import {
   isFinalVideoName,
   readObject,
   recordFinalScanResult,
+  markCopyDeletes,
+  settleCopyDeletes,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { readVideoLengths } from '~/server/utils/video-lengths';
@@ -24,11 +30,14 @@ import { buildEntryScanCopy, PreviewRejectedError } from '~/server/utils/service
 import {
   openZip,
   readEntry,
+  openEntryStream,
   s3ZipSource,
   id3TagLength,
   listZipPaths,
   MAX_ID3_TAGS,
   everyEntryHead,
+  holdsPdfHeader,
+  PDF_HEADER_WINDOW,
   isMediaName,
   sniffEntry,
   SNIFF_BYTES,
@@ -38,6 +47,7 @@ import {
 } from '~/server/utils/service-deal-zip';
 import {
   SERVICE_FINAL_OVER_LEVEL_REASON,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
   SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
@@ -238,6 +248,15 @@ async function validateZip({ zipfile, entries }: OpenedZip, shouldStop: () => bo
     if (shouldStop()) return null;
     const read = await readEntry(zipfile, entry, budget, () => false);
     if (read.kind === 'image') images.push(entry);
+    // A second read, on a budget of its own, so the archive's total is not counted twice. readEntry
+    // has already inflated this whole entry against the archive's limits, so this reads nothing the
+    // archive was not allowed, and the entry's own cap still applies.
+    else if (
+      !(await isTheDocumentItsNamed(entry.path, {
+        open: () => openEntryStream(zipfile, entry, { used: 0 }),
+      }))
+    )
+      throw new ZipRejectedError("A document in the archive isn't what its name says.");
   }
   return images;
 }
@@ -339,6 +358,20 @@ async function isTorchArchive(file: ClaimedFinal) {
   });
 }
 
+/** The Final's first bytes as stored, before any tag a player would skip. */
+async function readRawPrefix(file: ClaimedFinal) {
+  if (file.size === 0) return Buffer.alloc(0);
+  const response = await getS3Client().send(
+    new GetObjectCommand({
+      Bucket: await getBucket(),
+      Key: file.s3Key,
+      Range: `bytes=0-${Math.min(PDF_HEADER_WINDOW, file.size) - 1}`,
+    })
+  );
+  if (!response.Body) throw new Error('Empty object body');
+  return Buffer.from(await response.Body.transformToByteArray());
+}
+
 /** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
 async function readHead(file: ClaimedFinal) {
   let offset = 0;
@@ -360,7 +393,7 @@ async function readHead(file: ClaimedFinal) {
 }
 
 /** Counted by claimed type, so false refusals show up after release. */
-const notItsFormat = (kind: 'model' | 'audio', extension: string) => {
+const notItsFormat = (kind: 'model' | 'audio' | 'document', extension: string) => {
   logUnpack('final is not its claimed format', { payload: { kind, extension } }, 'warning').catch(
     () => null
   );
@@ -379,6 +412,7 @@ const isModelName = (name: string) =>
 async function isImageByContent(file: ClaimedFinal) {
   const head = await readHead(file);
   const kind = sniffEntry(head);
+  if (kind === 'pdf') throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
   if (kind === 'video')
     throw new ZipRejectedError(
       file.kind === 'Attachment'
@@ -403,6 +437,40 @@ async function isImageByContent(file: ClaimedFinal) {
       'This image format cannot be delivered. Use PNG, JPEG, WebP or GIF.'
     );
   return kind === 'image';
+}
+
+// An inline preview of these types must strip or refuse embedded data: images.
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
+
+type DocumentBytes = {
+  /** Every byte, in order. */
+  open: () => AsyncIterable<Buffer> | Promise<AsyncIterable<Buffer>>;
+};
+
+/**
+ * A document has no content scan, so a Final or a zip entry named as one must be what its name says,
+ * all of it: a text file is valid UTF-8 with no NUL byte anywhere. Anything else would be delivered
+ * unscanned, so it is refused.
+ */
+async function isTheDocumentItsNamed(name: string, { open }: DocumentBytes) {
+  if (!TEXT_EXTENSIONS.has(fileExtension(name))) return true;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  try {
+    for await (const chunk of await open()) {
+      if (chunk.includes(0)) return false;
+      decoder.decode(chunk, { stream: true });
+    }
+    decoder.decode();
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') return false;
+    throw error;
+  }
+  return true;
+}
+
+async function finalBytes(file: ClaimedFinal): Promise<DocumentBytes> {
+  const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
+  return { open: () => source.readRange(0, file.size) };
 }
 
 /** A Final that is itself an image has a single entry: the file. */
@@ -527,6 +595,8 @@ export async function unpackFinals({
   const began = Date.now();
   try {
     const extension = fileExtension(file.fileName);
+    if (holdsPdfHeader(await readRawPrefix(file)))
+      throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     if (extension === 'zip') {
       if (!(await unpackZip(file, shouldStop))) {
         await release(file.id);
@@ -538,6 +608,8 @@ export async function unpackFinals({
       await unpackImage(file);
     } else if (await isImageByContent(file)) {
       await unpackImage(file);
+    } else if (!(await isTheDocumentItsNamed(file.fileName, await finalBytes(file)))) {
+      throw notItsFormat('document', extension);
     }
     await markUnpacked(file.id, extension !== 'zip');
     // A hand-off that fails is logged; `settleMalwareScans` submits it again.
@@ -650,15 +722,19 @@ export async function settleMalwareScans({
     scansGivenUp: 0,
   };
 
-  const waiting = await dbWrite.$queryRaw<{ id: number; workflowId: string; stale: boolean }[]>`
-    SELECT "id", "malwareScanWorkflowId" AS "workflowId",
+  const waiting = await dbWrite.$queryRaw<
+    { id: number; workflowId: string; stale: boolean; scannedEtag: string | null }[]
+  >`
+    SELECT "id", "malwareScanWorkflowId" AS "workflowId", "scannedEtag",
       "malwareScanSubmittedAt" < now() - (${SERVICE_FINAL_SCAN_STALE_MS}::int * interval '1 millisecond') AS "stale"
     FROM "ServiceDealFile"
     WHERE ${WAITING_FOR_MALWARE_SCAN} AND "malwareScanWorkflowId" IS NOT NULL
     ORDER BY "id" LIMIT 50`;
-  for (const { id, workflowId, stale } of waiting) {
+  for (const { id, workflowId, stale, scannedEtag } of waiting) {
     if (shouldStop()) return counts;
-    const reading = await getFinalScanReading(workflowId).catch((error) => {
+    const reading = await getFinalScanReading(workflowId, {
+      video: acceptedAsVideo({ scannedEtag }),
+    }).catch((error) => {
       logUnpack(
         'malware scan read failed',
         { fileId: id, workflowId, error: (error as Error)?.message },
@@ -796,33 +872,64 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/** When `countDanglingScanCopies` last counted. Kept in memory: a restart only counts sooner. */
+let danglingCountedAt = 0;
+
 /**
- * Step 5: the copy of an image that passed has done its job. The copy of an image whose scan has not
- * finished, or that was rejected, is KEPT, even after its file was deleted: its Image row is what
- * the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
- * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
- * passes. A delete that fails stays pointed at and is retried.
+ * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
+ * (`imageGone`), so a growing count is a backlog; `marked` ones are our own delete, which the next
+ * copy run settles. Null when it did not count this run.
+ */
+export async function countDanglingScanCopies({ now = Date.now() } = {}) {
+  if (now - danglingCountedAt < 60 * 60_000) return null;
+  danglingCountedAt = now;
+  const [counts] = await dbWrite.$queryRaw<{ marked: number; unmarked: number }[]>`
+    SELECT count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NOT NULL)::int AS marked,
+      count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NULL)::int AS unmarked
+    FROM "ServiceDealFileEntry" e WHERE ${entryImageGone(Prisma.sql`e`)}`;
+  logUnpack(
+    'entries pointing at a gone image',
+    { count: counts.unmarked, total: counts.marked + counts.unmarked },
+    counts.unmarked ? 'warning' : 'info'
+  );
+  return counts;
+}
+
+/** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
+let copiesCursor = 0;
+
+/**
+ * Step 5: the copy of an image that passed has done its job. This step KEEPS the copy of an image
+ * whose scan has not finished, or that was refused, even after its file was deleted: its Image row
+ * is what the moderation tooling reads, and deleting it would take the evidence with it. Only
+ * purgeRemovedFiles deletes such a copy, and only an over-level one, together with its file. A copy
+ * whose file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once
+ * it passes. A delete that fails stays pointed at and is retried.
  */
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
+  // Each run starts after the last one's final row and wraps to the start, so copies kept for
+  // their case are tried again but cannot fill every batch.
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number; fileId: number | null }[]>`
     SELECT e."id", e."imageId", e."fileId" FROM "ServiceDealFileEntry" e
     WHERE e."imageId" IS NOT NULL AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-    ORDER BY e."id" LIMIT ${limit}::int`;
+    ORDER BY e."id" <= ${copiesCursor}::int, e."id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
+  copiesCursor = rows[rows.length - 1].id;
   const { deleteImages } = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {
     try {
-      await deleteImages([row.imageId], {
+      await markCopyDeletes([row.id]);
+      const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
-      if (row.fileId === null)
-        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
-      else
-        await dbWrite.$executeRaw`
-          UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
-      deleted++;
+      // A copy kept for its case stays pointed at, and so does one gone without our delete.
+      const settled = await settleCopyDeletes(
+        [row.id],
+        (gone ?? []).map(({ id }) => id)
+      );
+      if (settled.length) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',

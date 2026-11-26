@@ -54,7 +54,11 @@ import {
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
-import { cacheIt, edgeCacheIt, noEdgeCacheWhen } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt, noEdgeCacheWhen, rateLimit } from './../middleware.trpc';
+import {
+  IMAGE_404_CACHE_TAG,
+  imageResourcesEdgeTag,
+} from '~/server/services/image-visibility-invalidation.service';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
@@ -70,6 +74,7 @@ import {
   setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
+  updateImageAcceptableMinorRateLimits,
   updateImageAcceptableMinorSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
@@ -166,22 +171,34 @@ export const imageRouter = router({
     .use(
       edgeCacheIt({
         ttl: CacheTTL.sm,
+        tags: (input: { id: number }) => [imageResourcesEdgeTag(input.id)],
       })
     )
     .query(getImageResourcesHandler),
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
-  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanImageById(input)),
+  rescan: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      rescanImageById({ ...input, csamReview: !!ctx.features?.csamReports })
+    ),
   getEntitiesCoverImage: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
-    // A moderation flag on an entry reaches this shared, signed-out list only when these expire.
-    .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .use(cacheIt({ key: 'image:get404Images:v3', ttl: CacheTTL.day }))
+    // invalidateImageVisibilityCaches purges both by tag. The key's version drops entries cached
+    // before they carried the tag.
+    .use(edgeCacheIt({ ttl: CacheTTL.day, tags: () => [IMAGE_404_CACHE_TAG] }))
+    .use(
+      cacheIt({
+        key: 'image:get404Images:v4',
+        ttl: CacheTTL.day,
+        tags: () => [IMAGE_404_CACHE_TAG],
+      })
+    )
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(reportCsamImagesSchema)
@@ -261,6 +278,7 @@ export const imageRouter = router({
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updateImageAcceptableMinorSchema)
+    .use(rateLimit(updateImageAcceptableMinorRateLimits))
     .mutation(updateImageAcceptableMinorHandler),
   getMyImages: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -276,7 +294,9 @@ export const imageRouter = router({
     })),
   toggleImageFlag: moderatorProcedure
     .input(toggleImageFlagSchema)
-    .mutation(({ input, ctx }) => toggleImageFlag({ ...input })),
+    .mutation(({ input, ctx }) =>
+      toggleImageFlag({ ...input, csamReview: !!ctx.features?.csamReports })
+    ),
   refreshImageResources: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(getByIdSchema)

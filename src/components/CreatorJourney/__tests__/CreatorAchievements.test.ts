@@ -360,7 +360,7 @@ describe('Achievements badge art', () => {
 });
 
 // Ladders have five rungs. With the label in a column beside four tiles per row, the fifth wrapped
-// onto a line of its own (Ellie's review, 2026-10-09); the label now heads the row instead.
+// onto a line of its own (design review, 2026-10-09); the label now heads the row instead.
 describe('Ladder row layout', () => {
   it('puts the label above the tiles and fits five tiles on a desktop row', () => {
     const el = render(new Map([['create:models-1', null]]));

@@ -13,7 +13,6 @@ const SCHEMA = `
     minor boolean DEFAULT false, poi boolean DEFAULT false);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "Model3DLicense" (id int PRIMARY KEY, name text);
   CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
   CREATE TABLE "Model3D" (id int PRIMARY KEY, name text, description text, "userId" int,
@@ -145,8 +144,6 @@ describe('3D model removal', () => {
     ['flagged minor', `UPDATE "Model3D" SET minor = true WHERE id = 1`],
     ['flagged POI', `UPDATE "Model3D" SET poi = true WHERE id = 1`],
     ['owner banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = 7`],
-    ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
-    ['owner under an evidence hold', `INSERT INTO "EvidenceHeldUser" VALUES (7)`],
     ['thumbnail sent to review', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 10`],
     ['thumbnail taken down', `UPDATE "Image" SET "tosViolation" = true WHERE id = 10`],
     ['thumbnail blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 10`],
@@ -194,16 +191,16 @@ describe('3D model removal', () => {
     }
   }, 60_000);
 
-  // Listed on a report is a leg only the held-content rule catches: the image is otherwise clean.
-  test('a held thumbnail is never sent to the embedder', async () => {
+  // A held owner does not hide the row (civitai/civitai#10360).
+  test('a reported owner keeps the model in search', async () => {
     const pg = await pglite();
     try {
       await pg.exec(eligibleModel(1) + eligibleModel(2, 8));
-      await pg.exec(`INSERT INTO "CsamReport" (images) VALUES ('[{"id": 20}]')`);
+      await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (7)`);
       const { points, sent, deps } = fakes(pg);
       await syncIds(getModel3DDocs, [1, 2], deps);
-      expect([...points.keys()]).toEqual([1]);
-      expect(sent.map((i) => i.id)).toEqual(['1']);
+      expect([...points.keys()].sort()).toEqual([1, 2]);
+      expect(sent.map((i) => i.id).sort()).toEqual(['1', '2']);
     } finally {
       await pg.close();
     }

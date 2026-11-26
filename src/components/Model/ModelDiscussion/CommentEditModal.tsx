@@ -76,7 +76,7 @@ export default function CommentEditModal() {
       onClose={!mutating ? dialog.onClose : () => ({})}
       title="Add a comment"
       closeOnClickOutside={!mutating}
-      closeOnEscape={!mutating}
+      closeOnEscape={dialog.closeOnEscape && !mutating}
     >
       <Form form={form} onSubmit={handleSaveComment}>
         <Stack gap="md">

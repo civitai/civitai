@@ -568,6 +568,19 @@ fx('detail-training-data-red-host', detail(5006, { host: RED_HOST }), trainingDa
   fx('detail-origin-cache-no-versions', detail(5036), w);
 }
 
+// 6c'. Not found: Node answers `res.status(404).json({ error })` (expect.status). With no row from
+// the model statement feed-go may answer that 404 itself (FEED_GO_V1_MODELS_ANSWER_NOT_FOUND); with
+// a row getModelsWithVersions then drops (here: no Published version), the same 404 is Node's, but
+// the decision rests on the model-data cache, and feed-go hands it back.
+fx('detail-not-found', detail(5099), baseWorld());
+{
+  const w = baseWorld();
+  addModel(w, modelRow(5098, { cursorId: '1|1|5098' }), [version(6098, { status: 'Draft' })], {
+    files: { 6098: [file(7098, 6098)] },
+  });
+  fx('detail-not-found-no-published-version', detail(5098), w);
+}
+
 // 6d. The listing's read fails: Node leaves every Training Data file out; whether Node's own read
 // failed is unknown to feed-go, so it falls back rather than answer.
 {
@@ -840,7 +853,75 @@ fx(
   });
 }
 
-// Fallbacks before any read.
+// 16. A text `query`: the search index answers the page's ids (`world.search.hits`, in its order),
+// then the statement reads those ids. The answer keeps the search's order, leaves out a hit the
+// statement did not return and a row the search did not name, and pages by the search's offset.
+{
+  const w = baseWorld();
+  // Statement order (by the sort) is 5951, 5952, 5953; the search's is 5952, 5999 (no row), 5951,
+  // then the lookahead 5953.
+  w.search = { hits: [5952, 5999, 5951, 5953] };
+  addModel(w, modelRow(5951, { cursorId: '9|9|5951' }), [version(6951)], {
+    files: { 6951: [file(7951, 6951)] },
+  });
+  addModel(w, modelRow(5952, { cursorId: '8|8|5952' }), [version(6952)], {
+    files: { 6952: [file(7952, 6952)] },
+    images: { 6952: [image(8952, 6952)] },
+  });
+  addModel(w, modelRow(5953, { cursorId: '7|7|5953' }), [version(6953)], {
+    files: { 6953: [file(7953, 6953)] },
+  });
+  fx('list-query-search-order', list('query=golden%20cat&limit=3'), w);
+}
+{
+  // Every option the search takes: the offset (the cursor), a named sort, the types, the base
+  // models and the level `nsfw` opens; no lookahead hit, so no cursor.
+  const w = baseWorld();
+  w.search = { hits: [5961] };
+  addModel(w, modelRow(5961, { cursorId: '1|1|5961' }), [version(6961)], {
+    files: { 6961: [file(7961, 6961)] },
+  });
+  fx(
+    'list-query-search-options',
+    list(
+      'query=golden&cursor=4&limit=2&sort=Newest&types=LORA&types=Checkpoint&baseModels=SDXL%201.0&nsfw=true'
+    ),
+    w
+  );
+}
+{
+  // No hit is no result, whatever the statement would return.
+  const w = baseWorld();
+  w.search = { hits: [] };
+  fx('list-query-search-no-hits', list('query=zzzq&limit=5'), w);
+}
+{
+  // A blocked tag empties the page after the search: the search's cursor is kept.
+  const w = baseWorld();
+  w.search = { hits: [5971, 5972] };
+  w.tagIdsByName = { 'Blocked Thing': 14 };
+  w.blockedTags = [{ id: 14, name: 'Blocked Thing' }];
+  addModel(w, modelRow(5971, { cursorId: '1|1|5971' }), [version(6971)], {
+    files: { 6971: [file(7971, 6971)] },
+  });
+  fx('list-query-search-tag-blocked', list('query=golden&tag=blocked%20THING&limit=1'), w);
+}
+{
+  const w = baseWorld();
+  w.search = { hits: [5951] };
+  fx('fallback-list-query-page', list('query=golden&page=2'), w, {
+    expect: { fallback: 'v1-models-query' },
+  });
+}
+{
+  const w = baseWorld();
+  w.search = { hits: [5951] };
+  fx('fallback-list-query-cursor', list('query=golden&cursor=1.5'), w, {
+    expect: { fallback: 'v1-models-query' },
+  });
+}
+
+// Fallbacks before any read. A text query with no search backend (no `world.search`) falls back.
 fx('fallback-list-query-blank', list('query=%20&limit=5'), baseWorld(), {
   expect: { fallback: 'v1-models-query' },
 });
@@ -856,6 +937,29 @@ fx('fallback-list-query', list('query=golden&limit=5'), baseWorld(), {
 fx('fallback-list-favorites', list('favorites=false'), baseWorld(), {
   expect: { fallback: 'v1-models-authed-only' },
 });
+
+// A model-data cache miss on the list (FEED_GO_V1_MODELS_SERVE_DATA_MISS): the record is not in
+// the cache (`coldModelData`), so feed-go computes it with dataForModelsCache's lookup over the
+// replica rows its harness builds from `world.modelData`; Node's fetch answers the same record (its
+// mock returns `world.modelData`, which is what the lookup writes). A cold fixture: the record shape is
+// the lookup's transcription (internal/hydrate/modeldata.go), the answer is the real handler's.
+{
+  const w = baseWorld();
+  addModel(
+    w,
+    modelRow(5981, { cursorId: '9|9|5981' }),
+    [version(6981, { trainedWords: ['cold'] })],
+    {
+      files: { 6981: [file(7981, 6981)] },
+      images: { 6981: [image(8981, 6981)] },
+    }
+  );
+  addModel(w, modelRow(5982, { cursorId: '8|8|5982' }), [version(6982)], {
+    files: { 6982: [file(7982, 6982)] },
+  });
+  w.coldModelData = [5981];
+  fx('list-data-miss-computed', list('limit=5'), w, { config: { serveDataMiss: true } });
+}
 
 // --- writing -------------------------------------------------------------------------------------
 
@@ -873,7 +977,8 @@ function redisEntries(w) {
     };
   };
   for (const [id, v] of Object.entries(w.modelData))
-    record('packed:caches:data-for-model-2', id, v);
+    if (!(w.coldModelData ?? []).includes(Number(id)))
+      record('packed:caches:data-for-model-2', id, v);
   for (const [id, v] of Object.entries(w.modelTags)) record('packed:caches:model-tags', id, v);
   for (const [id, v] of Object.entries(w.tags)) record('packed:caches:basic-tags', id, v);
   for (const [id, v] of Object.entries(w.users)) record('packed:caches:basic-users', id, v);

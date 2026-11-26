@@ -12,7 +12,7 @@
     submit,
     anchored,
   }: {
-    notices: PageData['notices'];
+    notices: Extract<PageData, { notices: unknown }>['notices'];
     /** Why the last dismissal failed, if it did. */
     message: string | null;
     submit: SubmitFunction;

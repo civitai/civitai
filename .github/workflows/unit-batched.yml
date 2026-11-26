@@ -1,11 +1,16 @@
 name: Unit tests (main batch)
 
-# Batched verification of the unit suite on `main`. A push to `main` does not run lint.yml's
-# `Unit tests` job; this does, on the schedule below, and only when `main` moved: it dispatches lint.yml
+# Batched verification of the unit and component + geometry suites on `main`. A push to `main`
+# runs neither; this does, on the schedule below, and only when `main` moved: it dispatches lint.yml
 # with `only: unit` on `main` unless `main`'s head is the commit the last batch run already
-# verified. lint.yml's `unit-verify` job then posts the verdict as a `Unit tests (main batch)` commit
-# status, bisecting a red to the first bad merge commit. See lint.yml's header ("THE UNIT SUITE IS
-# THE EXCEPTION") and scripts/ci/unit-batched.mjs.
+# verified. In that one run, lint.yml's `unit-verify` and `component-verify` jobs post the verdicts
+# as `Unit tests (main batch)` and `Component tests (main batch)` commit statuses, bisecting a red
+# to the first bad merge commit. See lint.yml's header ("THE UNIT SUITE IS THE EXCEPTION", and the
+# `(main batch)` status contract) and scripts/ci/unit-batched.mjs.
+#
+# The same dispatched run also verifies the batch's other suites (lint.yml's `batch-suites` job,
+# scripts/ci/batch-suites.mjs): it dispatches each one whose paths changed since the last green
+# batch and posts a `Batch suites (main batch)` commit status.
 #
 # THE CADENCE IS THIS CRON LINE. :41 keeps it off the top of the hour.
 # scripts/__tests__/main-branch-ci-coverage.test.ts bounds the interval (MAX_BATCH_HOURS);

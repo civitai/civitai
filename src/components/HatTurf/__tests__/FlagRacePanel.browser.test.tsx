@@ -18,6 +18,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 import { FlagRacePanel, HOWTO_DISMISSED_KEY } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import type { FlagSummary } from '~/server/events/turf/turf.service';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const H = 3_600_000;
@@ -82,6 +83,31 @@ describe('FlagRacePanel', () => {
     expect(q('flag-race-pot')).toBeNull();
     expect(q('flag-race-held')).toBeNull();
     expect(q('flag-race-header')?.textContent).toContain('Race complete');
+  });
+
+  test('shows a play button over the art only with a video, and it plays that video', async () => {
+    await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
+    expect(q('flag-race-play')).toBeNull();
+    await cleanup();
+
+    await renderWithProviders(
+      <>
+        <FlagRacePanel
+          event="e"
+          summary={summary()}
+          video="https://example.com/flag-race.mp4"
+          duration={94.8}
+        />
+        <DialogProvider />
+      </>
+    );
+    expect(q('flag-race-duration')?.textContent).toBe('Watch · 1:35');
+    (q('flag-race-play') as HTMLElement).click();
+    await expect
+      .poll(() =>
+        document.body.querySelector('[data-testid="hat-turf-video"]')?.getAttribute('src')
+      )
+      .toBe('https://example.com/flag-race.mp4');
   });
 
   test('a dismissed how-it-works stays dismissed on the next visit, and the pill brings it back', async () => {

@@ -40,7 +40,7 @@ function makeDeps(overrides: Partial<CoverImageDeps> = {}): CoverImageDeps {
     assertUrlUsable: vi.fn().mockResolvedValue(undefined),
     createImage: vi.fn().mockResolvedValue({ id: 999 }),
     logExistenceUnknown: vi.fn(),
-    assertNotRestricted: vi.fn().mockResolvedValue(undefined),
+    assertUsableAsCover: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -94,18 +94,28 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
   const refuse = () => vi.fn().mockRejectedValue(new Error(RESTRICTED_COVER_IMAGE_MESSAGE));
 
   it('refuses a client-supplied id', async () => {
-    const deps = makeDeps({ assertNotRestricted: refuse() });
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
     await expect(
       resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, deps)
     ).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
-    expect(deps.assertNotRestricted).toHaveBeenCalledWith(42);
+    expect(deps.assertUsableAsCover).toHaveBeenCalledWith(42);
   });
 
   it("keeps the entity's current cover, so a later flag doesn't block unrelated edits", async () => {
-    const deps = makeDeps({ assertNotRestricted: refuse() });
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
     await expect(
       resolveCoverImageId(
         { coverImage: { ...coverImage, id: 42 }, userId: 7, currentCoverId: 42 },
+        deps
+      )
+    ).resolves.toBe(42);
+  });
+
+  it('keeps the current cover sent back with no url, as an editor who may not see it sends it', async () => {
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
+    await expect(
+      resolveCoverImageId(
+        { coverImage: { ...coverImage, id: 42, url: '' }, userId: 7, currentCoverId: 42 },
         deps
       )
     ).resolves.toBe(42);
@@ -135,9 +145,33 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
     ['a mature unrestricted image', { nsfwLevel: 8, modelRestricted: false }, false],
   ])('in production, decides %s (refused: %s)', async (_, row, refused) => {
     dbWriteMock.image.findUnique.mockResolvedValue(row as never);
-    const result = productionCoverImageDeps.assertNotRestricted(42);
+    const result = productionCoverImageDeps.assertUsableAsCover(42);
     if (refused) await expect(result).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
     else await expect(result).resolves.toBeUndefined();
+  });
+
+  it("in production, refuses a deal file's scan copy, which no cover may use", async () => {
+    dbWriteMock.image.findUnique.mockResolvedValue({
+      nsfwLevel: 1,
+      modelRestricted: false,
+    } as never);
+    dbWriteMock.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+      [...strings].join('').includes('ServiceDealFile') ? [{ dealFileImage: true }] : []) as never);
+    await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('runs the same check on a reused row that is not the current cover', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
+      assertUsableAsCover: refuse(),
+    });
+    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).rejects.toThrow();
+    expect(deps.assertUsableAsCover).toHaveBeenCalledWith(1234);
+    await expect(
+      resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps)
+    ).resolves.toBe(1234);
   });
 });
 

@@ -490,6 +490,7 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
+      "memorialized": false,
       "links": [],
       "stats": {
         "downloadCountAllTime": 41,
@@ -576,6 +577,7 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
+      "memorialized": false,
       "links": [],
       "stats": {
         "downloadCountAllTime": 41,
@@ -662,6 +664,7 @@
       },
       "excludeFromLeaderboards": true,
       "excludeFromEventPoints": true,
+      "memorialized": false,
       "links": [],
       "stats": {
         "downloadCountAllTime": 41,
@@ -741,6 +744,7 @@
       "settings": null,
       "excludeFromLeaderboards": false,
       "excludeFromEventPoints": false,
+      "memorialized": false,
       "links": [
         {
           "url": "https://example.com/bare",
@@ -774,6 +778,7 @@
       "settings": null,
       "excludeFromLeaderboards": false,
       "excludeFromEventPoints": false,
+      "memorialized": false,
       "links": [
         {
           "url": "https://example.com/bare",

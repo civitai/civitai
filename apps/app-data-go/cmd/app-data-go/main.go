@@ -10,8 +10,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -26,6 +28,9 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/shared"
+	"github.com/civitai/civitai/apps/app-data-go/internal/token"
+	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
 
 // Stream timings that are not configuration: how long a stream that failed is not reopened; how
@@ -38,6 +43,19 @@ const (
 	expiryMargin       = 30 * time.Second
 	tokenRecheck       = 2 * time.Minute
 	exchangeTimeout    = 5 * time.Second
+	// overlayMargin is how much longer than one adapter poll an acknowledged write is shown over a
+	// stream that has not caught up with it (WRITES-DESIGN.md: "one poll interval plus 30 s").
+	overlayMargin = 30 * time.Second
+	// levelMaxAge closes a level stream an hour after it opened (a fresh snapshot of the board), and
+	// maxSharedOverlays bounds the acknowledged shared writes held in all.
+	levelMaxAge       = time.Hour
+	maxSharedOverlays = 10_000
+	// signedOutProbesPerApp bounds the signed-out reads of a collection major not yet known to
+	// resolve that run at once per app (package shared, SIGNED-OUT).
+	signedOutProbesPerApp = 2
+	// serviceTokenScope is the one scope the level streams' service token asks for: the adapter's
+	// service tokens must grant AppsRead (auth.jwt.ts).
+	serviceTokenScope = "AppsRead"
 )
 
 func main() {
@@ -53,20 +71,30 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	for _, w := range cfg.Warnings() {
+		log.Warn("configuration", "warning", w)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
-	var mgr *session.Manager
+	// The private streams' manager, and with the shared reads on the level and per-viewer streams'.
+	var mgr, levels, viewers *session.Manager
+	var overlays *shared.Overlays
+	var sharedReader *shared.Reader
 	var m *metrics.Metrics
 	stats := func() (int, int, int, int) {
-		if mgr == nil {
-			return 0, 0, 0, 0
+		var sum session.Stats
+		for _, mm := range []*session.Manager{mgr, levels, viewers} {
+			if mm == nil {
+				continue
+			}
+			st := mm.Stats()
+			sum.Streams, sum.Live, sum.Records, sum.Bytes = sum.Streams+st.Streams, sum.Live+st.Live, sum.Records+st.Records, sum.Bytes+st.Bytes
 		}
-		st := mgr.Stats()
-		return st.Streams, st.Live, st.Records, st.Bytes
+		return sum.Streams, sum.Live, sum.Records, sum.Bytes
 	}
 	m = metrics.New(reg, stats)
 
@@ -80,6 +108,11 @@ func run(log *slog.Logger) error {
 		LiveWait:  cfg.LiveWait,
 		RESTSlots: make(chan struct{}, cfg.RESTMaxInFlight),
 	}
+	// One verifier, and one key set, for the block exchange and the writes alike.
+	var verifier *exchange.BlockVerifier
+	if cfg.BlockJWKSURL != "" {
+		verifier = &exchange.BlockVerifier{JWKSURL: cfg.BlockJWKSURL, HTTP: &http.Client{Timeout: exchangeTimeout}}
+	}
 	swept := make(chan struct{})
 	if cfg.RegistryURL != "" {
 		ex := &exchange.Exchanger{
@@ -89,29 +122,80 @@ func run(log *slog.Logger) error {
 		}
 		// One router decides which tokens are exchanged, for the handler and the streams alike. Its
 		// block cache is nil while APP_DATA_BLOCK_EXCHANGE is off: block tokens then read REST only.
-		router := &exchange.Router{User: ex.Exchange}
+		// The user exchange goes through a Guard (exchange.NewRouter): a token the hub refused is not sent
+		// again for a while, and an address presenting many tokens the hub cannot exchange is throttled
+		// before the hub.
+		router, _ := exchange.NewRouter(ex.Exchange, func(o string) { m.UserExchangeGuard.WithLabelValues(o).Inc() })
 		if cfg.BlockExchange {
 			// Each block token is verified against the site's JWKS before it is sent to the hub.
-			verifier := &exchange.BlockVerifier{JWKSURL: cfg.BlockJWKSURL, HTTP: &http.Client{Timeout: exchangeTimeout}}
 			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Verify: verifier.Check, Margin: expiryMargin,
-				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
+				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"), cfg.Writes)}
 		}
 		srv.Exchangeable = router.Accepts
+		// One budget over every stream this process opens, private, level and per-viewer
+		// (config.DefaultCacheBudgetBytes).
+		budget := session.NewBudget(cfg.MaxSubscriptions, cfg.CacheBudgetBytes)
 		mgr = session.New(session.ClientSubscriber{Client: &registry.Client{
 			BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 		}}, session.Options{
 			MaxStreams: cfg.MaxStreams, MaxPerToken: cfg.MaxStreamsPerToken,
 			IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
-			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
+			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes, MaxOverlayBytes: cfg.MaxOverlayBytes,
+			Budget: budget, Reserve: cfg.PrivateReserve(),
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
 			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
+			// Read-your-writes; zero with the writes off, which turns all of it off (session.Options).
+			OverlayTTL:  overlayTTL(cfg),
+			ReopenEvery: cfg.AdapterPoll,
+			Floor:       func(outcome string) { m.FloorReopens.WithLabelValues(outcome).Inc() },
+			Overlaid:    func(kind string) { m.Overlays.WithLabelValues(kind).Inc() },
+			// The private feed judges the viewer's region too (WRITES-DESIGN.md, "Region").
+			Region: cfg.ForwardRegion,
 		})
 		srv.Streams = mgr
+		if cfg.SharedReads {
+			sub := session.ClientSubscriber{Client: &registry.Client{
+				BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
+			}}
+			// The level streams run under this service's own token, minted as its service client
+			// (client credentials), whatever subject a read names; one the registry refuses is
+			// re-minted. With no service client every shared read is refused
+			// service_client_unconfigured: never minted as the relay client, which the hub refuses.
+			serviceToken, serviceRefused := serviceSource(ctx, cfg, m, log.With("component", "service-token"))
+			var reader *shared.Reader
+			reader, levels, viewers = shared.NewReader(shared.Build{
+				Sub: sub, Budget: budget,
+				Level:          shared.Bounds{MaxStreams: cfg.LevelMaxStreams, MaxRecords: cfg.LevelMaxRecords, MaxBytes: cfg.LevelMaxBytes},
+				Viewer:         shared.Bounds{MaxStreams: cfg.ViewerMaxStreams, MaxRecords: cfg.ViewerMaxRecords, MaxBytes: cfg.ViewerMaxBytes},
+				ServiceToken:   serviceToken,
+				ServiceRefused: serviceRefused,
+				ForwardRegion:  cfg.ForwardRegion,
+				ViewerExchange: router.Exchange,
+				LevelMaxAge:    levelMaxAge,
+				IdleTTL:        cfg.IdleTTL, MaxAge: cfg.MaxAge, Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
+				ExpiryMargin: expiryMargin, Recheck: tokenRecheck, OverlayTTL: overlayTTL(cfg), ReopenEvery: cfg.AdapterPoll,
+				MaxStreamsPerToken: cfg.MaxStreamsPerToken,
+				Opened:             m.StreamsOpened.Inc,
+				Closed:             func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
+				MaxOverlays:        maxSharedOverlays, MaxOverlayBytes: config.MaxSharedOverlayBytes,
+				ProbesPerApp: signedOutProbesPerApp,
+			})
+			overlays = reader.Overlays
+			srv.Shared = reader
+			sharedReader = reader
+			srv.Anonymous = verifier.CheckAnonymous
+		}
 		go func() {
 			defer close(swept)
-			mgr.Run(ctx, sweepInterval(cfg.IdleTTL))
+			var wg sync.WaitGroup
+			for _, mm := range []*session.Manager{mgr, levels, viewers} {
+				if mm != nil {
+					wg.Go(func() { mm.Run(ctx, sweepInterval(cfg.IdleTTL)) })
+				}
+			}
+			wg.Wait()
 		}()
 	} else {
 		close(swept)
@@ -119,16 +203,39 @@ func run(log *slog.Logger) error {
 
 	var draining atomic.Bool
 	srv.Ready = func() bool { return !draining.Load() }
+	if cfg.Writes {
+		site, err := url.Parse(cfg.WritesSiteURL)
+		if err != nil {
+			return err // config validated it; never reached
+		}
+		fwd := &writes.Forwarder{
+			Site: site, Key: []byte(cfg.WritesSigningKey), Timeout: cfg.WritesTimeout,
+			HTTP:   &http.Client{}, // bounded per forward by Timeout; redirects never followed (writes.Forwarder)
+			Verify: verifier.Check, Ready: srv.Ready,
+			Metrics: m, Log: log.With("component", "writes"),
+		}
+		if mgr != nil {
+			fwd.Acked = mgr.Ack
+		}
+		if overlays != nil {
+			fwd.Acked = shared.AckBoth(mgr, sharedReader)
+		}
+		srv.Writes = fwd
+	}
+	// A response may take as long as the slowest request: a read's deadline, or a forward's timeout.
+	longest := max(cfg.RequestDeadline, cfg.WritesTimeout)
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      cfg.RequestDeadline + 5*time.Second,
+		WriteTimeout:      longest + 5*time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
 	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
-		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken)
+		"writes", cfg.Writes, "shared_reads", cfg.SharedReads, "service_client", cfg.Service != nil, "forward_region", cfg.ForwardRegion,
+		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken,
+		"max_subscriptions", cfg.MaxSubscriptions, "cache_budget_bytes", cfg.CacheBudgetBytes)
 
 	served := make(chan error, 1)
 	go func() { served <- httpSrv.ListenAndServe() }()
@@ -138,7 +245,11 @@ func run(log *slog.Logger) error {
 		stop()
 	}
 	draining.Store(true)
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// In-flight writes are let finish: one cut off here would answer its client nothing, its outcome
+	// unknown. New writes are refused 503 not_forwarded once draining is set. The wait is sized by the
+	// forward timeout alone (a read cut off is only retried), and that timeout's cap
+	// (config.MaxWritesTimeout) keeps it inside the pod's termination grace period.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), max(10*time.Second, cfg.WritesTimeout+config.ShutdownMargin))
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx) //nolint:contextcheck // shutdown outlives the cancelled ctx by design
 	<-swept
@@ -146,6 +257,43 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// serviceSource is the level streams' service token and its invalidation, minted as cfg.Service at
+// the relay's token endpoint for the relay's resource, each fetch counted (metrics
+// ServiceTokenFetches); nil, nil without a service client. One token is minted at once in the
+// background, as a start-up self-check: its outcome is logged (never the token), and the token it
+// got is kept for the first level stream.
+func serviceSource(ctx context.Context, cfg *config.Config, m *metrics.Metrics, log *slog.Logger) (func(context.Context) (string, time.Time, error), func()) {
+	if cfg.Service == nil {
+		return nil, nil
+	}
+	svc := token.New(token.Config{URL: cfg.Relay.TokenURL, ClientID: cfg.Service.ClientID,
+		ClientSecret: cfg.Service.ClientSecret, Resource: cfg.Relay.Resource, Scope: serviceTokenScope}, &http.Client{Timeout: exchangeTimeout})
+	svc.OnFetch = m.ObserveServiceTokenFetch
+	go selfCheck(ctx, svc, log)
+	return svc.TokenExpiring, svc.Invalidate
+}
+
+// selfCheck mints the service token once and logs the outcome: never the token, and the error names
+// only the endpoint's status and OAuth error code (token.EndpointError).
+func selfCheck(ctx context.Context, svc *token.Source, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, exchangeTimeout)
+	defer cancel()
+	if _, err := svc.Token(ctx); err != nil {
+		log.Error("service token self-check failed: shared reads are refused until the hub mints it",
+			"outcome", token.Outcome(err), "err", err)
+		return
+	}
+	log.Info("service token self-check passed", "outcome", token.OutcomeOK)
+}
+
+// overlayTTL is how long an acknowledged write is shown over its stream: zero with the writes off.
+func overlayTTL(cfg *config.Config) time.Duration {
+	if !cfg.Writes {
+		return 0
+	}
+	return cfg.AdapterPoll + overlayMargin
 }
 
 // sweepInterval checks for idle streams four times per idle TTL, at most every 10 seconds.

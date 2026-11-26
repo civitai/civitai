@@ -116,6 +116,23 @@ describe('ImageFeedSearchSummary', () => {
     expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
   });
 
+  test('removing the anchor drops its preferred tag', async () => {
+    router.query = { similarTo: '42', prefer: '1676' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        preferRow={<span>prefer row</span>}
+        filters={{}}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('prefer row')).toBeVisible();
+    await removeChip('Similar to this image');
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({});
+  });
+
   test('Clear search leaves "more like this" too', async () => {
     router.query = { similarTo: '42' };
     renderWithProviders(

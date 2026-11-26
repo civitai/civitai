@@ -25,9 +25,9 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import { useMemo, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { ImageAskStep } from '~/components/Image/Remix/RemixAppModal';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer } from '~/shared/remix-apps/define';
 import {
@@ -42,6 +42,7 @@ import {
   RemixAppsSubmitted,
   type SubmittedRow,
 } from '~/components/Moderation/RemixApps/RemixAppsSubmitted';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export type AdminRow = RouterOutput['remixApp']['admin']['list'][number];
 
@@ -92,9 +93,9 @@ export function RemixAppsAdmin() {
   const order = trpc.remixApp.admin.order.useMutation({ onSuccess: refresh, onError });
   const remove = trpc.remixApp.admin.delete.useMutation({ onSuccess: refresh, onError });
   const confirmDelete = (slug: string) =>
-    openConfirmModal({
+    openConfirm({
       title: `Delete ${slug}?`,
-      children: (
+      message: (
         <Text size="sm">
           This removes the app row for good, and with it any installs of it. It cannot be undone.
         </Text>
@@ -492,6 +493,18 @@ function RemixAppTestRun({ slug, onClose }: { slug: string; onClose: () => void 
               {text ? 'Answer' : 'Skip'}
             </Button>
           </Group>
+        )}
+        {state?.status === 'ask' && state.ask.kind === 'image' && (
+          <Stack gap={4}>
+            <Text size="sm" fw={600}>
+              {state.ask.prompt}
+            </Text>
+            <ImageAskStep
+              ask={state.ask}
+              pending={start.isPending}
+              onAnswer={(answer) => quote([...answers, answer])}
+            />
+          </Stack>
         )}
         {state?.status === 'priced' && ready && (
           <Group justify="space-between">

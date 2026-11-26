@@ -10,6 +10,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
 // GallerySettings is the cached `model:gallery-settings:<modelId>` value (getGallerySettingsByModelId),
@@ -43,9 +44,22 @@ func (g *GalleryStore) Settings(ctx context.Context, modelID int) (*GallerySetti
 // SettingsMany is Settings for several models in one pipelined round trip (getShowcaseHeldLevels'
 // mGet). The first model whose key Node would rebuild falls back, as Settings does.
 func (g *GalleryStore) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {
+	out, missing, err := g.settingsRead(ctx, modelIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		return nil, fallback.New("gallery-settings-miss")
+	}
+	return out, nil
+}
+
+// settingsRead is SettingsMany's read, with the models whose key is absent listed in missing (in
+// modelIDs' order) rather than falling back; every other key Node would rebuild still falls back.
+func (g *GalleryStore) settingsRead(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, []int, error) {
 	out := make(map[int]*GallerySettings, len(modelIDs))
 	if len(modelIDs) == 0 {
-		return out, nil
+		return out, nil, nil
 	}
 	cmds := make([]*redis.StringCmd, len(modelIDs))
 	_, _ = g.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
@@ -54,19 +68,62 @@ func (g *GalleryStore) SettingsMany(ctx context.Context, modelIDs []int) (map[in
 		}
 		return nil
 	})
+	var missing []int
 	for i, cmd := range cmds {
 		raw, err := cmd.Bytes()
 		if errors.Is(err, redis.Nil) {
-			return nil, fallback.New("gallery-settings-miss")
+			missing = append(missing, modelIDs[i])
+			continue
 		}
 		if err != nil {
-			return nil, fallback.Wrap("gallery-settings-read-failed", err)
+			return nil, nil, fallback.Wrap("gallery-settings-read-failed", err)
 		}
 		s, err := ParseGallerySettings(raw)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out[modelIDs[i]] = s
+	}
+	return out, missing, nil
+}
+
+// GalleryHoldSource computes the hold of the models whose gallery-settings key is absent
+// (*hydrate.Sources: GalleryHolds).
+type GalleryHoldSource interface {
+	GalleryHolds(ctx context.Context, modelIDs []int) (map[int]hydrate.GalleryHold, error)
+}
+
+// holdComputingGallery is the gallery image.getInfinite's hold gates read with
+// InfinitePorts.GallerySettingsMiss on: its SettingsMany answers an absent key from the model's own
+// row (GalleryHoldSource), as getShowcaseHeldLevels' getGallerySettingsByModelId rebuild does, holding
+// only what the hold reads (`sfwHeld` and `level`: heldLevels is its one reader here). A model the
+// rebuild finds no row for is no settings (nil), as Node's null. Every other read is the store's.
+type holdComputingGallery struct {
+	*GalleryStore
+	holds GalleryHoldSource
+}
+
+func (g holdComputingGallery) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {
+	out, missing, err := g.settingsRead(ctx, modelIDs)
+	if err != nil || len(missing) == 0 {
+		return out, err
+	}
+	holds, err := g.holds.GalleryHolds(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range missing {
+		h, found := holds[id]
+		if !found {
+			out[id] = nil
+			continue
+		}
+		held, level := h.Held, h.Level
+		s := &GallerySettings{SfwHeld: &held}
+		if held {
+			s.Level = &level
+		}
+		out[id] = s
 	}
 	return out, nil
 }

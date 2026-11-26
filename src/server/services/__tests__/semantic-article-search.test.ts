@@ -361,11 +361,21 @@ describe("the articles feed's filters", () => {
 describe('semantic article search: the query audit and the browsing level', () => {
   const VIEWER = { id: 500, isModerator: false } as SessionUser;
   const run = (
-    over: { browsingLevel?: number; user?: SessionUser; correctedQuery?: string } = {}
+    over: {
+      browsingLevel?: number;
+      user?: SessionUser;
+      correctedQuery?: string;
+      spellcheck?: false;
+    } = {}
   ) => {
     const track = { action: vi.fn().mockResolvedValue(undefined) };
     return searchSemanticArticles({
-      input: { query: 'guide', browsingLevel: over.browsingLevel ?? 1, limit: 10 },
+      input: {
+        query: 'guide',
+        browsingLevel: over.browsingLevel ?? 1,
+        limit: 10,
+        ...(over.spellcheck === false && { spellcheck: false }),
+      },
       user: 'user' in over ? over.user : VIEWER,
       track,
       candidateSource: ranking([10], over.correctedQuery),
@@ -375,7 +385,13 @@ describe('semantic article search: the query audit and the browsing level', () =
   it('refuses a minor query for a moderator, before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result } = await run({ browsingLevel: 31, user: MOD });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     expect(sent).toHaveLength(0);
   });
 
@@ -520,6 +536,26 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  it('searched as typed, still refuses a refused query before asking the service', async () => {
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run({ spellcheck: false });
+    expect(result.items).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('searched as typed, asks the service for the text with its spelling correction off', async () => {
+    const queries: unknown[] = [];
+    await searchSemanticArticles({
+      input: { query: 'Shikata nee', browsingLevel: 1, limit: 10, spellcheck: false },
+      user: VIEWER,
+      candidateSource: async ({ query }) => {
+        queries.push(query);
+        return { ids: [] };
+      },
+    });
+    expect(queries[0]).toEqual({ text: 'Shikata nee', spellcheck: false });
   });
 
   it('shows results for a spelling correction that passes the audit', async () => {

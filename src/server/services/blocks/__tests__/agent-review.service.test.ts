@@ -114,6 +114,38 @@ import {
   buildAgentReviewApplyScript,
   agentReviewName,
 } from '~/server/services/blocks/agent-review.service';
+import {
+  getAgentReviewModelOptions,
+  OPENROUTER_MODELS_URL,
+} from '~/server/services/blocks/agent-review-models.service';
+
+/** OpenRouter's model list as the chosen-model tests see it (USD per token, as strings). */
+const OPENROUTER_MODELS_BODY = {
+  data: [
+    {
+      id: 'anthropic/claude-haiku-4.5',
+      name: 'Anthropic: Claude Haiku 4.5',
+      context_length: 200_000,
+      pricing: { prompt: '0.000001', completion: '0.000005' },
+      supported_parameters: ['tools', 'tool_choice'],
+    },
+    {
+      id: 'acme/chat-only',
+      name: 'Acme: Chat Only',
+      context_length: 8_000,
+      pricing: { prompt: '0.0000001', completion: '0.0000002' },
+      supported_parameters: ['temperature'],
+    },
+    {
+      // Tool-capable, but its $15/M input price is above the agent-review ceiling.
+      id: 'acme/premium-model',
+      name: 'Acme: Premium',
+      context_length: 200_000,
+      pricing: { prompt: '0.000015', completion: '0.000075' },
+      supported_parameters: ['tools'],
+    },
+  ],
+};
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 const SHA = 'f'.repeat(64);
@@ -125,6 +157,15 @@ function stubFetch(postOk = true) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init: RequestInit) => {
+      // OpenRouter's public model list (the chosen-model price lookup). Not a k8s call, so it
+      // is not recorded in `calls`.
+      if (String(url).startsWith(OPENROUTER_MODELS_URL)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => OPENROUTER_MODELS_BODY,
+        } as unknown as Response;
+      }
       calls.push({
         url,
         method: String(init.method),
@@ -171,6 +212,7 @@ beforeEach(() => {
   process.env.KUBERNETES_SERVICE_PORT = '443';
   process.env.NEXTAUTH_URL = 'https://civitai.com';
   vi.clearAllMocks();
+  getAgentReviewModelOptions.clear();
   mockAppBlockFindFirst.mockResolvedValue(null);
   mockReportFindFirst.mockResolvedValue(null);
   mockGetPrior.mockResolvedValue(null);
@@ -520,7 +562,13 @@ describe('buildAgentReviewApplyScript', () => {
     // Set only on the connect lane / a targeted re-run: without the :- default the
     // fallback aborts the apply (set -u) on every other run, and without the line at
     // all the connect lane is rendered as on-site.
-    for (const v of ['AGENT_REVIEW_KIND', 'AGENT_REVIEW_SECTIONS']) {
+    for (const v of [
+      'AGENT_REVIEW_KIND',
+      'AGENT_REVIEW_SECTIONS',
+      'ANALYSIS_MODEL',
+      'PRICE_IN_PER_M',
+      'PRICE_OUT_PER_M',
+    ]) {
       expect(script).toContain(`-e "s|\\\${${v}}|\${${v}:-}|g"`);
     }
   });
@@ -545,11 +593,14 @@ describe('agentReviewName', () => {
  * surviving sections are CARRIED FORWARD onto the new row so the retry cannot destroy the
  * analyses the mod was keeping.
  */
+/** The model the latest run used: a targeted re-run must name it (see the chosen-model block). */
+const LATEST_MODEL_ID = 'anthropic/claude-haiku-4.5';
+
 describe('startAgentReview — targeted re-run', () => {
   /** A prior report with two good sections and one broken one — the live failure shape. */
   const latestPartial = {
     id: 'arar_PREV',
-    model: 'some/model',
+    model: `openrouter/${LATEST_MODEL_ID}`,
     scopeVerdicts: { scopes: [{ declared: 'models:read:self' }], overBroad: [] },
     securityAudit: { findings: [{ severity: 'low' }], manifestUnexpectedKeys: [] },
     codeReview: { error: 'non-json-response' },
@@ -562,6 +613,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview'],
     });
 
@@ -578,12 +630,13 @@ describe('startAgentReview — targeted re-run', () => {
     return startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview'],
     }).then(() => {
       const created = createdRow();
       expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
       expect(created.securityAudit).toEqual(latestPartial.securityAudit);
-      expect(created.model).toBe('some/model');
+      expect(created.model).toBe(`openrouter/${LATEST_MODEL_ID}`);
       // 🔴 AND THE FAILED ONE IS **NOT** SEEDED. Carrying an `{ error }` forward would
       // re-report the OLD failure as if it were this run's, and the panel would show a
       // failure for an analysis that is currently running.
@@ -606,7 +659,12 @@ describe('startAgentReview — targeted re-run', () => {
       },
     });
 
-    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, sections: ['codeReview'] });
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+      model: LATEST_MODEL_ID,
+    });
 
     expect(createdRow().securityAudit).toEqual({ findings: [{ severity: 'low' }] });
   });
@@ -621,6 +679,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['scopeVerdicts'],
     });
 
@@ -686,6 +745,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview', 'codeReview'],
     });
 
@@ -703,6 +763,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview', 'securityAudit'],
     });
 
@@ -711,6 +772,205 @@ describe('startAgentReview — targeted re-run', () => {
     const created = createdRow();
     expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
     expect(created.securityAudit).toBeUndefined();
+  });
+});
+
+/**
+ * CHOSEN MODEL — a moderator re-runs the review on another OpenRouter model (a second opinion,
+ * or a way round a default model that stopped working).
+ */
+describe('startAgentReview — chosen model', () => {
+  it("passes the model, in the agent's format, WITH its price, and names it on the new row", async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      model: 'anthropic/claude-haiku-4.5',
+    });
+
+    const e = jobEnv();
+    expect(e.ANALYSIS_MODEL).toBe('openrouter/anthropic/claude-haiku-4.5');
+    // The price is what lets the cost cap cost THIS model rather than the default's rate.
+    expect(e.PRICE_IN_PER_M).toBe('1');
+    expect(e.PRICE_OUT_PER_M).toBe('5');
+    expect(createdRow().model).toBe('openrouter/anthropic/claude-haiku-4.5');
+  });
+
+  it('🔴 NO model ⇒ no model vars at all and no model on the row (the default Job is unchanged)', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+
+    const e = jobEnv();
+    expect(e.ANALYSIS_MODEL).toBeUndefined();
+    expect(e.PRICE_IN_PER_M).toBeUndefined();
+    expect(e.PRICE_OUT_PER_M).toBeUndefined();
+    expect(createdRow().model).toBeUndefined();
+  });
+
+  it('refuses a model that is not a tool-capable OpenRouter model, before any row or Job', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await expect(
+      startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, model: 'acme/chat-only' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  // Section-re-run model policy, decided in #10436 (agent review model picker).
+  it('🔴 a section re-run of a chosen-model run runs on THAT model (the Job gets it)', async () => {
+    // The latest run was written by model X with one analysis failed; re-running that one
+    // analysis must use X, or the report mixes X's analyses with the default model's.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      id: 'arar_PREV',
+      model: 'openrouter/anthropic/claude-haiku-4.5',
+      scopeVerdicts: { scopes: [] },
+      securityAudit: { findings: [] },
+      codeReview: { error: 'upstream-error' },
+    });
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+      model: 'anthropic/claude-haiku-4.5',
+    });
+
+    expect(jobEnv().ANALYSIS_MODEL).toBe('openrouter/anthropic/claude-haiku-4.5');
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+    expect(createdRow().model).toBe('openrouter/anthropic/claude-haiku-4.5');
+  });
+
+  it.each([
+    ['another model', 'acme/other-model'],
+    ['no model (the default)', undefined],
+  ])(
+    '🔴 a section re-run naming %s, when the latest run used X, is refused before any row or Job',
+    async (_why, model) => {
+      mockFindUnique.mockResolvedValue(pendingRequest());
+      mockGetLatest.mockResolvedValue({
+        id: 'arar_PREV',
+        model: 'openrouter/anthropic/claude-haiku-4.5',
+      });
+
+      await expect(
+        startAgentReview({
+          publishRequestId: PUBREQ,
+          modUserId: 7,
+          sections: ['codeReview'],
+          model,
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('Re-run all analyses'),
+      });
+
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+    }
+  );
+
+  it('a section re-run of a run whose model is no longer listed says so, pointing to Re-run all', async () => {
+    // e.g. the model was retired: OpenRouter no longer lists it as tool-capable.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/acme/retired-model' });
+
+    await expect(
+      startAgentReview({
+        publishRequestId: PUBREQ,
+        modUserId: 7,
+        sections: ['codeReview'],
+        model: 'acme/retired-model',
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This analysis can only be re-run on the model that wrote the rest of the report (acme/retired-model), and that model is no longer a tool-capable model on OpenRouter. Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a section re-run of a run whose model is over the input-price ceiling names the price and the limit', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/acme/premium-model' });
+
+    await expect(
+      startAgentReview({
+        publishRequestId: PUBREQ,
+        modUserId: 7,
+        sections: ['codeReview'],
+        model: 'acme/premium-model',
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This analysis can only be re-run on the model that wrote the rest of the report (acme/premium-model), and that model costs $15 per million input tokens, above the $5 limit for agent reviews. Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it('a section re-run when the model list cannot be loaded says so, pointing to Re-run all', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      id: 'arar_PREV',
+      model: 'openrouter/anthropic/claude-haiku-4.5',
+    });
+    const k8sFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) =>
+        String(url).startsWith(OPENROUTER_MODELS_URL)
+          ? ({ ok: false, status: 503, json: async () => ({}) } as unknown as Response)
+          : k8sFetch(url, init)
+      )
+    );
+
+    await expect(
+      startAgentReview({
+        publishRequestId: PUBREQ,
+        modUserId: 7,
+        sections: ['codeReview'],
+        model: 'anthropic/claude-haiku-4.5',
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This analysis can only be re-run on the model that wrote the rest of the report (anthropic/claude-haiku-4.5), and OpenRouter\'s model list could not be loaded to price that model (try again shortly). Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('a section re-run of a run with no recorded model still runs on the default', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      id: 'arar_PREV',
+      model: null,
+      scopeVerdicts: { scopes: [] },
+    });
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, sections: ['codeReview'] });
+
+    expect(jobEnv().ANALYSIS_MODEL).toBeUndefined();
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+  });
+
+  it('a model with ALL THREE sections is a full run, so it is accepted', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['scopeVerdicts', 'securityAudit', 'codeReview'],
+      model: 'anthropic/claude-haiku-4.5',
+    });
+
+    expect(jobEnv().ANALYSIS_MODEL).toBe('openrouter/anthropic/claude-haiku-4.5');
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBeUndefined();
   });
 });
 

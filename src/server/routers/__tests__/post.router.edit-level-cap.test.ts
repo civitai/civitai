@@ -148,6 +148,11 @@ describe.each([
     mockScheduled,
   ],
   [
+    'post.getPlannerDetail',
+    (scoped: boolean) => ownerCaller(scoped).getPlannerDetail({ id: 1 }),
+    mockPlannerDetail,
+  ],
+  [
     'post.reorderImages handler',
     (scoped: boolean) =>
       reorderPostImagesHandler({

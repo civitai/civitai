@@ -18,10 +18,9 @@ import {
   IconTrophy,
   IconVideo,
 } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { canShowProfileAppsTab } from '~/components/Profile/profile-apps-tab';
 import {
@@ -39,14 +38,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
 
-const ProfileHiddenTabsModal = dynamic(
-  () => import('~/components/Profile/ProfileHiddenTabsModal'),
-  {
-    ssr: false,
-  }
-);
-const openProfileHiddenTabs =
-  createDialogTrigger<ProfileHiddenTabsModalProps>(ProfileHiddenTabsModal);
+const openProfileHiddenTabs = (props: ProfileHiddenTabsModalProps) =>
+  openDialog(() => import('~/components/Profile/ProfileHiddenTabsModal'), props);
 
 type ProfileNavigationProps = {
   username: string;
@@ -233,7 +226,10 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
         aria-label="Choose profile tabs"
         onClick={() =>
           openProfileHiddenTabs({
-            props: { userId: user.id, username, privacySettings, tabs: hideableTabs },
+            userId: user.id,
+            username,
+            privacySettings,
+            tabs: hideableTabs,
           })
         }
       >

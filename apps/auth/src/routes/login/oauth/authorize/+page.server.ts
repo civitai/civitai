@@ -115,7 +115,7 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
     );
     if (proposed === 'invalid') return { invalid: true as const };
     const consent = await readConsentForOffline(locals.user.id, clientId);
-    const { initial, custom } = offlineCapInitial(consent?.buzzLimit ?? null, proposed);
+    const { initial, custom } = offlineCapInitial(consent?.offlineCap ?? null, proposed);
     offline = { cap: initial, custom, granted: consent?.offlineGrantedAt != null };
     // Carried so a switch of account reloads this page with the app's proposal intact.
     for (const key of ['offline_buzz_limit', 'offline_buzz_period'] as const) {

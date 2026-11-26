@@ -542,6 +542,12 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       'The MOD review preview: `page_<pubreq_ULID>`, SINGLE pubreq_, so dev-token’s ' +
       'spelling never matches it. COVERED — the writer emits both spellings from the same ' +
       'pending rows.',
+    'src/server/services/blocks/review-boot-check.service.ts':
+      'The review BOOT CHECK: `page_<pubreq_ULID>`, the SAME single-pubreq_ shape as the mod ' +
+      'review preview above, sent to the boot-check service as the BLOCK_INIT instance id of ' +
+      'the pending build it loads. No token or grant is minted for it (the check carries no ' +
+      'block token), so there is nothing to revoke; the shape is COVERED regardless, as the ' +
+      'review preview’s is.',
     'src/server/middleware/block-scope.middleware.ts':
       'Claims synthesised for a hub (OAuth) token on the block routes: `page_<appBlockId>` ' +
       'for an APPROVED AppBlock row, and for the author’s OWN dev tunnel `page_<apb_…>` ' +
@@ -551,6 +557,12 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
     'src/server/services/block-registry.service.ts':
       'The SQL synthesis in listForModel: `bus_pub_ || bus.id`, `bus_view_ || bus.id`, ' +
       '`pdb_ || pdb.app_block_id`. COVERED by the subscription and app-block legs.',
+    'src/server/services/blocks/runner-mint-handler.ts':
+      'The recipe-runner mint: `rbi_<runner clientId>`, a shape the parser does not ' +
+      'recognise, so NOT COVERED by the ban markers. The token lives 180s and every token ' +
+      'carrying `mintOrigin: runner` is refused everywhere but submit, which itself refuses ' +
+      'it until the attempt ledger lands; that change has to settle how a publisher ban ' +
+      'reaches a runner run before submit admits one.',
   };
 
   // 🔴 CONSTRUCTION ONLY. The earlier form also matched `PAGE_INSTANCE_PREFIX}`, which

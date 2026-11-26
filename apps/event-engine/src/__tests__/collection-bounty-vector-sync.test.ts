@@ -8,7 +8,7 @@ import { getCollectionDocs } from '@/vector-sync/collections/source';
 type Pg = Parameters<typeof getCollectionDocs>[0];
 
 describe('collection payload, against the real query', () => {
-  test('keeps public, rated, unblocked collections with an accepted item, of active unheld owners', async () => {
+  test('keeps public, rated, unblocked collections with an accepted item, of active owners, held or not', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
     await pg.exec(`
@@ -18,8 +18,7 @@ describe('collection payload, against the real query', () => {
         mode text, read text, availability text, "nsfwLevel" int, "userId" int, "imageId" int);
       CREATE TABLE "CollectionItem" (id int PRIMARY KEY, "collectionId" int, status text);
       CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
-      CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-      INSERT INTO "EvidenceHeldUser" VALUES (9);
+      INSERT INTO "CsamReport" VALUES (1, 9, '{}', '[]');
       INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL),
         (9, 'held', NULL, NULL);
       INSERT INTO "Collection" VALUES
@@ -38,7 +37,8 @@ describe('collection payload, against the real query', () => {
     `);
     try {
       const docs = await getCollectionDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect([...docs.keys()]).toEqual([1]);
+      // 8's owner is held. A held owner does not hide the row (civitai/civitai#10360).
+      expect([...docs.keys()]).toEqual([1, 8]);
       expect(docs.get(1)).toMatchObject({
         title_normalized: 'neon cities',
         type: 'Image',
@@ -59,7 +59,7 @@ describe('collection payload, against the real query', () => {
 });
 
 describe('bounty payload, against the real query', () => {
-  test('keeps visible, rated, unblocked, non-poi bounties of active unheld owners, with their feed fields', async () => {
+  test('keeps visible, rated, unblocked, non-poi bounties of active owners, held or not, with their feed fields', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     // event-engine's node10 resolution can't see pglite's exports map, so the subpath is untyped.
     const citextPath = '@electric-sql/pglite/contrib/citext';
@@ -80,8 +80,7 @@ describe('bounty payload, against the real query', () => {
       CREATE TABLE "Tag" (id int PRIMARY KEY, name citext);
       CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
       CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
-      CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-      INSERT INTO "EvidenceHeldUser" VALUES (9);
+      INSERT INTO "CsamReport" VALUES (1, 9, '{}', '[]');
       INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL),
         (9, 'held', NULL, NULL);
       INSERT INTO "Tag" VALUES (1, 'style'), (2, 'anime');
@@ -110,7 +109,8 @@ describe('bounty payload, against the real query', () => {
     `);
     try {
       const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect([...docs.keys()]).toEqual([1, 9]);
+      // 8's owner is held. A held owner does not hide the row (civitai/civitai#10360).
+      expect([...docs.keys()]).toEqual([1, 8, 9]);
       // The feed serves a bounty marked nsfw at XXX, whatever its rated level.
       expect(docs.get(9)?.nsfwLevel).toEqual([16]);
       expect(docs.get(1)).toMatchObject({

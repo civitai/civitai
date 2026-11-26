@@ -32,8 +32,8 @@ const { getTrainingModelsFeed } = await import('../training-moderation.service')
 
 let db: PGlite;
 
-const ids = async (query: Parameters<typeof getTrainingModelsFeed>[0]) =>
-  (await getTrainingModelsFeed(query)).items.map((m) => m.id);
+const ids = async (query: Omit<Parameters<typeof getTrainingModelsFeed>[0], 'viewer'>) =>
+  (await getTrainingModelsFeed({ ...query, viewer: undefined })).items.map((m) => m.id);
 
 beforeEach(async () => {
   db = await freshPglite();

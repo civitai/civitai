@@ -124,7 +124,8 @@ it('closes against the level the image has when the close runs, not when the swe
   // In call order: the sweep selects the item at level 4, the moderator re-rates the image to 8, then the sweep closes it.
   const [swept] = await Promise.all([
     closeModeratorRuledItems(db, { now: NOW }),
-    db.updateTable('Image').set({ nsfwLevel: 8 }).where('id', '=', 20).execute(),
+    // The moderator's write, from the main app: the Knights role cannot write "Image".
+    pg.query(`UPDATE "Image" SET "nsfwLevel" = 8 WHERE id = 20`),
   ]);
 
   expect(swept).toEqual({ closed: 1, failed: 0 });

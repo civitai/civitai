@@ -14,7 +14,7 @@ export type RegistryEntry = {
   staff?: readonly string[];
   others?: readonly string[];
   /** A table-specific rule `postgres.ts` applies. */
-  rule?: 'image-media' | 'restriction-triggers';
+  rule?: 'image-media' | 'restriction-triggers' | 'publish-deploy-detail';
 };
 
 export const REGISTRY: Record<string, RegistryEntry> = {
@@ -52,7 +52,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   ModelMetric: { subject: ['userId'] },
   ModelSelfGeneration: { subject: ['userId'] },
   DownloadHistory: { subject: ['userId'] },
-  Report: { subject: ['userId'] },
+  Report: { subject: ['userId'], staff: ['statusSetBy'] },
   ResourceReview: { subject: ['userId'] },
   ResourceReviewReaction: { subject: ['userId'] },
   Post: { subject: ['userId'] },
@@ -76,7 +76,20 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   AppCollaborator: { subject: ['userId'], others: ['invitedBy'] },
   AppOwnershipEvent: { subject: ['actorUserId'], others: ['targetUserId'] },
   AppOwnershipTransfer: { subject: ['fromUserId', 'toUserId'] },
-  AppBlockPublishRequest: { subject: ['submittedByUserId'], staff: ['reviewedByUserId'] },
+  // `deployDetail` goes through the author-facing redaction: a review boot check is exported as its
+  // fixed reason, never the app output it recorded.
+  AppBlockPublishRequest: {
+    subject: ['submittedByUserId'],
+    staff: ['reviewedByUserId'],
+    rule: 'publish-deploy-detail',
+  },
+  // Which of the user's App Assistant chats worked on which of their apps.
+  AppAssistantSessionLink: { subject: ['userId'] },
+  // What a submission of theirs was traced to: the request, slug and chat ids. Its `signals` and
+  // `snapshots` are JSON, so withheld (not in JSON_ALLOWED). The frozen chat transcripts are
+  // bundle-store objects, which no export source reads; they are a copy of the user's own App
+  // Assistant chats.
+  AppPublishRequestTrace: { subject: ['userId'] },
   AppListing: { subject: ['userId'] },
   PostIntentManifest: { subject: ['userId'] },
   AppListingReview: { subject: ['userId'] },
@@ -238,8 +251,8 @@ export const EXCLUDED: Record<string, string> = {
     'status history of withdrawal requests, keyed by the staff member who changed it; the requests themselves are exported',
   ModelPermissionSnapshot: 'internal audit snapshot',
   ModActivity: 'staff audit log; the user id there is the moderator',
-  HeldResourceReview:
-    'content held for an automated check (detection internals); the published content is exported',
+  FeaturePageCommentMirror:
+    'push bookkeeping for Feature Pages comments (ids and states only); the comments themselves are exported as CommentV3',
   HeldAnswer:
     'content held for an automated check (detection internals); the published content is exported',
   TextScanHold:
@@ -259,10 +272,6 @@ export const EXCLUDED: Record<string, string> = {
   CsamReportAudit: 'safety record; never exported',
   CsamFlagRelease: 'safety record; never exported',
   PersonalDataExport: 'this export log itself',
-  EvidenceHold: 'legal hold record; never exported',
-  EvidenceHoldImage: 'legal hold record; never exported',
-  EvidenceHoldPost: 'legal hold record; never exported',
-  EvidenceHeldUser: 'legal hold record (a view); never exported',
   PurchasableReward:
     'catalog item; names the user only as its staff author (purchases are exported)',
   ImageCdnModeratorDelete: 'moderation internals',

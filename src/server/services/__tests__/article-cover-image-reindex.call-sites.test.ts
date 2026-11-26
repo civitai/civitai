@@ -27,7 +27,19 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
-import { toggleImageFlag, updateImagesFlag } from '~/server/services/image.service';
+import {
+  afterCsamImageBlock,
+  handleBlockImages,
+  toggleImageFlag,
+  updateImagesFlag,
+} from '~/server/services/image.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import * as searchIndex from '~/server/search-index';
+import * as accountDeletionMarkers from '~/server/services/account-deletion-image-markers';
+import * as nsfwLevels from '~/server/services/nsfwLevels.service';
+import * as postService from '~/server/services/post.service';
+import { blockUserImagesAsCsam } from '~/server/services/user.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import {
   queueArticlesAndComicsForImages,
   queueDocumentsForBlockedImages,
@@ -126,17 +138,98 @@ describe("a moderator's minor flag write", () => {
   });
 
   it('queues the models and articles of a toggled image', async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ minor: false } as never);
-    await toggleImageFlag({ id: IMAGE_ID, flag: 'minor' });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ minor: false } as never);
+    await toggleImageFlag({ csamReview: true, id: IMAGE_ID, flag: 'minor' });
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledTimes(1);
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [IMAGE_ID] });
   });
 
   it('queues nothing for a poi flag write (control)', async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ poi: false } as never);
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ poi: false } as never);
     await updateImagesFlag({ ids: [IMAGE_ID], flag: 'poi', value: true });
-    await toggleImageFlag({ id: IMAGE_ID, flag: 'poi' });
+    await toggleImageFlag({ csamReview: true, id: IMAGE_ID, flag: 'poi' });
     expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
     expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
+  });
+});
+
+describe('a CSAM block', () => {
+  // A document of any owner that references a blocked image (a showcase, an article or comic cover)
+  // leaves search only through this queue: no trigger watches the block.
+  it('queues every document showing the blocked images', async () => {
+    await afterCsamImageBlock({ imageIds: [IMAGE_ID] });
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([IMAGE_ID]);
+  });
+
+  it('queues nothing for no images (control)', async () => {
+    await afterCsamImageBlock({ imageIds: [] });
+    expect(queueDocumentsForBlockedImages).not.toHaveBeenCalled();
+  });
+});
+
+describe('the steps every image block runs after its write', () => {
+  const POST_ID = 990000401;
+  let steps: {
+    search: ReturnType<typeof vi.spyOn>;
+    comics: ReturnType<typeof vi.spyOn>;
+    markers: ReturnType<typeof vi.spyOn>;
+    posts: ReturnType<typeof vi.spyOn>;
+  };
+  beforeEach(() => {
+    steps = {
+      search: vi
+        .spyOn(searchIndex.imagesMetricsSearchIndex, 'queueUpdate')
+        .mockResolvedValue(undefined as never),
+      comics: vi
+        .spyOn(nsfwLevels, 'queueComicsForPanelImages')
+        .mockResolvedValue(undefined as never),
+      markers: vi
+        .spyOn(accountDeletionMarkers, 'clearAccountDeletionImageMarkers')
+        .mockResolvedValue(undefined as never),
+      posts: vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined as never),
+    };
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: IMAGE_ID, userId: 990000402, postId: POST_ID, pHash: null, nsfwLevel: 1 },
+    ]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ id: IMAGE_ID, postId: POST_ID }]);
+  });
+  const expectEveryStep = () => {
+    expect(steps.search).toHaveBeenCalledWith([
+      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(redisMock.sysRedis.packed.set).toHaveBeenCalledWith(
+      expect.stringContaining(`:${IMAGE_ID}`),
+      'false',
+      expect.anything()
+    );
+    expect(steps.comics).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(steps.posts).toHaveBeenCalledWith([POST_ID]);
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([IMAGE_ID]);
+  };
+
+  it('a moderator block runs each one, and clears the grace breadcrumbs', async () => {
+    await handleBlockImages({ ids: [IMAGE_ID], moderatorId: 990000403 });
+    expectEveryStep();
+    expect(steps.markers).toHaveBeenCalledWith({ ids: [IMAGE_ID] });
+  });
+
+  // The filing services clear the breadcrumbs inside the block's transaction.
+  it('a CSAM block of listed images runs each one', async () => {
+    await afterCsamImageBlock({ imageIds: [IMAGE_ID] });
+    expectEveryStep();
+  });
+
+  it("a CSAM block of an account runs each one on the account's images, after the clear", async () => {
+    await blockUserImagesAsCsam(990000402);
+    expect(steps.markers).toHaveBeenCalledWith({ userId: 990000402 });
+    expectEveryStep();
+    expect(steps.markers.mock.invocationCallOrder[0]).toBeLessThan(
+      steps.search.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a CSAM block of an account fails when the breadcrumb clear fails', async () => {
+    steps.markers.mockRejectedValueOnce(new Error('marker clear failed'));
+    await expect(blockUserImagesAsCsam(990000402)).rejects.toThrow('marker clear failed');
   });
 });

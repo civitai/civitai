@@ -1,5 +1,9 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
+import {
+  scanHideReportIds,
+  unactionReportLiftingScanHide,
+} from '@civitai/db-queries/feature-page-comments';
 import { reportersWithoutReward } from '@civitai/shared/report-reward';
 import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
@@ -534,6 +538,22 @@ async function perReportType<V>(
   return rows.map((row) => [reportCountKey(row.type as ReportEntity), row.value]);
 }
 
+/** Why the scan's report was left open: the comment it hid cannot be shown again yet. */
+const SCAN_LIFT_HELD = {
+  foreign: 'It was hidden by another action on the platform first, so it stays hidden.',
+  reported: 'Someone else has also reported this comment. Rule on that report first.',
+  pushing: 'This comment is being sent to the platform. Try again in a minute.',
+  author: "The comment's author is banned or muted, so it stays hidden.",
+  held: 'This comment is held for a child-safety check, so it stays hidden.',
+  version: 'The comment changed since the scan hid it, so it stays hidden.',
+} as const;
+
+/** Why the scan's report closed with nothing shown again: its hide was replaced since. */
+const SCAN_LIFT_SUPERSEDED = {
+  hidden: 'Closed, but the comment stays hidden: it was hidden by another action since.',
+  removed: 'Closed, but nothing was restored: the comment was removed.',
+} as const;
+
 export async function setReportStatus({
   id,
   status,
@@ -541,6 +561,8 @@ export async function setReportStatus({
   ip,
   noRewardFor = [],
   noReward = false,
+  liftScanHide = false,
+  fromStatuses,
 }: {
   id: number;
   status: ReportStatus;
@@ -550,6 +572,14 @@ export async function setReportStatus({
   noRewardFor?: readonly number[];
   /** Closes the report without paying any of its reporters. */
   noReward?: boolean;
+  /**
+   * This moderator's own ruling on this one report: set Unactioned, a Feature Pages scan report
+   * lifts the scan's hide (`unactionReportLiftingScanHide`). Only the per-report status action
+   * passes it.
+   */
+  liftScanHide?: boolean;
+  /** Moves the report only from one of these statuses, in the write itself. */
+  fromStatuses?: readonly ReportStatus[];
 }) {
   // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
   // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
@@ -562,7 +592,29 @@ export async function setReportStatus({
     .executeTakeFirst();
   if (!exists) return { ok: false as const, error: 'That report no longer exists. Reload.' };
 
-  const updated = await dbWrite
+  if (liftScanHide && status === ReportStatus.Unactioned) {
+    const { changed, lifted, held, superseded } = await unactionReportLiftingScanHide(dbWrite, {
+      reportId: id,
+      actorId: userId,
+      systemUserId: SYSTEM_USER_ID,
+    });
+    if (held)
+      return {
+        ok: false as const,
+        held: true as const,
+        error: `${SCAN_LIFT_HELD[held]} This report is still open.`,
+      };
+    await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
+    await syncResolvedMarker(id, status);
+    return {
+      ok: true as const,
+      changed,
+      lifted: !!lifted,
+      ...(superseded ? { notice: SCAN_LIFT_SUPERSEDED[superseded] } : {}),
+    };
+  }
+
+  let update = dbWrite
     .updateTable('Report')
     .set({
       status,
@@ -575,7 +627,9 @@ export async function setReportStatus({
         : {}),
     })
     .where('id', '=', id)
-    .where('status', '!=', status)
+    .where('status', '!=', status);
+  if (fromStatuses) update = update.where('status', 'in', [...fromStatuses]);
+  const updated = await update
     .returning(['userId', 'alsoReportedBy', 'details'])
     .executeTakeFirst();
 
@@ -613,19 +667,35 @@ export async function setReportStatus({
 export async function setReportStatuses(
   decisions: { id: number; status: ReportStatus }[],
   { userId, ip }: { userId: number; ip?: string }
-): Promise<{ changed: number; unchanged: number; failed: { id: number; error: string }[] }> {
+): Promise<{
+  changed: number;
+  unchanged: number;
+  skipped: number;
+  failed: { id: number; error: string }[];
+}> {
   let changed = 0;
   let unchanged = 0;
+  let skipped = 0;
   const failed: { id: number; error: string }[] = [];
+  // A batch lifts no scan hide, so the scan's report on its hide is left open for its own dismissal.
+  const scanHides = await scanHideReportIds(
+    dbWrite,
+    decisions.filter((d) => d.status === ReportStatus.Unactioned).map((d) => d.id)
+  );
 
   for (const { id, status } of decisions) {
+    if (status === ReportStatus.Unactioned && scanHides.has(id)) {
+      skipped += 1;
+      failed.push({ id, error: 'Scan-hidden reports must be dismissed one at a time.' });
+      continue;
+    }
     const result = await setReportStatus({ id, status, userId, ip });
     if (!result.ok) failed.push({ id, error: result.error });
     else if (result.changed) changed += 1;
     else unchanged += 1;
   }
 
-  return { changed, unchanged, failed };
+  return { changed, unchanged, skipped, failed };
 }
 
 /**
@@ -958,8 +1028,6 @@ export type ReportedModelState = {
   unpublishedReason: string | null;
   unpublishedAt: string | null;
   takenDownAt: string | null;
-  /** Kept when its owner's content was removed, in the violation status without a take-down. */
-  removedWithOwner: boolean;
 };
 
 const metaString = (meta: unknown, key: string): string | null => {
@@ -991,10 +1059,6 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
     unpublishedReason: metaString(meta, 'unpublishedReason'),
     unpublishedAt: metaString(meta, 'unpublishedAt'),
     takenDownAt: metaString(meta, 'takenDownAt'),
-    removedWithOwner:
-      !!meta &&
-      typeof meta === 'object' &&
-      (meta as Record<string, unknown>).removedWithOwner === true,
   }));
 }
 

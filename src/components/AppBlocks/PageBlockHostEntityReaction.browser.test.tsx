@@ -20,8 +20,6 @@ const { setMutate, getMutate } = vi.hoisted(() => ({
   getMutate: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeInertSubRouter, makeTrpcProxy } = await import('../../../test/trpcProxyStub');
   // The reaction handlers call the wrapper procedures through the VANILLA client

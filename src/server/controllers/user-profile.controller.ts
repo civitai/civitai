@@ -29,6 +29,7 @@ import type {
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventViewerOf } from '~/server/events/event-viewer';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
@@ -75,10 +76,12 @@ export const getUserProfileHandler = async ({
   try {
     const user = await getUserWithProfile({
       username: input.username,
-      isModerator: ctx.user?.isModerator,
+      isModerator: actsAsModerator(ctx),
       sessionUserId: ctx.user?.id,
+      sessionUsername: ctx.user?.username,
       eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
+      fromReplica: true,
     });
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -130,6 +133,23 @@ export const getUserProfileHandler = async ({
   }
 };
 
+// The civitai.com copies count as the field they override.
+const moderatorArchivedFields = {
+  bio: ['bio', 'sfwBio'],
+  message: ['message', 'sfwMessage'],
+  location: ['location'],
+  links: ['socialLinks', 'sponsorshipLinks'],
+  showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
+  about: ['about'],
+} as const;
+
+/** The profile fields a moderator's save over another user's profile touches, archived first. */
+export function profileFieldsTouchedByModerator(input: object) {
+  return (Object.keys(moderatorArchivedFields) as (keyof typeof moderatorArchivedFields)[]).filter(
+    (field) => moderatorArchivedFields[field].some((key) => key in input)
+  );
+}
+
 export const updateUserProfileHandler = async ({
   input,
   ctx,
@@ -146,17 +166,7 @@ export const updateUserProfileHandler = async ({
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
     const byModerator = userId !== sessionUser.id;
     if (byModerator) {
-      // The civitai.com copies count as the field they override.
-      const touched = {
-        bio: ['bio', 'sfwBio'],
-        message: ['message', 'sfwMessage'],
-        location: ['location'],
-        links: ['socialLinks', 'sponsorshipLinks'],
-        showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
-      };
-      const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
-        touched[field].some((key) => key in input)
-      );
+      const fields = profileFieldsTouchedByModerator(input);
       if (fields.length)
         await archiveProfileBeforeModeratorChange({
           userId,
@@ -169,6 +179,7 @@ export const updateUserProfileHandler = async ({
       ...input,
       userId,
       isModerator: sessionUser.isModerator,
+      asModerator: actsAsModerator(ctx),
       sessionUserId: sessionUser.id,
       domain: ctx.domain,
       profileRedesign: ctx.features.profileRedesign,

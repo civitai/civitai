@@ -59,6 +59,7 @@ describe('deal-files', () => {
       isModerator: true,
       canReviewCsam: false,
       servableLevels: 31,
+      moderatorFetch: true,
     });
   });
 

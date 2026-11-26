@@ -11,7 +11,7 @@ export default defineModeratorEndpoint('creatorServices.disputeEvidence', {
     '{ deal, offering: { id, title, description }, events, files: [{ id, kind, round, status, scanStatus, malwareScanStatus, failReason, fileName, mimeType, size, deliverySize, uploadedAt, access? }], attachments: [same shape as files], accessRecordedSince, priorDisputes: { days, buyer, seller }, agentMode }',
   notes: [
     'Requires the moderator app permission `creatorServices.reviewDispute` or `creatorServices.resolveDispute`.',
-    "`deal` carries the agreed terms (price, revisions, delivery days, preview kind, maximum NSFW level) and the buyer's `requestText`; `offering.description` is the listing as it reads now.",
+    "`deal` carries the agreed terms (price, revisions, delivery days, preview kind, maximum NSFW level), the buyer's `requestText`, and for a service with a request form the buyer's `formAnswers` (`[{ label, answer }]`) and the `priceBreakdown` the price came from (`[{ label, price, days }]`, the base first); both are null without a form. `offering.description` is the listing as it reads now.",
     "`files` is the seller's delivery (previews and finals). `attachments` holds the files the buyer attached for the seller; a Buyer access there is the buyer fetching their own upload, not receiving the delivery.",
     'Files carry no content hash: none is stored.',
     '`access` is per role and kind, as on deal-files; it is absent from every file when the access log could not be read, and `accessRecordedSince` is then null.',

@@ -108,7 +108,8 @@ var (
 		"excludedUserIds", "include", "tools", "tags", "techniques",
 	}
 	ignoredKeys = []string{
-		"hatSort", "hatTeams", "hatTurfMine", "hideTurfHats", "hideWornHats", "includePG13",
+		"hatSort", "hatTeams", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats",
+		"includePG13",
 		"remixesOnly", "nonRemixesOnly", "hideAutoResources", "hideManualResources",
 	}
 )
@@ -123,6 +124,9 @@ var unsupportedKeys = []string{
 	"pending", "pendingReviewOnly", "poiOnly", "minorOnly", "withTags", "jumpTo", "baseModels",
 	"notPublished", "scheduled", "publishedOnly",
 }
+
+// UnsupportedInputKeys are the keys Parse (the posts gallery) falls back on as `input-<key>` (a copy).
+func UnsupportedInputKeys() []string { return append([]string(nil), unsupportedKeys...) }
 
 var knownSorts = map[string]bool{SortMostReactions: true, SortMostComments: true, SortMostCollected: true, SortNewest: true, SortOldest: true}
 var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "Month": true, "Year": true}

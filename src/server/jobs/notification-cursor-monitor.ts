@@ -2,6 +2,7 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
+import { getPausedNotificationTypes } from './paused-notification-types';
 
 const log = createLogger('notification-cursor-monitor', 'yellow');
 
@@ -32,12 +33,18 @@ export const notificationCursorMonitor = createJob(
       WHERE "key" LIKE 'last-sent-notification-%'
     `;
 
+    // A paused type's cursor is frozen on purpose. A malformed row is send-notifications' error to
+    // report; here it just means nothing is exempt.
+    const paused = await getPausedNotificationTypes().catch(() => new Set<string>());
+    const exempt = (key: string) =>
+      IGNORED_CURSORS.has(key) || paused.has(key.slice('last-sent-notification-'.length));
+
     const nowMs = Date.now();
     const staleThresholdMs = STALE_THRESHOLD_MIN * 60_000;
     const escalateThresholdMs = ESCALATE_THRESHOLD_MIN * 60_000;
 
     const stale = rows
-      .filter((r) => !IGNORED_CURSORS.has(r.key))
+      .filter((r) => !exempt(r.key))
       .map((r) => {
         // KeyValue.value is JSONB; cursor entries are stored as numeric ms-since-epoch.
         const ms = typeof r.value === 'number' ? r.value : Number(r.value);

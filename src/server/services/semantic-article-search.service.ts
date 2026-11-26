@@ -109,7 +109,12 @@ export async function searchSemanticArticles({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  const none = { items: [] as HydratedArticle[], nextCursor: undefined, correctedQuery: undefined };
+  const none = {
+    items: [] as HydratedArticle[],
+    nextCursor: undefined,
+    correctedQuery: undefined,
+    refused: false as boolean,
+  };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
@@ -257,6 +262,7 @@ export async function searchSemanticArticles({
     source: candidateSource,
     viewer: { isModerator: !!user?.isModerator },
     text: input.query,
+    spellcheck: input.spellcheck,
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
   });

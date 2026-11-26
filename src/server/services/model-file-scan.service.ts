@@ -55,6 +55,7 @@ import {
   trainingDataObjectUnchanged,
   uncountUnconfirmedResubmit,
 } from '~/server/services/training-data-scan.service';
+import { extractionRating, writeTrainingDataRating } from '~/server/services/training-data-rating';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -86,6 +87,8 @@ export type ScanOutcome = {
   /** The stored url a Training Data blob scan copied. Only an outcome naming the file's current url
    *  may write a Training Data file. */
   trainingDataUrl?: string;
+  /** An uploaded Training Data zip's rating, from the workflow's archiveExtraction step. */
+  trainingDataRating?: { nsfwLevel: number | undefined; fullyRated: boolean };
 };
 
 const exitCodeToScanResult = (exitCode: number | null | undefined): ScanResultCode => {
@@ -308,6 +311,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data,
     select: { pickleScanResult: true, virusScanResult: true },
   });
+  if (isTrainingData && outcome.trainingDataRating)
+    await writeTrainingDataRating(dbWrite, {
+      fileId,
+      url: file.url,
+      rating: outcome.trainingDataRating,
+    });
   const failedScan = ranScan && hasFailedScan(written);
   const coverageMoved =
     ranScan &&
@@ -722,6 +731,7 @@ async function notifyHashFix(modelVersionId: number, fileId: number) {
 
 type ModelClamScanStep = {
   $type: 'modelClamScan';
+  status?: string;
   output?: {
     exitCode?: number | null;
     output?: string | null;
@@ -1007,6 +1017,13 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       ? (data.metadata?.url as string | undefined)
       : undefined;
 
+  const steps = (data.steps ?? []) as unknown as ModelScanStep[];
+  // A failed workflow keeps the result of a step that finished: a zip's rating step failing must not
+  // discard its virus verdict, it only leaves the zip unrated.
+  const finished = (step: { status?: string } | undefined) =>
+    event.status === 'succeeded' || step?.status === 'succeeded';
+  const clamScan = steps.find((x) => x.$type === 'modelClamScan') as ModelClamScanStep | undefined;
+
   if (event.status !== 'succeeded') {
     logToAxiom(
       {
@@ -1019,12 +1036,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       },
       'webhooks'
     );
-    await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
-    return;
+    if (!trainingDataUrl || !finished(clamScan)) {
+      await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
+      return;
+    }
   }
 
-  const steps = (data.steps ?? []) as unknown as ModelScanStep[];
-  const clamScan = steps.find((x) => x.$type === 'modelClamScan') as ModelClamScanStep | undefined;
   const pickleScan = steps.find((x) => x.$type === 'modelPickleScan') as
     | ModelPickleScanStep
     | undefined;
@@ -1037,10 +1054,27 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     fileId,
     modelVersionId,
     trainingDataUrl,
-    rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
+    // Counts only: an extraction lists up to TRAINING_DATA_MAX_RATED_ENTRIES entries, too many to
+    // store on every scan result.
+    rawScanResult: {
+      source: 'orchestrator',
+      workflowId: event.workflowId,
+      steps: steps.map((step) => {
+        const output = (step as { output?: { entries?: unknown[]; rejected?: unknown[] } }).output;
+        return (step as { $type: string }).$type === 'archiveExtraction' && output
+          ? {
+              ...step,
+              output: {
+                entries: output.entries?.length ?? 0,
+                rejected: output.rejected?.length ?? 0,
+              },
+            }
+          : step;
+      }),
+    },
   };
 
-  if (clamScan?.output) {
+  if (clamScan?.output && finished(clamScan)) {
     const derived = deriveClamScanResult(clamScan.output);
     // A zip's scan that read no files has not cleared it.
     const readNothing =
@@ -1100,6 +1134,17 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       return;
     }
   }
+
+  const extraction = steps.find((x) => (x as { $type?: string }).$type === 'archiveExtraction') as
+    | { status?: string; output?: Parameters<typeof extractionRating>[0] }
+    | undefined;
+  if (
+    trainingDataUrl &&
+    outcome.virusScan?.result === ScanResultCode.Success &&
+    extraction?.output &&
+    finished(extraction)
+  )
+    outcome.trainingDataRating = await extractionRating(extraction.output, event.workflowId);
 
   if (pickleScan?.output) {
     const pickleOut = pickleScan.output;

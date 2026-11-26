@@ -3,6 +3,7 @@ import { Writable } from 'stream';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { SERVED_ACTIVITY } from '@civitai/shared/held-media';
 
 /**
  * `/api/mod/retracted-media/[imageId]`: a blocked image for a moderator, from storage rather than the
@@ -229,6 +230,28 @@ describe('/api/mod/retracted-media serving', () => {
     expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false, cdnLeg: false });
     expect(getGetUrlByKey).toHaveBeenCalledWith(KEY, { s3: {}, bucket: 'media', expiresIn: 60 });
     expect(trackModActivity).toHaveBeenCalledWith(42, {
+      entityType: 'image',
+      entityId: 7,
+      activity: 'retractedMedia:view',
+    });
+  });
+
+  // civitai/civitai#10202: a held account's image is answered as its twin, audited as a held view.
+  it('streams held media as it streams any other, recorded as a held view', async () => {
+    getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, held: true });
+    const held = await call();
+    getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, held: false });
+    const twin = await call();
+    expect({ status: held.statusCode, headers: held.headers }).toEqual({
+      status: twin.statusCode,
+      headers: twin.headers,
+    });
+    expect(trackModActivity).toHaveBeenNthCalledWith(1, 42, {
+      entityType: 'image',
+      entityId: 7,
+      activity: SERVED_ACTIVITY,
+    });
+    expect(trackModActivity).toHaveBeenNthCalledWith(2, 42, {
       entityType: 'image',
       entityId: 7,
       activity: 'retractedMedia:view',

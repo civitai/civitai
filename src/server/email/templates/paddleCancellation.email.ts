@@ -7,12 +7,17 @@ type PaddleCancelationData = {
 };
 
 export const paddleCancellationEmail = createEmail({
+  template: 'paddleCancellation',
+  mailClass: 'transactional',
   header: ({ email }: PaddleCancelationData) => ({
     subject: `Cancel Subscription: ${email}`,
     to: `assist@paddle.com`,
   }),
   html({ email }: PaddleCancelationData) {
     return simpleEmailWithTemplate({
+      icon: '📨',
+      accent: 'gray',
+      eyebrow: 'Subscription support',
       header: `Cancellation Support Requested`,
       body: `
       <p>

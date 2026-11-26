@@ -21,6 +21,10 @@ type baseModelTable struct {
 	// Generation is, per base model name and ecosystem key, the model types
 	// isBaseModelGenerationSupported answers true for.
 	Generation map[string][]string `json:"generation"`
+	// GateEcosystems is, per base model name, the ecosystem keys isTargetedBy
+	// (src/shared/generation/gates.ts) answers true for: the gate rule ecosystem targets that reach a
+	// version on that base model. A name it does not hold is reached by no ecosystem target.
+	GateEcosystems map[string][]string `json:"gateEcosystems"`
 	// ModelLocked is the names isModelLockedBaseModel answers true for.
 	ModelLocked []string `json:"modelLocked"`
 	// GenerationDisabled is the names isBaseModelGenerationDisabled answers true for (a disabled base
@@ -46,6 +50,7 @@ var (
 	table            baseModelTable
 	modelTypes       = map[string]bool{}
 	generationTypes  = map[string]map[string]bool{}
+	gateEcosystems   = map[string][]string{}
 	modelLocked      = map[string]bool{}
 	generationOff    = map[string]bool{}
 	matureRestricted = map[string]bool{}
@@ -55,7 +60,7 @@ func init() {
 	if err := json.Unmarshal(baseModelsJSON, &table); err != nil {
 		panic("modelfeed: basemodels.json: " + err.Error())
 	}
-	if len(table.ModelTypes) == 0 || len(table.Generation) == 0 || table.Levels.All == 0 {
+	if len(table.ModelTypes) == 0 || len(table.Generation) == 0 || len(table.GateEcosystems) == 0 || table.Levels.All == 0 {
 		panic("modelfeed: basemodels.json is incomplete")
 	}
 	for _, t := range table.ModelTypes {
@@ -67,6 +72,9 @@ func init() {
 			set[t] = true
 		}
 		generationTypes[name] = set
+	}
+	for name, keys := range table.GateEcosystems {
+		gateEcosystems[name] = keys
 	}
 	for _, n := range table.ModelLocked {
 		modelLocked[n] = true

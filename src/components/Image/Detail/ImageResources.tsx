@@ -12,7 +12,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconDownload, IconMessageCircle2, IconX } from '@tabler/icons-react';
 import { ModeratorLookupIcon } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -94,10 +94,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
   const { mutate, isPending: removingResource } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = (modelVersionId: number) => {
     setSelectedResource(modelVersionId);
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Remove Resource',
-      children:
+      message:
         'Are you sure you want to remove this resource from this image? This action is destructive and cannot be reverted.',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },

@@ -1,14 +1,13 @@
 import { PGlite } from '@electric-sql/pglite';
 import {
-  cleanupBlocked,
   deleteImageRows,
   IMAGE_USES,
+  IMAGE_USES_WITHOUT_RELATION,
   imageNotUsed,
   queueImageDeletes,
   queueImageStorageDelete,
-  readDueDeletes,
-  settleDeletes,
 } from '@civitai/db-queries/content-deletion';
+import { cleanupBlocked, readDueDeletes, settleDeletes } from '@civitai/db-queries/pending-deletes';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
@@ -38,7 +37,7 @@ beforeAll(async () => {
   `);
   await pg.exec(imageUseTablesSql);
   // Returned by `deleteImageRows`.
-  await pg.exec(`ALTER TABLE "Image" ADD COLUMN metadata jsonb`);
+  await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`);
 });
 afterAll(() => pg.close());
 
@@ -54,7 +53,11 @@ beforeEach(async () => {
     'CosmeticShopItem',
     'ItemDefinition',
     'ImageCdnShopTakedown',
-    ...new Set(Object.values(IMAGE_USES).map(([table]) => table)),
+    ...new Set(
+      [...Object.values(IMAGE_USES), ...Object.values(IMAGE_USES_WITHOUT_RELATION)].map(
+        ([table]) => table
+      )
+    ),
   ];
   await pg.exec(`TRUNCATE ${tables.map((t) => `"${t}"`).join(', ')}`);
 });
@@ -119,7 +122,7 @@ describe('queueImageDeletes', () => {
     ]);
   });
 
-  it.each(Object.entries(IMAGE_USES))(
+  it.each(Object.entries({ ...IMAGE_USES, ...IMAGE_USES_WITHOUT_RELATION }))(
     'skips an image still used by %s',
     async (_, [table, column]) => {
       await addImage(1);
@@ -182,7 +185,7 @@ describe('queueImageDeletes', () => {
     await queue([1, 2]);
     await pg.exec(`INSERT INTO "Article" ("coverId") VALUES (1)`);
 
-    const deleted = await deleteImageRows(db, {
+    const { deleted } = await deleteImageRows(db, {
       ids: [1, 2],
       actor: { system: 'test' },
       where: imageNotUsed(),

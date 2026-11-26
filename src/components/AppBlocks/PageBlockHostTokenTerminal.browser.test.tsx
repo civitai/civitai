@@ -31,8 +31,6 @@ import { advanceBy, advanceUntil, fakeTimeouts } from '../../../test/fakeTimeout
  * the condition under test).
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider statically imports this; a wholesale module mock MUST
   // re-declare it or the ESM link fails.

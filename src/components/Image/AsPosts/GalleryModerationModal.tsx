@@ -26,7 +26,7 @@ import { Flags } from '~/shared/utils/flags';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import classes from './GalleryModerationModal.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -45,15 +45,14 @@ export function GalleryModerationModal({
   const { copySettings, updating, copySettingsLoading } = useGallerySettings({ modelId: modelId });
 
   const handleCopySettings = () => {
-    openConfirmModal({
+    openConfirm({
       title: (
         <div className="flex flex-row flex-nowrap gap-2">
           <IconAlertTriangle color="gold" />
           <p className="text-lg">Copy Gallery Moderation Preferences</p>
         </div>
       ),
-      centered: true,
-      children:
+      message:
         'This will copy the gallery moderation preferences from this model to all your models and future ones. Are you sure you want to proceed?',
       onConfirm: async () => {
         try {

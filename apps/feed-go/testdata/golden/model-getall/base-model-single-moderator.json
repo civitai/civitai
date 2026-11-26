@@ -726,11 +726,17 @@
         "modelId": 5001,
         "deadline": {
           "$date": "2026-06-30T10:00:00.000Z"
-        }
+        },
+        "versionIds": [
+          6001
+        ]
       },
       {
         "modelId": 5005,
-        "deadline": null
+        "deadline": null,
+        "versionIds": [
+          6008
+        ]
       }
     ],
     "coverImages": [],

@@ -61,6 +61,7 @@ const snapshot: ProfileClearSnapshot = {
     location: null,
     showcaseSections: [],
     showcaseItems: [],
+    about: null,
   },
 };
 

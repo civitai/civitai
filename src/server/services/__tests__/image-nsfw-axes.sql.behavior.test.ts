@@ -71,8 +71,6 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -98,6 +96,10 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
   await holder.db.exec(migration);
 });

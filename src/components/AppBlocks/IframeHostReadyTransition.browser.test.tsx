@@ -76,10 +76,6 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   },
 }));
 
-// AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate;
-// this suite renders the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // IframeHost now reads `appBlocks && appBlocksPages` (the run route's own
 // predicate) to decide whether the chrome may offer `/apps/run/<blockId>`
 // shortcuts; the real hook THROWS without a FeatureFlagsProvider (which this

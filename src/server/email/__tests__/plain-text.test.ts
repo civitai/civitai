@@ -33,6 +33,8 @@ describe('htmlToPlainText', () => {
 describe('createEmail plain-text part', () => {
   it('derives it from the HTML, links included, when the template has no text()', () => {
     const email = createEmail({
+      template: 'test',
+      mailClass: 'transactional',
       header: (data: { to: string }) => ({ subject: 'S', to: data.to }),
       html: () => '<p>Hi</p><a class="em-btn" href="https://civitai.com/apps/run/a%20b">Open</a>',
     });
@@ -43,6 +45,8 @@ describe('createEmail plain-text part', () => {
 
   it("keeps a template's own text()", () => {
     const email = createEmail({
+      template: 'test',
+      mailClass: 'transactional',
       header: (data: { to: string }) => ({ subject: 'S', to: data.to }),
       html: () => '<p>Hi</p>',
       text: () => 'Own text',

@@ -30,7 +30,6 @@ h.utils = {
 vi.mock('~/components/HatTurf/useHatTurfFeed', () => ({
   useHatTurfFeed: () => ({ event: 'birthday2026', arm: 'control' }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: () => undefined,
@@ -92,7 +91,8 @@ const mountPage = (a = [1, 2], b = [2, 3]) =>
       <TurfSummaryProvider imageIds={b}>
         <Probe name="b" />
       </TurfSummaryProvider>
-    </>
+    </>,
+    { user: { id: 1 } }
   );
 
 const watchCards = () => [
@@ -321,7 +321,7 @@ describe('TurfSummaryProvider watch marks', () => {
         <Probe name="a" />
       </TurfSummaryProvider>
     );
-    const screen = await renderWithProviders(tree('event-one'));
+    const screen = await renderWithProviders(tree('event-one'), { user: { id: 1 } });
     // Never stopped before the change: the cards stay on screen across it.
     const stops = [probes.a!.watch(1), probes.a!.watch(2)];
     await vi.advanceTimersByTimeAsync(1_000);

@@ -9,6 +9,9 @@
 export const COSMETIC_SHOP_PAGE_SIZES = [24, 32, 48] as const;
 export const COSMETIC_SHOP_DEFAULT_PAGE_SIZE = COSMETIC_SHOP_PAGE_SIZES[0];
 
+/** Creator Score (`total`) needed to open a Creator Shop. */
+export const CREATOR_SHOP_MIN_CREATOR_SCORE = 10_000;
+
 // How many nearest cosmetics the creator-shop review panel lists.
 //
 // A rank limit, not a distance cutoff. It earned that shape at 64 bits, where a

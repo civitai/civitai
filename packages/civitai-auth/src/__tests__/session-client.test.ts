@@ -618,3 +618,50 @@ describe('createSessionClient — cache read on a dead Redis (queued command nev
     }
   });
 });
+
+describe('createSessionClient — a memorialized account', () => {
+  const memorialized = (id: number) => ({ ...richUser(id), memorialized: true } as SessionUser);
+  const impersonating = () =>
+    h.verifyToken.mockImplementation(async (t: string) => ({
+      sub: t,
+      iss: 'https://auth.test',
+      impersonatedBy: 99,
+    }));
+
+  it('a token resolves to no user on a cache hit carrying the marker', async () => {
+    h.store.set(key(7), memorialized(7));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
+    const client = createSessionClient();
+
+    expect(await client.resolveSessionUser('7')).toEqual({ user: null, reason: 'invalid' });
+    expect(await client.getSessionUser('7')).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('a token resolves to no user when the hub fetch returns the marker', async () => {
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => memorialized(7) }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual({
+      user: null,
+      reason: 'invalid',
+    });
+  });
+
+  it('an impersonation token still resolves to it', async () => {
+    impersonating();
+    h.store.set(key(7), memorialized(7));
+    expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7 });
+  });
+
+  it('a by-id read still returns it, from the same cache entry', async () => {
+    h.store.set(key(7), memorialized(7));
+    expect(await createSessionClient().getSessionUserById(7)).toMatchObject({
+      id: 7,
+      memorialized: true,
+    });
+  });
+
+  it('a token resolves as before without the marker (positive control)', async () => {
+    h.store.set(key(7), richUser(7));
+    expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7 });
+  });
+});

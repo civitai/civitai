@@ -23,7 +23,7 @@ import { parseReportHash } from '~/components/Apps/agentReviewReport';
  * with their justifications, the running app and its store art — so a routine approve needs no
  * tab at all. The other tabs are the evidence behind each signal, in the order a moderator
  * digs: the code, then the permissions in full, the manifest, the AI report, the preview, and
- * the console of errors the running preview reported.
+ * the console of errors the running preview reported, and the App Assistant sessions that built it.
  *
  * (`permissions` led before this; it is still one click away and still deep-linkable as
  * `?tab=permissions`. The reason it led — scopes and their justifications were buried at the
@@ -37,6 +37,7 @@ export const REVIEW_DETAIL_TAB_VALUES = [
   'agent',
   'preview',
   'console',
+  'sessions',
 ] as const;
 
 export type ReviewDetailTab = (typeof REVIEW_DETAIL_TAB_VALUES)[number];
@@ -61,6 +62,7 @@ export const REVIEW_DETAIL_TAB_LABELS: Record<ReviewDetailTab, string> = {
   agent: 'AI report',
   preview: 'Preview',
   console: 'Console',
+  sessions: 'Build sessions',
 };
 
 export function isReviewDetailTab(value: unknown): value is ReviewDetailTab {

@@ -2440,7 +2440,7 @@ describe('REST entry shape — the six exported write functions carry the full l
     await expect(call()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     // The token string this surface receives is the ONLY credential, so a body
     // that reached the DB before verifying it would be an unauthenticated write.
-    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam', { admitRunner: false });
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
@@ -3143,6 +3143,8 @@ describe('rate-limit refusals carry machine-readable retry metadata', () => {
       expect((trpcError.cause as { rateLimit?: unknown } | undefined)?.rateLimit).toEqual({
         retryAfterSeconds: RETRY_AFTER,
         retryAt: RETRY_AT,
+        id: 'apps.shared-storage',
+        kind: 'abuse',
       });
     }
   );

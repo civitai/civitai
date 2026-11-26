@@ -79,14 +79,13 @@ const deletedState: {
   blockedFor: string | null;
 } = { ...SCANNED };
 
-/** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
+/** `kept`: deletable images the DELETE does not return, as when a child-safety case keeps the row. */
 function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
   const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = sqlTextOf(strings);
     if (sql.includes('pg_class')) return [{ present: false }];
-    if (sql.includes('"ImageReport"')) return [];
-    if (sql.includes('"collectionId"')) return [];
+    // Before the report read below: the DELETE reads "ImageReport" for its child-safety case.
     if (sql.includes('DELETE FROM "Image"'))
       return deletable.map(({ id, url, userId }) => ({
         id,
@@ -95,6 +94,8 @@ function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
         ...deletedState,
       }));
     if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
+    if (sql.includes('"ImageReport"')) return [];
+    if (sql.includes('"collectionId"')) return [];
     if (sql.includes('AS deletable')) return images;
     if (sql.includes('SELECT id FROM "Image" WHERE "postId"'))
       return images.map(({ id }) => ({ id }));

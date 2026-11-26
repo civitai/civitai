@@ -26,6 +26,12 @@ const (
 	InfiniteImages = "getInfiniteImagesSchema" // image.getImagesAsPostsInfinite, image.getInfinite
 	AllModels      = "getAllModelsSchema"      // model.getAll
 	ImagesEndpoint = "imagesEndpointSchema"    // GET /api/v1/images
+	// POST /api/search/[...path] (siteSearchParamsSchema, siteMultiSearchSchema and its query, and
+	// siteFacetSearchSchema).
+	SiteSearchParams     = "siteSearchParamsSchema"
+	SiteMultiSearch      = "siteMultiSearchSchema"
+	SiteMultiSearchQuery = "siteMultiSearchQuerySchema"
+	SiteFacetSearch      = "siteFacetSearchSchema"
 )
 
 // Schema is one schema's keys and defaults.
@@ -45,7 +51,7 @@ func init() {
 	if err := json.Unmarshal(schemasJSON, &raw); err != nil {
 		panic("inputschema: schemas.json: " + err.Error())
 	}
-	for _, name := range []string{InfiniteImages, AllModels, ImagesEndpoint} {
+	for _, name := range []string{InfiniteImages, AllModels, ImagesEndpoint, SiteSearchParams, SiteMultiSearch, SiteMultiSearchQuery, SiteFacetSearch} {
 		s, ok := raw[name]
 		if !ok || len(s.Keys) == 0 {
 			panic("inputschema: schemas.json has no keys for " + name)

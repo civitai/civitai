@@ -77,12 +77,14 @@ import {
 import { getMysteryPackReview } from '~/server/services/creator-mystery-pack-review.service';
 import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
+import { assertCanOpenCreatorShop } from '~/server/services/creator-shop-open.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
 import {
   guardedProcedure,
   isFlagProtected,
+  middleware,
   moderatorProcedure,
   protectedProcedure,
   publicProcedure,
@@ -92,9 +94,15 @@ import {
 // Every Creator Shop endpoint is gated on the `creatorShop` feature flag
 // server-side (the flag also hides the UI). The flag falls back to `['mod']` but
 // is Flipt-controllable (`creator-shop`), so testers can be unlocked without a
-// deploy. Shops are open to all users (ClickUp 868kj4q5a) — the flag is the only
-// gate.
+// deploy. Opening a shop also needs a Creator Score: `opensShop` is on every door
+// that puts something in one.
 const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop'));
+
+// Used before `.input()`, so a refused caller hears the score rather than a validation error.
+const opensShop = middleware(async ({ ctx, next }) => {
+  if (ctx.user && !ctx.user.isModerator) await assertCanOpenCreatorShop(ctx.user.id);
+  return next();
+});
 
 // Creating stickers is flag-gated; rendering and owning them are not, so this
 // guards the write paths only.
@@ -116,19 +124,25 @@ const assertStickersEnabled = (features: FeatureAccess, type?: CosmeticType) => 
 
 export const creatorShopRouter = router({
   // #region [Creator: submit & manage]
-  submitItem: creatorShopProcedure.input(submitCreatorShopItemSchema).mutation(({ input, ctx }) => {
-    assertStickersEnabled(ctx.features, input.cosmeticType);
-    return submitCreatorShopItem({ ...input, userId: ctx.user.id });
-  }),
+  submitItem: creatorShopProcedure
+    .use(opensShop)
+    .input(submitCreatorShopItemSchema)
+    .mutation(({ input, ctx }) => {
+      assertStickersEnabled(ctx.features, input.cosmeticType);
+      return submitCreatorShopItem({ ...input, userId: ctx.user.id });
+    }),
   // #region [Packs]
-  submitPack: creatorShopProcedure.input(submitCreatorShopPackSchema).mutation(({ input, ctx }) => {
-    assertPacksEnabled(ctx.features);
-    return submitCreatorShopPack({
-      ...input,
-      userId: ctx.user.id,
-      stickersEnabled: ctx.features.stickers,
-    });
-  }),
+  submitPack: creatorShopProcedure
+    .use(opensShop)
+    .input(submitCreatorShopPackSchema)
+    .mutation(({ input, ctx }) => {
+      assertPacksEnabled(ctx.features);
+      return submitCreatorShopPack({
+        ...input,
+        userId: ctx.user.id,
+        stickersEnabled: ctx.features.stickers,
+      });
+    }),
   updatePack: creatorShopProcedure.input(updateCreatorShopPackSchema).mutation(({ input, ctx }) => {
     assertPacksEnabled(ctx.features);
     return updateCreatorShopPack({
@@ -166,15 +180,18 @@ export const creatorShopRouter = router({
     ),
   // #endregion
   // #region [Mystery packs] guardedProcedure: a muted creator is refused before the service runs.
-  submitMysteryPack: guardedProcedure.input(submitMysteryPackSchema).mutation(({ input, ctx }) => {
-    assertMysteryPacksEnabled(ctx.features);
-    return submitMysteryPack({
-      ...input,
-      userId: ctx.user.id,
-      countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
-      stickersEnabled: ctx.features.stickers,
-    });
-  }),
+  submitMysteryPack: guardedProcedure
+    .use(opensShop)
+    .input(submitMysteryPackSchema)
+    .mutation(({ input, ctx }) => {
+      assertMysteryPacksEnabled(ctx.features);
+      return submitMysteryPack({
+        ...input,
+        userId: ctx.user.id,
+        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+        stickersEnabled: ctx.features.stickers,
+      });
+    }),
   reviseMysteryPack: guardedProcedure.input(reviseMysteryPackSchema).mutation(({ input, ctx }) => {
     assertMysteryPacksEnabled(ctx.features);
     return reviseMysteryPack({
@@ -275,6 +292,7 @@ export const creatorShopRouter = router({
     getResoldItemsForManage({ userId: ctx.user.id })
   ),
   addResoldItem: creatorShopProcedure
+    .use(opensShop)
     .input(resoldItemSchema)
     .mutation(({ input, ctx }) => addResoldItem({ ...input, userId: ctx.user.id })),
   removeResoldItem: creatorShopProcedure

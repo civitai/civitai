@@ -92,9 +92,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ),
   };
 });
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: OWNER, username: 'owner' }),
-}));
 vi.mock('~/components/Dialog/DialogProvider', async (orig) => ({
   ...(await orig<typeof DialogProviderMod>()),
   useDialogContext: () => ({ opened: true, onClose: mocks.onClose, zIndex: 200 }),
@@ -140,7 +137,9 @@ beforeEach(() => {
 describe('StorylineFirstChapterModal', () => {
   test('makes the picked post chapter 1 of this storyline', async () => {
     mocks.items = [postItem(10), postItem(11)];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await expect.element(submit()).toBeDisabled();
     await tile(11).click();
@@ -156,7 +155,9 @@ describe('StorylineFirstChapterModal', () => {
       postItem(13),
     ];
     mocks.chapters = { 13: { storylineId: 9, chapterId: 1, depth: 0 } };
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await expect.element(tile(10)).toBeVisible();
     expect(tile(12).elements()).toHaveLength(0);
@@ -168,7 +169,9 @@ describe('StorylineFirstChapterModal', () => {
 
   test('says the ceiling goes up for a post rated above it, and still lets it through', async () => {
     mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R })];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await tile(10).click();
     await expect
@@ -181,7 +184,9 @@ describe('StorylineFirstChapterModal', () => {
   test('a post above a capped ceiling is marked and refused, not promised a raise', async () => {
     mocks.ownerMaxNsfwLevel = NsfwLevel.R;
     mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R })];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await page.getByRole('radio', { name: /above this storyline's PG-13 limit/ }).click();
     await expect.element(page.getByText(/rated above this storyline's maximum/)).toBeVisible();
@@ -192,7 +197,9 @@ describe('StorylineFirstChapterModal', () => {
   // Blocked is a moderation verdict: never shown as the post's rating, nor promised a raise.
   test('a post with a Blocked image is refused as unusable, without naming Blocked', async () => {
     mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R | NsfwLevel.Blocked })];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await tile(10).click();
     await expect.element(page.getByText(/can't be used in a storyline/)).toBeVisible();
@@ -204,7 +211,9 @@ describe('StorylineFirstChapterModal', () => {
   test('shows older posts a page at a time, and lists them once loaded', async () => {
     mocks.items = [postItem(10)];
     mocks.hasNextPage = true;
-    const { rerender } = await renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    const { rerender } = await renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await page.getByRole('button', { name: 'Show older posts' }).click();
     expect(mocks.fetchNextPage).toHaveBeenCalledTimes(1);
@@ -220,7 +229,9 @@ describe('StorylineFirstChapterModal', () => {
   test('offers no post when it cannot tell which are already chapters', async () => {
     mocks.items = [postItem(10)];
     mocks.chaptersError = true;
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     const failed = () => page.getByText("Couldn't load your posts.");
     // Settle on either outcome, so a regression fails on the tile, not on a timeout.
@@ -232,7 +243,9 @@ describe('StorylineFirstChapterModal', () => {
   // getForPosts refuses more than STORYLINE_FOR_POSTS_MAX ids.
   test('asks which posts are chapters at most 100 at a time', async () => {
     mocks.items = Array.from({ length: 150 }, (_, i) => postItem(1000 + i));
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await expect.element(tile(1149)).toBeVisible();
     expect(mocks.chapterLookups.at(-1)?.length).toBe(50);
@@ -241,14 +254,18 @@ describe('StorylineFirstChapterModal', () => {
 
   test('searches your posts by title', async () => {
     mocks.items = [postItem(10)];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await page.getByRole('textbox', { name: 'Search by the start of a title' }).fill('  Cat ');
     await expect.poll(() => mocks.queries.at(-1)).toBe('Cat');
   });
 
   test('says when no title matches the search', async () => {
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await page.getByRole('textbox', { name: 'Search by the start of a title' }).fill('Zebra');
     await expect
@@ -258,7 +275,9 @@ describe('StorylineFirstChapterModal', () => {
 
   test('an unrated post cannot be picked yet', async () => {
     mocks.items = [postItem(10, { nsfwLevel: 0 })];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await tile(10).click();
     await expect.element(page.getByText(/has not been rated yet/)).toBeVisible();
@@ -268,7 +287,9 @@ describe('StorylineFirstChapterModal', () => {
   test("shows the server's refusal", async () => {
     mocks.items = [postItem(10)];
     mocks.error = { message: 'This storyline already has its first chapter' };
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
 
     await expect
       .element(page.getByText('This storyline already has its first chapter'))
@@ -277,7 +298,9 @@ describe('StorylineFirstChapterModal', () => {
 
   test('once done, closes, says so, and opens the storyline', async () => {
     mocks.items = [postItem(10)];
-    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />, {
+      user: { id: OWNER, username: 'owner' },
+    });
     await expect.element(submit()).toBeVisible();
 
     await mocks.options.onSuccess?.({ ceilingRaisedTo: NsfwLevel.R });

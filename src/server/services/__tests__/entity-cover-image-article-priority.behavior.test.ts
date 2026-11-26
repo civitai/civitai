@@ -35,6 +35,7 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -50,6 +51,7 @@ beforeAll(async () => {
       status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int, availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
       mode "ModelModifier", minor boolean NOT NULL DEFAULT false,
@@ -192,5 +194,23 @@ describe('getEntityCoverImage, an Article with content images', () => {
       ['Article', 1, 20],
       ['Image', 60, 60],
     ]);
+  });
+});
+
+describe('getEntityCoverImage, a ToS-removed image with no blockedFor', () => {
+  it('is no cover for its owner', async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, 1, now() - interval '1 day');
+      INSERT INTO "Image" (id, url, "postId", ingestion, "blockedFor") VALUES
+        (60, 'removed', 2, 'Blocked', null), (61, 'kept', 2, 'Scanned', null);
+    `);
+    const covers = await getEntityCoverImage({
+      entities: [
+        { entityId: 60, entityType: 'Image' },
+        { entityId: 61, entityType: 'Image' },
+      ],
+      viewer: { id: 1 },
+    });
+    expect(covers.map((c) => c.id)).toEqual([61]);
   });
 });

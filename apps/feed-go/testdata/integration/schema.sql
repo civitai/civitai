@@ -82,8 +82,21 @@ CREATE TABLE "Image" (
   poi                 boolean NOT NULL DEFAULT false,
   "acceptableMinor"   boolean NOT NULL DEFAULT false,
   "modelRestricted"   boolean NOT NULL DEFAULT false,
-  "tosViolation"      boolean NOT NULL DEFAULT false
+  "tosViolation"      boolean NOT NULL DEFAULT false,
+  "firstVisibleAt"    timestamp(3)
 );
+
+-- source: packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql
+CREATE FUNCTION image_sort_at(
+  published_at timestamp, scanned_at timestamp, created_at timestamp, first_visible_at timestamp
+) RETURNS timestamp
+  LANGUAGE sql IMMUTABLE AS
+$$
+SELECT GREATEST(
+  published_at, scanned_at, created_at,
+  CASE WHEN first_visible_at <= published_at + interval '7 days' THEN first_visible_at END
+)
+$$;
 
 CREATE TABLE "ImageResourceNew" (
   "imageId"        integer NOT NULL,
@@ -353,6 +366,9 @@ CREATE TABLE "CollectionItem" (
   id             integer PRIMARY KEY,
   "collectionId" integer NOT NULL,
   "modelId"      integer,
+  -- image.getInfinite's collection page (the `ct` CTE, collectionCTE in internal/feed/query.go).
+  "imageId"      integer,
+  note           text,
   "addedById"    integer,
   status         "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED',
   "tagId"        integer
@@ -363,4 +379,35 @@ CREATE TABLE "CollectionContributor" (
   "collectionId" integer NOT NULL,
   permissions    "CollectionContributorPermission"[] NOT NULL,
   PRIMARY KEY ("userId", "collectionId")
+);
+
+-- model.getAll's community-cover guard (communityCoverGuard, internal/modelfeed/serve.go): the
+-- featured rows getShowcaseCommunityCovers starts from. source is TEXT with a CHECK in the app.
+CREATE TABLE "ModelVersionShowcaseItem" (
+  "modelVersionId" integer NOT NULL,
+  "imageId"        integer NOT NULL,
+  source           text NOT NULL,
+  removed          boolean NOT NULL DEFAULT false
+);
+
+-- image.getInfinite's hubId (GalleryStore.Hub, internal/feed/hub.go): the hub row a viewer may read
+-- (its owner's or a Public one; a moderator any) and its enabled sources.
+CREATE TYPE "UserHubSourceType" AS ENUM ('User', 'Model', 'ModelVersion', 'Collection', 'Tag');
+
+CREATE TABLE "UserHub" (
+  id                    integer PRIMARY KEY,
+  "userId"              integer NOT NULL,
+  availability          "Availability" NOT NULL DEFAULT 'Private',
+  "forcedBrowsingLevel" integer NOT NULL DEFAULT 0
+);
+
+CREATE TABLE "UserHubSource" (
+  id         integer PRIMARY KEY,
+  "hubId"    integer NOT NULL REFERENCES "UserHub" (id) ON DELETE CASCADE,
+  type       "UserHubSourceType" NOT NULL,
+  "targetId" integer NOT NULL,
+  enabled    boolean NOT NULL DEFAULT true,
+  exclude    boolean NOT NULL DEFAULT false,
+  "groupKey" integer,
+  UNIQUE ("hubId", type, "targetId")
 );

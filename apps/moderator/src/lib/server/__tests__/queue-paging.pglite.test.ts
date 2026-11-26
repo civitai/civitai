@@ -25,7 +25,8 @@ const { getImageTagReviewQueue } = await import('../image-tags.service');
 const { getImageRatingRequests } = await import('../image-rating-review.service');
 
 const SCHEMA = `
-CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" TEXT, "type" TEXT, data JSONB);
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" "EntityType", "type" TEXT, data JSONB);
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT,
@@ -131,6 +132,18 @@ describe('keyset queues reach every item exactly once', () => {
     );
 
     expect(seen).toEqual(NEWEST_FIRST);
+  });
+
+  it("never sends the uploader's legacy profile image on the image review queue", async () => {
+    await db.exec(`UPDATE "User" SET image = 'legacy-key' WHERE id = 7`);
+    await insertImages(`"needsReview"`, () => `'minor'`);
+    const { items } = await getImageReviewQueue({
+      needsReview: 'minor',
+      browsingLevel: 1,
+      limit: 4,
+    });
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) expect(item).not.toHaveProperty('userImage');
   });
 
   it.each(LIMITS)('reported image queue at %i per page', async (limit) => {

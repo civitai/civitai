@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The reward module loads `../base.reward`, which builds a buzz client, redis
-// handles and prom collectors at import time. Mocked to the surface base.reward
-// touches so this suite can collect; only `$query` is under test.
+// `../base.reward` builds a buzz client, redis handles and prom collectors at import time.
+// Mocked to the surface base.reward touches so this suite can collect; only `$query` is under test.
 const h = vi.hoisted(() => ({ query: vi.fn() }));
 
 vi.mock('~/server/clickhouse/client', () => ({
@@ -13,7 +12,7 @@ vi.mock('~/server/prom/client', () => ({
   rewardGivenCounter: { inc: vi.fn() },
   clickhouseFailSoftCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: vi.fn(),
   getMultipliersForUser: vi.fn(async () => ({ rewardsMultiplier: 1 })),
   getTransactionByExternalId: vi.fn(async () => null),

@@ -15,6 +15,7 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 const idleInput: SemanticImageSearchInput = { query: '', browsingLevel: 0, limit: 50 };
 
@@ -104,8 +105,7 @@ export function useSearchPeriod(searching: boolean) {
   return params.period ? undefined : searchPeriodChange(read())?.write;
 }
 
-/** The images feed answered by the semantic search, in the shape the feed renders. */
-/** `videos`: the search runs on the video index (`searchVideos`), as the /videos feed does. */
+/** The images feed answered by the semantic search, in the shape the feed renders; `videos` searches the video index. */
 export function useSemanticImageFeed(
   input: SemanticImageSearchInput | undefined,
   { videos = false }: { videos?: boolean } = {}
@@ -130,5 +130,10 @@ export function useSemanticImageFeed(
 
   const { items } = useFeedImageItems(data?.pages, { isRefetching: rest.isRefetching });
 
-  return { ...rest, images: items, correctedQuery: data?.pages[0]?.correctedQuery };
+  return {
+    ...rest,
+    images: items,
+    correctedQuery: data?.pages[0]?.correctedQuery,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
+  };
 }

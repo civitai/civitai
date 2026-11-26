@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
@@ -38,7 +39,8 @@ func NewCreatorBoardID(boardColor string) string {
 type NewCreatorBoards struct {
 	Cache  redis.UniversalClient
 	Prefix string
-	// Now is the staleness clock (nil = time.Now; tests replace it).
+	// Now is the staleness clock (nil = clock.Now, eval mode's frozen instant or the wall clock; tests
+	// replace it).
 	Now func() time.Time
 }
 
@@ -54,7 +56,7 @@ func (b *NewCreatorBoards) UserIDs(ctx context.Context, boardID string) ([]int, 
 	if err != nil {
 		return nil, fallback.Wrap("new-creators-read-failed", err)
 	}
-	now := time.Now
+	now := clock.Now
 	if b.Now != nil {
 		now = b.Now
 	}

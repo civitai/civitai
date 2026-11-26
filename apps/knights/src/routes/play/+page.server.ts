@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import { openItem } from '$lib/server/feed-token';
 import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
 import { metrics } from '$lib/server/metrics';
+import { readPress, type PressTiming } from '$lib/press';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
@@ -14,7 +15,7 @@ import {
 import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
-import { isRank, RANK_RULES } from '$lib/server/ranks';
+import type { RankPerks } from '$lib/rank-up';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
@@ -37,8 +38,12 @@ import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { lockoutFor, voteGate } from '$lib/server/vote-limits/runtime';
+import { pauseFor, voteGate } from '$lib/server/vote-limits/runtime';
+import type { Pause } from '$lib/server/vote-limits/gate';
+import { limitedMessage } from '$lib/vote-limit-copy';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { skillChecks } from '$lib/server/skill-check/runtime';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
@@ -53,6 +58,7 @@ import {
 } from '$lib/server/apprenticeship/apprenticeship.service';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
+import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -80,20 +86,15 @@ const APPRENTICE_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-type Perks = { goldMultiplier: number };
-type RankPerks = {
-  levels?: string;
-  goldMultiplier?: number;
-  /** The perks of the rank the player held before, for the rank-up's "what changed". */
-  previous?: Perks;
-};
 type Notice = ProgressNotice &
-  RankPerks & { milestone?: string; milestoneLevel?: number; levelGold?: number };
+  Partial<RankPerks> & {
+    levels?: string;
+    milestone?: string;
+    milestoneLevel?: number;
+    levelGold?: number;
+  };
 
-const perksOf = (rank: string): Perks | undefined =>
-  isRank(rank) ? { goldMultiplier: RANK_RULES[rank].goldMultiplier } : undefined;
-
-// A rank-up notice says what the rank brings and what it replaces; a level-up carries nothing more.
+// A rank-up notice says what the new rank brings; a level-up carries nothing more.
 function withRankPerks(progress: ProgressNotice | null): Notice | null {
   if (progress?.kind !== 'rank') return progress;
   const perks = rankTable().find((entry) => entry.rank === progress.rank);
@@ -101,8 +102,9 @@ function withRankPerks(progress: ProgressNotice | null): Notice | null {
   return {
     ...progress,
     levels: perks.levels,
+    voteWeight: perks.voteWeight,
     goldMultiplier: perks.goldMultiplier,
-    previous: perksOf(progress.fromRank),
+    dailyGoldCap: perks.dailyGoldCap,
   };
 }
 
@@ -120,6 +122,7 @@ async function acolyteLevelCard(progress: Notice | null, userId: number): Promis
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
+  if (await inquisitorQueueOpen(locals.user)) return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
@@ -148,7 +151,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
   // An Acolyte whose career reset is due falls through to the queue page, which serves nothing until it lands.
   if (status.rank === 'Acolyte' && !muted && !(status.smites >= status.maxSmites)) {
-    const view = await getApprentice(db, locals.user.id);
+    const view = await getApprentice(db, locals.user.id, {
+      skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+    });
     if (view.kind !== 'not-acolyte') {
       return {
         mode: 'apprentice' as const,
@@ -160,8 +165,8 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   }
 
   // A muted player sees their record but is served nothing to judge: no item, no vote-pace lookup.
-  const lockedUntil =
-    !muted && !locals.user.isModerator ? await lockoutFor(db, locals.user.id, now) : null;
+  const pause = !muted && !locals.user.isModerator ? await pauseFor(db, locals.user.id, now) : null;
+  const lockedUntil = pause?.until ?? null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
   // A muted Acolyte keeps the apprentice meter (read only: the apprenticeship serves them nothing to answer).
@@ -188,6 +193,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     resetPending,
     apprenticeMeter,
     lockoutSeconds,
+    lockoutWindowSeconds: pause?.windowSeconds ?? null,
     question: picked?.question ?? null,
     item: picked?.item ?? null,
   };
@@ -212,11 +218,21 @@ async function standingOnCard(form: FormData, userId: number) {
   }
 }
 
-const limitedFailure = (until: Date) =>
+const limitedFailure = ({ until, windowSeconds }: Pause) =>
   fail(429, {
-    message: 'You are judging too quickly. Rest a little.',
+    message: limitedMessage(windowSeconds),
     lockoutSeconds: Math.max(1, Math.ceil((until.getTime() - queueDeps.now().getTime()) / 1000)),
   });
+
+/** The pause a refusal answers: the one `/play` shows, so refused votes never give a different countdown. */
+async function pauseEnd(userId: number, refused: Pause): Promise<Pause> {
+  try {
+    return (await pauseFor(db, userId, queueDeps.now(), refused)) ?? refused;
+  } catch (error) {
+    console.error('knights: could not read the vote lockout', { userId, error });
+    return refused;
+  }
+}
 
 const busyFailure = () =>
   fail(429, { message: 'The Order is catching up. Try that answer again.', busy: true });
@@ -228,15 +244,14 @@ type ParsedVote = {
   answer: string;
   blockReason: string | null;
   itemId: number;
+  press: PressTiming;
 };
 
 /** Reads and checks the form without touching the database, so only real vote attempts reach the limits. */
-async function readVote({
-  request,
-  locals,
-}: VoteEvent): Promise<
-  { failure: ActionFailure<{ message: string }>; reason?: string } | ParsedVote
-> {
+async function readVote(
+  { request, locals }: VoteEvent,
+  arrivedAt: number
+): Promise<{ failure: ActionFailure<{ message: string }>; reason?: string } | ParsedVote> {
   const form = await request.formData();
   const token = form.get('item');
   const answer = form.get('answer');
@@ -270,20 +285,26 @@ async function readVote({
   if (ref.kind === 'yesno' && blockReason !== null) {
     return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
-  return { ref, answer, blockReason, itemId };
+  return { ref, answer, blockReason, itemId, press: readPress(form, arrivedAt) };
 }
 
 const kindOf = (ref: ParsedVote['ref']) =>
   ref.kind === 'hidden' ? 'hidden_check' : ref.kind === 'yesno' ? 'yesno' : 'rating';
 
 /** Logs and meters a refused vote under its ledger item id: a hidden check's is the negative of its reference id. */
-function refused(reason: string, vote: Pick<ParsedVote, 'ref' | 'itemId'> | null, userId: number) {
+function refused(
+  reason: string,
+  vote: Pick<ParsedVote, 'ref' | 'itemId'> | null,
+  userId: number,
+  press?: PressTiming
+) {
   metrics.voteRefused(
     reason,
     vote ? kindOf(vote.ref) : 'unknown',
     userId,
     vote ? (vote.ref.kind === 'hidden' ? hiddenItemId(vote.itemId) : vote.itemId) : null,
-    'vote'
+    'vote',
+    press
   );
 }
 
@@ -301,7 +322,10 @@ async function creditLate(userId: number, itemId: number, answer: string): Promi
   }
 }
 
-async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
+async function recordVote(
+  { ref, answer, blockReason, itemId, press }: ParsedVote,
+  { locals }: VoteEvent
+) {
   try {
     const before =
       ref.kind === 'hidden' || !(await signalsEnabled().catch(() => false))
@@ -317,6 +341,8 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
               answer,
               blockReason,
               isModerator: locals.user.isModerator,
+              serveJudged: (await skillChecks()).serveJudged,
+              skillChecks: (await skillChecks()).enabled,
             },
             // Graded in this request, so the warning or smite shows on the answer that caused it.
             { ...queueDeps, grade: { settings: await hiddenSettings(), ...resetDeps } }
@@ -341,10 +367,14 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
     void announceMoves(db, before);
     if (result.status === 'limited') {
       refused('limited', { ref, itemId }, locals.user.id);
-      return limitedFailure(result.until);
+      return limitedFailure(
+        await pauseEnd(locals.user.id, { until: result.until, windowSeconds: null })
+      );
     }
     if (result.status === 'rejected') {
-      refused(result.reason, { ref, itemId }, locals.user.id);
+      // Press timing only on not-open: it tells a vote that waited too long from an item that settled under the player.
+      const timing = result.reason === 'not-open' ? press : undefined;
+      refused(result.reason, { ref, itemId }, locals.user.id, timing);
       const watchCounted =
         ref.kind === 'queue' &&
         STALE_REASONS.has(result.reason) &&
@@ -365,8 +395,10 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 }
 
 export const actions: Actions = {
+  ...inquisitorActions,
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
+    const arrivedAt = queueDeps.now().getTime();
     const userId = event.locals.user.id;
     if ((await getStanding(db, userId)).muted) {
       refused('muted', null, userId);
@@ -376,7 +408,7 @@ export const actions: Actions = {
       refused('no-consent', null, userId);
       return consentFailure();
     }
-    const parsed = await readVote(event);
+    const parsed = await readVote(event, arrivedAt);
     if ('failure' in parsed) {
       if (parsed.reason) refused(parsed.reason, null, userId);
       return parsed.failure;
@@ -386,7 +418,10 @@ export const actions: Actions = {
     });
     if (!('until' in outcome)) return outcome;
     refused(outcome.busy ? 'busy' : 'limited', parsed, userId);
-    return outcome.busy ? busyFailure() : limitedFailure(outcome.until);
+    if (outcome.busy) return busyFailure();
+    // A running cooldown already covers the shown end (pauses are frozen into it): only a fresh trip reads the ledger.
+    const refusedPause = { until: outcome.until, windowSeconds: outcome.windowSeconds ?? null };
+    return limitedFailure(outcome.tripped ? await pauseEnd(userId, refusedPause) : refusedPause);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
@@ -494,7 +529,10 @@ export const actions: Actions = {
           version: typeof version === 'string' ? version : null,
           answer,
         },
-        apprenticeDeps
+        {
+          ...apprenticeDeps,
+          skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
+        }
       );
       if (result.status === 'rejected') {
         return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });

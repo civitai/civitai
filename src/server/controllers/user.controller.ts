@@ -1,3 +1,4 @@
+import { showcaseOptOutChanged } from '~/shared/constants/version-showcase.constants';
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
@@ -22,7 +23,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
@@ -50,6 +51,7 @@ import type {
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBanUser,
+  ToggleMuteInput,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -751,8 +753,10 @@ export const updateUserHandler = async ({
         unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
       );
 
-    if (sidebarBackgroundId) payloadCosmeticIds.push(sidebarBackgroundId);
-    else if (sidebarBackgroundId === null)
+    // Only the redesigned profile draws a sidebar background, so only its customizer sets one.
+    const sidebarId = ctx.features?.profileRedesign ? sidebarBackgroundId : undefined;
+    if (sidebarId) payloadCosmeticIds.push(sidebarId);
+    else if (sidebarId === null)
       unequipPromises.push(
         unequipCosmeticByType({ userId: id, type: CosmeticType.SidebarBackground })
       );
@@ -899,7 +903,7 @@ export const deleteUserHandler = async ({
     return user;
   } catch (error) {
     // The same refusal as a restricted account, so the two cannot be told apart.
-    if (error instanceof LegalHoldError)
+    if (error instanceof MemorializedAccountError)
       throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1337,14 +1341,17 @@ export const toggleMuteHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: ToggleMuteInput;
   ctx: ProtectedContext;
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const { id } = input;
-  const user = await getUserById({ id, select: { muted: true } });
+  const { id, setTo } = input;
+  // The primary decides the direction: a replica behind the last mute or unmute would flip it back.
+  const user = await getUserById({ id, select: { muted: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (setTo === user.muted)
+    return { id, muted: user.muted, changed: false as const, sessionInvalidated: undefined };
 
   const updatedUser = user.muted
     ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
@@ -1363,7 +1370,7 @@ export const toggleMuteHandler = async ({
     });
   }
 
-  return updatedUser;
+  return { ...updatedUser, changed: true as const };
 };
 
 export const toggleBanHandler = async ({
@@ -1383,10 +1390,11 @@ export const toggleBanHandler = async ({
 
   const updatedUser = await toggleBan({ ...input, userId: ctx.user.id, isModerator: true });
 
-  await ctx.track.userActivity({
-    type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
-    targetUserId: updatedUser.id,
-  });
+  if (updatedUser.changed)
+    await ctx.track.userActivity({
+      type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
+      targetUserId: updatedUser.id,
+    });
 
   return updatedUser;
 };
@@ -1763,6 +1771,12 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+    if (showcaseOptOutChanged(restSettings, restInput)) {
+      const { bustVersionShowcasesForUser } = await import(
+        '~/server/services/version-showcase.service'
+      );
+      await bustVersionShowcasesForUser(id);
+    }
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
     // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and

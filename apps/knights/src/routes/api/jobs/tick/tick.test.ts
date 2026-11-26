@@ -12,6 +12,12 @@ const retryPendingConversions = vi.hoisted(() => vi.fn());
 const runLabelPass = vi.hoisted(() => vi.fn());
 const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
+const sweepMissingReviews = vi.hoisted(() => vi.fn());
+const closeIneligibleReviews = vi.hoisted(() => vi.fn());
+const expireBeyondCap = vi.hoisted(() => vi.fn());
+const inquisitorOn = vi.hoisted(() => ({ value: true }));
+const runTagReview = vi.hoisted(() => vi.fn());
+const writeBackTagReviews = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
@@ -27,9 +33,24 @@ vi.mock('$lib/server/conversion/label-pass', () => ({ runLabelPass }));
 vi.mock('$lib/server/shop/purchase', () => ({ retryPendingPurchases }));
 vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({}) }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
-vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
+vi.mock('$lib/server/inquisitor/review.service', () => ({
+  sweepMissingReviews,
+  closeIneligibleReviews,
+  expireBeyondCap,
+}));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({ enabled: true, poolCap: 500, serveJudged: false, maxOpen: 5000 }),
+}));
+vi.mock('$lib/server/yesno/tag-review', () => ({ runTagReview }));
+vi.mock('$lib/server/yesno/tag-writeback', () => ({ writeBackTagReviews }));
+vi.mock('$lib/server/yesno/runtime', () => ({
+  yesNoConfig: () => ({ maxAgeDays: 14, tagReview: false }),
+  tagReviewPort: () => ({}),
+}));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
-vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
+vi.mock('$lib/server/queue/runtime', () => ({
+  queueDeps: { mirrorXp: undefined, inquisitorQueue: () => inquisitorOn.value },
+}));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
 const resetDeps = vi.hoisted(() => ({} as { acolyteSmites?: () => boolean }));
 vi.mock('$lib/server/smites/runtime', () => ({ resetDeps }));
@@ -83,8 +104,24 @@ beforeEach(() => {
   retryPendingPurchases.mockResolvedValue({ retried: 0, granted: 0, failed: 0 });
   closeStrandedYesNo.mockReset();
   closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
+  runTagReview.mockReset();
+  runTagReview.mockResolvedValue({ created: 0, ruled: 0, ended: 0, failed: 0 });
+  writeBackTagReviews.mockReset();
+  writeBackTagReviews.mockResolvedValue({
+    applied: 0,
+    skipped: 0,
+    waiting: 0,
+    failed: 0,
+    exhausted: 0,
+  });
   runLabelPass.mockReset();
   runLabelPass.mockResolvedValue({ done: true, labelsWritten: 0, labelFailures: 0 });
+  sweepMissingReviews.mockReset();
+  sweepMissingReviews.mockResolvedValue(0);
+  closeIneligibleReviews.mockReset();
+  closeIneligibleReviews.mockResolvedValue(0);
+  expireBeyondCap.mockReset();
+  expireBeyondCap.mockResolvedValue(0);
   tickItemFailures.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -93,6 +130,9 @@ describe('POST /api/jobs/tick', () => {
   it('reports both steps when both succeed', async () => {
     escalateExpired.mockResolvedValue({ escalated: 2, toInquisitor: 1, extended: 3 });
     applyPendingResolutions.mockResolvedValue({ applied: 1 });
+    sweepMissingReviews.mockResolvedValue(2);
+    closeIneligibleReviews.mockResolvedValue(3);
+    expireBeyondCap.mockResolvedValue(4);
 
     const response = await run();
 
@@ -110,12 +150,43 @@ describe('POST /api/jobs/tick', () => {
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
+      tagReviewCreated: 0,
+      tagReviewRuled: 0,
+      tagReviewWrittenBack: 0,
+      tagReviewWaiting: 0,
       expiredSmites: 0,
       resets: 0,
       conversionsRetried: 0,
       purchasesRetried: 0,
+      reviewsOpened: 2,
+      reviewsClosed: 3,
+      reviewsExpired: 4,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
+  });
+
+  it('runs no review sweep while the inquisitor queue is switched off', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    inquisitorOn.value = false;
+    try {
+      expect(await (await run()).json()).toMatchObject({
+        reviewsOpened: 0,
+        reviewsClosed: 0,
+        reviewsExpired: 0,
+      });
+      expect(sweepMissingReviews).not.toHaveBeenCalled();
+      expect(closeIneligibleReviews).not.toHaveBeenCalled();
+    } finally {
+      inquisitorOn.value = true;
+    }
+  });
+
+  it('fails the tick when the inquisitor review sweep throws', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    sweepMissingReviews.mockRejectedValue(new Error('db down'));
+    expect((await run()).status).toBe(500);
   });
 
   it('closes items a moderator ruled before paying out, reports them, and counts one that failed', async () => {
