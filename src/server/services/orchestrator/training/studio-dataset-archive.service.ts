@@ -52,6 +52,8 @@ export type StudioDatasetArchive =
       status: 'archived';
       items: number;
       skipped: number;
+      /** Of `skipped`, the items the orchestrator withholds: left out of the zip, never rated. */
+      blocked?: number;
       /** Every item of an approved run is in the zip, each rated: the only zip that can be
        *  shared. */
       complete?: boolean;
@@ -135,11 +137,17 @@ const EXT_BY_MIME: Record<string, string> = {
   'audio/ogg': 'ogg',
 };
 
+const MEDIA_EXTENSIONS = new Set([...Object.values(EXT_BY_MIME), 'jpeg']);
+
+/**
+ * A blob's name in the zip: by its media type, else by a media extension on its key, else `bin`.
+ * Never `txt`: a blob named like a caption would be read back as one and never rated.
+ */
 function extensionFor(key: string, contentType: string | null): string {
-  const fromKey = key.includes('.') ? key.split('.').pop() : undefined;
-  if (fromKey && /^[a-z0-9]{1,5}$/i.test(fromKey)) return fromKey.toLowerCase();
   const mime = contentType?.split(';')[0].trim().toLowerCase();
-  return (mime && EXT_BY_MIME[mime]) || 'bin';
+  if (mime && EXT_BY_MIME[mime]) return EXT_BY_MIME[mime];
+  const fromKey = key.includes('.') ? key.split('.').pop()?.toLowerCase() : undefined;
+  return fromKey && MEDIA_EXTENSIONS.has(fromKey) ? fromKey : 'bin';
 }
 
 const BLOCKED_BLOB_PATH = '/v2/consumer/blobs/blocked/';
@@ -248,14 +256,21 @@ async function uploadDatasetZip({
 
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
+  let blocked = 0;
   let captions = 0;
   const rated: RatedEntry[] = [];
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
-      // A blocked blob never counts as rated, whatever level it carries.
-      rated.push({ mediaType: 'image', nsfwLevel: blob.blockedReason ? null : blob.nsfwLevel });
+      // A blocked blob is left out, with its caption: what came back is the placeholder. It counts
+      // as unrated, so the zip is never fully rated.
+      if (blob.blockedReason) {
+        rated.push({ mediaType: 'image', nsfwLevel: null });
+        blocked += 1;
+        continue;
+      }
+      rated.push({ mediaType: 'image', nsfwLevel: blob.nsfwLevel });
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -283,6 +298,7 @@ async function uploadDatasetZip({
     url: url.split('?')[0],
     bytes: archive.pointer(),
     included,
+    blocked,
     captions,
     ...datasetRating(rated),
     skipped: items.length - included,
@@ -376,6 +392,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       status: 'archived',
       items: stored.included,
       skipped: stored.skipped,
+      ...(stored.blocked > 0 && { blocked: stored.blocked }),
       complete:
         stored.skipped === 0 &&
         stored.included === total &&

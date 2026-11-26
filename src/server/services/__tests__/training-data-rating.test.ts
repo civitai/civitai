@@ -98,3 +98,41 @@ describe('extractionRating', () => {
     expect(rating).toEqual({ nsfwLevel: 1, fullyRated: false });
   });
 });
+
+// The rating probe as a fixture (synthetic): the extraction step's output for a zip holding an
+// image named 04.txt, a real caption, and an image the orchestrator could not level. Civitai reads
+// the step's typing; this pins what it does with each kind.
+describe('extractionRating over a captioned zip', () => {
+  afterEach(() => mockHeadBlob.mockReset());
+
+  const image04 = {
+    air: 'urn:air:other:other:orchestrator:blob@04.txt',
+    mediaType: 'image',
+    blob: { nsfwLevel: 'pg' },
+  };
+  const caption = { air: 'urn:air:other:other:orchestrator:blob@01.txt', mediaType: 'text' };
+  const unleveled = { air: 'urn:air:other:other:orchestrator:blob@02.png', mediaType: 'image' };
+
+  it('rates the caption-named image and skips the real caption: fully rated', async () => {
+    expect(await extractionRating({ entries: [image04, caption] }, 'wf-1')).toEqual({
+      nsfwLevel: NsfwLevel.PG,
+      fullyRated: true,
+    });
+    expect(mockHeadBlob).not.toHaveBeenCalled();
+  });
+
+  it('counts an image with no level, from the output or its header, as unrated', async () => {
+    mockHeadBlob.mockResolvedValue({ response: new Response(null) });
+    expect(await extractionRating({ entries: [image04, caption, unleveled] }, 'wf-1')).toEqual({
+      nsfwLevel: NsfwLevel.PG,
+      fullyRated: false,
+    });
+    expect(mockHeadBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a rejected entry as unrated', async () => {
+    expect(
+      await extractionRating({ entries: [image04, caption], rejected: [{ air: 'x' }] }, 'wf-1')
+    ).toEqual({ nsfwLevel: NsfwLevel.PG, fullyRated: false });
+  });
+});
