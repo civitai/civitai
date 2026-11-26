@@ -54,7 +54,7 @@ function renderCard(chain: string, ticker: string, network: string | null = null
       chain={chain}
       onCurrencySelect={vi.fn()}
     />,
-    { user: { isModerator: false } }
+    { user: { id: 7, isModerator: false } }
   );
 }
 
