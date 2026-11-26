@@ -2763,7 +2763,8 @@ export const REDIS_SYS_KEYS = {
     USER_CUT: 'session:user-cut',
     // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
     FAMILY_LIVE: 'session:family-live',
-    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser. Written only once
+    // the browser has two families or an account list; a single-family browser has none.
     DEVICE_FAMILIES: 'session:device-families',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
