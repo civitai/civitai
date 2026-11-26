@@ -18,7 +18,8 @@ import type {
   MembershipResyncResult,
 } from '$lib/membership-extend';
 import type { CompGiftPreview, CompGiftResult, CompGiftTier } from '$lib/membership-gift-comp';
-import { civitaiAppUrl } from './civitai-url';
+import { tryCivitaiInternalUrl } from './civitai-url';
+import { mainAppHostFetch } from './main-app-fetch';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
@@ -74,6 +75,9 @@ export type ActionResult =
     }
   | { ok: false; error: string; retryAfterSeconds?: number };
 
+const INTERNAL_URL_UNSET =
+  'The main app is unreachable from here: CIVITAI_INTERNAL_URL is not set.';
+
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
  *  the client, so every one of these is called from a form action, never proxied. */
 async function callMainApp(
@@ -84,10 +88,11 @@ async function callMainApp(
   const token = env.WEBHOOK_TOKEN;
   if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
 
-  const base = civitaiAppUrl();
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return { ok: false, error: INTERNAL_URL_UNSET };
   const query = new URLSearchParams({ ...params, token });
   try {
-    const res = await fetch(`${base}${path}?${query}`, {
+    const res = await mainAppHostFetch(`${base}${path}?${query}`, {
       method: 'POST',
       signal: AbortSignal.timeout(15_000),
     });
@@ -155,7 +160,8 @@ async function postJson(opts: {
   /** `'session'` only: forward this cookie instead of the current request's. */
   cookie?: string;
 }): Promise<JsonResult> {
-  const base = civitaiAppUrl();
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return { ok: false, error: INTERNAL_URL_UNSET, requestNeverSent: true };
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   let url = `${base}${opts.path}`;
 
@@ -204,7 +210,7 @@ async function postJson(opts: {
   }
 
   try {
-    const res = await fetch(url, {
+    const res = await mainAppHostFetch(url, {
       method: isGet ? 'GET' : 'POST',
       headers,
       ...(isGet ? {} : { body: JSON.stringify(opts.body) }),
@@ -1617,7 +1623,7 @@ async function inChunks(
   /** Attribution for the chunk that just landed. Runs INSIDE the loop on purpose: written after it,
    *  a later chunk's timeout returns early and the images already actioned end up with no record of
    *  who actioned them — the exact thing the per-image rows exist to prevent. */
-  onSent?: (chunk: number[]) => Promise<void>
+  onSent?: (chunk: number[], body: Record<string, unknown>) => Promise<void>
 ): Promise<CountResult> {
   let affected = 0;
   for (let i = 0; i < imageIds.length; i += CHUNK) {
@@ -1630,7 +1636,7 @@ async function inChunks(
     const count = countOf(result.body, ['images']);
     affected += count;
     // A chunk that matched nothing gets no attribution: those ids do not exist.
-    if (count > 0) await onSent?.(chunk);
+    if (count > 0) await onSent?.(chunk, result.body);
   }
   return { ok: true, count: affected };
 }
@@ -1736,6 +1742,18 @@ export async function removeAllImagesForUser(input: {
   return { ok: true, count: countOf(result.body, ['images']) };
 }
 
+/** The ids of `chunk` that `/api/mod/restore-images` restored. It skips one only the CSAM review may
+ *  restore and keeps one blocked while its owner is deleted; neither is a restore to log. A response
+ *  from before `restored` existed falls back to its `skipped` list. */
+export function restoredIdsOf(chunk: number[], body: Record<string, unknown>) {
+  if (Array.isArray(body.restored)) {
+    const restored = new Set(body.restored);
+    return chunk.filter((id) => restored.has(id));
+  }
+  const skipped = new Set(Array.isArray(body.skipped) ? body.skipped : []);
+  return chunk.filter((id) => !skipped.has(id));
+}
+
 export async function restoreImages(input: {
   imageIds: number[];
   moderatorId: number;
@@ -1752,9 +1770,9 @@ export async function restoreImages(input: {
         { imageIds: chunk, userId: input.moderatorId },
         'Image restore'
       ),
-    (chunk) =>
+    (chunk, body) =>
       Promise.all(
-        chunk.map((id) =>
+        restoredIdsOf(chunk, body).map((id) =>
           recordModActivity({
             userId: input.moderatorId,
             entityType: 'image',

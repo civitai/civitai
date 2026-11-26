@@ -60,8 +60,7 @@ import {
 } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useServerDomains } from '~/providers/AppProvider';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -129,8 +128,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   } = useQueryBuzz(availableTypes);
   const { color: buzzColor } = useBuzzCurrencyConfig(selectedType);
   const features = useFeatureFlags();
-  const serverDomains = useServerDomains();
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   const yellowOnGreen = features.isGreen && selectedType === 'yellow';
 
   const { addRun, removeRun, updateRun } = trainingStore;
@@ -1577,14 +1575,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <div className="mt-3 flex items-center gap-3">
             <Button
               component="a"
-              href={syncAccount(`//${serverDomains.red}${router.asPath}`)}
+              href={redHref()}
               onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                 e.preventDefault();
-                window.open(
-                  syncAccount(`//${serverDomains.red}${router.asPath}`),
-                  '_blank',
-                  'noopener,noreferrer'
-                );
+                window.open(redHref(), '_blank', 'noopener,noreferrer');
               }}
               target="_blank"
               rel="noreferrer nofollow"

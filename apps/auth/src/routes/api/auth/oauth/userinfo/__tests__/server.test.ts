@@ -24,10 +24,21 @@ function userinfo() {
   } as never);
 }
 
-function token(tokenScope: bigint, user: { bannedAt?: Date | null; deletedAt?: Date | null } = {}) {
+function token(
+  tokenScope: bigint,
+  user: { bannedAt?: Date | null; deletedAt?: Date | null } = {},
+  tokenScopeWide: bigint | null = null
+) {
   h.tables.User = [{ id: 1, deletedAt: null, bannedAt: null, ...user }];
   h.tables.ApiKey = [
-    { key: 'hash:civitai_x', type: 'Access', userId: 1, tokenScope, expiresAt: null },
+    {
+      key: 'hash:civitai_x',
+      type: 'Access',
+      userId: 1,
+      tokenScope,
+      tokenScopeWide,
+      expiresAt: null,
+    },
   ];
 }
 
@@ -41,6 +52,15 @@ describe('oauth/userinfo', () => {
     const res = await userinfo();
     expect(res.status).toBe(401);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
+  });
+
+  // Deliberate (civitai/civitai#10562): the runner consent copy says it "reads your profile and
+  // email", so a runner token answers here. Do not fold it back into the client-credentials refusal.
+  it('answers for a recipe-runner token (the runner bit lives in the wide column)', async () => {
+    token(TokenScope.UserRead, {}, TokenScope.UserRead | TokenScope.RunnerMint);
+    const res = await userinfo();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ sub: '1', username: 'owner' });
   });
 
   it("refuses a banned user's token", async () => {

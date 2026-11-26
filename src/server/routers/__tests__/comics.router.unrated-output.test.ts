@@ -633,6 +633,38 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
+  it('gives no key of a selection whose image was blocked since, and keeps a clean one', async () => {
+    const unlock = async (blockedFor: string | null) => {
+      selectedPanel();
+      givenWorkflow(bothRated, { allowMatureContent: true });
+      dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+      const stored = dbMock.dbWrite.comicPanel.update.getMockImplementation()!;
+      dbMock.dbWrite.comicPanel.update.mockImplementation((async (args: never) => ({
+        ...(await stored(args)),
+        imageUrl: 'picked',
+        image: {
+          userId: USER_ID,
+          nsfwLevel: 1,
+          modelRestricted: false,
+          tosViolation: false,
+          needsReview: null,
+          ingestion: blockedFor ? 'Blocked' : 'Scanned',
+          blockedFor,
+        },
+      })) as never);
+      const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+      return {
+        imageUrl: result.imageUrl,
+        keyed: ('candidates' in result ? result.candidates ?? [] : []).filter(
+          (c) => 'key' in c && c.key
+        ).length,
+        picked: result.candidateImages.includes('picked'),
+      };
+    };
+    expect(await unlock('moderated')).toEqual({ imageUrl: null, keyed: 0, picked: false });
+    expect(await unlock(null)).toEqual({ imageUrl: 'picked', keyed: 2, picked: true });
+  });
+
   it('collects the slots of an unlock already paid for, without charging again', async () => {
     selectedPanel();
     givenWorkflow(bothRated, { allowMatureContent: true }, { unlocked: true });
@@ -852,7 +884,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     });
 
     it('by duplicatePanel', async () => {
-      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(source as never);
+      dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(source as never);
 
       await caller()
         .duplicatePanel({ panelId: PANEL_ID })
@@ -862,7 +894,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     });
 
     it('by duplicateChapter', async () => {
-      dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+      dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
         name: 'one',
         project: { userId: USER_ID },
         panels: [source],
@@ -928,5 +960,145 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
       /already unlocked/
     );
     expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('comics.pollPanelStatus - a selection whose image was blocked since', () => {
+  // The owner selected "picked" (an Image was made for it), a moderator blocked that Image, and the
+  // owner set the panel back to Generating, so the next poll reuses the stored candidate keys.
+  const poll = async (pickedBlocked: boolean) => {
+    givenPanel({
+      status: 'Generating',
+      imageUrl: 'picked',
+      imageId: 5,
+      image: {
+        userId: USER_ID,
+        nsfwLevel: 1,
+        modelRestricted: false,
+        ingestion: pickedBlocked ? 'Blocked' : 'Scanned',
+        blockedFor: pickedBlocked ? 'moderated' : null,
+      },
+      metadata: { quantity: 2, candidateImages: [{ key: 'picked' }, { key: 'other' }] },
+    });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'pg' })]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue(
+      (pickedBlocked
+        ? [
+            {
+              url: 'picked',
+              userId: USER_ID,
+              nsfwLevel: 1,
+              modelRestricted: false,
+              ingestion: 'Blocked',
+              blockedFor: 'moderated',
+            },
+          ]
+        : []) as never
+    );
+    const result = await caller().pollPanelStatus({ panelId: PANEL_ID });
+    return {
+      imageUrl: result.imageUrl,
+      keys: ('candidates' in result ? result.candidates ?? [] : []).map((c) =>
+        'key' in c ? c.key : null
+      ),
+      candidateImages: 'candidateImages' in result ? result.candidateImages : undefined,
+    };
+  };
+
+  it('never emits the blocked key, and still emits a clean one', async () => {
+    expect(await poll(true)).toEqual({
+      imageUrl: null,
+      keys: ['other'],
+      candidateImages: ['other'],
+    });
+    expect(await poll(false)).toEqual({
+      imageUrl: 'picked',
+      keys: ['picked', 'other'],
+      candidateImages: ['picked', 'other'],
+    });
+  });
+});
+
+describe('selectPanelImage and addReferenceImages return media only as the block allows', () => {
+  const blockedRow = (url: string) => ({
+    url,
+    userId: USER_ID,
+    nsfwLevel: 1,
+    modelRestricted: false,
+    ingestion: 'Blocked',
+    blockedFor: 'moderated',
+  });
+  /** A candidate key whose image is blocked, and a context panel key stored on generation. */
+  const metadata = () => ({
+    candidateImages: [{ key: 'panel-key' }, { key: 'blocked-key' }],
+    previousPanelImageUrl: 'ctx-blocked',
+    referenceImages: [{ url: 'ctx-blocked', width: 1, height: 1 }],
+  });
+
+  it('selecting an image returns no blocked candidate key and no context key, and keeps a clean key', async () => {
+    const select = async (blocked: boolean) => {
+      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({
+        id: PANEL_ID,
+        projectId: 11,
+        workflowId: null,
+        prompt: 'p',
+        metadata: metadata(),
+        chapter: { project: { userId: USER_ID } },
+      } as never);
+      dbMock.dbWrite.image.findMany
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce(
+          (blocked ? [blockedRow('blocked-key'), blockedRow('ctx-blocked')] : []) as never
+        );
+      dbMock.dbWrite.comicPanel.update.mockResolvedValue({
+        id: PANEL_ID,
+        status: 'Ready',
+        imageUrl: 'panel-key',
+        metadata: metadata(),
+      } as never);
+      const panel = await caller().selectPanelImage({
+        panelId: PANEL_ID,
+        selectedImageKey: 'panel-key',
+      });
+      const meta = panel.metadata as { candidateImages: { key?: string }[] };
+      return {
+        keys: meta.candidateImages.map((c) => c.key ?? null),
+        leaksContext: JSON.stringify(meta).includes('ctx-blocked'),
+      };
+    };
+    expect(await select(true)).toEqual({ keys: ['panel-key', null], leaksContext: false });
+    expect(await select(false)).toEqual({
+      keys: ['panel-key', 'blocked-key'],
+      leaksContext: false,
+    });
+  });
+
+  it('adding images to a reference returns none that is blocked', async () => {
+    dbMock.dbRead.comicReference.findUnique.mockResolvedValue({ id: 11, userId: USER_ID } as never);
+    dbMock.dbWrite.comicReferenceImage.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.comicReference.update.mockResolvedValue({
+      id: 11,
+      userId: USER_ID,
+      images: [
+        { position: 0, image: { ...blockedRow('ref-blocked'), id: 1, width: 1, height: 1 } },
+        {
+          position: 1,
+          image: {
+            ...blockedRow('ref-clean'),
+            ingestion: 'Scanned',
+            blockedFor: null,
+            id: 2,
+            width: 1,
+            height: 1,
+          },
+        },
+      ],
+    } as never);
+    const ref = await caller().addReferenceImages({
+      referenceId: 11,
+      images: [{ url: '0a1b2c3d-1111-4222-8333-444455556666', width: 64, height: 64 }],
+    });
+    expect(ref.images.map((i) => i.image.url)).toEqual(['ref-clean']);
+    expect(ref.images[0]?.image).not.toHaveProperty('blockedFor');
   });
 });

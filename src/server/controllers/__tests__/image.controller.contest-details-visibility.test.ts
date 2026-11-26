@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * `image.getContestCollectionDetails` is public. An image the viewer may not open by id must get
@@ -98,7 +99,24 @@ describe('getImageContestCollectionDetailsHandler', () => {
       id: IMAGE_ID,
       userId: 900,
       isModerator: true,
+      ownerSeesHeld: true,
     });
+  });
+
+  it("gives the owner's view of a held image on a session, not on a scoped key", async () => {
+    mocks.assertImageVisibleToViewer.mockResolvedValue({ id: IMAGE_ID });
+    await getImageContestCollectionDetailsHandler({ input: { id: IMAGE_ID }, ctx: ctx(VIEWER) });
+    expect(mocks.assertImageVisibleToViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerSeesHeld: true })
+    );
+
+    await getImageContestCollectionDetailsHandler({
+      input: { id: IMAGE_ID },
+      ctx: { user: VIEWER, apiKeyId: 5, tokenScope: TokenScope.MediaRead } as unknown as HandlerCtx,
+    });
+    expect(mocks.assertImageVisibleToViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerSeesHeld: false })
+    );
   });
 
   it('an error other than not-found is not swallowed into an empty answer', async () => {

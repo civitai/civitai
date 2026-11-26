@@ -31,6 +31,8 @@ const MIGRATIONS = [
   '20271125120000_knights_legacy_player_days',
   '20271128120000_knights_player_question_settings',
   '20271128120100_knights_unsure',
+  '20271130120000_knights_queue_item_verdict_labelled',
+  '20271130120100_knights_queue_item_verdict_unlabelled_idx',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -40,12 +42,23 @@ const MIGRATIONS = [
   )
 );
 
-export const IMAGE_GATE_MIGRATION = fileURLToPath(
-  new URL(
-    '../../../../packages/civitai-db-schema/prisma/migrations/20271127120000_knights_image_gate/migration.sql',
-    import.meta.url
-  )
+const migrationPath = (name: string) =>
+  fileURLToPath(
+    new URL(
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`,
+      import.meta.url
+    )
+  );
+
+/** Creates the gate's partition function and first view; `IMAGE_GATE_MIGRATION` replaces the view after it. */
+const IMAGE_GATE_BASE_MIGRATION = migrationPath('20271127120000_knights_image_gate');
+
+export const IMAGE_GATE_REVOKES_MIGRATION = migrationPath(
+  '20271127120100_knights_image_gate_revokes'
 );
+
+/** The migration carrying the current "KnightsImageGate" SQL. */
+export const IMAGE_GATE_MIGRATION = migrationPath('20271202120000_knights_image_gate_shared_file');
 
 /** Owns the tables and applies the image gate migration, as the tables' owner does in production. Not a superuser. */
 export const TABLE_OWNER = 'knights_table_owner';
@@ -85,6 +98,7 @@ async function applyImageGate(pg: PGlite) {
     END $$;
     SET ROLE ${TABLE_OWNER};`);
   try {
+    await pg.exec(readFileSync(IMAGE_GATE_BASE_MIGRATION, 'utf8'));
     await pg.exec(readFileSync(IMAGE_GATE_MIGRATION, 'utf8'));
   } finally {
     await pg.exec('RESET ROLE');
@@ -123,7 +137,7 @@ CREATE TABLE "CsamReport" (
   "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]'
 );
-CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
+CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY,
   "minor" BOOLEAN NOT NULL DEFAULT false,

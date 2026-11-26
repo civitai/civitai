@@ -153,6 +153,7 @@ describe('Creator Studio "Who reacted" and reactions from before the lists launc
     } as never);
     expect(page?.reactors.map((r) => r.userId)).toEqual([OPTED_IN, OWNER, AFTER]);
     expect(page?.counts.Like).toBe(5);
+    expect(page?.hidden).toBe(2);
   });
 
   it('lists the same older reaction once its reactor opts in', async () => {
@@ -182,6 +183,7 @@ describe('Creator Studio lists leave out a user who opted out', () => {
     } as never);
     expect(page?.reactors.map((r) => r.userId)).toEqual([LISTED, OPTED_BACK_IN]);
     expect(page?.counts.Like).toBe(3);
+    expect(page?.hidden).toBe(1);
   });
 
   it('"Who collected": absent from the list, still in the total', async () => {
@@ -280,6 +282,7 @@ describe('Creator Studio "Who reacted" leaves out reactors the reaction totals d
       const p = await page(entity, entity === 'image' ? NC_IMAGE : NC_ARTICLE);
       expect(p?.reactors.map((r) => r.userId)).toEqual([COUNTED]);
       expect(p?.counts.Like).toBe(1);
+      expect(p?.hidden).toBe(0);
     }
   );
 

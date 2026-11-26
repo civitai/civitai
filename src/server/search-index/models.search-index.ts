@@ -6,7 +6,10 @@ import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
@@ -235,8 +238,9 @@ export async function appendCommunityCoverImages(
     ),
   ]);
   // Like every image in the document, a featured cover listed on a report is left out.
-  const listed = await reportListedImageIds(
-    missing.flatMap((cover) => isShowcaseCoverImage(community, cover)?.id ?? [])
+  const listed = await getReportListedHiddenImageIds(
+    missing.flatMap((cover) => isShowcaseCoverImage(community, cover)?.id ?? []),
+    SIGNED_OUT_REPORT_LISTED
   );
   for (const cover of missing) {
     const image = isShowcaseCoverImage(community, cover);
@@ -307,20 +311,6 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
   );
 }
 
-/** Of these image ids, the ones listed on a CSAM report, whatever its state. */
-export async function reportListedImageIds(
-  imageIds: number[],
-  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
-) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await db.$queryRaw<{ id: number }[]>`
-    SELECT i.id FROM "Image" i
-    WHERE i.id = ANY(${imageIds}::int[])
-      AND (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
-  `;
-  return new Set(rows.map((r) => r.id));
-}
-
 /** Each version's images less the listed ones. */
 export function withoutListedImages<E extends { images: { id: number }[] }>(
   byVersion: Record<number, E>,
@@ -354,8 +344,9 @@ export async function holdSearchShowcase<E extends { images: { id: number; nsfwL
       )
     )
   );
-  const listed = await reportListedImageIds(
-    Object.values(held).flatMap((entry) => entry.images.map((image) => image.id))
+  const listed = await getReportListedHiddenImageIds(
+    Object.values(held).flatMap((entry) => entry.images.map((image) => image.id)),
+    SIGNED_OUT_REPORT_LISTED
   );
   return withoutListedImages(held, listed);
 }

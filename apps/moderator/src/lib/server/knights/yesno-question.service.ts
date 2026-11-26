@@ -197,6 +197,16 @@ function checkedPrompt(raw: string): { prompt: string } | { error: string } {
   return prompt.length > YESNO_QUESTION_MAX ? { error: TOO_LONG } : { prompt };
 }
 
+/** The image a yes/no question shows; none when the question is gone. */
+export async function yesNoQuestionImageIds(id: number): Promise<number[]> {
+  const row = await dbWrite
+    .selectFrom('KnightsQueueItem')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? [row.imageId] : [];
+}
+
 export async function retireYesNoQuestion(input: {
   id: number;
   by: number;

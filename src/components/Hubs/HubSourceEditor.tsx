@@ -16,8 +16,9 @@ import {
   kindColor,
   removeHubGroup,
   removeHubTag,
+  sourceModelStateLabel,
 } from '~/components/Hubs/hub.utils';
-import type { HubSourceScope } from '~/server/schema/user-hub.schema';
+import type { HubSourceScope, SourceModelState } from '~/server/schema/user-hub.schema';
 import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -35,6 +36,8 @@ export type HubSourceValue = {
    * match; null is a group of one, which is every source that predates the column.
    */
   groupKey?: number | null;
+  /** The owner's own deleted model, or another user's unpublished one. Sent to the hub owner only. */
+  modelState?: SourceModelState;
 };
 
 /**
@@ -171,6 +174,12 @@ function SourceChip({
       >
         {hubSourceKindLabel(first.type)}
       </Badge>
+
+      {first.modelState && (
+        <Badge size="xs" variant="outline" color="gray" className="shrink-0">
+          {sourceModelStateLabel[first.modelState]}
+        </Badge>
+      )}
 
       {addControl}
 

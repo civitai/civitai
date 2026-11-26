@@ -66,8 +66,9 @@ beforeAll(async () => {
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
       poi BOOLEAN NOT NULL DEFAULT false, minor BOOLEAN NOT NULL DEFAULT false, "userId" INTEGER NOT NULL DEFAULT 5,
       "postId" INTEGER, metadata JSONB NOT NULL DEFAULT '{}', "scanJobs" JSONB, "pHash" BIGINT,
-      "tosViolation" BOOLEAN NOT NULL DEFAULT false
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false, url TEXT
     );
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
     CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER);
     CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);

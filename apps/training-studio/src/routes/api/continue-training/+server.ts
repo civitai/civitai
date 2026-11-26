@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { logToAxiom } from '$lib/server/axiom';
 import { requireToken } from '$lib/server/token';
 import {
   continueTraining,
@@ -7,7 +8,7 @@ import {
   MatureRepriceError,
   type ContinueOpts,
 } from '$lib/server/train';
-import { TrainingBatchValidationError } from '$lib/train-core';
+import { DatasetUnreadableError, TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
 import { isKohyaAllowed } from '$lib/server/flipt';
@@ -87,6 +88,15 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     if (err instanceof RunWithheldError) error(403, err.message);
     if (err instanceof MatureRepriceError)
       error(409, { message: err.message, matureCount: err.matureCount });
+    if (err instanceof DatasetUnreadableError) {
+      void logToAxiom({
+        name: 'training-studio-dataset-unreadable',
+        type: 'warning',
+        userId: locals.user.id,
+        payload: { unreadable: err.unreadable },
+      });
+      error(503, err.message);
+    }
     throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');

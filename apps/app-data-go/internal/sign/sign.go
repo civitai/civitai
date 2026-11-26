@@ -10,6 +10,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -25,6 +27,28 @@ const (
 // carries those the viewer's request carried, and the signature covers them, so the site can apply
 // its region rules to values only this service could have sent.
 var RegionHeaders = []string{"cf-ipcountry", "cf-region-code", "x-isuk"}
+
+// regionValueRE is one region header's value, as the edge sets them (a country, a region code, a
+// flag).
+var regionValueRE = regexp.MustCompile(`^[A-Za-z0-9-]{1,16}$`)
+
+// ReadRegion is the values of RegionHeaders h carries, indexed as RegionHeaders, each "" when
+// absent; bad names the first header that is repeated or not one well-formed value ("" when none
+// is), and then values is zero. The one reading of the edge's region, for a forward and a
+// subscription alike.
+func ReadRegion(h http.Header) (values [3]string, bad string) {
+	for i, name := range RegionHeaders {
+		vals := h.Values(name)
+		switch {
+		case len(vals) == 0:
+		case len(vals) > 1 || !regionValueRE.MatchString(vals[0]):
+			return [3]string{}, name
+		default:
+			values[i] = vals[0]
+		}
+	}
+	return values, ""
+}
 
 // RegionLine is the canonical string's sixth line: the values of RegionHeaders, in that order, joined
 // by ",", each empty when absent; the empty string when all are absent. values is indexed as

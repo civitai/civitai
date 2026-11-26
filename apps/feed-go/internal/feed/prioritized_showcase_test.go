@@ -12,9 +12,9 @@ import (
 
 // getAllImages reads the version's curated showcase for a prioritizedUserIds request with a
 // modelVersionId (getCarouselShowcaseIds, src/server/services/image.service.ts) and, curated, serves
-// that list in its order. Not ported: the guard hands a curated version, a failed read (both
-// ShowcaseCurated), an uncached entry (ShowcaseUnknown) or a stale one (ShowcaseStale) to Node
-// (DESIGN.md §16.9).
+// that list in its order. Not ported: the guard hands a curated version (ShowcaseCurated), an
+// uncached entry (ShowcaseUnknown) or a stale one (ShowcaseStale) to Node (DESIGN.md §16.9); a failed
+// read is TestServeInfinitePrioritizedShowcaseReadFailure's.
 func TestServeInfinitePrioritizedCuratedShowcase(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -135,5 +135,49 @@ func TestServeInfinitePrioritizedShowcaseMissComputed(t *testing.T) {
 	f.deps.Sources.(*fakeV1Sources).showcaseFrom = &hydrate.Sources{Packed: &hydrate.PackedReader{Redis: testkit.NewRedis()}}
 	if _, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{}); fallback.Reason(err) != "prioritized-showcase-miss" {
 		t.Errorf("no computation: reason %q (%v), want prioritized-showcase-miss", fallback.Reason(err), err)
+	}
+}
+
+// A failed read of the version's showcase entry, or (with the computation, no entry) of its lag flag,
+// is a read failure, never a curation or a miss: prioritized-showcase-miss-failed, nothing looked up
+// on the replica. A flag that is set stays the miss.
+func TestServeInfinitePrioritizedShowcaseReadFailure(t *testing.T) {
+	failing := func(key string) *testkit.Redis {
+		r := testkit.NewRedis()
+		r.KeyErr = func(k string) error {
+			if k == key {
+				return testkit.ErrDown
+			}
+			return nil
+		}
+		return r
+	}
+	flagged := testkit.NewRedis()
+	flagged.SetString("lag-helper:modelVersion:60", []byte("1"))
+	for _, c := range []struct {
+		name string
+		r    *testkit.Redis
+		want string
+	}{
+		{"the showcase GET fails", failing(hydrate.KeyVersionShowcase + ":60"), "prioritized-showcase-miss-failed"},
+		{"the lag flag read fails", failing("lag-helper:modelVersion:60"), "prioritized-showcase-miss-failed"},
+		{"the lag flag set", flagged, "prioritized-showcase-miss"},
+	} {
+		var bound [][]int
+		db := &testkit.DB{Routes: []testkit.Route{{Match: `FROM "ModelVersionShowcaseItem" WHERE "modelVersionId" = ANY($1::int[])`,
+			Rows: func(args []any) (*testkit.Rows, error) {
+				ids, _ := args[0].([]int)
+				bound = append(bound, ids)
+				return testkit.NewRows([]string{"?column?"}), nil
+			}}}}
+		f := newCarouselFixture(t)
+		f.rows = []RawImage{infRow(31, 700), infRow(30, 700)}
+		f.deps.Sources.(*fakeV1Sources).showcaseFrom = &hydrate.Sources{Packed: &hydrate.PackedReader{Redis: c.r}, Replica: db, Compute: &hydrate.MissCompute{}}
+		if _, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{}); fallback.Reason(err) != c.want {
+			t.Errorf("%s: reason %q (%v), want %q", c.name, fallback.Reason(err), err, c.want)
+		}
+		if len(bound) != 0 {
+			t.Errorf("%s: lookups bound %v, want none", c.name, bound)
+		}
 	}
 }

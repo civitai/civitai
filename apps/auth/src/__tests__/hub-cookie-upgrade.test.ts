@@ -337,6 +337,23 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     );
   });
 
+  // Regression: moving a browser writes no family record and leaves an existing one untouched, TTL included.
+  it('the move writes no family record, and leaves one already there as it is', async () => {
+    sharedSession();
+    const moved = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    expect((await visit(moved)).session).toMatchObject({ sub: '100', sid: 'j0' });
+    expect(moved.get(HOST())).toBeDefined();
+    expect(h.sys.sets.has(deviceFamiliesKey('dev-d'))).toBe(false);
+
+    sharedSession({ jti: 'j1' });
+    h.sys.sets.set(deviceFamiliesKey('dev-e'), new Set(['j1', 'spoke-fam']));
+    const second = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-e' });
+    expect((await visit(second)).session).toMatchObject({ sub: '100', sid: 'j1' });
+    expect(second.get(HOST_DEVICE())).toBe('dev-e');
+    expect([...h.sys.sets.get(deviceFamiliesKey('dev-e'))!].sort()).toEqual(['j1', 'spoke-fam']);
+    expect(h.sys.ttls.has(deviceFamiliesKey('dev-e'))).toBe(false);
+  });
+
   it('two tabs racing on the same token get one session', async () => {
     sharedSession();
     const a = jar({ [SHARED()]: J0 });

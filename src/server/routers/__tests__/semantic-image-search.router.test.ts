@@ -110,6 +110,23 @@ describe('semanticImageSearch router', () => {
     }
   );
 
+  // The moderator view of a refusal (refusedBy) follows the session's role alone.
+  it('takes no moderator view from the request input', async () => {
+    h.flagOn = true;
+    await caller().search({
+      query: 'fox',
+      refusedBy: 'query guard',
+      refused: true,
+      isModerator: true,
+      asModerator: true,
+      viewer_is_moderator: true,
+    } as never);
+    const args = h.search.mock.calls[0][0];
+    expect(args).toMatchObject({ asModerator: false, user: { isModerator: false } });
+    for (const key of ['refusedBy', 'refused', 'isModerator', 'asModerator', 'viewer_is_moderator'])
+      expect(Object.hasOwn(args.input, key)).toBe(false);
+  });
+
   it('refuses feedback from a signed-out visitor', async () => {
     h.flagOn = true;
     await expect(caller(null).feedback({ rating: 'up' })).rejects.toMatchObject({

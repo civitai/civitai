@@ -3210,6 +3210,14 @@ export interface FeaturePageCommentMirror {
   contentAt: Date;
   removeWantedAt: Date | null;
   restrictedAt: Date | null;
+  scanHiddenAt: Date | null;
+  scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
+  modHideSentAt: Date | null;
+  modHideOrigin: string | null;
+  liftGrantedAt: Date | null;
+  liftGrantedBy: number | null;
+  liftGrantedVersion: number | null;
   nextPushAt: Date | null;
   leaseUntil: Date | null;
   createdAt: Date;
@@ -5285,6 +5293,7 @@ export interface KnightsQueueItem {
   noEffect: string | null;
   meta: JsonValue | null;
   voteCount: number;
+  verdictLabelledValue: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -7418,6 +7427,7 @@ export interface ServiceDealFileEntry {
   scanStatus: ServiceDealFileScanStatus;
   failReason: string | null;
   createdAt: Date;
+  copyDeleteStartedAt: Date | null;
 }
 
 export interface ServiceDealTransaction {

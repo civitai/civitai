@@ -293,6 +293,53 @@ describe('updateUserProfile — a new cover image', () => {
   });
 });
 
+describe('updateUserProfile — a stored cover whose block refuses its owner the media', () => {
+  const save = (asModerator = false) =>
+    updateUserProfile({
+      userId: USER_ID,
+      sessionUserId: USER_ID,
+      asModerator,
+      bio: 'new bio',
+      // What the edit form sends back for a cover its read withheld.
+      coverImage: null,
+      sfwCoverImage: null,
+    } as never);
+  const written = () => (tx.userProfile.update.mock.calls[0] as any[])[0].data;
+
+  it.each(['tos', 'moderated'])('is kept by a bio-only save (blocked for %s)', async (reason) => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      coverImage: { ingestion: 'Blocked', blockedFor: reason },
+      sfwCoverImage: { ingestion: 'Blocked', blockedFor: reason },
+    } as never);
+    await save();
+
+    expect(written().coverImage).toBeUndefined();
+    expect(written().sfwCoverImage).toBeUndefined();
+    expect(written().bio).toBe('new bio');
+  });
+
+  it('is cleared by a moderator, whose read showed it', async () => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      coverImage: { ingestion: 'Blocked', blockedFor: 'tos' },
+      sfwCoverImage: null,
+    } as never);
+    await save(true);
+
+    expect(written().coverImage).toEqual({ disconnect: true });
+  });
+
+  it('is cleared when the cover was one the owner could see (control)', async () => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      coverImage: { ingestion: 'Scanned', blockedFor: null },
+      sfwCoverImage: { ingestion: 'Blocked', blockedFor: 'AiNotVerified' },
+    } as never);
+    await save();
+
+    expect(written().coverImage).toEqual({ disconnect: true });
+    expect(written().sfwCoverImage).toEqual({ disconnect: true });
+  });
+});
+
 describe('updateUserProfile — links', () => {
   it('updates an existing link only on the profile being saved', async () => {
     await updateUserProfile({

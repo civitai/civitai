@@ -80,6 +80,7 @@ const PACKAGE_EXPORTS = {
   './child-safety-case': './src/child-safety-case.db.ts',
   './profile-picture-clear': './src/profile-picture-clear.db.ts',
   './access-token': './src/access-token.db.ts',
+  './recipe-runner': './src/recipe-runner.db.ts',
   './test-harness': './src/test/compile-harness.ts',
   './test/image-uses': './src/test/image-uses.ts',
 };

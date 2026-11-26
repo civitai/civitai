@@ -216,6 +216,19 @@ describe('moderator writes to an image that is a profile picture', () => {
     expect(bustedKeys()).toContain(avatarKey);
   });
 
+  it("a re-rate that leaves User.image alone still evicts the owner's session", async () => {
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+
+    expect((await ownerRow()).image).toBe('https://cdn.example/avatar-key/width=96');
+    expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
+  });
+
+  it('a re-rate of an image that is nobody’s picture evicts no session', async () => {
+    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+
+    expect(bustedKeys().filter((key) => key.startsWith(`${REDIS_KEYS.USER.SESSION}:`))).toEqual([]);
+  });
+
   it('an image delete evicts it, though the row naming the avatar is gone', async () => {
     await deleteImages([AVATAR_ID]);
 

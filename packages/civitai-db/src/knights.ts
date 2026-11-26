@@ -1,7 +1,11 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageKnownSql } from '@civitai/shared/held-media';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldImageKnownSql,
+  sharedFileHeldImageSql,
+} from '@civitai/shared/held-media';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
 
@@ -63,8 +67,9 @@ export const SERVABLE_IMAGE_CONTENT_MARKER = '/* servable-image-content */';
 /**
  * The content half of `servableImage`, independent of the post's publish state and privacy: a rated still image with
  * no block marker, no review hold, no real-person or minor flag (those go to the moderators' own queues), no CSAM flag or
- * held owner (`heldImageSql`), no listing on a CSAM report, no ToS violation, an uploader who is not deleted, and no
- * model or version on its post that is deleted or unpublished for a violation. Sweeps close items and retire references
+ * held owner (`heldImageSql`), no listing on a CSAM report, no other image row or moderator-deleted row on the same file
+ * that is CSAM-held or listed (`sharedFileHeldImageSql`), no ToS violation, an uploader who is not deleted, and no model
+ * or version on its post that is deleted or unpublished for a violation. Sweeps close items and retire references
  * over a failure here. Some of these states can lift (a hold, a ToS flag, an unpublish for a violation) and nothing
  * reopens what they closed, by design; a state that should only hide belongs in `imageSourceVisible`. Keep every clause
  * true or false, never NULL: the queue sweep reads `NOT servableImageContent` while other sweeps test membership, and a
@@ -86,6 +91,7 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     // A clean image's nullable columns make the held check NULL, not false.
     sql<SqlBool>`NOT ${sql.raw(heldImageKnownSql('img'))}`,
     sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
+    sql<SqlBool>`NOT ${sql.raw(sharedFileHeldImageSql('img'))}`,
     eb.not(
       eb.exists(
         eb

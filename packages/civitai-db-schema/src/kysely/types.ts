@@ -3358,6 +3358,14 @@ export type FeaturePageCommentMirror = {
   contentAt: Generated<Timestamp>;
   removeWantedAt: Timestamp | null;
   restrictedAt: Timestamp | null;
+  scanHiddenAt: Timestamp | null;
+  scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
+  modHideSentAt: Timestamp | null;
+  modHideOrigin: string | null;
+  liftGrantedAt: Timestamp | null;
+  liftGrantedBy: number | null;
+  liftGrantedVersion: number | null;
   nextPushAt: Timestamp | null;
   leaseUntil: Timestamp | null;
   createdAt: Generated<Timestamp>;
@@ -4076,6 +4084,11 @@ export type KnightsQueueItem = {
    * Yes/no items only: answers so far; serving finishes questions that are under way first.
    */
   voteCount: Generated<number>;
+  /**
+   * The settled value the label pass has finished with: recorded as its verdict label, or skipped for good (image not
+   * servable or gone, or refused by the label store too often). Null until then.
+   */
+  verdictLabelledValue: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -6008,6 +6021,10 @@ export type ServiceDealFileEntry = {
   scanStatus: Generated<ServiceDealFileScanStatus>;
   failReason: string | null;
   createdAt: Generated<Timestamp>;
+  /**
+   * Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+   */
+  copyDeleteStartedAt: Timestamp | null;
 };
 export type ServiceDealFilePurge = {
   id: Generated<number>;

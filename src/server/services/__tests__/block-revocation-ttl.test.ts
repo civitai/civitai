@@ -33,6 +33,12 @@ const MINT_PER_KIND: Record<Kind, Parameters<typeof BlockTokenService.sign>[0]> 
   default: { ...baseInput, scopes: ['models:read:self'] },
   settings: { ...baseInput, scopes: ['block:settings:read'] },
   dev: { ...baseInput, scopes: ['models:read:self'], dev: true },
+  runner: {
+    ...baseInput,
+    scopes: ['ai:write:budgeted'],
+    buzzBudget: 40,
+    runner: { runId: 'run_ttl' },
+  },
 };
 
 /** `exp - iat` off the real signed JWT — what the token is actually worth. */

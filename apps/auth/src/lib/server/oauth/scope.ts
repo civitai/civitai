@@ -1,4 +1,5 @@
 import {
+  ALL_SCOPES,
   apiKeyScopeColumns,
   CLIENT_CREDENTIALS_MAX_SCOPE,
   CLIENT_CREDENTIALS_ONLY_SCOPES,
@@ -6,6 +7,7 @@ import {
   NON_USER_SCOPES,
   parseTokenScope,
   readApiKeyScope,
+  RUNNER_ONLY_SCOPES,
   TokenScope,
   tokenScopeLabels,
 } from '@civitai/auth/token-scope';
@@ -20,6 +22,11 @@ export { hasScope };
 /** Whether `requested` carries a scope only the `client_credentials` grant may mint. */
 export function carriesClientCredentialsOnlyScope(requested: bigint): boolean {
   return (requested & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n;
+}
+
+/** Whether `scope` carries a recipe-runner-only scope; refused wherever a path does not admit it. */
+export function carriesRunnerOnlyScope(scope: bigint): boolean {
+  return (scope & RUNNER_ONLY_SCOPES) !== 0n;
 }
 
 /** Whether `requested` carries a scope no grant acting for a user may mint. */
@@ -137,7 +144,9 @@ export function parseScopeRequest(raw: unknown): ScopeRequest | null {
     } else if (Object.hasOwn(OIDC_SCOPE_BITS, token)) {
       scope |= OIDC_SCOPE_BITS[token];
     } else if (Object.hasOwn(TokenScope, token) && token !== 'None') {
-      scope |= TokenScope[token as keyof typeof TokenScope];
+      const bit = TokenScope[token as keyof typeof TokenScope];
+      if ((bit & ~ALL_SCOPES) !== 0n) return null;
+      scope |= bit;
     } else {
       return null;
     }
@@ -153,7 +162,11 @@ export function parseScopeRequest(raw: unknown): ScopeRequest | null {
 export const SUPPORTED_SCOPE_NAMES: string[] = [
   'openid',
   ...Object.keys(OIDC_SCOPE_BITS),
-  ...Object.keys(TokenScope).filter((name) => name !== 'None' && name !== 'WorkerRegister'),
+  ...Object.entries(TokenScope)
+    .filter(
+      ([name, bit]) => name !== 'None' && name !== 'WorkerRegister' && (bit & ~ALL_SCOPES) === 0n
+    )
+    .map(([name]) => name),
 ];
 
 /** Each labelled scope bit set in `scope`, with its label. */

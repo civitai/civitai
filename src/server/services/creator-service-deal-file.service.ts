@@ -26,6 +26,8 @@ import { holdServiceDealForReview } from '~/server/services/creator-service-escr
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import {
   dealReadyToDeliver,
+  entryImageGone,
+  fileImageGone,
   liveFile,
   SCANNED_FILE_KINDS,
 } from '~/server/services/creator-service-deal-file-sql';
@@ -533,8 +535,8 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     await tx.$queryRaw`
       SELECT 1 FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int FOR UPDATE OF e`;
     // An image that passed has no more use for its copy.
-    const copies = await tx.$queryRaw<{ imageId: number }[]>`
-      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+    const copies = await tx.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT e."id", e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
         AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
     // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below must depend
@@ -549,10 +551,7 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
   });
 
   const { file } = removed;
-  await clearDeletedCopies(
-    await deleteImages(removed.copies.map(({ imageId }) => imageId)),
-    file.id
-  );
+  await deleteEntryCopies(removed.copies);
   // An upload never completed still sits at the uploader's key, which they can write to: the
   // server keeps its own copy instead.
   if (isUploaderKey(file.s3Key)) await keepServerCopy(await getBucket(), file.id, file.s3Key);
@@ -583,13 +582,53 @@ async function deleteImages(imageIds: number[]) {
   return gone;
 }
 
-/** Entries stop pointing at copies that are gone: deleted now, or by an earlier run. */
-export function clearDeletedCopies(imageIds: number[], fileId: number) {
-  return dbWrite.$executeRaw`
-    UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
-    WHERE e."imageId" IS NOT NULL AND e."fileId" = ${fileId}::int
-      AND (e."imageId" IN (${Prisma.join(imageIds.length ? imageIds : [-1])})
-        OR NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId"))`;
+/**
+ * Marks entries whose copies a delete is about to remove, so a retry can tell its own delete from one
+ * made elsewhere. Only a copy still there is marked: one already gone was not this delete's.
+ */
+export async function markCopyDeletes(entryIds: number[]) {
+  if (!entryIds.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" e SET "copyDeleteStartedAt" = now()
+    WHERE e."id" IN (${Prisma.join(entryIds)})
+      AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
+}
+
+/**
+ * Settles the marked entries a delete was asked for; returns the ids let go. An entry lets go of its
+ * copy when this delete removed it or an earlier try did (marked, and the image is gone); one no file
+ * owns goes with it. One whose copy still exists (kept for its case, or the delete failed) stays
+ * pointed and unmarked. An unmarked entry whose image is gone stays pointed (`fileImageGone`).
+ */
+export async function settleCopyDeletes(entryIds: number[], goneImageIds: number[]) {
+  if (!entryIds.length) return [];
+  const released = await dbWrite.$queryRaw<{ id: number }[]>`
+    WITH released AS (
+      SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
+      WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."imageId" IS NOT NULL
+        AND (e."imageId" IN (${Prisma.join(goneImageIds.length ? goneImageIds : [-1])})
+          OR (e."copyDeleteStartedAt" IS NOT NULL AND ${entryImageGone(Prisma.sql`e`)}))
+    ), dropped AS (
+      DELETE FROM "ServiceDealFileEntry" e USING released r
+      WHERE e."id" = r."id" AND r."fileId" IS NULL RETURNING e."id"
+    ), cleared AS (
+      UPDATE "ServiceDealFileEntry" e
+      SET "imageId" = NULL, "scanKey" = NULL, "copyDeleteStartedAt" = NULL
+      FROM released r WHERE e."id" = r."id" AND r."fileId" IS NOT NULL RETURNING e."id"
+    )
+    SELECT "id" FROM dropped UNION ALL SELECT "id" FROM cleared`;
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" e SET "copyDeleteStartedAt" = NULL
+    WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."copyDeleteStartedAt" IS NOT NULL
+      AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
+  return released.map(({ id }) => id);
+}
+
+/** Marks, deletes and settles these entries' scan copies; returns the entry ids let go. */
+async function deleteEntryCopies(entries: { id: number; imageId: number }[]) {
+  const ids = entries.map(({ id }) => id);
+  await markCopyDeletes(ids);
+  return settleCopyDeletes(ids, await deleteImages(entries.map(({ imageId }) => imageId)));
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -689,7 +728,6 @@ async function deleteFileObjects(
  * since: a rating mismatch, not a verdict on the content. It does not keep a removed file, and its
  * copy is deleted by the purge, with the file. `e` names the entry row.
  */
-// Keeps evidence, so it counts more than csamHeld, which only refuses serving: poi and ingestion too.
 export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
   ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
   AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
@@ -817,16 +855,13 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
     if (!deleted) continue;
     // A copy of an image refused only for its rating goes with its file. One that stays (kept for
     // its case) keeps the row, for the next run to judge again.
-    const copies = await dbWrite.$queryRaw<{ imageId: number }[]>`
-      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+    const copies = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT e."id", e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${file.id}::int AND e."imageId" IS NOT NULL
         AND ${entryOnlyOverLevel(Prisma.sql`e`)}`;
     if (copies.length) {
       if (!(await stillDeletable())) continue;
-      const ids = copies.map(({ imageId }) => imageId);
-      const gone = await deleteImages(ids);
-      await clearDeletedCopies(gone, file.id);
-      if (gone.length !== ids.length) continue;
+      if ((await deleteEntryCopies(copies)).length !== copies.length) continue;
     }
     const done = await dbWrite.$transaction(async (tx) => {
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
@@ -1055,6 +1090,7 @@ export async function listServiceDealFiles({
   isModerator,
   canReviewCsam = false,
   servableLevels,
+  moderatorFetch = false,
 }: {
   dealId: number;
   userId: number;
@@ -1063,6 +1099,8 @@ export async function listServiceDealFiles({
   canReviewCsam?: boolean;
   /** What this domain may show; a preview rated outside it is listed without its URL. */
   servableLevels: number;
+  /** The moderator dispute tool: `canDownload` answers for its download, as `resolveServiceDealFileDownload` does. */
+  moderatorFetch?: boolean;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -1086,6 +1124,7 @@ export async function listServiceDealFiles({
     ORDER BY f."round", f."id"`;
 
   const privileged = isSeller || isModerator;
+  const disputeReview = isModerator && moderatorFetch;
   // A removed file is for moderators who are not a party to the deal.
   const seesRemoved = isModerator && !isSeller && !isBuyer;
   return rows.flatMap((row): ListedFile[] => {
@@ -1106,7 +1145,7 @@ export async function listServiceDealFiles({
           canDownload:
             canReviewCsam &&
             !isUploaderKey(row.s3Key) &&
-            finalLevelGate(row, servableLevels, false) === 'served',
+            finalLevelGate(row, servableLevels, disputeReview) === 'served',
           removedAt: row.removedAt,
         },
       ];
@@ -1134,7 +1173,7 @@ export async function listServiceDealFiles({
           canDownload:
             row.status === 'Ready' &&
             (owner || cleared) &&
-            finalLevelGate(row, servableLevels, false, isBuyer) === 'served',
+            finalLevelGate(row, servableLevels, disputeReview, isBuyer) === 'served',
         },
       ];
     }
@@ -1149,7 +1188,9 @@ export async function listServiceDealFiles({
       row.status === 'Ready' &&
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
-    const levelGate = allowed ? finalLevelGate(row, servableLevels, false, isSeller) : 'refused';
+    const levelGate = allowed
+      ? finalLevelGate(row, servableLevels, disputeReview, isSeller)
+      : 'refused';
     const downloadable = levelGate === 'served';
     const lockedFinal = buyerOnly && row.kind === 'Final' && !allowed;
     const offDomain =
@@ -1214,9 +1255,14 @@ const finalLevelColumns = Prisma.sql`f."scannedEtag",
           OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE)) AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
+      -- Not entryImageGone: a rated entry whose copy was let go (imageId cleared) counts here too.
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone"`;
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
+      ${fileImageGone(Prisma.sql`f`)} AS "imageGone",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+          AND e."failReason" IS DISTINCT FROM ${SERVICE_FINAL_OVER_LEVEL_REASON}) AS "entryRefused"`;
 
 type FinalLevelFacts = {
   scannedEtag: string | null;
@@ -1226,14 +1272,17 @@ type FinalLevelFacts = {
   /** An image in it is blocked, for any reason. */
   imageBlocked: boolean;
   ratedImageGone: boolean;
+  /** An entry still points at an image that is gone, so nothing shows the image was not held. */
+  imageGone: boolean;
+  /** An entry failed its scan for a reason other than its rating. */
+  entryRefused: boolean;
 };
 
 /**
  * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
  * image, or a zip of them), goes only where that rating may be shown. The list and the download
- * share this gate; only the download passes `disputeReview`. `ownOriginal` is the uploader taking
- * back their own original, never the delivery copy. 'offDomain': rated, but outside this domain's
- * levels.
+ * share this gate; the dispute tool passes `disputeReview` to both. 'offDomain': rated, but outside
+ * this domain's levels.
  */
 function finalLevelGate(
   row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
@@ -1245,6 +1294,9 @@ function finalLevelGate(
   // A file of any kind held for CSAM or a minor goes only through the CSAM path, never this route,
   // rated or not. Its uploader still gets their own original back, unless an image in it is blocked.
   if (row.csamHeld && !(ownOriginal && !row.imageBlocked)) return 'refused';
+  // Fails closed: the entry's verdict outlives its image, and a gone image may have been held. An
+  // entry refused for anything but its rating also refuses its uploader's own original.
+  if (row.imageGone || (ownOriginal && row.entryRefused)) return 'refused';
   if (row.kind !== 'Final') return 'served';
   const video = isFinalVideoName(row.fileName);
   if (!video && row.contentLevel === null) return 'served';

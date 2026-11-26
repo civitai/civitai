@@ -51,6 +51,7 @@ import type {
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBanUser,
+  ToggleMuteInput,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -1330,14 +1331,17 @@ export const toggleMuteHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: ToggleMuteInput;
   ctx: ProtectedContext;
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const { id } = input;
-  const user = await getUserById({ id, select: { muted: true } });
+  const { id, setTo } = input;
+  // The primary decides the direction: a replica behind the last mute or unmute would flip it back.
+  const user = await getUserById({ id, select: { muted: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (setTo === user.muted)
+    return { id, muted: user.muted, changed: false as const, sessionInvalidated: undefined };
 
   const updatedUser = user.muted
     ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
@@ -1356,7 +1360,7 @@ export const toggleMuteHandler = async ({
     });
   }
 
-  return updatedUser;
+  return { ...updatedUser, changed: true as const };
 };
 
 export const toggleBanHandler = async ({
@@ -1376,10 +1380,11 @@ export const toggleBanHandler = async ({
 
   const updatedUser = await toggleBan({ ...input, userId: ctx.user.id, isModerator: true });
 
-  await ctx.track.userActivity({
-    type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
-    targetUserId: updatedUser.id,
-  });
+  if (updatedUser.changed)
+    await ctx.track.userActivity({
+      type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
+      targetUserId: updatedUser.id,
+    });
 
   return updatedUser;
 };

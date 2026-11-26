@@ -101,6 +101,14 @@ export type CollectionStream = {
   /** Every major's schema document, `@v1` first. */
   family: Array<{ urn: string; body: Record<string, unknown> }>;
   /**
+   * The collection's CURRENT major: the major a document written now is stamped with, by the
+   * document store's own rule (`currentCollectionMajors` over `manifestHistory`, in
+   * `doc-streams.ts` `collectionFamily`). The private and level streams name it in their `meta`
+   * as `currentMajor`, so app-data-go can read a collection at its current major when a read
+   * names none (`apps/app-data-go/internal/api/major.go`). Undefined when not known.
+   */
+  currentMajor?: number;
+  /**
    * Content levels are on for the app (`app-blocks-shared-doc-levels`): each document is also
    * gated on its own rating, at the audience's level (`audienceDocLevel`), so an unrated, pending
    * or above-level document is not sent.

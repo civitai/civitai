@@ -30,6 +30,13 @@ type SessionUser struct {
 	IsEarlyAdopter     bool
 	AppBuilderApproved bool
 	Onboarding         int
+	// BrowsingLevel and ShowNsfw are the saved `browsingLevel` (0 when absent or null) and `showNsfw`
+	// (true only when the boolean true) getServerBrowsingLevel reads off the session user.
+	// BrowsingPrefsUnread is set when either holds a value of another kind (a string, a fraction, a
+	// negative level): JavaScript's truthiness of it is not reproduced, so a reader falls back.
+	BrowsingLevel       int
+	ShowNsfw            bool
+	BrowsingPrefsUnread bool
 
 	// raw is the cached session entry, for the bearer checks that read more of it.
 	raw map[string]any
@@ -87,6 +94,15 @@ func IsModerationAccount(id int, username string, configuredID int) bool {
 // account, the request is signed out; the other slot's cookie is not tried, as getHubSession does not
 // try it.
 func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser, error) {
+	u, err := r.resolve(ctx, req)
+	if f, ok := ctx.Value(observerKey{}).(func(*SessionUser, error)); ok {
+		f(u, err)
+	}
+	return u, err
+}
+
+// resolve is Resolve without the observer (WithResolveObserver).
+func (r *Resolver) resolve(ctx context.Context, req *http.Request) (*SessionUser, error) {
 	if m, ok := ctx.Value(resolvedKey{}).(*resolved); ok {
 		return m.user, m.err
 	}
@@ -195,7 +211,29 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 		u.Banned = true
 	}
 	u.Memorialized, _ = m["memorialized"].(bool)
+	readBrowsingPrefs(u, m)
 	return u, nil
+}
+
+// readBrowsingPrefs fills the saved browsing level and showNsfw: a number (not a numeric string) that
+// is a non-negative integer for the level, a boolean for showNsfw; absent or nil reads as unset.
+func readBrowsingPrefs(u *SessionUser, m map[string]any) {
+	if v, ok := m["browsingLevel"]; ok && v != nil {
+		n, isInt := hydrate.Int(v)
+		if _, isStr := v.(string); isStr || !isInt || n < 0 {
+			u.BrowsingPrefsUnread = true
+		} else {
+			u.BrowsingLevel = n
+		}
+	}
+	if v, ok := m["showNsfw"]; ok && v != nil {
+		b, isBool := v.(bool)
+		if !isBool {
+			u.BrowsingPrefsUnread = true
+		} else {
+			u.ShowNsfw = b
+		}
+	}
 }
 
 // FixedCookieNames is a CookieNames that gives the same names for every host.

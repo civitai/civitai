@@ -180,7 +180,7 @@ export function materialEditBlockedReason(
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
-    ? 'name, source repository, issue tracker and content rating'
+    ? 'content rating'
     : ctx.connectClientId != null
     ? 'name, App URL, source repository, issue tracker, content rating and permission ' +
       'justifications (including offline access)'
@@ -227,6 +227,26 @@ export function materialEditBlockedReason(
       `NOTHING on this screen can be saved — not the tagline, description or category ` +
       `either. To edit anything, ${scopeWayOut}; the new permissions are then reviewed ` +
       `along with your changes.`
+    );
+  }
+
+  // 🔴 ON-SITE: the content rating is the only MATERIAL field this form can still change. The
+  // name, tagline, description and both links come from the app (`listingFieldsFromManifest`)
+  // and are never editable here, in any status, so they are neither "locked until republish" nor
+  // "editable now". The category comes from the app too: owners and editors (who read this notice)
+  // cannot change it here, and only a moderator may set it, on the live listing
+  // (`onsiteCategoryEditableByModerator`).
+  if (isOnsiteEdit(ctx)) {
+    const onsiteWayOut = isOwnerEdit(ctx)
+      ? `Republish the app from the Publishing tab first, then edit it — the edit is staged ` +
+        `for review.`
+      : `The app's owner has to republish it before it can be edited — the Publishing tab ` +
+        `that does it is theirs, not yours.`;
+    return (
+      `This app is unpublished, so its ${fields} is locked. Changing it needs moderator ` +
+      `review, and an unpublished listing has no way to reach it. ${onsiteWayOut} Its name, ` +
+      `tagline, description, source repository and issue tracker come from ` +
+      `block.manifest.json, and its category is set by the manifest or a moderator.`
     );
   }
 
@@ -355,6 +375,76 @@ export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
 }
 
 /**
+ * Do this listing's name, tagline, description, category and source-repository / issue-tracker
+ * links come from the app rather than from this form? PURE.
+ *
+ * True for an ON-SITE listing. The draft is minted from `block.manifest.json` at submit and every
+ * block-version approve re-syncs all of them (`buildListingScalarSync` and the issue-tracker
+ * sync), while an on-site revision apply copies assets only. So an edit here is either
+ * overwritten at the next approve or, on a live listing (staged on a revision), dropped. The form
+ * shows them read-only, `buildScalarPatch` never emits them, and the server refuses them
+ * (`assertNoOnsiteManifestPatch`). Off-site listings own them, so they stay editable. Inherits
+ * `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
+ */
+export function listingFieldsFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+  return isOnsiteEdit(ctx);
+}
+
+/**
+ * May THIS caller still change an on-site listing's category here? PURE.
+ *
+ * Only a MODERATOR, and only when the save writes the listing itself (`updateListing`): the
+ * operator's call made category read-only for on-site OWNERS and editors. A moderator's category
+ * fix on the live row is how a curated category reaches a listing before the app's next approved
+ * version (curation itself writes only the app). Not when the save goes to a revision draft (an
+ * approved listing with a shadow open): the on-site revision apply copies assets only and would
+ * drop it, so the server refuses it there.
+ */
+export function onsiteCategoryEditableByModerator(
+  ctx: Pick<ListingEditContext, 'kind' | 'role' | 'status' | 'shadowId'>
+): boolean {
+  return (
+    isOnsiteEdit(ctx) &&
+    ctx.role === 'moderator' &&
+    !(ctx.status === 'approved' && ctx.shadowId != null)
+  );
+}
+
+/** The explanation the read-only on-site link fields carry. */
+export const MANIFEST_LINK_FIELD_NOTE = {
+  sourceRepoUrl:
+    'Comes from "repository" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  issueTrackerUrl:
+    'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+} as const;
+
+/**
+ * The explanation the read-only on-site name / tagline / description / category fields carry.
+ *
+ * 🔴 CATEGORY IS NOT A STRAIGHT MANIFEST COPY, so its note does not say "change it there". The
+ * listing takes the APP's category (`AppBlock.category`) on every approve, and an approve copies
+ * the manifest's `category` onto the app only while the app has none, so a moderator's curated
+ * category (`setMarketplaceMeta`) survives version bumps. Once one is set, the manifest key no
+ * longer moves it.
+ */
+export const MANIFEST_COPY_FIELD_NOTE = {
+  name:
+    'Comes from "name" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  tagline:
+    'Comes from "tagline" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  description:
+    'Comes from "description" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  category:
+    'Comes from "category" in block.manifest.json while your app has no category yet; once ' +
+    'one is set, a moderator changes it. The listing takes it when a version is approved.',
+} as const;
+
+/**
  * The edit form's HEADER copy, by kind. PURE.
  *
  * 🔴 THIS FINISHES A PATTERN THAT WAS ALREADY HERE, it does not start one. The wizard
@@ -428,8 +518,13 @@ export function buildScalarPatch(
   const original = editContextToForm(ctx);
   const patch: UpdateListingPatchInput = {};
 
-  const name = current.name.trim();
-  if (name !== original.name.trim()) patch.name = name;
+  // 🔴 NEVER on an ON-SITE listing: name, tagline, description, category and both links come
+  // from the app (`listingFieldsFromManifest`), and the server refuses the keys outright.
+  const fromManifest = listingFieldsFromManifest(ctx);
+  if (!fromManifest) {
+    const name = current.name.trim();
+    if (name !== original.name.trim()) patch.name = name;
+  }
 
   // 🔴 NEVER patch `externalUrl` on an ON-SITE listing. Its CTA is its hosted page; an
   // external URL is not a field it has, and the edit form must not be able to write one
@@ -450,17 +545,22 @@ export function buildScalarPatch(
   // compares normalised forms. So re-saving `.../a/b` as `.../a/b/` does send a patch,
   // and the server correctly classifies it as no material change — an in-place no-op
   // write rather than a needless mod re-review.
-  const sourceRepoUrl = current.sourceRepoUrl.trim();
-  const originalSourceRepoUrl = original.sourceRepoUrl.trim();
-  if (sourceRepoUrl !== originalSourceRepoUrl) {
-    patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
-  }
+  //
+  // 🔴 NEVER on an ON-SITE listing, for either link: the manifest owns both
+  // (`listingFieldsFromManifest`), and the server refuses the key outright.
+  if (!fromManifest) {
+    const sourceRepoUrl = current.sourceRepoUrl.trim();
+    const originalSourceRepoUrl = original.sourceRepoUrl.trim();
+    if (sourceRepoUrl !== originalSourceRepoUrl) {
+      patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+    }
 
-  // Issue tracker / support link — the same rule as the source link: only when retyped, cleared
-  // with `null`, and the canonical comparison is the server's.
-  const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
-  if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
-    patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
+    // Issue tracker / support link — the same rule as the source link: only when retyped,
+    // cleared with `null`, and the canonical comparison is the server's.
+    const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+    if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
+      patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
+    }
   }
 
   // Beta status + note. Emitted ONLY when the author actually changed them, which is what
@@ -494,16 +594,21 @@ export function buildScalarPatch(
     }
   }
 
-  const tagline = current.tagline.trim();
-  const originalTagline = original.tagline.trim();
-  if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
+  if (!fromManifest) {
+    const tagline = current.tagline.trim();
+    const originalTagline = original.tagline.trim();
+    if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
 
-  const description = current.description.trim();
-  const originalDescription = original.description.trim();
-  if (description !== originalDescription)
-    patch.description = description.length > 0 ? description : null;
+    const description = current.description.trim();
+    const originalDescription = original.description.trim();
+    if (description !== originalDescription)
+      patch.description = description.length > 0 ? description : null;
+  }
 
-  if ((current.category ?? null) !== (original.category ?? null)) {
+  if (
+    (!fromManifest || onsiteCategoryEditableByModerator(ctx)) &&
+    (current.category ?? null) !== (original.category ?? null)
+  ) {
     patch.category = current.category ?? null;
   }
 

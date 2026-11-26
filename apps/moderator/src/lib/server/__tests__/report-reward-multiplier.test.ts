@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Axiom from '@civitai/axiom';
-import { REDIS_KEYS } from '@civitai/redis';
+import { keyHashSlot, REDIS_KEYS } from '@civitai/redis';
+import {
+  PostgresQueryCompiler,
+  type CompiledQuery,
+  type QueryId,
+  type RootOperationNode,
+} from 'kysely';
 
 /**
  * `rewardReportReporters` writes the `pending` buzzEvents row that IS the payout: the main app's
@@ -87,9 +93,48 @@ vi.mock('../db', () => ({
             wheresAre(wheres, 1) && has(wheres, 'enabled', '=', true) ? bonusEvents() : []
           )
         : chain(() => []),
+    getExecutor: () => ({
+      transformQuery: (node: unknown) => node,
+      compileQuery: (node: RootOperationNode, queryId: QueryId) =>
+        new PostgresQueryCompiler().compileQuery(node, queryId),
+      executeQuery: async (query: CompiledQuery) => ({ rows: subscriptionRowsFor(query) }),
+    }),
   },
   dbWrite: {},
 }));
+
+/**
+ * Postgres fallback for the tier, keyed by reporter: the `rewardsMultiplier` of their active
+ * subscription's product, or null for none. A reporter left out has no `User` row at all.
+ */
+let subscriptions = new Map<number, number | null>();
+/** When set, the multiplier lookup rejects with it, as a failed replica read would. */
+let subscriptionDbError: Error | undefined;
+const subscriptionQuery = vi.fn();
+/**
+ * Answers the multiplier lookup only when the compiled SQL keeps the clauses that decide who is a
+ * paying member and was asked for exactly the reporters the cache could not answer. The SQL text
+ * itself is pinned to the main app's by moderator-user-multipliers.parity.test.ts.
+ */
+function subscriptionRowsFor(query: CompiledQuery) {
+  subscriptionQuery(query.parameters);
+  if (subscriptionDbError) throw subscriptionDbError;
+  const text = query.sql.replace(/\s+/g, ' ');
+  const keepsRule =
+    text.includes(`cs.status IN ('active', 'trialing')`) &&
+    text.includes(`cs."currentPeriodEnd" >= now()`) &&
+    text.includes(`(p.metadata->>'rewardsMultiplier')::float as "rewardsMultiplier"`);
+  if (!keepsRule) return [];
+  return (query.parameters as number[])
+    .filter((id) => subscriptions.has(id))
+    .map((userId) => ({
+      userId,
+      rewardsIneligible: false,
+      rewardsMultiplier: subscriptions.get(userId) ?? null,
+      purchasesMultiplier: null,
+    }));
+}
+const GOLD = 4;
 
 const { rewardReportReporters } = await import('../rewards');
 
@@ -115,8 +160,12 @@ async function rowsFor({
   ineligible = [],
   unpaid,
   events,
+  subs = [],
 }: {
-  /** Ordered [reporterId, cached tier] pairs — an object would reorder integer keys. */
+  /**
+   * Ordered [reporterId, cached tier] pairs — an object would reorder integer keys. An Error tier
+   * makes that reporter's cache read reject with it.
+   */
   tiers: [number, unknown][];
   storedBonus: number;
   ineligible?: number[];
@@ -124,12 +173,19 @@ async function rowsFor({
   unpaid?: number[];
   /** Raw RewardsBonusEvent rows, when a case needs a window rather than a plain multiplier. */
   events?: unknown[];
+  /** [reporterId, product rewardsMultiplier] for reporters with an active subscription. */
+  subs?: [number, number | null][];
 }) {
   reporterIds = tiers.map(([id]) => id);
   redisGet.mockImplementation(async (key: string) => {
     const id = Number(key.split(':').pop());
-    return tiers.find(([tierId]) => tierId === id)?.[1];
+    const tier = tiers.find(([tierId]) => tierId === id)?.[1];
+    if (tier instanceof Error) throw tier;
+    return tier;
   });
+  // Every reporter exists in Postgres; only those in `subs` hold a subscription.
+  subscriptions = new Map(reporterIds.map((id) => [id, null]));
+  for (const [id, multiplier] of subs) subscriptions.set(id, multiplier);
   bonusEvents.mockReturnValue(events ?? bonus(storedBonus));
   ineligibleRows.mockReturnValue(ineligible.map((id) => ({ id })));
   await rewardReportReporters({ reportId: 1, reporterIds, unpaidReporterIds: unpaid });
@@ -151,23 +207,29 @@ async function rowFor({
   storedBonus,
   ineligible = false,
   events,
+  sub,
 }: {
   tier: unknown;
   storedBonus: number;
   ineligible?: boolean;
   events?: unknown[];
+  /** The product rewardsMultiplier of reporter 42's active subscription in Postgres. */
+  sub?: number;
 }) {
   const [row] = await rowsFor({
     tiers: [[42, tier]],
     storedBonus,
     ineligible: ineligible ? [42] : [],
     events,
+    subs: sub === undefined ? [] : [[42, sub]],
   });
   return row;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  subscriptions = new Map();
+  subscriptionDbError = undefined;
 });
 
 describe('rewardReportReporters for reporters the report marks as earning nothing', () => {
@@ -228,20 +290,147 @@ describe('rewardReportReporters multiplier', () => {
     expect(row.multiplier).toBe(0);
   });
 
-  // Both fallback cases run under a 2x bonus deliberately. Asserting 1 under a 1x bonus cannot
-  // fail: a guard that returns `undefined` gives `undefined * 1 = NaN`, and the clamp turns a
-  // non-finite value into 1 — so the assertion would pass through the clamp rather than through
-  // the fallback it names. Under 2x the fallback gives 2 and the broken path still gives 1.
-  it('falls back to the base multiplier when the shared cache has nothing', async () => {
+  it("reads a Gold member's tier from Postgres when the shared cache has nothing", async () => {
+    // The cache is written only by the main app and expires after a day. Paying the base 1x on a
+    // miss underpaid every member whose entry had lapsed.
+    const row = await rowFor({ tier: null, storedBonus: 10, sub: GOLD });
+    expect(row.multiplier).toBe(4);
+  });
+
+  it("reads a Gold member's tier from Postgres when the cache read rejects", async () => {
+    const row = await rowFor({ tier: new TypeError('socket closed'), storedBonus: 10, sub: GOLD });
+    expect(row.multiplier).toBe(4);
+  });
+
+  it('logs failed cache reads once per report, with their class and shard, and no user id', async () => {
+    await rowsFor({
+      tiers: [
+        [42, new TypeError('socket closed')],
+        [43, new TypeError('socket closed')],
+      ],
+      storedBonus: 10,
+      subs: [
+        [42, GOLD],
+        [43, GOLD],
+      ],
+    });
+    expect(axiom).toHaveBeenCalledTimes(1);
+    const payload = axiom.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      type: 'error',
+      error: 'socket closed',
+      payload: { failedReads: 2, errorClasses: ['TypeError'] },
+    });
+    expect([...(payload.payload as { slots: number[] }).slots].sort()).toEqual(
+      [
+        ...new Set(
+          [42, 43].map((id) => keyHashSlot(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${id}`))
+        ),
+      ].sort()
+    );
+    expect(payload.userId).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain(':42');
+    expect(JSON.stringify(payload)).not.toContain(':43');
+  });
+
+  it('reads the tier from Postgres for a notFound entry, ignoring any tier on it', async () => {
+    // A real notFound entry carries no multiplier; one is put here so that dropping the
+    // `!cached.notFound` half of the guard reads back 4 x 2 rather than the 1.5 x 2 Postgres holds.
+    const row = await rowFor({
+      tier: { notFound: true, rewardsMultiplier: 4 },
+      storedBonus: 20,
+      sub: 1.5,
+    });
+    expect(row.multiplier).toBe(3);
+  });
+
+  // Under a 2x bonus deliberately. Asserting 1 under a 1x bonus cannot fail: a guard that returns
+  // `undefined` gives `undefined * 1 = NaN`, and the clamp turns a non-finite value into 1.
+  it('pays a reporter with no subscription the base multiplier', async () => {
     const row = await rowFor({ tier: null, storedBonus: 20 });
     expect(row.multiplier).toBe(2);
   });
 
-  it('falls back to the base multiplier for a notFound entry, ignoring any tier on it', async () => {
-    // A real notFound entry carries no multiplier; one is put here so that dropping the
-    // `!cached.notFound` half of the guard reads back 4 rather than silently still passing.
-    const row = await rowFor({ tier: { notFound: true, rewardsMultiplier: 4 }, storedBonus: 20 });
-    expect(row.multiplier).toBe(2);
+  it('asks Postgres once, and only for the reporters the cache could not answer', async () => {
+    const rows = await rowsFor({
+      tiers: [
+        [41, cached(2)],
+        [42, null],
+        [43, new Error('MOVED')],
+      ],
+      storedBonus: 10,
+      subs: [
+        [41, 1.5],
+        [42, GOLD],
+        [43, GOLD],
+      ],
+    });
+    expect(
+      rows.map((r: { toUserId: number; multiplier: number }) => [r.toUserId, r.multiplier])
+    ).toEqual([
+      [41, 2],
+      [42, 4],
+      [43, 4],
+    ]);
+    expect(subscriptionQuery).toHaveBeenCalledTimes(1);
+    expect([...subscriptionQuery.mock.calls[0][0]].sort()).toEqual([42, 43]);
+  });
+
+  it('does not query Postgres for the tier when the cache answers every reporter', async () => {
+    await rowFor({ tier: cached(4), storedBonus: 10 });
+    expect(subscriptionQuery).not.toHaveBeenCalled();
+  });
+
+  it('skips a reporter neither the cache nor Postgres can answer, logs it, and pays the rest', async () => {
+    // Paying 1x here is the bug this file pins: a member is underpaid and nothing says so. A
+    // skipped row is left out and logged instead, and the moderator's action still succeeds.
+    redisGet.mockImplementation(async (key: string) => {
+      if (key.endsWith(':42')) throw new Error('connection reset');
+      return cached(2);
+    });
+    subscriptionDbError = new Error('replica unavailable');
+    bonusEvents.mockReturnValue(bonus(10));
+    ineligibleRows.mockReturnValue([]);
+    reporterIds = [42, 7];
+
+    await expect(
+      rewardReportReporters({ reportId: 990100008, reporterIds })
+    ).resolves.toBeUndefined();
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(
+      insert.mock.calls[0][0].values.map((r: { toUserId: number; multiplier: number }) => [
+        r.toUserId,
+        r.multiplier,
+      ])
+    ).toEqual([[7, 2]]);
+    const skipped = axiom.mock.calls
+      .map(([payload]) => payload)
+      .find((payload) => payload.event === 'reportAccepted reward skipped: multiplier unavailable');
+    expect(skipped).toMatchObject({
+      type: 'error',
+      payload: { retryable: true },
+      reportId: 990100008,
+      reporterIds: [42],
+      message: 'replica unavailable',
+    });
+  });
+
+  it('writes nothing when no reporter in the report can be priced, and still resolves', async () => {
+    subscriptionDbError = new Error('replica unavailable');
+    redisGet.mockRejectedValue(new Error('connection reset'));
+    bonusEvents.mockReturnValue(bonus(10));
+    ineligibleRows.mockReturnValue([]);
+    reporterIds = [42];
+
+    await expect(
+      rewardReportReporters({ reportId: 990100009, reporterIds })
+    ).resolves.toBeUndefined();
+
+    expect(insert).not.toHaveBeenCalled();
+    expect(axiom.mock.calls.map(([payload]) => payload.event)).toContain(
+      'reportAccepted reward skipped: multiplier unavailable'
+    );
   });
 
   it('writes 0 for a reporter Postgres reports ineligible even when the cache is cold', async () => {
@@ -273,10 +462,10 @@ describe('rewardReportReporters multiplier', () => {
 
   it('pays a garbage cached tier exactly what a missing one pays, and says so', async () => {
     // NaN is `typeof 'number'`, so it walks past the tier guard and reaches the column as a value
-    // it cannot parse. Letting the clamp catch it instead pays 1 rather than 2, because the clamp
-    // never sees the bonus — a garbage entry would quietly be worth less than no entry at all.
-    const row = await rowFor({ tier: cached(NaN), storedBonus: 20 });
-    expect(row.multiplier).toBe(2);
+    // it cannot parse. Letting the clamp catch it instead pays 1, because the clamp never sees the
+    // tier Postgres holds — a garbage entry would quietly be worth less than no entry at all.
+    const row = await rowFor({ tier: cached(NaN), storedBonus: 10, sub: GOLD });
+    expect(row.multiplier).toBe(4);
     // Not reported as a clamp: nothing came near the column's ceiling.
     expect(row.transactionDetails).toBe('{}');
     expect(axiom).toHaveBeenCalledTimes(1);

@@ -71,6 +71,8 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import type { SourceRepoReadClient } from '~/server/services/blocks/app-listing-source-repo.service';
+import type { IssueTrackerReadClient } from '~/server/services/blocks/app-listing-issue-tracker.service';
 import type {
   ActionsRunSource,
   ReviewSourceProvenance,
@@ -1618,15 +1620,28 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // submit that didn't reuse an existing orphan draft.
   if (createDraftListing) {
     try {
-      const { buildListingScalarSync } = await import('./app-listing-mapper');
+      const { buildListingScalarSync, buildListingIssueTrackerSync } = await import(
+        './app-listing-mapper'
+      );
+      // The manifest's `repository` / `bugs` links are manifest-governed like name/tagline/
+      // description, so the draft carries them from the start instead of showing both links
+      // empty until approve. Both columns are manual-apply, so each is probed first; a probe
+      // that cannot answer reads as "absent" and the link is simply left for approve's re-sync
+      // to write, rather than failing the draft create.
+      const { sourceRepoAvailable, issueTrackerAvailable } = await probeDraftLinkColumns(
+        dbWrite,
+        slug
+      );
       const scalars = buildListingScalarSync({
         manifest,
         blockId: slug,
         category: typeof manifest.category === 'string' ? manifest.category : null,
+        sourceRepoAvailable,
       });
+      const draftListingId = newAppListingId();
       await dbWrite.appListing.create({
         data: {
-          id: newAppListingId(),
+          id: draftListingId,
           kind: 'onsite',
           status: 'draft',
           slug,
@@ -1634,6 +1649,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
           tagline: scalars.tagline,
           description: scalars.description,
           category: scalars.category,
+          // Absent (not null) when the column is unavailable — see `buildListingScalarSync`.
+          ...(scalars.sourceRepoUrl !== undefined ? { sourceRepoUrl: scalars.sourceRepoUrl } : {}),
           // Seed the maturity rating from the submitted manifest (approve re-syncs it
           // authoritatively from the AppBlock); default SFW so an omitted rating is never
           // mature. Drives the asset NSFW-scan threshold while pending.
@@ -1644,6 +1661,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
           userId: submittedByUserId,
         },
       });
+      // `issue_tracker_url` is a no-type column, so it is written by raw SQL after the create,
+      // best-effort (a failed write leaves the link for approve's re-sync).
+      const tracker = buildListingIssueTrackerSync({ manifest, issueTrackerAvailable });
+      if (tracker.write && tracker.value !== null) {
+        const { writeIssueTrackerBestEffort, writeListingIssueTrackerUrl } = await import(
+          './app-listing-issue-tracker.service'
+        );
+        const value = tracker.value;
+        await writeIssueTrackerBestEffort(`submit draft ${slug}`, () =>
+          writeListingIssueTrackerUrl(dbWrite, draftListingId, value)
+        );
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -1701,6 +1730,39 @@ class ListingFloorRefusal extends Error {
     super(message);
     this.name = 'ListingFloorRefusal';
   }
+}
+
+/**
+ * Which manual-apply link columns the submit-time draft may name. Each probe that THROWS (a
+ * transient fault, not a missing column) reads as `false`: at draft mint an omitted link is
+ * harmless — approve re-syncs both from the manifest — whereas a throw here would cost the
+ * author the whole draft.
+ */
+async function probeDraftLinkColumns(
+  db: SourceRepoReadClient & IssueTrackerReadClient,
+  slug: string
+): Promise<{ sourceRepoAvailable: boolean; issueTrackerAvailable: boolean }> {
+  const [{ isSourceRepoColumnAvailable }, { isIssueTrackerColumnAvailable }] = await Promise.all([
+    import('./app-listing-source-repo.service'),
+    import('./app-listing-issue-tracker.service'),
+  ]);
+  const probe = async (name: string, run: () => Promise<boolean>) => {
+    try {
+      return await run();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[submitVersion] ${name} column probe failed (slug=${slug}); the draft is minted without ` +
+          `that link and approve writes it: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  };
+  const [sourceRepoAvailable, issueTrackerAvailable] = await Promise.all([
+    probe('source_repo_url', () => isSourceRepoColumnAvailable(db)),
+    probe('issue_tracker_url', () => isIssueTrackerColumnAvailable(db)),
+  ]);
+  return { sourceRepoAvailable, issueTrackerAvailable };
 }
 
 /**
@@ -1793,8 +1855,9 @@ async function submitListingReadiness(args: {
       [{ id: row.id, iconId: row.iconId, coverId: row.coverId }],
       dbWrite
     );
-    // The trust-link nudge. On-site links are manifest-governed and reach the listing only at
-    // approve, so the SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
+    // The trust-link nudge. On-site links are manifest-governed: a NEW draft is minted with them,
+    // but an existing listing (a reused draft, an update) only takes them at approve, so the
+    // SUBMITTED manifest is what this submit is about: its `repository` / `bugs`
     // decide the nudge. The columns are still read, for one thing only — whether each exists
     // here: a link whose column is absent is reported as unknown (no nudge), never as missing.
     const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';

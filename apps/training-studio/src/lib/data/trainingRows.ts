@@ -172,6 +172,8 @@ export interface TrainingStudioMeta {
   /** Dataset images the upload scan rated R or above, stamped at submit. A positive count lets "train
    *  further" skip re-rating the dataset; 0 or absent is re-checked. */
   matureCount?: number;
+  /** See `CLIP_SKIP_AS_SENT` in `@civitai/shared/training-kohya-replay`. */
+  clipSkipAsSent?: true;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {

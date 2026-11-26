@@ -6,6 +6,8 @@
  *   - `getInfiniteImagesSchema`: `image.getImagesAsPostsInfinite` and `image.getInfinite`.
  *   - `getAllModelsSchema`: `model.getAll` (its router input, `getAllModelsInputSchema`).
  *   - `imagesEndpointSchema`: `GET /api/v1/images`.
+ *   - `siteSearchParamsSchema`, `siteMultiSearchSchema` (and `siteMultiSearchQuerySchema`, one of its
+ *     `queries`) and `siteFacetSearchSchema`: `POST /api/search/[...path]`.
  *
  * The Go parsers accept only the keys listed here, and fall back (`input-unknown-key`) on any other, so
  * a key the app adds to a schema is never silently dropped by a Go build that does not know it.
@@ -23,6 +25,11 @@ import * as z from 'zod';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { imagesEndpointSchema } from '~/server/schema/images-endpoint.schema';
 import { getAllModelsInputSchema } from '~/server/schema/model.schema';
+import {
+  siteFacetSearchSchema,
+  siteMultiSearchSchema,
+  siteSearchParamsSchema,
+} from '~/server/schema/site-search.schema';
 
 export const FEED_GO_INPUT_SCHEMAS_PATH = join(
   __dirname,
@@ -51,6 +58,10 @@ export function buildFeedGoInputSchemas() {
     getInfiniteImagesSchema: project(getInfiniteImagesSchema),
     getAllModelsSchema: project(getAllModelsInputSchema),
     imagesEndpointSchema: project(imagesEndpointSchema),
+    siteSearchParamsSchema: project(siteSearchParamsSchema),
+    siteMultiSearchSchema: project(siteMultiSearchSchema),
+    siteMultiSearchQuerySchema: project(siteMultiSearchSchema.shape.queries.element),
+    siteFacetSearchSchema: project(siteFacetSearchSchema),
   };
 }
 

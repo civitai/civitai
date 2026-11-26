@@ -177,10 +177,13 @@ export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.leng
 export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
 
 /**
- * The most rows one stage's scan reads per pick (five doubling rounds from `STAGE_SCAN_FIRST_ROUND`), so a bucket that cannot fill
- * never drives a stage-sized read; past the budget the window keeps what the scan found.
+ * The most rows one stage's scan reads per priority per pick (five doubling rounds from `STAGE_SCAN_FIRST_ROUND`), so a bucket that
+ * cannot fill never drives a stage-sized read; past the budget the scan moves on to the next priority.
  */
 export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
+
+/** The most priorities one stage's scan reads (producers enqueue at 1 to 3), which bounds a pick at this many row budgets. */
+export const STAGE_SCAN_MAX_PRIORITIES = 3;
 
 /**
  * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
@@ -190,10 +193,12 @@ export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
  * player has already judged for the question, at any stage or in any earlier item.
  *
  * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
- * is full, the stage runs out or `rowBudget` rows are read. Most open items can be unservable (a draft or scheduled
- * post, a deleted image), and only the Image and Post rows tell, so a read per bucket would walk the whole stage once
- * per bucket. A bucket that cannot fill keeps the scan going to the budget, so the rounds read only what bucketing and
- * the cursor need, and one more read fetches the served columns of the kept items alone.
+ * is full or the stage runs out. Each priority is scanned on its own, from a first round, with its own `rowBudget`: once a
+ * priority has used it or run out, the scan moves to the next priority. Scan sampling enqueues SFW at priority 1 and NSFW at
+ * priority 2, so a priority-1 backlog longer than one budget would otherwise hide every R, X and XXX item. The bucket is
+ * worked out from the Image row, so no index can seek to one, and a read per bucket would walk the whole stage once per
+ * bucket. The rounds read only what bucketing and the cursor need, and one more read fetches the served columns of the
+ * kept items alone.
  */
 async function stageWindow(
   db: Executor,
@@ -251,46 +256,52 @@ async function stageWindow(
   const kept: number[] = [];
   const taken = new Map<LevelBucket | null, number>();
   let filled = 0;
-  let after: StageScanCursor | null = null;
-  for (let size = STAGE_SCAN_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
-    const cursor: StageScanCursor | null = after;
-    const limit = Math.min(size, rowBudget - read);
-    const rows = await eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
-      .select([
-        'i.id',
-        'i.priority',
-        // createdAt is TIMESTAMP(3); this text names the exact stored value whatever the host or session time zone.
-        sql<string>`to_char(i."createdAt", 'YYYY-MM-DD HH24:MI:SS.MS')`.as('createdAtKey'),
-        'i.prediction',
-        'img.nsfwLevel as imageLevel',
-      ])
-      .where((eb) => eb(bucketLevelSql, '!=', 0))
-      // (priority, createdAt, id) is unique and never changes on a row, so a round starts exactly after the last one.
-      // The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
-      .$if(cursor !== null, (qb) => {
-        const c = cursor as StageScanCursor;
-        return qb.where(
-          sql<SqlBool>`(i.priority, i."createdAt", i.id) > (${c.priority}, ${c.createdAt}::timestamp, ${c.id})`
-        );
-      })
-      .orderBy('i.priority', 'asc')
-      .orderBy('i.createdAt', 'asc')
-      .orderBy('i.id', 'asc')
-      .limit(limit)
-      .execute();
-    read += rows.length;
-    for (const row of rows) {
-      const bucket = itemBucket(row.prediction, row.imageLevel);
-      const count = taken.get(bucket) ?? 0;
-      if (count >= FEED.bucketWindowSize) continue;
-      taken.set(bucket, count + 1);
-      if (count + 1 === FEED.bucketWindowSize) filled++;
-      kept.push(row.id);
+  // One priority at a time, each with its own budget. An equality on priority keeps the planner on the index's order; a range
+  // over (priority, createdAt, id) let it read and sort the whole rest of a large priority (about 0.7s against 50ms in prod).
+  let priority = await nextPriority(db, stage, null);
+  for (let started = 0; priority !== null && started < STAGE_SCAN_MAX_PRIORITIES; started++) {
+    let after: StageScanCursor | null = null;
+    for (let size = STAGE_SCAN_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
+      const cursor: StageScanCursor | null = after;
+      const limit = Math.min(size, rowBudget - read);
+      const rows = await eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
+        .select([
+          'i.id',
+          // createdAt is TIMESTAMP(3); this text names the exact stored value whatever the host or session time zone.
+          sql<string>`to_char(i."createdAt", 'YYYY-MM-DD HH24:MI:SS.MS')`.as('createdAtKey'),
+          'i.prediction',
+          'img.nsfwLevel as imageLevel',
+        ])
+        .where((eb) => eb(bucketLevelSql, '!=', 0))
+        .where('i.priority', '=', priority)
+        // (createdAt, id) is unique within a priority and never changes on a row, so a round starts exactly after the last
+        // one. The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
+        .$if(cursor !== null, (qb) => {
+          const c = cursor as StageScanCursor;
+          return qb.where(
+            sql<SqlBool>`(i."createdAt", i.id) > (${c.createdAt}::timestamp, ${c.id})`
+          );
+        })
+        .orderBy('i.createdAt', 'asc')
+        .orderBy('i.id', 'asc')
+        .limit(limit)
+        .execute();
+      read += rows.length;
+      for (const row of rows) {
+        const bucket = itemBucket(row.prediction, row.imageLevel);
+        const count = taken.get(bucket) ?? 0;
+        if (count >= FEED.bucketWindowSize) continue;
+        taken.set(bucket, count + 1);
+        if (count + 1 === FEED.bucketWindowSize) filled++;
+        kept.push(row.id);
+      }
+      if (rows.length < limit || filled === BUCKET_LEVELS.length) break;
+      // Annotated so the cursor's type does not depend on the rows its own round read.
+      const last: { id: number; createdAtKey: string } = rows[rows.length - 1];
+      after = { createdAt: last.createdAtKey, id: last.id };
     }
-    if (rows.length < limit || filled === BUCKET_LEVELS.length) break;
-    // Annotated so the cursor's type does not depend on the rows its own round read.
-    const last: { id: number; priority: number; createdAtKey: string } = rows[rows.length - 1];
-    after = { priority: last.priority, createdAt: last.createdAtKey, id: last.id };
+    if (filled === BUCKET_LEVELS.length) break;
+    priority = await nextPriority(db, stage, priority);
   }
 
   // A kept item that stops being a candidate before this read (judged, closed, unservable) is left out, as if the scan
@@ -308,7 +319,23 @@ async function stageWindow(
   return [...escalated, ...normal];
 }
 
-type StageScanCursor = { priority: number; createdAt: string; id: number };
+type StageScanCursor = { createdAt: string; id: number };
+
+/** The lowest priority above `after` (any, when null) among the stage's open rating items, or null when none is left. */
+async function nextPriority(db: Executor, stage: Rank, after: number | null) {
+  const row = await db
+    .selectFrom('KnightsQueueItem as i')
+    .select('i.priority')
+    .where('i.status', '=', 'Open')
+    .where('i.minRank', '=', stage)
+    .where('i.isHiddenCheck', '=', false)
+    .where('i.audience', 'is', null)
+    .$if(after !== null, (qb) => qb.where('i.priority', '>', after as number))
+    .orderBy('i.priority', 'asc')
+    .limit(1)
+    .executeTakeFirst();
+  return row?.priority ?? null;
+}
 
 /**
  * What a player is served next: the highest stage they may judge that has an open item they have not judged,

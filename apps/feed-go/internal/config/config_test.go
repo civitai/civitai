@@ -640,6 +640,26 @@ func TestLoadServingLimits(t *testing.T) {
 	}
 }
 
+// FEED_GO_SHUTDOWN_DELAY_MS: unset, negative or junk is the 10 s default; 0 is an explicit "no wait".
+func TestLoadShutdownDelay(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]time.Duration{
+		"": 10 * time.Second, "junk": 10 * time.Second, "-1": 10 * time.Second,
+		"0": 0, "2500": 2500 * time.Millisecond, "30000": 30 * time.Second,
+	} {
+		t.Setenv("FEED_GO_SHUTDOWN_DELAY_MS", in)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ShutdownDelay != want {
+			t.Errorf("FEED_GO_SHUTDOWN_DELAY_MS=%q -> %v, want %v", in, cfg.ShutdownDelay, want)
+		}
+	}
+}
+
 // FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS is off unless set to a true value, and is its own switch:
 // FEED_GO_COMPUTE_MISSES on does not turn it on.
 func TestLoadComputeImageResourcesMiss(t *testing.T) {
@@ -1062,5 +1082,55 @@ func TestServeParityEnv(t *testing.T) {
 		if c.ServeParityRate != want {
 			t.Errorf("FEED_GO_SERVE_PARITY_SAMPLE_RATE=%q reads %v, want %v", v, c.ServeParityRate, want)
 		}
+	}
+}
+
+// FEED_GO_EVAL_CAPTURE defaults off and then reads none of the store's variables; on, it refuses to
+// start without all three (each one missing in turn), and reads them and the two rates.
+func TestLoadEvalCapture(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	store := map[string]string{
+		"FEED_GO_EVAL_CLICKHOUSE_URL":      "https://store.example.test:8443/evaldb",
+		"FEED_GO_EVAL_CLICKHOUSE_USER":     "writer",
+		"FEED_GO_EVAL_CLICKHOUSE_PASSWORD": "pw",
+	}
+	for k, v := range store {
+		t.Setenv(k, v)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_EVAL_CAPTURE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.EvalCapture != want {
+			t.Errorf("FEED_GO_EVAL_CAPTURE=%q -> %v, want %v", in, c.EvalCapture, want)
+		}
+		if !want && (c.EvalClickHouseURL != "" || c.EvalClickHouseUser != "" || c.EvalClickHousePassword != "") {
+			t.Errorf("FEED_GO_EVAL_CAPTURE=%q read the store's variables", in)
+		}
+	}
+	t.Setenv("FEED_GO_EVAL_CAPTURE", "true")
+	t.Setenv("FEED_GO_EVAL_CAPTURE_SERVE_RATE", "0.01")
+	t.Setenv("FEED_GO_EVAL_CAPTURE_SHADOW_RATE", "0.25")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EvalClickHouseURL != store["FEED_GO_EVAL_CLICKHOUSE_URL"] || c.EvalClickHouseUser != "writer" || c.EvalClickHousePassword != "pw" {
+		t.Errorf("store = %q %q %q", c.EvalClickHouseURL, c.EvalClickHouseUser, c.EvalClickHousePassword)
+	}
+	if c.EvalCaptureServeRate != 0.01 || c.EvalCaptureShadowRate != 0.25 {
+		t.Errorf("rates = %v %v, want 0.01 0.25", c.EvalCaptureServeRate, c.EvalCaptureShadowRate)
+	}
+	for missing := range store {
+		t.Run(missing, func(t *testing.T) {
+			t.Setenv(missing, "")
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "FEED_GO_EVAL_CAPTURE needs") {
+				t.Errorf("capture on without %s: err %v, want the refusal", missing, err)
+			}
+		})
 	}
 }

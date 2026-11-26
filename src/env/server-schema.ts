@@ -464,13 +464,15 @@ export const serverSchema = z
     // Accepted alongside WEBHOOK_TOKEN while callers move to a new value. Unset or blank: only
     // WEBHOOK_TOKEN is accepted (~/server/utils/webhook-token).
     WEBHOOK_TOKEN_PREVIOUS: z.string().optional(),
-    // Also accepted by /api/live, /api/ready and /api/health only, so probes need not carry
-    // WEBHOOK_TOKEN. Unset or blank matches nothing.
+    // Also accepted by /api/live, /api/ready, /api/health, /api/metrics and the event-loop watchdog
+    // port only, so probes and scrapes need not carry WEBHOOK_TOKEN. Unset or blank matches nothing.
     PROBE_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
     // Header token for /api/admin/provider-download-token. Unset: the endpoint refuses everything.
     PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
+    // x-admin-token for /api/admin/refresh-sessions and refresh-user-sessions. Unset: both return 404.
+    SESSION_RESET_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),

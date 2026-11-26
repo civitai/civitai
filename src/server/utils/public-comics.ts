@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { challengeCoverWhere } from '~/server/common/image-visibility';
 import {
@@ -31,7 +32,15 @@ import { slugitOr } from '~/utils/string-helpers';
 // then narrowed to the caller's browsing level, so the default (PG) response can sit in the shared
 // cache.
 
-const anonymous: PublicComicsCtx = { user: undefined, features: { isGreen: false } };
+// A signed-out server render: no viewer and no bearer credential, read as a session would be.
+const anonymous: PublicComicsCtx = {
+  user: undefined,
+  apiKeyId: undefined,
+  apiKeyType: undefined,
+  subject: undefined,
+  tokenScope: TokenScope.Full,
+  features: { isGreen: false },
+};
 
 const PAGE_WIDTH = 1600;
 

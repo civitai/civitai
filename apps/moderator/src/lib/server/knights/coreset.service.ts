@@ -325,6 +325,16 @@ export async function addCoreImage(input: {
       };
 }
 
+/** The image a Trials reference shows; none when the reference is gone. */
+export async function referenceImageIds(id: number): Promise<number[]> {
+  const row = await dbWrite
+    .selectFrom('KnightsReferenceImage')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row ? [row.imageId] : [];
+}
+
 export async function updateCoreItem(input: {
   id: number;
   level: number;

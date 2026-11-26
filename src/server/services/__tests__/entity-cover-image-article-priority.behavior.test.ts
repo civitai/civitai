@@ -196,3 +196,21 @@ describe('getEntityCoverImage, an Article with content images', () => {
     ]);
   });
 });
+
+describe('getEntityCoverImage, a ToS-removed image with no blockedFor', () => {
+  it('is no cover for its owner', async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, 1, now() - interval '1 day');
+      INSERT INTO "Image" (id, url, "postId", ingestion, "blockedFor") VALUES
+        (60, 'removed', 2, 'Blocked', null), (61, 'kept', 2, 'Scanned', null);
+    `);
+    const covers = await getEntityCoverImage({
+      entities: [
+        { entityId: 60, entityType: 'Image' },
+        { entityId: 61, entityType: 'Image' },
+      ],
+      viewer: { id: 1 },
+    });
+    expect(covers.map((c) => c.id)).toEqual([61]);
+  });
+});

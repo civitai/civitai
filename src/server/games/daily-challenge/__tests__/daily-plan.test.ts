@@ -68,7 +68,7 @@ describe('resolveDailyPlan', () => {
     expect(plan.record).toEqual({
       setKey: entry.set,
       source: 'schedule',
-      judgeName: entry.judge,
+      judgeName: 'Jolly CivBot',
       occasion: entry.occasion,
     });
   });

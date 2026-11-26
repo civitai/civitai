@@ -4,7 +4,10 @@ import { dbRead, dbWrite } from './db';
 import { blockImage, isBannedOwnerBlocked, isModerationBlocked } from './image-moderation.service';
 import { recordModActivity } from './mod-activity';
 import { setReportStatus } from './reports.service';
-import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
+import {
+  getLatestApprovedImageAppeals,
+  OPEN_REPORT_STATUSES,
+} from '@civitai/db-queries/image-removal-confirmation';
 import { restrictedImageIds, withheldRow } from './retracted-media';
 
 // Removals held by `holdRemovals` because they repeat the reason an approved appeal overturned. A
@@ -194,15 +197,26 @@ export async function confirmRemoval({
       throw e;
     }
   // The image is down either way, so the reports the removal answered are actioned, unless it is
-  // held.
-  if (!skipped)
-    for (const reportId of claimed.reportIds)
-      await setReportStatus({
-        id: reportId,
-        status: ReportStatus.Actioned,
-        userId,
-        noReward: unpaid,
-      });
+  // held. One a moderator has reviewed since the hold keeps its status.
+  const openReportIds =
+    skipped || !claimed.reportIds.length
+      ? []
+      : (
+          await dbWrite
+            .selectFrom('Report')
+            .select('id')
+            .where('id', 'in', claimed.reportIds)
+            .where('status', 'in', OPEN_REPORT_STATUSES)
+            .execute()
+        ).map((r) => r.id);
+  for (const reportId of openReportIds)
+    await setReportStatus({
+      id: reportId,
+      status: ReportStatus.Actioned,
+      userId,
+      noReward: unpaid,
+      fromStatuses: OPEN_REPORT_STATUSES,
+    });
   await recordModActivity({
     userId,
     entityType: 'image',

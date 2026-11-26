@@ -1,10 +1,11 @@
 import { NotificationCategory } from '~/server/common/enums';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import type { CommentType } from '~/server/clickhouse/tracker';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { articleShareCookieName } from '~/server/services/article-share.helpers';
 import { getArticleByShareToken } from '~/server/services/article-share.service';
-import { canViewArticle } from '~/server/services/article.service';
+import { canViewArticle } from '~/server/services/article-read';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
@@ -40,15 +41,25 @@ import {
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
 
-export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req' | 'cache'>;
+export type CommentReadContext = Pick<
+  Context,
+  'user' | 'features' | 'req' | 'cache' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'
+>;
 
 /**
  * What one kind of entity adds to the comment rules every surface shares. The owner is not here:
  * `getBlockCheckOwnerIds` resolves it for every current entity type; a new one needs a case there.
  */
 type CommentSurface = {
-  /** Throws not-found when the viewer may not see the entity's comments. Reads and writes. */
-  assertVisible?(entityId: number, ctx: CommentReadContext): Promise<void>;
+  /**
+   * Throws not-found when the viewer may not see the entity's comments. Reads and writes;
+   * `ownerSeesHeld` is the owner's view of their own held image, passed on reads only.
+   */
+  assertVisible?(
+    entityId: number,
+    ctx: CommentReadContext,
+    view?: { ownerSeesHeld?: boolean }
+  ): Promise<void>;
   /** Throws when the viewer may not write there: a create or an edit, or the owner's hide and pin. */
   assertWritable?(entityId: number, ctx: ProtectedContext): Promise<void>;
   /** Throws when the entity takes no new comments or edits; the owner may still hide and pin. */
@@ -206,10 +217,13 @@ async function assertComicChapterVisible(chapterId: number, ctx: CommentReadCont
     (ctx.features?.isGreen &&
       chapter.project.nsfwLevel !== 0 &&
       Flags.intersects(chapter.project.nsfwLevel, nsfwBrowsingLevelsFlag)) ||
-    (await isComicProjectHidden(chapter.project, ctx.user))
+    (await isComicProjectHidden(
+      chapter.project,
+      ctx.user && { id: ctx.user.id, isModerator: actsAsModerator(ctx) }
+    ))
   )
     throw throwNotFoundError('Chapter not found');
-  if (ctx.user?.isModerator || chapter.project.userId === ctx.user?.id) return;
+  if (actsAsModerator(ctx) || chapter.project.userId === ctx.user?.id) return;
   if (chapter.status !== ComicChapterStatus.Published || chapter.panels.some(isPanelTainted))
     throw throwNotFoundError('Chapter not found');
 }
@@ -283,11 +297,12 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
   post: { assertVisible: assertPostCommentsVisible, assertWritable: accessGated('Post') },
   image: {
-    assertVisible: async (imageId, ctx) =>
+    assertVisible: async (imageId, ctx, view) =>
       void (await assertImageVisibleToViewer({
         id: imageId,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: view?.ownerSeesHeld ?? false,
       })),
     onCreated: (comment, ctx) => {
       if (comment.parentId) return;

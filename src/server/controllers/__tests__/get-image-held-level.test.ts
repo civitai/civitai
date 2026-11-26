@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as UserService from '~/server/services/user.service';
@@ -165,5 +165,78 @@ describe('getImageHandler, the image page', () => {
     } as unknown as HandlerCtx;
     await getImageHandler({ input: { id: 1 }, ctx });
     expect(image).toHaveBeenCalledWith(expect.objectContaining({ ownerSeesHeld: false }));
+  });
+});
+
+describe('getImageHandler on a blocked image', () => {
+  const MEDIA = 'blocked-media-key';
+  const PREVIEW = 'blocked-blur-hash';
+  const VIDEO = 'blocked-video-id';
+  function read(
+    row: { ingestion: string; blockedFor: string | null; nsfwLevel?: number },
+    user: { id: number; isModerator?: boolean } = { id: UPLOADER }
+  ) {
+    heldLevels.mockResolvedValue(new Map());
+    image.mockResolvedValueOnce({
+      id: 1,
+      postId: null,
+      url: MEDIA,
+      hash: PREVIEW,
+      nsfwLevel: NsfwLevel.PG,
+      metadata: { width: 10, youtubeVideoId: VIDEO, vimeoVideoId: VIDEO },
+      cosmetic: { data: { url: 'frame' } },
+      ...row,
+      user: { id: UPLOADER },
+    });
+    const ctx = {
+      user,
+      features: { canViewNsfw: true },
+      req: { headers: {} },
+      cache: null,
+    } as unknown as HandlerCtx;
+    return getImageHandler({ input: { id: 1 }, ctx });
+  }
+  /** Every string anywhere in the response, so a media field at any depth is caught. */
+  const strings = (value: unknown): string[] =>
+    typeof value === 'string'
+      ? [value]
+      : value && typeof value === 'object'
+      ? Object.values(value).flatMap(strings)
+      : [];
+
+  it.each([
+    ['a moderator block', { ingestion: 'Blocked', blockedFor: BlockedReason.Moderated }],
+    ['a CSAM block', { ingestion: 'Blocked', blockedFor: BlockedReason.CSAM }],
+    ['a ToS block', { ingestion: 'Blocked', blockedFor: BlockedReason.TOS }],
+    ['a block with no reason', { ingestion: 'Blocked', blockedFor: null }],
+    ['a reason no code writes', { ingestion: 'Scanned', blockedFor: 'zzz' }],
+  ])('serves its owner the block notice and no media at any depth: %s', async (_, row) => {
+    const result = await read(row);
+    expect(result).toMatchObject({ id: 1, blockedFor: row.blockedFor, ingestion: row.ingestion });
+    expect(result.url).toBeNull();
+    const served = strings(result);
+    for (const media of [MEDIA, PREVIEW, VIDEO, 'frame']) expect(served).not.toContain(media);
+  });
+
+  it('serves its owner the media of an image held only for its metadata', async () => {
+    const result = await read({ ingestion: 'Blocked', blockedFor: BlockedReason.AiNotVerified });
+    expect(result.url).toBe(MEDIA);
+  });
+
+  it('serves its owner the media of an image rated Blocked with no block', async () => {
+    const result = await read({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      nsfwLevel: NsfwLevel.Blocked,
+    });
+    expect(result.url).toBe(MEDIA);
+  });
+
+  it('serves a moderator the media of a blocked image', async () => {
+    const result = await read(
+      { ingestion: 'Blocked', blockedFor: BlockedReason.Moderated },
+      { id: 5, isModerator: true }
+    );
+    expect(result.url).toBe(MEDIA);
   });
 });

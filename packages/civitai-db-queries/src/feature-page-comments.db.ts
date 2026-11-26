@@ -1,6 +1,6 @@
 import { CompiledQuery, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { csamQueueHeldText } from '@civitai/shared/held-url';
+import { csamHoldLockKey, csamQueueHeldText } from '@civitai/shared/held-url';
 
 /**
  * The Feature Pages comment mirror's reads and writes. Every read is driven from
@@ -10,6 +10,13 @@ import { csamQueueHeldText } from '@civitai/shared/held-url';
 
 const rows = async <R>(db: Kysely<DB>, text: string, parameters: unknown[] = []) =>
   (await db.executeQuery<R>(CompiledQuery.raw(text, parameters))).rows;
+
+/**
+ * Whether the comment author `u` (a "User" alias, possibly from a LEFT JOIN) is in standing: there,
+ * not deleted, banned or muted. False, never null, for a missing author.
+ */
+const fpAuthorInStanding = (u: string) =>
+  `(${u}.id IS NOT NULL AND ${u}."deletedAt" IS NULL AND ${u}."bannedAt" IS NULL AND NOT ${u}.muted)`;
 
 export type FpMirrorFactsRow = {
   commentId: number;
@@ -37,8 +44,7 @@ export type FpMirrorFactsRow = {
   parentUrn: string | null;
   authorExists: boolean;
   authorDeletedAt: Date | null;
-  bannedAt: Date | null;
-  muted: boolean | null;
+  authorInStanding: boolean;
   username: string | null;
   csamHeld: boolean;
   /**
@@ -54,6 +60,19 @@ export type FpMirrorFactsRow = {
   goneAt: Date | null;
   /** The text's own event time (post or edit): the `at` a text post carries. */
   contentAt: Date | null;
+  /** The current hide is the scan's own: a moderator hide sent now is sent for the scan. */
+  scanHide: boolean;
+  /** The `at` of the last moderator hide sent. */
+  modHideSentAt: Date | null;
+  /** Whose hide that was: 'foreign' (hidden there first by another) stays until shown again. */
+  modHideOrigin: string | null;
+  /** The text version a moderator lifted the scan's hide for. */
+  liftGrantedVersion: number | null;
+  /**
+   * A moderator lifted the scan's hide on this version after the last moderator hide sent, and
+   * that hide was sent for the scan.
+   */
+  liftGranted: boolean;
 };
 
 const FACTS = `
@@ -61,12 +80,16 @@ const FACTS = `
          m."pushedDigest", m."platformDigest", m."pendingDigest", m."pushAttempts", m."nextPushAt",
          m."updatedAt"::text AS "mirrorUpdatedAt", m."postAttemptedAt", m."subjectMissingAt",
          m."removeWantedAt", m."restrictedAt", m."postSeq", m."goneAt", m."contentAt",
+         m."modHideSentAt", m."modHideOrigin", m."liftGrantedVersion",
+         COALESCE(m."modHideOrigin" = 'scan' AND m."liftGrantedAt" > m."modHideSentAt"
+           AND m."liftGrantedVersion" = m.version, false) AS "liftGranted",
+         COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false) AS "scanHide",
          c.id IS NOT NULL AS "commentExists", c.hidden, c."tosViolation", c."deletedAt", c.content,
          c."createdAt", c."entityId" AS "topicId",
          COALESCE(c."replyToId", c."parentId") AS "parentId",
          t.urn AS "subjectUrn", pm.urn AS "parentUrn",
-         u.id IS NOT NULL AS "authorExists", u."deletedAt" AS "authorDeletedAt", u."bannedAt",
-         u.muted, u.username,
+         u.id IS NOT NULL AS "authorExists", u."deletedAt" AS "authorDeletedAt",
+         ${fpAuthorInStanding('u')} AS "authorInStanding", u.username,
          ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS "csamHeld"
   FROM "FeaturePageCommentMirror" m
   LEFT JOIN "CommentV3" c ON c.id = m."commentId"
@@ -219,6 +242,8 @@ export type FpPushRecord = {
   clearPostAttempted?: boolean;
   /** The platform holds a removal. */
   removeWanted?: boolean;
+  /** A moderator hide was sent at this `at`, for the scan's hide or not. */
+  modHide?: { at: Date; origin: 'scan' | 'moderator' | 'foreign' };
 };
 
 /**
@@ -249,6 +274,8 @@ export async function recordFpPush(db: Kysely<DB>, commentId: number, r: FpPushR
        "postAttemptedAt" = CASE WHEN $14::boolean THEN NULL ELSE "postAttemptedAt" END,
        "removeWantedAt" = CASE WHEN $15::boolean THEN COALESCE("removeWantedAt", now())
          ELSE "removeWantedAt" END,
+       "modHideSentAt" = COALESCE($18::timestamptz, "modHideSentAt"),
+       "modHideOrigin" = CASE WHEN $18::timestamptz IS NULL THEN "modHideOrigin" ELSE $19 END,
        "leaseUntil" = NULL,
        "updatedAt" = now()
      WHERE "commentId" = $1`,
@@ -270,6 +297,8 @@ export async function recordFpPush(db: Kysely<DB>, commentId: number, r: FpPushR
       !!r.removeWanted,
       r.parkedWant ?? null,
       !!r.parkedRestricting,
+      r.modHide?.at ?? null,
+      r.modHide?.origin ?? null,
     ]
   );
 }
@@ -513,4 +542,180 @@ export async function readFpRunbookCounts(db: Kysely<DB>) {
     unreachable: counts?.unreachable ?? 0,
     targets: counts?.targets ?? 0,
   };
+}
+
+/** SQL predicate: an open report on the comment id expression `comment` from anyone but the user id expression `system`. */
+const openPersonReport = (comment: string, system: string) => `EXISTS (
+  SELECT 1 FROM "CommentV3Report" pcr JOIN "Report" pr ON pr.id = pcr."reportId"
+  WHERE pcr."commentId" = ${comment} AND pr.status IN ('Pending', 'Processing')
+    AND pr."userId" <> ${system})`;
+
+/** Whether anyone but the system user still has an open report on this comment. */
+export async function hasOpenPersonFpReport(
+  db: Kysely<DB>,
+  { commentId, systemUserId }: { commentId: number; systemUserId: number }
+) {
+  const [row] = await rows<{ open: boolean }>(
+    db,
+    `SELECT ${openPersonReport('$1', '$2')} AS open`,
+    [commentId, systemUserId]
+  );
+  return !!row?.open;
+}
+
+/** The details.comment of the report the scan files when it hides a Feature Pages comment. */
+export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
+
+/**
+ * A moderator sets one report Unactioned. When it is the report the scan filed with its current hide
+ * and it moves from open to Unactioned here, it also lifts that hide, in the same transaction.
+ * `changed`: the status moved; `lifted`: the comment shown again, or null. `held`: that report is
+ * left open, unchanged, because the lift cannot be made now, and why. `superseded`: it was the
+ * scan's report, but its hide has since been replaced (another hide, or the comment removed).
+ */
+export async function unactionReportLiftingScanHide(
+  db: Kysely<DB>,
+  { reportId, actorId, systemUserId }: { reportId: number; actorId: number; systemUserId: number }
+) {
+  return db.transaction().execute(async (trx) => {
+    const [link] = await rows<{ commentId: number }>(
+      trx,
+      `SELECT "commentId" FROM "CommentV3Report" WHERE "reportId" = $1`,
+      [reportId]
+    );
+    const commentId = link?.commentId;
+    if (commentId !== undefined) {
+      // In the order an edit takes them: the hold decision's lock, the comment, its mirror row, then
+      // the report. Each in a statement of its own, so what is read after sees what any writer it
+      // waited on committed.
+      await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
+        commentId,
+        csamHoldLockKey('CommentV3'),
+      ]);
+      await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+      await rows(
+        trx,
+        `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`,
+        [commentId]
+      );
+    }
+    const [prior] = await rows<{ status: string }>(
+      trx,
+      `SELECT status::text AS status FROM "Report" WHERE id = $1 FOR UPDATE`,
+      [reportId]
+    );
+    if (!prior || prior.status === 'Unactioned') return { changed: false, lifted: null };
+    const opened = prior.status === 'Pending' || prior.status === 'Processing';
+    // The scan's own report whose hide something else has since replaced: closed, and said so.
+    let superseded: 'removed' | 'hidden' | undefined;
+    if (commentId !== undefined && opened && actorId !== systemUserId) {
+      // The scan's own report on the scan's current hide: a lift it cannot make now leaves it open
+      // and says why, so the hide is never left with nobody told.
+      const [wait] = await rows<{
+        foreign: boolean;
+        reported: boolean;
+        pushing: boolean;
+        author: boolean;
+        held: boolean;
+        version: boolean;
+      }>(
+        trx,
+        `SELECT COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
+           ${openPersonReport('m."commentId"', '$2')} AS reported,
+           COALESCE(m."leaseUntil" > now(), false) AS pushing,
+           NOT ${fpAuthorInStanding('u')} AS author,
+           ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
+           m."scanHiddenVersion" IS DISTINCT FROM m.version AS version
+         FROM "FeaturePageCommentMirror" m
+         JOIN "CommentV3" c ON c.id = m."commentId"
+         JOIN "Report" r ON r.id = m."scanHideReportId"
+         LEFT JOIN "User" u ON u.id = c."userId"
+         WHERE m."commentId" = $1 AND m."scanHideReportId" = $3
+           AND r."userId" = $2 AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4
+           AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
+           AND c."hiddenAt" = m."scanHiddenAt" AND m."goneCause" IS NULL
+           AND m."removeWantedAt" IS NULL`,
+        [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
+      );
+      const held = (['foreign', 'reported', 'pushing', 'author', 'held', 'version'] as const).find(
+        (why) => wait?.[why]
+      );
+      if (held) return { changed: false, lifted: null, held };
+      if (!wait) {
+        const [bound] = await rows<{ removed: boolean }>(
+          trx,
+          `SELECT (c.id IS NULL OR c."deletedAt" IS NOT NULL OR m."goneCause" IS NOT NULL
+             OR m."removeWantedAt" IS NOT NULL) AS removed
+           FROM "FeaturePageCommentMirror" m
+           JOIN "Report" r ON r.id = m."scanHideReportId"
+           LEFT JOIN "CommentV3" c ON c.id = m."commentId"
+           WHERE m."commentId" = $1 AND m."scanHideReportId" = $3
+             AND r."userId" = $2 AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4`,
+          [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
+        );
+        if (bound) superseded = bound.removed ? 'removed' : 'hidden';
+      }
+    }
+    await rows(
+      trx,
+      `UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = now(), "statusSetBy" = $2
+       WHERE id = $1`,
+      [reportId, actorId]
+    );
+    if (commentId === undefined || !opened || actorId === systemUserId || superseded)
+      return { changed: true, lifted: null, superseded };
+    // A push may send the scan's hide again after the lift, and the platform keeps it, so the lease
+    // and person-report conditions repeat the checks above.
+    const [lifted] = await rows<{ commentId: number; version: number }>(
+      trx,
+      `WITH ok AS (
+         SELECT m."commentId", m.version FROM "FeaturePageCommentMirror" m
+         JOIN "CommentV3" c ON c.id = m."commentId"
+         JOIN "User" u ON u.id = c."userId"
+         JOIN "Report" r ON r.id = $4
+         WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
+           AND m."scanHideReportId" = r.id AND r."userId" = $3 AND r.reason = 'AdminAttention'
+           AND r.details->>'comment' = $5
+           AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
+           AND c."hiddenAt" = m."scanHiddenAt" AND m."scanHiddenVersion" = m.version
+           AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
+           AND m."modHideOrigin" IS DISTINCT FROM 'foreign'
+           AND (m."leaseUntil" IS NULL OR m."leaseUntil" < now())
+           AND ${fpAuthorInStanding('u')}
+           AND NOT ${csamQueueHeldText('CommentV3', 'm."commentId"')}
+           AND NOT ${openPersonReport('m."commentId"', '$3')}
+       ), shown AS (
+         UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL, "updatedAt" = now()
+         WHERE id = (SELECT "commentId" FROM ok)
+         RETURNING id
+       )
+       UPDATE "FeaturePageCommentMirror" m SET "liftGrantedAt" = clock_timestamp(),
+         "liftGrantedBy" = $2, "liftGrantedVersion" = ok.version, "nextPushAt" = now(),
+         "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()
+       FROM ok, shown WHERE m."commentId" = ok."commentId" AND shown.id = ok."commentId"
+       RETURNING m."commentId", m."liftGrantedVersion" AS version`,
+      [commentId, actorId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
+    );
+    if (!lifted) return { changed: true, lifted: null };
+    await rows(
+      trx,
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+       VALUES ($1, 'commentV3', 'scanLift', $2), ($1, 'report', 'scanLift', $3)
+       ON CONFLICT DO NOTHING`,
+      [actorId, commentId, reportId]
+    );
+    return { changed: true, lifted };
+  });
+}
+
+/** Of these reports, those the scan filed for a hide of its comment, current or since replaced: each is dismissed one at a time. */
+export async function scanHideReportIds(db: Kysely<DB>, reportIds: number[]) {
+  if (!reportIds.length) return new Set<number>();
+  const found = await rows<{ id: number }>(
+    db,
+    `SELECT "scanHideReportId" AS id FROM "FeaturePageCommentMirror"
+     WHERE "scanHideReportId" = ANY($1::int[])`,
+    [reportIds]
+  );
+  return new Set(found.map((r) => r.id));
 }

@@ -39,6 +39,7 @@ func TestScopeConstantsAreTheAppsValues(t *testing.T) {
 		"TokenScope.Full":                {ScopeFull, 33554431},
 		"TokenScopePresets.ReadOnly":     {ScopeReadOnly, 10701093},
 		"CLIENT_CREDENTIALS_ONLY_SCOPES": {ScopeClientCredentialsOnly, 1342177280},
+		"RUNNER_ONLY_SCOPES":             {ScopeRunnerOnly, 8589934592},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %d, want %d", name, c.got, c.want)
@@ -156,6 +157,10 @@ func TestResolveAPIKeysAsNodeDoes(t *testing.T) {
 		m["tokenScope"], m["tokenScopeWide"] = 33554431, int64(33554431|1<<30)
 		m["lastUsedAt"] = nil // refused before the lastUsedAt write
 	}))
+	f.principal(t, "k-runner", row(45, func(m map[string]any) {
+		m["tokenScope"], m["tokenScopeWide"] = 1, int64(1|1<<33)
+		m["lastUsedAt"] = nil // refused before the lastUsedAt write
+	}))
 	f.principal(t, "k-never-used", row(45, func(m map[string]any) { m["lastUsedAt"] = nil }))
 	f.principal(t, "k-used-2h-ago", row(45, func(m map[string]any) { m["lastUsedAt"] = f.now.Add(-2 * time.Hour) }))
 	f.principal(t, "k-used-at-the-hour", row(45, func(m map[string]any) { m["lastUsedAt"] = f.now.Add(-time.Hour + 2*time.Second) }))
@@ -228,6 +233,7 @@ func TestResolveAPIKeysAsNodeDoes(t *testing.T) {
 		{"MediaRead-only key", B("k-media-read"), "/x", bearerWant{reason: "bearer-scoped-key"}},
 		{"full scope plus an opt-in bit is not Full", B("k-full-plus-opt-in"), "/x", bearerWant{reason: "bearer-scoped-key"}},
 		{"client-credentials-only scope: signed out", B("k-download-link"), "/x", bearerWant{}},
+		{"runner-only scope: signed out", B("k-runner"), "/x", bearerWant{}},
 
 		// lastUsedAt: a write the app would make
 		{"never used", B("k-never-used"), "/x", bearerWant{reason: "bearer-last-used"}},

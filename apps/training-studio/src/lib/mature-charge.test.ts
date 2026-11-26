@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matureSpend, spendOrder } from './mature-charge';
+import { datasetCharge, matureSpend, spendOrder } from './mature-charge';
 
 describe('spendOrder', () => {
   it('spends Blue first by default, then the paid account', () => {
@@ -44,4 +44,31 @@ describe('matureSpend', () => {
     expect(matureSpend({ ...base, price: null, mature: true })).toBeNull();
     expect(matureSpend({ ...base, price: 0, mature: true })).toBeNull();
   });
+});
+
+describe('datasetCharge', () => {
+  const table: [number, number, boolean, boolean, ReturnType<typeof datasetCharge>][] = [
+    [0, 0, false, false, 'not-mature'],
+    [0, 0, false, true, 'not-mature'],
+    [0, 0, true, false, 'not-mature'],
+    [0, 0, true, true, 'not-mature'],
+    [0, 2, false, false, 'not-mature'],
+    [0, 2, false, true, 'unreadable'],
+    [0, 2, true, false, 'mature'],
+    [0, 2, true, true, 'mature'],
+    [3, 0, false, false, 'mature'],
+    [3, 0, false, true, 'reprice'],
+    [3, 0, true, false, 'mature'],
+    [3, 0, true, true, 'mature'],
+    [3, 2, false, false, 'mature'],
+    [3, 2, false, true, 'reprice'],
+    [3, 2, true, false, 'mature'],
+    [3, 2, true, true, 'mature'],
+  ];
+  it.each(table)(
+    'mature %i, failed %i, priced mature %s, spends Green %s → %s',
+    (mature, failed, pricedMature, spendsGreen, charge) => {
+      expect(datasetCharge({ mature, failed, pricedMature, spendsGreen })).toBe(charge);
+    }
+  );
 });

@@ -2247,6 +2247,10 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
+  // When the row first passed the public feed gates; written only by set_image_sort_at, which adds it
+  // to sortAt within the release cap. Raw SQL only, so Prisma never selects it and code may deploy
+  // before the migration.
+  firstVisibleAt    DateTime? // @no-type
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
@@ -5387,8 +5391,87 @@ model OauthConsent {
   // When the user approved "stay connected while you're away" (the OAuth offline grant, flag
   // `oauth-offline-grant`); null = none. No-type for the reason `ApiKey.mintOrigin` gives.
   offlineGrantedAt DateTime? // @no-type
+  // The spend cap for a recipe runner acting on the offline grant, over a rolling period
+  // (`day` | `week` | `month` = 1, 7, 30 days). Both null or both set; null refuses every runner
+  // mint. Separate from `buzzLimit`, the live-session cap. No-type, like `offlineGrantedAt`.
+  offlineBuzzLimit  Int?    // @no-type
+  offlineBuzzPeriod String? // @no-type
 
   @@unique([userId, clientId])
+}
+
+// The one recipe-runner OAuth client bound to a recipe app, written only by Civitai admins. RAW
+// SQL ONLY; CHECKs live in migration `20271204120000_recipe_runner_ledger`, applied by hand.
+// @no-type
+model RunnerClientBinding {
+  runnerClientId  String    @id @map("runner_client_id")
+  appBlockId      String    @unique @map("app_block_id")
+  status          String    @default("active")
+  createdByUserId Int       @map("created_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  suspendedAt     DateTime? @map("suspended_at") @db.Timestamptz(6)
+  suspendedReason String?   @map("suspended_reason")
+
+  @@map("runner_client_bindings")
+}
+
+// What a user authorized a recipe runner to start: one run (`single`) or a capped recurring
+// authorization (`standing`). RAW SQL ONLY; same migration.
+// @no-type
+model RunnerRunAuthorization {
+  id                String    @id
+  userId            Int       @map("user_id")
+  runnerClientId    String    @map("runner_client_id")
+  kind              String
+  runId             String?   @map("run_id")
+  recipeVersionHash String    @map("recipe_version_hash")
+  paramsHash        String    @map("params_hash")
+  maxAmountPerRun   Int       @map("max_amount_per_run")
+  maxRunsPerPeriod  Int?      @map("max_runs_per_period")
+  period            String?
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason     String?   @map("revoked_reason")
+
+  @@index([userId, runnerClientId], map: "runner_run_authorizations_user_client_idx")
+  @@map("runner_run_authorizations")
+}
+
+// One row per submit attempt of a recipe run; the runner's spend ledger. At most one live
+// attempt per run (partial unique index). RAW SQL ONLY; same migration.
+// @no-type
+model RunnerRunAttempt {
+  attemptId       String    @id @map("attempt_id")
+  runId           String    @map("run_id")
+  attemptNo       Int       @map("attempt_no")
+  userId          Int       @map("user_id")
+  runnerClientId  String    @map("runner_client_id")
+  appBlockId      String    @map("app_block_id")
+  authorizationId String    @map("authorization_id")
+  state           String
+  reservedAmount  Int       @map("reserved_amount")
+  chargedAmount   Int?      @map("charged_amount")
+  workflowId      String?   @map("workflow_id")
+  externalId      String    @map("external_id")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  settledAt       DateTime? @map("settled_at") @db.Timestamptz(6)
+
+  @@unique([runId, attemptNo])
+  @@index([userId, runnerClientId, createdAt], map: "runner_run_attempts_user_client_created_idx")
+  @@map("runner_run_attempts")
+}
+
+// A refund transaction re-credits a runner attempt at most once. RAW SQL ONLY; same migration.
+// @no-type
+model RunnerRecredit {
+  transactionId String   @id @map("transaction_id")
+  attemptId     String   @map("attempt_id")
+  amount        Int
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("runner_recredits")
 }
 
 /// An emailed sign-in invite from a system app (auth hub POST /api/auth/invite). Only the token's hash is
@@ -5673,6 +5756,19 @@ model FeaturePageCommentMirror {
   // Since when a restriction (hide, removal, retraction) is owed to the platform: lease priority and
   // the alert clock.
   restrictedAt      DateTime? @db.Timestamptz(6)
+  // The scan's own hide: CommentV3.hiddenAt as the scan set it, the text version it judged and the
+  // report it filed. Any other hide clears scanHiddenAt, so they no longer match the current hide.
+  scanHiddenAt      DateTime? @db.Timestamptz(6)
+  scanHiddenVersion Int?
+  scanHideReportId  Int? // partial index FeaturePageCommentMirror_scanHideReportId_idx (migration only)
+  // The `at` of the last moderator hide sent, and what it was sent for: the scan's hide, a
+  // moderator's here, or one the platform already held (foreign: never lifted from here).
+  modHideSentAt     DateTime? @db.Timestamptz(6)
+  modHideOrigin     String? // scan | moderator | foreign (DB CHECK)
+  // A moderator's lift of a hide: when (taken under the comment's lock), by whom, for which version.
+  liftGrantedAt      DateTime? @db.Timestamptz(6)
+  liftGrantedBy      Int?
+  liftGrantedVersion Int?
   nextPushAt     DateTime? @db.Timestamptz(6)
   leaseUntil     DateTime? @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
@@ -8736,6 +8832,9 @@ model KnightsQueueItem {
   meta              Json?
   /// Yes/no items only: answers so far; serving finishes questions that are under way first.
   voteCount         Int             @default(0)
+  /// The settled value the label pass has finished with: recorded as its verdict label, or skipped for good (image not
+  /// servable or gone, or refused by the label store too often). Null until then.
+  verdictLabelledValue String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -12106,8 +12205,11 @@ model ServiceDealFileEntry {
   scanStatus ServiceDealFileScanStatus @default(Pending)
   failReason String?
   createdAt  DateTime                  @default(now())
+  /// Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+  copyDeleteStartedAt DateTime?
 
   @@unique([fileId, entryIndex])
+  @@index([imageId])
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

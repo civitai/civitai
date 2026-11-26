@@ -17,6 +17,7 @@ import {
 import clsx from 'clsx';
 import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { WithheldMedia } from '~/components/EdgeMedia/WithheldMedia';
 import { useRescanArticle } from '~/hooks/useRescanArticle';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -34,7 +35,7 @@ export type TextModerationIssue = {
 
 type BlockedImage = {
   id: number;
-  url: string;
+  url: string | null;
   ingestion: ImageIngestionStatus;
   blockedFor: string | null;
   nsfwLevelLocked: boolean;
@@ -42,7 +43,7 @@ type BlockedImage = {
 
 type ErrorImage = {
   id: number;
-  url: string;
+  url: string | null;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   failureClass: string | null;
@@ -266,12 +267,16 @@ export function ArticleProblematicImages({
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                     <div className="flex min-w-0 flex-1 items-start gap-3">
                       <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
-                        <EdgeMedia
-                          src={image.url}
-                          width={64}
-                          className="size-full object-cover"
-                          alt="Blocked image (removed for policy violation)"
-                        />
+                        {image.url === null ? (
+                          <WithheldMedia compact />
+                        ) : (
+                          <EdgeMedia
+                            src={image.url}
+                            width={64}
+                            className="size-full object-cover"
+                            alt="Blocked image (removed for policy violation)"
+                          />
+                        )}
                       </div>
                       <Stack gap={4} className="min-w-0 flex-1">
                         <Text size="xs" fw={500} c="red.7">
@@ -315,12 +320,16 @@ export function ArticleProblematicImages({
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                     <div className="flex min-w-0 flex-1 items-start gap-3">
                       <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
-                        <EdgeMedia
-                          src={image.url}
-                          width={64}
-                          className="size-full object-cover"
-                          alt="Error image (may be broken)"
-                        />
+                        {image.url === null ? (
+                          <WithheldMedia compact />
+                        ) : (
+                          <EdgeMedia
+                            src={image.url}
+                            width={64}
+                            className="size-full object-cover"
+                            alt="Error image (may be broken)"
+                          />
+                        )}
                       </div>
                       <Stack gap={4} className="min-w-0 flex-1">
                         <Text size="xs" fw={500} c="yellow.7">

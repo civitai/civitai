@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { imageBlockedForConditions } from '~/server/common/image-visibility';
+import { reportListedImageSql } from '~/server/services/report-listed-visibility';
 
 export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
@@ -10,6 +10,7 @@ import {
   imageReviewedSql,
   minorMatureImageVisibleSql,
   notHeldForReviewSql,
+  ownerMediaSql,
 } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -65,14 +66,21 @@ export const countableImageSql = () =>
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
  * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
  * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
- * the owner's alone.
+ * the owner's alone. Images listed on a CsamReport are the uploader's (`ownerSeesReportListed`) and
+ * `seesReportListed` viewers' alone, moderators included.
  */
 export function entityImageVisibilityConditions({
   userId,
   isModerator,
+  seesReportListed,
+  ownerSeesReportListed = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /** The held-media viewer (`seesReportListed(ctx)`); false for a read with no viewer. */
+  seesReportListed: boolean;
+  /** The request carries the owner's view (a session or a full-access key). */
+  ownerSeesReportListed?: boolean;
 }): Prisma.Sql[] {
   const AND: Prisma.Sql[] = [];
   if (!isModerator) {
@@ -98,19 +106,14 @@ export function entityImageVisibilityConditions({
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  if (!isModerator) AND.push(ownerMediaSql(userId));
   AND.push(imageNotRestrictedSql({ viewerId: userId }));
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  AND.push(reportListedImageSql({ userId, seesReportListed, ownerSeesReportListed }));
   return AND;
 }
 
-/**
- * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
- * viewer without the held-media grant. Its uploader still sees it.
- */
-export const notReportListedSql = (userId?: number) =>
-  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
-    userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
-  })`;
+export { reportListedImageSql };
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on
@@ -125,9 +128,15 @@ export function imageVisibilityConditions({
   ownerSeesHeld = false,
   shownReviewImageLevels,
   judgingCrucibleIds,
+  ownerKeepsBlockedRow = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * The owner keeps a blocked image's row, for a read whose handler serves it without its media
+   * (`viewerCanSeeImageMedia`) or returns no media at all. Never for a read that returns a url.
+   */
+  ownerKeepsBlockedRow?: boolean;
   /**
    * `userId` (the session user) also sees their own items under an owner-hidden review hold. Only
    * for a read that shows the owner their item; not for one that acts on the image (a remix, say).
@@ -222,7 +231,7 @@ export function imageVisibilityConditions({
     // Not to a collection manager; to the owner only where the caller asks.
     notHeldForReviewSql(ownerSeesHeld ? userId : undefined),
     minorMatureImageVisibleSql({ userId }),
-    ...imageBlockedForConditions({ userId }),
+    ...imageBlockedForConditions({ userId, ownerKeepsBlockedRow }),
     imageNotRestrictedSql({ viewerId: userId }),
     // Without the opt-in, a review image is closed to its uploader too (moderators aside).
     ...(shownReviewImageLevels === undefined ? [notReviewImageSql] : []),
@@ -265,7 +274,7 @@ export async function assertImageVisibleToViewer({
     : Prisma.sql`NULL::boolean`;
   // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
   // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
-  // int4 or boolean, which both executors parse alike.
+  // int4, boolean or text, which both executors parse alike.
   // An id past int4 names no image: not found, as Prisma answered, rather than a range error.
   if (!isPgInt4(id)) throw throwNotFoundError();
   const { kyselyRead } = await loadKyselyDb();
@@ -274,17 +283,26 @@ export async function assertImageVisibleToViewer({
     userId: number;
     nsfwLevel: number;
     postId: number | null;
+    ingestion: string;
+    blockedFor: string | null;
     visibleSignedOut: boolean | null;
   }>(
     kyselyRead,
     Prisma.sql`
-    SELECT i.id, i."userId", i."nsfwLevel", i."postId", ${signedOutVerdict} AS "visibleSignedOut"
+    SELECT i.id, i."userId", i."nsfwLevel", i."postId", i.ingestion::text AS ingestion,
+      i."blockedFor", ${signedOutVerdict} AS "visibleSignedOut"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
       [
         Prisma.sql`i.id = ${id}`,
-        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, judgingCrucibleIds }),
+        ...imageVisibilityConditions({
+          userId,
+          isModerator,
+          ownerSeesHeld,
+          judgingCrucibleIds,
+          ownerKeepsBlockedRow: true,
+        }),
       ],
       ' AND '
     )}
@@ -333,7 +351,12 @@ export async function assertImageReportable({
       CASE WHEN ri."imageId" IS NULL THEN NULL ELSE (${Prisma.join(
         [
           Prisma.sql`TRUE`,
-          ...imageVisibilityConditions({ userId, isModerator, shownReviewImageLevels }),
+          ...imageVisibilityConditions({
+            userId,
+            isModerator,
+            shownReviewImageLevels,
+            ownerKeepsBlockedRow: true,
+          }),
         ],
         ' AND '
       )}) IS TRUE END AS "visible"
@@ -400,7 +423,7 @@ export async function getImageIdsVisibleToViewer({
       WHERE ${Prisma.join(
         [
           Prisma.sql`i.id IN (${Prisma.join(idList)})`,
-          ...imageVisibilityConditions({ userId, isModerator }),
+          ...imageVisibilityConditions({ userId, isModerator, ownerKeepsBlockedRow: true }),
         ],
         ' AND '
       )}

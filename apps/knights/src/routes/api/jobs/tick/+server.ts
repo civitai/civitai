@@ -1,7 +1,9 @@
 import { json } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 import { logToAxiom } from '$lib/server/axiom';
 import { retryPendingConversions } from '$lib/server/conversion/convert';
 import { runLabelPass } from '$lib/server/conversion/label-pass';
+import { verdictLabelConfig } from '$lib/server/conversion/verdict-labels';
 import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
 import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { db } from '$lib/server/db';
@@ -140,7 +142,7 @@ export const POST: RequestHandler = async ({ request }) => {
     })
   );
   const labels = await settle('label write-back', () =>
-    runLabelPass(db, { now: new Date(), log: logToAxiom })
+    runLabelPass(db, { now: new Date(), log: logToAxiom, verdict: verdictLabelConfig(env) })
   );
   // Only a step that throws fails the tick (a 500 pages). Items that failed inside a step are retried by the next tick, so
   // they are counted and logged instead: one bad item would otherwise page for hours and hide a real tick outage.

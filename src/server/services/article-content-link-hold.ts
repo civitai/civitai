@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 import {
   imageUrlUnavailableError,
   isUnfinishedUploadUrl,
@@ -23,6 +25,9 @@ export type ContentLinkHold = {
   deferredSince: Date | null;
   reportedAt: Date | null;
 };
+
+/** A deferral older than this goes to moderators, or, for a still-absent upload, links as before. */
+export const CONTENT_LINK_DEFERRAL_BACKSTOP_MS = 24 * 60 * 60 * 1000;
 
 /** Each issuer lookup takes a bounded number of keys; an article can hold more images than that. */
 const URLS_PER_LOOKUP = 16;
@@ -111,6 +116,45 @@ export async function classifyUnlinkedContentUrls({
   return { refused, deferred };
 }
 
+const UPLOAD_PROBE_CONCURRENCY = 4;
+/**
+ * Bounds a link's probes: the settle job re-links each held article every run. The rest are not
+ * probed: new urls link as before, deferred ones stay deferred.
+ */
+export const MAX_UPLOAD_PROBES = 32;
+/** No probe starts past this, so a slow store costs a save at most this plus one probe deadline. */
+export const UPLOAD_PROBE_BUDGET_MS = 4000;
+
+/**
+ * What the image store says of each url's upload: `absent` (a row for it would 404 at the scanner,
+ * so it is deferred instead) or `present`. A url in neither got no answer: an unreadable store
+ * proves nothing, and the first such answer stops the probing, as does the time budget.
+ */
+export async function probeContentUploads(
+  urls: string[],
+  {
+    max = MAX_UPLOAD_PROBES,
+    budgetMs = UPLOAD_PROBE_BUDGET_MS,
+  }: { max?: number; budgetMs?: number } = {}
+) {
+  const absent = new Set<string>();
+  const present = new Set<string>();
+  const stopAt = Date.now() + budgetMs;
+  let unreadable = false;
+  await limitConcurrency(
+    urls.slice(0, max).map((url) => async () => {
+      if (unreadable || Date.now() >= stopAt) return;
+      // Objects are stored under lowercase keys.
+      const verdict = await probeCreatedImageMedia(url.toLowerCase());
+      if (verdict === 'absent') absent.add(url);
+      else if (verdict === 'unknown') unreadable = true;
+      else present.add(url);
+    }),
+    UPLOAD_PROBE_CONCURRENCY
+  );
+  return { absent, present };
+}
+
 /** The hold to store after linking found `refused` and `deferred`, carrying over what still applies. */
 export function nextContentLinkHold(
   previous: ContentLinkHold | null,
@@ -175,4 +219,37 @@ export async function writeContentLinkHold(
           AND md5(COALESCE(a.content, '')) = md5(${content})
       `;
   return written > 0;
+}
+
+/**
+ * Adds `urls` to the article's deferred urls, keeping what its hold already holds and whom it
+ * settles against; `editorId` only when it has none.
+ */
+export async function deferContentUrls({
+  articleId,
+  content,
+  urls,
+  editorId,
+  now,
+}: {
+  articleId: number;
+  content: string;
+  urls: string[];
+  editorId: number;
+  now: Date;
+}) {
+  const previous = await getContentLinkHold(dbWrite, articleId);
+  return writeContentLinkHold(dbWrite, {
+    articleId,
+    content,
+    hold: nextContentLinkHold(
+      previous,
+      {
+        refused: previous?.refused ?? [],
+        deferred: [...new Set([...(previous?.deferred ?? []), ...urls])],
+        editorId: previous?.editorId ?? editorId,
+      },
+      now
+    ),
+  });
 }

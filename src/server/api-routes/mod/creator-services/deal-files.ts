@@ -54,6 +54,7 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
               canReviewCsam,
               // Moderators review every level.
               servableLevels: allBrowsingLevelsFlag,
+              moderatorFetch: true,
             });
             return files.map((file) => ({ dealId: id, ...file }));
           } catch (error) {

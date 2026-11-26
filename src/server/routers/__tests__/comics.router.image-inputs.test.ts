@@ -106,7 +106,7 @@ describe('comics.addReferenceImages', () => {
   it('stores an accepted value', async () => {
     dbMock.dbRead.comicReference.findUnique.mockResolvedValue({ id: 3, userId: USER_ID } as never);
     dbMock.dbWrite.image.create.mockResolvedValue({ id: 901 } as never);
-    dbMock.dbWrite.comicReference.update.mockResolvedValue({ id: 3 } as never);
+    dbMock.dbWrite.comicReference.update.mockResolvedValue({ id: 3, images: [] } as never);
     scanAccepted();
 
     await caller().addReferenceImages({

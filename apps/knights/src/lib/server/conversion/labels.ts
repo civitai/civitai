@@ -5,7 +5,7 @@ import { YESNO_KEY_PREFIX } from '../yesno/keys';
 import { heldSql } from './held';
 
 /** A vote the store has refused this many times is given up on (its reason stays in `record_failure`), so it is not retried forever. */
-const MAX_REFUSALS = 5;
+export const MAX_REFUSALS = 5;
 
 /** A vote the store refused, or whose write raised, is not tried again for this long, so a short outage cannot use up its refusals. */
 const RETRY_AFTER_MINUTES = 10;
@@ -104,9 +104,9 @@ async function keyedPrefix(db: Kysely<DB>, playerId: number): Promise<string | n
 }
 
 /** Logs the store's player-hash prefix, never a user id (public log sink). */
-async function logGaveUp(
+export async function logGaveUp(
   log: LabelLog | undefined,
-  kind: LabelKind,
+  kind: LabelKind | 'verdict',
   itemId: number,
   prefix: string | null
 ) {
@@ -248,7 +248,7 @@ export async function hasUnlabelled(db: Kysely<DB>, kind: LabelKind): Promise<bo
 }
 
 /** True when the store has no failure for `ref` newer than the retry age. */
-const notRecentlyFailed = (ref: ReturnType<typeof sql>) =>
+export const notRecentlyFailed = (ref: ReturnType<typeof sql>) =>
   sql`NOT EXISTS (SELECT 1 FROM label_store.record_failure rf WHERE rf."sourceRef" = ${ref}
     AND rf."createdAt" > now() - make_interval(mins => ${RETRY_AFTER_MINUTES}))`;
 

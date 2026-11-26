@@ -31,6 +31,7 @@ import {
   bucketLevelSql,
   servableItems,
   STAGE_SCAN_FIRST_ROUND,
+  STAGE_SCAN_MAX_PRIORITIES,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 import { creditLateJudgment, notInHiddenTagGroups } from './vote-record';
@@ -129,9 +130,10 @@ async function item(
  * which has milliseconds, so only the id orders them and a scan cursor must carry that instant exactly. Returns the item
  * ids in serving order.
  */
-async function sameAgeStage(levels: number[], firstImage = 100_000) {
+async function sameAgeStage(levels: number[], firstImage = 100_000, priorities?: number[]) {
   const params = [`{${levels.join(',')}}`, firstImage];
   const rows = `unnest($1::int[]) WITH ORDINALITY AS t(level, n)`;
+  const priority = `{${(priorities ?? levels.map(() => 1)).join(',')}}`;
   await pg.query(
     `INSERT INTO "Post" ("id","publishedAt") SELECT $2::int + n, '2020-01-01'::timestamp FROM ${rows}`,
     params
@@ -143,9 +145,9 @@ async function sameAgeStage(levels: number[], firstImage = 100_000) {
   );
   const items = await pg.query<{ id: number }>(
     `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","priority","createdAt","updatedAt")
-     SELECT $3::text, $2::int + n, 'test', 'Knight', 5, 1, '2026-12-15 11:00:00.123'::timestamp, '2026-12-15 11:00:00.123'::timestamp
+     SELECT $3::text, $2::int + n, 'test', 'Knight', 5, ($4::int[])[n], '2026-12-15 11:00:00.123'::timestamp, '2026-12-15 11:00:00.123'::timestamp
      FROM ${rows} ORDER BY n RETURNING id`,
-    [...params, Q]
+    [...params, Q, priority]
   );
   return items.rows.map((r) => r.id).sort((a, b) => a - b);
 }
@@ -261,7 +263,7 @@ describe('getFeed', () => {
     expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([escalated, knightItem]);
   });
 
-  it('orders by priority then age, and skips hidden checks and Acolytes', async () => {
+  it('orders by priority then age when every draw favours the lowest priority, and skips hidden checks and Acolytes', async () => {
     await player(1, 'Knight');
     await player(2, 'Acolyte');
     for (const id of [10, 11, 12, 13]) await image(id);
@@ -270,7 +272,12 @@ describe('getFeed', () => {
     await item(12, { hidden: true });
     const mid = await item(13, { priority: 2 });
 
-    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([high, mid, low]);
+    // A draw of 0.2 takes priority 1 while it lasts, then the lowest priority left, and never the starvation path.
+    expect((await getFeed(db, 1, { random: () => 0.2 }))?.items.map((i) => i.id)).toEqual([
+      high,
+      mid,
+      low,
+    ]);
     expect(await getFeed(db, 2)).toBeNull();
   });
 
@@ -283,7 +290,10 @@ describe('getFeed', () => {
 
     expect((await getFeed(db, 1, { exclude: [first] }))?.items.map((i) => i.id)).toEqual([second]);
     expect(await getFeed(db, 1, { exclude: [first, second] })).toBeNull();
-    expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([first, second]);
+    expect((await getFeed(db, 2, { random: () => 0.2 }))?.items.map((i) => i.id)).toEqual([
+      first,
+      second,
+    ]);
   });
 
   it('serves only as many items as asked for', async () => {
@@ -293,7 +303,9 @@ describe('getFeed', () => {
     await item(11, { priority: 2 });
     await item(12, { priority: 3 });
 
-    expect((await getFeed(db, 1, { limit: 1 }))?.items.map((i) => i.id)).toEqual([first]);
+    expect((await getFeed(db, 1, { limit: 1, random: () => 0.2 }))?.items.map((i) => i.id)).toEqual(
+      [first]
+    );
   });
 
   it('fills the stretch from the chosen question even when another question has more items', async () => {
@@ -387,6 +399,41 @@ describe('getFeed', () => {
       (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
     expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
     expect(served).not.toContain(ids[350]);
+  });
+
+  it('gives each priority its own row budget, so a priority-1 backlog past the budget cannot hide priority 2', async () => {
+    await player(1, 'Knight');
+    // 350 PG items at priority 1, then one R, X and XXX item at priority 2. A 250-row budget runs out inside priority 1, so
+    // the scan jumps to the start of priority 2 and reads it from a first round again.
+    const levels = [...Array<number>(350).fill(1), 4, 8, 16];
+    const ids = await sameAgeStage(levels, 100_000, [...Array<number>(350).fill(1), 2, 2, 2]);
+    const nsfw = ids.slice(350);
+    const watched = watchFeedReads();
+
+    const feed = await getFeed(watched.db, 1, { scanRowBudget: 250, limit: 50 });
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150, 3]);
+    expect(watched.rounds[2]).toEqual(nsfw);
+    expect(feed?.items.map((i) => i.id)).toEqual(expect.arrayContaining(nsfw));
+  });
+
+  it('reads at most STAGE_SCAN_MAX_PRIORITIES row budgets per pick', async () => {
+    await player(1, 'Knight');
+    // 150 PG items at each of priorities 1 to 3, then an X item at priority 4. A 100-row budget is used up in each of the
+    // first three priorities, and the scan stops there instead of reading a fourth.
+    const pgs = Array<number>(150).fill(1);
+    const ids = await sameAgeStage([...pgs, ...pgs, ...pgs, 8], 100_000, [
+      ...pgs,
+      ...pgs.map(() => 2),
+      ...pgs.map(() => 3),
+      4,
+    ]);
+    const watched = watchFeedReads();
+
+    const feed = await getFeed(watched.db, 1, { scanRowBudget: 100, limit: 50 });
+    expect(STAGE_SCAN_MAX_PRIORITIES).toBe(3);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 100, 100]);
+    expect(watched.rounds.map((r) => r[0])).toEqual([ids[0], ids[150], ids[300]]);
+    expect(feed?.items.map((i) => i.id)).not.toContain(ids[450]);
   });
 
   it('never reads or serves an image the gate refuses when the row budget cuts the scan short', async () => {

@@ -2638,9 +2638,6 @@ export const REDIS_SYS_KEYS = {
     // only as the fallback for ratings written before the move. Remove with that fallback, after
     // DATASET_RATING_SYS_FALLBACK_UNTIL in apps/training-studio/src/lib/server/dataset-rating.ts.
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
-    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:<blobId lowercased>,
-    // so a failed or unanswered rating is not sent again on every view.
-    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -2766,7 +2763,8 @@ export const REDIS_SYS_KEYS = {
     USER_CUT: 'session:user-cut',
     // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
     FAMILY_LIVE: 'session:family-live',
-    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser. Written only once
+    // the browser has two families or an account list; a single-family browser has none.
     DEVICE_FAMILIES: 'session:device-families',
     // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
     // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
@@ -3238,6 +3236,12 @@ const REDIS_KEYS_UNPREFIXED = {
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
+    // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
+    // without re-rating.
+    MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
+    MODEL3D_PREVIEW_V2_PENDING: 'generation:model3d-preview-v2-pending',
+    MODEL3D_PREVIEW_V2_RETRY: 'generation:model3d-preview-v2-retry',
+    MODEL3D_RATING_V2_CLEAR: 'generation:model3d-rating-v2-clear',
   },
   TRAINING: {
     // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
@@ -3257,6 +3261,10 @@ const REDIS_KEYS_UNPREFIXED = {
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
     // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
     STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:m<level>:<blobId
+    // lowercased>, so a failed or unanswered rating is not sent again on every view. Lost early, the
+    // blob is sent once more, within the daily allowance.
+    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
     // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
     // acts on, and how. Written by hand with an expiry; deleting it, or its eviction, refuses every call.
     RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
@@ -3271,6 +3279,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
     // src/lib/server/oauth/offline-grant.ts.
     REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
+    // A ban's mark on a self-only client it disabled: see src/server/services/oauth-ban-marker.ts.
+    BAN_DISABLED: 'oauth:ban-disabled',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',

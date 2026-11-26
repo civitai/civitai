@@ -167,7 +167,7 @@ const collectionItems = async () =>
 const pendingDeletes = async () =>
   (
     await db.query<{ entityId: number; data: unknown }>(
-      `SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityId"`
+      `SELECT "entityId", data - 'prior' AS data FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityId"`
     )
   ).rows;
 

@@ -1,6 +1,7 @@
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   ImageSort,
   NotificationCategory,
@@ -84,6 +85,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
+  actsAsModerator,
   canViewImageMedia,
   keepCrawlerAnswerOutOfEdgeCache,
   viewerCanSeeImageMedia,
@@ -171,11 +173,12 @@ export const moderateImageHandler = async ({
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    // If the spoke rejects the action with a 4xx (a bad/conflicting request rather than a server fault),
-    // surface it as the matching tRPC code with the spoke's clean message, not a generic 500.
+    // A spoke 4xx is a refusal, not a server fault: surface it as the matching tRPC code with the
+    // spoke's message, not a generic 500.
     if (error instanceof ModeratorClientError && error.status && error.status < 500)
       throw new TRPCError({
-        code: error.status === 409 ? 'CONFLICT' : 'BAD_REQUEST',
+        code:
+          error.status === 409 ? 'CONFLICT' : error.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST',
         message: error.message,
         cause: error,
       });
@@ -382,19 +385,13 @@ export const setTosViolationHandler = async ({
 };
 
 // #region [new handlers]
-/**
- * A held gallery is shown whole to a moderator, signed in or on a full-access key: the same
- * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
- */
-const moderatorView = (ctx: Context) => credentialViews(ctx).asModerator;
-
-/** The owner a taken-down model's gallery is shown to, on the same credentials as `moderatorView`. */
+/** The owner a taken-down model's gallery is shown to, on the same credentials as `actsAsModerator`. */
 const galleryOwnerId = (ctx: Context) =>
   ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
 
 /** Whether the request's model gallery is withheld from this viewer (see `isModelGalleryWithheld`). */
 const isGalleryWithheldFrom = (ctx: Context, input: Parameters<typeof isModelGalleryWithheld>[0]) =>
-  moderatorView(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
+  actsAsModerator(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
 
 export const getImagesForModelVersionHandler = async ({
   input,
@@ -413,7 +410,7 @@ export const getImagesForModelVersionHandler = async ({
   ]);
   // A minor or SFW-only model's showcase is held at its gallery level, as in the gallery.
   const wholeShowcase =
-    moderatorView(ctx) || (!!version && galleryOwnerId(ctx) === version.model.userId);
+    actsAsModerator(ctx) || (!!version && galleryOwnerId(ctx) === version.model.userId);
   // A version with no row has no model to clear it, so it serves none of its images.
   const shown = wholeShowcase
     ? byVersion
@@ -437,7 +434,7 @@ export const getImagesForModelVersionHandler = async ({
   const settings = resolveStrictestPoiMinor(
     await getBrowsingSettingAddons(),
     requestServableLevels(ctx),
-    { isModerator: moderatorView(ctx) }
+    { isModerator: actsAsModerator(ctx) }
   );
   // Moderator and owner exemptions on the same credentials as the hold.
   const exemptViewer = galleryOwnerId(ctx) !== undefined ? ctx.user : undefined;
@@ -473,7 +470,7 @@ async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLev
   images: T[]
 ) {
   const postIds = images.map((image) => image.postId).filter(isDefined);
-  if (!postIds.length || moderatorView(ctx)) return images;
+  if (!postIds.length || actsAsModerator(ctx)) return images;
   const held = await getHeldLevelsByPost(postIds);
   return images.filter((image) => {
     const hold = image.postId ? held.get(image.postId) : undefined;
@@ -574,7 +571,7 @@ export const getInfiniteImagesHandler = async ({
     // taken-down model's only to its owner, except to moderators, who must see what they may need
     // to remove.
     const [heldLevel, withheld] = await Promise.all([
-      moderatorView(ctx) ? undefined : getHeldGalleryLevel(scopedInput),
+      actsAsModerator(ctx) ? undefined : getHeldGalleryLevel(scopedInput),
       isGalleryWithheldFrom(ctx, scopedInput),
     ]);
     if (withheld) return { items: [], nextCursor: undefined };
@@ -664,7 +661,7 @@ export const getInfiniteImagesHandler = async ({
         ...scopedInput,
         user,
         ...credentialViews(ctx),
-        holdExempt: moderatorView(ctx),
+        holdExempt: actsAsModerator(ctx),
         galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
@@ -789,7 +786,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
     // Only the model's owner and moderators may list the images it hides from its gallery.
-    if (hidden && input.modelId && !moderatorView(ctx)) {
+    if (hidden && input.modelId && !actsAsModerator(ctx)) {
       const ownerId = galleryOwnerId(ctx);
       const model = await dbRead.model.findUnique({
         where: { id: input.modelId },
@@ -802,7 +799,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // A taken-down model's gallery is its owner's alone.
     const [modelGallerySettings, heldLevel, withheld] = await Promise.all([
       input.modelId ? getGallerySettingsByModelId({ id: input.modelId }) : null,
-      moderatorView(ctx) ? undefined : getHeldGalleryLevel(input),
+      actsAsModerator(ctx) ? undefined : getHeldGalleryLevel(input),
       isGalleryWithheldFrom(ctx, input),
     ]);
     if (withheld) return { nextCursor: undefined, items: [] };
@@ -1231,6 +1228,8 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       nsfwLevel: result.nsfwLevel,
       userId: result.user.id,
       postId: result.postId ?? null,
+      ingestion: result.ingestion,
+      blockedFor: result.blockedFor,
     });
     // A failed hold lookup serves the image without media rather than failing the page.
     const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
@@ -1243,7 +1242,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;
-    return servable ? result : withoutMedia({ ...result, eventDecoration: null });
+    if (servable) return result;
+    // A block leaves its owner the notice and the appeal, not the media or its preview.
+    if (!ownerMediaAllowed(result))
+      return withoutMedia({ ...result, hash: null, cosmetic: null, eventDecoration: null });
+    return withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1353,12 +1356,15 @@ export const getImageContestCollectionDetailsHandler = async ({
     const userId = ctx.user?.id;
     const isModerator = ctx.user?.isModerator;
     // An image the viewer may not open gets the same answer as an id with no contest entries.
-    const image = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).catch(
-      (error) => {
-        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
-        throw error;
-      }
-    );
+    const image = await assertImageVisibleToViewer({
+      id: input.id,
+      userId,
+      isModerator,
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
+    }).catch((error) => {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
+      throw error;
+    });
     if (!image) return { collectionItems: [], post: null };
 
     const collectionItems = await getImageContestCollectionDetails({

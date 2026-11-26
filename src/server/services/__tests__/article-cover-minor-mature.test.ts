@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as SystemCache from '~/server/services/system-cache';
@@ -378,5 +380,319 @@ describe('getArticleById follows the article availability rule', () => {
 
   it('follows the article availability rule for a public article, signed out', async () => {
     await expect(read(Availability.Public, undefined)).resolves.toMatchObject({ id: 1 });
+  });
+});
+
+// civitai/civitai#10514: article images follow the report-listed rule.
+describe('the article page under the report-listed rule', () => {
+  // The rule's per-viewer answer is pinned on real SQL in article-card-cover.behavior.test.ts;
+  // here the database names the image as hidden, and the page must drop it.
+  beforeEach(() => {
+    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: COVER },
+    ]);
+  });
+
+  async function detail(field: 'coverImage' | 'bannerImage', seesReportListed: boolean) {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      nsfwLevel: 1,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: '',
+      metadata: null,
+      cover: 'cover-key',
+      coverImage: null,
+      bannerImage: null,
+      [field]: cover(1, false),
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    return getArticleById({
+      id: 1,
+      userId: STRANGER,
+      reportListedViewer: { seesReportListed },
+    });
+  }
+
+  it.each(['coverImage', 'bannerImage'] as const)('drops a hidden %s', async (field) => {
+    expect((await detail(field, false))[field]).toBeUndefined();
+  });
+
+  it('drops the legacy cover key with a hidden cover', async () => {
+    expect((await detail('coverImage', false)).cover).toBeNull();
+  });
+
+  it.each(['coverImage', 'bannerImage'] as const)(
+    'keeps the %s for a viewer who sees report-listed images',
+    async (field) => {
+      expect((await detail(field, true))[field]).toMatchObject({ id: COVER });
+    }
+  );
+});
+
+// civitai/civitai#10514: article images follow the report-listed rule.
+describe('the article page body under the report-listed rule', () => {
+  // Body image ids, each listed on a report: one the article's owner uploaded, one someone else did.
+  const OWN_BODY = 601;
+  const OTHERS_BODY = 602;
+  const CLEAN_BODY = 603;
+  const uuid = (id: number) => `${id}${id}${id}aaaa-bbbb-4ccc-8ddd-${String(id).repeat(4)}`;
+  const body = (id: number, userId: number) => ({
+    id,
+    url: uuid(id),
+    nsfwLevel: 1,
+    minor: false,
+    modelRestricted: false,
+    userId,
+    ingestion: 'Scanned',
+    needsReview: null,
+    tosViolation: false,
+    hash: null,
+    width: 10,
+    height: 10,
+  });
+  const images = [
+    body(OWN_BODY, OWNER),
+    body(OTHERS_BODY, OTHER_IMAGE_OWNER),
+    body(CLEAN_BODY, OWNER),
+  ];
+
+  let pg: PGlite;
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
+      INSERT INTO "Image" (id, "userId") VALUES
+        (${OWN_BODY}, ${OWNER}), (${OTHERS_BODY}, ${OTHER_IMAGE_OWNER}), (${CLEAN_BODY}, ${OWNER}),
+        (${COVER}, ${OWNER});
+      INSERT INTO "CsamReport" (images) VALUES ('[${OWN_BODY}, {"id": ${OTHERS_BODY}}, ${COVER}]');
+    `);
+  });
+  afterAll(() => pg?.close());
+
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return sql.text.includes('"CsamReport"') ? (await pg.query(sql.text, sql.values)).rows : [];
+    }) as never);
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      nsfwLevel: 1,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: images
+        .map((i) => `<img src="https://image.civitai.com/abc/${i.url}/width=450">`)
+        .join(''),
+      metadata: null,
+      coverImage: null,
+      bannerImage: null,
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue(
+      images.map((image) => ({ image })) as never
+    );
+  });
+
+  const shownTo = async (
+    viewer: Viewer,
+    reportListedViewer: { seesReportListed: boolean; ownerSeesReportListed?: boolean }
+  ) => {
+    const article = await getArticleById({
+      id: 1,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
+      reportListedViewer,
+    });
+    const ids = article.contentImages.map((i) => i.id);
+    for (const image of images)
+      expect(article.content?.includes(image.url), `image ${image.id} in the body`).toBe(
+        ids.includes(image.id)
+      );
+    return ids;
+  };
+  const SESSION = { seesReportListed: false, ownerSeesReportListed: true };
+
+  it.each<[string, Viewer]>([
+    ['a signed-out viewer', undefined],
+    ['a stranger', { id: STRANGER }],
+    ['a moderator without the grant', { id: MOD, isModerator: true }],
+  ])('🔴 withholds every listed body image from %s', async (_, viewer) => {
+    expect(await shownTo(viewer, SESSION)).toEqual([CLEAN_BODY]);
+  });
+
+  it("🔴 withholds from the article's owner a listed body image someone else uploaded", async () => {
+    expect(await shownTo({ id: OWNER }, SESSION)).toEqual([OWN_BODY, CLEAN_BODY]);
+  });
+
+  it('🔴 withholds from the uploader on a scoped key', async () => {
+    expect(
+      await shownTo({ id: OWNER }, { seesReportListed: false, ownerSeesReportListed: false })
+    ).toEqual([CLEAN_BODY]);
+  });
+
+  it('keeps every body image for a held-media viewer (control)', async () => {
+    expect(
+      await shownTo(
+        { id: MOD, isModerator: true },
+        { seesReportListed: true, ownerSeesReportListed: true }
+      )
+    ).toEqual([OWN_BODY, OTHERS_BODY, CLEAN_BODY]);
+  });
+
+  it.each<[string, Viewer, typeof SESSION, boolean]>([
+    ['its uploader', { id: OWNER }, SESSION, true],
+    ['a stranger', { id: STRANGER }, SESSION, false],
+    [
+      'its uploader on a scoped key',
+      { id: OWNER },
+      { ...SESSION, ownerSeesReportListed: false },
+      false,
+    ],
+  ])('a listed cover and %s', async (_, viewer, reportListedViewer, shown) => {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      nsfwLevel: 1,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: '',
+      metadata: null,
+      cover: 'cover-key',
+      coverImage: cover(1, false),
+      bannerImage: null,
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    const article = await getArticleById({
+      id: 1,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
+      reportListedViewer,
+    });
+    expect(article.coverImage?.id).toBe(shown ? COVER : undefined);
+  });
+
+  describe('the edit form read', () => {
+    const editRead = async (
+      viewer: Viewer,
+      reportListedViewer: { seesReportListed: boolean; ownerSeesReportListed?: boolean },
+      edit = true
+    ) =>
+      (
+        await getArticleById({
+          id: 1,
+          userId: viewer?.id,
+          isModerator: viewer?.isModerator,
+          reportListedViewer,
+          edit,
+        })
+      ).content ?? '';
+    const placeholders = (content: string) =>
+      [...content.matchAll(/data-type="withheldMedia" data-id="(\d+)"/g)].map((m) => Number(m[1]));
+
+    it("🔴 keeps the place of a listed image the owner didn't upload, without its source", async () => {
+      const content = await editRead({ id: OWNER }, SESSION);
+      expect(placeholders(content)).toEqual([1]);
+      expect(content).not.toContain(uuid(OTHERS_BODY));
+      expect(content).toContain(uuid(OWN_BODY));
+    });
+
+    it('🔴 keeps the place of every listed image for a moderator without the grant', async () => {
+      const content = await editRead({ id: MOD, isModerator: true }, SESSION);
+      expect(placeholders(content)).toEqual([0, 1]);
+      expect(content).not.toContain(uuid(OWN_BODY));
+      expect(content).not.toContain(uuid(OTHERS_BODY));
+    });
+
+    // Each listed image, as a link and as an upper-case source besides its plain image.
+    const spelledEveryWay = (id: number) =>
+      `<p><img src="https://image.civitai.com/abc/${uuid(id)}/width=450"></p>` +
+      `<p><a href="https://image.civitai.com/abc/${uuid(id)}/original=true">src</a></p>` +
+      `<p><img src="https://image.civitai.com/abc/${uuid(id).toUpperCase()}/width=450"></p>`;
+    const editReadOf = async (body: string, viewer: Viewer, reportListedViewer: typeof SESSION) => {
+      dbMock.dbRead.article.findFirst.mockResolvedValue({
+        id: 1,
+        userId: OWNER,
+        nsfwLevel: 1,
+        status: ArticleStatus.Published,
+        ingestion: ArticleIngestionStatus.Scanned,
+        tags: [],
+        content: body,
+        metadata: null,
+        coverImage: null,
+        bannerImage: null,
+      } as never);
+      return (await editRead(viewer, reportListedViewer)).toLowerCase();
+    };
+
+    it.each<[string, number, Viewer, typeof SESSION]>([
+      ['a moderator without the grant', OWN_BODY, { id: MOD, isModerator: true }, SESSION],
+      [
+        'the owner on a scoped key',
+        OWN_BODY,
+        { id: OWNER },
+        { ...SESSION, ownerSeesReportListed: false },
+      ],
+      ["the owner, for someone else's upload", OTHERS_BODY, { id: OWNER }, SESSION],
+    ])('🔴 gives %s no form of a listed image', async (_, id, viewer, reportListedViewer) => {
+      expect(await editReadOf(spelledEveryWay(id), viewer, reportListedViewer)).not.toContain(
+        uuid(id)
+      );
+    });
+
+    it.each<[string, Viewer, typeof SESSION]>([
+      ['its uploader', { id: OWNER }, SESSION],
+      [
+        'a held-media viewer',
+        { id: MOD, isModerator: true },
+        { ...SESSION, seesReportListed: true },
+      ],
+    ])('gives %s the listed image (control)', async (_, viewer, reportListedViewer) => {
+      expect(await editReadOf(spelledEveryWay(OWN_BODY), viewer, reportListedViewer)).toContain(
+        uuid(OWN_BODY)
+      );
+    });
+
+    it('🔴 keeps a link to a listed image for a moderator without the grant, without its href', async () => {
+      const content = await editReadOf(
+        spelledEveryWay(OWN_BODY),
+        { id: MOD, isModerator: true },
+        SESSION
+      );
+      expect(content).toContain('<a data-withheld-href="0">src</a>');
+    });
+
+    it("leaves the uploader's link to their listed image as stored (control)", async () => {
+      const content = await editReadOf(spelledEveryWay(OWN_BODY), { id: OWNER }, SESSION);
+      expect(content).toContain(
+        `<a href="https://image.civitai.com/abc/${uuid(OWN_BODY)}/original=true">src</a>`
+      );
+      expect(content).not.toContain('data-withheld-href');
+    });
+
+    it('gives no placeholder to a reader who cannot edit', async () => {
+      const content = await editRead({ id: STRANGER }, SESSION);
+      expect(placeholders(content)).toEqual([]);
+      expect(content).not.toContain(uuid(OWN_BODY));
+    });
+
+    it('is the page read for a held-media viewer (control)', async () => {
+      const viewer = { id: MOD, isModerator: true };
+      const reportListedViewer = { ...SESSION, seesReportListed: true };
+      const page = await editRead(viewer, reportListedViewer, false);
+      expect(await editRead(viewer, reportListedViewer)).toBe(page);
+      expect(placeholders(page)).toEqual([]);
+    });
+
+    it("gives no placeholder on the owner's page read (control)", async () => {
+      expect(placeholders(await editRead({ id: OWNER }, SESSION, false))).toEqual([]);
+    });
   });
 });

@@ -26,7 +26,12 @@ Authorization: Bearer <the app's hub access token for the user>
 
 1. Validate `slug`, `collection` and `major`, and build the collection's schema URN,
    `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>` (`internal/urn`, pinned to the adapter's
-   `registryUrn` by golden vectors).
+   `registryUrn` by golden vectors). With no `major`, the read is of the collection's CURRENT major:
+   it opens the stream at the major the streams last named for the collection on this replica (1 the
+   first time), and the stream's `meta` names the current one (`currentMajor`, which the adapter's
+   private and level feeds send on `live` and `progress`). A stream that names another major is read
+   again at it, once; one that names none is answered at the major it was opened at (`internal/api/major.go`, THE CURRENT MAJOR). Neither service needs
+   the other released first.
 2. If the registry path is on and the token is one the hub can exchange (below), read the token's
    stream for that schema (`internal/session`). A read:
 
@@ -493,7 +498,11 @@ carry no key. The HTTP binding sends it (an SSE upsert is the whole entity); the
 body format (`k1`), so a cursor saved before keys were carried resumes as a change: each record is
 sent again, with its key, and no cursor is expired.
 
-This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"data":…}`.
+This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"version"?:…,"data":…}`.
+The adapter's body format `k3` adds the document's store `version` beside the key and seq
+(`Entity.version`), and a read answers it as the item's `version`, the number a write's `ifVersion`
+is compared against; a REST item carries the store's `version` too (and, as before, the same number
+as its `rev`). An item from a stream before `k3` omits `version`.
 `?keyPrefix=P` (a key's grammar, at most 128 characters) keeps the records whose key starts with `P`
 on the registry path and is sent on as the store's own `keyPrefix` on REST. A stream whose records
 carry no key cannot be filtered: a `keyPrefix` read of it goes to REST (`unkeyed`). A prefix that

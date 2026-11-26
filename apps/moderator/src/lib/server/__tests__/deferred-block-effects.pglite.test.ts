@@ -24,7 +24,12 @@ const { dbHandle, createNotification, setReportStatus, logToAxiom } = vi.hoisted
     async (_n: { userId: number; details: { url: string; reason?: string } }) => undefined
   ),
   setReportStatus: vi.fn(
-    async (_a: { id: number; status: string; noRewardFor?: readonly number[] }) => ({
+    async (_a: {
+      id: number;
+      status: string;
+      noRewardFor?: readonly number[];
+      fromStatuses?: readonly string[];
+    }) => ({
       ok: true as const,
       changed: true,
     })
@@ -64,9 +69,13 @@ vi.mock('../redis', () => ({ getSysRedis: () => ({ del: vi.fn(), sRem: vi.fn() }
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined), logToAxiom }));
 
-const { acceptImage, blockImage, dismissFromCsamQueue, dismissUserFromCsamQueue } = await import(
-  '../image-moderation.service'
-);
+const {
+  acceptImage,
+  blockImage,
+  dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
+  ImageNotRestoredError,
+} = await import('../image-moderation.service');
 const { clearUserCsamFlags } = await import('../csam-flag-clear');
 const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 
@@ -294,6 +303,26 @@ describe('dismissing it from the review queue', () => {
     await dismiss(FLAGGED);
 
     expect(actioned().map((a) => a.id)).toEqual([report(FLAGGED)]);
+  });
+
+  it('leaves a report alone that a moderator closed between its read and its write', async () => {
+    await block(FLAGGED);
+    // As the real write does it: `fromStatuses` bounds the UPDATE itself.
+    setReportStatus.mockImplementationOnce(async (a) => {
+      await db.query(`UPDATE "Report" SET "status" = 'Unactioned' WHERE "id" = $1`, [a.id]);
+      await db.query(
+        `UPDATE "Report" SET "status" = $1 WHERE "id" = $2
+           AND ($3::text[] IS NULL OR "status" = ANY($3::text[]))`,
+        [a.status, a.id, a.fromStatuses ? [...a.fromStatuses] : null]
+      );
+      return { ok: true as const, changed: true };
+    });
+    await dismiss(FLAGGED);
+
+    const { rows } = await db.query(`SELECT "status" FROM "Report" WHERE "id" = $1`, [
+      report(FLAGGED),
+    ]);
+    expect(rows).toEqual([{ status: 'Unactioned' }]);
   });
 
   it('for a row with a report reason, actions the open reports of that reason, including one filed after the block', async () => {
@@ -540,8 +569,14 @@ describe('a re-block of an image already removed under the flag', () => {
 });
 
 describe('an unblock of it', () => {
-  it('drops its deferred effects unfired', async () => {
+  it('is refused while the flag is on, and once the flag is cleared drops its deferred effects unfired', async () => {
     await block(FLAGGED);
+    await expect(
+      acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(ImageNotRestoredError);
+    expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED}`);
     await acceptImage({ imageId: FLAGGED, userId: 2, restoreRemoved: true });
 
     expect(await deferredRows()).toEqual([]);

@@ -7,6 +7,10 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -376,9 +380,29 @@ const challengeCardQuery = Prisma.sql`
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
     LEFT JOIN "User" ju ON ju.id = cj."userId"`;
 
-// Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
-// ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
-// of the two is shown as the author is a client concern (see getChallengeDisplayUser).
+/** The challenge covers a card or list may show, as the challenge's own cover read does. */
+async function getChallengeCoverImages(coverImageIds: number[], viewerId: number | undefined) {
+  if (!coverImageIds.length) return [];
+  const [images, listed] = await Promise.all([
+    dbRead.image.findMany({
+      where: {
+        id: { in: coverImageIds },
+        AND: [imageNotRestrictedWhere({ viewerId }), challengeCoverWhere()],
+      },
+      select: imageSelect,
+    }),
+    getReportListedHiddenImageIds(coverImageIds, SIGNED_OUT_REPORT_LISTED),
+  ]);
+  return images.filter((image) => !listed.has(image.id));
+}
+
+/** A cover the editor may not see: its id, so a save keeps it, and nothing that shows it. */
+const withoutCoverSource = <T extends { url: string; hash: string | null }>(image: T): T => ({
+  ...image,
+  url: '',
+  hash: null,
+});
+
 // The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
@@ -393,6 +417,9 @@ function coverWithinSite<
     : cover;
 }
 
+// Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
+// ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
+// of the two is shown as the author is a client concern (see getChallengeDisplayUser).
 async function mapChallengeRowsToCards(
   items: ChallengeCardRow[],
   site: SiteViewer
@@ -410,13 +437,7 @@ async function mapChallengeRowsToCards(
   ]);
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages = await dbRead.image.findMany({
-    where: {
-      id: { in: coverImageIds },
-      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
-    },
-    select: imageSelect,
-  });
+  const coverImages = await getChallengeCoverImages(coverImageIds, site.viewerId);
 
   return items.map((item) => {
     const coverImage = coverWithinSite(
@@ -945,7 +966,10 @@ export async function getInfiniteChallenges(
 async function buildChallengeDetail(
   challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>,
   green?: { isGreen?: boolean; viewerId?: number },
-  { forEdit = false }: { forEdit?: boolean } = {}
+  {
+    forEdit = false,
+    seesReportListed = false,
+  }: { forEdit?: boolean; seesReportListed?: boolean } = {}
 ) {
   const id = challenge.id;
 
@@ -983,27 +1007,36 @@ async function buildChallengeDetail(
   const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
-  const fetchedCover = challenge.coverImageId
-    ? await dbRead.image.findFirst({
-        where: {
-          id: challenge.coverImageId,
-          // The edit form must round-trip the cover it keeps, or a save would drop it.
-          ...(forEdit
-            ? {}
-            : {
-                AND: [
-                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
-                  challengeCoverWhere(),
-                ],
-              }),
-        },
-        select: imageSelect,
-      })
-    : null;
-  const coverImage = coverWithinSite(fetchedCover, {
+  const [listedCover, readCover] = await Promise.all([
+    !seesReportListed && challenge.coverImageId
+      ? getReportListedHiddenImageIds([challenge.coverImageId], SIGNED_OUT_REPORT_LISTED)
+      : new Set<number>(),
+    challenge.coverImageId
+      ? dbRead.image.findFirst({
+          where: {
+            id: challenge.coverImageId,
+            // The edit form must round-trip the cover it keeps, or a save would drop it.
+            ...(forEdit
+              ? {}
+              : {
+                  AND: [
+                    imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                    challengeCoverWhere(),
+                  ],
+                }),
+          },
+          select: imageSelect,
+        })
+      : null,
+  ]);
+  const coverListed = listedCover.size > 0;
+  const fetchedCover = forEdit || !coverListed ? readCover : null;
+  const shownCover = coverWithinSite(fetchedCover, {
     isGreen: green?.isGreen ?? false,
     viewerId: green?.viewerId,
   });
+  // A listed cover keeps its id for the edit form but loses its source.
+  const coverImage = shownCover && coverListed ? withoutCoverSource(shownCover) : shownCover;
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
@@ -1188,12 +1221,16 @@ export async function getChallengeDetail(
  * ones needed for the edit form (judging prompt, theme elements, etc.).
  * Bypasses visibility checks.
  */
-export async function getChallengeForEdit(id: number): Promise<ChallengeDetailForEdit | null> {
+export async function getChallengeForEdit(
+  id: number,
+  { seesReportListed = false }: { seesReportListed?: boolean } = {}
+): Promise<ChallengeDetailForEdit | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
   const { _internal, ...detail } = await buildChallengeDetail(challenge, undefined, {
     forEdit: true,
+    seesReportListed,
   });
   return { ...detail, ..._internal };
 }
@@ -3264,22 +3301,26 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 async function getEventCoverImages(
   coverImageIds: (number | null)[],
   site: SiteViewer,
-  { forEdit = false }: { forEdit?: boolean } = {}
+  {
+    forEdit = false,
+    seesReportListed = false,
+  }: { forEdit?: boolean; seesReportListed?: boolean } = {}
 ) {
   const ids = coverImageIds.filter(isDefined);
   if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
-  const images = await dbRead.image.findMany({
-    where: {
-      id: { in: ids },
-      ...(forEdit
-        ? {}
-        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
-    },
-    select: imageSelect,
-  });
+  const [images, listed] = forEdit
+    ? await Promise.all([
+        dbRead.image.findMany({ where: { id: { in: ids } }, select: imageSelect }),
+        seesReportListed
+          ? new Set<number>()
+          : getReportListedHiddenImageIds(ids, SIGNED_OUT_REPORT_LISTED),
+      ])
+    : [await getChallengeCoverImages(ids, site.viewerId), new Set<number>()];
   const map = new Map<number, ChallengeCoverImage>();
-  for (const img of images) {
-    if (!coverWithinSite(img, site)) continue;
+  for (const found of images) {
+    if (!coverWithinSite(found, site)) continue;
+    // As on the challenge edit form: the id round-trips, the source does not.
+    const img = listed.has(found.id) ? withoutCoverSource(found) : found;
     map.set(img.id, {
       id: img.id,
       url: img.url,
@@ -3418,18 +3459,9 @@ export async function getActiveEvents(
   ]);
 
   const coverImageIds = allChallenges.map((c) => c.coverImageId).filter(isDefined);
-  const coverImages =
-    coverImageIds.length > 0
-      ? await dbRead.image
-          .findMany({
-            where: {
-              id: { in: coverImageIds },
-              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
-            },
-            select: imageSelect,
-          })
-          .then((imgs) => new Map(imgs.map((img) => [img.id, img])))
-      : new Map();
+  const coverImages = new Map(
+    (await getChallengeCoverImages(coverImageIds, site.viewerId)).map((img) => [img.id, img])
+  );
 
   // Get entry counts for all challenges
   const collectionIds = allChallenges.map((c) => c.collectionId).filter(isDefined);
@@ -3587,7 +3619,10 @@ export async function getChallengeEventById(
 /**
  * Get all challenge events (for moderator management).
  */
-export async function getChallengeEvents(input: GetChallengeEventsInput) {
+export async function getChallengeEvents(
+  input: GetChallengeEventsInput,
+  { seesReportListed = false }: { seesReportListed?: boolean } = {}
+) {
   const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
   const events = await dbRead.challengeEvent.findMany({
     where,
@@ -3612,7 +3647,7 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
   const coverMap = await getEventCoverImages(
     events.map((e) => e.coverImageId),
     { isGreen: false },
-    { forEdit: true }
+    { forEdit: true, seesReportListed }
   );
   return events.map(({ coverImageId, ...e }) => ({
     ...e,
@@ -4145,7 +4180,7 @@ export async function getCompletedChallengesWithWinners(
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
-  // Cursor-based pagination: "endsAt:id"
+  // The "endsAt:id" cursor points to the first challenge on the next page.
   if (cursor) {
     const lastColon = cursor.lastIndexOf(':');
     if (lastColon !== -1) {
@@ -4155,7 +4190,7 @@ export async function getCompletedChallengesWithWinners(
       const endsAt = new Date(endsAtStr);
       if (!isNaN(id) && !isNaN(endsAt.getTime())) {
         conditions.push(
-          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id < ${id}))`
+          Prisma.sql`(c."endsAt" < ${endsAt} OR (c."endsAt" = ${endsAt} AND c.id <= ${id}))`
         );
       }
     }
@@ -4334,16 +4369,7 @@ export async function getCompletedChallengesWithWinners(
 
   // Fetch cover images
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages =
-    coverImageIds.length > 0
-      ? await dbRead.image.findMany({
-          where: {
-            id: { in: coverImageIds },
-            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
-          },
-          select: imageSelect,
-        })
-      : [];
+  const coverImages = await getChallengeCoverImages(coverImageIds, currentUserId);
 
   // Transform results
   const coverImageMap = new Map(coverImages.map((img) => [img.id, img]));

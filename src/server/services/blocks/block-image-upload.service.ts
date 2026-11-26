@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
@@ -561,8 +562,7 @@ function throwForTerminalOutcome(outcome: BlockImageUploadScanOutcome): never {
     case 'blocked-nsfw':
       throw new TRPCError({
         code: 'BAD_REQUEST',
-        message:
-          'that image is above the safe-for-work limit for app uploads — choose a SFW image',
+        message: 'that image is above the safe-for-work limit for app uploads — choose a SFW image',
       });
     case 'blocked-flagged':
       throw new TRPCError({
@@ -608,6 +608,7 @@ export async function gateBlockUploadImage(opts: {
   if (image.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this image' });
   }
+  await assertNotDealFileImages([image.id], 'used here');
 
   const outcome = classifyBlockImageUploadScan({
     ingestion: image.ingestion,

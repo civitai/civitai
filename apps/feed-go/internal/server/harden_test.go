@@ -700,7 +700,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true,
 		// The search guard is one per process, used by the list route alone.
-		"feed_go_search_rejected_total": true}
+		"feed_go_search_rejected_total": true,
+		// A writer's batch mixes endpoints: its dropped rows are per table.
+		"feed_go_eval_capture_rows_dropped_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {
@@ -722,11 +724,11 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	// 23: feed_go_shadow_compare_viewer_total (per-viewer-class body results),
+	// 24: feed_go_shadow_compare_viewer_total (per-viewer-class body results),
 	// feed_go_shadow_response_viewer_total (the tRPC feeds' per-viewer-class header results),
-	// feed_go_devalue_write_total and feed_go_serve_parity_total included.
-	if checked != 23 {
-		t.Fatalf("checked %d per-endpoint families, want 23 (a family was renamed or lost)", checked)
+	// feed_go_devalue_write_total, feed_go_serve_parity_total and feed_go_eval_capture_total included.
+	if checked != 24 {
+		t.Fatalf("checked %d per-endpoint families, want 24 (a family was renamed or lost)", checked)
 	}
 }
 

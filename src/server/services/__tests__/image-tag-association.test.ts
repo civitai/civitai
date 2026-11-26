@@ -238,7 +238,12 @@ describe('getImagesByEntity associates tags per image', () => {
     // 41 is deliberately absent: it is the empty case, in the middle.
     imageTagsFetch.mockResolvedValue(cachedTags({ 70: ['a1', 'a2'], 93: ['c1'] }));
 
-    const result = await getImagesByEntity({ id: 1, type: 'Bounty', include: ['tags'] });
+    const result = await getImagesByEntity({
+      id: 1,
+      type: 'Bounty',
+      include: ['tags'],
+      seesReportListed: false,
+    });
 
     // Positive control: an early return would make every assertion below a
     // statement about nothing.
@@ -256,7 +261,7 @@ describe('getImagesByEntity associates tags per image', () => {
       { ...baseRow, id: 70, entityId: 1, poi: false, minor: false },
     ]);
 
-    const result = await getImagesByEntity({ id: 1, type: 'Bounty' });
+    const result = await getImagesByEntity({ id: 1, type: 'Bounty', seesReportListed: false });
 
     expect(result).toHaveLength(1);
     expect(imageTagsFetch).not.toHaveBeenCalled();

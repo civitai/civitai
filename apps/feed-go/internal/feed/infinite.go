@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -623,7 +624,7 @@ type InfiniteSources interface {
 	CollectionPermission(ctx context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error)
 	// VersionShowcase is what the version-showcase cache says about the versions (hydrate.Showcase),
 	// a version it holds no usable entry for answered from the replica when misses are computed; an
-	// error is a failed replica read (the state is then ShowcaseCurated).
+	// error is a failed read (the replica, the cache or a lag flag; the state is then ShowcaseCurated).
 	VersionShowcase(ctx context.Context, versionIDs []int) (hydrate.Showcase, error)
 }
 
@@ -946,7 +947,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	if useIndex && d.Feed == nil {
 		return nil, fallback.New("index-feed-unconfigured")
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
@@ -1274,7 +1275,8 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			// prioritizedUserIds request with a modelVersionId; curated, the carousel is that list in
 			// its order. Not ported, so anything but an uncurated version falls back: a fresh
 			// uncurated entry or, with no usable entry and the miss computation on, no row on the
-			// replica (a failed query is prioritized-showcase-miss-failed). Read regardless of Node's
+			// replica (a failed query, cache GET or lag-flag read is prioritized-showcase-miss-failed).
+			// Read regardless of Node's
 			// `model-version-showcase-serve` flag: off, Node serves the live list and a fallback here
 			// is only a lost answer (DESIGN.md §16.9).
 			st, err := d.Sources.VersionShowcase(ctx, []int{in.ModelVersionID})

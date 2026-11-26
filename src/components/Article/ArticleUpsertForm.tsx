@@ -210,6 +210,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
+          editForm: true,
           userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
@@ -735,7 +736,9 @@ function ActionButtons({
       ...(scanStatus.images?.error || []),
     ];
 
-    return problematicImages.some((img) => currentContentUrls.has(img.url));
+    // A blocked image sent without its url cannot be matched to the content, so it holds the
+    // publish until a save drops it from the scan.
+    return problematicImages.some((img) => img.url === null || currentContentUrls.has(img.url));
   }, [scanStatus, currentContentUrls]);
 
   const publishDisabled = publishButtonProps.disabled || hasProblematicImages;

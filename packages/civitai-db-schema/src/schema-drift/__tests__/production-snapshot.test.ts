@@ -283,6 +283,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `Image.firstVisibleAt`: `20271201120000_image_first_visible_at` — no-type, written only by
+    //     the sortAt trigger the same migration installs.
     //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
     //   the eight `app_block_publish_requests.actions_run_*` columns:
     //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
@@ -296,7 +298,11 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271125130000_service_deal_buyer_disclosure`
     //   the three `ServiceOffering` request-form columns and the three `ServiceDeal` form columns:
     //     `20271128130000_service_request_form` — drop these at the next catalog recapture.
+    //   `OauthConsent.offlineBuzzLimit` / `.offlineBuzzPeriod`: `20271204120000_recipe_runner_ledger`
     const inFlightColumns = new Set([
+      'OauthConsent.offlineBuzzLimit',
+      'OauthConsent.offlineBuzzPeriod',
+      'ServiceDealFileEntry.copyDeleteStartedAt',
       'ServiceOffering.requestForm',
       'ServiceOffering.requestFormVersion',
       'ServiceOffering.fromPrice',
@@ -379,6 +385,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
       'Image.nsfwAxes',
+      'Image.firstVisibleAt',
       'app_user_scope_grants.confirm_within_limit_max_job',
       'app_block_publish_requests.actions_run_repository',
       'app_block_publish_requests.actions_run_repository_id',

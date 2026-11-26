@@ -62,7 +62,7 @@ export async function startStickerAutoTrack(input: {
       limitMessage: (limit) =>
         resolved ? usageLimitMessage(resolved.def, { ...resolved, limit }) : undefined,
       store: redis,
-      submit: async ({ metadata, step }) => {
+      submit: async ({ metadata, steps }) => {
         const { data, response } = await submitWorkflowWithRetry({
           client: internalOrchestratorClient,
           body: {
@@ -70,7 +70,7 @@ export async function startStickerAutoTrack(input: {
             metadata,
             tags: ['sticker-track'],
             currencies: [],
-            steps: [step],
+            steps,
           },
         });
         return { id: data?.id, status: response?.status };

@@ -96,20 +96,17 @@
  * stream's set of collection schemas (the fixed entity schemas go to everyone); the `service`
  * stream is the same for everyone.
  */
-import { readCatalog } from '~/server/registry-adapter/catalog-source';
-import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
+import { readCatalog, readDocStreamApps } from '~/server/registry-adapter/catalog-source';
+import {
+  liveCatalogReadDeps,
+  liveDocStreamReadDeps,
+} from '~/server/registry-adapter/catalog-source.live';
 import { createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
 import { abortableSleep } from '~/utils/errorHandling';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveLevelDocSource, liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
-import {
-  composeAdapter,
-  resolveFromCatalog,
-  resolvePrivateFromCatalog,
-  resolveSharedLevelFromCatalog,
-  resolveViewerFromCatalog,
-} from '~/server/registry-adapter/doc-streams';
+import { composeAdapter, docStreamResolvers } from '~/server/registry-adapter/doc-streams';
 import {
   createLevelFeed,
   createLevelStreamFill,
@@ -277,6 +274,15 @@ function main() {
   const deps = liveCatalogReadDeps({ listings, onSubListingsCapped });
   // Every subscription polls; they share one catalog read per half poll interval.
   const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
+  // The private, per-viewer and level streams resolve from every approved app, not the public
+  // catalog: those streams decide access themselves. Shared the same way, read only when asked.
+  const docStreamDeps = liveDocStreamReadDeps();
+  const readDocApps = sharedRead(() => readDocStreamApps(docStreamDeps), pollMs / 2);
+  const resolvers = docStreamResolvers({
+    readCatalogApps: readApps,
+    readDocStreamApps: readDocApps,
+    docLevelsOn: isSharedDocLevelsOn,
+  });
   const store = createRedisSnapshotStore();
   const polling = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
@@ -296,10 +302,7 @@ function main() {
   const docs = createDocFeed({
     source: liveSharedDocSource(),
     // Export only what content levels gate: an app whose levels flag is off publishes nothing.
-    resolve: resolveFromCatalog(readApps, undefined, {
-      docLevelsOn: isSharedDocLevelsOn,
-      requireDocLevels: true,
-    }),
+    resolve: resolvers.exported,
     store,
     pollMs,
     sleep: abortableSleep,
@@ -316,7 +319,7 @@ function main() {
       ? createPrivateDocFeed({
           relays: privateRelays,
           source: livePrivateDocSource(),
-          resolve: resolvePrivateFromCatalog(readApps),
+          resolve: resolvers.private,
           decide: liveDecideCollectionRead,
           runGateReadable: liveRunGateReadable,
           instanceRevoked: liveInstanceRevoked,
@@ -351,7 +354,7 @@ function main() {
     levelDocs = createLevelFeed({
       clients: levelConfig.clients,
       source: liveLevelDocSource(),
-      resolve: resolveSharedLevelFromCatalog(readApps, isSharedDocLevelsOn),
+      resolve: resolvers.level,
       store,
       pollMs,
       sleep: abortableSleep,
@@ -373,7 +376,7 @@ function main() {
       ? createViewerFeed({
           relays: privateRelays,
           source: liveViewerDocSource(),
-          resolve: resolveViewerFromCatalog(readApps, isSharedDocLevelsOn),
+          resolve: resolvers.viewer,
           maxRecords: parseViewerStreamMaxRecords(
             process.env.REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS
           ),

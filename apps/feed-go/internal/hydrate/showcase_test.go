@@ -15,7 +15,7 @@ import (
 // getVersionShowcaseCache writes them (a CachedVersionShowcase record plus `cachedAt`); the literal
 // expectations follow curatedSiteFor (src/server/services/version-showcase.service.ts), which
 // withCuratedShowcases and getCarouselShowcaseIds decide by: a row on either site is curated; a failed
-// read is answered as curated here (the request is Node's); and createCachedArray's fetch: an
+// read is answered as curated here, with its error (the request is Node's); and createCachedArray's fetch: an
 // entry past the cache's hour (`ttl: CacheTTL.hour`) is rebuilt by the reader that wins the
 // revalidate lock, so the cache cannot answer it.
 
@@ -90,12 +90,35 @@ func TestVersionShowcaseState(t *testing.T) {
 		{"uncurated and a miss", []int{7101, 7108}, ShowcaseUnknown},
 		{"curated wins over a miss", []int{7108, 7102}, ShowcaseCurated},
 		{"no rows member", []int{7106}, ShowcaseCurated},
-		{"a failed read", []int{7110}, ShowcaseCurated},
-		{"a failed read beside a miss", []int{7108, 7110}, ShowcaseCurated},
 	} {
 		if got, err := src.VersionShowcase(context.Background(), c.ids); got != c.want || err != nil {
 			t.Errorf("%s: %v (%v), want %v", c.name, got, err, c.want)
 		}
+	}
+	// A GET that failed (not redis.Nil) is curated WITH the read's error, so the caller's fallback
+	// names a read failure (`<reason>-miss-failed`), never a curation; the cache-only State still
+	// answers it curated.
+	for _, c := range []struct {
+		name string
+		ids  []int
+	}{
+		{"a failed read", []int{7110}},
+		{"a failed read beside a miss", []int{7108, 7110}},
+		{"a failed read beside an uncurated entry", []int{7101, 7110}},
+		// A curated entry ahead of the failed one does not end the scan first: the failure wins.
+		{"a failed read after a curated entry", []int{7102, 7110}},
+		{"a failed read before a curated entry", []int{7110, 7102}},
+	} {
+		got, err := src.VersionShowcase(context.Background(), c.ids)
+		if got != ShowcaseCurated || err == nil || err.Error() != "version showcase cache read: shard down" {
+			t.Errorf("%s: %v (%v), want curated with the cache read's error", c.name, got, err)
+		}
+	}
+	b := NewBatch()
+	read := src.Packed.QueueShowcases(b, []int{7110})
+	b.Exec(context.Background())
+	if got := read.State([]int{7110}); got != ShowcaseCurated {
+		t.Errorf("State over a failed read: %v, want curated", got)
 	}
 }
 
@@ -274,8 +297,10 @@ func TestShowcaseStateSubsetComputed(t *testing.T) {
 // ('modelVersion', ids): `lag-helper:modelVersion:<id>`, namespace prefixed, set by
 // refreshVersionShowcases' preventReplicationLagBatch). A missed version with its flag set (any
 // non-empty value, the tracker's `Boolean(value)`) is not computed: it stays ShowcaseUnknown and the
-// replica is not queried, so the caller falls back as a miss. A failed flag read is the same. A flag
-// on another version, on a version the cache answers, or an empty flag, changes nothing.
+// replica is not queried, so the caller falls back as a miss. A failed flag read is not queried
+// either, but is curated with the read's error (the caller's `<reason>-miss-failed`), unless a flag is
+// found set. A flag on another version, on a version the cache answers, or an empty flag, changes
+// nothing.
 func TestVersionShowcaseLagFlag(t *testing.T) {
 	const ns = "ns:"
 	r := testkit.NewRedis()
@@ -299,24 +324,29 @@ func TestVersionShowcaseLagFlag(t *testing.T) {
 		want  Showcase
 		bound [][]int
 		obs   map[string]int
+		err   string // the error's text; "" for none
 	}{
-		{"unflagged miss: computed", []int{7501}, ShowcaseUncurated, [][]int{{7501}}, map[string]int{"version-showcase/computed": 1}},
-		{"flagged miss: not computed", []int{7502}, ShowcaseUnknown, nil, map[string]int{}},
-		{"another flag value: not computed", []int{7503}, ShowcaseUnknown, nil, map[string]int{}},
-		{"one flagged among misses: not computed", []int{7501, 7502}, ShowcaseUnknown, nil, map[string]int{}},
-		{"the flag is on a cached version: computed", []int{7504, 7501}, ShowcaseUncurated, [][]int{{7501}}, map[string]int{"version-showcase/computed": 1}},
-		{"an empty flag: computed", []int{7505, 7501}, ShowcaseUncurated, [][]int{{7505, 7501}}, map[string]int{"version-showcase/computed": 2}},
-		{"a failed flag read: not computed", []int{7506}, ShowcaseUnknown, nil, map[string]int{}},
-		{"a failed flag read among misses: not computed", []int{7501, 7506}, ShowcaseUnknown, nil, map[string]int{}},
-		{"a failed flag read, another flagged: not computed", []int{7506, 7502}, ShowcaseUnknown, nil, map[string]int{}},
+		{"unflagged miss: computed", []int{7501}, ShowcaseUncurated, [][]int{{7501}}, map[string]int{"version-showcase/computed": 1}, ""},
+		{"flagged miss: not computed", []int{7502}, ShowcaseUnknown, nil, map[string]int{}, ""},
+		{"another flag value: not computed", []int{7503}, ShowcaseUnknown, nil, map[string]int{}, ""},
+		{"one flagged among misses: not computed", []int{7501, 7502}, ShowcaseUnknown, nil, map[string]int{}, ""},
+		{"the flag is on a cached version: computed", []int{7504, 7501}, ShowcaseUncurated, [][]int{{7501}}, map[string]int{"version-showcase/computed": 1}, ""},
+		{"an empty flag: computed", []int{7505, 7501}, ShowcaseUncurated, [][]int{{7505, 7501}}, map[string]int{"version-showcase/computed": 2}, ""},
+		{"a failed flag read: not computed, the read's error", []int{7506}, ShowcaseCurated, nil, map[string]int{}, "version showcase lag flag read: shard down"},
+		{"a failed flag read among misses: not computed, the read's error", []int{7501, 7506}, ShowcaseCurated, nil, map[string]int{}, "version showcase lag flag read: shard down"},
+		{"a failed flag read, another flagged: the flag wins", []int{7506, 7502}, ShowcaseUnknown, nil, map[string]int{}, ""},
 	} {
 		rep := &showcaseReplica{}
 		obs := &observed{}
 		src := &Sources{Packed: &PackedReader{Redis: r, Prefix: ns, Now: func() time.Time { return showcaseNow }}, Replica: rep.db(),
 			Compute: &MissCompute{Observe: obs.observe}}
 		got, err := src.VersionShowcase(context.Background(), c.ids)
-		if got != c.want || err != nil {
-			t.Errorf("%s: %v (%v), want %v", c.name, got, err, c.want)
+		gotErr := ""
+		if err != nil {
+			gotErr = err.Error()
+		}
+		if got != c.want || gotErr != c.err {
+			t.Errorf("%s: %v (%q), want %v (%q)", c.name, got, gotErr, c.want, c.err)
 		}
 		if !reflect.DeepEqual(rep.bound, c.bound) {
 			t.Errorf("%s: queries bound %v, want %v", c.name, rep.bound, c.bound)

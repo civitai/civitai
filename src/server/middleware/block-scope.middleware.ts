@@ -36,6 +36,7 @@ import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
   DEV_TOKEN_LIFETIME_SECONDS,
+  RUNNER_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import {
@@ -217,6 +218,14 @@ export interface BlockTokenClaims {
    * an owner, which is the wrong direction for a guard to fail in.
    */
   privateRunAudience?: PrivateRunAudience;
+  /**
+   * `'runner'` on a token minted for a recipe runner acting on a user's offline grant.
+   * Such a token may only submit a workflow: `verifyBlockToken` refuses it unless the
+   * caller opts in with `admitRunner`, and only `submitWorkflow` does.
+   */
+  mintOrigin?: 'runner';
+  /** The recipe run a runner token was minted for; present exactly when `mintOrigin` is. */
+  runId?: string;
 }
 
 /**
@@ -967,9 +976,18 @@ const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-d
 // (block-token.service.ts DEV_TOKEN_LIFETIME_SECONDS) so the verify cap can
 // never silently desync from the lifetime the signer actually stamps.
 const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
+const MAX_TOKEN_AGE_RUNNER_SECONDS = RUNNER_TOKEN_LIFETIME_SECONDS;
 const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
 
-export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
+export interface VerifyBlockTokenOptions {
+  /** Accept a `mintOrigin: 'runner'` token. Only `submitWorkflow` passes it. */
+  admitRunner?: boolean;
+}
+
+export async function verifyBlockToken(
+  token: string,
+  options: VerifyBlockTokenOptions = {}
+): Promise<BlockTokenClaims | null> {
   // L-VERIFY: require a kid and verify against exactly that one key. The
   // signer (BlockTokenService.sign) has stamped a `kid` (sha256 of the key
   // modulus) on every block token since the first App Blocks commit
@@ -1119,16 +1137,36 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         // (b) Must be a member of the closed set.
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
+      if (claims.runId !== undefined && claims.mintOrigin === undefined) return null;
+      if (claims.mintOrigin !== undefined) {
+        // Runner tokens carry none of the dev/review/private-run/anonymous markers.
+        if (claims.mintOrigin !== 'runner') return null;
+        if (options.admitRunner !== true) return null;
+        if (claims.sub === ANON_SUBJECT) return null;
+        if (typeof claims.runId !== 'string' || claims.runId === '') return null;
+        if (
+          claims.dev !== undefined ||
+          claims.reviewRunForReal !== undefined ||
+          claims.privateRun !== undefined
+        ) {
+          return null;
+        }
+      }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
       // already enforced the real lifetime in jwtVerify; this re-checks the age
       // against the type-specific cap so a signer bug emitting a too-long `exp`
       // is still caught. FAIL-SAFE TO THE SHORTER CAP: only an explicit
-      // `dev === true` (validated boolean above) gets the 4h cap; absent /
-      // false / anything-else → the 15min cap.
+      // `dev === true` (validated boolean above) gets the 4h cap and only
+      // `mintOrigin === 'runner'` the runner cap; absent / false / anything-else
+      // → the 15min cap.
       const nowSeconds = Math.floor(Date.now() / 1000);
       const ageSeconds = nowSeconds - claims.iat;
       const ageCapSeconds =
-        claims.dev === true ? MAX_TOKEN_AGE_DEV_SECONDS : MAX_TOKEN_AGE_DEFAULT_SECONDS;
+        claims.dev === true
+          ? MAX_TOKEN_AGE_DEV_SECONDS
+          : claims.mintOrigin === 'runner'
+          ? MAX_TOKEN_AGE_RUNNER_SECONDS
+          : MAX_TOKEN_AGE_DEFAULT_SECONDS;
       if (ageSeconds > ageCapSeconds + MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS) {
         return null;
       }

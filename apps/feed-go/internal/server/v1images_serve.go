@@ -71,8 +71,7 @@ func (s *Server) serveV1ImagesLabelled(w http.ResponseWriter, r *http.Request) {
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}
-	w.Header().Set(ServedByHeader, ServedByNode)
-	s.proxyVia(s.V1ImagesFallback, w, r, endpoint)
+	s.handBack(s.V1ImagesFallback, w, r, endpoint, err)
 }
 
 // v1ImagesCompute is the compute of the images route, the shadow's and the public route's alike

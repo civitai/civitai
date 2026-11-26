@@ -39,6 +39,8 @@ export const APP_RATE_LIMITS = {
   // ── Block tokens
   'apps.block-token-mint': { kind: 'abuse' },
   'apps.block-token-mint-ip': { kind: 'abuse' },
+  'apps.block-token-runner-mint': { kind: 'abuse' },
+  'apps.block-token-runner-mint-ip': { kind: 'abuse' },
   'apps.review-token-run-for-real': { kind: 'abuse' },
   // ── The bridge and the block REST routes (per app instance, app or viewer)
   'apps.catalog': { kind: 'abuse' },

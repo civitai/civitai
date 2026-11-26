@@ -40,6 +40,14 @@ import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
  *   an `/api/v1/models/[id]` request whose credential is an Authorization header (never a
  *   `?token=`) is mirrored with a description of it in place of the key
  *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
+ *   Corpus-only samples (`FEED_GO_SHADOW_CORPUS_ONLY_RATE`, default 0: off; feed-go DESIGN.md §19.6
+ *   T4): a further fraction of the `[id]` requests that would be `skipped_credential` is posted with
+ *   the credential taken out (`corpusOnly`), for feed-go's eval capture only. See `corpusOnly`.
+ * - `POST /api/search/*` (flag `feed-go-shadow-site-search`): the request's JSON body, the search
+ *   call Node made and the backend's 200 body (both captured by the site-search service), and the
+ *   answer Node wrote, so feed-go reshapes the same backend answer for its own viewer and compares
+ *   both the call and the answer, without asking the backend again. A request carrying an API
+ *   credential is not mirrored.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
@@ -51,6 +59,9 @@ import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
  * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
  * response) is synchronous on the event loop every other request shares, and the in-flight cap
  * does not bound it (a slot frees as soon as the compare endpoint answers).
+ *
+ * Every sample carries `sampleRate`, the effective rate it was taken at (`effectiveRate`): feed-go's
+ * eval capture weighs it by 1 / that rate.
  *
  * Forwarded: the raw `input`, the headers the answer depends on, and the SESSION cookies only
  * (the compare side re-verifies their signature). An API credential is forwarded only as the
@@ -87,6 +98,9 @@ export const FEED_GO_SHADOW_V1_IMAGES_PATH = `/internal/shadow${FEED_GO_SHADOW_V
 export const FEED_GO_SHADOW_V1_MODELS_ROUTE = '/api/v1/models';
 export const FEED_GO_SHADOW_V1_MODELS_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_MODELS_ROUTE}`;
 export const FEED_GO_SHADOW_V1_MODELS_ID_PATH = `${FEED_GO_SHADOW_V1_MODELS_PATH}/id`;
+/** The site search route (`POST /api/search/*`, one flag), and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_SITE_SEARCH_ROUTE = '/api/search';
+export const FEED_GO_SHADOW_SITE_SEARCH_PATH = `/internal/shadow${FEED_GO_SHADOW_SITE_SEARCH_ROUTE}`;
 /** The third tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE = 'model.getAll';
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
@@ -209,6 +223,8 @@ export type FeedGoShadowConfig = {
   modelGetAllUrl: string | undefined;
   /** Full compare endpoint URL for `model.getAssociatedResourcesCardData`, or undefined (disabled). */
   modelAssociatedUrl: string | undefined;
+  /** Full compare endpoint URL for `POST /api/search/*`, or undefined (disabled). */
+  siteSearchUrl?: string;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -241,6 +257,12 @@ export type FeedGoShadowConfig = {
    * feed-go answered it.
    */
   v1ModelsQuery?: boolean;
+  /**
+   * `FEED_GO_SHADOW_CORPUS_ONLY_RATE` (default 0: off; clamped to [0, 1], junk reads 0): the fraction
+   * of sampled `/api/v1/models/[id]` requests carrying an API credential that are posted as
+   * corpus-only samples rather than counted `skipped_credential` (see `corpusOnly`).
+   */
+  corpusOnlyRate?: number;
 };
 
 type Env = Record<string, string | undefined>;
@@ -257,6 +279,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let infiniteUrl: string | undefined;
   let modelGetAllUrl: string | undefined;
   let modelAssociatedUrl: string | undefined;
+  let siteSearchUrl: string | undefined;
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
@@ -273,6 +296,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
         modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
         modelAssociatedUrl = new URL(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH, parsed).toString();
+        siteSearchUrl = new URL(FEED_GO_SHADOW_SITE_SEARCH_PATH, parsed).toString();
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
@@ -286,6 +310,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       infiniteUrl = undefined;
       modelGetAllUrl = undefined;
       modelAssociatedUrl = undefined;
+      siteSearchUrl = undefined;
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
@@ -300,6 +325,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     infiniteUrl,
     modelGetAllUrl,
     modelAssociatedUrl,
+    siteSearchUrl,
     probeUrl,
     probeInfiniteUrl,
     probeModelGetAllUrl,
@@ -312,6 +338,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     v1ModelsQuery: ['true', '1'].includes(
       (env.FEED_GO_SHADOW_V1_MODELS_QUERY ?? '').trim().toLowerCase()
     ),
+    corpusOnlyRate: envNumber(env.FEED_GO_SHADOW_CORPUS_ONLY_RATE, 0, 0, 1),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -334,6 +361,8 @@ type ShadowRequestLike = {
   url?: string;
   headers: Record<string, string | string[] | undefined>;
   query: Partial<Record<string, string | string[]>>;
+  /** The parsed JSON body (`POST /api/search/*` only). */
+  body?: unknown;
 };
 
 function headerValue(v: string | string[] | undefined): string | undefined {
@@ -346,6 +375,132 @@ function headerValue(v: string | string[] | undefined): string | undefined {
 function hasApiCredential(req: ShadowRequestLike) {
   return !!headerValue(req.headers.authorization) || req.query.token !== undefined;
 }
+
+/**
+ * Words that mark a query pair's name (or its whole text) as a credential's: feed-go's evalcorpus
+ * `credentialWords`, which feed-go applies again and refuses a corpus-only sample on (it is the one
+ * authority; this copy only keeps Node from sending a sample feed-go would refuse).
+ */
+const CREDENTIAL_WORDS = [
+  'token',
+  'secret',
+  'password',
+  'passwd',
+  'cookie',
+  'authorization',
+  'bearer',
+  'apikey',
+  'api_key',
+  'api-key',
+  'credential',
+  'session',
+] as const;
+
+function isCredentialName(name: string) {
+  const l = name.toLowerCase();
+  return CREDENTIAL_WORDS.some((w) => l.includes(w));
+}
+
+/**
+ * One `&`-separated query pair read as URLSearchParams reads it (what the app and the replay read):
+ * every valid escape decoded, each invalid one kept as written, `+` a space. `name` is its name,
+ * `text` the whole pair decoded (`name=value`, or `name` with no `=`). Decoding escape by escape
+ * matters: a pair with one bad escape still decodes the rest, so `decodeURIComponent` (which gives
+ * up on the whole string) would miss a key hidden behind an escaped character.
+ */
+function decodePair(pair: string): { name: string; text: string } {
+  const [entry] = [...new URLSearchParams(pair)];
+  const [name, value] = entry ?? ['', ''];
+  return { name, text: pair.includes('=') ? `${name}=${value}` : name };
+}
+
+/** A raw query string (or a path) decoded pair by pair as URLSearchParams reads it. */
+function decodeQuery(raw: string): string {
+  return raw
+    .split('&')
+    .map((pair) => decodePair(pair).text)
+    .join('&');
+}
+
+/** The values of `v`, a parsed query value. */
+function queryValues(v: string | string[] | undefined): string[] {
+  if (typeof v === 'string') return [v];
+  return Array.isArray(v) ? v : [];
+}
+
+/**
+ * A credentialed request's credential class as the app reads it (feed-go's evalcorpus
+ * `credentialClass`): `header` (an Authorization header) or `query` (a non-empty `token` value).
+ * Undefined for both at once (feed-go's class would be `header+query`, which a corpus-only sample
+ * cannot carry) and for neither (an empty `?token=` is no credential to the app).
+ */
+function credentialClassOf(req: ShadowRequestLike): 'header' | 'query' | undefined {
+  const header = !!headerValue(req.headers.authorization);
+  const query = queryValues(req.query.token).some((v) => v !== '');
+  if (header === query) return undefined;
+  return header ? 'header' : 'query';
+}
+
+/**
+ * The text a request's credentials are made of, each non-empty: the Authorization header and its
+ * key part(s), every `token` value, and every value of a query pair named like a credential. A
+ * corpus-only sample drops any query pair holding one and is not sent when its body holds one in
+ * any form checked (`leaksSecret`).
+ */
+function credentialSecrets(req: ShadowRequestLike, rawQuery: string): string[] {
+  const out = new Set<string>();
+  const auth = headerValue(req.headers.authorization)?.trim();
+  if (auth) {
+    out.add(auth);
+    const parts = auth.split(/\s+/).filter(Boolean);
+    for (const p of parts.length > 1 ? parts.slice(1) : parts) out.add(p);
+  }
+  for (const [k, v] of Object.entries(req.query)) {
+    if (isCredentialName(k)) for (const x of queryValues(v)) out.add(x);
+  }
+  for (const pair of rawQuery.split('&')) {
+    const { name, text } = decodePair(pair);
+    if (pair.includes('=') && isCredentialName(name)) out.add(text.slice(name.length + 1));
+  }
+  out.delete('');
+  return [...out];
+}
+
+/**
+ * A raw query string without every pair whose unescaped name or text holds a credential word
+ * (feed-go's `stripQuery`), and without every pair whose raw or unescaped text holds one of
+ * `secrets` (a key echoed under another name). Order and encoding kept.
+ */
+function stripCredentialPairs(rawQuery: string, secrets: readonly string[]): string {
+  return rawQuery
+    .split('&')
+    .filter((pair) => {
+      if (pair === '') return false;
+      const { name, text } = decodePair(pair);
+      if (isCredentialName(name) || isCredentialName(text)) return false;
+      return !secrets.some((sec) => pair.includes(sec) || text.includes(sec));
+    })
+    .join('&');
+}
+
+/** Whether `text` holds one of `secrets` as written, URI-encoded or JSON-escaped. */
+function leaksSecret(text: string, secrets: readonly string[]) {
+  return secrets.some(
+    (sec) =>
+      text.includes(sec) ||
+      text.includes(encodeURIComponent(sec)) ||
+      text.includes(JSON.stringify(sec).slice(1, -1))
+  );
+}
+
+/**
+ * The effective-rate window (`effectiveRate`): the share of bound checks the per-second bucket and
+ * the in-flight cap admitted is counted per endpoint over the current and the previous
+ * SAMPLE_RATE_WINDOW_MS window (so 60 to 120 s), and the configured rate is used alone while those
+ * hold fewer than SAMPLE_RATE_MIN_OBSERVATIONS checks (a share of a handful is noise).
+ */
+export const SAMPLE_RATE_WINDOW_MS = 60_000;
+export const SAMPLE_RATE_MIN_OBSERVATIONS = 20;
 
 /** The headers feed-go needs, and nothing else (see the module doc). */
 export function pickShadowHeaders(req: ShadowRequestLike): Record<string, string> {
@@ -362,14 +517,34 @@ export function pickShadowHeaders(req: ShadowRequestLike): Record<string, string
   return out;
 }
 
-type Captured = { envelope: unknown } | { data: unknown };
+/**
+ * What a site-search sample mirrors: the search call and the backend's 200 body
+ * (`SiteSearchUpstream`), and the answer Node wrote: the backend's bytes on a passthrough (`raw`),
+ * else the reshaped body `res.json` stringified.
+ */
+export type SiteSearchCapture = {
+  path: string;
+  request: string;
+  response: Buffer;
+  raw?: Buffer;
+  body?: unknown;
+};
 
-/** The REST routes: their samples carry a path and capture their own JSON body. */
-type RestEndpoint = Extract<FeedGoShadowEndpoint, 'v1-images' | 'v1-models' | 'v1-models-id'>;
+type Captured = { envelope: unknown } | { data: unknown } | { siteSearch: SiteSearchCapture };
+
+/**
+ * The REST routes: their samples carry a path and capture their own JSON body (site-search: its call
+ * and the backend's answer too).
+ */
+type RestEndpoint = Extract<
+  FeedGoShadowEndpoint,
+  'v1-images' | 'v1-models' | 'v1-models-id' | 'site-search'
+>;
 const REST_ENDPOINTS: ReadonlySet<FeedGoShadowEndpoint> = new Set<FeedGoShadowEndpoint>([
   'v1-images',
   'v1-models',
   'v1-models-id',
+  'site-search',
 ]);
 function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoint {
   return REST_ENDPOINTS.has(endpoint);
@@ -405,6 +580,8 @@ export type FeedGoShadowSample = {
   responseHeaders?: Record<string, string>;
   /** `rest` when responseHeaders is FEED_GO_COMPARED_REST_RESPONSE_HEADERS (a REST sample). */
   responseHeaderSet?: 'rest';
+  /** The effective rate this sample was taken at, set when it is admitted (`effectiveRate`). */
+  sampleRate?: number;
   done: boolean;
 };
 
@@ -416,6 +593,8 @@ export type FeedGoShadowDeps = {
   enabledV1Images?: () => boolean;
   /** The `feed-go-shadow-v1-models` flag (absent: neither model route is sampled). */
   enabledV1Models?: () => boolean;
+  /** The `feed-go-shadow-site-search` flag (absent: `POST /api/search/*` is never sampled). */
+  enabledSiteSearch?: () => boolean;
   /** The `feed-go-shadow-infinite` flag (absent: `image.getInfinite` is never sampled). */
   enabledInfinite?: () => boolean;
   /** The `feed-go-shadow-model-getall` flag (absent: `model.getAll` is never sampled). */
@@ -456,6 +635,31 @@ export type FeedGoShadowDeps = {
  */
 export const FEED_GO_TRAINING_DATA_SQL_HEADER = 'x-feed-go-training-data-sql';
 
+/**
+ * A site-search sample's POST body, assembled from text: the backend's answer and the call are JSON
+ * Node already holds as bytes, so they are spliced in rather than parsed and written again (the
+ * answer is about a megabyte). `node` is `{upstream: {path, body}, body}`, the call and the answer,
+ * the document feed-go compares its own with; `upstream` is the backend's answer it reshapes.
+ */
+function siteSearchSampleBody(
+  sample: FeedGoShadowSample,
+  capture: SiteSearchCapture,
+  response: Record<string, unknown>
+): string {
+  const answer = capture.raw ? capture.raw.toString('utf8') : JSON.stringify(capture.body);
+  if (typeof answer !== 'string') throw new Error('site-search: no answer to mirror');
+  const extra = JSON.stringify(response);
+  return (
+    `{"input":${JSON.stringify(sample.input)},"path":${JSON.stringify(sample.path ?? '')}` +
+    `,"headers":${JSON.stringify(sample.headers)}` +
+    `,"upstream":${capture.response.toString('utf8')}` +
+    `,"node":{"upstream":{"path":${JSON.stringify(capture.path)},"body":${capture.request}}` +
+    `,"body":${answer}}` +
+    (extra === '{}' ? '' : `,${extra.slice(1, -1)}`) +
+    '}'
+  );
+}
+
 /** A sampler instance. The module exports one wired to the env, the flag and the counter. */
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const { config, enabled } = deps;
@@ -464,6 +668,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const enabledInfinite = deps.enabledInfinite ?? (() => false);
   const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
   const enabledModelAssociated = deps.enabledModelAssociated ?? (() => false);
+  const enabledSiteSearch = deps.enabledSiteSearch ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -479,12 +684,18 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
   // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve another.
   const buckets = createPerSecondBuckets(FEED_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
+  /** Per endpoint, the bound checks `admit` made and passed, this window and the previous one. */
+  const admitWindows = new Map<
+    FeedGoShadowEndpoint,
+    { start: number; checked: number; admitted: number; prevChecked: number; prevAdmitted: number }
+  >();
 
   /** The mirrored REST routes: each one's compare URL and flag. */
   const restRoutes: Record<RestEndpoint, { url: string | undefined; enabled: () => boolean }> = {
     'v1-images': { url: config.v1ImagesUrl, enabled: enabledV1Images },
     'v1-models': { url: config.v1ModelsUrl, enabled: enabledV1Models },
     'v1-models-id': { url: config.v1ModelsIdUrl, enabled: enabledV1Models },
+    'site-search': { url: config.siteSearchUrl, enabled: enabledSiteSearch },
   };
 
   function release(sample: FeedGoShadowSample) {
@@ -561,6 +772,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         input: input ?? '',
         headers,
         startedAt,
+        sampleRate: effectiveRate(route.endpoint, config.rate),
         done: false,
       };
     } catch {
@@ -568,23 +780,64 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
-  /** The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop. */
+  /**
+   * The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop, and
+   * counts the check in the endpoint's effective-rate window.
+   */
   function admit(endpoint: FeedGoShadowEndpoint): boolean {
+    let ok = true;
     if (inFlight >= config.maxInFlight) {
       record('dropped_overload', endpoint);
-      return false;
-    }
-    if (!buckets.take(endpoint)) {
+      ok = false;
+    } else if (!buckets.take(endpoint)) {
       record('dropped_rate_limit', endpoint);
-      return false;
+      ok = false;
     }
-    return true;
+    const w = admitWindow(endpoint);
+    w.checked++;
+    if (ok) w.admitted++;
+    return ok;
+  }
+
+  /** The endpoint's effective-rate window, rolled forward to now. */
+  function admitWindow(endpoint: FeedGoShadowEndpoint) {
+    const t = now();
+    let w = admitWindows.get(endpoint);
+    if (!w) {
+      w = { start: t, checked: 0, admitted: 0, prevChecked: 0, prevAdmitted: 0 };
+      admitWindows.set(endpoint, w);
+    } else if (t - w.start >= SAMPLE_RATE_WINDOW_MS) {
+      // The current window becomes the previous one, unless it ended more than a window ago.
+      const recent = t - w.start < 2 * SAMPLE_RATE_WINDOW_MS;
+      w.prevChecked = recent ? w.checked : 0;
+      w.prevAdmitted = recent ? w.admitted : 0;
+      w.checked = 0;
+      w.admitted = 0;
+      w.start = t;
+    }
+    return w;
+  }
+
+  /**
+   * The rate a sample of `endpoint` admitted now was effectively taken at: `base` (the configured
+   * probability it was selected with) times the share of the endpoint's recent bound checks that
+   * passed (SAMPLE_RATE_WINDOW_MS; `base` alone below SAMPLE_RATE_MIN_OBSERVATIONS checks). The
+   * share is of checks, not of selections: a REST sample skipped before its check (a non-200, no
+   * capture) was not dropped for capacity, and its request's shape is what decided that.
+   */
+  function effectiveRate(endpoint: FeedGoShadowEndpoint, base: number): number {
+    const w = admitWindow(endpoint);
+    const checked = w.checked + w.prevChecked;
+    if (checked < SAMPLE_RATE_MIN_OBSERVATIONS) return base;
+    return (base * (w.admitted + w.prevAdmitted)) / checked;
   }
 
   /**
    * `begin` for a REST route: whether this request is sampled. The handler calls it after its cheap
-   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`)
-   * and calls `finish`, which is where the in-flight slot and the token are taken. Never throws.
+   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`;
+   * site-search: `captureSiteSearch`) and calls `finish`, which is where the in-flight slot and the
+   * token are taken. The `GET` routes' input is the query string; `POST /api/search/*`'s is the
+   * parsed JSON body as JSON.stringify writes it. Never throws.
    */
   function beginRest(
     endpoint: RestEndpoint,
@@ -594,7 +847,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       const route = restRoutes[endpoint];
       if (!route.url || config.rate <= 0) return undefined;
-      if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      const method = endpoint === 'site-search' ? 'POST' : 'GET';
+      if ((req.method ?? '').toUpperCase() !== method) return undefined;
       // The list's text search is mirrored only with FEED_GO_SHADOW_V1_MODELS_QUERY. A text query is
       // any value other than the one empty string (the handler's `if (query)`).
       if (endpoint === 'v1-models' && !config.v1ModelsQuery) {
@@ -610,14 +864,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (hasApiCredential(req)) {
         described = credentialHeaders(endpoint, req, opts);
         if (!described) {
-          record('skipped_credential', endpoint);
+          if (!corpusOnly(endpoint, req)) record('skipped_credential', endpoint);
           return undefined;
         }
       }
       const target = req.url ?? '';
       const q = target.indexOf('?');
       const path = q < 0 ? target : target.slice(0, q);
-      const input = q < 0 ? '' : target.slice(q + 1);
+      const input =
+        endpoint === 'site-search' ? JSON.stringify(req.body) : q < 0 ? '' : target.slice(q + 1);
+      if (typeof input !== 'string') return undefined;
       const headers = pickShadowHeaders(req);
       if (endpoint === 'v1-models' || endpoint === 'v1-models-id') {
         try {
@@ -664,9 +920,89 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     return { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
   }
 
+  /**
+   * A corpus-only sample (feed-go DESIGN.md §19.6 T4) of a credentialed request `beginRest` would
+   * otherwise count `skipped_credential`: `/api/v1/models/[id]` only (the one REST endpoint feed-go's
+   * eval capture takes), at FEED_GO_SHADOW_CORPUS_ONLY_RATE of the sampled ones. Posted to the `[id]`
+   * compare URL as `{corpusOnly, credential, sampleRate, input, path, headers}`:
+   *
+   * - the credential is taken out of everything sent: no Authorization header and no credential
+   *   description, no cookie at all (the session cookie is a credential too), no query pair named
+   *   like a credential (`token` in any case or escape) and no pair holding the key's text; only the
+   *   headers COPIED_HEADERS names. `credential` is the class it was (`header` / `query`).
+   * - Node's answer is never sent and never waited for: the POST is queued now, before the handler
+   *   answers, and the handler's capture and finish never see it (beginRest returns undefined).
+   * - The same bounds as a sample: the in-flight cap and the `[id]` per-second bucket.
+   * - `sampleRate`: FEED_GO_SHADOW_SAMPLE_RATE x this rate x the bucket's admitted share.
+   *
+   * True when it took the request (sent, or dropped and counted); false when the caller counts
+   * `skipped_credential`: another route, the rate off or not picked, both credential kinds at once,
+   * or a body that would still hold the key (`leaksSecret` on the encoded input, path and headers,
+   * the last word; the rest of the body is constants and the rate). feed-go checks again and refuses
+   * a sample that still carries any credential (its evalcorpus rules, the authority).
+   */
+  function corpusOnly(endpoint: RestEndpoint, req: ShadowRequestLike): boolean {
+    const rate = config.corpusOnlyRate ?? 0;
+    if (endpoint !== 'v1-models-id' || rate <= 0 || !config.v1ModelsIdUrl) return false;
+    if (random() >= rate) return false;
+    const credential = credentialClassOf(req);
+    if (!credential) return false;
+    const target = req.url ?? '';
+    const q = target.indexOf('?');
+    const rawQuery = q < 0 ? '' : target.slice(q + 1);
+    const secrets = credentialSecrets(req, rawQuery);
+    const input = stripCredentialPairs(rawQuery, secrets);
+    const path = q < 0 ? target : target.slice(0, q);
+    const headers: Record<string, string> = {};
+    for (const name of COPIED_HEADERS) {
+      const v = headerValue(req.headers[name]);
+      if (v) headers[name] = v;
+    }
+    // As encoded, and as the reader decodes the query and the path (escape by escape).
+    const probe = [JSON.stringify({ input, path, headers }), decodeQuery(input), decodeQuery(path)];
+    if (probe.some((text) => leaksSecret(text, secrets))) return false;
+    const sample: FeedGoShadowSample = {
+      endpoint,
+      holdsSlot: false,
+      input,
+      path,
+      headers,
+      done: false,
+    };
+    if (!takeSlot(sample)) return true;
+    const body = JSON.stringify({
+      corpusOnly: true,
+      credential,
+      sampleRate: (sample.sampleRate ?? config.rate) * rate,
+      input,
+      path,
+      headers,
+    });
+    schedule(() => post(sample, body, 'corpus_only'));
+    return true;
+  }
+
   /** `beginRest` for `GET /api/v1/images`. */
   function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
     return beginRest('v1-images', req);
+  }
+
+  /**
+   * `beginRest` for `POST /api/search/*`: the handler calls it after its cheap rejects (the rate
+   * limit, the profanity refusal). A request carrying an API credential is never mirrored.
+   */
+  function beginSiteSearch(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+    return beginRest('site-search', req);
+  }
+
+  /** The site-search handler's capture: references only, encoded later in `send`. Never throws. */
+  function captureSiteSearch(sample: FeedGoShadowSample, capture: SiteSearchCapture): void {
+    try {
+      if (sample.endpoint !== 'site-search' || sample.captured || sample.done) return;
+      sample.captured = { siteSearch: capture };
+    } catch {
+      /* never throw from the handler */
+    }
   }
 
   /**
@@ -791,19 +1127,27 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       const started = now();
       const captured = sample.captured!;
-      const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
       // No status: only 200s are posted, and feed-go does not compare it.
-      const response = sample.responseHeaders
-        ? {
-            responseHeaders: sample.responseHeaders,
-            ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
-          }
-        : {};
-      body = JSON.stringify(
-        isRestEndpoint(endpoint)
-          ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
-          : { input: sample.input, headers: sample.headers, node, ...response }
-      );
+      const response = {
+        ...(sample.responseHeaders
+          ? {
+              responseHeaders: sample.responseHeaders,
+              ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
+            }
+          : {}),
+        ...(sample.sampleRate !== undefined ? { sampleRate: sample.sampleRate } : {}),
+      };
+      if ('siteSearch' in captured) {
+        body = siteSearchSampleBody(sample, captured.siteSearch, response);
+      } else {
+        const node =
+          'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
+        body = JSON.stringify(
+          isRestEndpoint(endpoint)
+            ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
+            : { input: sample.input, headers: sample.headers, node, ...response }
+        );
+      }
       // Drop the reference to the captured page now that it is encoded: only `body` is needed
       // while the POST is in flight.
       sample.captured = undefined;
@@ -813,6 +1157,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       release(sample);
       return;
     }
+    post(sample, body, 'sent');
+  }
+
+  /** POST a sample's encoded body; counts `ok` on a 2xx, else what went wrong; frees the slot. */
+  function post(sample: FeedGoShadowSample, body: string, ok: 'sent' | 'corpus_only'): void {
+    const { endpoint } = sample;
     let pending: Promise<Response>;
     try {
       pending = doFetch(urlOf(endpoint)!, {
@@ -829,7 +1179,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     pending
       .then(
         (res) => {
-          record(res.ok ? 'sent' : 'rejected', endpoint);
+          record(res.ok ? ok : 'rejected', endpoint);
           // Free the connection; feed-go's 202 has no body worth reading.
           res.body?.cancel().catch(() => undefined);
         },
@@ -966,6 +1316,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
     inFlight++;
     sample.holdsSlot = true;
+    sample.sampleRate = effectiveRate(sample.endpoint, config.rate);
     return true;
   }
 
@@ -973,6 +1324,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     begin,
     beginRest,
     beginV1Images,
+    beginSiteSearch,
+    captureSiteSearch,
     probe,
     run,
     capture,
@@ -1005,6 +1358,9 @@ function getInstance(): FeedGoShadow {
     ),
     enabledModelAssociated: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_ASSOCIATED)
+    ),
+    enabledSiteSearch: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_SITE_SEARCH)
     ),
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)
@@ -1059,6 +1415,32 @@ export function beginFeedGoShadowV1Models(
     return sample;
   } catch {
     return undefined;
+  }
+}
+
+/** `POST /api/search/*`: whether this request is sampled (see `beginSiteSearch`). Never throws. */
+export function beginFeedGoShadowSiteSearch(
+  req: ShadowRequestLike
+): FeedGoShadowSample | undefined {
+  try {
+    const owner = getInstance();
+    const sample = owner.beginSiteSearch(req);
+    if (sample) owners.set(sample, owner);
+    return sample;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `POST /api/search/*`: keep references to the call, the backend's answer and Node's 200 answer. */
+export function captureFeedGoShadowSiteSearch(
+  sample: FeedGoShadowSample,
+  capture: SiteSearchCapture
+): void {
+  try {
+    (owners.get(sample) ?? getInstance()).captureSiteSearch(sample, capture);
+  } catch {
+    /* never throw from the handler */
   }
 }
 

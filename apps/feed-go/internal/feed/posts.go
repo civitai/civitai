@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -179,7 +180,7 @@ var empty = &Result{}
 // Serve is getImagesAsPostsInfiniteHandler for the supported subset.
 func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	in := req.Input
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
