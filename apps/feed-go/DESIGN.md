@@ -624,8 +624,20 @@ superjson unless `TRPC_WRITE_DEVALUE` is on (§5.2):
 {"result":{"data":{"json":{…},"meta":{"values":{"items.0.createdAt":["Date"],…},"v":1}}}}
 ```
 
-- Dates are ISO strings annotated `["Date"]`; `undefined` members are dropped from `json` and
-  annotated `["undefined"]` (array elements become `null`), exactly as superjson's walker does.
+- Dates are ISO strings annotated `["Date"]`; an `undefined` (object member, array element or the
+  root) is written as `null` and annotated `["undefined"]`, byte for byte as Node writes it:
+  superjson's walker maps undefined to null (its `undefined` transformation) before `JSON.stringify`
+  runs, so a member is `"nextCursor":null` plus `"nextCursor":["undefined"]`, never an omitted key.
+  Until feed-go 0.0.51 this writer omitted the member (and wrote a root undefined with no `json`);
+  that decoded to the same value but failed every byte compare (a last page was exactly the 18
+  bytes of `"nextCursor":null,` short). Only the superjson envelope changed: the plain-JSON REST
+  bodies (`superjson.Plain`, `JSON.stringify`'s rules, §13) still omit an undefined member, as Node's
+  `res.json` does, so their bytes and ETags are unchanged; the devalue writer has its own encoding
+  of undefined (§5.2) and is untouched.
+- The annotation ORDER follows this writer's traversal. Node's can differ in one case: at a level
+  whose child is itself annotated under an integer-like key (an undefined or Date array element, a
+  numeric object key), the JS object holding that level's annotations enumerates the integer key
+  first. The decoded value is the same; a byte compare of `meta.values` sees the reorder.
 - `meta.referentialEqualities` is **not** written. Node emits it when one object instance appears at
   several paths (a creator's `cosmetics` array on each of their images, the post `user` that is also
   `images[0].user`). It restores object identity after decode, never a value; nothing in the client
@@ -890,9 +902,10 @@ path as serving, and compares decoded values:
   numerically), `meta.values` as a set (a `Date` or `undefined` on one side only is a difference the
   client would see), `meta.referentialEqualities` ignored;
 - `["undefined"]` annotations applied first, as `superjson.deserialize` applies them: superjson
-  writes an undefined object member as `null` plus the annotation, this service's writer omits the
-  member and writes the same annotation, and `setDeep` assigns the annotated path either way, so
-  both decode to the same object. (Before this, every such member — `images.*.tags` on every image,
+  writes an undefined object member as `null` plus the annotation, and so does this service's writer
+  since 0.0.51 (§5 "Wire format"); before that it omitted the member. `setDeep` assigns the
+  annotated path either way, so both decode to the same object, and the comparator keeps accepting
+  an omitted member against an annotated null (an older release, a replayed capture). (Before this, every such member — `images.*.tags` on every image,
   `images.*.thumbnailUrl` on every image without a video thumbnail, `review` on every post without
   one — was counted `missing-in-go`, and at 64 differences per comparison those artifacts also
   truncated the report before any real difference was reached.) A real `null` against an
