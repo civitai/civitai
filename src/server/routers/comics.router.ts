@@ -739,7 +739,7 @@ async function panelsForViewer<P extends PanelMediaRow & { image?: PanelImageRow
   panels: P[],
   ctx: ViewerCtx,
   { isOwner = true, keepSourceImage = () => true, withheld = () => false }: PanelDisplay<P> = {}
-): Promise<(P & { metadata: Record<string, unknown> | null })[]> {
+): Promise<(Omit<P, 'metadata'> & { metadata: Record<string, unknown> | null })[]> {
   const moderator = actsAsModerator(ctx);
   const mediaRefused = (panel: P) =>
     !!panel.image && !blockLeavesMedia(panel.image, ctx.user?.id, moderator);
