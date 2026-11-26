@@ -403,6 +403,68 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(dev?.dev).toBe(true);
   });
 
+  it('[REG] refuses a runner token by default, and admits it only on opt-in', async () => {
+    const token = await signRaw({ mintOrigin: 'runner' });
+    expect(await verifyBlockToken(token)).toBeNull();
+    expect(await verifyBlockToken(token, { admitRunner: false })).toBeNull();
+    const admitted = await verifyBlockToken(token, { admitRunner: true });
+    expect(admitted).not.toBeNull();
+    expect(admitted?.mintOrigin).toBe('runner');
+  });
+
+  it('[INV] an ordinary token verifies with or without the opt-in', async () => {
+    const token = await signRaw({});
+    expect(await verifyBlockToken(token)).not.toBeNull();
+    expect(await verifyBlockToken(token, { admitRunner: true })).not.toBeNull();
+  });
+
+  it('[REG] refuses any other mintOrigin value, even on opt-in', async () => {
+    for (const bogus of ['Runner', 'live', '', 1, true, null, {}]) {
+      expect(
+        await verifyBlockToken(await signRaw({ mintOrigin: bogus }), { admitRunner: true }),
+        `mintOrigin=${JSON.stringify(bogus)}`
+      ).toBeNull();
+    }
+  });
+
+  it('[REG] refuses a runner token carrying dev, reviewRunForReal or privateRun', async () => {
+    for (const extra of [
+      { dev: true },
+      { dev: false },
+      { reviewRunForReal: true },
+      { privateRun: true },
+      { privateRun: false },
+    ]) {
+      expect(
+        await verifyBlockToken(await signRaw({ mintOrigin: 'runner', ...extra }), {
+          admitRunner: true,
+        }),
+        JSON.stringify(extra)
+      ).toBeNull();
+    }
+  });
+
+  it('[REG] refuses an anonymous runner token', async () => {
+    const sign = async (extra: Record<string, unknown>) => {
+      const now = Math.floor(Date.now() / 1000);
+      return new SignJWT({ ...baseClaims, ...extra })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: await configuredKid() })
+        .setIssuer('civitai')
+        .setAudience('civitai-app-block')
+        .setSubject('anon')
+        .setJti('test-jti')
+        .setIssuedAt(now)
+        .setExpirationTime(now + 600)
+        .sign(await importPrivateKey());
+    };
+    // Control: an anonymous token without the marker verifies, so the refusal below is the
+    // runner rule and not the subject.
+    expect(await verifyBlockToken(await sign({}), { admitRunner: true })).not.toBeNull();
+    expect(
+      await verifyBlockToken(await sign({ mintOrigin: 'runner' }), { admitRunner: true })
+    ).toBeNull();
+  });
+
   // ---- PRIVATE-RUN AUDIENCE claim shape guard -------------------------------
   //
   // ⚠️ THESE FOUR ROWS WERE ADDED BECAUSE A MUTANT SURVIVED. The initial sweep for the

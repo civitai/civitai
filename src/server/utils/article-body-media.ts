@@ -45,6 +45,18 @@ export function servableBodyImageUrls(images: ArticleBodyImageState[], browsingL
 }
 
 /**
+ * Whether a source or link names one of `uuids` (lower-case image urls). `keysIn` reads the uuid
+ * however the url spells it, as the browser would resolve it.
+ */
+export function namesBodyMedia(value: string | undefined, uuids: readonly string[]) {
+  if (!value || !uuids.length) return false;
+  const lower = value.toLowerCase();
+  if (uuids.some((uuid) => lower.includes(uuid))) return true;
+  const keys = new Set(uuids);
+  return keysIn(value).some((key) => keys.has(key));
+}
+
+/**
  * Drops every `img` and `edge-media` whose source names a `withheld` uuid and, given `keep`, every
  * one whose uuid is not in it, including one with no uuid. `keepEdgeMedia` does the same for
  * `edge-media` alone, which only ever holds site media; one with no uuid is always dropped. A link
@@ -65,13 +77,7 @@ export function removeBodyMedia(
   const held = withheld.filter(Boolean).map((uuid) => uuid.toLowerCase());
   if (!html || !/<(img|edge-media|a)\b/i.test(html)) return html;
   if (!keep && !held.length && edgeMediaAllKept(html, keepEdgeMedia)) return html;
-  const heldKeys = new Set(held);
-  // keysIn reads the uuid however the url spells it, as the browser would resolve it.
-  const namesWithheld = (value: string | undefined) => {
-    if (!value) return false;
-    const lower = value.toLowerCase();
-    return held.some((uuid) => lower.includes(uuid)) || keysIn(value).some((k) => heldKeys.has(k));
-  };
+  const namesWithheld = (value: string | undefined) => namesBodyMedia(value, held);
   const kept = (uuid: string | null | undefined, set = keep) => !set || set.has(uuid ?? '');
   return sanitize(html, {
     allowedTags: false,
@@ -119,4 +125,22 @@ function edgeMediaAllKept(html: string, keepEdgeMedia: ReadonlySet<string> | und
     if (keepEdgeMedia && !keepEdgeMedia.has(uuid)) return false;
   }
   return true;
+}
+
+/**
+ * The body a reader who is neither its owner nor a moderator is served, and the body images it
+ * keeps: servable ones not in `hiddenIds` (the report-listed images this reader may not see).
+ */
+export function readerArticleBody<
+  T extends ArticleBodyImageState & { id: number; minor: boolean | null }
+>(content: string, bodyImages: T[], hiddenIds: ReadonlySet<number>) {
+  const kept = bodyImages.filter((image) => !hiddenIds.has(image.id) && isServableBodyImage(image));
+  const withheld = bodyImages.filter((image) => !kept.includes(image)).map((image) => image.url);
+  return {
+    kept,
+    content: removeBodyMedia(content, {
+      withheld,
+      keepEdgeMedia: new Set(kept.map((image) => image.url)),
+    }),
+  };
 }

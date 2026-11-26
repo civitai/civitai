@@ -277,10 +277,10 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
         // Every cover type follows the bounty search index's report-listed exclusion.
-        `AND (?::boolean OR ((i.id)::text NOT IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL.replace(
+        `AND ((i.id)::text NOT IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL.replace(
           /\s+/g,
           ' '
-        ).trim()}))) ` +
+        ).trim()})) ` +
         'AND ( ?::boolean ' +
         `OR ( e."entityType" IN ('Bounty', 'BountyEntry') ` +
         `AND (b.availability <> 'Private' OR (?::boolean AND b."userId" = ?)) ) ` +

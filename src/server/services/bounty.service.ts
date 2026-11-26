@@ -1,3 +1,4 @@
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
 import { randomBytes } from 'crypto';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import type * as z from 'zod';
@@ -1231,8 +1232,7 @@ export const deleteBountyById = async ({
 
 /**
  * The ids of the bounties' images the viewer may see, by the entity image rules and the bounty
- * search index's exclusions. `seesReportListed` is the held-media viewer: a moderator holding the
- * csamReports grant.
+ * search index's exclusions.
  */
 async function getVisibleBountyImageIds({
   bountyIds,
@@ -1259,13 +1259,9 @@ async function getVisibleBountyImageIds({
   return rows.map(({ imageId }) => imageId);
 }
 
-type BountyImageViewer = {
-  userId?: number;
-  isModerator?: boolean;
-  seesReportListed?: boolean;
-  // The uploader keeps their own report-listed images only on a session or a full-access key.
-  ownerSeesReportListed?: boolean;
-};
+type BountyImageViewer = { userId?: number; isModerator?: boolean } & Partial<
+  Omit<ReportListedViewer, 'userId'>
+>;
 
 /** Generation data its uploader hid goes only to the uploader and moderators. */
 const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(

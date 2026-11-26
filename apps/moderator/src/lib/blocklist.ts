@@ -83,6 +83,7 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' minutes.',
   ProfanityWord:
     'Words the profanity filter flags on civitai.com: masked in comments, reviews and chat, refused in search, and checked by model and bounty auto-NSFW and app shared-data moderation. The generation gate does not use it; the orchestrator rates prompts. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry really removes it.' +
+    " It is the only source: the filter library's own built-in English words do not apply alongside it, so a word missing here is not blocked." +
     ` It must keep at least ${MIN_MANAGED_PROFANITY_ENTRIES} usable entries: a removal below that is refused, and a list below it is ignored in favour of the shipped one.` +
     ' Matching is inside words too, so a short entry can mask parts of many ordinary words: an entry needs at least 4 letters, or 3 with | at its start or end or when it is on the shipped list; wrap it in | (as in |word|) to match it only as a whole word.' +
     ' Entries are publicly readable, like the shipped list: never add names, handles or other personal details.' +

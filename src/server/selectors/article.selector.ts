@@ -59,3 +59,18 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   lockedProperties: true,
   metadata: true,
 });
+
+/** A body image's row, with what `RenderRichText`'s `imageGuard` needs to guard it by level. */
+export const articleContentImageSelect = {
+  id: true,
+  url: true,
+  ingestion: true,
+  nsfwLevel: true,
+  userId: true,
+  hash: true,
+  width: true,
+  height: true,
+  needsReview: true,
+  tosViolation: true,
+  modelRestricted: true,
+} satisfies Prisma.ImageSelect;

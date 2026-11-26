@@ -332,6 +332,7 @@ async function resolveStorageContext(
   privateRun: boolean;
 }> {
   const resolved = await resolveBlockToken(blockToken, {
+    admitRunner: false,
     // Per-instance revocation FIRST. A token's signature and expiry say nothing about the
     // install, so without this an uninstall or a mod toggling the instance off leaves every
     // already-minted token reading and writing until natural expiry. A publisher ban writes

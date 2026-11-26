@@ -1,6 +1,6 @@
 import { generateHTML } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
-import { upsertArticleInput } from '~/server/schema/article.schema';
+import { articleContentSchema } from '~/server/schema/article.schema';
 import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import type { Editor } from '@tiptap/core';
 import {
@@ -30,7 +30,7 @@ const doc = (attrs: Record<string, unknown>) => ({
 
 /** What an article save does to the editor's HTML: the schema's sanitizer, then the server parse. */
 function save(html: string) {
-  const content = upsertArticleInput.shape.content.parse(html);
+  const content = articleContentSchema.parse(html);
   return generateJSON(content, tiptapExtensions);
 }
 const embedOf = (json: any) => json.content.find((n: any) => n.type === 'civitaiEmbed');
@@ -93,14 +93,14 @@ describe('civitaiEmbed full-width display', () => {
   });
 
   it('keeps no display value but full on the embed, on the article save path', () => {
-    const content = upsertArticleInput.shape.content.parse(
+    const content = articleContentSchema.parse(
       '<div data-type="civitaiEmbed" data-display="anything"><a href="/images/13" data-entity="image" data-id="13">x</a></div>'
     );
     expect(content).not.toContain('anything');
   });
 
   it('drops data-display from any div that is not the embed, on the article save path', () => {
-    const content = upsertArticleInput.shape.content.parse(
+    const content = articleContentSchema.parse(
       '<div data-type="civitaiembed" data-display="full">a</div>' +
         '<div data-type="civitaiEmbed2" data-display="full">b</div>' +
         '<div data-display="full">c</div>' +
