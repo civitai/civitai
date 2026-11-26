@@ -30,8 +30,9 @@ import {
   type QueueDeps,
   bucketLevelSql,
   servableItems,
-  STAGE_SCAN_FIRST_ROUND,
+  STAGE_BUCKET_FIRST_ROUND,
   STAGE_SCAN_MAX_PRIORITIES,
+  syncLevelBuckets,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 import { creditLateJudgment } from './vote-record';
@@ -149,11 +150,21 @@ async function sameAgeStage(levels: number[], firstImage = 100_000, priorities?:
      FROM ${rows} ORDER BY n RETURNING id`,
     [...params, Q, priority]
   );
+  // As the tick would, so the feed finds them through their stored bucket.
+  await syncLevelBuckets(db, { limit: levels.length });
   return items.rows.map((r) => r.id).sort((a, b) => a - b);
 }
 
+/** Stores `level` as the items' bucket, as if their images were re-rated since the tick last set it. */
+async function storeBucket(ids: number[], level: number) {
+  await pg.query(`UPDATE "KnightsQueueItem" SET "levelBucket" = $2 WHERE id = ANY($1::int[])`, [
+    ids,
+    level,
+  ]);
+}
+
 /**
- * `db`, recording the ids each read returns: `rounds` for the stage-scan rounds (the rows carrying a `createdAtKey`),
+ * `db`, recording the ids each read returns: `rounds` for the bucket read rounds (the rows carrying a `createdAtKey`),
  * `fullReads` for the reads of served columns (rows carrying an `imageKey`). A read that returns no rows is not seen.
  * `onRound` runs after each round's rows come back and before the next round starts.
  */
@@ -373,11 +384,54 @@ describe('getFeed', () => {
     expect(served.filter((id) => nsfw.includes(id)).length).toBeGreaterThan(0);
   });
 
-  it('serves a bucket whose first item sits behind a whole scan round of another bucket', async () => {
+  it('serves X and XXX items that sit behind thousands of R items in the same priority', async () => {
     await player(1, 'Knight');
-    // One full first round of PG items ahead in serving order, so the X item is the first row of the second round. Every
-    // item shares a priority and enqueue time, so only the id puts the X item after the round's last row.
-    for (let n = 0; n < STAGE_SCAN_FIRST_ROUND; n++) {
+    // Production's shape: a run of R items at priority 2, oldest first, longer than any age-order read reaches, then the
+    // stage's only X and XXX items. Each bucket is read on its own, so the run hides nothing.
+    const ids = await sameAgeStage(
+      [...Array<number>(3200).fill(4), 8, 16],
+      100_000,
+      Array<number>(3202).fill(2)
+    );
+    const [x, xxx] = ids.slice(3200);
+
+    const served = (await getFeed(db, 1, { limit: 50 }))?.items.map((i) => i.id) ?? [];
+    expect(served).toEqual(expect.arrayContaining([x, xxx]));
+  });
+
+  it('serves items the tick has not given a bucket yet', async () => {
+    await player(1, 'Knight');
+    await image(10, 8);
+    await image(11, 16);
+    const unsynced = [await item(10, { priority: 2 }), await item(11, { priority: 2 })];
+    await pg.query(`UPDATE "KnightsQueueItem" SET "levelBucket" = NULL`);
+    // A stored 0 (no bucket) is never served, as a live level without a bucket never was.
+    await image(12, 8);
+    const none = await item(12, { priority: 2 });
+    await pg.query(`UPDATE "KnightsQueueItem" SET "levelBucket" = 0 WHERE id = $1`, [none]);
+
+    const served = (await getFeed(db, 1, { limit: 50 }))?.items.map((i) => i.id) ?? [];
+    expect(served.sort((a, b) => a - b)).toEqual(unsynced);
+  });
+
+  it('keeps a window per priority, so priority-1 NSFW items cannot crowd priority 2 out', async () => {
+    await player(1, 'Knight');
+    // A full window of R items at priority 1 ahead of one R item at priority 2: the priority-2 item has its own window.
+    const ids = await sameAgeStage(Array<number>(11).fill(4), 100_000, [
+      ...Array<number>(10).fill(1),
+      2,
+    ]);
+
+    // A draw of 0.99 sends every pick past priority 1's share to the other priorities while they have candidates.
+    const served = (await getFeed(db, 1, { limit: 1 }))?.items.map((i) => i.id) ?? [];
+    expect(served).toEqual([ids[10]]);
+  });
+
+  it('serves a bucket whose first item sits behind a hundred items of another bucket', async () => {
+    await player(1, 'Knight');
+    // A hundred PG items ahead in serving order. Every item shares a priority and enqueue time, so only the id puts the
+    // X item after them.
+    for (let n = 0; n < 100; n++) {
       await image(1000 + n, 1);
       await item(1000 + n, { priority: 1 });
     }
@@ -388,55 +442,52 @@ describe('getFeed', () => {
     expect(served).toContain(x);
   });
 
-  it('stops a stage scan whose buckets cannot fill at the row budget', async () => {
+  it("stops a bucket's read at the row budget", async () => {
     await player(1, 'Knight');
-    // 350 PG items then one X item, under a budget that ends inside the second round: that round is cut to what is left
-    // of the budget and the scan stops there, before the X item, instead of reading on to the end of the stage.
+    // A full window of PG items, then 340 items stored as X whose images were since re-rated PG (the tick has not caught
+    // up), then one X item. The X read keeps none of the re-rated rows (the PG bucket is full), so it reads on in rounds,
+    // and a 25-row budget ends it inside the second round, before the X item.
     const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
+    const rerated = ids.slice(10, 350);
+    await storeBucket(rerated, 8);
     const watched = watchFeedReads();
 
     const served =
-      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
+      (await getFeed(watched.db, 1, { scanRowBudget: 25 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([10, 10, 15]);
+    expect(watched.rounds.slice(1).flat()).toEqual(rerated.slice(0, 25));
     expect(served).not.toContain(ids[350]);
   });
 
-  it('gives each priority its own row budget, so a priority-1 backlog past the budget cannot hide priority 2', async () => {
+  it('gives each priority its own reads, so a priority-1 read cut at the budget cannot hide priority 2', async () => {
     await player(1, 'Knight');
-    // 350 PG items at priority 1, then one R, X and XXX item at priority 2. A 250-row budget runs out inside priority 1, so
-    // the scan jumps to the start of priority 2 and reads it from a first round again.
+    // Priority 1 as in the budget test above, then one R, X and XXX item at priority 2. Priority 1's X read stops at the
+    // 25-row budget, and priority 2's buckets are each read from a first round of their own.
     const levels = [...Array<number>(350).fill(1), 4, 8, 16];
     const ids = await sameAgeStage(levels, 100_000, [...Array<number>(350).fill(1), 2, 2, 2]);
+    await storeBucket(ids.slice(10, 350), 8);
     const nsfw = ids.slice(350);
     const watched = watchFeedReads();
 
-    const feed = await getFeed(watched.db, 1, { scanRowBudget: 250, limit: 50 });
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150, 3]);
-    expect(watched.rounds[2]).toEqual(nsfw);
+    const feed = await getFeed(watched.db, 1, { scanRowBudget: 25, limit: 50 });
+    expect(watched.rounds.map((r) => r.length)).toEqual([10, 10, 15, 1, 1, 1]);
+    expect(watched.rounds.slice(3).flat()).toEqual(nsfw);
     expect(feed?.items.map((i) => i.id)).toEqual(expect.arrayContaining(nsfw));
   });
 
-  it('reads at most STAGE_SCAN_MAX_PRIORITIES row budgets per pick', async () => {
+  it('reads at most STAGE_SCAN_MAX_PRIORITIES priorities per pick', async () => {
     await player(1, 'Knight');
-    // 150 PG items at each of priorities 1 to 3, then an X item at priority 4. A 100-row budget is used up in each of the
-    // first three priorities, and the scan stops there instead of reading a fourth.
-    const pgs = Array<number>(150).fill(1);
-    const ids = await sameAgeStage([...pgs, ...pgs, ...pgs, 8], 100_000, [
-      ...pgs,
-      ...pgs.map(() => 2),
-      ...pgs.map(() => 3),
-      4,
-    ]);
+    // One X item at each of priorities 1 to 4: the reads cover the first three priorities and stop there.
+    const ids = await sameAgeStage([8, 8, 8, 8], 100_000, [1, 2, 3, 4]);
     const watched = watchFeedReads();
 
-    const feed = await getFeed(watched.db, 1, { scanRowBudget: 100, limit: 50 });
+    const feed = await getFeed(watched.db, 1, { limit: 50 });
     expect(STAGE_SCAN_MAX_PRIORITIES).toBe(3);
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 100, 100]);
-    expect(watched.rounds.map((r) => r[0])).toEqual([ids[0], ids[150], ids[300]]);
-    expect(feed?.items.map((i) => i.id)).not.toContain(ids[450]);
+    expect(watched.rounds).toEqual([[ids[0]], [ids[1]], [ids[2]]]);
+    expect(feed?.items.map((i) => i.id)).not.toContain(ids[3]);
   });
 
-  it('never reads or serves an image the gate refuses when the row budget cuts the scan short', async () => {
+  it('never reads or serves an image the gate refuses when the row budget cuts a read short', async () => {
     await player(1, 'Knight');
     // The skill-check cases the serve gate refuses too (the rest only bar an image from skill checks).
     const serveRefusals = [
@@ -451,15 +502,17 @@ describe('getFeed', () => {
       ([label]) => serveRefusals.includes(label)
     );
     expect(refusals.map(([label]) => label)).toEqual(serveRefusals);
-    // 100 PG items, then one R item per refusal and one clean R item, then PG items: the R bucket is empty, so the scan
-    // keeps any R row it reads. A 250-row budget cuts the second round to 150 rows, which reach past them.
-    const firstRefused = 100;
+    // A full window of PG items, then 10 items stored as R whose images are PG now, then one R item per refusal and one
+    // clean R item, then 250 more re-rated items. The R read keeps no re-rated row (the PG bucket is full), so its first
+    // round of 10 keeps nothing, and a 25-row budget cuts the second round to 15 rows, which reach past the refused ones.
+    const firstRefused = 20;
     const clean = firstRefused + refusals.length;
     const ids = await sameAgeStage([
       ...Array<number>(firstRefused).fill(1),
       ...Array<number>(refusals.length + 1).fill(4),
       ...Array<number>(250).fill(1),
     ]);
+    await storeBucket([...ids.slice(10, firstRefused), ...ids.slice(clean + 1)], 4);
     // The refusals write rows that name these image ids, which later tests reuse.
     onTestFinished(async () => {
       await pg.exec(`TRUNCATE ${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`);
@@ -472,48 +525,53 @@ describe('getFeed', () => {
     const watched = watchFeedReads();
 
     const served =
-      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
-    // The full read fetches the served columns of every item the scan kept: the R row past the refused ones is kept.
+      (await getFeed(watched.db, 1, { scanRowBudget: 25 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([10, 10, 15]);
+    // The full read fetches the served columns of every item the reads kept: the R row past the refused ones is kept.
     expect(watched.fullReads.flat()).toContain(ids[clean]);
     expect(watched.rounds.flat().filter((id) => refused.includes(id))).toEqual([]);
     expect(watched.fullReads.flat().filter((id) => refused.includes(id))).toEqual([]);
     expect(served.filter((id) => refused.includes(id))).toEqual([]);
   });
 
-  it('scans a stage whose buckets cannot fill in doubling rounds, and fetches the full rows of the kept items only', async () => {
+  it('reads a bucket in doubling rounds while its rows belong to a full bucket, and fetches the full rows of the kept items only', async () => {
     await player(1, 'Knight');
-    // 350 PG items then one X item: only the PG bucket can fill, so the scan reads the whole stage. 351 rows overshoot
-    // the first two rounds (100, then 200), so the third round (400) is the partial one that ends the scan.
-    const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
-    const x = ids[350];
+    // A full window of PG items, then 300 items stored as X whose images are PG now, then one X item. The X read keeps no
+    // re-rated row, so it doubles its rounds (10, 20, 40, 80) and the fifth (160) is the partial one that ends it.
+    const ids = await sameAgeStage([...Array<number>(310).fill(1), 8]);
+    const rerated = ids.slice(10, 310);
+    await storeBucket(rerated, 8);
+    const x = ids[310];
     const watched = watchFeedReads();
 
     const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
     expect(served).toContain(x);
-    expect(STAGE_SCAN_FIRST_ROUND).toBe(100);
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 51]);
+    expect(STAGE_BUCKET_FIRST_ROUND).toBe(10);
+    expect(watched.rounds.map((r) => r.length)).toEqual([10, 10, 20, 40, 80, 151]);
     // Each round starts right after the last row of the one before: every row once, in serving order.
-    expect(watched.rounds.flat()).toEqual(ids);
-    // The served columns are read once, for the first 10 PG items and the X item, not for the 340 PG items left out.
+    expect(watched.rounds.slice(1).flat()).toEqual([...rerated, x]);
+    // The served columns are read once, for the PG window and the X item, not for the 300 re-rated items left out.
     expect(watched.fullReads.map((r) => [...r].sort((a, b) => a - b))).toEqual([
       [...ids.slice(0, 10), x],
     ]);
   });
 
-  it('continues the scan after the last row read even when that row is gone by the next round', async () => {
+  it('continues a read after the last row read even when that row is gone by the next round', async () => {
     await player(1, 'Knight');
-    const ids = await sameAgeStage([...Array<number>(150).fill(1), 8]);
-    const x = ids[150];
+    // As above with 15 re-rated items: the X read's first round ends on the tenth, deleted before the second round.
+    const ids = await sameAgeStage([...Array<number>(25).fill(1), 8]);
+    const rerated = ids.slice(10, 25);
+    await storeBucket(rerated, 8);
+    const x = ids[25];
     const watched = watchFeedReads(async (round) => {
-      if (round.length === STAGE_SCAN_FIRST_ROUND) {
+      if (round[0] === rerated[0]) {
         await pg.query(`DELETE FROM "KnightsQueueItem" WHERE id = $1`, [round[round.length - 1]]);
       }
     });
 
     const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 51]);
-    expect(watched.rounds[1][0]).toBe(ids[100]);
+    expect(watched.rounds.map((r) => r.length)).toEqual([10, 10, 6]);
+    expect(watched.rounds[2][0]).toBe(rerated[10]);
     expect(served).toContain(x);
   });
 
@@ -2497,6 +2555,103 @@ describe('closeUnservableItems', () => {
   });
 });
 
+describe('syncLevelBuckets', () => {
+  const stored = async (id: number) =>
+    (
+      await pg.query<{ levelBucket: number | null }>(
+        `SELECT "levelBucket" FROM "KnightsQueueItem" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].levelBucket;
+  const setStored = (id: number, value: number | null) =>
+    pg.query(`UPDATE "KnightsQueueItem" SET "levelBucket" = $2 WHERE id = $1`, [id, value]);
+
+  it('fills unset and re-rated values of open rating items and leaves correct ones and every other item alone', async () => {
+    for (const [id, level] of [
+      [10, 8],
+      [11, 4],
+      [12, 1],
+      [13, 16],
+      [14, 2],
+      [15, 8],
+      [16, 8],
+      [17, 3],
+    ] as const)
+      await image(id, level);
+    const unset = await item(10);
+    const rerated = await item(11);
+    const correct = await item(12);
+    const predicted = await item(13);
+    const closed = await item(14);
+    const yesNo = await item(15, { question: 'knights.test.bool' });
+    const hidden = await item(16, { hidden: true });
+    const noBucket = await item(17);
+    await setStored(unset, null);
+    await setStored(rerated, 16);
+    await setStored(correct, 1);
+    await setStored(predicted, null);
+    await pg.query(`UPDATE "KnightsQueueItem" SET prediction = '{"value":"2"}' WHERE id = $1`, [
+      predicted,
+    ]);
+    await setStored(noBucket, null);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET status = 'Closed', "levelBucket" = NULL WHERE id = $1`,
+      [closed]
+    );
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET audience = 'players', prompt = 'Hat?', "levelBucket" = NULL WHERE id = $1`,
+      [yesNo]
+    );
+    await setStored(hidden, null);
+    const updatedAt = (await itemRow(correct)).updatedAt;
+
+    expect(await syncLevelBuckets(db)).toEqual({ synced: 4 });
+
+    expect(await stored(unset)).toBe(8);
+    expect(await stored(rerated)).toBe(4);
+    expect(await stored(correct)).toBe(1);
+    expect(await stored(predicted)).toBe(2);
+    expect(await stored(noBucket)).toBe(0);
+    expect(await stored(closed)).toBeNull();
+    expect(await stored(yesNo)).toBeNull();
+    expect(await stored(hidden)).toBeNull();
+    expect((await itemRow(correct)).updatedAt).toEqual(updatedAt);
+    // Nothing is left to set, so the next tick writes nothing.
+    expect(await syncLevelBuckets(db)).toEqual({ synced: 0 });
+  });
+
+  it('moves an item into a bucket once its image gets a level, and out of one once it loses it', async () => {
+    await image(10, 0);
+    await image(11, 4);
+    const rated = await item(10);
+    const unrated = await item(11);
+    expect([await stored(rated), await stored(unrated)]).toEqual([0, 4]);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 8 WHERE id = 10`);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 11`);
+
+    expect(await syncLevelBuckets(db)).toEqual({ synced: 2 });
+    expect([await stored(rated), await stored(unrated)]).toEqual([8, 0]);
+  });
+
+  it('sets at most `limit` items per call, oldest id first', async () => {
+    const ids: number[] = [];
+    for (const id of [10, 11, 12]) {
+      await image(id, 4);
+      ids.push(await item(id));
+      await setStored(ids[ids.length - 1], null);
+    }
+
+    expect(await syncLevelBuckets(db, { limit: 2 })).toEqual({ synced: 2 });
+    expect([await stored(ids[0]), await stored(ids[1]), await stored(ids[2])]).toEqual([
+      4,
+      4,
+      null,
+    ]);
+    expect(await syncLevelBuckets(db, { limit: 2 })).toEqual({ synced: 1 });
+    expect(await stored(ids[2])).toBe(4);
+  });
+});
+
 describe('closeWithoutOutcome', () => {
   it('marks pending votes inconclusive and closes the item', async () => {
     await fiveKnights();
@@ -3108,12 +3263,15 @@ describe('a creator the player hid or blocked', () => {
     }
   );
 
-  it('leaves the creator out of every scan round, the short per-row rounds and the long ones alike', async () => {
+  it('leaves the creator out of every read round, the short per-row rounds and the long ones alike', async () => {
     await player(1, 'Knight');
-    // 742 PG items, then two X items: only the PG bucket can fill, so the scan reads the whole stage in rounds of 100,
-    // 200 and 400 (probed per row) and then 800 (the plain anti-join). The creator owns one item in each kind of round.
-    const ids = await sameAgeStage([...Array<number>(740).fill(1), 8, 8]);
-    const [early, late, x] = [ids[5], ids[740], ids[741]];
+    // A full window of PG items, 740 items stored as X whose images are PG now, then two X items: the X read keeps no
+    // re-rated row, so under a raised budget it reads them all in rounds of 10 up to 320 (probed per row) and then one of
+    // 640 (the plain anti-join). The creator owns one item in each kind of round.
+    const ids = await sameAgeStage([...Array<number>(750).fill(1), 8, 8]);
+    const storedX = ids.slice(10);
+    await storeBucket(ids.slice(10, 750), 8);
+    const [early, late, x] = [ids[15], ids[740], ids[750]];
     await pg.query(
       `UPDATE "Image" SET "userId"=50 WHERE id IN (SELECT "imageId" FROM "KnightsQueueItem" WHERE id IN ($1,$2))`,
       [early, late]
@@ -3121,10 +3279,13 @@ describe('a creator the player hid or blocked', () => {
     await engage(pg, 1, 50, 'Hide');
     const watched = watchFeedReads();
 
-    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    const served =
+      (await getFeed(watched.db, 1, { scanRowBudget: 2000 }))?.items.map((i) => i.id) ?? [];
     expect(served).toContain(x);
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 400, 40]);
-    expect(watched.rounds.flat()).toEqual(ids.filter((id) => id !== early && id !== late));
+    expect(watched.rounds.map((r) => r.length)).toEqual([10, 10, 20, 40, 80, 160, 320, 110]);
+    expect(watched.rounds.slice(1).flat()).toEqual(
+      storedX.filter((id) => id !== early && id !== late)
+    );
   });
 
   it('changes nothing for a Follow row', async () => {

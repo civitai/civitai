@@ -31,6 +31,9 @@ const MIGRATIONS = [
   '20271125120000_knights_legacy_player_days',
   '20271130120000_knights_queue_item_verdict_labelled',
   '20271130120100_knights_queue_item_verdict_unlabelled_idx',
+  '20271205120000_knights_level_bucket',
+  '20271205120100_knights_level_bucket_idx',
+  '20271205120200_knights_level_bucket_backfill',
 ].map((name) =>
   fileURLToPath(
     new URL(

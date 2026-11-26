@@ -35,6 +35,7 @@ import {
   BUCKET_LEVELS,
   FEED,
   itemBucket,
+  levelBucket,
   lowestTierPerItem,
   orderFeed,
   TIER_ESCALATED,
@@ -170,35 +171,47 @@ export const bucketLevelSql = sql<number>`CASE
   ELSE 0
 END`;
 
-/** Rows the first round of a stage's normal-order scan reads; each later round reads twice as many as the one before. */
-export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
-
-/** The longest scan round that probes `notHiddenCreator` per row; longer rounds read faster as a parallel anti-join. */
-export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
+/** Rows the first round of one bucket's read takes: the window it fills, as every row it reads is eligible and almost all are kept. */
+export const STAGE_BUCKET_FIRST_ROUND = FEED.bucketWindowSize;
 
 /**
- * The most rows one stage's scan reads per priority per pick (five doubling rounds from `STAGE_SCAN_FIRST_ROUND`), so a bucket that
- * cannot fill never drives a stage-sized read; past the budget the scan moves on to the next priority.
+ * The most rows one bucket's read takes per priority per pick (five doubling rounds from `STAGE_BUCKET_FIRST_ROUND`). Every row
+ * read already passed the player's filters, so a read goes past its first round only for rows stored under this bucket whose
+ * live bucket differs (re-rated since the tick last synced) and whose live bucket is full. The tick corrects those within a
+ * tick, so a handful at most; this bounds the read when a mass re-rate leaves many. At three priorities and five buckets a
+ * pick reads at most 4,650 rows this way, half the 9,300 of the age-order scan it replaced.
  */
-export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
+export const STAGE_BUCKET_ROW_BUDGET = STAGE_BUCKET_FIRST_ROUND * 31;
 
-/** The most priorities one stage's scan reads (producers enqueue at 1 to 3), which bounds a pick at this many row budgets. */
+/**
+ * Rows the one read per priority of items the tick has not given a bucket yet (`levelBucket` NULL) takes. The tick sets new
+ * items within a tick, so this many covers them; past it they wait for the tick.
+ */
+export const STAGE_UNSYNCED_ROWS = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
+
+/**
+ * The longest read that probes `notHiddenCreator` per row; longer reads run faster as a parallel anti-join. With the
+ * production defaults every read takes the per-row probe (the largest bucket round is 160 rows, the unsynced read 100);
+ * the anti-join applies only to larger `scanRowBudget` values that tests pass.
+ */
+export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_UNSYNCED_ROWS * 4;
+
+/** The most priorities one stage's reads cover (producers enqueue at 1 to 3), which bounds a pick at this many sets of reads. */
 export const STAGE_SCAN_MAX_PRIORITIES = 3;
 
 /**
  * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
- * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
- * (priority, age, id), so a crowded bucket cannot push the others out of the window. The caller buckets the escalated
- * rows with `itemBucket`. An item whose level has no bucket is read only once escalated. No read includes an image the
- * player has already judged for the question, at any stage or in any earlier item.
+ * nothing is escalated), then, for each priority in turn, the first `FEED.bucketWindowSize` items of each level bucket in age
+ * order (createdAt, id), so neither a crowded bucket nor a crowded priority can push the others out of the window. The caller
+ * buckets every row with `itemBucket`. An item whose level has no bucket is read only once escalated. No read includes an
+ * image the player has already judged for the question, at any stage or in any earlier item.
  *
- * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
- * is full or the stage runs out. Each priority is scanned on its own, from a first round, with its own `rowBudget`: once a
- * priority has used it or run out, the scan moves to the next priority. Scan sampling enqueues SFW at priority 1 and NSFW at
- * priority 2, so a priority-1 backlog longer than one budget would otherwise hide every R, X and XXX item. The bucket is
- * worked out from the Image row, so no index can seek to one, and a read per bucket would walk the whole stage once per
- * bucket. The rounds read only what bucketing and the cursor need, and one more read fetches the served columns of the
- * kept items alone.
+ * Each bucket is read through the stored `levelBucket` (the `KnightsQueueItem_open_levelBucket_idx` index seeks to it), in
+ * rounds that continue after the last row read, until the bucket holds its window at that priority or `rowBudget` rows are
+ * read. A row is kept by its live bucket, so a stored value the tick has not yet corrected only changes which read finds
+ * the item. Rows the tick has not reached (NULL) are read once per priority, bucketed live; a stored 0 (no bucket) is never
+ * read. The reads take only what bucketing and the cursor need, and one more read fetches the served columns of the kept
+ * items alone.
  */
 async function stageWindow(
   db: Executor,
@@ -206,7 +219,7 @@ async function stageWindow(
   stage: Rank,
   exclude: number[],
   escalatedSince: Date,
-  rowBudget = STAGE_SCAN_ROW_BUDGET
+  rowBudget = STAGE_BUCKET_ROW_BUDGET
 ) {
   const eligible = (perRow = true) =>
     servableItems(db)
@@ -254,17 +267,24 @@ async function stageWindow(
           .execute();
 
   const kept: number[] = [];
-  const taken = new Map<LevelBucket | null, number>();
-  let filled = 0;
-  // One priority at a time, each with its own budget. An equality on priority keeps the planner on the index's order; a range
-  // over (priority, createdAt, id) let it read and sort the whole rest of a large priority (about 0.7s against 50ms in prod).
+  // One priority at a time. An equality on priority keeps the planner on the index's order; a range over
+  // (priority, createdAt, id) let it read and sort the whole rest of a large priority (about 0.7s against 50ms in prod).
   let priority = await nextPriority(db, stage, null);
   for (let started = 0; priority !== null && started < STAGE_SCAN_MAX_PRIORITIES; started++) {
-    let after: StageScanCursor | null = null;
-    for (let size = STAGE_SCAN_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
-      const cursor: StageScanCursor | null = after;
-      const limit = Math.min(size, rowBudget - read);
-      const rows = await eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
+    const p = priority;
+    const taken = new Map<LevelBucket, number>();
+    const keep = (rows: { id: number; prediction: unknown; imageLevel: number }[]) => {
+      for (const row of rows) {
+        const bucket = itemBucket(row.prediction, row.imageLevel);
+        if (bucket === null) continue;
+        const count = taken.get(bucket) ?? 0;
+        if (count >= FEED.bucketWindowSize) continue;
+        taken.set(bucket, count + 1);
+        kept.push(row.id);
+      }
+    };
+    const rows = (limit: number) =>
+      eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
         .select([
           'i.id',
           // createdAt is TIMESTAMP(3); this text names the exact stored value whatever the host or session time zone.
@@ -272,39 +292,47 @@ async function stageWindow(
           'i.prediction',
           'img.nsfwLevel as imageLevel',
         ])
-        .where((eb) => eb(bucketLevelSql, '!=', 0))
-        .where('i.priority', '=', priority)
-        // (createdAt, id) is unique within a priority and never changes on a row, so a round starts exactly after the last
-        // one. The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
-        .$if(cursor !== null, (qb) => {
-          const c = cursor as StageScanCursor;
-          return qb.where(
-            sql<SqlBool>`(i."createdAt", i.id) > (${c.createdAt}::timestamp, ${c.id})`
-          );
-        })
+        .where('i.priority', '=', p)
         .orderBy('i.createdAt', 'asc')
         .orderBy('i.id', 'asc')
-        .limit(limit)
-        .execute();
-      read += rows.length;
-      for (const row of rows) {
-        const bucket = itemBucket(row.prediction, row.imageLevel);
-        const count = taken.get(bucket) ?? 0;
-        if (count >= FEED.bucketWindowSize) continue;
-        taken.set(bucket, count + 1);
-        if (count + 1 === FEED.bucketWindowSize) filled++;
-        kept.push(row.id);
+        .limit(limit);
+
+    for (const level of BUCKET_LEVELS) {
+      const bucket = levelBucket(level) as LevelBucket;
+      let after: StageScanCursor | null = null;
+      for (let size = STAGE_BUCKET_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
+        const cursor: StageScanCursor | null = after;
+        const limit = Math.min(size, rowBudget - read);
+        const round = await rows(limit)
+          .where('i.levelBucket', '=', level)
+          // (createdAt, id) is unique within a priority and never changes on a row, so a round starts exactly after the last
+          // one. The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
+          .$if(cursor !== null, (qb) => {
+            const c = cursor as StageScanCursor;
+            return qb.where(
+              sql<SqlBool>`(i."createdAt", i.id) > (${c.createdAt}::timestamp, ${c.id})`
+            );
+          })
+          .execute();
+        read += round.length;
+        keep(round);
+        if (round.length < limit || (taken.get(bucket) ?? 0) >= FEED.bucketWindowSize) break;
+        // Annotated so the cursor's type does not depend on the rows its own round read.
+        const last: { id: number; createdAtKey: string } = round[round.length - 1];
+        after = { createdAt: last.createdAtKey, id: last.id };
       }
-      if (rows.length < limit || filled === BUCKET_LEVELS.length) break;
-      // Annotated so the cursor's type does not depend on the rows its own round read.
-      const last: { id: number; createdAtKey: string } = rows[rows.length - 1];
-      after = { createdAt: last.createdAtKey, id: last.id };
     }
-    if (filled === BUCKET_LEVELS.length) break;
+    // Items the tick has not reached yet, bucketed live; only buckets with room take them.
+    keep(
+      await rows(STAGE_UNSYNCED_ROWS)
+        .where('i.levelBucket', 'is', null)
+        .where((eb) => eb(bucketLevelSql, '!=', 0))
+        .execute()
+    );
     priority = await nextPriority(db, stage, priority);
   }
 
-  // A kept item that stops being a candidate before this read (judged, closed, unservable) is left out, as if the scan
+  // A kept item that stops being a candidate before this read (judged, closed, unservable) is left out, as if the reads
   // had run a moment later and found it so.
   const position = new Map(kept.map((id, n) => [id, n]));
   const normal =
@@ -350,12 +378,13 @@ export async function getFeed(
     exclude = [],
     now = new Date(),
     random = Math.random,
-    scanRowBudget = STAGE_SCAN_ROW_BUDGET,
+    scanRowBudget = STAGE_BUCKET_ROW_BUDGET,
   }: {
     limit?: number;
     exclude?: number[];
     now?: Date;
     random?: () => number;
+    /** Rows each bucket's read takes per priority at most (`STAGE_BUCKET_ROW_BUDGET`); for tests. */
     scanRowBudget?: number;
   } = {}
 ): Promise<Feed | null> {
@@ -432,6 +461,10 @@ export type NewItem = {
   expiresAt?: Date | null;
 };
 
+/**
+ * Inserts one item. The producers (the main app's scan sampling, the yes/no import, moderator tools) insert their own rows
+ * and leave `levelBucket` to the tick; this sets it at once, as the tick would.
+ */
 export async function enqueueItem(db: Executor, input: NewItem, now: Date): Promise<number> {
   const question = await db
     .selectFrom('KnightsQuestion')
@@ -459,6 +492,7 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
     })
     .returning('id')
     .executeTakeFirstOrThrow();
+  await syncLevelBuckets(db, { itemIds: [row.id] });
   return row.id;
 }
 
@@ -1488,6 +1522,45 @@ export async function closeUnservableItems(
   for (let i = 0; i < result.imageUnservable; i++) metrics.escalation(IMAGE_UNSERVABLE_REASON);
   moved?.(closedOpen);
   return result;
+}
+
+/**
+ * The most items one tick's `syncLevelBuckets` sets: one tick catches up with a normal hour of new items, and a backlog
+ * (a large import, a mass re-rate) is spread over several ticks instead of making one long.
+ */
+export const LEVEL_BUCKET_SYNC_LIMIT = 5000;
+
+/**
+ * Keeps `levelBucket` equal to `bucketLevelSql` on open rating items (hidden checks and yes/no items are never served by
+ * the feed's bucket reads, so they are left NULL): sets it where it is still NULL (no producer writes it) and corrects it
+ * where the image was re-rated since. At most `limit` items per call, oldest id first; rows another transaction holds
+ * are skipped for the next tick. `updatedAt` is left alone: the column is derived, not a change to the item. `itemIds`
+ * narrows the call to those items (`enqueueItem` sets its own row at once).
+ */
+export async function syncLevelBuckets(
+  db: Executor,
+  { limit = LEVEL_BUCKET_SYNC_LIMIT, itemIds }: { limit?: number; itemIds?: number[] } = {}
+): Promise<{ synced: number }> {
+  const due = db
+    .selectFrom('KnightsQueueItem as i')
+    .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .select(['i.id', bucketLevelSql.as('bucket')])
+    .$if(itemIds !== undefined, (qb) => qb.where('i.id', 'in', itemIds as number[]))
+    .where('i.status', '=', 'Open')
+    .where('i.audience', 'is', null)
+    .where('i.isHiddenCheck', '=', false)
+    .where((eb) => eb('i.levelBucket', 'is distinct from', bucketLevelSql))
+    .orderBy('i.id', 'asc')
+    .limit(limit)
+    .forUpdate('i')
+    .skipLocked();
+  const result = await db
+    .updateTable('KnightsQueueItem as u')
+    .from(due.as('due'))
+    .set((eb) => ({ levelBucket: eb.ref('due.bucket') }))
+    .whereRef('u.id', '=', 'due.id')
+    .executeTakeFirst();
+  return { synced: Number(result.numUpdatedRows) };
 }
 
 /** Closes items with no outcome: no label and nothing written back. Pending votes become `inconclusive`; settling them is the caller's. */

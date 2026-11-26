@@ -5286,6 +5286,7 @@ export interface KnightsQueueItem {
   reason: string | null;
   escalationReason: string | null;
   prediction: JsonValue | null;
+  levelBucket: number | null;
   externalId: string | null;
   prompt: string | null;
   audience: string | null;
