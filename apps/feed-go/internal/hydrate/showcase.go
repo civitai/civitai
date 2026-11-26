@@ -85,8 +85,9 @@ func showcaseOf(curated, unknown, stale bool) Showcase {
 	return ShowcaseUncurated
 }
 
-// classify sorts ids by their entries: curated when any entry says so, failed when a GET failed for
-// a reason other than redis.Nil (either ends the scan: nothing else can change the answer), else
+// classify sorts ids by their entries: failed when any GET failed for a reason other than redis.Nil
+// (checked first, so it wins whatever the order), curated when any entry says so (it ends the scan),
+// else
 // missing (the ids with no entry Node's fetch would use as it is, each once), held (one of them is a
 // bust's debounce marker) and stale (some uncurated entry is past ShowcaseTTL).
 func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, stale bool, failed error) {
@@ -106,6 +107,14 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 	if p != nil && p.Now != nil {
 		now = p.Now()
 	}
+	// A failed GET (not redis.Nil) among the asked ids wins over every entry, whatever the order.
+	for _, id := range ids {
+		if i, ok := at[id]; ok {
+			if err := r.read.cmds[i].Err(); err != nil && !errors.Is(err, redis.Nil) {
+				return false, nil, false, false, err
+			}
+		}
+	}
 	seen := make(map[int]bool, len(ids))
 	for _, id := range ids {
 		i, ok := at[id]
@@ -117,9 +126,6 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 			continue
 		}
 		cmd := r.read.cmds[i]
-		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
-			return false, nil, false, false, err
-		}
 		e, st := entryState(cmd, ShowcaseTTL, now, decodeOpts{})
 		if st == stateHeld {
 			held = true

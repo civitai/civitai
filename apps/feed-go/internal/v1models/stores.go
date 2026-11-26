@@ -93,7 +93,21 @@ func dataMiss(missed []int, failed map[int]error) error {
 	return fallback.New("v1-models-data-miss")
 }
 
-// firstFailed is the read error of the first of ids in failed; nil when none failed.
+// tagsRead is the ids whose model-tags entry modelData reads: those with a model-data entry that is
+// not a notFound marker.
+func tagsRead(ids []int, data map[int]hydrate.OrderedEntry) []int {
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if e, ok := data[id]; ok && !e.NotFound {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// firstFailed is the read error of the first of ids in failed; nil when none failed. Each content
+// fallback of a cache read asks it over ALL the ids that read answers, not only the id at hand, so a
+// failed GET anywhere in the read wins over a content miss or stale entry, whatever the id order.
 func firstFailed(ids []int, failed map[int]error) error {
 	if len(failed) == 0 {
 		return nil
@@ -110,9 +124,9 @@ func firstFailed(ids []int, failed map[int]error) error {
 // by modelTagCache's (whose own appendFn names them from tagCache). A model-tags miss falls back; a
 // model-data miss falls back unless computeMiss, when it is computed (computeDataMisses; DESIGN.md
 // §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on the replica with
-// Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back. Where a miss falls back and its
-// cache GET failed (hydrate.OrderedRead.Failed), the reason is that cache's `-read-failed` one, not
-// its `-miss`.
+// Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back. Where a read would fall back on
+// content (a miss, a stale entry) and any of its GETs failed (hydrate.OrderedRead.Failed), the
+// reason is that cache's `-read-failed` one.
 func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[int]*modelData, error) {
 	ids = hydrate.Unique(ids)
 	b := hydrate.NewBatch()
@@ -132,7 +146,14 @@ func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[
 	for _, id := range ids {
 		e, ok := dataEntries[id]
 		if !ok {
-			return nil, dataMiss([]int{id}, dataFailed)
+			// Over every id still without an entry (a computed miss has one now), not only this one.
+			var absent []int
+			for _, x := range ids {
+				if _, ok := dataEntries[x]; !ok {
+					absent = append(absent, x)
+				}
+			}
+			return nil, dataMiss(absent, dataFailed)
 		}
 		if e.NotFound {
 			continue
@@ -156,7 +177,7 @@ func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[
 		out[id] = md
 		te, ok := tagEntries[id]
 		if !ok {
-			if err := tagsFailed[id]; err != nil {
+			if err := firstFailed(tagsRead(ids, dataEntries), tagsFailed); err != nil {
 				return nil, fallback.Wrap("v1-models-tags-read-failed", err)
 			}
 			return nil, fallback.New("v1-models-tags-miss")
@@ -191,6 +212,9 @@ func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[
 			continue
 		}
 		if e.Stale {
+			if err := firstFailed(tagIDs, namesFailed); err != nil && !d.Config.ComputeMisses {
+				return nil, fallback.Wrap("v1-models-tag-name-read-failed", err)
+			}
 			return nil, fallback.New("v1-models-tag-name-stale")
 		}
 		if !e.NotFound {
@@ -404,12 +428,15 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	for _, vid := range versionIDs {
 		e, ok := fileEntries[vid]
 		if !ok {
-			if err := filesFailed[vid]; err != nil {
+			if err := firstFailed(versionIDs, filesFailed); err != nil {
 				return nil, fallback.Wrap("v1-models-files-read-failed", err)
 			}
 			return nil, fallback.New("v1-models-files-miss")
 		}
 		if e.Stale {
+			if err := firstFailed(versionIDs, filesFailed); err != nil {
+				return nil, fallback.Wrap("v1-models-files-read-failed", err)
+			}
 			return nil, fallback.New("v1-models-files-stale")
 		}
 		if e.NotFound {
@@ -456,7 +483,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		for _, id := range candidates {
 			v, ok := vals[id]
 			if !ok {
-				if err := failed[id]; err != nil {
+				if err := firstFailed(candidates, failed); err != nil {
 					return nil, fallback.Wrap("v1-models-membership-read-failed", err)
 				}
 				return nil, fallback.New("v1-models-membership-miss")

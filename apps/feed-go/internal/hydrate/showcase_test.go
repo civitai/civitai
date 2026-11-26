@@ -105,6 +105,9 @@ func TestVersionShowcaseState(t *testing.T) {
 		{"a failed read", []int{7110}},
 		{"a failed read beside a miss", []int{7108, 7110}},
 		{"a failed read beside an uncurated entry", []int{7101, 7110}},
+		// A curated entry ahead of the failed one does not end the scan first: the failure wins.
+		{"a failed read after a curated entry", []int{7102, 7110}},
+		{"a failed read before a curated entry", []int{7110, 7102}},
 	} {
 		got, err := src.VersionShowcase(context.Background(), c.ids)
 		if got != ShowcaseCurated || err == nil || err.Error() != "version showcase cache read: shard down" {

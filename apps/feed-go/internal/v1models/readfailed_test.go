@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
@@ -20,12 +21,23 @@ func failKey(key string, edit ...func(*testWorld)) func(*testWorld) {
 }
 
 // A cache GET that FAILS on either REST models route hands back with that cache's own
-// `-read-failed` reason, never the `-miss` a content miss gives: the canary's fallback-delta drops
-// the content reasons (sticky clients skew them), and a read failure is a regression it must count.
-// Each failure case is paired with its content control: the same entry absent, no read failing.
+// `-read-failed` reason, never the `-miss` a content miss gives: a fallback-rate comparison may
+// leave out content-driven reasons (sticky clients skew them), so a read failure must never wear a
+// content label.
+// Each failure case is paired with its content control: the same entry absent, no read failing. A
+// failed GET anywhere in one cache read wins over its content reasons, whatever the id order.
 func TestServeReadFailureIsNotAContentMiss(t *testing.T) {
 	hideBuzz := func(w *testWorld) { w.entries[KeyMetricPrivacy+":1001"] = meta("hideModelBuzz", true) }
 	absent := func(key string) func(*testWorld) { return func(w *testWorld) { w.entries[key] = nil } }
+	cached := superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)}
+	twoTags := func(w *testWorld) {
+		w.entries[KeyModelTags+":5001"] = append(meta("modelId", int64(5001), "tagIds", []any{int64(11), int64(12)}), cached)
+		w.entries[KeyBasicTags+":12"] = append(meta("id", int64(12), "name", "other"), cached)
+	}
+	stale11 := func(w *testWorld) {
+		w.entries[KeyBasicTags+":11"] = append(meta("id", int64(11), "name", "style"),
+			superjson.Field{Key: "cachedAt", Val: testNow.Add(-48 * time.Hour)})
+	}
 	for _, c := range []struct {
 		name   string
 		edit   func(*testWorld)
@@ -41,6 +53,10 @@ func TestServeReadFailureIsNotAContentMiss(t *testing.T) {
 		{"files: absent", absent(KeyFilesForVersion + ":6001"), "v1-models-files-miss"},
 		{"membership: GET fails", failKey(KeyMembershipValid+":1001", hideBuzz), "v1-models-membership-read-failed"},
 		{"membership: absent", hideBuzz, "v1-models-membership-miss"},
+		// Two tags: a stale entry on 11 met first, a failed GET on 12. The failure wins whatever the
+		// order; with 12 cached, the stale entry alone is the content reason.
+		{"tag names: one stale, another's GET fails", failKey(KeyBasicTags+":12", twoTags, stale11), "v1-models-tag-name-read-failed"},
+		{"tag names: one stale, the other cached", func(w *testWorld) { twoTags(w); stale11(w) }, "v1-models-tag-name-stale"},
 	} {
 		_, _, dErr, lErr := serveBoth(t, c.edit, nil)
 		if reason(dErr) != c.reason || reason(lErr) != c.reason {
