@@ -82,3 +82,41 @@ describe('article.getInfinite event decoration viewer', () => {
     expect(await viewerFor(member, session)).toEqual({ id: 2, isModerator: false });
   });
 });
+
+describe('article.getInfinite report-listed viewer', () => {
+  beforeEach(() => {
+    mockGetArticles.mockReset();
+    mockGetArticles.mockResolvedValue(feed);
+  });
+
+  async function reportListedViewerFor(
+    user: unknown,
+    credential: Record<string, unknown>,
+    csamReports: boolean
+  ) {
+    const ctx = { ...fakeCtx(user, credential), features: { csamReports } as never };
+    await articleRouter.createCaller(ctx as never).getInfinite({});
+    return mockGetArticles.mock.calls.at(-1)![0].reportListedViewer;
+  }
+
+  it('a grant-holding moderator on a session sees report-listed covers', async () => {
+    expect(await reportListedViewerFor(moderator, session, true)).toEqual({
+      seesReportListed: true,
+      ownerSeesReportListed: true,
+    });
+  });
+
+  it('the same moderator on a scoped key sees neither', async () => {
+    expect(await reportListedViewerFor(moderator, scopedKey, true)).toEqual({
+      seesReportListed: false,
+      ownerSeesReportListed: false,
+    });
+  });
+
+  it("a member on a session keeps only the owner's view", async () => {
+    expect(await reportListedViewerFor(member, session, false)).toEqual({
+      seesReportListed: false,
+      ownerSeesReportListed: true,
+    });
+  });
+});

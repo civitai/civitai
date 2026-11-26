@@ -147,6 +147,10 @@ export const semanticImageSearchRouter = router({
           nextCursor: undefined,
           correctedQuery: undefined,
           latencyMs: 0,
+          refused: result.refused,
+          ...('refusedBy' in result && result.refusedBy !== undefined
+            ? { refusedBy: result.refusedBy }
+            : {}),
         };
       }
       return { ...result, latencyMs };

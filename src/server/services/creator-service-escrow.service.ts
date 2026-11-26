@@ -231,21 +231,16 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
   const releasable = Prisma.sql`"id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
       AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
   const unclaimed = Prisma.sql`${releasable} AND ${noReleaseLeg}`;
-  // Our own scan-copy delete still settling is the only thing in the way: wait for the next run
-  // rather than send the deal to the moderators. A settle that never lands holds once the window ends.
-  const [finals] = await tx.$queryRaw<{ clear: boolean; clearOnceSettled: boolean }[]>`
-    SELECT ${dealFinalsClear(Prisma.sql`d`)} AS "clear",
-      ${dealFinalsClear(Prisma.sql`d`, { exceptSettling: true })} AS "clearOnceSettled"
-    FROM "ServiceDeal" d WHERE d."id" = ${dealId}::int`;
-  if (finals && !finals.clear && finals.clearOnceSettled) return false;
-  // Finals that have not all passed scanning are never paid for, whatever a moderator decided.
+  // Finals that have not all passed scanning are never paid for, whatever a moderator decided. Our
+  // own scan-copy delete still settling does not hold the deal: the claim below waits for it, and a
+  // settle that never lands holds once its window ends.
   if (
     await holdForReview(
       tx,
       dealId,
       FINAL_SCAN_FAILED,
       Prisma.sql`${unclaimed}
-      AND NOT ${dealFinalsClear(Prisma.sql`d`)}`
+      AND NOT ${dealFinalsClear(Prisma.sql`d`, { exceptSettling: true })}`
     )
   )
     return 'held';
@@ -283,7 +278,7 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
     FROM "ServiceDeal" d
     JOIN "ServiceDealTransaction" h
       ON h."dealId" = d."id" AND h."leg" = 'Hold'::"ServiceDealLeg" AND h."transactionId" IS NOT NULL
-    WHERE d."id" = ${dealId}::int
+    WHERE d."id" = ${dealId}::int AND ${dealFinalsClear(Prisma.sql`d`)}
     ON CONFLICT ("dealId", "leg") DO NOTHING`;
   return claimed > 0;
 }

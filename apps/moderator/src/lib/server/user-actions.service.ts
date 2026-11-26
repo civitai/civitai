@@ -19,6 +19,7 @@ import type {
 } from '$lib/membership-extend';
 import type { CompGiftPreview, CompGiftResult, CompGiftTier } from '$lib/membership-gift-comp';
 import { tryCivitaiInternalUrl } from './civitai-url';
+import { mainAppHostFetch } from './main-app-fetch';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
@@ -91,7 +92,7 @@ async function callMainApp(
   if (base === null) return { ok: false, error: INTERNAL_URL_UNSET };
   const query = new URLSearchParams({ ...params, token });
   try {
-    const res = await fetch(`${base}${path}?${query}`, {
+    const res = await mainAppHostFetch(`${base}${path}?${query}`, {
       method: 'POST',
       signal: AbortSignal.timeout(15_000),
     });
@@ -209,7 +210,7 @@ async function postJson(opts: {
   }
 
   try {
-    const res = await fetch(url, {
+    const res = await mainAppHostFetch(url, {
       method: isGet ? 'GET' : 'POST',
       headers,
       ...(isGet ? {} : { body: JSON.stringify(opts.body) }),

@@ -234,13 +234,17 @@ function formatResult(action, user, result, options = {}) {
   output += `User: ${user.username} (ID: ${user.id})\n`;
   output += `Success: Yes\n`;
 
+  // "Now" is what the server returned, never the inverse of the lookup: the lookup can read a lagged
+  // replica, and then its inverse names the opposite of what the toggle actually did.
+  const now = (field, on, off) =>
+    result && field in result ? (result[field] ? on : off) : 'Unknown (re-check the user)';
   if (action === 'ban') {
     output += `Previous: ${user.bannedAt ? 'Banned' : 'Not Banned'}\n`;
-    output += `Now: ${user.bannedAt ? 'Not Banned' : 'Banned'}\n`;
+    output += `Now: ${now('bannedAt', 'Banned', 'Not Banned')}\n`;
     if (options.reasonCode) output += `Reason: ${options.reasonCode}\n`;
   } else if (action === 'mute') {
     output += `Previous: ${user.muted ? 'Muted' : 'Not Muted'}\n`;
-    output += `Now: ${user.muted ? 'Not Muted' : 'Muted'}\n`;
+    output += `Now: ${now('muted', 'Muted', 'Not Muted')}\n`;
   } else if (action === 'leaderboard') {
     output += `Previous: ${user.excludeFromLeaderboards ? 'Excluded' : 'Eligible'}\n`;
     output += `Now: ${options.eligible ? 'Eligible' : 'Excluded'}\n`;

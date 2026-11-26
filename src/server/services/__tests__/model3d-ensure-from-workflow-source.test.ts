@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { ensureModel3DFromWorkflow } from '~/server/services/model3d.service';
 import type { SessionUser } from '~/types/session';
 
 const mocks = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   handlePolyGenWorkflowResult: vi.fn(),
+  submitWorkflow: vi.fn(),
+}));
+vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  submitWorkflow: mocks.submitWorkflow,
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getFliptVariant: vi.fn(async () => 's2'),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'token'),
@@ -20,7 +30,11 @@ vi.mock('~/server/services/orchestrator/handlers/polyGen.handler', async (import
 }));
 vi.mock('~/server/orchestrator/polygen/polygen-output', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  getPolyGenPrimaryModel: vi.fn(() => ({ url: 'https://x/model.glb', nsfwLevel: 1 })),
+  getPolyGenPrimaryModel: vi.fn(() => ({
+    url: 'https://orchestration.civitai.com/v2/consumer/blobs/MESH-0.glb',
+    format: 'glb',
+    nsfwLevel: 1,
+  })),
   getPolyGenPostBlock: vi.fn(() => undefined),
 }));
 
@@ -37,6 +51,8 @@ function workflowWith(metadata: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+  mocks.submitWorkflow.mockReset();
+  redisMock.redis.get.mockClear();
   mocks.handlePolyGenWorkflowResult.mockReset();
   mocks.getWorkflow.mockReset();
   dbMock.dbRead.model3D.findUnique.mockReset();
@@ -81,5 +97,32 @@ describe('ensureModel3DFromWorkflow source image', () => {
   it('ignores a source image id that is not a positive integer', async () => {
     expect(await sourceImageIdHandedOn({ sourceImageId: 1.5 })).toBeUndefined();
     expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// Ownership is proven by the user's own token reading the result; the render and pending read must
+// come after it.
+describe('ensureModel3DFromWorkflow four-angle render', () => {
+  const pendingKey = (userId: number) => expect.stringMatching(new RegExp(`:${userId}:wf-1$`));
+
+  it("another user's click on the result neither reads its pending render nor asks for one", async () => {
+    mocks.getWorkflow.mockRejectedValue(new Error('Not found'));
+    await expect(
+      ensureModel3DFromWorkflow({ input: { workflowId: 'wf-1' }, user, ctx: {} as never })
+    ).rejects.toThrow();
+    expect(mocks.getWorkflow).toHaveBeenCalledTimes(1);
+    expect(mocks.handlePolyGenWorkflowResult).not.toHaveBeenCalled();
+    expect(redisMock.redis.get).not.toHaveBeenCalled();
+    expect(mocks.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("the owner's click reads only the owner's pending render", async () => {
+    mocks.getWorkflow.mockResolvedValue({ ...workflowWith({}), allowMatureContent: false });
+    await ensureModel3DFromWorkflow({
+      input: { workflowId: 'wf-1' },
+      user,
+      ctx: {} as never,
+    }).catch(() => undefined);
+    expect(redisMock.redis.get).toHaveBeenCalledWith(pendingKey(user.id));
   });
 });

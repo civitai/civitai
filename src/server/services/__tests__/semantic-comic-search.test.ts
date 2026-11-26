@@ -306,7 +306,13 @@ describe('semantic comic search: the query audit', () => {
   it('refuses a refused query before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const result = await search([10], { browsingLevel: 31, user: MOD });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     expect(sent).toHaveLength(0);
   });
 
@@ -320,7 +326,13 @@ describe('semantic comic search: the query audit', () => {
       user: MOD,
       correctedQuery: 'corrected',
     });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     // The refused correction's candidates are never hydrated.
     expect(h.fetched).toEqual([]);
   });
