@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { blockLeavesMedia, ownerMediaAllowed } from '~/server/common/image-block-marker';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -137,19 +137,29 @@ export async function viewerCanSeeImageMedia(
  * Whether the viewer may see the media an image was generated from, judged by each recorded
  * source on its own (`meta.extra.sourceImageIds`): an edit can be rated below its source. A
  * source the viewer could not open (`image.get`'s rules), that is gone, or that is rated Blocked
- * counts as unseen except by its owner and moderators. The
- * image's owner made it from those sources and is not asked again. Sources the meta does not
- * record (uploads) can only be judged by the image's own rating.
+ * counts as unseen except by its owner and moderators. The image's owner made it from those
+ * sources and is not asked their visibility again, but a block on one still refuses its media,
+ * owner included. Sources the meta does not record (uploads) can only be judged by the image's own
+ * rating.
  */
 export async function viewerCanSeeSourceMedia(
   ctx: MediaViewer,
   image: { id: number; userId: number },
   meta: unknown
 ) {
+  if (actsAsModerator(ctx)) return true;
   const fullViewer = isSessionOrFullUserKey(ctx) ? ctx.user : undefined;
-  if (fullViewer && (fullViewer.isModerator || fullViewer.id === image.userId)) return true;
   const sourceIds = [...new Set(storedSourceImageIds(meta) ?? [])].filter((id) => id !== image.id);
   if (!sourceIds.length) return true;
+  if (fullViewer && fullViewer.id === image.userId) {
+    const owned = await dbRead.$queryRaw<
+      { nsfwLevel: number; userId: number; ingestion: string; blockedFor: string | null }[]
+    >(Prisma.sql`
+      SELECT i."nsfwLevel", i."userId", i.ingestion::text AS ingestion, i."blockedFor"
+      FROM "Image" i WHERE i.id IN (${Prisma.join(sourceIds)})
+    `);
+    return owned.every((source) => blockLeavesMedia(source, fullViewer.id));
+  }
   const sources = await dbRead.$queryRaw<
     { nsfwLevel: number; userId: number; ingestion: string; blockedFor: string | null }[]
   >(Prisma.sql`
@@ -174,13 +184,12 @@ export async function viewerCanSeeSourceMedia(
     for (const targetUserId of owners)
       if (await amIBlockedByUser({ userId: viewerId, targetUserId })) return false;
   }
-  return sources.every(
-    ({ nsfwLevel, userId, ingestion, blockedFor }) =>
-      // A block leaves a source's owner its media only where `ownerMediaAllowed` says so.
-      (fullViewer?.id === userId &&
-        (actsAsModerator(ctx) || ownerMediaAllowed({ ingestion, blockedFor }))) ||
-      (nsfwLevel !== NsfwLevel.Blocked &&
-        canViewImageMedia(ctx, { nsfwLevel, user: { id: userId } }))
+  return sources.every(({ nsfwLevel, userId, ingestion, blockedFor }) =>
+    // A block leaves a source's owner its media only where `ownerMediaAllowed` says so.
+    fullViewer?.id === userId
+      ? ownerMediaAllowed({ ingestion, blockedFor })
+      : nsfwLevel !== NsfwLevel.Blocked &&
+        canViewImageMedia(ctx, { nsfwLevel, user: { id: userId } })
   );
 }
 

@@ -1,4 +1,4 @@
-import { hasBlockMarker, ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { blockLeavesMedia } from '~/server/common/image-block-marker';
 import {
   imageRestrictionSelect,
   isImageServable,
@@ -45,19 +45,7 @@ type PanelImage = RestrictableImage & { ingestion: string; blockedFor: string | 
 /** What `withServableCover` reads beyond `imageRestrictionSelect`. */
 export const coverBlockSelect = { ingestion: true, blockedFor: true } as const;
 
-/**
- * Whether a block leaves `viewerId` an image's media: a moderator keeps it, its owner per
- * `ownerMediaAllowed`, anyone else only when the image carries no block.
- */
-export function blockLeavesMedia(
-  image: PanelImage,
-  viewerId?: number | null,
-  actsAsModerator = false
-) {
-  if (actsAsModerator) return true;
-  if (viewerId != null && image.userId === viewerId) return ownerMediaAllowed(image);
-  return !hasBlockMarker(image);
-}
+export { blockLeavesMedia };
 
 /** `withServableImage` for a cover or hero image, also withheld where `blockLeavesMedia` is false. */
 export function withServableCover<

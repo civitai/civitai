@@ -37,3 +37,22 @@ export function ownerMediaAllowed(image: {
   if (image.blockedFor != null) return OWNER_MEDIA_EXEMPT_BLOCKS.includes(image.blockedFor);
   return image.ingestion !== ImageIngestionStatus.Blocked;
 }
+
+/**
+ * Whether a block leaves `viewerId` an image's media: a moderator keeps it, its owner per
+ * `ownerMediaAllowed`, anyone else only when the image carries no block.
+ */
+export function blockLeavesMedia(
+  image: {
+    userId: number;
+    ingestion: ImageIngestionStatus | string;
+    nsfwLevel: number;
+    blockedFor: string | null;
+  },
+  viewerId?: number | null,
+  actsAsModerator = false
+) {
+  if (actsAsModerator) return true;
+  if (viewerId != null && image.userId === viewerId) return ownerMediaAllowed(image);
+  return !hasBlockMarker(image);
+}

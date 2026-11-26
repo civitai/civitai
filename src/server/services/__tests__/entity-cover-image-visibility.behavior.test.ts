@@ -448,6 +448,18 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     });
   });
 
+  describe('a blocked image as its own cover', () => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('has no cover for the %s', async (who) => {
+      expect(await coverOf('Image', 2914, viewers[who])).toBeNull();
+    });
+    it('keeps its cover for a moderator', async () => {
+      expect(await coverOf('Image', 2914, viewers.moderator)).toBe(2914);
+    });
+    it("CONTROL: an unblocked image of the owner's is its own cover for them", async () => {
+      expect(await coverOf('Image', 1135, viewers.owner)).toBe(1135);
+    });
+  });
+
   describe.each(hidden)('%s', (_, entityType, entityId, imageId) => {
     it.each(['anonymous', 'stranger'] as const)('has no cover for a %s viewer', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBeNull();
