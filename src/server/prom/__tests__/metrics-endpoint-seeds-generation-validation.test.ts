@@ -26,7 +26,7 @@ import '~/__tests__/mocks/db.mock';
 // `endpoint-helpers` spreads `env.TRPC_ORIGINS` at module load; stub the wrapper so none of
 // that graph is needed to import the page.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 const METRIC = 'civitai_app_generation_validation_refused_total';
