@@ -321,7 +321,7 @@ describe('rewardReportReporters multiplier', () => {
       error: 'socket closed',
       payload: { failedReads: 2, errorClasses: ['TypeError'] },
     });
-    expect([...(payload.payload.slots as number[])].sort()).toEqual(
+    expect([...(payload.payload as { slots: number[] }).slots].sort()).toEqual(
       [
         ...new Set(
           [42, 43].map((id) => keyHashSlot(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${id}`))
