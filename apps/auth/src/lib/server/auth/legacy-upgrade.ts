@@ -111,9 +111,12 @@ function carryDeviceId(cookies: Cookies): string {
   return id;
 }
 
-// The copy keeps the session's family, so no family record is written. carryDeviceId is called for the host-slot
-// device cookie it sets (the account list is keyed by it); its return value is not needed here.
-async function recordFamily(cookies: Cookies, family: string | undefined): Promise<void> {
+// The copy keeps the session's family, so it needs no family record. carryDeviceId sets the host-slot device cookie
+// the account list is keyed by.
+async function markLiveAndCarryDeviceId(
+  cookies: Cookies,
+  family: string | undefined
+): Promise<void> {
   await markFamilyLive(family);
   carryDeviceId(cookies);
 }
@@ -134,7 +137,7 @@ export async function preUpgradeHubSession(
   const token = await sign(upgrade);
   if (!token) return;
   await sessions.trackToken(upgrade.jti, Number(upgrade.claims.sub)).catch(() => undefined);
-  await recordFamily(cookies, familyId({ ...upgrade.claims, jti: upgrade.jti }));
+  await markLiveAndCarryDeviceId(cookies, familyId({ ...upgrade.claims, jti: upgrade.jti }));
   setSessionCookie(cookies, token, 'host');
 }
 
@@ -241,7 +244,7 @@ async function finish(
 ): Promise<string | null> {
   if (!token) return null;
   if (cookies.get(hostSessionCookieName()) !== token) setSessionCookie(cookies, token, 'host');
-  await recordFamily(cookies, familyId(j0));
+  await markLiveAndCarryDeviceId(cookies, familyId(j0));
   const retire = retireSharedSession();
   if (retire) await sessions.invalidateToken(j0.jti!, Number(j0.sub)).catch(() => undefined);
   // Only the minting request starts the TTL: a replay re-arming it would keep an ended token usable indefinitely.
