@@ -839,10 +839,13 @@ const referenceImageSelect = {
  *  `panelsForViewer`): only the images the viewer may be served and a block leaves them, and on a
  *  `safeOnly` read only those with a safe level, without the fields that decide the block. */
 function referenceForViewer<
-  R extends {
-    images: { image: PanelImageRow & RestrictableImage & { id: number; url: string } }[];
-  }
->(reference: R, ctx: ViewerCtx, { safeOnly = false }: { safeOnly?: boolean } = {}) {
+  E extends { image: PanelImageRow & RestrictableImage & { id: number; url: string } },
+  R extends { images: E[] }
+>(
+  reference: R & { images: E[] },
+  ctx: ViewerCtx,
+  { safeOnly = false }: { safeOnly?: boolean } = {}
+) {
   const moderator = actsAsModerator(ctx);
   const { images, ...rest } = reference;
   return {
@@ -854,9 +857,9 @@ function referenceForViewer<
           blockLeavesMedia(image, ctx.user?.id, moderator) &&
           (!safeOnly || !image.nsfwLevel || hasSafeBrowsingLevel(image.nsfwLevel))
       )
-      .map(({ image, ...rest }) => {
+      .map(({ image, ...entry }: E) => {
         const { ingestion: _ingestion, blockedFor: _blockedFor, ...shown } = image;
-        return { ...rest, image: shown };
+        return { ...entry, image: shown };
       }),
   };
 }
