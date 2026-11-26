@@ -141,6 +141,7 @@ import {
   getContentLinkHold,
   nextContentLinkHold,
   sameContentLinkHold,
+  urlsWithAbsentUploads,
   writeContentLinkHold,
 } from '~/server/services/article-content-link-hold';
 import {
@@ -2448,7 +2449,15 @@ export async function linkArticleContentImages({
         wasHeld: new Set([...(previousHold?.deferred ?? []), ...(previousHold?.refused ?? [])]),
         now,
       });
-      hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId }, now);
+      const sorted = new Set([...classified.refused, ...classified.deferred]);
+      const absent = await urlsWithAbsentUploads(
+        unlinked.filter((url) => !sorted.has(url) && !isUnfinishedUploadUrl(url))
+      );
+      hold = nextContentLinkHold(
+        previousHold,
+        { ...classified, deferred: [...classified.deferred, ...absent], editorId: userId },
+        now
+      );
     }
   }
   const held = new Set([...(hold?.deferred ?? []), ...(hold?.refused ?? [])]);

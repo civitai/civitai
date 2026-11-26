@@ -1,8 +1,10 @@
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as ImageService from '~/server/services/image.service';
@@ -214,8 +216,31 @@ beforeAll(async () => {
   await db.exec(MIGRATION);
 });
 
+/** The image store, at the S3 wire: a key in `absent` answers 404, every other key exists. */
+const store = { absent: new Set<string>(), down: false };
+setEnv({
+  S3_IMAGE_B2_ENDPOINT: 'https://b2.example',
+  S3_IMAGE_B2_ACCESS_KEY: 'ia',
+  S3_IMAGE_B2_SECRET_KEY: 'is',
+});
+const s3Send = vi.spyOn(S3Client.prototype, 'send').mockImplementation((async (
+  command: unknown
+) => {
+  if (!(command instanceof HeadObjectCommand)) throw new Error('unexpected S3 command');
+  if (store.down) throw Object.assign(new Error('503'), { $metadata: { httpStatusCode: 503 } });
+  if (store.absent.has(command.input.Key ?? ''))
+    throw Object.assign(new Error('NotFound'), {
+      name: 'NotFound',
+      $metadata: { httpStatusCode: 404 },
+    });
+  return { ContentLength: 1024 };
+}) as never);
+afterAll(() => s3Send.mockRestore());
+
 beforeEach(async () => {
   await db.exec(`TRUNCATE "Article", "Image", "ImageConnection", "ArticleContentLinkHold"`);
+  store.absent.clear();
+  store.down = false;
   await givenArticle();
   redis.clear();
   textModeration = legacyVerdict(false);
@@ -714,5 +739,44 @@ describe('a refused url still unrecorded', () => {
     await link({ now: at(30 * MINUTE) });
     expect(await rows()).toEqual([]);
     expect((await hold())?.refused).toEqual([KEY]);
+  });
+});
+
+describe('a url whose upload is not in the image store', () => {
+  beforeEach(() => recordUploadKeyOwner(KEY, AUTHOR));
+
+  it('gets no image row, is deferred, and keeps the article off public', async () => {
+    store.absent.add(KEY);
+    await link();
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY]);
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('links once the upload shows up', async () => {
+    store.absent.add(KEY);
+    await link();
+    store.absent.clear();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([KEY]);
+    expect(await hold()).toBeNull();
+  });
+
+  it('links only the urls whose uploads exist', async () => {
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    store.absent.add(KEY2);
+    const content = `<p>${img(KEY)}${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    await link({ content });
+    expect(await rows()).toEqual([KEY]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+  });
+
+  it('control: links as before when the store cannot be read', async () => {
+    store.absent.add(KEY);
+    store.down = true;
+    await link();
+    expect(await rows()).toEqual([KEY]);
+    expect(await hold()).toBeNull();
   });
 });

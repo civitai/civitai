@@ -1,7 +1,7 @@
 import { ArticleStatus, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -15,6 +15,12 @@ import {
   checkSavedArticleContentUrls,
   recomputeArticleIngestion,
 } from '~/server/services/article.service';
+import {
+  getContentLinkHold,
+  nextContentLinkHold,
+  urlsWithAbsentUploads,
+  writeContentLinkHold,
+} from '~/server/services/article-content-link-hold';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -31,6 +37,8 @@ type MigrationStats = {
   articlesSkipped: number;
   /** Migrated articles with content keys that have no issue record. */
   articlesWithUnrecordedKeys: number;
+  /** Content urls with no upload in the image store: no row, held on their article instead. */
+  uploadsAbsent: number;
   errors: number;
 };
 
@@ -316,11 +324,28 @@ async function processBatch(
     }
   }
 
+  // Probed before the transaction: a probe can take seconds, and a batch holds many urls.
+  const existingUrls = new Set(
+    (
+      await dbRead.image.findMany({
+        where: { url: { in: [...allUrls] } },
+        select: { url: true },
+      })
+    ).map((img) => img.url)
+  );
+  const absent = new Set(
+    await urlsWithAbsentUploads([...allUrls].filter((url) => !existingUrls.has(url)))
+  );
+  for (const url of absent) allUrls.delete(url);
+  stats.uploadsAbsent += absent.size;
+
   if (dryRun) {
-    log(`[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs`);
+    log(
+      `[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs, ${absent.size} absent`
+    );
     stats.articlesProcessed += articles.length;
     stats.imagesCreated += allUrls.size;
-    stats.connectionsCreated += articleUrlPairs.length;
+    stats.connectionsCreated += articleUrlPairs.filter(({ url }) => !absent.has(url)).length;
     return;
   }
 
@@ -398,6 +423,35 @@ async function processBatch(
     });
   }
 
+  // Before the recompute, so it keeps these articles off public until the settle job links them.
+  const now = new Date();
+  for (const article of articles) {
+    const deferred = getContentMedia(article.content)
+      .map((item) => item.url)
+      .filter((url) => absent.has(url));
+    if (!deferred.length) continue;
+    try {
+      const previous = await getContentLinkHold(dbWrite, article.id);
+      await writeContentLinkHold(dbWrite, {
+        articleId: article.id,
+        content: article.content,
+        hold: nextContentLinkHold(
+          previous,
+          {
+            refused: previous?.refused ?? [],
+            deferred: [...new Set([...(previous?.deferred ?? []), ...deferred])],
+            editorId: article.userId,
+          },
+          now
+        ),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      log(`  ⚠️  article ${article.id}: hold write for absent uploads failed: ${msg}`);
+      stats.errors++;
+    }
+  }
+
   // Recompute every article in the batch. Articles with images flip to
   // Pending (webhook recomputes them back to Scanned once scans complete);
   // text-only articles stay wherever their text-moderation state puts them.
@@ -461,6 +515,7 @@ async function runMigration(
     connectionsCreated: 0,
     articlesSkipped: 0,
     articlesWithUnrecordedKeys: 0,
+    uploadsAbsent: 0,
     errors: 0,
   };
   let lastProcessedEnd = params.start;

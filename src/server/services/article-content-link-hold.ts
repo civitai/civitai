@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 import {
   imageUrlUnavailableError,
   isUnfinishedUploadUrl,
@@ -109,6 +111,24 @@ export async function classifyUnlinkedContentUrls({
     }
   }
   return { refused, deferred };
+}
+
+const UPLOAD_PROBE_CONCURRENCY = 4;
+
+/**
+ * The urls whose upload the image store says does not exist. A row for one is scanned, 404s at
+ * the scanner and sits in Error for good, so it is deferred instead and linked once it appears. A
+ * store that cannot be read proves nothing, and the url links as before.
+ */
+export async function urlsWithAbsentUploads(urls: string[]) {
+  const absent: string[] = [];
+  await limitConcurrency(
+    urls.map((url) => async () => {
+      if ((await probeCreatedImageMedia(url)) === 'absent') absent.push(url);
+    }),
+    UPLOAD_PROBE_CONCURRENCY
+  );
+  return absent;
 }
 
 /** The hold to store after linking found `refused` and `deferred`, carrying over what still applies. */
