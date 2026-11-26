@@ -425,3 +425,159 @@ describe('a moderator on a scoped key', () => {
     await expect(draftChapters(true)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
+
+describe('the panel debug view, an update and a duplicate of a blocked panel', () => {
+  const panelRow = (image: object) => ({
+    id: 7,
+    status: 'Ready',
+    prompt: 'p',
+    enhancedPrompt: null,
+    imageUrl: 'panel-key',
+    imageId: 1,
+    workflowId: null,
+    errorMessage: null,
+    metadata: { candidateImages: [{ key: 'panel-key' }, { key: 'other-key' }] },
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    position: 0,
+    projectId: 3,
+    chapterPosition: 0,
+    image,
+    references: [],
+    chapter: { project: { userId: OWNER, baseModel: 'Flux1' } },
+  });
+  const keysOf = (metadata: unknown) =>
+    ((metadata as { candidateImages: { key?: string }[] }).candidateImages ?? []).map(
+      (c) => c.key ?? null
+    );
+  const blocked = () => ({ ...blockedImage(BlockedReason.Moderated) });
+  const clean = () => ({ ...cleanImage });
+
+  it('debug info gives the owner no image or candidate key of a blocked panel', async () => {
+    const debug = async (image: object) => {
+      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panelRow(image) as never);
+      const { panel } = await callerFor(UPLOADER).getPanelDebugInfo({ panelId: 7 });
+      return { imageUrl: panel.imageUrl, keys: keysOf(panel.metadata) };
+    };
+    expect(await debug(blocked())).toEqual({ imageUrl: null, keys: [null, null] });
+    expect(await debug(clean())).toEqual({
+      imageUrl: 'panel-key',
+      keys: ['panel-key', 'other-key'],
+    });
+  });
+
+  it('an update returns no image or candidate key of a blocked panel', async () => {
+    const update = async (image: object) => {
+      dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(panelRow(image) as never);
+      dbMock.dbWrite.comicPanel.update.mockResolvedValue(panelRow(image) as never);
+      const updated = await callerFor(UPLOADER).updatePanel({ panelId: 7, status: 'Generating' });
+      return { imageUrl: updated.imageUrl, keys: keysOf(updated.metadata) };
+    };
+    expect(await update(blocked())).toEqual({ imageUrl: null, keys: [null, null] });
+    expect(await update(clean())).toEqual({
+      imageUrl: 'panel-key',
+      keys: ['panel-key', 'other-key'],
+    });
+  });
+
+  it('refuses to duplicate a blocked panel', async () => {
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panelRow(blocked()) as never);
+    await expect(callerFor(UPLOADER).duplicatePanel({ panelId: 7 } as never)).rejects.toMatchObject(
+      {
+        code: 'BAD_REQUEST',
+      }
+    );
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('selecting a panel image', () => {
+  const select = async (backing: object[]) => {
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({
+      id: 7,
+      workflowId: null,
+      metadata: { candidateImages: [{ key: 'candidate-key' }] },
+      chapter: { project: { userId: OWNER } },
+    } as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue(backing as never);
+    return callerFor(UPLOADER)
+      .selectPanelImage({ panelId: 7, selectedImageKey: 'candidate-key' })
+      .catch((e: unknown) => e);
+  };
+  const refusedAsBlocked = expect.objectContaining({
+    message: 'This image is blocked and cannot be selected.',
+  });
+
+  it('refuses a key that already backs a blocked image', async () => {
+    expect(await select([{ ingestion: 'Blocked', blockedFor: BlockedReason.Moderated }])).toEqual(
+      refusedAsBlocked
+    );
+  });
+
+  it('does not refuse a key whose image is clean or only held for its metadata', async () => {
+    expect(await select([])).not.toEqual(refusedAsBlocked);
+    expect(
+      await select([{ ingestion: 'Blocked', blockedFor: BlockedReason.AiNotVerified }])
+    ).not.toEqual(refusedAsBlocked);
+  });
+});
+
+describe("a comic chapter's comment thread", () => {
+  it('is not found on a draft chapter for a moderator on a scoped key', async () => {
+    const { commentSurface } = await import('~/server/services/commentv3/surfaces');
+    dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+      status: 'Draft',
+      panels: [{ image: { tosViolation: false, needsReview: null, ingestion: 'Scanned' } }],
+      project: {
+        userId: OWNER,
+        status: 'Active',
+        tosViolation: false,
+        publishedAt: new Date(0),
+        nsfwLevel: 1,
+        user: { bannedAt: null },
+      },
+    } as never);
+    const ctx = (scopedKey: boolean) =>
+      ({
+        user: { ...MODERATOR },
+        features: {},
+        tokenScope: scopedKey ? TokenScope.MediaRead : TokenScope.Full,
+        ...(scopedKey ? { apiKeyId: 9 } : {}),
+      } as never);
+    const check = (scopedKey: boolean) =>
+      Promise.resolve(commentSurface('comicChapter').assertVisible?.(1, ctx(scopedKey)));
+    await expect(check(false)).resolves.toBeUndefined();
+    await expect(check(true)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe("a reference's images", () => {
+  const blockedRef = () => ({
+    ...blockedImage(BlockedReason.Moderated),
+    nsfwLevel: NsfwLevel.PG,
+    url: 'ref-blocked',
+  });
+  const cleanRef = () => ({ ...cleanImage, url: 'ref-clean' });
+  const reference = () => ({
+    id: 11,
+    userId: OWNER,
+    images: [
+      { position: 0, image: blockedRef() },
+      { position: 1, image: cleanRef() },
+    ],
+  });
+  const urls = (ref: { images: { image: { url: string } }[] }) =>
+    ref.images.map((i) => i.image.url);
+
+  it('leaves out a blocked image for its owner on getReference and getUserReferences', async () => {
+    dbMock.dbRead.comicReference.findUnique.mockResolvedValue(reference() as never);
+    expect(urls(await callerFor(UPLOADER).getReference({ referenceId: 11 }))).toEqual([
+      'ref-clean',
+    ]);
+
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([reference()] as never);
+    const [ref] = await callerFor(UPLOADER).getUserReferences();
+    expect(urls(ref)).toEqual(['ref-clean']);
+    expect(ref.images[0].image).not.toHaveProperty('blockedFor');
+  });
+});

@@ -27,7 +27,7 @@ import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isImageServable, isUploaderId } from '~/server/common/image-visibility';
-import { hasBlockMarker } from '~/server/common/image-block-marker';
+import { hasBlockMarker, ownerMediaAllowed } from '~/server/common/image-block-marker';
 
 // Two-arg classed form, as free-placement uses: the one-arg form shares an int4 keyspace
 // with `article.service.ts`, which locks on a bare articleId, so a hashed key could collide
@@ -91,7 +91,12 @@ function servableCover<C extends NonNullable<RawCreatorAnnouncement['cover']>>(
 ) {
   if (!cover) return null;
   const own = isUploaderId(viewerId) && cover.userId === viewerId;
-  if (!isImageServable(cover, viewerId) || (hasBlockMarker(cover) && !own)) return null;
+  // A block leaves the uploader the media only where `ownerMediaAllowed` says so.
+  if (
+    !isImageServable(cover, viewerId) ||
+    (own ? !ownerMediaAllowed(cover) : hasBlockMarker(cover))
+  )
+    return null;
   const { ingestion: _ingestion, blockedFor: _blockedFor, ...rest } = cover;
   return rest;
 }

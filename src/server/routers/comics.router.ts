@@ -695,6 +695,59 @@ async function assertReferencePanelImageUnblocked(
 }
 
 // Shared helper: resolve a reference's images for generation
+/** A panel's stored media for the request's viewer: none of it when `blockLeavesMedia` refuses its
+ *  image, candidate keys included. */
+function panelMediaFor(
+  panel: { imageUrl: string | null; metadata: unknown; image: PanelImageRow | null },
+  ctx: Parameters<typeof actsAsModerator>[0]
+) {
+  if (!panel.image || blockLeavesMedia(panel.image, ctx.user?.id, actsAsModerator(ctx)))
+    return { imageUrl: panel.imageUrl, metadata: panel.metadata };
+  return {
+    imageUrl: null,
+    metadata: viewerPanelMetadata(panel.metadata, {
+      isOwner: true,
+      keepSourceImage: () => false,
+      withheld: true,
+    }),
+  };
+}
+type PanelImageRow = Parameters<typeof blockLeavesMedia>[0];
+
+/** Refuses copying a panel whose image a block refuses the viewer: the copy would carry its media. */
+function assertPanelCopyable(
+  panel: { image: PanelImageRow | null },
+  ctx: Parameters<typeof actsAsModerator>[0]
+) {
+  if (panel.image && !blockLeavesMedia(panel.image, ctx.user?.id, actsAsModerator(ctx)))
+    throw throwBadRequestError('A panel whose image is blocked cannot be duplicated.');
+}
+
+/** What a reference image read needs to show the image and to hold it to its block. */
+const referenceImageSelect = {
+  id: true,
+  url: true,
+  width: true,
+  height: true,
+  ...imageRestrictionSelect,
+  ...coverBlockSelect,
+} as const;
+
+/** `reference` with only the images a block leaves this viewer, without the fields that decide it. */
+function withServableReferenceImages<
+  R extends { images: { image: PanelImageRow & { id: number; url: string } }[] }
+>(reference: R, ctx: Parameters<typeof actsAsModerator>[0]) {
+  return {
+    ...reference,
+    images: reference.images
+      .filter(({ image }) => blockLeavesMedia(image, ctx.user?.id, actsAsModerator(ctx)))
+      .map(({ image, ...rest }) => {
+        const { ingestion: _ingestion, blockedFor: _blockedFor, ...shown } = image;
+        return { ...rest, image: shown };
+      }),
+  };
+}
+
 async function primarySourceRows(urls: string[]) {
   // primary: a block or re-rating must show up on the next read, not after replica lag.
   return dbWrite.image.findMany({
@@ -1174,6 +1227,7 @@ export const comicsRouter = router({
                         width: true,
                         height: true,
                         ...imageRestrictionSelect,
+                        ...coverBlockSelect,
                       },
                     },
                   },
@@ -1186,6 +1240,7 @@ export const comicsRouter = router({
         ref.images = ref.images.filter(
           (ri) =>
             isImageServable(ri.image, ctx.user.id) &&
+            blockLeavesMedia(ri.image, ctx.user.id, actsAsModerator(ctx)) &&
             (!ctx.features.isGreen ||
               !ri.image.nsfwLevel ||
               hasSafeBrowsingLevel(ri.image.nsfwLevel))
@@ -2023,12 +2078,14 @@ export const comicsRouter = router({
         include: {
           chapter: { include: { project: { select: { userId: true } } } },
           references: { select: { referenceId: true } },
+          image: { select: panelImageVisibilitySelect },
         },
       });
 
       if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      assertPanelCopyable(panel, ctx);
 
       if (panel.status !== ComicPanelStatus.Ready || !panel.imageUrl) {
         throw throwBadRequestError('Only completed panels with an image can be duplicated.');
@@ -2097,7 +2154,10 @@ export const comicsRouter = router({
           project: { select: { userId: true } },
           panels: {
             orderBy: { position: 'asc' },
-            include: { references: { select: { referenceId: true } } },
+            include: {
+              references: { select: { referenceId: true } },
+              image: { select: panelImageVisibilitySelect },
+            },
           },
         },
       });
@@ -2105,6 +2165,7 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      for (const panel of chapter.panels) assertPanelCopyable(panel, ctx);
 
       // Don't allow duplicating chapters with incomplete panels
       const incompletePanels = chapter.panels.filter(
@@ -2316,12 +2377,12 @@ export const comicsRouter = router({
         include: {
           images: {
             orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+            include: { image: { select: referenceImageSelect } },
           },
         },
       });
 
-      return updated;
+      return withServableReferenceImages(updated, ctx);
     }),
 
   // Poll reference status — just return current status + images
@@ -2665,16 +2726,17 @@ export const comicsRouter = router({
         throw throwBadRequestError('A panel image is changed through replacePanelImage');
       }
 
-      const updated = await dbWrite.comicPanel.update({
+      const { image, ...updated } = await dbWrite.comicPanel.update({
         where: { id: input.panelId },
         data: {
           status: input.status,
           // Only clearing is written; any other value is the current one.
           imageUrl: input.imageUrl === null ? null : undefined,
         },
+        include: { image: { select: panelImageVisibilitySelect } },
       });
 
-      return updated;
+      return { ...updated, ...panelMediaFor({ ...updated, image }, ctx) };
     }),
 
   replacePanelImage: comicProtectedProcedure
@@ -2790,6 +2852,7 @@ export const comicsRouter = router({
               project: { select: { userId: true, baseModel: true } },
             },
           },
+          image: { select: panelImageVisibilitySelect },
           references: {
             include: {
               reference: {
@@ -2857,10 +2920,9 @@ export const comicsRouter = router({
           status: panel.status,
           prompt: panel.prompt,
           enhancedPrompt: panel.enhancedPrompt,
-          imageUrl: panel.imageUrl,
+          ...panelMediaFor(panel, ctx),
           workflowId: panel.workflowId,
           errorMessage: panel.errorMessage,
-          metadata: panel.metadata,
           createdAt: panel.createdAt,
           updatedAt: panel.updatedAt,
         },
@@ -3754,6 +3816,13 @@ export const comicsRouter = router({
           'Selected image is not among the available (unlocked) candidates'
         );
       }
+      // primary: a block on an Image the key already backs must show up here, not after replica lag.
+      const backing = await dbWrite.image.findMany({
+        where: { url: input.selectedImageKey },
+        select: { ingestion: true, blockedFor: true },
+      });
+      if (backing.some((row) => !ownerMediaAllowed(row)))
+        throw throwBadRequestError('This image is blocked and cannot be selected.');
 
       const genParams = meta?.generationParams;
       const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
@@ -5721,14 +5790,14 @@ export const comicsRouter = router({
         include: {
           images: {
             orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+            include: { image: { select: referenceImageSelect } },
           },
         },
       });
       if (!reference || reference.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      return reference;
+      return withServableReferenceImages(reference, ctx);
     }),
 
   deleteReference: comicProtectedProcedure
@@ -5872,11 +5941,11 @@ export const comicsRouter = router({
         include: {
           images: {
             orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+            include: { image: { select: referenceImageSelect } },
           },
         },
       });
-      return references;
+      return references.map((reference) => withServableReferenceImages(reference, ctx));
     }),
 
   // ──── Project-scoped references ────
@@ -5950,13 +6019,13 @@ export const comicsRouter = router({
           images: {
             orderBy: { position: 'asc' },
             take: 1,
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+            include: { image: { select: referenceImageSelect } },
           },
           _count: { select: { images: true } },
         },
       });
 
-      return references;
+      return references.map((reference) => withServableReferenceImages(reference, ctx));
     }),
 
   // ──── Queue Status ────

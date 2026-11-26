@@ -659,7 +659,7 @@ export const isImageNotFlagged = (image: {
 /**
  * An image with any `blockedFor` reason is hidden from everyone but moderators, as SQL over
  * `"Image" i`; its owner keeps it only where `ownerMediaAllowed` does. `ownerKeepsBlockedRow` is for
- * a read that serves the owner the row without its media (the image page) or a cover. Empty for a
+ * a read that serves the owner the row without its media (the image page). Empty for a
  * moderator.
  */
 export function imageBlockedForConditions({
