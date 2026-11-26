@@ -66,6 +66,7 @@ import {
   setUserSettingsInput,
   getBanContentPreviewSchema,
   toggleBanUserSchema,
+  toggleMuteSchema,
   toggleFavoriteInput,
   toggleFeatureInputSchema,
   toggleFollowUserSchema,
@@ -340,7 +341,7 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleFollowUserSchema)
     .mutation(toggleFollowUserHandler),
-  toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
+  toggleMute: moderatorProcedure.input(toggleMuteSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
   getBanContentPreview: moderatorProcedure
     .input(getBanContentPreviewSchema)
