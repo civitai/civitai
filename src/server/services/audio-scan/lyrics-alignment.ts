@@ -53,7 +53,6 @@ export async function alignTrackLyrics({ imageId, url }: { imageId: number; url:
     },
   });
   if (response?.status === 204) return false;
-  // Logged: a recipe that keeps failing, or starts reshaping the text, would leave every song untimed.
   if (!data?.lines) {
     logAlignment(imageId, 'failed', { status: response?.status, error });
     return false;

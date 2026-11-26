@@ -8,6 +8,7 @@ vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { alignTrackLyrics } from '~/server/services/audio-scan/lyrics-alignment';
 
 const TEXT = '[Verse]\nRain on the window\n\nSun on the floor';
@@ -64,11 +65,27 @@ describe("aligning a song's lyrics", () => {
     });
   });
 
-  it('leaves the lyrics untimed when the song cannot be aligned (204)', async () => {
+  it('leaves the lyrics untimed, quietly, when the song cannot be aligned (204)', async () => {
     answer(undefined, 204);
 
     await expect(align()).resolves.toBe(false);
     expect(dbMock.dbWrite.trackLyrics.updateMany).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('logs a failed call and leaves the lyrics untimed', async () => {
+    answer(undefined, 500);
+
+    await expect(align()).resolves.toBe(false);
+    expect(dbMock.dbWrite.trackLyrics.updateMany).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'lyrics-alignment',
+        imageId: 7,
+        outcome: 'failed',
+        status: 500,
+      })
+    );
   });
 
   it('writes nothing when the aligned lines are not the stored lines', async () => {
@@ -76,6 +93,9 @@ describe("aligning a song's lyrics", () => {
 
     await expect(align()).resolves.toBe(false);
     expect(dbMock.dbWrite.trackLyrics.updateMany).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'unmatched', stored: 3, aligned: 4 })
+    );
   });
 
   it('writes nothing when no line came back timed', async () => {

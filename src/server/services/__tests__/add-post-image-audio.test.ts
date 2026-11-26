@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   createImage: vi.fn(),
   submitTrackLyricsScan: vi.fn(async () => undefined),
-  alignTrackLyrics: vi.fn(async () => false),
+  alignLyrics: vi.fn(async () => ({ data: undefined, response: { status: 204 } })),
   throwOnBlockedUserContent: vi.fn(),
   stageGenerationOutputImage: vi.fn(),
   deleteImages: vi.fn(async () => undefined),
@@ -101,9 +101,10 @@ vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => (
   ...(await importOriginal<object>()),
   submitTrackLyricsScan: mocks.submitTrackLyricsScan,
 }));
-// The alignment recipe crosses to the orchestrator; its rules are tested with it.
-vi.mock('~/server/services/audio-scan/lyrics-alignment', () => ({
-  alignTrackLyrics: mocks.alignTrackLyrics,
+// The alignment recipe crosses to the orchestrator.
+vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  invokeLyricsAlignmentStepTemplate: mocks.alignLyrics,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -335,12 +336,19 @@ describe('addPostImage — audio', () => {
   it('sends the saved lyrics for their verdict, and to be timed against the song', async () => {
     mocks.music = true;
     createThenStop();
+    // The alignment reads back the row the save just wrote.
+    dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({
+      text: 'sun',
+      lines: [{ t: null, text: 'sun' }],
+    } as never);
     mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
     expect(mocks.submitTrackLyricsScan).toHaveBeenCalledWith({ imageId: 11 });
-    expect(mocks.alignTrackLyrics).toHaveBeenCalledWith({
-      imageId: 11,
-      url: expect.any(String),
+    // Not awaited by the post: the saved lyrics go to the recipe with the song's own audio.
+    await vi.waitFor(() => expect(mocks.alignLyrics).toHaveBeenCalledTimes(1));
+    expect(mocks.alignLyrics.mock.calls[0][0].body).toEqual({
+      mediaUrl: expect.stringContaining(`${KEY}/original=true/`),
+      lyrics: 'sun',
     });
   });
 
@@ -367,7 +375,7 @@ describe('addPostImage — audio', () => {
     expect(dbMock.dbWrite.trackLyrics.upsert).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
     expect(mocks.submitTrackLyricsScan).not.toHaveBeenCalled();
-    expect(mocks.alignTrackLyrics).not.toHaveBeenCalled();
+    expect(mocks.alignLyrics).not.toHaveBeenCalled();
   });
 
   it('ignores the lyrics the client sent when the workflow has lyrics', async () => {
