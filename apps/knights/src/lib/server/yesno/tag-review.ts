@@ -3,9 +3,9 @@ import {
   mergeMeta,
   MOD_TAG_REVIEW_AXIS,
   MOD_TAG_REVIEW_SOURCE,
-  modReviewEligibleImage,
-  servableImage,
+  readWithoutJit,
 } from '@civitai/db/knights';
+import { modReviewEligibleImage, servableImage } from '../image-gate';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { staffedRanks } from '../queue/queue.service';
@@ -87,29 +87,31 @@ export async function runTagReview(
     // The flagged rows come from the `TagsOnImageNew_needsReview_idx` partial index alone (its predicate copied exactly
     // in `flaggedSql`), materialized before any join: joining Tag or Image inside that scan makes Postgres walk the
     // whole table instead (over a minute on prod). The same rule is noted on the moderator queue query.
-    const page = await db
-      .with(
-        (cte) => cte('flagged').materialized(),
-        (qb) =>
-          qb
-            .selectFrom('TagsOnImageNew as f')
-            .select(['f.imageId', 'f.tagId'])
-            .where(flaggedSql('f'))
-      )
-      .selectFrom('flagged as t')
-      .innerJoin('Image as img', 'img.id', 't.imageId')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .innerJoin('Tag as tag', 'tag.id', 't.tagId')
-      .select(['t.imageId', 't.tagId', 'tag.name'])
-      .where('tag.type', '=', 'Moderation')
-      .where('tag.nsfwLevel', '<', NsfwLevel.Blocked)
-      .where(servableImage)
-      .where(modReviewEligibleImage)
-      .where(sql<SqlBool>`(t."imageId", t."tagId") > (${from.imageId}, ${from.tagId})`)
-      .orderBy('t.imageId', 'asc')
-      .orderBy('t.tagId', 'asc')
-      .limit(pageSize)
-      .execute();
+    const page = await readWithoutJit(db, (trx) =>
+      trx
+        .with(
+          (cte) => cte('flagged').materialized(),
+          (qb) =>
+            qb
+              .selectFrom('TagsOnImageNew as f')
+              .select(['f.imageId', 'f.tagId'])
+              .where(flaggedSql('f'))
+        )
+        .selectFrom('flagged as t')
+        .innerJoin('Image as img', 'img.id', 't.imageId')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .innerJoin('Tag as tag', 'tag.id', 't.tagId')
+        .select(['t.imageId', 't.tagId', 'tag.name'])
+        .where('tag.type', '=', 'Moderation')
+        .where('tag.nsfwLevel', '<', NsfwLevel.Blocked)
+        .where(servableImage)
+        .where(modReviewEligibleImage)
+        .where(sql<SqlBool>`(t."imageId", t."tagId") > (${from.imageId}, ${from.tagId})`)
+        .orderBy('t.imageId', 'asc')
+        .orderBy('t.tagId', 'asc')
+        .limit(pageSize)
+        .execute()
+    );
     if (page.length > 0) result.created += await createEpisodes(db, page, now);
     // Advanced only after the page's items exist, so a failed create retries this page next run.
     const last = page.at(-1);

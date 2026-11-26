@@ -83,8 +83,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
           flag,
           ...rest
         )) as typeof actual.isFlipt;
-  // The App Blocks source flags' read. Scanned rows answers off, as an unconfigured Flipt
-  // answered through isFlipt before those flags failed closed.
+  // The App Blocks source flags' read; scanned rows is pinned off so these cells stay about the
+  // workflow kind.
   const isFliptSync = ((flag: string, ...rest: unknown[]) =>
     flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
       ? flags.refuseExternalApp
@@ -94,6 +94,14 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
           flag,
           ...rest
         )) as typeof actual.isFliptSync;
+  const readFliptBoolean = (async (flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES ||
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? isFliptSync(flag, ...(rest as []))
+      : (actual.readFliptBoolean as (...a: unknown[]) => Promise<boolean | null>)(
+          flag,
+          ...rest
+        )) as typeof actual.readFliptBoolean;
   const getFliptVariant = ((flag: string, ...rest: unknown[]) =>
     flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_STEP_POSITIONS && flags.stepPositions !== null
       ? Promise.resolve(flags.stepPositions)
@@ -105,6 +113,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     ...actual,
     isFlipt,
     isFliptSync,
+    readFliptBoolean,
     getFliptVariant,
     ensureFliptInitialized: async () => undefined,
   };

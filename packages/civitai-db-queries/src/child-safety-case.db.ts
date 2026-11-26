@@ -1,4 +1,5 @@
 import { sql, type RawBuilder } from 'kysely';
+import { csamReportListedImageIdsSql } from '@civitai/shared/held-media';
 import { evidenceVerifiedText } from '@civitai/shared/held-url';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { CHILD_SAFETY_VIOLATIONS } from '@civitai/shared/post-text-report';
@@ -6,17 +7,23 @@ import { CHILD_SAFETY_VIOLATIONS } from '@civitai/shared/post-text-report';
 // An image or post in an open child-safety case: what keeps a delete of it until the case closes
 // (docs/features/pending-deletes.md).
 
-const openChildSafetyReport = (reportId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+const childSafetyReport = (
+  reportId: RawBuilder<unknown>,
+  statuses: string[]
+) => sql<boolean>`EXISTS (
   SELECT 1 FROM "Report" cs_r
   WHERE cs_r.id = ${reportId}
-    AND cs_r.status IN ('Pending', 'Processing')
+    AND cs_r.status::text IN (${sql.join(statuses)})
     AND (cs_r.reason = 'CSAM' OR (cs_r.reason = 'TOSViolation'
       AND cs_r.details ->> 'violation' IN (${sql.join([...CHILD_SAFETY_VIOLATIONS])})))
 )`;
 
-const postReported = (postId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+const OPEN = ['Pending', 'Processing'];
+const openChildSafetyReport = (reportId: RawBuilder<unknown>) => childSafetyReport(reportId, OPEN);
+
+const postReported = (postId: RawBuilder<unknown>, statuses = OPEN) => sql<boolean>`EXISTS (
   SELECT 1 FROM "PostReport" cs_pr
-  WHERE cs_pr."postId" = ${postId} AND ${openChildSafetyReport(sql.ref('cs_pr.reportId'))}
+  WHERE cs_pr."postId" = ${postId} AND ${childSafetyReport(sql.ref('cs_pr.reportId'), statuses)}
 )`;
 
 /**
@@ -38,6 +45,8 @@ const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
   END
 )`;
 
+const csamBlocked = (image: string) => sql<boolean>`${sql.ref(`${image}.blockedFor`)} = 'CSAM'`;
+
 // Each leg is a CASE so its subquery runs only on a row the leg can hold: an AND whose first test is
 // NULL (no flag, the usual image) still evaluates its second.
 
@@ -45,11 +54,9 @@ const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
  * Blocked for CSAM, until its CyberTip is filed with verified evidence. Read against `image` (a
  * table name or alias). The broader "held" rule is `heldImageSql` in @civitai/shared/held-media.
  */
-const csamBlockOpen = (image: string) => {
-  const col = (name: string) => sql.ref(`${image}.${name}`);
-  return sql<boolean>`CASE WHEN ${col('blockedFor')} = 'CSAM'
-    THEN NOT ${evidenceFiled(col('id'))} ELSE false END`;
-};
+const csamBlockOpen = (image: string) =>
+  sql<boolean>`CASE WHEN ${csamBlocked(image)}
+    THEN NOT ${evidenceFiled(sql.ref(`${image}.id`))} ELSE false END`;
 
 /** Under CSAM review, until the CSAM queue dismisses it; once blocked as CSAM, the block decides. */
 const csamReviewOpen = (image: string) => {
@@ -65,19 +72,24 @@ const csamReviewOpen = (image: string) => {
 
 /**
  * A child-safety case its owner can already see, read against `image`: the image is served to them
- * as blocked. Only this case may tell the owner their delete waits on a review.
+ * as blocked. Only this case may tell the owner their delete waits on a review. Unlike
+ * `csamBlockOpen`, it does not follow the review's progress, so what the owner is told holds while
+ * their delete waits.
  */
 export const childSafetyVisibleCase = (image = 'Image') => {
   const needsReview = sql.ref(`${image}.needsReview`);
-  return sql<boolean>`(${csamBlockOpen(image)}
+  return sql<boolean>`(${csamBlocked(image)}
     AND COALESCE(${needsReview}, '') <> ALL(${sql.val([...OWNER_HIDDEN_REVIEWS])}::text[]))`;
 };
 
 /** An image attached to a service review under an open child-safety report. */
-const serviceReviewReported = (imageId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+const serviceReviewReported = (
+  imageId: RawBuilder<unknown>,
+  statuses = OPEN
+) => sql<boolean>`EXISTS (
   SELECT 1 FROM "ServiceDealReviewImage" cs_ri
   JOIN "ServiceDealReviewReport" cs_rr ON cs_rr."serviceDealReviewId" = cs_ri."reviewId"
-  WHERE cs_ri."imageId" = ${imageId} AND ${openChildSafetyReport(sql.ref('cs_rr.reportId'))}
+  WHERE cs_ri."imageId" = ${imageId} AND ${childSafetyReport(sql.ref('cs_rr.reportId'), statuses)}
 )`;
 
 /**
@@ -101,3 +113,39 @@ export const childSafetyImageCase = (image = 'Image') => {
 
 /** A post under an open child-safety report, read against `post`; deleting it takes the report. */
 export const childSafetyPostCase = (post = 'Post') => postReported(sql.ref(`${post}.id`));
+
+const ACTIONED = ['Actioned'];
+
+/**
+ * A closed child-safety case on the image found something, read against `image`: it is blocked for
+ * CSAM, a CSAM report lists it, or a child-safety report on it, its post or its service review was
+ * actioned.
+ */
+export const childSafetyImageFinding = (image = 'Image') => {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  return sql<boolean>`(
+    ${col('blockedFor')} IS NOT DISTINCT FROM 'CSAM'
+    OR (${col('id')})::text IN (${sql.raw(csamReportListedImageIdsSql())})
+    OR EXISTS (
+      SELECT 1 FROM "ImageReport" cs_ir
+      WHERE cs_ir."imageId" = ${col('id')} AND ${childSafetyReport(
+    sql.ref('cs_ir.reportId'),
+    ACTIONED
+  )}
+    )
+    OR CASE WHEN ${col('postId')} IS NOT NULL THEN ${postReported(
+    col('postId'),
+    ACTIONED
+  )} ELSE false END
+    OR ${serviceReviewReported(col('id'), ACTIONED)}
+  )`;
+};
+
+/** A closed child-safety case on the post, or on an image in it, found something. */
+export const childSafetyPostFinding = (post = 'Post') => sql<boolean>`(
+  ${postReported(sql.ref(`${post}.id`), ACTIONED)}
+  OR EXISTS (
+    SELECT 1 FROM "Image" cs_pi WHERE cs_pi."postId" = ${sql.ref(`${post}.id`)}
+      AND ${childSafetyImageFinding('cs_pi')}
+  )
+)`;

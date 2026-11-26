@@ -60,6 +60,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
@@ -283,12 +284,11 @@ describe('image.getDetail for a moderator on an API key', () => {
 });
 
 describe('tag.getVotableTags on an image', () => {
-  function tagCallerFor(user: User) {
+  function tagCallerFor(user: User, credential: Credential = SESSION) {
     return tagRouter.createCaller({
-      user,
+      user: withModeratorRightsFor(user, credential),
       acceptableOrigin: true,
-      tokenScope: TokenScope.Full,
-      apiKeyId: null,
+      ...credential,
       req: { headers: {} },
       res: { setHeader: () => undefined },
       cache: { edgeTTL: 0 },
@@ -297,9 +297,9 @@ describe('tag.getVotableTags on an image', () => {
     } as never);
   }
 
-  async function seesTags(user: User, id = 1) {
+  async function seesTags(user: User, id = 1, credential?: Credential) {
     try {
-      const tags = await tagCallerFor(user).getVotableTags({ type: 'image', id });
+      const tags = await tagCallerFor(user, credential).getVotableTags({ type: 'image', id });
       expect(tags.map((t) => t.name)).toEqual(['tag']);
       return true;
     } catch (e) {
@@ -330,11 +330,16 @@ describe('tag.getVotableTags on an image', () => {
   );
 
   it.each(['csam', 'minor'])(
-    'an image held for %s review returns no tags to its owner; a moderator still gets them',
+    'an image held for %s review returns tags to its owner and a moderator, and to nobody else',
     async (hold) => {
       await seed({ image: { '"needsReview"': `'${hold}'` } });
-      expect(await seesTags(SELF)).toBe(false);
+      expect(await seesTags(SELF)).toBe(true);
       expect(await seesTags(MOD)).toBe(true);
+      expect(await seesTags(STRANGER)).toBe(false);
+      expect(await seesTags(ANON)).toBe(false);
+      // The owner's view needs a session or a full-access key: a scoped key gets the hold.
+      expect(await seesTags(SELF, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await seesTags(SELF, 1, keyOf(TokenScope.Full))).toBe(true);
     }
   );
 

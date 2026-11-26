@@ -551,13 +551,46 @@ describe('media references (#9982)', () => {
     });
   });
 
+  it.each([
+    ['a job file without a prefix', '7001-20261121@epoch_5.safetensors'],
+    ["the viewer's own job file without a prefix", `${VIEWER}-20261121@epoch_5.safetensors`],
+    ['an at sign in any other value', 'cat@home'],
+  ])('refuses %s at a media key', (_label, value) => {
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+      key: 'image',
+    });
+    expect(
+      findStepPositionProblem({ trainingData: { type: 'blobs', items: [{ air: value }] } }, VIEWER)
+    ).toMatchObject({ form: 'media-reference', key: 'air' });
+  });
+
+  it('passes an https URL with an at sign in its path', () => {
+    expect(
+      findStepPositionProblem({ image: 'https://image.civitai.com/x/@y/z.png' }, VIEWER)
+    ).toBeNull();
+  });
+
+  it('refuses a media value nested past the depth bound', () => {
+    let nested: unknown = 'https://image.civitai.com/x/y.png';
+    for (let i = 0; i < 70; i++) nested = [nested];
+    expect(findStepPositionProblem({ image: nested }, VIEWER)).toMatchObject({
+      form: 'reference',
+      key: 'image',
+    });
+  });
+
   it('refuses a recased default end to end', () => {
     const input = { prompt: 'a cat', image: { $ref: '$arguments', path: 'v', Default: blob } };
     const graph = resolveBlockWorkflowGraph({
       steps: [{ $type: 'imageGen', input }],
       arguments: { v: ownJob },
     });
-    expect(graph.ok).toBe(false);
+    expect(graph).toMatchObject({
+      ok: false,
+      errorCode: 'workflow_ref_invalid',
+      error: expect.stringContaining('a reference key must be spelled'),
+    });
     expect(findStepPositionProblem(input, VIEWER, { v: ownJob })).toMatchObject({
       form: 'media-reference',
       key: 'image',

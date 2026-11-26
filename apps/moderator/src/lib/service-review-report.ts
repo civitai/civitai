@@ -19,5 +19,5 @@ export type ReportedServiceReview = {
   commentHeld: boolean;
   replyHeld: boolean;
   /** Its images, hidden or not: the Image row's `url` key. */
-  images: { id: number; url: string }[];
+  images: { id: number; url: string; restricted?: true }[];
 };

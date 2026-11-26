@@ -86,6 +86,9 @@ const (
 
 var blockUserSub = regexp.MustCompile(`^user:[1-9][0-9]{0,11}$`)
 
+// anonSubject is a signed-out viewer's block-token subject (block-token-subject.ts ANON_SUBJECT).
+const anonSubject = "anon"
+
 // ErrBlockUnverifiable is a block token that cannot be checked now: no usable key set is held (the JWKS
 // could not be fetched), or its kid is unknown and the JWKS was fetched too recently to fetch again. Not
 // a refusal: nothing is remembered, and the read goes to REST.
@@ -103,9 +106,61 @@ func localRefusal(reason string) error {
 // Check reports whether token may be sent to the hub's block exchange: nil when it verifies, an ErrRefused
 // (code LocalRefusalCode) when the hub would refuse it, ErrBlockUnverifiable when it cannot be checked.
 func (v *BlockVerifier) Check(ctx context.Context, token string) error {
+	claims, err := v.verified(ctx, token)
+	if err != nil {
+		return err
+	}
+	return checkBlockClaims(claims, v.now().Unix())
+}
+
+// AnonymousClaims are what the signed-out read path uses of a verified anonymous block token
+// (WRITES-DESIGN.md, "Signed-out viewers"). The browsing levels are nil when the token carries none.
+type AnonymousClaims struct {
+	// BlockID is the slug the token was minted for; AppBlockID the app block (the slug's approved
+	// production block, for a production token).
+	BlockID, AppBlockID                   string
+	MaxBrowsingLevel, ViewerBrowsingLevel *int64
+}
+
+// CheckAnonymous verifies a SIGNED-OUT viewer's block token (`sub: anon`) exactly as Check verifies a
+// signed-in one (the key, the signature, issuer, audience, expiry, the claim shapes, the dev, review
+// and private-run markers and the age cap, each a refusal), and answers its claims. A signed-in
+// token is refused here (`signed in`): it takes the signed-in path. Never sent to the hub: there is
+// no user to exchange for.
+func (v *BlockVerifier) CheckAnonymous(ctx context.Context, token string) (AnonymousClaims, error) {
+	claims, err := v.verified(ctx, token)
+	if err != nil {
+		return AnonymousClaims{}, err
+	}
+	if err := checkClaims(claims, v.now().Unix(), true); err != nil {
+		return AnonymousClaims{}, err
+	}
+	out := AnonymousClaims{AppBlockID: claims["appBlockId"].(string)}
+	out.BlockID, _ = claims["blockId"].(string)
+	if out.BlockID == "" {
+		return AnonymousClaims{}, localRefusal("claim shape")
+	}
+	for name, into := range map[string]**int64{"maxBrowsingLevel": &out.MaxBrowsingLevel, "viewerBrowsingLevel": &out.ViewerBrowsingLevel} {
+		raw, present := claims[name]
+		if !present {
+			continue
+		}
+		// The site's isBrowsingLevelClaim: a non-negative integer.
+		f, ok := raw.(float64)
+		if !ok || f < 0 || f != float64(int64(f)) || f > 1<<53 {
+			return AnonymousClaims{}, localRefusal("claim shape")
+		}
+		n := int64(f)
+		*into = &n
+	}
+	return out, nil
+}
+
+// verified checks token's header, key and signature, and answers its decoded claims.
+func (v *BlockVerifier) verified(ctx context.Context, token string) (map[string]any, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return localRefusal("malformed")
+		return nil, localRefusal("malformed")
 	}
 	var header struct {
 		Alg string `json:"alg"`
@@ -113,37 +168,41 @@ func (v *BlockVerifier) Check(ctx context.Context, token string) error {
 		Kid any    `json:"kid"`
 	}
 	if !decodeSegment(parts[0], &header) {
-		return localRefusal("malformed")
+		return nil, localRefusal("malformed")
 	}
 	if header.Alg != "RS256" || header.Typ != "JWT" {
-		return localRefusal("malformed")
+		return nil, localRefusal("malformed")
 	}
 	kid, ok := header.Kid.(string)
 	if !ok {
-		return localRefusal("unknown key")
+		return nil, localRefusal("unknown key")
 	}
 	key, err := v.key(ctx, kid)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return localRefusal("signature or claims")
+		return nil, localRefusal("signature or claims")
 	}
 	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
 	if rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig) != nil {
-		return localRefusal("signature or claims")
+		return nil, localRefusal("signature or claims")
 	}
 	var claims map[string]any
 	if !decodeSegment(parts[1], &claims) {
-		return localRefusal("signature or claims")
+		return nil, localRefusal("signature or claims")
 	}
-	return checkBlockClaims(claims, v.now().Unix())
+	return claims, nil
 }
 
 // checkBlockClaims is block-token-verify.ts after the signature: jose's issuer, audience, exp and nbf
 // checks with 30 s of tolerance, then the claim shapes, the subject, the markers and the age cap.
-func checkBlockClaims(c map[string]any, now int64) error {
+func checkBlockClaims(c map[string]any, now int64) error { return checkClaims(c, now, false) }
+
+// checkClaims is checkBlockClaims for a signed-in subject, or, with anonymous, for the anonymous one
+// (every other check the same).
+func checkClaims(c map[string]any, now int64, anonymous bool) error {
 	if c["iss"] != blockTokenIssuer {
 		return localRefusal("signature or claims")
 	}
@@ -175,7 +234,10 @@ func checkBlockClaims(c map[string]any, now int64) error {
 		!stringList(c["scopes"]) || !iatOK || !expOK {
 		return localRefusal("claim shape")
 	}
-	if !blockUserSub.MatchString(sub) {
+	switch {
+	case anonymous && sub != anonSubject:
+		return localRefusal("signed in")
+	case !anonymous && !blockUserSub.MatchString(sub):
 		return localRefusal("anonymous")
 	}
 	if !absentOrFalse(c, "dev") {

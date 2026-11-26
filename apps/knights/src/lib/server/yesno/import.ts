@@ -6,10 +6,11 @@ import {
   isModeratedSql,
   MODERATION_META_KEY,
   MODERATOR_RETIRED,
+  readWithoutJit,
   REWORD_OF_META_KEY,
-  servableImage,
   YESNO_QUESTION_MAX,
 } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import {
   axisKey,
   axisPrompt,
@@ -169,12 +170,14 @@ export async function dropUnservableImages(
   spares: YesNoRow[] = []
 ): Promise<YesNoRow[]> {
   if (rows.length === 0) return rows;
-  const found = await db
-    .selectFrom('Image as img')
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => ['img.id', servableImage(eb).as('servable')])
-    .where('img.id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
-    .execute();
+  const found = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('Image as img')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => ['img.id', servableImage(eb).as('servable')])
+      .where('img.id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
+      .execute()
+  );
   const servable = new Map(found.map((f) => [f.id, f.servable === true]));
   const kept: YesNoRow[] = [];
   for (const row of rows) {
@@ -398,24 +401,26 @@ async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
       .filter((c) => c.reason === 'retired' && c.voteCount === 0)
       .sort((a, b) => number(b) - number(a))[0];
     if (!latest) continue;
-    const reopened = await db
-      .updateTable('KnightsQueueItem')
-      .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
-      .where('id', '=', latest.id)
-      .where('status', '=', 'Closed')
-      .where('reason', '=', 'retired')
-      .where('voteCount', '=', 0)
-      .where((eb) =>
-        eb.exists(
-          eb
-            .selectFrom('Image as img')
-            .innerJoin('Post as p', 'p.id', 'img.postId')
-            .select('img.id')
-            .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
-            .where(servableImage)
+    const reopened = await readWithoutJit(db, (trx) =>
+      trx
+        .updateTable('KnightsQueueItem')
+        .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
+        .where('id', '=', latest.id)
+        .where('status', '=', 'Closed')
+        .where('reason', '=', 'retired')
+        .where('voteCount', '=', 0)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom('Image as img')
+              .innerJoin('Post as p', 'p.id', 'img.postId')
+              .select('img.id')
+              .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
+              .where(servableImage)
+          )
         )
-      )
-      .executeTakeFirst();
+        .executeTakeFirst()
+    );
     revived += Number(reopened.numUpdatedRows);
   }
   return revived;

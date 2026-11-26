@@ -6,9 +6,16 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import type { TextScanSubject } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
-export const readCsamHolds = (entityType: string, entityId: number) =>
+/** The caller's transaction, to read holds and the verdict on it; the primary otherwise. */
+export type CsamHoldReader = Pick<Prisma.TransactionClient, 'textScanHold' | 'entityModeration'>;
+
+export const readCsamHolds = (
+  entityType: string,
+  entityId: number,
   // primary: read with a verdict just written, to decide whether the content may be shown.
-  dbWrite.textScanHold.findMany({
+  db: CsamHoldReader = dbWrite
+) =>
+  db.textScanHold.findMany({
     where: { entityType, entityId, label: 'csam' },
     select: { status: true, textHash: true, meta: true },
   });
@@ -23,12 +30,13 @@ export type CsamHoldState = 'held' | 'clear' | 'unverified';
 export async function csamHoldState(
   entityType: string,
   entityId: number,
-  loadSubject: (id: number) => Promise<TextScanSubject | undefined>
-): Promise<CsamHoldState> {
-  const holds = await readCsamHolds(entityType, entityId);
-  if (csamHoldBars(null, holds)) return 'held';
+  loadSubject: (id: number) => Promise<TextScanSubject | undefined>,
   // primary: the verdict a callback has just recorded.
-  const verdict = await dbWrite.entityModeration.findUnique({
+  db: CsamHoldReader = dbWrite
+): Promise<CsamHoldState> {
+  const holds = await readCsamHolds(entityType, entityId, db);
+  if (csamHoldBars(null, holds)) return 'held';
+  const verdict = await db.entityModeration.findUnique({
     where: { entityType_entityId: { entityType, entityId } },
     select: { status: true, triggeredLabels: true, result: true },
   });

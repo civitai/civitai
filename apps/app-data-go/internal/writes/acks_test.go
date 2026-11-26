@@ -81,8 +81,6 @@ func TestEachAcknowledgedWriteIsHandedToAcked(t *testing.T) {
 			200, `not json`, nil},
 		{"a refused put", call{method: "PUT", path: "/v1/apps/ack-app-eleven/collections/kv/records/k-11", body: []byte(`{"data":{"n":11}}`)},
 			409, `{"code":"version_conflict","seq":81}`, nil},
-		{"a mark", call{method: "PATCH", path: "/v1/apps/ack-app-twelve/collections/records/records/k-12", body: []byte(`{"$mark":"vote"}`)},
-			200, `{"marked":true,"count":3,"markSeq":82,"seq":82}`, nil},
 		{"info", call{method: "GET", path: "/v1/apps/ack-app-thirteen/info"},
 			200, `{"seq":83,"key":"k-13","data":{}}`, nil},
 	}

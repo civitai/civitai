@@ -562,9 +562,11 @@ export const getVotableTags = async ({
   id,
   take = 100,
   isModerator = false,
+  ownerSeesHeld = false,
 }: GetVotableTagsSchema & {
   userId?: number;
   isModerator?: boolean;
+  ownerSeesHeld?: boolean;
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
@@ -596,7 +598,7 @@ export const getVotableTags = async ({
     results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
     // imageTagsCache is keyed by image id alone, so the viewer check runs first.
-    await assertImageVisibleToViewer({ id, userId, isModerator });
+    await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
     // Fetch from cache

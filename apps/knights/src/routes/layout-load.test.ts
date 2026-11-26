@@ -23,7 +23,8 @@ const feedbackEnabled = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
 const rankBadgeUrls = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls }));
-vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => ({}) }));
+const stored = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => stored.value }));
 
 const { load } = await import('./+layout.server');
 
@@ -59,6 +60,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stored.value = {};
   playerRow.value = undefined;
   delete process.env.CIVITAI_APP_URL;
   delete process.env.CIVITAI_SITE_URL;
@@ -121,6 +123,30 @@ describe('layout load', () => {
     getPlayerStatus.mockResolvedValue(null);
     expect(await run()).toMatchObject({ headerStats: { status: null, daily: null } });
     expect(getDailyStatus).not.toHaveBeenCalled();
+  });
+
+  it("shows a moderator as the Inquisitor while the queue is on, with none of their career's stats or recap", async () => {
+    playerRow.value = { userId: 7 };
+    stored.value = { inquisitorQueue: true };
+    const moderator = { id: 7, username: 'ana', isModerator: true };
+    expect(await run(moderator)).toMatchObject({
+      inquisitor: true,
+      headerStats: null,
+      recapUnseen: false,
+    });
+    expect(getPlayerStatus).not.toHaveBeenCalled();
+    expect(getRecapState).not.toHaveBeenCalled();
+
+    stored.value = { inquisitorQueue: false };
+    expect(await run(moderator)).toMatchObject({
+      inquisitor: false,
+      headerStats: { status: { rank: 'Acolyte' } },
+    });
+  });
+
+  it('never shows a player as the Inquisitor, whatever the queue setting', async () => {
+    stored.value = { inquisitorQueue: true };
+    expect(await run()).toMatchObject({ inquisitor: false });
   });
 
   it('does not depend on the URL, and re-runs only when the header is invalidated', async () => {

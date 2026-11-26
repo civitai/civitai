@@ -380,7 +380,10 @@ async function shard(since, iRaw, nRaw, outDir) {
     run: true,
     project: ['unit*'],
     passWithNoTests: true,
-    reporters: ['default', 'json'],
+    // `github-actions` annotates each failing test on the check (see lint.yml, `Manifest schema
+    // drift tests`). Named reporters replace vitest's own choice, which adds it only when none is
+    // named, so it is listed here; off Actions it would only print `::error` lines.
+    reporters: ['default', 'json', ...(process.env.GITHUB_ACTIONS ? ['github-actions'] : [])],
     outputFile: { json: report },
   });
   try {

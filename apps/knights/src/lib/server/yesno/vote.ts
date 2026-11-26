@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely';
-import { MOD_TAG_REVIEW_SOURCE, removalLowersLevel } from '@civitai/db/knights';
+import { MOD_TAG_REVIEW_SOURCE, readWithoutJit, removalLowersLevel } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { PROGRESSION } from '../progression/config';
@@ -62,11 +62,13 @@ export async function castYesNoVote(
       if (!locked || locked.status !== 'Open') return rejected('not-open');
 
       const tagReview = locked.source === MOD_TAG_REVIEW_SOURCE;
-      const item = await playableItems(trx, { tagReview })
-        .where('i.id', '=', input.itemId)
-        .where(notHiddenCreator(input.userId))
-        .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt', 'i.meta'])
-        .executeTakeFirst();
+      const item = await readWithoutJit(trx, (trx) =>
+        playableItems(trx, { tagReview })
+          .where('i.id', '=', input.itemId)
+          .where(notHiddenCreator(input.userId))
+          .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt', 'i.meta'])
+          .executeTakeFirst()
+      );
       if (!item) return rejected('unavailable');
 
       // The same words about the same image under another id are the same question to the player. A tag review item is the

@@ -1,3 +1,4 @@
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
@@ -58,6 +59,8 @@ import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comi
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
+import { TRPCError } from '@trpc/server';
+import { Prisma } from '@prisma/client';
 import {
   assertUnlockAllowed,
   assertUnlockReleasesOutput,
@@ -73,11 +76,7 @@ import {
   whatIfPresetImageGen,
   type PresetModelConfig,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import {
-  NSFW_CAPPED,
-  NSFW_CAPPED_MESSAGE,
-  WorkflowData,
-} from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
@@ -299,6 +298,7 @@ async function getOwnedImageOrThrow(imageId: number, userId: number) {
   if (!image || image.userId !== userId) {
     throw throwAuthorizationError();
   }
+  await assertNotDealFileImages([imageId], 'used here');
   return image;
 }
 
@@ -725,6 +725,109 @@ async function getReferenceImages(referenceId: number) {
     /** Every image it has was left out: the generation runs without this reference. */
     skipped: reference.images.length > 0 && refImages.length === 0,
   };
+}
+
+/** An unlock claim older than this is free to take over (or to delete its panel under). */
+const UNLOCK_CLAIM_EXPIRY = '10 minutes';
+/** Under the claim's expiry, so no charge still in flight is overlapped by a takeover. */
+const UNLOCK_CHARGE_TIMEOUT_MS = 150_000;
+
+/**
+ * A failed charge write was refused (a 4xx: insufficient Buzz, a refused unlock) or may still have
+ * been applied (no response, an upstream 5xx, an unmapped failure).
+ */
+function chargeOutcomeUnknown(error: unknown) {
+  return (
+    !(error instanceof TRPCError) ||
+    error.code === 'SERVICE_UNAVAILABLE' ||
+    error.code === 'INTERNAL_SERVER_ERROR'
+  );
+}
+
+/**
+ * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The writes
+ * that end an unlock replace metadata from the pre-claim copy, which is what drops the claim (a
+ * jsonb merge would leave it held). An unconfirmed charge or a crash leaves it to expire.
+ */
+async function claimPanelUnlock(panelId: number) {
+  const token = randomUUID();
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "ComicPanel"
+    SET metadata = COALESCE(metadata, '{}'::jsonb)
+      || jsonb_build_object('unlockClaim', jsonb_build_object('token', ${token}::text, 'at', now()))
+    WHERE id = ${panelId}
+      AND (metadata->'unlockClaim' IS NULL
+        OR (metadata->'unlockClaim'->>'at')::timestamptz < now() - ${UNLOCK_CLAIM_EXPIRY}::interval)
+    RETURNING id
+  `;
+  return rows.length > 0 ? token : null;
+}
+
+/**
+ * The poll's write. Its metadata is a copy read before the downloads, so the claim comes from the
+ * row in the same statement: one an unlock took meanwhile stays, one released since stays released.
+ */
+async function writePolledPanel(
+  panelId: number,
+  {
+    status,
+    errorMessage,
+    metadata,
+  }: { status: ComicPanelStatus; errorMessage?: string; metadata: Record<string, unknown> }
+) {
+  const copy = { ...metadata };
+  delete copy.unlockClaim;
+  await dbWrite.$executeRaw`
+    UPDATE "ComicPanel"
+    SET status = ${status}::"ComicPanelStatus",
+      "errorMessage" = CASE WHEN ${errorMessage !== undefined} THEN ${errorMessage ?? null}::text
+        ELSE "errorMessage" END,
+      metadata = ${JSON.stringify(copy)}::jsonb || CASE
+        WHEN jsonb_typeof(metadata->'unlockClaim') = 'object'
+        THEN jsonb_build_object('unlockClaim', metadata->'unlockClaim')
+        ELSE '{}'::jsonb END,
+      "updatedAt" = now()
+    WHERE id = ${panelId}
+  `;
+}
+
+/** Frees the claim only if it is still this request's own. */
+async function releasePanelUnlock(panelId: number, token: string) {
+  await dbWrite.$executeRaw`
+    UPDATE "ComicPanel" SET metadata = metadata - 'unlockClaim'
+    WHERE id = ${panelId} AND metadata->'unlockClaim'->>'token' = ${token}
+  `;
+}
+
+/** Whether a panel row holds an unlock claim that has not expired (never null). */
+const liveUnlockClaim = () => Prisma.sql`COALESCE(
+  jsonb_typeof(metadata->'unlockClaim') = 'object'
+    AND (metadata->'unlockClaim'->>'at')::timestamptz >= now() - ${UNLOCK_CLAIM_EXPIRY}::interval,
+  false
+)`;
+
+/**
+ * A delete waits while a panel it removes holds a live unlock claim: the claim may cover a charge
+ * still landing, and with the panel gone the queue's unlock would no longer defer to it.
+ */
+const unlockStillFinishing = () =>
+  throwBadRequestError('An unlock on this panel is still finishing. Try again in a few minutes.');
+
+/** Refuses a delete of the project while one of its panels holds a live unlock claim. */
+async function assertNoLiveUnlockClaim(projectId: number) {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "ComicPanel" WHERE "projectId" = ${projectId} AND ${liveUnlockClaim()} LIMIT 1
+  `;
+  if (rows.length) throw unlockStillFinishing();
+}
+
+/** A copied panel's metadata: the source's unlock claim is not the copy's. */
+function withoutUnlockClaim(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return metadata ?? undefined;
+  const copy = { ...metadata };
+  delete copy.unlockClaim;
+  return copy;
 }
 
 // Shared helper: create a single panel record and submit generation
@@ -1606,6 +1709,7 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await assertNoLiveUnlockClaim(input.id);
 
       await dbWrite.comicProject.update({
         where: { id: input.id },
@@ -1797,6 +1901,19 @@ export const comicsRouter = router({
       }
 
       await dbWrite.$transaction(async (tx) => {
+        // The chapter row first, so a reorder cannot move another chapter into this position; then
+        // its panels, so an unlock cannot claim one between the check and the delete.
+        await tx.$queryRaw`
+          SELECT 1 FROM "ComicChapter"
+          WHERE "projectId" = ${input.projectId} AND position = ${input.chapterPosition}
+          FOR UPDATE
+        `;
+        const panels = await tx.$queryRaw<{ live: boolean }[]>`
+          SELECT ${liveUnlockClaim()} AS live FROM "ComicPanel"
+          WHERE "projectId" = ${input.projectId} AND "chapterPosition" = ${input.chapterPosition}
+          FOR UPDATE
+        `;
+        if (panels.some((p) => p.live)) throw unlockStillFinishing();
         await tx.comicChapter.delete({
           where: {
             projectId_position: { projectId: input.projectId, position: input.chapterPosition },
@@ -1896,7 +2013,7 @@ export const comicsRouter = router({
             imageId: panel.imageId,
             position: panel.position + 1,
             status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
-            metadata: panel.metadata ?? undefined,
+            metadata: withoutUnlockClaim(panel.metadata),
           },
         });
 
@@ -2012,7 +2129,7 @@ export const comicsRouter = router({
               imageId: panel.imageId,
               position: panel.position,
               status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
-              metadata: panel.metadata ?? undefined,
+              metadata: withoutUnlockClaim(panel.metadata),
             },
           });
 
@@ -2573,10 +2690,11 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-
-      await dbWrite.comicPanel.delete({
-        where: { id: input.panelId },
-      });
+      // One statement: an unlock cannot claim the panel between the check and the delete.
+      const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
+        DELETE FROM "ComicPanel" WHERE id = ${panel.id} AND NOT ${liveUnlockClaim()} RETURNING id
+      `;
+      if (!deleted.length) throw unlockStillFinishing();
 
       // Recalculate NSFW levels after panel removal
       await updateComicNsfwLevels([panel.projectId]).catch((e) =>
@@ -2793,7 +2911,7 @@ export const comicsRouter = router({
         // use. The orchestrator does NOT hand us a final
         // `blockedReason: 'canUpgrade' | 'siteRestricted'` — those are
         // *derived* in `BlobData`'s constructor from the output's
-        // `nsfwLevel` plus the (domain, nsfwEnabled, allowMatureContent)
+        // `nsfwLevel` plus the (domain, allowMatureContent)
         // context. Reading raw `step.output.images[i].blockedReason`
         // misses the derived path, so mature outputs slipped through and
         // we'd download the blurred preview as if it were a clean image.
@@ -2805,7 +2923,6 @@ export const comicsRouter = router({
         domainFlags[ctx.domain as ColorDomain] = true;
         const wfData = new WorkflowData(normalized as any, {
           domain: domainFlags,
-          nsfwEnabled: !!ctx.user!.showNsfw,
           holdUnrated: true,
         });
         const firstStep = wfData.steps[0];
@@ -2871,7 +2988,7 @@ export const comicsRouter = router({
             // Capture the orchestrator-derived nsfwLevel per slot so the
             // picker can blur mature candidates by default. Without this,
             // mature outputs that aren't `blockedReason`'d (e.g. on red with
-            // nsfwEnabled+allowMatureContent) flow to the picker uncensored.
+            // allowMatureContent) flow to the picker uncensored.
             const nsfwLevel = normalizeCandidateNsfwLevel((candidateImg as any)?.nsfwLevel);
 
             // Locked candidate: marker only. The orchestrator MAY provide a
@@ -2968,15 +3085,9 @@ export const comicsRouter = router({
           // preview URLs for any still-locked entries.
           const metadataChanged = JSON.stringify(previousByIndex) !== JSON.stringify(newCandidates);
           if (metadataChanged || panel.status !== ComicPanelStatus.AwaitingSelection) {
-            await dbWrite.comicPanel.update({
-              where: { id: panel.id },
-              data: {
-                status: ComicPanelStatus.AwaitingSelection,
-                metadata: {
-                  ...((panel.metadata as any) ?? {}),
-                  candidateImages: newCandidates,
-                },
-              },
+            await writePolledPanel(panel.id, {
+              status: ComicPanelStatus.AwaitingSelection,
+              metadata: { ...((panel.metadata as any) ?? {}), candidateImages: newCandidates },
             });
             sendComicPanelSignal(ctx.user!.id, {
               panelId: panel.id,
@@ -3015,29 +3126,16 @@ export const comicsRouter = router({
         const blockedOutput = rawOutputs.find((o) => o?.blockedReason);
         const blockedReason = blockedOutput?.blockedReason as string | undefined;
         if (workflow.status === 'succeeded' && blockedReason) {
-          const errorMessage =
-            blockedReason === 'siteRestricted'
-              ? 'This generation produced mature content that cannot be viewed on this site.'
-              : blockedReason === 'canUpgrade'
-              ? 'This generation produced mature content. Unlock with yellow Buzz to keep the result.'
-              : blockedReason === NSFW_CAPPED
-              ? NSFW_CAPPED_MESSAGE
-              : `Generation blocked: ${blockedReason}.`;
+          const errorMessage = blockedReasonMessage(blockedReason);
 
           if (
             panel.status !== ComicPanelStatus.RequireUnlock ||
             panelBlockedReason !== blockedReason
           ) {
-            await dbWrite.comicPanel.update({
-              where: { id: panel.id },
-              data: {
-                status: ComicPanelStatus.RequireUnlock,
-                errorMessage,
-                metadata: {
-                  ...((panel.metadata as any) ?? {}),
-                  blockedReason,
-                },
-              },
+            await writePolledPanel(panel.id, {
+              status: ComicPanelStatus.RequireUnlock,
+              errorMessage,
+              metadata: { ...((panel.metadata as any) ?? {}), blockedReason },
             });
             sendComicPanelSignal(ctx.user!.id, {
               panelId: panel.id,
@@ -3250,7 +3348,8 @@ export const comicsRouter = router({
   unlockPanelGeneration: comicGenerationProcedure
     .input(z.object({ panelId: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: the stored candidates route the unlock; a lagging replica can miss them.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
@@ -3261,65 +3360,165 @@ export const comicsRouter = router({
         throw throwBadRequestError('Panel has no workflow to unlock.');
       }
 
-      assertUnlockAllowed({ domain: ctx.domain, showNsfw: !!ctx.user!.showNsfw });
+      assertUnlockAllowed({ domain: ctx.domain });
 
       // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
       // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
-      const meta = (panel.metadata as any) ?? {};
-      const isSinglePanelBlocked = panel.status !== ComicPanelStatus.AwaitingSelection;
+      // The writes that end this unlock start from this copy; a claim in it is another request's (or
+      // expired) and is not this one's to write back.
+      const meta = { ...((panel.metadata as any) ?? {}) };
+      delete meta.unlockClaim;
       const candidates: Array<{ key?: string; requiresUnlock?: boolean; blockedReason?: string }> =
         meta.candidateImages ?? [];
+      // Only a multi-image generation stores candidates; a selection leaves them stored and the
+      // panel Ready, so the status cannot tell the two apart.
+      const isSinglePanelBlocked = candidates.length === 0;
 
-      // 1) Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
-      //    workflow's cap leaves nothing to release, so the cap check runs before the write.
+      // Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
+      // workflow's cap leaves nothing to release, so the cap check runs before the write.
       let token: string;
       try {
         token = await getOrchestratorToken(ctx.user!.id, ctx);
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
-      await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
-      // Uncaught: the mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
-      await updateWorkflow({
-        token,
-        workflowId: panel.workflowId,
-        allowMatureContent: true,
-        throwOnError: true,
-      });
+      // Already unlocked with slots still locked here (an earlier unlock that did not reach them), or
+      // a single-image panel whose unlock was paid but not collected: collect without a new charge.
+      const alreadyPaid =
+        (candidates.some((c) => c?.requiresUnlock === true) ||
+          (isSinglePanelBlocked && panel.status !== ComicPanelStatus.Ready)) &&
+        (await getWorkflow({ token, path: { workflowId: panel.workflowId } }))
+          .allowMatureContent === true;
+      let claim: string | null = null;
+      // A charge write that failed without a refusal (cut off by its bound, a gateway error) may
+      // still land: the claim then stays until it expires.
+      let chargeMayLand = false;
+      try {
+        if (!alreadyPaid) {
+          claim = await claimPanelUnlock(panel.id);
+          if (!claim) throw throwBadRequestError('This panel is already being unlocked.');
+          await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
+          const bound = new AbortController();
+          const timer = setTimeout(() => bound.abort(), UNLOCK_CHARGE_TIMEOUT_MS);
+          try {
+            // The mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
+            await updateWorkflow({
+              token,
+              workflowId: panel.workflowId,
+              allowMatureContent: true,
+              throwOnError: true,
+              signal: bound.signal,
+            });
+          } catch (error) {
+            if (!bound.signal.aborted && !chargeOutcomeUnknown(error)) throw error;
+            chargeMayLand = true;
+            throw throwBadRequestError(
+              'This unlock is not confirmed yet. Check this panel again in a few minutes.'
+            );
+          } finally {
+            clearTimeout(timer);
+          }
+        }
 
-      // 2) Re-fetch the workflow and run it through the same `BlobData`
-      //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
-      //    reflects the post-unlock state. We do this inline rather than
-      //    waiting for a poll tick — clicking Unlock should produce the
-      //    final result in one round-trip, not after a 25-second sleep.
-      const fresh = await getWorkflow({ token, path: { workflowId: panel.workflowId } });
-      const [normalized] = await formatGenerationResponse2([fresh as any], ctx.user);
-      const domainFlags: Record<ColorDomain, boolean> = colorDomainNames.reduce(
-        (acc, c) => ({ ...acc, [c]: false }),
-        {} as Record<ColorDomain, boolean>
-      );
-      domainFlags[ctx.domain as ColorDomain] = true;
-      const wfData = new WorkflowData(normalized as any, {
-        domain: domainFlags,
-        nsfwEnabled: !!ctx.user!.showNsfw,
-        holdUnrated: true,
-      });
-      const firstStep = wfData.steps[0];
-      const outputs = firstStep?.output ?? [];
+        // Same BlobData pipeline as pollPanelStatus, inline so Unlock returns the final state in one round-trip.
+        const fresh = await getWorkflow({ token, path: { workflowId: panel.workflowId } });
+        const [normalized] = await formatGenerationResponse2([fresh as any], ctx.user);
+        const domainFlags: Record<ColorDomain, boolean> = colorDomainNames.reduce(
+          (acc, c) => ({ ...acc, [c]: false }),
+          {} as Record<ColorDomain, boolean>
+        );
+        domainFlags[ctx.domain as ColorDomain] = true;
+        const wfData = new WorkflowData(normalized as any, {
+          domain: domainFlags,
+          holdUnrated: true,
+        });
+        const firstStep = wfData.steps[0];
+        const outputs = firstStep?.output ?? [];
 
-      // 3a) Single-image: download the now-clean URL into S3 and mark Ready.
-      if (isSinglePanelBlocked) {
-        const clean = outputs.find((o) => !o.blockedReason && o.url);
-        if (!clean?.url) {
-          // Orchestrator hasn't propagated the unblocked output yet, or the
-          // unlock didn't actually clear the block (e.g. POI/minor flag).
-          // Drop back to `Generating` so the regular poll loop picks it up
-          // when it does become available.
+        // Single-image: download the now-clean URL into S3 and mark Ready.
+        if (isSinglePanelBlocked) {
+          const clean = outputs.find((o) => !o.blockedReason && o.url);
+          if (!clean?.url) {
+            // Orchestrator hasn't propagated the unblocked output yet, or the
+            // unlock didn't actually clear the block (e.g. POI/minor flag).
+            // Drop back to `Generating` so the regular poll loop picks it up
+            // when it does become available.
+            const { blockedReason: _drop, ...metaWithoutBlock } = meta;
+            const updated = await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: {
+                status: ComicPanelStatus.Generating,
+                errorMessage: null,
+                metadata: metaWithoutBlock,
+              },
+            });
+            sendComicPanelSignal(ctx.user!.id, {
+              panelId: updated.id,
+              projectId: panel.projectId,
+              status: updated.status,
+            });
+            return {
+              id: updated.id,
+              status: updated.status,
+              imageUrl: null,
+              candidateImages: [] as string[],
+            };
+          }
+
+          const genParams = meta?.generationParams;
+          const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
+          const imgHeight =
+            genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
+
+          let s3Key: string;
+          try {
+            const resp = await fetch(clean.url, { signal: fetchTimeoutSignal(120_000) });
+            if (!resp.ok) throw new Error(`Failed to download: ${resp.status}`);
+            const buf = Buffer.from(await resp.arrayBuffer());
+            s3Key = randomUUID();
+            const { s3, bucket, backend } = await getImageUploadBackend();
+            await s3.send(
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: s3Key,
+                Body: buf,
+                ContentType: resp.headers.get('content-type') || 'image/jpeg',
+              })
+            );
+            registerMediaLocation(s3Key, backend, buf.length);
+            await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
+          } catch (e) {
+            console.error(`Failed to download unlocked panel ${panel.id}:`, e);
+            throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
+          }
+
+          const civitaiResources = (firstStep?.resources ?? []).map((r) => ({
+            modelVersionId: r.id,
+            type: r.model.type,
+            weight: r.strength,
+          }));
+          const image = await createImage({
+            url: s3Key,
+            type: 'image',
+            userId: ctx.user!.id,
+            width: imgWidth,
+            height: imgHeight,
+            meta: { prompt: panel.prompt, civitaiResources } as any,
+          });
+          await createImageResources({ imageId: image.id }).catch((e) =>
+            console.error(
+              `Failed to materialize resources for unlocked panel image ${image.id}:`,
+              e
+            )
+          );
+
           const { blockedReason: _drop, ...metaWithoutBlock } = meta;
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },
             data: {
-              status: ComicPanelStatus.Generating,
+              status: ComicPanelStatus.Ready,
+              imageUrl: s3Key,
+              imageId: image.id,
               errorMessage: null,
               metadata: metaWithoutBlock,
             },
@@ -3328,213 +3527,151 @@ export const comicsRouter = router({
             panelId: updated.id,
             projectId: panel.projectId,
             status: updated.status,
+            imageUrl: updated.imageUrl,
           });
           return {
             id: updated.id,
             status: updated.status,
-            imageUrl: null,
+            imageUrl: updated.imageUrl,
             candidateImages: [] as string[],
           };
         }
 
-        const genParams = meta?.generationParams;
-        const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
-        const imgHeight =
-          genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
+        // Multi-image: replace each `requiresUnlock` slot with a freshly downloaded S3 key, in
+        // stable orchestrator order. Already-clean slots keep their existing key (no re-upload).
+        const previousByIndex = candidates;
+        const newCandidates: Array<
+          | { key: string; nsfwLevel?: number }
+          | { requiresUnlock: true; blockedReason: string; nsfwLevel?: number }
+        > = [];
+        const {
+          s3: s3Multi,
+          bucket: multiBucket,
+          backend: multiBackend,
+        } = await getImageUploadBackend();
 
-        let s3Key: string;
-        try {
-          const resp = await fetch(clean.url, { signal: fetchTimeoutSignal(120_000) });
-          if (!resp.ok) throw new Error(`Failed to download: ${resp.status}`);
-          const buf = Buffer.from(await resp.arrayBuffer());
-          s3Key = randomUUID();
-          const { s3, bucket, backend } = await getImageUploadBackend();
-          await s3.send(
-            new PutObjectCommand({
-              Bucket: bucket,
-              Key: s3Key,
-              Body: buf,
-              ContentType: resp.headers.get('content-type') || 'image/jpeg',
-            })
-          );
-          registerMediaLocation(s3Key, backend, buf.length);
-          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
-        } catch (e) {
-          console.error(`Failed to download unlocked panel ${panel.id}:`, e);
-          throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
+        for (let i = 0; i < outputs.length; i++) {
+          const out = outputs[i];
+          const prev = previousByIndex[i] as any;
+          const slotNsfwLevel = normalizeCandidateNsfwLevel((out as any)?.nsfwLevel);
+
+          if (prev && typeof prev.key === 'string') {
+            newCandidates.push({
+              key: prev.key,
+              ...(typeof prev.nsfwLevel === 'number'
+                ? { nsfwLevel: prev.nsfwLevel }
+                : slotNsfwLevel != null
+                ? { nsfwLevel: slotNsfwLevel }
+                : {}),
+            });
+            continue;
+          }
+
+          if (!out?.url) {
+            // Orchestrator still has nothing for this slot — keep it locked
+            // so a subsequent poll can pick it up if/when it materializes.
+            newCandidates.push({
+              requiresUnlock: true,
+              blockedReason: out?.blockedReason ?? 'canUpgrade',
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+            continue;
+          }
+
+          if (out.blockedReason) {
+            // Still blocked even after the unlock (POI, minor, etc.). Keep
+            // the marker so the picker doesn't render it as selectable.
+            newCandidates.push({
+              requiresUnlock: true,
+              blockedReason: out.blockedReason,
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+            continue;
+          }
+
+          try {
+            const resp = await fetch(out.url, { signal: fetchTimeoutSignal(120_000) });
+            if (!resp.ok) {
+              newCandidates.push({
+                requiresUnlock: true,
+                blockedReason: 'canUpgrade',
+                ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+              });
+              continue;
+            }
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const s3Key = randomUUID();
+            await s3Multi.send(
+              new PutObjectCommand({
+                Bucket: multiBucket,
+                Key: s3Key,
+                Body: buf,
+                ContentType: resp.headers.get('content-type') || 'image/jpeg',
+              })
+            );
+            registerMediaLocation(s3Key, multiBackend, buf.length);
+            await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
+            newCandidates.push({
+              key: s3Key,
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+          } catch (e) {
+            console.error(
+              `Failed to download unlocked candidate for panel ${panel.id} slot ${i}:`,
+              e
+            );
+            newCandidates.push({
+              requiresUnlock: true,
+              blockedReason: 'canUpgrade',
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+          }
         }
 
-        const civitaiResources = (firstStep?.resources ?? []).map((r) => ({
-          modelVersionId: r.id,
-          type: r.model.type,
-          weight: r.strength,
-        }));
-        const image = await createImage({
-          url: s3Key,
-          type: 'image',
-          userId: ctx.user!.id,
-          width: imgWidth,
-          height: imgHeight,
-          meta: { prompt: panel.prompt, civitaiResources } as any,
-        });
-        await createImageResources({ imageId: image.id }).catch((e) =>
-          console.error(`Failed to materialize resources for unlocked panel image ${image.id}:`, e)
-        );
-
-        const { blockedReason: _drop, ...metaWithoutBlock } = meta;
+        // A selection stays selected: only the slots change.
+        const keepsSelection = panel.status === ComicPanelStatus.Ready && !!panel.imageUrl;
         const updated = await dbWrite.comicPanel.update({
           where: { id: panel.id },
           data: {
-            status: ComicPanelStatus.Ready,
-            imageUrl: s3Key,
-            imageId: image.id,
-            errorMessage: null,
-            metadata: metaWithoutBlock,
+            status: keepsSelection ? panel.status : ComicPanelStatus.AwaitingSelection,
+            metadata: {
+              ...meta,
+              candidateImages: newCandidates,
+            },
           },
         });
         sendComicPanelSignal(ctx.user!.id, {
           panelId: updated.id,
           projectId: panel.projectId,
           status: updated.status,
-          imageUrl: updated.imageUrl,
         });
         return {
           id: updated.id,
           status: updated.status,
           imageUrl: updated.imageUrl,
-          candidateImages: [] as string[],
+          // Per-slot detail with the orchestrator's nsfwLevel so the picker
+          // can blur mature candidates by default. Locked entries lose any
+          // ephemeral preview URL here — the unlock response shouldn't need
+          // them since the workflow restriction was just lifted.
+          candidates: newCandidates.map((c) =>
+            'requiresUnlock' in c
+              ? {
+                  requiresUnlock: true as const,
+                  blockedReason: c.blockedReason,
+                  blurredPreviewUrl: null as string | null,
+                  nsfwLevel: c.nsfwLevel ?? null,
+                }
+              : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
+          ),
+          candidateImages: newCandidates
+            .filter((c): c is { key: string; nsfwLevel?: number } => 'key' in c)
+            .map((c) => c.key),
         };
+      } catch (error) {
+        if (claim && !chargeMayLand)
+          await releasePanelUnlock(panel.id, claim).catch(() => undefined);
+        throw error;
       }
-
-      // 3b) Multi-image: replace each `requiresUnlock` slot with a freshly
-      //     downloaded S3 key, in stable orchestrator order. Already-clean
-      //     slots keep their existing key (no re-upload).
-      const previousByIndex = candidates;
-      const newCandidates: Array<
-        | { key: string; nsfwLevel?: number }
-        | { requiresUnlock: true; blockedReason: string; nsfwLevel?: number }
-      > = [];
-      const {
-        s3: s3Multi,
-        bucket: multiBucket,
-        backend: multiBackend,
-      } = await getImageUploadBackend();
-
-      for (let i = 0; i < outputs.length; i++) {
-        const out = outputs[i];
-        const prev = previousByIndex[i] as any;
-        const slotNsfwLevel = normalizeCandidateNsfwLevel((out as any)?.nsfwLevel);
-
-        if (prev && typeof prev.key === 'string') {
-          newCandidates.push({
-            key: prev.key,
-            ...(typeof prev.nsfwLevel === 'number'
-              ? { nsfwLevel: prev.nsfwLevel }
-              : slotNsfwLevel != null
-              ? { nsfwLevel: slotNsfwLevel }
-              : {}),
-          });
-          continue;
-        }
-
-        if (!out?.url) {
-          // Orchestrator still has nothing for this slot — keep it locked
-          // so a subsequent poll can pick it up if/when it materializes.
-          newCandidates.push({
-            requiresUnlock: true,
-            blockedReason: out?.blockedReason ?? 'canUpgrade',
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-          continue;
-        }
-
-        if (out.blockedReason) {
-          // Still blocked even after the unlock (POI, minor, etc.). Keep
-          // the marker so the picker doesn't render it as selectable.
-          newCandidates.push({
-            requiresUnlock: true,
-            blockedReason: out.blockedReason,
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-          continue;
-        }
-
-        try {
-          const resp = await fetch(out.url, { signal: fetchTimeoutSignal(120_000) });
-          if (!resp.ok) {
-            newCandidates.push({
-              requiresUnlock: true,
-              blockedReason: 'canUpgrade',
-              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-            });
-            continue;
-          }
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const s3Key = randomUUID();
-          await s3Multi.send(
-            new PutObjectCommand({
-              Bucket: multiBucket,
-              Key: s3Key,
-              Body: buf,
-              ContentType: resp.headers.get('content-type') || 'image/jpeg',
-            })
-          );
-          registerMediaLocation(s3Key, multiBackend, buf.length);
-          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
-          newCandidates.push({
-            key: s3Key,
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-        } catch (e) {
-          console.error(
-            `Failed to download unlocked candidate for panel ${panel.id} slot ${i}:`,
-            e
-          );
-          newCandidates.push({
-            requiresUnlock: true,
-            blockedReason: 'canUpgrade',
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-        }
-      }
-
-      const updated = await dbWrite.comicPanel.update({
-        where: { id: panel.id },
-        data: {
-          status: ComicPanelStatus.AwaitingSelection,
-          metadata: {
-            ...meta,
-            candidateImages: newCandidates,
-          },
-        },
-      });
-      sendComicPanelSignal(ctx.user!.id, {
-        panelId: updated.id,
-        projectId: panel.projectId,
-        status: updated.status,
-      });
-      return {
-        id: updated.id,
-        status: updated.status,
-        imageUrl: updated.imageUrl,
-        // Per-slot detail with the orchestrator's nsfwLevel so the picker
-        // can blur mature candidates by default. Locked entries lose any
-        // ephemeral preview URL here — the unlock response shouldn't need
-        // them since the workflow restriction was just lifted.
-        candidates: newCandidates.map((c) =>
-          'requiresUnlock' in c
-            ? {
-                requiresUnlock: true as const,
-                blockedReason: c.blockedReason,
-                blurredPreviewUrl: null as string | null,
-                nsfwLevel: c.nsfwLevel ?? null,
-              }
-            : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
-        ),
-        candidateImages: newCandidates
-          .filter((c): c is { key: string; nsfwLevel?: number } => 'key' in c)
-          .map((c) => c.key),
-      };
     }),
 
   selectPanelImage: comicProtectedProcedure
@@ -3589,7 +3726,6 @@ export const comicsRouter = router({
           domainFlags[ctx.domain as ColorDomain] = true;
           const wfData = new WorkflowData(normalized as any, {
             domain: domainFlags,
-            nsfwEnabled: !!ctx.user!.showNsfw,
           });
           civitaiResources = (wfData.steps[0]?.resources ?? []).map((r) => ({
             modelVersionId: r.id,

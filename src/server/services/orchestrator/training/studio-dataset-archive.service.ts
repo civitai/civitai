@@ -28,6 +28,7 @@ import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-u
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { buildUploadKey } from '~/utils/upload-key';
 import { backoffDelay } from '~/utils/backoff';
+import { studioRunOfVersion } from '~/server/services/orchestrator/training/studio-run-link';
 
 /**
  * A Training Studio run trains on orchestrator blobs, never a zip, so publishing it creates a
@@ -309,6 +310,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       modelVersionId: true,
       modelVersion: {
         select: {
+          meta: true,
           model: {
             select: {
               id: true,
@@ -335,8 +337,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     return { fileId, outcome: 'unavailable', reason };
   };
 
-  const workflowId = (model.meta as { trainingStudioWorkflowId?: string } | null)
-    ?.trainingStudioWorkflowId;
+  const workflowId = studioRunOfVersion(file.modelVersion.meta, model.meta);
   if (!workflowId) return markUnavailable('not a Training Studio model');
 
   // A banned or deleted owner cannot be minted a token, so their run is read with the service token.

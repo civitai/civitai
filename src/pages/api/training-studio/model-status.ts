@@ -4,7 +4,10 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
 import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/training/studio-withheld';
 
-const schema = z.object({ id: z.coerce.number().int().positive() });
+const schema = z.object({
+  id: z.coerce.number().int().positive(),
+  versionId: z.coerce.number().int().positive().optional(),
+});
 const MAX_WORKFLOW_IDS = 100;
 const workflowIdsSchema = z.object({
   userId: z.coerce.number().int().positive(),
@@ -32,7 +35,14 @@ export default AuthedEndpoint(async (req, res, user) => {
   if (!input.success) return res.status(400).json({ error: 'Invalid model id.' });
 
   const model = await dbWrite.model.findFirst({
-    where: { id: input.data.id, userId: user.id, ...studioModelNotOwnerDeleted(user.id) },
+    where: {
+      id: input.data.id,
+      userId: user.id,
+      ...studioModelNotOwnerDeleted(user.id),
+      // A run added to an existing model is that model's version: deleting it (a hard delete)
+      // ends the run's link while the model lives on.
+      ...(input.data.versionId && { modelVersions: { some: { id: input.data.versionId } } }),
+    },
     select: { id: true },
   });
   return res.json({ live: model !== null });

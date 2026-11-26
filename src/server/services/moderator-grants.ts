@@ -10,6 +10,7 @@ const SUPER_ROLE = 'moderator:admin';
 /** Grant ids this module can check; declared in `apps/moderator/src/lib/permissions.ts`. */
 export type ModeratorGrantId =
   | 'user.deleteAccount'
+  | 'user.memorialize'
   | 'user.personalDataExport.queue'
   | 'user.personalDataExport.release'
   | 'user.purge'
@@ -34,7 +35,8 @@ export type ModeratorGrantId =
   | 'apps.buzz.refund.large'
   | 'training.retrain'
   | 'feedback.status.set'
-  | 'tickets.escalate';
+  | 'tickets.escalate'
+  | 'modelFlags.detections.decide';
 
 /** Whether `user` holds a role on the moderator app's `AppPageAccess` row `path`; admin always. */
 async function holdsModeratorRow(user: { roles?: string[] }, path: string): Promise<boolean> {

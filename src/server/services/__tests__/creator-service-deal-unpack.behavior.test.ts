@@ -1,10 +1,12 @@
+import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
-import { crc32 } from 'zlib';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { crc32, deflateSync } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import { BUYER_DISCLOSURE_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -25,6 +27,7 @@ import {
   webmClip,
   type FixtureEntry,
 } from '~/server/utils/__tests__/zip-fixture';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -161,6 +164,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 const files = await import('~/server/services/creator-service-deal-file.service');
 const deals = await import('~/server/services/creator-service-deal.service');
 const unpack = await import('~/server/services/creator-service-deal-unpack.service');
+const escrow = await import('~/server/services/creator-service-escrow.service');
 const scan = await import('~/server/services/creator-service-deal-file-scan');
 const orchestrator = await import('@civitai/orchestration-client');
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
@@ -194,6 +198,9 @@ const MIGRATIONS = [
   '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -258,7 +265,8 @@ async function accepted() {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    disclosureReviewEnabled: false,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -386,9 +394,6 @@ beforeAll(async () => {
       "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       "reportSentAt" timestamp, "archivedAt" timestamp);
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
     CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
@@ -397,6 +402,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
   // The deal holds a party's delete reads.
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
@@ -436,11 +442,11 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) => {
-    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-  });
+  images.deleteImages.mockImplementation(async (ids: number[]) =>
+    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
+  );
   await holder.db.exec(`
-    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealFilePurge", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "Report", "ImageReport", "CsamReport", "CsamQueueSetAside" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -792,6 +798,125 @@ describe('judging a file by what it is', () => {
     expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
     expect((await fileRow(fileId)).failReason).toMatch(reason);
     expect(await entries(fileId)).toEqual([]);
+  });
+
+  const JUNK = Buffer.from('a'.repeat(1024));
+  /** A PDF as a writer makes one: a binary comment, then JPEG, deflated and plain streams. */
+  const pdf = ({ start = '%PDF-1.7\n', end = 'trailer\n<< /Root 1 0 R >>\n%%EOF\n' } = {}) =>
+    Buffer.concat([
+      Buffer.from(start, 'latin1'),
+      Buffer.from(
+        '%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Subtype /Image /Filter /DCTDecode >>\nstream\n',
+        'latin1'
+      ),
+      JPEG_BYTES(),
+      Buffer.from('\nendstream\nendobj\n2 0 obj\n<< /Filter /FlateDecode >>\nstream\n'),
+      deflateSync(Buffer.from('BT /F1 12 Tf (hello) Tj ET '.repeat(80))),
+      Buffer.from('\nendstream\nendobj\n3 0 obj\nstream\n'),
+      Buffer.from('BT /F1 12 Tf 72 712 Td (a line of the brief) Tj ET\n'.repeat(50)),
+      Buffer.from('endstream\nendobj\n'),
+      Buffer.from(end, 'latin1'),
+    ]);
+  const pdfThen = (media: Buffer) =>
+    Buffer.concat([Buffer.from('%PDF-1.7\n'), media, Buffer.from('\n%%EOF\n')]);
+  it.each([
+    [
+      'a PNG behind 1 KB of text, called notes.txt',
+      'notes.txt',
+      Buffer.concat([JUNK, PNG_BYTES()]),
+    ],
+    ['a zip behind 1 KB of text, called notes.txt', 'notes.txt', Buffer.concat([JUNK, PK])],
+    ['a NUL byte in a .json', 'data.json', Buffer.from('{"a": 1}\u0000')],
+    [
+      'bytes that are not UTF-8, called notes.md',
+      'notes.md',
+      Buffer.from([0x68, 0x69, 0xc3, 0x28]),
+    ],
+    ['a .pdf that does not start with its header', 'brief.pdf', Buffer.concat([JUNK, PNG_BYTES()])],
+    ['a .pdf whose header line is followed by a zip', 'brief.pdf', pdfThen(PK)],
+    ['a .pdf whose header line is followed by a PNG', 'brief.pdf', pdfThen(PNG_BYTES())],
+    [
+      'a .pdf whose header runs straight into a PNG',
+      'brief.pdf',
+      Buffer.concat([Buffer.from('%PDF-'), PNG_BYTES(), Buffer.from('\n%%EOF\n')]),
+    ],
+    ['a .pdf with no %%EOF', 'brief.pdf', pdf({ end: 'trailer\n' })],
+    ['a .pdf with more than padding after its %%EOF', 'brief.pdf', pdf({ end: '%%EOF\nzz' })],
+    [
+      'a .pdf whose %%EOF is more than 1 KB from its end',
+      'brief.pdf',
+      Buffer.concat([pdf(), JUNK, Buffer.from('more')]),
+    ],
+  ])('refuses %s, which would be delivered unscanned', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await fileRow(fileId)).failReason).toMatch(/doesn't look like a \.\w+ document/);
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it.each([
+    ['a PNG behind 1 KB of text', Buffer.concat([JUNK, PNG_BYTES()])],
+    ['a NUL byte', Buffer.from('fine\u0000')],
+  ])('refuses a zip whose notes.txt holds %s', async (_n, data) => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'docs/notes.txt', data },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: "A document in the archive isn't what its name says.",
+    });
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it('refuses a zip whose brief.pdf is not a PDF', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'brief.pdf', data: pdfThen(PNG_BYTES()) },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: "A document in the archive isn't what its name says.",
+    });
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it('unpacks a zip whose documents are what their names say', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'docs/notes.txt', data: Buffer.from('Résumé — notes ✓\n'.repeat(100)) },
+      // Inflated 16 KB at a time, so the ✓ arrives split across two chunks.
+      { name: 'docs/long.txt', data: Buffer.from(`${'a'.repeat(16383)}✓`) },
+      { name: 'brief.pdf', data: pdf() },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await entries(fileId)).map((e) => e.path)).toEqual(['a.png']);
+  });
+
+  it.each([
+    ['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))],
+    ['a .pdf with a JPEG and a deflated stream in its body', 'brief.pdf', pdf()],
+    [
+      'a .pdf padded with NULs after its %%EOF',
+      'brief.pdf',
+      pdf({ start: '%PDF-1.4\r\n', end: '%%EOF\r\n\u0000\u0000\u0000' }),
+    ],
+  ])('delivers %s', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
   });
 
   it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
@@ -1148,9 +1273,13 @@ describe('video by any other name', () => {
     bytes[188] = 0x47;
     return bytes;
   };
-  /** Three packets of a transport stream: one short of what is taken as one. */
-  const threeSyncs = () =>
-    Buffer.concat([tsStream(188).subarray(0, 3 * 188), Buffer.alloc(600, 0x11)]);
+  /** Three packets of a transport stream: one short of what is taken as one. No NUL byte, so a
+   * .txt holding it is still text. */
+  const threeSyncs = () => {
+    const bytes = Buffer.alloc(3 * 188 + 600, 0x11);
+    for (const at of [0, 188, 376]) bytes[at] = 0x47;
+    return bytes;
+  };
   /** Sync bytes every `gap` bytes, a spacing no transport stream uses. */
   const spacedSyncs = (gap: number) => {
     const bytes = Buffer.alloc(1200, 0x11);
@@ -1714,6 +1843,21 @@ describe('copies of scanned images', () => {
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
   });
 
+  it('keeps an entry pointed at a copy gone without this delete, and counts it hourly', async () => {
+    const { fileId } = await settled();
+    const hour = 60 * 60_000;
+    const at = Date.now() + 1000 * hour;
+    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ marked: 0, unmarked: 0 });
+    await q(`DELETE FROM "Image" WHERE id = 1`);
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect((await entries(fileId))[0]).toMatchObject({ imageId: 1, scanKey: 'scan-key-1' });
+    expect(await unpack.countDanglingScanCopies({ now: at + hour - 1 })).toBeNull();
+    expect(await unpack.countDanglingScanCopies({ now: at + hour })).toEqual({
+      marked: 0,
+      unmarked: 1,
+    });
+  });
+
   it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
@@ -1726,6 +1870,81 @@ describe('copies of scanned images', () => {
       scanKey: 'scan-key-1',
     });
     expect((await entries(fileId))[0].imageId).not.toBeNull();
+  });
+
+  describe('copies kept for their case', () => {
+    /** 50 passed copies kept for their case, then one that can go. */
+    async function keptThenDeletable() {
+      const dealId = await accepted();
+      await q(`INSERT INTO "Image" (url) SELECT 'kept' FROM generate_series(1, 50)`);
+      await q(`INSERT INTO "Image" (url) VALUES ('free')`);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+           SELECT $1, i, 'a.png', 1, i, 'Passed' FROM generate_series(1, 51) i`,
+        [dealId]
+      );
+      images.deleteImages.mockImplementation(async (ids: number[]) =>
+        q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) AND url <> 'kept' RETURNING id`, [ids])
+      );
+    }
+    const copies = async () =>
+      (await q<{ imageId: number }>(`SELECT "imageId" FROM "ServiceDealFileEntry"`)).map(
+        (row) => row.imageId
+      );
+
+    it('do not hold up a copy after them: it goes in the same run or the next', async () => {
+      await keptThenDeletable();
+      const deleted =
+        (await unpack.deleteEntryScanCopies()) + (await unpack.deleteEntryScanCopies());
+      expect(deleted).toBe(1);
+      expect(await copies()).not.toContain(51);
+      expect(await copies()).toHaveLength(50);
+    });
+
+    it('are deleted once their case clears', async () => {
+      await keptThenDeletable();
+      await unpack.deleteEntryScanCopies();
+      await unpack.deleteEntryScanCopies();
+      await q(`UPDATE "Image" SET url = 'free'`);
+      const deleted =
+        (await unpack.deleteEntryScanCopies()) + (await unpack.deleteEntryScanCopies());
+      expect(deleted).toBe(50);
+      expect(await copies()).toEqual([]);
+    });
+  });
+
+  describe('when the seller deletes a file whose passed image is gone', () => {
+    async function removedFinal({ imageGoneFirst }: { imageGoneFirst: boolean }) {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned'`);
+      await unpack.settleEntryScans();
+      if (imageGoneFirst) await q(`DELETE FROM "Image"`);
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      return { dealId, fileId };
+    }
+
+    it('keeps the pointer, so the file is refused and kept, when the image went some other way', async () => {
+      const { dealId, fileId } = await removedFinal({ imageGoneFirst: true });
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: false,
+        downloaded: false,
+      });
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() - interval '1 day'`);
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+    });
+
+    it('lets go of a copy its own delete removed', async () => {
+      const { dealId, fileId } = await removedFinal({ imageGoneFirst: false });
+      expect((await entries(fileId))[0].imageId).toBeNull();
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: true,
+        downloaded: true,
+      });
+    });
   });
 
   describe('when the seller deletes the file', () => {
@@ -1779,6 +1998,22 @@ describe('copies of scanned images', () => {
       expect((await fileRow(fileId)).removedAt).not.toBeNull();
     });
 
+    it("leaves another file's entries alone, even one pointing at a copy that is gone", async () => {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      const other = await zipFinal(dealId, [{ name: 'b.png', data: IMAGE_B }]);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanKey") VALUES ($1, $2, 0, 'b.png', 1, 999, 'gone-key')`,
+        [other, dealId]
+      );
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      expect(
+        await q(`SELECT "imageId", "scanKey" FROM "ServiceDealFileEntry" WHERE "fileId" = $1`, [
+          other,
+        ])
+      ).toEqual([{ imageId: 999, scanKey: 'gone-key' }]);
+    });
+
     it('still judges the image whose scan finishes later, and drops it once it passes', async () => {
       await threeImages();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = 3`);
@@ -1789,16 +2024,152 @@ describe('copies of scanned images', () => {
       expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, null]);
     });
 
-    it("rejects the image that comes back above the deal's limit, and keeps its copy", async () => {
+    it("leaves the copy of the image that comes back above the deal's limit to the purge", async () => {
       await threeImages();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4 WHERE id = 3`);
       await unpack.settleEntryScans();
       expect(await unpack.deleteEntryScanCopies()).toBe(0);
-      expect((await orphans()).map((r) => [r.scanStatus, r.imageId])).toEqual([
-        ['Passed', null],
-        ['Failed', 2],
-        ['Failed', 3],
+      expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, 3]);
+    });
+  });
+
+  // Decided in civitai/civitai#10422.
+  describe("a Final refused only for a rating above the deal's level", () => {
+    /** A one-image zip Final rated `flags` above the PG-13 deal, settled, then deleted by its seller. */
+    async function overLevelFinal(flags = '', items = [{ name: 'a.png', data: IMAGE_A }]) {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, items);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4${flags}`);
+      await unpack.settleEntryScans();
+      await unpack.settleFinals();
+      expect((await fileRow(fileId)).scanStatus).toBe('Failed');
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() - interval '1 day'`);
+      return fileId;
+    }
+
+    it('keeps its copy while it is listed', async () => {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4`);
+      await unpack.settleEntryScans();
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
+    const purgedWithCopy = async (fileId: number) => {
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
+      expect(await files.purgeRemovedFiles()).toBe(1);
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    };
+    const keptWithCopy = async (fileId: number, copies = 1) => {
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(copies);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+    };
+
+    it('is purged once removed, its copy with it', async () => {
+      await purgedWithCopy(await overLevelFinal());
+    });
+
+    it('is kept, with its copy, while a hold is on its deal', async () => {
+      const fileId = await overLevelFinal();
+      await q(`INSERT INTO "Report" (status) VALUES ('Pending')`);
+      await q(
+        `INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, (SELECT max(id) FROM "Report"))`
+      );
+      await keptWithCopy(fileId);
+      await q(
+        `UPDATE "Report" SET status = 'Unactioned', "createdAt" = now() - interval '400 days', "statusSetAt" = now() - interval '400 days'`
+      );
+      await purgedWithCopy(fileId);
+    });
+
+    it('is purged by a later run when one of its copies failed to delete', async () => {
+      const fileId = await overLevelFinal('', [
+        { name: 'a.png', data: IMAGE_A },
+        { name: 'b.png', data: IMAGE_B },
       ]);
+      images.deleteImages.mockRejectedValueOnce(new Error('store down'));
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
+      expect(await files.purgeRemovedFiles()).toBe(1);
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    });
+
+    it.each([
+      ['no purge was tried', ''],
+      [
+        'its entry failed for another reason',
+        `UPDATE "ServiceDealFileEntry" SET "failReason" = 'Rejected';
+         INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size") SELECT id, "dealId", size FROM "ServiceDealFile"`,
+      ],
+    ])('is kept when its copy is gone and %s', async (_n, sql) => {
+      const fileId = await overLevelFinal();
+      await holder.db.exec(
+        `UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL; DELETE FROM "Image"; ${sql}`
+      );
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+    });
+
+    it('keeps its copy when a hold lands after its objects are deleted', async () => {
+      const fileId = await overLevelFinal();
+      const { s3Key } = await fileRow(fileId);
+      const deleteObject = s3.deleteObject.getMockImplementation();
+      s3.deleteObject.mockImplementation(async (bucketName: string, key: string) => {
+        await deleteObject?.(bucketName, key);
+        if (key !== s3Key) return;
+        await q(`INSERT INTO "Report" (status) VALUES ('Pending')`);
+        await q(
+          `INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, (SELECT max(id) FROM "Report"))`
+        );
+      });
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(images.deleteImages).not.toHaveBeenCalled();
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
+    it.each([
+      ['flagged as a minor', `UPDATE "Image" SET minor = true`],
+      ['flagged as a real person', `UPDATE "Image" SET poi = true`],
+      ['held for review', `UPDATE "Image" SET "needsReview" = 'tag'`],
+      ['blocked', `UPDATE "Image" SET "blockedFor" = 'TOS'`],
+      ['sent back to be scanned', `UPDATE "Image" SET ingestion = 'Rescan'`],
+      [
+        'listed on a CSAM report',
+        `INSERT INTO "CsamReport" ("userId", images) VALUES (9, '[{"id": 1}]')`,
+      ],
+      [
+        'under an open child-safety report',
+        `INSERT INTO "Report" (status, reason) VALUES ('Pending', 'CSAM');
+         INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (1, (SELECT max(id) FROM "Report"))`,
+      ],
+    ])('is kept, with its copy, when its image is %s since', async (_n, sql) => {
+      const fileId = await overLevelFinal();
+      await holder.db.exec(sql);
+      await keptWithCopy(fileId);
+    });
+
+    it('is kept, with its copy, when the image delete keeps the copy for its case', async () => {
+      const fileId = await overLevelFinal();
+      images.deleteImages.mockResolvedValueOnce([]);
+      await keptWithCopy(fileId);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
+    it('is kept when its image row is gone or was never recorded', async () => {
+      const fileId = await overLevelFinal();
+      await q(`DELETE FROM "Image"`);
+      await keptWithCopy(fileId, 0);
+      await q(`UPDATE "ServiceDealFileEntry" SET "imageId" = NULL`);
+      await keptWithCopy(fileId, 0);
     });
   });
 });
@@ -1886,6 +2257,299 @@ describe('the finals malware scan flag', () => {
       recorded: true,
       held: false,
     });
+  });
+});
+
+type FileCaller = {
+  userId: number;
+  isModerator: boolean;
+  servableLevels: number;
+  canReviewCsam?: boolean;
+  moderatorFetch?: boolean;
+};
+
+/** Whether the list offers `caller` a download of the file, and whether the download serves it. */
+async function callerSees(dealId: number, fileId: number, caller: FileCaller) {
+  const listed = (await files.listServiceDealFiles({ dealId, ...caller })).find(
+    (row) => row.id === fileId
+  );
+  const download = await files.resolveServiceDealFileDownload({ fileId, ...caller });
+  return { listed: listed?.canDownload, downloaded: download !== null };
+}
+
+/** The moderator dispute tool, as the mod endpoints call the service. */
+const DISPUTE_TOOL: FileCaller = {
+  userId: 99,
+  isModerator: true,
+  canReviewCsam: true,
+  moderatorFetch: true,
+  servableLevels: allBrowsingLevelsFlag,
+};
+
+/** What a CSAM reviewer who is no party to the deal is offered of a file, and gets. */
+const reviewerSees = (dealId: number, fileId: number, servableLevels: number) =>
+  callerSees(dealId, fileId, {
+    userId: 99,
+    isModerator: true,
+    canReviewCsam: true,
+    servableLevels,
+  });
+
+// Decided in civitai/civitai#10422.
+describe('a Final rated outside the domain', () => {
+  /** A completed R deal whose one Final (`name`) passed, its one image rated R. */
+  async function completedRatedFinal(name: 'a.png' | 'result.zip') {
+    malwareScan.on.mockResolvedValue(false);
+    const dealId = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    const fileId =
+      name === 'a.png'
+        ? await final(dealId, name, IMAGE_A)
+        : await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await verdict('Scanned', '', 4);
+    await unpack.settleEntryScans();
+    await q(
+      `UPDATE "ServiceDealFile" SET "repackedAt" = now(), "deliveryKey" = 'k/delivered',
+         "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+    await unpack.settleFinals();
+    expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "completedAt" = now(), "releaseAt" = now() WHERE id = $1`,
+      [dealId]
+    );
+    return { dealId, fileId };
+  }
+  const listed = async (dealId: number, fileId: number, servableLevels: number) =>
+    (
+      await files.listServiceDealFiles({
+        dealId,
+        userId: BUYER,
+        isModerator: false,
+        servableLevels,
+      })
+    ).find((row) => row.id === fileId);
+  const download = (fileId: number, servableLevels: number) =>
+    files.resolveServiceDealFileDownload({
+      fileId,
+      userId: BUYER,
+      isModerator: false,
+      servableLevels,
+    });
+
+  it.each(['a.png', 'result.zip'] as const)(
+    'is served, and listed downloadable, only where its rating may be shown (%s)',
+    async (name) => {
+      const { dealId, fileId } = await completedRatedFinal(name);
+      expect(await download(fileId, 31)).not.toBeNull();
+      expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: true });
+      expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+      expect(await download(fileId, 3)).toBeNull();
+      expect(await listed(dealId, fileId, 3)).toMatchObject({
+        canDownload: false,
+        downloadOffDomain: true,
+        fileName: name,
+      });
+    }
+  );
+
+  it('a file with no rated image is still refused while an image in it is held', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = NULL`);
+    await q(`UPDATE "Image" SET minor = true`);
+    expect(await download(fileId, 31)).toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
+    expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+  });
+
+  it('gives a seller who moderates their own original of a held file, never its delivery copy', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "Image" SET minor = true`);
+    const asSeller = (delivered: boolean) =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: SELLER,
+        isModerator: true,
+        delivered,
+        servableLevels: 31,
+      });
+    expect(await asSeller(false)).toMatchObject({ key: (await fileRow(fileId)).s3Key });
+    expect(await asSeller(true)).toBeNull();
+    // The list answers for the original.
+    const [listedFile] = (
+      await files.listServiceDealFiles({
+        dealId,
+        userId: SELLER,
+        isModerator: true,
+        servableLevels: 31,
+      })
+    ).filter((row) => row.id === fileId);
+    expect(listedFile).toMatchObject({ canDownload: true });
+  });
+
+  describe('once an image in it is gone', () => {
+    /** What the seller, the buyer and the moderator dispute tool are offered of the file, and get. */
+    const everyoneSees = async (dealId: number, fileId: number) => ({
+      seller: await callerSees(dealId, fileId, {
+        userId: SELLER,
+        isModerator: false,
+        servableLevels: 31,
+      }),
+      buyer: await callerSees(dealId, fileId, {
+        userId: BUYER,
+        isModerator: false,
+        servableLevels: 31,
+      }),
+      disputeTool: await callerSees(dealId, fileId, DISPUTE_TOOL),
+    });
+    const refused = { listed: false, downloaded: false };
+    const served = { listed: true, downloaded: true };
+
+    it('refuses everyone a file whose image was blocked as CSAM and then deleted', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`UPDATE "Image" SET "blockedFor" = 'CSAM'`);
+      await q(`DELETE FROM "Image"`);
+      expect(await everyoneSees(dealId, fileId)).toEqual({
+        seller: refused,
+        buyer: refused,
+        disputeTool: refused,
+      });
+    });
+
+    const finalsClear = async (dealId: number) => {
+      const sql = Prisma.sql`SELECT ${escrow.dealFinalsClear(
+        Prisma.sql`d`
+      )} AS clear FROM "ServiceDeal" d WHERE d.id = ${dealId}::int`;
+      return (await q<{ clear: boolean }>(sql.text, sql.values as unknown[]))[0].clear;
+    };
+    const marker = async (fileId: number) =>
+      (
+        await q<{ copyDeleteStartedAt: Date | null }>(
+          `SELECT "copyDeleteStartedAt" FROM "ServiceDealFileEntry" WHERE "fileId" = $1`,
+          [fileId]
+        )
+      )[0].copyDeleteStartedAt;
+
+    it('settles our own copy delete that stopped before its clear on the next run, and the finals clear again', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      expect(await finalsClear(dealId)).toBe(true);
+      images.deleteImages.mockImplementationOnce(async (ids: number[]) => {
+        await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
+        throw new Error('stopped after the delete');
+      });
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await marker(fileId)).not.toBeNull();
+      expect(await finalsClear(dealId)).toBe(false);
+      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(refused);
+
+      expect(await unpack.deleteEntryScanCopies()).toBe(1);
+      expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
+      expect(await finalsClear(dealId)).toBe(true);
+      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(served);
+    });
+
+    it('keeps a copy gone without our delete pointed, so the finals stay not clear', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`DELETE FROM "Image"`);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await marker(fileId)).toBeNull();
+      expect(await finalsClear(dealId)).toBe(false);
+    });
+
+    it('keeps a copy kept for its case pointed and unmarked, so a later outside delete stays refused', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      images.deleteImages.mockResolvedValue([]);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await marker(fileId)).toBeNull();
+      expect(await finalsClear(dealId)).toBe(true);
+      await q(`DELETE FROM "Image"`);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await finalsClear(dealId)).toBe(false);
+    });
+
+    it('serves a file whose passed image copy was let go', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`DELETE FROM "Image"`);
+      await q(`UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL`);
+      expect(await everyoneSees(dealId, fileId)).toEqual({
+        seller: served,
+        buyer: served,
+        disputeTool: served,
+      });
+    });
+
+    it.each([
+      ['refuses', 'An image in this file was rejected when it was checked.', false],
+      ['still serves', SERVICE_FINAL_OVER_LEVEL_REASON, true],
+    ])(
+      '%s the seller a file whose image entry failed with: %s',
+      async (_n, failReason, sellerServed) => {
+        const { dealId, fileId } = await completedRatedFinal('result.zip');
+        await q(`DELETE FROM "Image"`);
+        await q(
+          `UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanStatus" = 'Failed', "failReason" = $1`,
+          [failReason]
+        );
+        expect((await everyoneSees(dealId, fileId)).seller).toEqual(
+          sellerServed ? served : refused
+        );
+      }
+    );
+  });
+
+  it('is not refused because its owner is named on a CSAM report, only for its own flag', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "Image" SET "userId" = $1`, [SELLER]);
+    await q(`INSERT INTO "CsamReport" ("userId", images) VALUES ($1, '[]')`, [SELLER]);
+    expect(await download(fileId, 31)).not.toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: true });
+    await q(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    expect(await download(fileId, 31)).toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
+  });
+
+  it.each([
+    ['an image in it is held', async () => (await q(`UPDATE "Image" SET minor = true`), 31)],
+    ['this host may not show its rating', async () => 3],
+    [
+      'it still sits at the key its uploader holds',
+      async () => (
+        await q(`UPDATE "ServiceDealFile" SET "s3Key" = 'service-deals/uploads/1/0/f'`), 31
+      ),
+    ],
+  ])(
+    'once removed, is refused to a CSAM reviewer, listed and downloaded alike, when %s',
+    async (_n, refuse) => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+      expect(await reviewerSees(dealId, fileId, 31)).toEqual({ listed: true, downloaded: true });
+      expect(await reviewerSees(dealId, fileId, await refuse())).toEqual({
+        listed: false,
+        downloaded: false,
+      });
+    }
+  );
+
+  it('rated where no domain may show it, is refused with no other domain offered', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    expect(await listed(dealId, fileId, 3)).toMatchObject({ downloadOffDomain: true });
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = 32`);
+    expect(await download(fileId, 31)).toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
+    expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+  });
+
+  it('a file with no rated image is served on any domain', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = NULL`);
+    expect(await download(fileId, 3)).not.toBeNull();
+    expect(await listed(dealId, fileId, 3)).toMatchObject({ canDownload: true });
   });
 });
 
@@ -2161,6 +2825,168 @@ describe('the finals malware scan', () => {
       ['an unknown workflow status', workflow('somethingNew', [CLEAN, NOT_PICKLE]), 'Running'],
     ])('%s reads as %s', (_name, wf, expected) => {
       expect(scan.readFinalScan(wf)).toBe(expected);
+    });
+  });
+
+  describe('a pickle parse error', () => {
+    const pickleParseError = {
+      $type: 'modelPickleScan',
+      output: { status: 'parseError', dangerousImportsFound: false },
+    };
+    const clam = (status: string, extra = {}) => ({
+      $type: 'modelClamScan',
+      output: { status, infected: false, scannedFileCount: 1, ...extra },
+    });
+
+    it.each([
+      [
+        'a video with a clean virus scan',
+        { video: true },
+        workflow('succeeded', [CLEAN, pickleParseError]),
+        'Passed',
+      ],
+      [
+        'a video the virus scan could not read in full',
+        { video: true },
+        workflow('succeeded', [clam('limitsExceeded'), pickleParseError]),
+        'Failed',
+      ],
+      [
+        'a video the virus scan found infected',
+        { video: true },
+        workflow('succeeded', [EICAR, pickleParseError]),
+        'Failed',
+      ],
+      [
+        'a video the virus scan called clean without reading a file',
+        { video: true },
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean', infected: false } },
+          pickleParseError,
+        ]),
+        'Retry',
+      ],
+      [
+        'a video the virus scan errored on',
+        { video: true },
+        workflow('succeeded', [CLAM_ERROR, pickleParseError]),
+        'Retry',
+      ],
+      [
+        'a video with dangerous imports',
+        { video: true },
+        workflow('succeeded', [
+          CLEAN,
+          {
+            $type: 'modelPickleScan',
+            output: { status: 'parseError', dangerousImportsFound: true },
+          },
+        ]),
+        'Failed',
+      ],
+      [
+        'a file not accepted as video',
+        {},
+        workflow('succeeded', [CLEAN, pickleParseError]),
+        'Failed',
+      ],
+    ])('reads %s', (_name, options, wf, expected) => {
+      expect(scan.readFinalScan(wf, options)).toBe(expected);
+    });
+
+    const videoClip = mp4Clip({ seconds: 10 });
+    const probeTen = async () => ({ width: 640, height: 360, duration: 10.1 });
+    const serveVideo = () =>
+      s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) =>
+        command.input.Range
+          ? body(videoClip.subarray(0, 16))
+          : {
+              Body: {
+                transformToByteArray: async () => videoClip,
+                transformToWebStream: () => ({ streamOf: command.input.Key }),
+              },
+              ETag: '"v1"',
+              VersionId: 'ver1',
+            }
+      );
+    const scannedEtagOf = async (fileId: number) =>
+      (
+        await q<{ scannedEtag: string | null }>(
+          `SELECT "scannedEtag" FROM "ServiceDealFile" WHERE id = $1`,
+          [fileId]
+        )
+      )[0].scannedEtag;
+    async function deliveredVideo(fileName = 'clip.mp4') {
+      const dealId = await accepted();
+      const fileId = await final(dealId, fileName, videoClip);
+      serveVideo();
+      await unpack.unpackFinals({ probeVideo: probeTen });
+      await files.deliverServiceDeal({ dealId, userId: SELLER });
+      await verdict('Scanned');
+      return { dealId, fileId };
+    }
+
+    it('passes a video unpack accepted, which the pickle scan could not read', async () => {
+      const { fileId } = await deliveredVideo();
+      expect(await scannedEtagOf(fileId)).toBe('"v1"');
+      workflows.set('wf-1', workflow('succeeded', [CLEAN, pickleParseError]));
+      expect(await run()).toMatchObject({ scansPassed: 1, finalsPassed: 1 });
+      expect(await fileRow(fileId)).toMatchObject({
+        scanStatus: 'Passed',
+        malwareScanStatus: 'Passed',
+      });
+    });
+
+    it('does not pass a video whose pickle scan found dangerous imports, even with a clean virus scan', async () => {
+      const { fileId } = await deliveredVideo();
+      workflows.set(
+        'wf-1',
+        workflow('succeeded', [
+          CLEAN,
+          {
+            $type: 'modelPickleScan',
+            output: { status: 'parseError', dangerousImportsFound: true },
+          },
+        ])
+      );
+      expect(await run()).toMatchObject({ scansFailed: 1, finalsPassed: 0 });
+      expect((await fileRow(fileId)).malwareScanStatus).toBe('Failed');
+    });
+
+    it('fails a file that only has a video name', async () => {
+      const { fileId } = await deliveredVideo();
+      // The name is the same; what unpack recorded about the bytes is not.
+      await q(`UPDATE "ServiceDealFile" SET "scannedEtag" = NULL WHERE id = $1`, [fileId]);
+      workflows.set('wf-1', workflow('succeeded', [CLEAN, pickleParseError]));
+      expect(await run()).toMatchObject({ scansPassed: 0, scansFailed: 1 });
+      expect((await fileRow(fileId)).malwareScanStatus).toBe('Failed');
+    });
+
+    it('fails an image whose pickle scan could not read it', async () => {
+      const { fileId } = await delivered();
+      expect(await scannedEtagOf(fileId)).toBeNull();
+      workflows.set('wf-1', workflow('succeeded', [CLEAN, pickleParseError]));
+      expect(await run()).toMatchObject({ scansPassed: 0, scansFailed: 1 });
+    });
+
+    it('leaves scannedEtag empty for a refused .mp4 name, an image and a zip: only unpackVideo sets it', async () => {
+      const dealId = await accepted();
+      const notVideo = await final(dealId, 'clip.mp4', IMAGE_A);
+      const image = await final(dealId, 'a.png', IMAGE_A);
+      const zip = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
+        const data = bucket.objects.get(command.input.Key) ?? Buffer.alloc(0);
+        return {
+          Body: {
+            transformToByteArray: async () => (command.input.Range ? data.subarray(0, 16) : data),
+            transformToWebStream: () => ({ streamOf: command.input.Key }),
+          },
+          ETag: '"v1"',
+        };
+      });
+      while (await unpack.unpackFinals({ probeVideo: probeTen }));
+      expect(await fileRow(notVideo)).toMatchObject({ scanStatus: 'Failed' });
+      for (const id of [notVideo, image, zip]) expect(await scannedEtagOf(id)).toBeNull();
     });
   });
 
@@ -2565,6 +3391,42 @@ describe('a video Final', () => {
     probe.video.mockResolvedValue({ width: 640, height: 360, duration: 10.1 });
   });
 
+  it('never stamped and rated off this domain, is refused, with no link to the other domain', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    const listed = async () =>
+      (
+        await files.listServiceDealFiles({
+          dealId,
+          userId: SELLER,
+          isModerator: false,
+          servableLevels: 3,
+        })
+      ).find((row) => row.id === fileId);
+    expect(await listed()).toMatchObject({ canDownload: false, downloadOffDomain: true });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scannedEtag" = NULL, "scannedVersionId" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    expect(await listed()).toMatchObject({ canDownload: false });
+    expect((await listed())?.downloadOffDomain).toBeUndefined();
+  });
+
+  it('once removed and never stamped, is refused to a CSAM reviewer, listed and downloaded alike', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    expect(await reviewerSees(dealId, fileId, 31)).toEqual({ listed: true, downloaded: true });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scannedEtag" = NULL, "scannedVersionId" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    expect(await reviewerSees(dealId, fileId, 31)).toEqual({ listed: false, downloaded: false });
+  });
+
   it('scans the whole video, as the version it will serve', async () => {
     const { fileId } = await videoFinal(4);
     expect(s3.uploadImageBufferToStore.mock.calls[0][0].equals(CLIP)).toBe(true);
@@ -2615,6 +3477,31 @@ describe('a video Final', () => {
     s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
     expect(await download(fileId, BUYER, 3)).toBeNull();
     expect(await download(fileId, 99)).toBeNull();
+  });
+
+  it('is listed as the download would serve it: off the domain, and unstamped', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    const listed = async (servableLevels: number) =>
+      (
+        await files.listServiceDealFiles({
+          dealId,
+          userId: BUYER,
+          isModerator: false,
+          servableLevels,
+        })
+      ).find((row) => row.id === fileId);
+    expect(await listed(31)).toMatchObject({ canDownload: true });
+    expect(await download(fileId, BUYER, 3)).toBeNull();
+    expect(await listed(3)).toMatchObject({ canDownload: false, downloadOffDomain: true });
+    await q(`UPDATE "ServiceDealFile" SET "scannedEtag" = NULL WHERE id = $1`, [fileId]);
+    expect(await download(fileId, BUYER)).toBeNull();
+    const unstamped = await listed(31);
+    expect(unstamped).toMatchObject({ canDownload: false });
+    expect(unstamped?.downloadOffDomain).toBeUndefined();
   });
 
   it('holds a moderator on the download route to the domain, and unscanned bytes to dispute review', async () => {
@@ -2733,6 +3620,34 @@ describe('a video Final', () => {
       });
     expect(await asModerator(false)).toBeNull();
     expect(await asModerator(true)).toMatchObject({ versionId: 'ver1' });
+  });
+
+  describe("the dispute tool's list offers a download exactly when its download serves one", () => {
+    const remove = (fileId: number) =>
+      q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+
+    it.each([false, true])('a video never stamped, removed: %s', async (removed) => {
+      const { dealId, fileId } = await videoFinal(4);
+      s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+      if (removed) await remove(fileId);
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: true,
+        downloaded: true,
+      });
+    });
+
+    it.each([false, true])('a Final rated Blocked, removed: %s', async (removed) => {
+      const { dealId, fileId } = await videoFinal(4);
+      await judged(fileId, 4);
+      await completed(dealId);
+      s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+      await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = 32 WHERE "fileId" = $1`, [fileId]);
+      if (removed) await remove(fileId);
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: true,
+        downloaded: true,
+      });
+    });
   });
 
   it.each([

@@ -121,10 +121,10 @@ describe('serving tag review items', () => {
     ['flagged as a real person', `UPDATE "Image" SET poi = true`],
     ['flagged for CSAM', `UPDATE "Image" SET "needsReview" = 'csam'`],
     ['listed on a CSAM report', `INSERT INTO "CsamReport" (images) VALUES ('[100]')`],
-    ['owned by a user under a legal hold', `INSERT INTO "EvidenceHeldUser" VALUES (50)`],
+    ['owned by a user named on a CSAM report', `INSERT INTO "CsamReport" ("userId") VALUES (50)`],
     [
       'under an open report',
-      `INSERT INTO "Report" (id, status) VALUES (1, 'Pending'); INSERT INTO "ImageReport" VALUES (100, 1)`,
+      `INSERT INTO "Report" (id, status) VALUES (1, 'Pending'); INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (100, 1)`,
     ],
   ])(
     'pulls an item whose image becomes %s: not served, vote refused, swept unplayable',

@@ -11,7 +11,7 @@ import {
 } from '~/server/services/apps/doc-store';
 import type { DocCollection, DocStoreContext } from '~/server/services/apps/doc-store.types';
 import { createPgliteHarness, type Harness } from './doc-store.harness';
-import { BOARD, ctx, freshApp, NS_PROD, PREFS, TALLIES } from './doc-store.functional';
+import { BOARD, ctx, freshApp, NS_PROD, PREFS } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -67,7 +67,7 @@ async function stored(app: string, key: string) {
 }
 
 describe('listUnrated', () => {
-  it('lists never-rated, pending and stale-rated shared documents, oldest change first; skips rated, private, counter and hidden ones', async () => {
+  it('lists never-rated, pending and stale-rated shared documents, oldest change first; skips rated, private and hidden ones', async () => {
     const app = freshApp('RTLIST');
     const plain = ctx(app, NS_PROD, AUTHOR);
     const on = gated(plain, 31);
@@ -77,7 +77,6 @@ describe('listUnrated', () => {
     await store.put(plain, BOARD, 'stale', { t: 'rated, then edited' });
     await store.put(plain, BOARD, 'hidden', { t: 'hidden by a moderator' });
     await store.put(plain, PREFS, 'private', { theme: 'moss' });
-    await store.increment(plain, TALLIES, 'counted', 'plays', 1);
 
     for (const key of ['rated', 'stale']) {
       const [doc] = (await unrated(app)).filter((d) => d.key === key);
@@ -105,8 +104,7 @@ describe('listUnrated', () => {
       version: 1,
     });
     expect(docs[2]).toMatchObject({ key: 'stale', version: 2 });
-    // Counter-only and private collections list nothing.
-    expect(await unrated(app, TALLIES)).toEqual([]);
+    // A private collection lists nothing.
     expect(await unrated(app, PREFS)).toEqual([]);
   });
 
@@ -187,7 +185,7 @@ describe('applyRating', () => {
     expect(keysOf(await unrated(app))).toEqual(['e1', 'd1']);
   });
 
-  it('refuses a gone, hidden or counter document, and writes nothing', async () => {
+  it('refuses a gone or hidden document, and writes nothing', async () => {
     const app = freshApp('RTREFUSE');
     const plain = ctx(app, NS_PROD, AUTHOR);
     await store.put(plain, BOARD, 'h1', { t: 'x' });
@@ -214,17 +212,6 @@ describe('applyRating', () => {
         reason: 'gone',
       }
     );
-    await store.increment(plain, TALLIES, 'c1', 'plays', 1);
-    const [counter] = await h.raw(
-      `SELECT d.seq FROM appdata.doc d WHERE d.app_id = $1 AND d.coll = 'tallies' AND d.key = 'c1'`,
-      [app]
-    );
-    expect(
-      await rater.applyRating(app, NS_PROD, TALLIES.name, 'c1', {
-        seq: Number(counter.seq),
-        level: 2,
-      })
-    ).toEqual({ applied: false, reason: 'counter' });
     expect((await stored(app, 'h1')).rating_status).toBeNull();
   });
 

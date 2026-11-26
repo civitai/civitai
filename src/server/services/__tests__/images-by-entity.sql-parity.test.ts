@@ -28,9 +28,13 @@ beforeAll(() => {
   );
 });
 
-async function sqlFor(viewer: { userId?: number; isModerator?: boolean }) {
+async function sqlFor(viewer: {
+  userId?: number;
+  isModerator?: boolean;
+  seesReportListed?: boolean;
+}) {
   sent.length = 0;
-  await getImagesByEntity({ ids: [1, 2], type: 'BountyEntry', ...viewer });
+  await getImagesByEntity({ ids: [1, 2], type: 'BountyEntry', seesReportListed: false, ...viewer });
   expect(sent).toHaveLength(1);
   return { sql: sent[0].sql.replace(/\s+/g, ' ').trim(), values: sent[0].values };
 }
@@ -44,5 +48,10 @@ describe('getImagesByEntity SQL', () => {
   });
   it('for a moderator', async () => {
     expect(await sqlFor({ userId: 30, isModerator: true })).toMatchSnapshot();
+  });
+  it('for a moderator who sees report-listed images', async () => {
+    expect(
+      await sqlFor({ userId: 30, isModerator: true, seesReportListed: true })
+    ).toMatchSnapshot();
   });
 });

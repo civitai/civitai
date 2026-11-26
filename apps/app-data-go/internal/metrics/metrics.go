@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
+	"github.com/civitai/civitai/apps/app-data-go/internal/token"
 )
 
 // Sources are the `source` values of app_data_reads_total: where a read's answer came from.
@@ -27,7 +28,9 @@ var FallbackReasons = []string{
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen",
+	// A level stream whose service token was not minted (shared.CloseServiceToken*).
+	"service_token_refused", "service_token_unavailable"}
 
 // Outcomes are the `outcome` values of app_data_reads_total. `registry_only` is a read that asked for
 // the registry's answer only (api.RegistryOnlyHeader) and that the registry could not answer: REST
@@ -49,13 +52,16 @@ var OverlayKinds = []string{"record", "delete_marker"}
 var BlockOutcomes = []string{
 	exchange.BlockIssued, exchange.BlockReused, exchange.BlockRefused, exchange.BlockRemembered,
 	exchange.BlockFailed, exchange.BlockSpent, exchange.BlockFull, exchange.BlockUnverifiable,
+	exchange.BlockRateLimited,
 }
 
+// GuardOutcomes are the `outcome` values of app_data_user_exchange_guarded_total (exchange.Guard*).
+var GuardOutcomes = []string{exchange.GuardThrottled, exchange.GuardRemembered, exchange.GuardJoined}
+
 // WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the
-// write routes, WRITES-DESIGN.md "The API"; publish and unpublish are not served yet). A PATCH is
-// named by its operator ($inc increment, $mark mark, $unmark unmark); `patch` is a PATCH refused here
-// before its operator could be read (a body that is not exactly one operator).
-var WriteOps = []string{"create", "put", "delete", "mark", "unmark", "increment", "info", "patch"}
+// write routes, WRITES-DESIGN.md "The API"). The tally PATCH (increment, mark, unmark) was removed
+// with App Storage's tallies (docs/app-storage-generic-core.md, rollout step 5).
+var WriteOps = []string{"create", "put", "delete", "info"}
 
 // WriteOutcomes are the `outcome` values of app_data_writes_total. `2xx`, `4xx` and `501` are the
 // store's answer, passed on. `refused_here` is a request this service refused before forwarding it
@@ -77,6 +83,8 @@ type Metrics struct {
 	// BlockExchanges counts App Block token exchanges by outcome and refusal code; zero while the block
 	// exchange is off.
 	BlockExchanges *prometheus.CounterVec
+	// UserExchangeGuard counts hub-token exchanges not sent to the hub, by outcome (GuardOutcomes).
+	UserExchangeGuard *prometheus.CounterVec
 	// Writes counts the write routes' answers by op and outcome (WriteOps, WriteOutcomes); zero while
 	// APP_DATA_WRITES is off.
 	Writes *prometheus.CounterVec
@@ -87,6 +95,17 @@ type Metrics struct {
 	// APP_DATA_WRITES is off.
 	FloorReopens *prometheus.CounterVec
 	Overlays     *prometheus.CounterVec
+	// SignedOutReads counts signed-out viewers' shared reads by outcome (Outcomes); zero while
+	// APP_DATA_WRITES is off.
+	SignedOutReads *prometheus.CounterVec
+	// ServiceTokenFetches counts each call to the hub's token endpoint for the level streams' service
+	// token, by outcome (token.Outcomes: ok, refused, unavailable); zero without a service client.
+	ServiceTokenFetches *prometheus.CounterVec
+}
+
+// ObserveServiceTokenFetch is token.Source.OnFetch: it counts each fetch by its outcome.
+func (m *Metrics) ObserveServiceTokenFetch(err error) {
+	m.ServiceTokenFetches.WithLabelValues(token.Outcome(err)).Inc()
 }
 
 // Stats is what the session manager holds now (session.Stats), read at scrape time.
@@ -120,6 +139,10 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_block_exchanges_total",
 			Help: "App Block token exchanges at the hub, by outcome (issued, reused, refused, remembered, failed, spent, full, unverifiable) and the refusal code (local: refused here, never sent).",
 		}, []string{"outcome", "error"}),
+		UserExchangeGuard: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_user_exchange_guarded_total",
+			Help: "Hub-token exchanges not sent to the hub, by outcome (throttled: the viewer's address presented too many tokens not seen exchanged; remembered: the hub refused this token moments ago; joined: the same token's exchange was in flight, its answer shared).",
+		}, []string{"outcome"}),
 		Writes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_writes_total",
 			Help: "Write-route answers (and info), by op and outcome (2xx, 4xx, 501: the store's; refused_here; unavailable, signature: 503 not_forwarded; unknown: 504, the outcome lost).",
@@ -137,14 +160,22 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_cache_overlays_total",
 			Help: "Acknowledged writes shown over their token's stream until it shows them, by kind (record, delete_marker).",
 		}, []string{"kind"}),
+		SignedOutReads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_signed_out_reads_total",
+			Help: "Signed-out viewers' shared-collection reads, served from the level streams, by outcome.",
+		}, []string{"outcome"}),
+		ServiceTokenFetches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_service_token_fetch_total",
+			Help: "Calls to the hub's token endpoint for the level streams' service token, by outcome (ok; refused: the hub refused this client; unavailable: unreachable, a 429 or 5xx, or no token in the answer).",
+		}, []string{"outcome"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
 			return float64(pick(stats()))
 		})
 	}
-	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges,
-		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays,
+	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges, m.UserExchangeGuard,
+		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays, m.SignedOutReads, m.ServiceTokenFetches,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -173,11 +204,20 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	for _, k := range OverlayKinds {
 		m.Overlays.WithLabelValues(k)
 	}
+	for _, o := range Outcomes {
+		m.SignedOutReads.WithLabelValues(o)
+	}
 	for _, op := range WriteOps {
 		m.WriteForward.WithLabelValues(op)
 		for _, o := range WriteOutcomes {
 			m.Writes.WithLabelValues(op, o)
 		}
+	}
+	for _, o := range token.Outcomes {
+		m.ServiceTokenFetches.WithLabelValues(o)
+	}
+	for _, o := range GuardOutcomes {
+		m.UserExchangeGuard.WithLabelValues(o)
 	}
 	for _, o := range BlockOutcomes {
 		if o != exchange.BlockRefused && o != exchange.BlockRemembered {

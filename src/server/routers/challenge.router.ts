@@ -91,6 +91,8 @@ import {
 import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 
 /**
  * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
@@ -127,9 +129,12 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
+    // The feed searches the text when the semantic search fails, so it refuses the same way.
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const guard = await guardTextQuery(input, ctx);
-      if (guard === 'refuse') return { items: [], nextCursor: undefined };
+      // The feed's search fallback: the page says it was refused, never which check refused it.
+      if (guard === 'refuse') return { items: [], nextCursor: undefined, refused: true as const };
       return getInfiniteChallenges({
         ...input,
         ...guard,
@@ -199,6 +204,7 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCompletedChallengesWithWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const guard = await guardTextQuery(input, ctx);
       if (guard === 'refuse') return { items: [], nextCursor: undefined };
@@ -442,6 +448,7 @@ export const challengeRouter = router({
         ...input,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
       })
     ),
 

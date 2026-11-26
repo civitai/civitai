@@ -1,8 +1,9 @@
 import { ZodError } from 'zod';
 import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
 import {
+  CLIP_SKIP_AS_SENT,
   KOHYA_CONTINUE_KEYS as SHARED_KOHYA_CONTINUE_KEYS,
-  pickDefinedKeys,
+  copyKohyaInput,
 } from '@civitai/shared/training-kohya-replay';
 import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { buildKohyaInput } from './kohya-training';
@@ -81,6 +82,7 @@ import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
 import { MAX_RUNS } from '$lib/submit-limits';
 import { MatureRepriceError } from '$lib/mature-charge';
+import { isMatureNsfwLevel } from '$lib/nsfw-rating';
 import type { TrainingTextCheck } from '$lib/training-text';
 
 /** Captions remain raw until the engine-specific submit builder applies the trigger word. */
@@ -350,7 +352,7 @@ export async function submitTraining(
   /** The server's rating found the dataset mature: the charge stays out of Green. */
   mature = false
 ): Promise<string> {
-  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
+  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION, ...CLIP_SKIP_AS_SENT };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
   const key = run.submitKey && SUBMIT_KEY.test(run.submitKey) ? run.submitKey : undefined;
 
@@ -816,7 +818,6 @@ export interface ContinueOpts {
 
 export { MatureRepriceError };
 
-const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const PROBE_CONCURRENCY = 8;
 const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
@@ -831,6 +832,11 @@ export interface MatureCount {
   rated: number;
   /** Blob ids the caller can read that have no stored v2 rating yet (always empty without a rating). */
   unratedKeys: string[];
+  /** The stored v2 verdict by the id the caller sent, only for blobs its HEAD could read. */
+  verdicts: Record<string, boolean>;
+  /** Of the `rated` images: v2 not mature where the upload rating was mature, and the reverse. */
+  v2NotMatureUploadMature: number;
+  v2MatureUploadNotMature: number;
 }
 
 /** How many of a dataset's blobs are mature. Each blob's X-NSFW-Level header counts R and above;
@@ -847,26 +853,41 @@ async function countMatureBlobs(
   let mature = 0;
   let failed = 0;
   let rated = 0;
+  let v2NotMatureUploadMature = 0;
+  let v2MatureUploadNotMature = 0;
   const unratedKeys: string[] = [];
+  const verdicts: Record<string, boolean> = {};
   await forEachPooled(airs, PROBE_CONCURRENCY, async (air) => {
     try {
       const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
       if (!response?.ok) failed++;
+      const uploadMature = isMatureNsfwLevel(response?.headers.get('x-nsfw-level'));
       // Only for a blob this caller's HEAD could read: the cache is shared across users.
       const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
       if (v2) {
         rated++;
+        verdicts[air] = v2.mature;
         if (v2.mature) mature++;
+        if (v2.mature && !uploadMature) v2MatureUploadNotMature++;
+        if (!v2.mature && uploadMature) v2NotMatureUploadMature++;
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-      const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
-      if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
+      if (uploadMature) mature++;
     } catch {
       failed++;
     }
   });
-  return { images: airs.length, mature, failed, rated, unratedKeys };
+  return {
+    images: airs.length,
+    mature,
+    failed,
+    rated,
+    unratedKeys,
+    verdicts,
+    v2NotMatureUploadMature,
+    v2MatureUploadNotMature,
+  };
 }
 
 /** A dataset's mature count for Review, the same count the submit makes. */
@@ -1008,6 +1029,7 @@ async function buildContinuation(
     sourceWorkflowId: opts.workflowId,
     sourceEpoch: opts.fromEpoch,
     matureCount,
+    ...CLIP_SKIP_AS_SENT,
   };
   const slug = name ? slugify(name) : '';
 
@@ -1015,7 +1037,7 @@ async function buildContinuation(
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
   const continuedInput =
     input.engine === 'kohya'
-      ? continueKohyaInput(input, addEpochs, steps, continueFrom, traceMode)
+      ? continueKohyaInput(input, srcMeta, addEpochs, steps, continueFrom, traceMode)
       : {
           engine: 'ai-toolkit',
           ecosystem: input.ecosystem,
@@ -1094,6 +1116,7 @@ const KOHYA_CONTINUE_KEYS = SHARED_KOHYA_CONTINUE_KEYS satisfies readonly (keyof
 
 function continueKohyaInput(
   input: Record<string, unknown>,
+  sourceMeta: TrainingStudioMeta,
   epochs: number,
   steps: number | undefined,
   continueFrom: string,
@@ -1104,7 +1127,7 @@ function continueKohyaInput(
       'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
     );
   return {
-    ...pickDefinedKeys(input, KOHYA_CONTINUE_KEYS),
+    ...copyKohyaInput(input, KOHYA_CONTINUE_KEYS, sourceMeta),
     engine: 'kohya',
     maxTrainEpochs: epochs,
     ...(steps ? { steps } : {}),

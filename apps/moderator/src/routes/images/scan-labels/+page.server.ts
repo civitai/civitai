@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
@@ -9,6 +10,7 @@ import {
   applyCsamHolds,
   applyMajorityBlocks,
   castVote,
+  itemWithheld,
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
@@ -35,7 +37,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : parsed;
   const filters = toFilters(query);
   const userId = locals.user.id;
-  const card = await claimNext(userId, filters);
+  const card = await claimNext({ userId, csamReview: holdsCsamReview(locals.user) }, filters);
   const [counters, versions] = await Promise.all([
     getCounters(userId, filters),
     getOpenFlaggerVersions(),
@@ -98,6 +100,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     const itemId = await itemForToken(input.token, locals.user.id);
     if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });
+    if (await itemWithheld(itemId, holdsCsamReview(locals.user)))
+      return fail(409, { error: REFUSAL['not-open'] });
     const result = await castVote({
       itemId,
       userId: locals.user.id,

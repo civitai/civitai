@@ -29,6 +29,7 @@ const m = vi.hoisted(() => ({
   onCommentCreated: vi.fn(async (_: unknown) => undefined),
   getStored: vi.fn(),
   deleteComments3: vi.fn(),
+  deleteOwn: vi.fn(),
   afterDeleted: vi.fn(async (_: unknown) => undefined),
   metric: vi.fn(async (_: unknown) => undefined),
   authors: vi.fn(async (..._a: unknown[]) => (_id: number): object => ({})),
@@ -87,6 +88,7 @@ vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: m.access }
 vi.mock('~/server/services/commentv3/moderation.service', () => ({
   bulkSetCommentV3TosViolation: m.tos,
   deleteCommentsV3: m.deleteComments3,
+  deleteOwnCommentV3: m.deleteOwn,
   afterCommentsV3Deleted: m.afterDeleted,
 }));
 vi.mock('~/server/services/sticker.service', () => ({
@@ -554,6 +556,7 @@ describe('commentv3 delete', () => {
 
   it('lets only the author or a moderator delete, and settles points', async () => {
     m.deleteComments3.mockResolvedValue(removed);
+    m.deleteOwn.mockResolvedValue(removed);
     await expect(
       deleteCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
@@ -561,11 +564,13 @@ describe('commentv3 delete', () => {
 
     const tx = nextTx();
     await deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } });
-    expect(m.deleteComments3).toHaveBeenCalledWith(tx, [101]);
+    expect(m.deleteOwn).toHaveBeenCalledWith(tx, expect.objectContaining({ id: 101 }));
     expect(m.afterDeleted).toHaveBeenCalledWith(removed);
 
+    const modTx = nextTx();
     await deleteCommentV3Handler({ ctx: ctx(STRANGER, true), input: { id: 101 } });
-    expect(m.deleteComments3).toHaveBeenCalledTimes(2);
+    expect(m.deleteComments3).toHaveBeenCalledWith(modTx, [101]);
+    expect(m.deleteOwn).toHaveBeenCalledTimes(1);
   });
 
   it('answers a member deleting their comment removed for ToS as gone; a moderator may', async () => {
@@ -751,7 +756,8 @@ describe('commentv3 delete on an article', () => {
     await expect(deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })).resolves.toEqual(
       { id: 101 }
     );
-    expect(m.deleteComments3).toHaveBeenCalled();
+    // The author's own delete.
+    expect(m.deleteOwn).toHaveBeenCalled();
   });
 
   it('case 2', async () => {

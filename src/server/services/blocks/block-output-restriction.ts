@@ -23,7 +23,7 @@ import type {
  * both it still reports the output `available` with a url that does not serve the
  * real media (an image serves blurred, a video does not serve at all):
  *   - the SITE asked for it: an SFW app's submit sends `allowMatureContent: false`
- *     (`blockOutputClamp`, from the token's `maxBrowsingLevel`), and a base model that
+ *     (`outputRestrictions`, from the token's `maxBrowsingLevel`), and a base model that
  *     restricts mature output adds `nsfwLevel: 'pg13'`;
  *   - the PAYING POOL caused it: a submit that sent no `allowMatureContent` has it set
  *     at charge time from the Buzz account that paid (the orchestrator's mature-content

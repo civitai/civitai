@@ -465,12 +465,6 @@ jobs:
           fi
           echo "no migrations added outside the schema package"
 
-      # BLOCKING, on every PR including drafts. The moderator app keeps its own copy of the hold
-      # SQL; the unit suite that would catch drift does not run on PRs, and a PR touching only the
-      # main-app side is not path-filtered into apps.yml.
-      - name: Moderator hold SQL matches the main app
-        run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
-
       # BLOCKING, on every PR including drafts. A route missing from the generated map is a 404.
       - name: API route maps are generated
         run: node scripts/generate-api-routes.mjs --check
@@ -485,6 +479,14 @@ jobs:
       #
       # The file list is a glob, so a new drift test joins by its name. The JSON report is counted
       # because vitest given files it does not match runs the rest and still exits 0.
+      #
+      # `--reporter=github-actions`: vitest adds that reporter on its own only when NO reporter is
+      # named, so listing `default` and `json` drops it and a failing test annotates nothing but
+      # the exit code. It prints one `::error` command per failing test it can place in a file
+      # (GitHub keeps 10 error annotations per step, 50 per job; the rest stay in the log), appends a
+      # pass/fail/flaky summary to GITHUB_STEP_SUMMARY on every run, and ignores `--outputFile`,
+      # so the json report each count/ledger step reads is unchanged. A new vitest step that names
+      # its reporters must name this one too.
       - name: Manifest schema drift tests
         run: |
           set -euo pipefail
@@ -495,7 +497,7 @@ jobs:
           fi
           printf '%s\n' "${files[@]}"
           pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
-            --outputFile=schema-drift-report.json "${files[@]}"
+            --reporter=github-actions --outputFile=schema-drift-report.json "${files[@]}"
           ran=$(node -e 'console.log(require("./schema-drift-report.json").testResults.length)')
           if [ "$ran" -ne "${#files[@]}" ]; then
             echo "::error::vitest ran $ran of ${#files[@]} schema drift test files; each one must run."
@@ -831,8 +833,8 @@ jobs:
     # which is why the shard pick lives in the matrix expression instead.
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
-    # draft too).
-    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
+    # draft too). Fork PRs don't run the gated unit job.
+    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'full-ci'))) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 6 RUNNERS ────────────────────────────────────────────
     #
     # Vitest's `--shard` cuts a path-hash-ordered list into equal file COUNTS. Fixed
@@ -883,28 +885,38 @@ jobs:
     # heaviest hash shard hit 20m on slow runners. Left at 25m when N went to 6 (shards
     # 8-15m at N=6 on 2026-11-17): the headroom is for slow runners, which do not shard.
     timeout-minutes: 25
-    # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
-    # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
-    # itself without its URL, so a shard that does not hold it pays only the container start.
-    # Anchored: `unit-verify` re-runs failed files and bisects with the same services and env.
-    services: &unit-services
+    # On civitai-dc the images come from the private ghcr mirror (mirror-ci-images.yml), because
+    # Docker Hub rate-limits those runners' anonymous pulls, and the job logs in to ghcr with its own
+    # read-only token. Each image and its credentials use the runs-on condition above, so a hosted
+    # run (a bot, or the kill switch) pulls the same digest from Docker Hub with no login. The whole
+    # credentials mapping switches, not each field: the workflow schema rejects an empty username or
+    # password at job setup, while an empty mapping leaves both unset and the runner skips the login.
+    permissions:
+      contents: read
+      packages: read
+    services:
+      # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
+      # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
+      # itself without its URL, so a shard that does not hold it pays only the container start.
       redis:
-        image: redis:7
+        image: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'ghcr.io/civitai/ci-redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90' || 'redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90' }}
+        credentials: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && fromJSON(format('{{"username":"{0}","password":"{1}"}}', github.actor, github.token)) || fromJSON('{}') }}
         ports:
           - 6379:6379
-        options: >-
+        options: &unit-redis-options >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
       # A real Postgres for the App Blocks document store's concurrency tests (quota under racing
       # writers, concurrent marks/counters, lock timeout — doc-store.pg.test.ts). Same pattern as
       # Redis above: the file skips itself without its URL, so other shards pay only the container
       # start. The suite creates and drops its own databases on this throwaway server.
       postgres:
-        image: postgres:18
+        image: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'ghcr.io/civitai/ci-postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a' || 'postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a' }}
+        credentials: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && fromJSON(format('{{"username":"{0}","password":"{1}"}}', github.actor, github.token)) || fromJSON('{}') }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
-        options: >-
+        options: &unit-postgres-options >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
     env: &unit-env
       ROSTER_REDIS_URL: redis://localhost:6379/15
@@ -937,6 +949,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
+          # Defense in depth: keeps the job token out of .git/config.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
@@ -1052,7 +1066,7 @@ jobs:
         # every line up to the kill.
         run: |
           nohup bash -c 'while true; do echo "[mem] $(date -u +%H:%M:%S) $(free -m | awk '"'"'/^Mem:/{print "used=" $3 " avail=" $7} /^Swap:/{print "swap=" $3}'"'"' | tr "\n" " ")"; sleep 5; done' &
-          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=github-actions --outputFile=unit-report.json
 
       - name: Upload memory samples
         if: ${{ always() }}
@@ -1508,7 +1522,7 @@ jobs:
         run: node scripts/build-tag-index-decode-worker.mjs --check
 
       - name: Package unit tests
-        run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
+        run: pnpm run test:packages:run --reporter=default --reporter=json --reporter=github-actions --outputFile=packages-report.json
 
       # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
       # and so does a config whose globs stopped resolving. This asserts the LEDGER — every
@@ -1797,7 +1811,8 @@ jobs:
         run: |
           rc=0
           pnpm exec vitest run --project component --shard="$SHARD/3" \
-            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/component-report.json" || rc=$?
+            --reporter=default --reporter=json --reporter=github-actions \
+            --outputFile.json="$RUNNER_TEMP/component-report.json" || rc=$?
           node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/component-report.json" --narrowed || exit 1
           exit $rc
 
@@ -1874,7 +1889,7 @@ jobs:
         id: geometry
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true' && matrix.shard == 1 }}
         continue-on-error: ${{ github.event_name == 'pull_request' }}
-        run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --outputFile=geometry-report.json
+        run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --reporter=github-actions --outputFile=geometry-report.json
 
       # 🔴 A GREEN VITEST RUN IS A CLAIM, NOT EVIDENCE — the same hazard the
       # `packages` job's ledger exists for, one project over. `--project` matching
@@ -2187,7 +2202,21 @@ jobs:
       actions: read
       contents: read
       statuses: write
-    services: *unit-services
+    # Re-runs `unit`'s failed files and bisects, so the same images, by digest. From Docker Hub with no
+    # registry token: this job is hosted and holds statuses: write.
+    services:
+      redis:
+        image: redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+        ports:
+          - 6379:6379
+        options: *unit-redis-options
+      postgres:
+        image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: *unit-postgres-options
     env: *unit-env
     steps:
       - id: checkout

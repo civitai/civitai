@@ -24,6 +24,7 @@ import {
   pickShadowHeaders,
   pickShadowResponseHeaders,
   readFeedGoShadowConfig,
+  type RestSampleOptions,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
   SHADOW_DEFAULT_MAX_PER_SECOND,
   SHADOW_DEFAULT_TIMEOUT_MS,
@@ -58,6 +59,8 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     probeInfiniteUrl: undefined,
     probeModelGetAllUrl: undefined,
     probeRate: 0,
+    v1ModelsCredentials: false,
+    v1ModelsQuery: false,
     ...overrides,
   };
 }
@@ -171,6 +174,10 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: undefined,
       probeModelGetAllUrl: undefined,
       probeRate: 0,
+      probeV1ImagesUrl: undefined,
+      probeV1ImagesRate: 0,
+      v1ModelsCredentials: false,
+      v1ModelsQuery: false,
     });
   });
 
@@ -192,6 +199,7 @@ describe('readFeedGoShadowConfig', () => {
         'http://feed-go.internal.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
       v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
       v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
+      siteSearchUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/search',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
@@ -200,7 +208,43 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
       probeModelGetAllUrl: 'http://feed-go.internal.test:9090/internal/probe/model.getAll',
       probeRate: 0.5,
+      probeV1ImagesUrl: 'http://feed-go.internal.test:9090/internal/probe/api/v1/images',
+      probeV1ImagesRate: 0,
+      v1ModelsCredentials: false,
+      v1ModelsQuery: false,
     });
+  });
+
+  it('reads FEED_GO_SHADOW_V1_MODELS_CREDENTIALS as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['yes', false],
+      ['true', true],
+      [' TRUE ', true],
+      ['1', true],
+    ] as const) {
+      expect(
+        readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_CREDENTIALS: value }).v1ModelsCredentials
+      ).toBe(want);
+    }
+  });
+
+  it('reads FEED_GO_SHADOW_V1_MODELS_QUERY as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['on', false],
+      ['true', true],
+      [' True ', true],
+      ['1', true],
+    ] as const) {
+      expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_QUERY: value }).v1ModelsQuery).toBe(
+        want
+      );
+    }
   });
 
   it('rejects a non-http URL and clamps out-of-range numbers', () => {
@@ -457,6 +501,29 @@ describe('createFeedGoShadow — sampling decision', () => {
       'a multi-procedure path',
       {},
       request({ query: { trpc: 'image.getImagesAsPostsInfinite,user.getCreator', input: INPUT } }),
+    ],
+    // feed-go's serve-side parity replay of a request it served (feed-go-parity-replay.ts), on each
+    // mirrored procedure with its flag on: feed-go compares it itself.
+    [
+      'a feed-go parity replay',
+      {},
+      request({ headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' } }),
+    ],
+    [
+      'a feed-go parity replay of image.getInfinite',
+      { infinite: true },
+      request({
+        headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' },
+        query: { trpc: 'image.getInfinite', input: INPUT },
+      }),
+    ],
+    [
+      'a feed-go parity replay of model.getAll',
+      { models: true },
+      request({
+        headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' },
+        query: { trpc: 'model.getAll', input: INPUT },
+      }),
     ],
   ])('does not sample: %s', async (_name, opts, req) => {
     const h = harness(opts as Parameters<typeof harness>[0]);
@@ -951,9 +1018,10 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     h: ReturnType<typeof harness>,
     endpoint: 'v1-models' | 'v1-models-id',
     req: ReturnType<typeof restRequest>,
-    { status = 200, body = { items: [], metadata: {} } as unknown } = {}
+    { status = 200, body = { items: [], metadata: {} } as unknown } = {},
+    opts?: RestSampleOptions
   ) {
-    const sample = h.shadow.beginRest(endpoint, req);
+    const sample = h.shadow.beginRest(endpoint, req, opts);
     if (sample) {
       if (status === 200) h.shadow.captureRest(sample, body);
       h.shadow.finish(sample, status);
@@ -1029,6 +1097,30 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
   });
 
+  it('a list text query is sampled only with FEED_GO_SHADOW_V1_MODELS_QUERY; an empty one always', () => {
+    const text = (q: string | string[]) =>
+      modelsRequest(`/api/v1/models?query=${encodeURIComponent(String(q))}`, {
+        query: { query: q },
+      });
+    const off = harness();
+    expect(off.shadow.beginRest('v1-models', text('cat'))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models', text(' '))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models', text(['', '']))).toBeUndefined();
+    // The empty query is the database path: sampled as before.
+    expect(off.shadow.beginRest('v1-models', text(''))).toBeDefined();
+    // `[id]` has no text search: a `query` key there changes nothing.
+    expect(
+      off.shadow.beginRest(
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { query: { query: 'x' } })
+      )
+    ).toBeDefined();
+    const on = harness({ config: { v1ModelsQuery: true } });
+    const sample = on.shadow.beginRest('v1-models', text('cat'));
+    expect(sample).toBeDefined();
+    expect(sample?.input).toBe('query=cat');
+  });
+
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {
     const off = harness({ v1Models: false });
     expect(off.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))).toBeUndefined();
@@ -1062,6 +1154,110 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       expect(h.endpoints).toEqual([endpoint]);
     }
   );
+
+  describe('an API credential, with FEED_GO_SHADOW_V1_MODELS_CREDENTIALS', () => {
+    const KEY = 'k-live-secret-0123';
+    const DESCRIBED = 'key:described';
+    const keyed = (url: string, headers: Record<string, string> = {}) =>
+      modelsRequest(url, {
+        headers: { host: 'civitai.com', authorization: `Bearer ${KEY}`, ...headers },
+      });
+
+    it.each(['v1-models', 'v1-models-id'] as const)(
+      'off (the default): %s is counted skipped_credential and never sent, as before',
+      async (endpoint) => {
+        const h = harness();
+        expect(
+          serveModels(h, endpoint, keyed('/api/v1/models/1'), {}, { credential: () => DESCRIBED })
+        ).toBeUndefined();
+        await h.flush();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        expect(h.outcomes).toEqual(['skipped_credential']);
+      }
+    );
+
+    it('on: [id] is sent with the description in place of the key', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample = serveModels(
+        h,
+        'v1-models-id',
+        keyed('/api/v1/models/1'),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      expect(sample).toBeDefined();
+      await h.flush();
+      expect(h.outcomes).toEqual(['sent']);
+      const [url, init] = h.fetchMock.mock.calls[0];
+      expect(url).toBe(V1_MODEL_ID_URL);
+      const body = init.body as string;
+      expect(JSON.parse(body).headers).toEqual({
+        host: 'civitai.com',
+        authorization: 'present',
+        'x-feed-go-credential': DESCRIBED,
+      });
+      expect(body).not.toContain(KEY);
+    });
+
+    it.each([
+      [
+        'the list (its credentials always fall back in feed-go)',
+        'v1-models',
+        keyed('/api/v1/models'),
+      ],
+      [
+        'a ?token= on [id] (the query string carries it)',
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1?token=KEY', { query: { token: 'KEY' } }),
+      ],
+      ['GET /api/v1/images', 'v1-images', keyed('/api/v1/images')],
+    ] as const)('on: %s is still skipped_credential', async (_name, endpoint, req) => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample =
+        endpoint === 'v1-images'
+          ? h.shadow.beginV1Images(req)
+          : h.shadow.beginRest(endpoint, req, { credential: () => DESCRIBED });
+      expect(sample).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it('on: no description, an empty one or a throwing one is skipped_credential', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      for (const credential of [
+        undefined,
+        () => undefined,
+        () => {
+          throw new Error('x');
+        },
+      ]) {
+        expect(
+          h.shadow.beginRest('v1-models-id', keyed('/api/v1/models/1'), { credential })
+        ).toBeUndefined();
+      }
+      await h.flush();
+      expect(h.outcomes).toEqual([
+        'skipped_credential',
+        'skipped_credential',
+        'skipped_credential',
+      ]);
+    });
+
+    it('on: a request with no credential carries no description', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      serveModels(
+        h,
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { headers: { host: 'civitai.com' } }),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      await h.flush();
+      const [, init] = h.fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body as string).headers).toEqual({ host: 'civitai.com' });
+    });
+  });
 
   it('each model route has its own per-second bucket', async () => {
     const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
@@ -1562,5 +1758,107 @@ describe('createFeedGoShadow — REST response headers', () => {
     const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
     expect(body).not.toHaveProperty('responseHeaders');
     expect(body).not.toHaveProperty('responseHeaderSet');
+  });
+});
+
+describe('createFeedGoShadow — POST /api/search/*', () => {
+  const SEARCH_URL = 'http://feed-go.test:9090/internal/shadow/api/search';
+
+  function searchHarness(enabled = true) {
+    const outcomes: string[] = [];
+    const queued: Array<() => void> = [];
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+      async () => new Response(null, { status: 202 })
+    );
+    const shadow = createFeedGoShadow({
+      config: config({ siteSearchUrl: SEARCH_URL }),
+      enabled: () => true,
+      enabledSiteSearch: () => enabled,
+      random: () => 0,
+      fetch: fetchMock as unknown as typeof fetch,
+      record: (o) => void outcomes.push(o),
+      recordEncode: () => undefined,
+      now: () => 0,
+      schedule: (fn) => void queued.push(fn),
+    });
+    const flush = async () => {
+      while (queued.length) queued.shift()!();
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    };
+    return { shadow, outcomes, fetchMock, flush };
+  }
+
+  const searchRequest = (headers: Record<string, string> = {}) => ({
+    method: 'POST',
+    url: '/api/search/indexes/models_v9/search?x=1',
+    headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t; _ga=1', ...headers },
+    query: { path: ['indexes', 'models_v9', 'search'] },
+    body: { q: 'cat', limit: 2 },
+  });
+
+  it('is off without its flag, and never mirrors a GET or a credentialed request', () => {
+    expect(searchHarness(false).shadow.beginSiteSearch(searchRequest())).toBeUndefined();
+    const h = searchHarness();
+    expect(h.shadow.beginSiteSearch({ ...searchRequest(), method: 'GET' })).toBeUndefined();
+    expect(
+      h.shadow.beginSiteSearch(searchRequest({ authorization: 'Bearer key' }))
+    ).toBeUndefined();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+  });
+
+  // The sample carries the body as JSON, the path without the query, the session cookie only; the
+  // backend's answer and the call spliced in as JSON, and Node's answer as `node.body`.
+  it('posts the body, the call, the backend answer and the answer Node wrote', async () => {
+    const h = searchHarness();
+    const sample = h.shadow.beginSiteSearch(searchRequest())!;
+    expect(sample.endpoint).toBe('site-search');
+    const backend = Buffer.from('{"hits":[{"id":1,"name":"R","sfwName":"S"}]}');
+    h.shadow.captureSiteSearch(sample, {
+      path: '/indexes/models_v9/search',
+      request: '{"q":"cat","limit":2,"filter":["poi != true"]}',
+      response: backend,
+      body: { hits: [{ id: 1, name: 'S' }] },
+    });
+    h.shadow.finish(sample, 200, { getHeaders: () => ({ 'cache-control': 'private, no-store' }) });
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(SEARCH_URL);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: '{"q":"cat","limit":2}',
+      path: '/api/search/indexes/models_v9/search',
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      upstream: { hits: [{ id: 1, name: 'R', sfwName: 'S' }] },
+      node: {
+        upstream: {
+          path: '/indexes/models_v9/search',
+          body: { q: 'cat', limit: 2, filter: ['poi != true'] },
+        },
+        body: { hits: [{ id: 1, name: 'S' }] },
+      },
+      responseHeaders: { 'cache-control': 'private, no-store' },
+      responseHeaderSet: 'rest',
+    });
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it("a passthrough answer is mirrored as Node's bytes", async () => {
+    const h = searchHarness();
+    const sample = h.shadow.beginSiteSearch(searchRequest())!;
+    const raw = Buffer.from('{"hits":[],"query":"cat"}');
+    h.shadow.captureSiteSearch(sample, { path: '/p', request: '{}', response: raw, raw });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.node.body).toEqual({ hits: [], query: 'cat' });
+  });
+
+  it('a non-200 or an uncaptured answer is not sent', async () => {
+    const h = searchHarness();
+    h.shadow.finish(h.shadow.beginSiteSearch(searchRequest())!, 400);
+    h.shadow.finish(h.shadow.beginSiteSearch(searchRequest())!, 200);
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status', 'skipped_no_capture']);
   });
 });

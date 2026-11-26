@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { reviewWithShadow } from './review-shadow';
+import { reviewWithShadow, shadowFor, shadowSendable } from './review-shadow';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 
 const { logToAxiom } = loggingMock;
 
@@ -32,7 +34,7 @@ describe('reviewWithShadow', () => {
     });
 
     expect(result.summary).toBe('primary');
-    expect(run).toHaveBeenCalledWith('civitai/qwen3.8');
+    expect(run).toHaveBeenCalledWith('civitai/qwen3.8', undefined);
     const event = await loggedEvent();
     expect(event).toMatchObject({
       type: 'daily-challenge-review-shadow',
@@ -85,4 +87,83 @@ describe('reviewWithShadow', () => {
       expect(logToAxiom).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('reviewWithShadow provider', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("passes the shadow's provider pin to the shadow run only", async () => {
+    const provider = {
+      order: ['wafer/us'],
+      allowFallbacks: false,
+      dataCollection: 'deny' as const,
+    };
+    const run = vi.fn(async (model?: string) =>
+      model ? review('shadow', model) : review('primary')
+    );
+
+    await reviewWithShadow({ run, shadow: { model: 'm', sampleRate: 1, provider }, context });
+    await loggedEvent();
+
+    expect(run).toHaveBeenCalledWith(undefined);
+    expect(run).toHaveBeenCalledWith('m', provider);
+  });
+});
+
+// The send rules are in docs/features/challenge-platform.md §5, Judge-model shadow.
+describe('shadowSendable', () => {
+  const sendable = {
+    source: ChallengeSource.System,
+    allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13,
+    entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null, needsReview: null },
+  };
+
+  it('sends a scanned SFW entry of an SFW System daily', () => {
+    expect(shadowSendable(sendable)).toBe(true);
+  });
+
+  // Source, challenge level, scan, hold and mature entries are covered through the job in
+  // daily-challenge-processing.banned-entrants.pglite.test.ts; these are the rows it cannot reach.
+  it.each([
+    ['an entry with no scan state', { ...sendable, entry: { nsfwLevel: NsfwLevel.PG } }],
+    [
+      'an entry with no block state',
+      {
+        ...sendable,
+        entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', needsReview: null },
+      },
+    ],
+    [
+      'an entry with no review state',
+      { ...sendable, entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null } },
+    ],
+    ['a blocked entry', { ...sendable, entry: { ...sendable.entry, blockedFor: 'tos' } }],
+    ['an unrated entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: 0 } }],
+  ])('never sends %s', (_, input) => {
+    expect(shadowSendable(input)).toBe(false);
+  });
+});
+
+describe('shadowFor', () => {
+  const input = {
+    source: ChallengeSource.System,
+    allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13,
+    entry: { nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned', blockedFor: null, needsReview: null },
+  };
+  const deny = { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' as const };
+
+  it('runs a pinned shadow that denies data collection on a sendable entry', () => {
+    const shadow = { model: 'm', sampleRate: 1, provider: deny };
+    expect(shadowFor(shadow, input)).toBe(shadow);
+  });
+
+  // No pin, and an unsendable entry, are covered through the job in the banned-entrants PGlite suite.
+  it('never runs with a pin that allows data collection', () => {
+    const shadow = {
+      model: 'm',
+      sampleRate: 1,
+      provider: { ...deny, dataCollection: 'allow' as const },
+    };
+    expect(shadowFor(shadow, input)).toBeNull();
+  });
 });

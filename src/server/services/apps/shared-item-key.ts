@@ -9,9 +9,9 @@
 // declares none — or an environment without a document store — resolves from the legacy store,
 // exactly as before the document store existed.
 //
-// Any other shared collection never holds an item. A `write: "none"` one exists only for marks
-// and counters, which an app commonly keys by the item's own key (e.g. per-item downvotes); an
-// owner-written one has no user author. Neither moves an app nor takes part in a lookup, so such
+// Any other shared collection never holds an item. A `write: "none"` one existed only for marks
+// and counters (removed; it is read-only now), which an app commonly keyed by the item's own key
+// (e.g. per-item downvotes); an owner-written one has no user author. Neither moves an app nor takes part in a lookup, so such
 // a document can neither make a key ambiguous nor answer for an item.
 //
 // Accepted trade-off: between a version that declares shared collections going live and the

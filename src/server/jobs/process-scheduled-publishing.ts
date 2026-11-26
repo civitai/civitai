@@ -30,7 +30,6 @@ import { markComicProjectsChapterPublished } from '~/server/services/comics/chap
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
-import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 
 type ScheduledEntity = {
   id: number;
@@ -42,9 +41,6 @@ type ScheduledEntity = {
 // Blast-radius guard on the reward sweep: any bulk write that stamps "publishedAt"
 // across a large batch would otherwise be reward-applied row by row in one run.
 const REWARD_SWEEP_LIMIT = 5000;
-
-// The due selects skip a model a content wipe kept as the go-live statements do, or its side effects
-// (cache busts, index updates) fire again every run on a model that never goes live.
 
 // Backstop for when the scan webhook did not unpublish a failed-scan version first.
 const noFailedScanFileSql = (versionId: string) => Prisma.sql`
@@ -62,7 +58,6 @@ export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
   WHERE status = 'Scheduled'
     AND "publishedAt" <= ${now}
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('meta')}
 `;
 
 /** Scheduled versions due by `now` that have a file, with their early access. */
@@ -88,7 +83,6 @@ export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
   WHERE mv.status = 'Scheduled'
     AND mv."publishedAt" <= ${now}
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('m.meta')}
     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf."modelVersionId" = mv.id)
     AND ${noFailedScanFileSql('mv.id')}
 `;
@@ -103,7 +97,6 @@ export const scheduledPostsDueSql = (now: Date) => Prisma.sql`
     AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
     AND m."userId" = p."userId"
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('m.meta')}
     AND ${noFailedScanFileSql('mv.id')}
 `;
 
@@ -116,7 +109,6 @@ export const lastVersionAtSql = (modelIds: number[]) => Prisma.sql`
   SET "lastVersionAt" = date_trunc('milliseconds', NOW())
   WHERE id IN (${Prisma.join(modelIds)})
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('meta')}
 `;
 
 /**
@@ -127,6 +119,7 @@ export const scheduledPostsGoLiveSql = (
   locked: { postId: number; versionId: number }[],
   now: Date
 ) => Prisma.sql`
+  WITH live AS (
   UPDATE "Post" p
   SET
     "publishedAt" = CASE
@@ -145,14 +138,16 @@ export const scheduledPostsGoLiveSql = (
     AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
-    AND ${notRemovedWithOwnerSql('m.meta')}
     AND ${noFailedScanFileSql('mv.id')}
-  RETURNING p.id, p."userId"
+  RETURNING p.id, p."userId", p."publishedAt"
+  )
+  -- A post the publish guard kept unpublished (trg_post_pending_delete_keep_unpublished) did not go live.
+  SELECT id, "userId" FROM live WHERE "publishedAt" IS NOT NULL
 `;
 
 /**
- * Scheduled versions due by `now` go live, unless their model's moderation rule, a take-down or a
- * content wipe's record stops them.
+ * Scheduled versions due by `now` go live, unless their model's moderation rule or a take-down stops
+ * them.
  */
 export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
   UPDATE "ModelVersion" mv
@@ -164,8 +159,6 @@ export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.s
     AND mv."publishedAt" <= ${now}
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
-    -- A model a content wipe kept goes live only by a moderator's hand.
-    AND ${notRemovedWithOwnerSql('m.meta')}
     AND ${noFailedScanFileSql('mv.id')}
   RETURNING mv.id
 `;
@@ -196,7 +189,6 @@ export const scheduledModelsGoLiveSql = (
       }
     )
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('meta')}
     -- After the version UPDATE, so a version it just published counts. A model whose versions all
     -- wait on their files stays Scheduled with them.
     AND EXISTS (

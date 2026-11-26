@@ -24,6 +24,12 @@ import (
 // No origin allow-list (unlike model.getAll): the list answers any origin (CORS `*`); an `[id]`
 // request with an Origin falls back (v1-models-origin).
 
+// OutcomeNotFound is the feed_go_requests_total outcome of a public `GET /api/v1/models/{id}` request
+// answered here with Node's 404 (FEED_GO_V1_MODELS_ANSWER_NOT_FOUND: the model statement returned no
+// row and the model's lag flag read clean; v1models.Answer.Absent). Kept apart from `served` (no model
+// was answered) and from the fallbacks (nothing went to the app). Serve mode, `[id]` only.
+const OutcomeNotFound = "not_found"
+
 // errV1ModelsOff is the `v1-models-off` fallback: a public model route with ServeV1Models off.
 var errV1ModelsOff = fallback.New("v1-models-off")
 
@@ -40,6 +46,13 @@ func (s *Server) ServeV1ModelsIDHTTP(w http.ResponseWriter, r *http.Request) {
 // serveV1Models is serve (server.go) for a REST model route. With ServeV1Models off every request is
 // the `v1-models-off` fallback: nothing is computed and no serve slot is taken.
 func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint string) {
+	withProfileLabels(r.Context(), endpoint, "serve", func(ctx context.Context) {
+		s.serveV1ModelsLabelled(w, r.WithContext(ctx), endpoint)
+	})
+}
+
+// serveV1ModelsLabelled is serveV1Models under the request's profile labels (withProfileLabels).
+func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, endpoint string) {
 	start := time.Now()
 	ctx, span := s.startSpan(r.Context(), r.Header, "serve", endpoint)
 	defer span.End()
@@ -58,6 +71,8 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 	if err == nil {
 		served := "served"
 		switch {
+		case c.absent:
+			served = OutcomeNotFound
 		case c.trivial:
 			served = "served_empty"
 		case c.cached:
@@ -70,6 +85,9 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
 		return
 	}
+	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
+		return
+	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}
@@ -78,11 +96,14 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 }
 
 // writeV1Models writes a computed answer as Node's res.json does: c.headers (v1models.ResponseHeaders),
-// Next's JSON Content-Type, and the body bytes. With is304 it is sendEtagResponse's 304: the
-// same headers, no body. Node's 304 also carries the Content-Type res.json set before sendData; Go's
-// net/http drops Content-Type, Content-Length and Transfer-Encoding from every 304 it writes, so
-// this one has none (the one known divergence, DESIGN.md §16.8). It is counted under the outcome of
-// the answer it was computed from (served, served_empty or served_cached), as the same compute.
+// Next's JSON Content-Type, and the body bytes, with status 200, or 404 for the not-found answer
+// (c.absent: `res.status(404).json(...)` in the `[id]` handler, the same headers). With is304 it is
+// sendEtagResponse's 304: the same headers, no body. Next decides that 304 over the body's ETag
+// whatever the status the handler set, so a 404 whose ETag the request names is a 304 too. Node's
+// 304 also carries the Content-Type res.json set before sendData; Go's net/http drops Content-Type,
+// Content-Length and Transfer-Encoding from every 304 it writes, so this one has none (the one known
+// divergence, DESIGN.md §16.8). It is counted under the outcome of the answer it was computed from
+// (served, served_empty, served_cached or not_found), as the same compute.
 func writeV1Models(w http.ResponseWriter, c *computed, is304 bool) {
 	h := w.Header()
 	for _, x := range c.headers {
@@ -96,17 +117,23 @@ func writeV1Models(w http.ResponseWriter, c *computed, is304 bool) {
 	h.Set("Content-Type", v1models.JSONContentType)
 	h.Set("Content-Length", strconv.Itoa(len(c.payload)))
 	h.Set(ServedByHeader, ServedByGo)
-	w.WriteHeader(http.StatusOK)
+	status := http.StatusOK
+	if c.absent {
+		status = http.StatusNotFound
+	}
+	w.WriteHeader(status)
 	_, _ = w.Write(c.payload) //nolint:gosec // G705: a computed JSON body under application/json, not reflected input
 }
 
 // v1ModelsCompute is the compute of a model route, the shadow's and the public route's alike (serving
-// tells them apart): the request checks of v1ModelsPreflight, then, serving only, those of
-// v1ModelsServeOnly; the port (computeV1Models / computeV1ModelsID); then the body as JSON.stringify
+// tells them apart): the request checks of v1ModelsPreflight (on `[id]` with V1BearerAuth, only its
+// method check), then, serving only, those of v1ModelsServeOnly; on `[id]` with V1BearerAuth, the
+// credential decision (v1DetailCredential, DESIGN.md §16.10); the port (computeV1Models / computeV1ModelsID); then the body as JSON.stringify
 // writes it (v1models.NodeBody) and the headers Node sends with it (v1models.ResponseHeaders).
-// Serving, a not-found `[id]` falls back (`v1-models-not-found`): Node's answer is a 404, and a served
-// answer here is a 200. In the shadow a list sample with a session cookie or an `etag` query is still
-// computed and its body compared; an `etag` query's headers are not computed (v1ModelsHeadersUnknown),
+// Serving, a not-found `[id]` is answered with Node's 404 when the port knows Node's statement finds
+// no row (c.absent, FEED_GO_V1_MODELS_ANSWER_NOT_FOUND), and falls back (`v1-models-not-found`)
+// otherwise; its headers are computed over the not-found body as over any other. In the shadow a list
+// sample with a session cookie or an `etag` query is still computed and its body compared; an `etag` query's headers are not computed (v1ModelsHeadersUnknown),
 // so its response compare is `uncompared`.
 func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Context, *http.Request) (*computed, error) {
 	detail := endpoint == EndpointV1ModelsID
@@ -118,11 +145,25 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 		inner = s.computeV1ModelsFn
 	}
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
-		if err := v1ModelsPreflight(r); err != nil {
-			return nil, err
+		bearer := s.V1BearerAuth && detail
+		if !bearer {
+			if err := v1ModelsPreflight(r); err != nil {
+				return nil, err
+			}
+		} else if r.Method != http.MethodGet {
+			return nil, fallback.New("method")
 		}
 		if serving {
 			if err := v1ModelsServeOnly(r, detail); err != nil {
+				return nil, err
+			}
+		}
+		// V1BearerAuth, `[id]` only: the credential decided as the Node route decides it, after the
+		// checks above and before the port (which then answers as for any caller).
+		apiKey := false
+		if bearer {
+			var err error
+			if ctx, apiKey, err = s.v1DetailCredential(ctx, r); err != nil {
 				return nil, err
 			}
 		}
@@ -130,7 +171,10 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 		if err != nil {
 			return nil, err
 		}
-		if serving && c.notFound {
+		if apiKey {
+			c.viewerClass = V1ViewerAPIKey
+		}
+		if serving && c.notFound && !c.absent {
 			c.release()
 			return nil, fallback.New("v1-models-not-found")
 		}
@@ -178,7 +222,8 @@ func notModified(r *http.Request, c *computed) bool {
 // v1ModelsPreflight falls back, in the shadow and serving alike, on a request that is not a GET
 // (`method`) or carries any API credential: an Authorization header of any value, or any non-empty
 // `token` query value, read as loosely as the endpoint wrappers read it (auth.AnyQueryToken)
-// (`bearer-token`: the block-scope middleware and the scoped-key views are not ported).
+// (`bearer-token`). Used on the list always, and on `[id]` with V1BearerAuth off; on, `[id]`'s
+// credential is decided as Node decides it (v1DetailCredential).
 func v1ModelsPreflight(r *http.Request) error {
 	if r.Method != http.MethodGet {
 		return fallback.New("method")

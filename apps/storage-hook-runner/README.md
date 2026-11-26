@@ -20,30 +20,28 @@ missing fields are a 400):
 | `ts`         | integer                                                            | unix seconds, inside the signed body; must be within ±60 s of the runner's clock                                          |
 | `appId`      | string                                                             | the app's blockId                                                                                                         |
 | `collection` | string                                                             |                                                                                                                           |
-| `op`         | `create` \| `put` \| `delete` \| `increment` \| `mark` \| `unmark` |                                                                                                                           |
+| `op`         | `create` \| `put` \| `delete`                                       |                                                                                                                           |
 | `sha256`     | 64 lowercase hex                                                   | must equal sha256 of the UTF-8 bytes of `source`                                                                          |
 | `source`     | string                                                             | the hook module, at most 64 KiB (UTF-8)                                                                                   |
 | `timeoutMs`  | number, optional                                                   | clamped to [1, 500]; default 50                                                                                           |
 | `input`      | object                                                             | the hook's argument, below; `input.op`, `input.collection` and `input.app.blockId` must match `op`, `collection`, `appId` |
 
-`input` (every key present; `null` where there is nothing). A `tally` that is not exactly the
-op's own operator (`$inc` naming one counter, `$mark`, `$unmark`), or one on a document write,
-is a 400 `bad_request`:
+`input` (every key present but `parent`, which only a viewer-keyed collection sends; `null` where
+there is nothing). The tally ops (`increment`, `mark`, `unmark`) were removed from App Storage, so
+`tally` is always `null`; anything else there is a 400 `bad_request`:
 
 ```ts
 {
   op, collection,
   key: string,                       // pre-generated for create
   before: Json | null,               // stored data before the write
-  after: Json | null,                // data after the write (null for delete and tally ops)
-  doc: Record<string, unknown> | null, // stored doc metadata (version, author kind, counters, marks)
-  // the storage API's update operator (PATCH /:coll/:key), whichever route carried it:
-  // { $inc: { <counter>: by } } for increment, { $mark: name } for mark,
-  // { $unmark: name } for unmark; null for create, put and delete
-  tally: { $inc: Record<string, number> } | { $mark: string } | { $unmark: string } | null,
+  after: Json | null,                // data after the write (null for delete)
+  doc: Record<string, unknown> | null, // stored doc metadata (version, author kind; counters and marks always {})
+  tally: null,                       // always null: the tally ops were removed
   viewer: { userId: number },
   app: { blockId: string },
   from: string | null,               // importing app's blockId on an imported write
+  parent?: string | null,            // viewer-keyed collections only: the @me write's parent key
 }
 ```
 
@@ -169,10 +167,10 @@ caller to refuse.
 One self-contained ES module whose **default export** is a synchronous function:
 
 ```js
-export default function check({ op, before, after, tally }) {
+export default function check({ op, before, after }) {
   if (before && before.locked) return { allow: false, reason: `${op}: card is locked` };
-  if (tally && tally.$inc && Object.values(tally.$inc)[0] > 1)
-    return { allow: false, reason: 'one at a time' };
+  if (after && typeof after.title === 'string' && after.title.length > 80)
+    return { allow: false, reason: 'title too long' };
   return { allow: true };
 }
 ```

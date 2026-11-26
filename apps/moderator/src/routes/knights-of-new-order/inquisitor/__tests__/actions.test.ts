@@ -6,7 +6,10 @@ vi.mock('$lib/server/knights/inquisitor.service', () => ({
   getInquisitorQueue: vi.fn(),
   INQUISITOR_QUEUE_LIMIT: 100,
   ruleOnInquisitorItem: rule,
+  inquisitorItemImageId: async () => 1,
 }));
+// The withheld-image gate is pinned in image-action-access.pglite.test.ts.
+vi.mock('$lib/server/retracted-media', () => ({ withheldRefusal: async () => null }));
 vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn() }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 

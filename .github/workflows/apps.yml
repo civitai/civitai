@@ -333,7 +333,7 @@ jobs:
           SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           set -f
-          pnpm exec vitest run $VITEST_PROJECT_ARGS --shard="$SHARD/$SHARD_TOTAL" --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/app-unit-report.json"
+          pnpm exec vitest run $VITEST_PROJECT_ARGS --shard="$SHARD/$SHARD_TOTAL" --reporter=default --reporter=json --reporter=github-actions --outputFile="$RUNNER_TEMP/app-unit-report.json"
 
       # For `apps-ledger`. `!cancelled()` so a RED shard still hands over its report: the ledger
       # must account for its files either way. A shard that wrote no report uploads nothing

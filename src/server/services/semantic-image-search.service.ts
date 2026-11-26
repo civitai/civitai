@@ -6,10 +6,11 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { dbRead } from '~/server/db/client';
 import { getAllImages } from '~/server/services/image.service';
-import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import { semanticImageCsamFlaggedText } from '~/server/services/semantic-image-flags.sql';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
+import { isMoreLikeThisRefused } from '~/shared/utils/more-like-this';
 import { ImageSort } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -40,6 +41,7 @@ import {
   resolveTags,
   resolveUserIds,
   searchServiceSource,
+  withPreferredTagFirst,
   withTagMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
@@ -58,19 +60,24 @@ const searchServiceCandidates: Record<MediaCollection, CandidateSource> = {
   videos: searchServiceSource('videos', { notFoundMessage: 'Video not found' }),
 };
 
-/** `items` without the images the shared held-media rule holds, for every viewer, moderators included. */
-async function withoutHeldImages<T extends { id: number }>(items: T[]) {
+/** `items` without images under CSAM review or blocked as CSAM, for every viewer, moderators included. */
+async function withoutCsamFlaggedImages<T extends { id: number }>(items: T[]) {
   if (!items.length) return items;
-  const held = await dbRead.$queryRaw<{ id: number }[]>`
+  const flagged = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT i.id FROM "Image" i
     WHERE i.id = ANY(${items.map((item) => item.id)}::int[])
-      AND ${Prisma.raw(semanticImageHeldText('i'))}`;
-  if (!held.length) return items;
-  const heldIds = new Set(held.map((row) => row.id));
-  return items.filter((item) => !heldIds.has(item.id));
+      AND ${Prisma.raw(semanticImageCsamFlaggedText('i'))}`;
+  if (!flagged.length) return items;
+  const flaggedIds = new Set(flagged.map((row) => row.id));
+  return items.filter((item) => !flaggedIds.has(item.id));
 }
 
-const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
+const emptyPage = () => ({
+  items: [],
+  nextCursor: undefined,
+  correctedQuery: undefined,
+  refused: false as boolean,
+});
 
 export async function searchSemanticImages({
   input,
@@ -136,13 +143,12 @@ export async function searchSemanticImages({
   if (userIds && !userIds.length) return emptyPage();
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
   // A named tag that does not exist can match nothing.
-  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size)
-    return { items: [], nextCursor: undefined, correctedQuery: undefined };
+  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size) return emptyPage();
   const strip = stripBlockedTagIds(
     [...new Set([...(input.tagIds ?? []), ...(namedTagIds ?? [])])],
     blockedTags.map((t) => t.id)
   );
-  if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
+  if (strip.emptyResult) return emptyPage();
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
   const addonsFor = (level: number) =>
@@ -217,7 +223,7 @@ export async function searchSemanticImages({
       domain,
       headers: { src: 'semanticImageSearch' },
     });
-    return withoutHeldImages(items);
+    return withoutCsamFlaggedImages(items);
   };
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
@@ -226,7 +232,9 @@ export async function searchSemanticImages({
     const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
       excludedTagIds: viewerExcludedTagIds,
     });
-    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    // Refused the same way as an image the viewer cannot see, whatever their level.
+    if (!anchor || isMoreLikeThisRefused(anchor))
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
@@ -311,7 +319,18 @@ export async function searchSemanticImages({
           (t) => !blockedTags.some((b) => b.id === t.id)
         )
       : undefined;
-  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
+  // A blocked or viewer-hidden tag is not boosted: hydration would drop every image it ranks first.
+  const preferTagId =
+    'similarTo' in query && collection === 'images'
+      ? input.preferTagIds?.find(
+          (id) => !blockedTags.some((b) => b.id === id) && !viewerExcludedTagIds.includes(id)
+        )
+      : undefined;
+  const ranked = queryTag
+    ? withTagMatchesFirst(cachedSource, queryTag.id)
+    : preferTagId
+    ? withPreferredTagFirst(cachedSource, preferTagId)
+    : cachedSource;
 
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks

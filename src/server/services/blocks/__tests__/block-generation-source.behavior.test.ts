@@ -44,6 +44,8 @@ vi.mock('~/server/flipt/client', () => ({
   },
   isFlipt: async (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
   isFliptSync: (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  readFliptBoolean: async (flag: string) =>
+    flag === 'app-block-source-scanned-rows' && holder.scannedRows,
   ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
@@ -228,7 +230,6 @@ beforeAll(async () => {
     ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS metadata jsonb;
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, meta jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3));
     CREATE TABLE "ImageCdnModeratorDelete" (url text, "userId" int, "imageId" int, "csamReview" boolean NOT NULL DEFAULT false);

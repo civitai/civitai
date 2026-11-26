@@ -12,6 +12,11 @@ export const FEED = {
   recentJudgedHours: 24,
   /** Share of picks that take the oldest candidate of the chosen bucket instead of its lead, so no item waits forever. */
   starvationShare: 0.1,
+  /**
+   * Share of picks that go to priority 1 while it has candidates; the other priorities split the rest. Priority 1 holds the
+   * images our own system rated SFW (and owners' own ratings), where a player catching a missed NSFW rating matters most.
+   */
+  priorityOneShare: 0.7,
 } as const;
 
 /** Source priority, best first: escalated items while their priority lasts, then the item's own priority. */
@@ -87,11 +92,33 @@ const byAge = (a: FeedCandidate, b: FeedCandidate) => a.createdAt - b.createdAt 
 /** Buckets in a fixed order (null last), so the draw does not depend on row order. */
 const BUCKET_ORDER: (LevelBucket | null)[] = [...BUCKETS.map(([, bucket]) => bucket), null];
 
+/** `options[floor(draw * length)]`, clamped at both ends. */
+const nth = <T>(options: T[], draw: number): T =>
+  options[Math.max(0, Math.min(options.length - 1, Math.floor(draw * options.length)))];
+
+/**
+ * The priority the next pick serves from, among the normal-tier candidates: priority 1 `FEED.priorityOneShare` of the time
+ * while it has candidates, the other priorities splitting the rest equally. With one priority left it is that one, and no
+ * draw is made; with none (only escalated candidates left) it is null.
+ */
+function drawPriority(left: FeedCandidate[], random: () => number): number | null {
+  const priorities = [
+    ...new Set(left.filter((c) => c.tier !== TIER_ESCALATED).map((c) => c.priority)),
+  ].sort((a, b) => a - b);
+  if (priorities.length <= 1) return priorities[0] ?? null;
+  const others = priorities.filter((p) => p !== 1);
+  const draw = random();
+  if (others.length === priorities.length) return nth(others, draw);
+  if (draw < FEED.priorityOneShare) return 1;
+  return nth(others, (draw - FEED.priorityOneShare) / (1 - FEED.priorityOneShare));
+}
+
 /**
  * Orders a stage's window for one player. Candidates must already be in serving order (tier, priority, age). Each pick
- * draws a bucket with equal probability among the buckets that still have candidates, leaving out the player's recent
- * buckets unless that leaves none. Within the bucket it takes the first candidate
- * of the leading tier and priority in the player's own order; about one pick in ten takes the bucket's oldest instead.
+ * first draws a priority (`drawPriority`), then a bucket with equal probability among the buckets holding that priority's
+ * or escalated candidates, leaving out the player's recent buckets unless that leaves none. Within the bucket it takes the first
+ * candidate of the leading tier in the player's own order; about one pick in ten takes the bucket's oldest at any priority
+ * instead.
  */
 export function orderFeed<T extends FeedCandidate>(
   candidates: T[],
@@ -102,33 +129,31 @@ export function orderFeed<T extends FeedCandidate>(
     limit: number;
   }
 ): T[] {
-  const pools = new Map<LevelBucket | null, T[]>();
-  for (const bucket of BUCKET_ORDER) {
-    const pool = candidates.filter((c) => c.bucket === bucket);
-    if (pool.length > 0) pools.set(bucket, pool);
-  }
+  const left = [...candidates];
   const recent = [...input.recent];
   const served: T[] = [];
 
-  while (served.length < input.limit && pools.size > 0) {
-    const open = [...pools.keys()];
+  while (served.length < input.limit && left.length > 0) {
+    const priority = drawPriority(left, input.random);
+    // Escalated items are served ahead of normal priority, so every draw keeps them.
+    const ofPriority = left.filter((c) => c.tier === TIER_ESCALATED || c.priority === priority);
+    const open = BUCKET_ORDER.filter((b) => ofPriority.some((c) => c.bucket === b));
     const fresh = open.filter((b) => !recent.includes(b));
     const choices = fresh.length > 0 ? fresh : open;
-    const bucket =
-      choices[Math.min(choices.length - 1, Math.floor(input.random() * choices.length))];
-    const pool = pools.get(bucket) as T[];
+    const bucket = nth(choices, input.random());
+    const pool = ofPriority.filter((c) => c.bucket === bucket);
 
     let pick: T;
     if (input.random() < FEED.starvationShare) {
-      pick = [...pool].sort(byAge)[0];
+      // The oldest of the bucket at any priority, so no item in the window waits forever behind the priority draw.
+      pick = left.filter((c) => c.bucket === bucket).sort(byAge)[0];
     } else {
       const lead = pool[0];
       pick = pool
-        .filter((c) => c.tier === lead.tier && c.priority === lead.priority)
+        .filter((c) => c.tier === lead.tier)
         .sort((a, b) => tieBreak(input.playerId, a.id) - tieBreak(input.playerId, b.id))[0];
     }
-    pool.splice(pool.indexOf(pick), 1);
-    if (pool.length === 0) pools.delete(bucket);
+    left.splice(left.indexOf(pick), 1);
     served.push(pick);
     recent.unshift(pick.bucket);
     recent.length = Math.min(recent.length, FEED.recentJudged);

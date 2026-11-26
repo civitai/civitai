@@ -1,12 +1,17 @@
 import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
-import { ESCALATED_FROM_LEVEL_META_KEY, gradeKnightsVotes } from '@civitai/db/knights';
+import {
+  ESCALATED_FROM_LEVEL_META_KEY,
+  gradeKnightsVotes,
+  readVoteTallies,
+  tallyByAnswer,
+  type KnightsAnswerTally,
+} from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
 import {
   KNIGHTS_ESCALATION_REASONS,
   KNIGHTS_NSFW_LEVEL_QUESTION,
-  KNIGHTS_STAGE_RANKS,
   KNIGHTS_WRITEBACK_REASONS,
   type KnightsEscalationReason,
   type KnightsWritebackReason,
@@ -17,8 +22,7 @@ import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
-import { readRetractedMedia } from '../retracted-media';
-import { readScannerCsamVerdicts } from '../review-batch';
+import { listWithheldIds, readRetractedMedia } from '../retracted-media';
 import {
   consensusBlockReason,
   isKnightsBlockReason,
@@ -28,14 +32,7 @@ import {
 
 export const INQUISITOR_QUEUE_LIMIT = 100;
 
-export type InquisitorVote = {
-  answer: string;
-  label: string;
-  votes: number;
-  weight: number;
-  /** Votes for this answer by the stage the item was at when they were cast, lowest stage first; stages with none are left out. A higher rank can vote at a lower stage, so this is not the voter's rank. */
-  stages: { stage: string; votes: number }[];
-};
+export type InquisitorVote = KnightsAnswerTally;
 
 export type InquisitorItem = {
   id: number;
@@ -120,36 +117,6 @@ export async function countInquisitorQueue(): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
-type StageTally = { answer: string; stage: string; votes: string; weight: number };
-
-const stageOrder = (stage: string) => {
-  const index = (KNIGHTS_STAGE_RANKS as readonly string[]).indexOf(stage);
-  return index === -1 ? KNIGHTS_STAGE_RANKS.length : index;
-};
-
-function tallyByAnswer(tallies: StageTally[], labels: Map<string, string>): InquisitorVote[] {
-  const byAnswer = new Map<string, InquisitorVote>();
-  for (const tally of tallies) {
-    const vote = byAnswer.get(tally.answer) ?? {
-      answer: tally.answer,
-      label: labels.get(tally.answer) ?? tally.answer,
-      votes: 0,
-      weight: 0,
-      stages: [],
-    };
-    vote.votes += Number(tally.votes);
-    vote.weight += Number(tally.weight);
-    vote.stages.push({ stage: tally.stage, votes: Number(tally.votes) });
-    byAnswer.set(tally.answer, vote);
-  }
-  return [...byAnswer.values()]
-    .map((vote) => ({
-      ...vote,
-      stages: vote.stages.sort((a, b) => stageOrder(a.stage) - stageOrder(b.stage)),
-    }))
-    .sort((a, b) => b.weight - a.weight || a.answer.localeCompare(b.answer));
-}
-
 export async function getInquisitorQueue(
   filter: InquisitorFilter = 'all',
   { csamReview = false }: { csamReview?: boolean } = {}
@@ -183,24 +150,10 @@ export async function getInquisitorQueue(
     .execute();
   if (items.length === 0) return [];
 
-  const tallies = await dbWrite
-    .selectFrom('KnightsVote')
-    .select([
-      'itemId',
-      'answer',
-      'stage',
-      sql<string>`count(*)`.as('votes'),
-      sql<number>`sum("weight")`.as('weight'),
-    ])
-    .where(
-      'itemId',
-      'in',
-      items.map((item) => item.id)
-    )
-    // A held player's vote (weight 0) decided nothing, so it is not shown as a vote.
-    .where('weight', '>', 0)
-    .groupBy(['itemId', 'answer', 'stage'])
-    .execute();
+  const tallies = await readVoteTallies(
+    dbWrite,
+    items.map((item) => item.id)
+  );
 
   const blockedVotes = await dbWrite
     .selectFrom('KnightsVote')
@@ -218,11 +171,19 @@ export async function getInquisitorQueue(
     items.map((item) => item.imageId),
     { csamReview }
   );
+  const cdnIds = items
+    .filter(
+      (item) =>
+        !viewable.has(item.imageId) && !eligible.has(item.imageId) && item.ingestion !== 'Blocked'
+    )
+    .map((item) => item.imageId);
+  // A failed read withholds every row it was asked about.
+  const withheld = await listWithheldIds(cdnIds, { csamReview }, 'inquisitor');
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
     const media: InquisitorMedia = viewable.has(item.imageId)
       ? 'retracted'
-      : eligible.has(item.imageId) || ingestion === 'Blocked'
+      : eligible.has(item.imageId) || ingestion === 'Blocked' || withheld.has(item.imageId)
       ? 'restricted'
       : 'cdn';
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
@@ -245,7 +206,7 @@ export async function getInquisitorQueue(
 
 /**
  * Which of these images `/api/retracted-media` serves at all (`eligible`) and which it serves to
- * this viewer (`viewable`), read by that route's own reader with one scanner read for the page. A
+ * this viewer (`viewable`), read by that route's own reader. A
  * read that fails leaves both empty, so every blocked image is drawn as restricted.
  */
 async function retractedMediaFor(
@@ -253,11 +214,7 @@ async function retractedMediaFor(
   { csamReview }: { csamReview: boolean }
 ): Promise<{ eligible: Set<number>; viewable: Set<number> }> {
   try {
-    const { eligible, viewable } = await readRetractedMedia(imageIds, {
-      csamReview,
-      orHeld: true,
-      readVerdicts: (rows) => readScannerCsamVerdicts(rows.map((row) => row.id)),
-    });
+    const { eligible, viewable } = await readRetractedMedia(imageIds, { csamReview, orHeld: true });
     return { eligible, viewable: new Set(viewable.keys()) };
   } catch (e) {
     // Every blocked row is restricted rather than the whole queue failing to load.
@@ -268,6 +225,16 @@ async function retractedMediaFor(
     });
     return { eligible: new Set(), viewable: new Set() };
   }
+}
+
+/** The image a queue item asks about; `null` for an item that does not exist. */
+export async function inquisitorItemImageId(itemId: number): Promise<number | null> {
+  const row = await dbWrite
+    .selectFrom('KnightsQueueItem')
+    .select('imageId')
+    .where('id', '=', itemId)
+    .executeTakeFirst();
+  return row?.imageId ?? null;
 }
 
 export type RulingOutcome = { ok: true } | { ok: false; error: string };
@@ -366,6 +333,8 @@ export async function ruleOnInquisitorItem(
       id: claimed.imageId,
       nsfwLevel: level,
       ...(reason && { reason }),
+      // Left Pending, the requests come back to the rating queue if the level is ever unlocked.
+      status: 'Actioned',
       userId: moderatorId,
     });
   } catch (error) {

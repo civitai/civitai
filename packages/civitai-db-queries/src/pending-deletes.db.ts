@@ -1,7 +1,9 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { ImageIngestionStatus } from '@civitai/db-schema/enums';
 import {
   childSafetyImageCase,
+  childSafetyImageFinding,
   childSafetyPostCase,
   childSafetyVisibleCase,
 } from './child-safety-case.db';
@@ -19,6 +21,40 @@ import {
 export type DeleteReplay = { moderatorDelete?: true; keepStoredFiles?: true };
 
 export const PENDING_DELETES_ACTOR = { system: 'pending-deletes' } as const;
+
+/**
+ * The key of a queued row's `data` that holds what the kept-delete hide overwrote on its image, so a
+ * release that drops the delete can put it back (`liftKeptHides`). On the queue row, not the image:
+ * only the server reads it.
+ */
+export const KEPT_HIDE_PRIOR = 'prior';
+
+/**
+ * The key of an image's `metadata` that the kept-delete hide sets to its `hide` id. The table's
+ * `KEPT_HIDE_TRIGGER` drops it from any later write that names a block column (migration
+ * `20271203120000_image_kept_hide_marker_drop`).
+ */
+export const KEPT_HIDE_MARKER = 'keptHide';
+
+/** The "Image" trigger that drops `KEPT_HIDE_MARKER`. Without it enabled, nothing is lifted. */
+export const KEPT_HIDE_TRIGGER = 'trg_image_kept_hide_drop_marker';
+
+/** `KEPT_HIDE_TRIGGER` exists and is enabled. */
+export const keptHideTriggerOn = sql<boolean>`EXISTS (SELECT 1 FROM pg_trigger
+  WHERE tgrelid = '"Image"'::regclass AND tgname = ${KEPT_HIDE_TRIGGER} AND tgenabled IN ('O', 'A'))`;
+
+/**
+ * An image's columns as they were before the kept-delete hide, and when it ran: `hide` is the id it
+ * wrote to `KEPT_HIDE_MARKER`.
+ */
+export type KeptHidePrior = {
+  ingestion: string;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  at: string;
+  hide: string;
+};
 
 /**
  * The pending delete a kept row is queued as: the deleter's own, or anyone else's delete (a moderator's
@@ -54,29 +90,133 @@ const pendingRank = (column: string) => {
 
 // A stronger kind replaces a queued one (a moderator's delete or cleanup, anyone's outright delete, an
 // owner's cleanup, strongest first) and the row keeps its earlier due time. An outright ask (`ownerId`,
-// `deletedBy`) survives either way. Anything else changes nothing.
+// `deletedBy`) survives either way. A row a restore marked holds only the drain's ask, which the restore
+// withdrew, so another ask on it replaces it whole and alone decides the kind. Anything else changes
+// nothing.
 export const PENDING_DELETE_UPSERT = sql`
   ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
-    SET "data" = CASE
+    SET "data" = CASE WHEN "JobQueue"."data" ? 'releasedOnRestore' THEN EXCLUDED."data" ELSE (CASE
         WHEN ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
         THEN EXCLUDED."data" ELSE "JobQueue"."data" END
       || jsonb_strip_nulls(jsonb_build_object(
         'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'),
-        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy'))),
+        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy')))) END
+      -- The first hide's record stays: a later ask finds the row already blocked. Only a moderator's
+      -- delete hides it again, with a new marker the record no longer matches, and its ask never lifts.
+      || jsonb_strip_nulls(jsonb_build_object(${KEPT_HIDE_PRIOR}::text, COALESCE(
+        "JobQueue"."data"->${KEPT_HIDE_PRIOR}::text, EXCLUDED."data"->${KEPT_HIDE_PRIOR}::text))),
       "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")
     WHERE ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
       OR (EXCLUDED."data" ? 'ownerId' AND NOT "JobQueue"."data" ? 'ownerId')
-      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')`;
+      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')
+      OR "JobQueue"."data" ? 'releasedOnRestore'`;
 
 /** `NsfwLevel.Blocked`. */
 export const NSFW_LEVEL_BLOCKED = 32;
 
-/** Moderation still open on an image: a review other than CSAM, any block, or an open report. */
+/** `key` of the kept-delete record in a queued row's `data`, as text. */
+export const keptHidePrior = (data: RawBuilder<unknown>, key: keyof KeptHidePrior) =>
+  sql`(${data}->${KEPT_HIDE_PRIOR}::text->>${key}::text)`;
+
+/** A cast that reads a malformed value as NULL instead of failing the statement. */
+const timestampOr = (text: RawBuilder<unknown>) =>
+  sql`CASE WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$'
+    THEN (${text})::timestamptz END`;
+
+/** A moderator has acted on the item since `since` (text); an unreadable `since` counts any earlier activity. */
+export const moderatorActedSince = (
+  entityType: 'image' | 'post' | 'user',
+  id: RawBuilder<unknown>,
+  since: RawBuilder<unknown>
+) =>
+  sql<boolean>`EXISTS (SELECT 1 FROM "ModActivity" ma WHERE ma."entityType" = ${entityType}
+    AND ma."entityId" = ${id} AND ma."createdAt" >= COALESCE(${timestampOr(since)}, '-infinity'))`;
+
+/** The queued delete is not a moderator's: a moderator's delete is never lifted by a release. */
+export const notModeratorAsk = (data: RawBuilder<unknown>) =>
+  sql<boolean>`(NOT ${data} ? 'moderatorDelete'
+    AND COALESCE(${data}->>'deletedBy', '') NOT LIKE 'moderator:%')`;
+
+/** The owner `userId` is neither banned nor deleted. */
+export const ownerInGoodStanding = (userId: RawBuilder<unknown>) =>
+  sql<boolean>`NOT EXISTS (SELECT 1 FROM "User" kh_u WHERE kh_u.id = ${userId}
+    AND (kh_u."bannedAt" IS NOT NULL OR kh_u."deletedAt" IS NOT NULL))`;
+
+/**
+ * The image (`image`, an alias) is still as the kept-delete hide in `data` left it, so a release may
+ * lift it. Relies on `KEPT_HIDE_TRIGGER` dropping the marker on any later block write; false (never
+ * NULL) when any check is unreadable.
+ */
+export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  const prior = (key: keyof KeptHidePrior) => keptHidePrior(data, key);
+  return sql<boolean>`COALESCE((
+    ${keptHideTriggerOn}
+    AND ${col('metadata')}->>${KEPT_HIDE_MARKER}::text = ${prior('hide')}
+    AND ${col('ingestion')} = 'Blocked' AND ${col('blockedFor')} = 'moderated'
+    AND ${col('nsfwLevel')} = ${NSFW_LEVEL_BLOCKED}
+    AND (${col('needsReview')} IS NULL OR ${col('needsReview')} = 'appeal')
+    AND ${prior('ingestion')} = ANY(${Object.values(ImageIngestionStatus)}::text[])
+    AND ${prior('nsfwLevel')} ~ '^[0-9]{1,2}$'
+    AND ${prior('blockedFor')} IS DISTINCT FROM 'CSAM'
+    AND ${prior('needsReview')} IS DISTINCT FROM 'csam'
+    AND ${prior('at')} IS NOT NULL
+    AND NOT ${moderatorActedSince('image', col('id'), prior('at'))}
+    AND NOT ${moderatorActedSince('user', col('userId'), prior('at'))}
+    -- A scan verdict on a blocked row can drop its review, so one after the hide leaves it blocked.
+    AND (${col('scannedAt')} IS NULL OR ${col('scannedAt')} < ${timestampOr(prior('at'))})
+    AND NOT ${childSafetyImageCase(image)}
+    AND (${childSafetyImageFinding(image)}) IS FALSE
+    AND ${ownerInGoodStanding(col('userId'))}
+  ), false)`;
+};
+
+/**
+ * An account restore left a drain's delete of `ownerId`'s content (marked `releasedOnRestore`) whose
+ * case is still open. Its other marked rows wait for it, so they are all released together.
+ */
+export const restoreCaseOpen = (ownerId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "JobQueue" rc_q
+  WHERE rc_q.type = 'PendingDelete' AND rc_q.data ? 'releasedOnRestore' AND (
+    (rc_q."entityType" = 'Image' AND EXISTS (
+      SELECT 1 FROM "Image" rc_i WHERE rc_i.id = rc_q."entityId" AND rc_i."userId" = ${ownerId}
+        AND ${childSafetyImageCase('rc_i')}))
+    OR (rc_q."entityType" = 'Post' AND EXISTS (
+      SELECT 1 FROM "Post" rc_p WHERE rc_p.id = rc_q."entityId" AND rc_p."userId" = ${ownerId}
+        AND ${childSafetyPostCase('rc_p')}))
+  )
+)`;
+
+/**
+ * Moderation was open on the image before a kept delete hid it, by its record: a review other than
+ * CSAM, or any block.
+ */
+const priorModerationOpen = (data: RawBuilder<unknown>) => sql<boolean>`(
+  COALESCE(${keptHidePrior(data, 'needsReview')} <> 'csam', false)
+  OR ${keptHidePrior(data, 'blockedFor')} IS NOT NULL
+  OR ${keptHidePrior(data, 'ingestion')} = 'Blocked'
+  OR ${keptHidePrior(data, 'nsfwLevel')} = ${String(NSFW_LEVEL_BLOCKED)}
+)`;
+
+/**
+ * Moderation still open on an image: a review other than CSAM, any block, or an open report. A block
+ * only a kept delete's hide put there, still standing, is read as the image was before it.
+ */
 const moderationOpen = sql<boolean>`(
-  ("Image"."needsReview" IS NOT NULL AND "Image"."needsReview" <> 'csam')
-  OR "Image"."blockedFor" IS NOT NULL
-  OR "Image".ingestion = 'Blocked'
-  OR "Image"."nsfwLevel" = ${NSFW_LEVEL_BLOCKED}
+  (
+    (
+      ("Image"."needsReview" IS NOT NULL AND "Image"."needsReview" <> 'csam')
+      OR "Image"."blockedFor" IS NOT NULL
+      OR "Image".ingestion = 'Blocked'
+      OR "Image"."nsfwLevel" = ${NSFW_LEVEL_BLOCKED}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "JobQueue" pd_q
+      WHERE pd_q.type = 'PendingDelete' AND pd_q."entityType" = 'Image' AND pd_q."entityId" = "Image".id
+        AND ${keptHideStands('Image', sql.ref('pd_q.data'))}
+        AND NOT ${priorModerationOpen(sql.ref('pd_q.data'))}
+    )
+  )
   OR EXISTS (
     SELECT 1 FROM "ImageReport" pd_ir JOIN "Report" pd_r ON pd_r.id = pd_ir."reportId"
     WHERE pd_ir."imageId" = "Image".id AND pd_r.status IN ('Pending', 'Processing')
@@ -93,6 +233,9 @@ export type PendingDelete = DeleteReplay & {
   ownerId?: number;
   deletedBy?: string;
   cleanup?: true;
+  /** The account-deletion drain's ask, released by an account restore while a case held the row. */
+  releasedOnRestore?: true;
+  prior?: KeptHidePrior;
 };
 
 const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;
@@ -175,9 +318,9 @@ export const postDeleteBlocked = (data: RawBuilder<unknown>) =>
     ELSE ${ownPostDeleteBlocked(sql`(${data}->>'ownerId')::int`)} END`;
 
 /**
- * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, a
- * held owner (`heldOwner`, the caller's), and for an owner's cleanup any moderation still open,
- * which decides those images first.
+ * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, an
+ * owner named on a CSAM report (`heldOwner`, the caller's), and for an owner's cleanup any
+ * moderation still open, which decides those images first.
  */
 export const cleanupBlocked = (moderatorDelete: boolean, heldOwner: RawBuilder<boolean>) =>
   sql<boolean>`(${childSafetyImageCase()} OR ${heldOwner}${
@@ -207,6 +350,17 @@ export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[]) 
     SELECT id FROM "Image"
     WHERE id = ANY(${ids}::int[]) AND ${childSafetyVisibleCase()}
       AND ${pendingDeleteQueued('Image', sql.ref('Image.id'), { ownerAsked: true })}
+  `.execute(db);
+  return new Set(rows.map((row) => row.id));
+}
+
+/** Of `postIds`, those with a pending delete still queued. */
+export async function postsWithDeleteQueued(db: Kysely<DB>, postIds: number[]) {
+  const ids = [...new Set(postIds)];
+  if (!ids.length) return new Set<number>();
+  const { rows } = await sql<{ id: number }>`
+    SELECT id FROM "Post"
+    WHERE id = ANY(${ids}::int[]) AND ${pendingDeleteQueued('Post', sql.ref('Post.id'))}
   `.execute(db);
   return new Set(rows.map((row) => row.id));
 }

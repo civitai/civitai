@@ -5,8 +5,15 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import { hideComments, prismaRunner } from '~/server/services/commentv3/write.service';
 
-/** The ids of the sections of each type that `owner` owns. */
-export const SECTION_OWNERS: Record<CommentEntityType, (owner: string) => string> = {
+/**
+ * The ids of the sections of each type that `owner` owns. A Feature Pages topic has no civitai
+ * owner, so it has no entry; leaving it out also keeps its enum label out of this SQL, which runs
+ * before the label exists.
+ */
+export const SECTION_OWNERS: Record<
+  Exclude<CommentEntityType, 'featurePage'>,
+  (owner: string) => string
+> = {
   image: (o) => `SELECT id FROM "Image" WHERE "userId" = ${o}`,
   post: (o) => `SELECT id FROM "Post" WHERE "userId" = ${o}`,
   article: (o) => `SELECT id FROM "Article" WHERE "userId" = ${o}`,

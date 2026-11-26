@@ -103,6 +103,8 @@ const itemsLeadIn = (positive: boolean) =>
   positive ? 'This applies to the following:' : 'This decision applies to the following:';
 
 export const moderationActionEmail = createEmail({
+  template: 'moderationAction',
+  mailClass: 'transactional',
   header: ({ to, kind }: ModerationActionEmailData) => ({
     subject: moderationActionConfig[kind].subject,
     to,

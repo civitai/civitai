@@ -8,8 +8,8 @@ import { createReportHandler, REPORT_ENDPOINT } from '~/server/services/apps/doc
  * the moderators. The body, the gates and the answers are documented in
  * `src/server/services/apps/doc-store-report-api.ts`; this file only wires the route.
  *
- * `apps:storage` is required and is consent-exempt. Off for an app (the
- * `app-blocks-storage-report-api` flag), the path answers as an unknown route.
+ * `apps:storage` is required and is consent-exempt. The route is always on: it is how a report is
+ * filed (the storage route's `report` mark alias runs the same code, `fileReport`).
  */
 
 // A report body is three short strings.

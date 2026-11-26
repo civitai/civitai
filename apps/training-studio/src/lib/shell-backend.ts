@@ -74,8 +74,9 @@ export const shellBackend: StudioBackend = {
       'Failed to load training'
     ),
 
-  modelLive: async (modelId) => {
-    const res = await fetch(`/api/model-status?id=${modelId}`);
+  modelLive: async (modelId, modelVersionId) => {
+    const versionParam = modelVersionId ? `&versionId=${modelVersionId}` : '';
+    const res = await fetch(`/api/model-status?id=${modelId}${versionParam}`);
     if (!res.ok) throw new Error(await messageOf(res, `Model check failed (${res.status})`));
     return ((await res.json()) as { live: boolean }).live;
   },
@@ -93,7 +94,7 @@ export const shellBackend: StudioBackend = {
       )}`
     );
     if (!res.ok) throw new Error(await messageOf(res, `Dataset image unavailable (${res.status})`));
-    return res.blob();
+    return { blob: await res.blob(), nsfwLevel: res.headers.get('x-nsfw-level') ?? undefined };
   },
 
   listGenerations: async (media) => {

@@ -7,6 +7,7 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
+import { studioRunOfVersion } from '~/server/services/orchestrator/training/studio-run-link';
 
 export default defineModeratorEndpoint('trainingData.resolve', {
   summary: "Resolve a version's training data to a signed download URL.",
@@ -31,7 +32,7 @@ export default defineModeratorEndpoint('trainingData.resolve', {
         url: true,
         name: true,
         metadata: true,
-        modelVersion: { select: { model: { select: { meta: true } } } },
+        modelVersion: { select: { meta: true, model: { select: { meta: true } } } },
       },
     });
 
@@ -41,11 +42,12 @@ export default defineModeratorEndpoint('trainingData.resolve', {
     // be sent as a 200 with an error-shaped body.
     if (!file) throw throwNotFoundError('No training data on this version');
     // A Training Studio `Training Data` row points at the trained epoch until the dataset archive job
-    // swaps in the zip. Keyed on the server-owned model meta and the url itself because the row's own
-    // metadata is the owner's to edit.
-    const studioWorkflowId = (
-      file.modelVersion.model.meta as { trainingStudioWorkflowId?: string } | null
-    )?.trainingStudioWorkflowId;
+    // swaps in the zip. Keyed on the server-owned version and model meta and the url itself because
+    // the row's own metadata is the owner's to edit.
+    const studioWorkflowId = studioRunOfVersion(
+      file.modelVersion.meta,
+      file.modelVersion.model.meta
+    );
     const { selectedEpochUrl } = (file.metadata ?? {}) as { selectedEpochUrl?: string };
     if (studioWorkflowId && (file.url === selectedEpochUrl || isTrustedOrchestratorUrl(file.url)))
       throw throwNotFoundError(

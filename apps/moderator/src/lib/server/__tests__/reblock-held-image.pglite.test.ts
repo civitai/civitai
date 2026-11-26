@@ -189,7 +189,8 @@ const event = (fields: Record<string, string>) => {
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
   return {
     request: new Request('https://mod.example/reports/image', { method: 'POST', body: form }),
-    locals: { user: { id: 2 }, grants: {} },
+    // A grant holder: the restricted-image refusal is `card-media-access`'s, not this file's.
+    locals: { user: { id: 2, roles: ['moderator:admin'] }, grants: {} },
     getClientAddress: () => '127.0.0.1',
   } as never;
 };
@@ -951,6 +952,11 @@ describe('a block under the review flag alone, later cleared', () => {
     clickhouseInsert.mockClear();
     csamCheck.live = [{ hash: '103', reason: 'TOS' }];
     try {
+      // Only the CSAM review clears the flag; an unblock before that is refused.
+      await expect(
+        acceptImage({ imageId: FLAGGED_LIVE, userId: 2, restoreRemoved: true })
+      ).rejects.toBeInstanceOf(ImageNotRestoredError);
+      await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = ${FLAGGED_LIVE}`);
       await acceptImage({ imageId: FLAGGED_LIVE, userId: 2, restoreRemoved: true });
     } finally {
       csamCheck.live = [];
@@ -961,5 +967,27 @@ describe('a block under the review flag alone, later cleared', () => {
       .filter((a) => a.table === 'blocked_images')
       .flatMap((a) => a.values);
     expect(disabled).toEqual([{ hash: '103', reason: 'TOS', disabled: true }]);
+  });
+});
+
+describe('a queue accept of an image under the CSAM review flag', () => {
+  const acceptOn = (slug: string | undefined, roles: string[]) =>
+    imageQueueActions.accept({
+      ...(event({ imageId: String(FLAGGED_LIVE) }) as object),
+      params: slug ? { slug } : {},
+      locals: { user: { id: 2, roles }, grants: {} },
+    } as never);
+
+  it.each([
+    ['another queue', 'minor', ['moderator:admin']],
+    ['the report page', undefined, ['moderator:admin']],
+  ])('is refused on %s and keeps the flag', async (_, slug, roles) => {
+    expect(await acceptOn(slug, roles)).toMatchObject({ status: expect.any(Number) });
+    expect(await row(FLAGGED_LIVE)).toMatchObject({ needsReview: 'csam' });
+  });
+
+  it('clears the flag on the CSAM queue, for a moderator who holds that review', async () => {
+    await acceptOn('csam', ['moderator:admin']);
+    expect(await row(FLAGGED_LIVE)).toMatchObject({ needsReview: null, ingestion: 'Scanned' });
   });
 });

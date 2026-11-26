@@ -584,7 +584,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
       FROM "ImageConnection" ic
       JOIN "Image" i ON i.id = ic."imageId"
       WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
-        AND ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+        AND ${Prisma.join(entityImageVisibilityConditions({ seesReportListed: false }), ' AND ')}
       LIMIT 1
     `,
   ]);

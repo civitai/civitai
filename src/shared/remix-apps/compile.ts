@@ -24,8 +24,16 @@ export function compileRemixApp(listing: RemixAppListing, spec: RemixDeclarative
     engine: spec.engine,
     async run(ctx) {
       const values = new Map<string, string>();
+      const references = new Map<string, RemixImage | null>();
       for (const ask of spec.asks) {
-        if (ask.kind === 'text') {
+        if (ask.kind === 'image') {
+          const image = await ctx.ask({
+            kind: 'image',
+            prompt: ask.prompt,
+            ...(ask.optional ? { optional: true } : {}),
+          });
+          references.set(ask.id, image);
+        } else if (ask.kind === 'text') {
           const answer = (
             await ctx.ask({
               kind: 'text',
@@ -57,7 +65,7 @@ export function compileRemixApp(listing: RemixAppListing, spec: RemixDeclarative
         ({ images } = await ctx.workflow({
           kind: 'image',
           prompt: fill(step.prompt, values),
-          images: [input],
+          images: [input, ...(step.references ?? []).flatMap((id) => references.get(id) ?? [])],
           aspectRatio: step.aspectRatio,
           quantity: step.quantity,
         }));

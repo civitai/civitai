@@ -1597,7 +1597,8 @@ describe('Kohya training', () => {
     { resolution: 1000 },
     { kohya: { numRepeats: 0 } },
     { kohya: { seed: -1 } },
-    { kohya: { clipSkip: 1 } },
+    { kohya: { clipSkip: 0 } },
+    { kohya: { clipSkip: 5 } },
     { minSnrGamma: 2.5 },
     { optimizer: 'Automagic' },
     { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
@@ -1610,7 +1611,7 @@ describe('Kohya training', () => {
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 
-  it('accepts clip skip 1 for SD1 but not for SDXL, whose trainer would raise it to 2', () => {
+  it('sends a picked clip skip of 1 for SD1 and SDXL', () => {
     const data: Parameters<typeof buildKohyaInput>[1] = { type: 'blobs', items: [] };
     const sd1 = {
       ...run(),
@@ -1619,9 +1620,78 @@ describe('Kohya training', () => {
       kohya: { clipSkip: 1 },
     };
     expect(buildKohyaInput(sd1, data, 'none')).toMatchObject({ clipSkip: 1 });
-    expect(() => buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toThrow(
-      /clipSkip must be an integer between 2 and 4/
+    expect(buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toMatchObject({
+      clipSkip: 1,
+    });
+  });
+
+  describe('clip skip copied by train further', () => {
+    const sourceInput = (model: string, clipSkip: number) => ({
+      ...buildKohyaInput(run(), { type: 'blobs', items: [] }, 'none'),
+      model,
+      clipSkip,
+    });
+    const continued = async (input: Record<string, unknown>, metadata: object) => {
+      getWorkflow.mockResolvedValue({
+        data: {
+          metadata,
+          steps: [
+            {
+              $type: 'training',
+              input,
+              output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+            },
+          ],
+        },
+      });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-further' } });
+      const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+      await continueTraining(client, opts, { checkText, kohyaAllowed: true });
+      return submitWorkflow.mock.calls.at(-1)![0].body as {
+        metadata: Record<string, unknown>;
+        steps: { input: Record<string, unknown> }[];
+      };
+    };
+    const SDXL = 'urn:air:sdxl:checkpoint:civitai:1@2';
+
+    // On a run from before 1 was selectable for SDXL, a stored 1 stands for 2: copied as stored, a
+    // continuation would train on the last layer.
+    it.each(['sdxl', 'pony', 'illustrious', 'noobai'])(
+      'copies an unstamped %s clip skip of 1 as 2',
+      async (family) => {
+        const model = `urn:air:${family}:checkpoint:civitai:1@2`;
+        const body = await continued(sourceInput(model, 1), { trigger: 'ohwx' });
+        expect(body.steps[0]!.input.clipSkip).toBe(2);
+      }
     );
+
+    it.each([
+      ['a 1 picked on a stamped SDXL run', SDXL, 1, { clipSkipAsSent: true }, 1],
+      ['an unstamped SDXL 3', SDXL, 3, {}, 3],
+      ['an unstamped SD1 1', 'urn:air:sd1:checkpoint:civitai:1@2', 1, {}, 1],
+    ])('keeps %s', async (_label, model, clipSkip, metadata, expected) => {
+      const body = await continued(sourceInput(model, clipSkip), metadata);
+      expect(body.steps[0]!.input.clipSkip).toBe(expected);
+    });
+
+    it('keeps a flow run at 1', async () => {
+      const model = 'urn:air:flux1:checkpoint:civitai:1@2';
+      const input = buildKohyaInput(
+        { ...run(), ecosystem: 'flux1', customModel: model },
+        { type: 'blobs', items: [] },
+        'none'
+      );
+      const body = await continued(input, {});
+      expect(body.steps[0]!.input.clipSkip).toBe(1);
+    });
+
+    it('stamps the continuation and a fresh submit', async () => {
+      const body = await continued(sourceInput(SDXL, 2), {});
+      expect(body.metadata.clipSkipAsSent).toBe(true);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya' } });
+      await submitTraining(client, run());
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.metadata.clipSkipAsSent).toBe(true);
+    });
   });
 
   it('leaves SDXL prediction mode to checkpoint metadata by default', () => {
@@ -1828,6 +1898,48 @@ describe('dataset maturity under the v2 rating', () => {
       expect(count.unratedKeys).toEqual([key]);
     }
   );
+
+  it("hands back a stored verdict only for a blob this caller's HEAD could read", async () => {
+    headBlob.mockReset();
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, { status: path.blobId === 'theirs.png' ? 403 : 204 }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['mine.png', 'theirs.png'],
+      ratingAt(1, { 'mine.png': { mature: false }, 'theirs.png': { mature: true } })
+    );
+    expect(count.verdicts).toEqual({ 'mine.png': false });
+  });
+
+  it('counts where the v2 verdict and the upload rating disagree, each way', async () => {
+    headBlob.mockReset();
+    const upload: Record<string, string> = {
+      'a.png': 'R',
+      'b.png': 'PG',
+      'c.png': 'R',
+      'd.png': 'PG',
+    };
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, {
+        status: 204,
+        headers: { 'x-nsfw-level': upload[path.blobId]! },
+      }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['a.png', 'b.png', 'c.png', 'd.png'],
+      ratingAt(1, {
+        'a.png': { mature: false },
+        'b.png': { mature: true },
+        'c.png': { mature: true },
+      })
+    );
+    expect(count.v2NotMatureUploadMature).toBe(1);
+    expect(count.v2MatureUploadNotMature).toBe(1);
+    expect(count.verdicts).toEqual({ 'a.png': false, 'b.png': true, 'c.png': true });
+    expect(count.mature).toBe(2);
+  });
 
   const pricedMature = { meta: { name: 'test', matureCount: 1 } };
 

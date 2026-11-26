@@ -29,8 +29,7 @@ import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/Serv
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { SellGate } from '~/components/CreatorShop/Services/SellGate';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useRedHref } from '~/hooks/useRedHref';
 import { useRouter } from 'next/router';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useEffect, useRef, useState } from 'react';
@@ -83,8 +82,7 @@ export function ManageServicesPanel({
     servicesEnabled
   );
   const router = useRouter();
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   const [requestsTab, setRequestsTab] = useState<string | null>('open');
 
   // A service card's Manage links here with `?edit=<id>`: open that offering's form once, and drop
@@ -170,7 +168,7 @@ export function ManageServicesPanel({
       )}
       {hiddenOffDomain > 0 && (
         <Text size="sm" c="dimmed">
-          <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
+          <Anchor href={redHref()} inherit>
             {pluralize(hiddenOffDomain, 'mature service')}: manage on civitai.red
           </Anchor>
         </Text>

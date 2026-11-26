@@ -98,6 +98,14 @@ const ownerVote = () =>
   } as never);
 
 describe('owner rating vote', () => {
+  it("reopens the voter's earlier request that a ruling settled", async () => {
+    await ownerVote();
+
+    expect(dbMock.dbWrite.imageRatingRequest.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { nsfwLevel: NsfwLevel.R, status: 'Pending' } })
+    );
+  });
+
   it('queues the image for v1 and v2 while the v1 game is live', async () => {
     await ownerVote();
 

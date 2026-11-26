@@ -353,6 +353,9 @@ CREATE TABLE "CollectionItem" (
   id             integer PRIMARY KEY,
   "collectionId" integer NOT NULL,
   "modelId"      integer,
+  -- image.getInfinite's collection page (the `ct` CTE, collectionCTE in internal/feed/query.go).
+  "imageId"      integer,
+  note           text,
   "addedById"    integer,
   status         "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED',
   "tagId"        integer
@@ -372,4 +375,26 @@ CREATE TABLE "ModelVersionShowcaseItem" (
   "imageId"        integer NOT NULL,
   source           text NOT NULL,
   removed          boolean NOT NULL DEFAULT false
+);
+
+-- image.getInfinite's hubId (GalleryStore.Hub, internal/feed/hub.go): the hub row a viewer may read
+-- (its owner's or a Public one; a moderator any) and its enabled sources.
+CREATE TYPE "UserHubSourceType" AS ENUM ('User', 'Model', 'ModelVersion', 'Collection', 'Tag');
+
+CREATE TABLE "UserHub" (
+  id                    integer PRIMARY KEY,
+  "userId"              integer NOT NULL,
+  availability          "Availability" NOT NULL DEFAULT 'Private',
+  "forcedBrowsingLevel" integer NOT NULL DEFAULT 0
+);
+
+CREATE TABLE "UserHubSource" (
+  id         integer PRIMARY KEY,
+  "hubId"    integer NOT NULL REFERENCES "UserHub" (id) ON DELETE CASCADE,
+  type       "UserHubSourceType" NOT NULL,
+  "targetId" integer NOT NULL,
+  enabled    boolean NOT NULL DEFAULT true,
+  exclude    boolean NOT NULL DEFAULT false,
+  "groupKey" integer,
+  UNIQUE ("hubId", type, "targetId")
 );

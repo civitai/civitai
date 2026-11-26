@@ -1250,6 +1250,7 @@ describe("bounty entry images and the owner's view, against the real image query
         "tosViolation" boolean NOT NULL DEFAULT false
       );
       CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
       INSERT INTO "Image" (id, "needsReview", index) VALUES (${CLEAN}, NULL, 0), (${HELD}, 'csam', 1);
       INSERT INTO "ImageConnection" VALUES (${CLEAN}, 3, 'BountyEntry'), (${HELD}, 3, 'BountyEntry');
     `);
@@ -1298,5 +1299,77 @@ describe("bounty entry images and the owner's view, against the real image query
     it('keeps it from another signed-in user', async () => {
       expect(await imageIds(otherUser)).toEqual([CLEAN]);
     });
+  });
+});
+
+// The held-media viewer rule (src/pages/api/mod/held-media): a moderator holding the csamReports grant.
+describe('who the bounty reads treat as a held-media viewer', () => {
+  beforeEach(() => {
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      nsfw: false,
+      nsfwLevel: 1,
+      moderatorNsfwLevel: null,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([]);
+  });
+  afterEach(() => dbMock.dbRead.$queryRaw.mockReset());
+  const viewers = {
+    'a moderator with the grant': [{ id: 7, isModerator: true }, { csamReports: true }, true],
+    'a moderator without it': [{ id: 7, isModerator: true }, { csamReports: false }, false],
+    'a grant without moderator': [{ id: 6 }, { csamReports: true }, false],
+    'a signed-out visitor': [undefined, { csamReports: false }, false],
+    'a moderator with the grant on a MediaRead-scoped key': [
+      { id: 7, isModerator: true },
+      { csamReports: true },
+      false,
+      {
+        apiKeyId: 7,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 7 },
+        tokenScope: TokenScope.MediaRead,
+      },
+    ],
+  } as const;
+
+  it.each(Object.keys(viewers))('%s', async (who) => {
+    const [user, flags, sees, credential] = viewers[who as keyof typeof viewers] as readonly [
+      unknown,
+      object,
+      boolean,
+      object?
+    ];
+    const ctx = { user, features: { canViewNsfw: true, ...flags }, ...credential } as never;
+    await getBountyHandler({ input: { id: 9 }, ctx });
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      {
+        id: 9,
+        name: 'B',
+        nsfw: false,
+        nsfwLevel: 1,
+        moderatorNsfwLevel: null,
+        tags: [],
+        user: { id: 5 },
+      },
+    ]);
+    await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx,
+    });
+    expect(mockBountyImages).toHaveBeenLastCalledWith(
+      expect.objectContaining({ seesReportListed: sees, ownerSeesReportListed: !credential })
+    );
+    expect(mockImagesForBounties).toHaveBeenLastCalledWith(
+      expect.objectContaining({ seesReportListed: sees, ownerSeesReportListed: !credential })
+    );
   });
 });

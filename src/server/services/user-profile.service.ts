@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import type { EventViewer } from '~/server/events/event-access';
 import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
 import { kyselyWrite } from '~/server/db/kyselyDb';
@@ -43,6 +44,7 @@ import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { publicMemorial } from '~/server/services/memorial.service';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
@@ -230,6 +232,7 @@ export const getUserWithProfile = async ({
         claimKey: sameUser ? c.claimKey : null,
       })),
       meta: undefined,
+      memorial: publicMemorial(userMeta),
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
       creatorShopEnabled,
@@ -337,7 +340,7 @@ export const assertShowcaseItemsOwned = async ({
   )
     throw throwBadRequestError('A taken-down model cannot be showcased');
 
-  if (isModerator) return;
+  if (isModerator) return assertNotDealFileImages(imageIds, 'used here');
 
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
   const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
@@ -361,6 +364,7 @@ export const assertShowcaseItemsOwned = async ({
     ownedArticles.length !== articleIds.length
   )
     throw throwAuthorizationError('You can only add your own content to your showcase');
+  await assertNotDealFileImages(imageIds, 'used here');
 };
 
 const toShowcaseItems = (sections: ShowcaseSectionSchema[]): ShowcaseItemSchema[] =>

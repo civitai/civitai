@@ -11,6 +11,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useState } from 'react';
+import { reviewedByLabel } from '~/components/Moderation/AppAccessRequests/reviewedByLabel';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
 import { formatDate } from '~/utils/date-helpers';
@@ -30,21 +31,6 @@ const STATUS_COLOR: Record<AppAccessRequestStatus, string> = {
   approved: 'green',
   declined: 'gray',
 };
-
-/**
- * Who decided a row. An approved row with no reviewer is read as one `app-access-auto-approve`
- * approved on submit. Known mislabel: `reviewedById` is ON DELETE SET NULL, so a MODERATOR's
- * approval whose account was deleted since also has no reviewer and reads "Approved
- * automatically" too; telling the two apart would need a column.
- */
-function reviewedByLabel(item: {
-  status: AppAccessRequestStatus;
-  reviewedById: number | null;
-  reviewedByUsername: string | null;
-}) {
-  if (item.reviewedById === null && item.status === 'approved') return 'Approved automatically';
-  return item.reviewedByUsername ?? 'a moderator';
-}
 
 /**
  * The moderator queue for "Request access" on `/apps/build`. Approving GRANTS builder access —
@@ -80,9 +66,8 @@ export function AppAccessRequestsQueue() {
       <Alert color="blue" variant="light" title="Approving grants access">
         Approve lets the person build apps, including the App Assistant, from their next page load.
         Revoke takes that away again, whether a moderator approved the request or it was approved
-        automatically. While automatic approval is on, a revoked person who still passes the account
-        checks gets access back the next time they request it: to keep someone out, ban or mute
-        them.
+        automatically. A revoked or declined person is never approved automatically again: their
+        next request waits here.
       </Alert>
       <SegmentedControl
         value={filter}

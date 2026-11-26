@@ -3,12 +3,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   getUsageLimitConfig,
+  getUsageLimitTierTable,
   resetUsageLimitConfigCache,
   resolveUsageLimit,
   USAGE_LIMIT_CONFIG_TTL_MS,
   USAGE_LIMIT_FIRST_READ_TIMEOUT_MS,
 } from '~/server/services/usage-limit-config.service';
-import { defaultUsageLimitConfig } from '~/shared/constants/usage-limits';
+import { defaultUsageLimitConfig, getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 const findKeyValue = dbMock.dbRead.keyValue.findUnique;
 const row = (limits: Record<string, unknown>) => ({ value: { version: 1, limits } } as never);
@@ -108,3 +109,27 @@ describe('getUsageLimitConfig', () => {
 function settle() {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+describe('getUsageLimitTierTable', () => {
+  it('lists the product limits a tier raises, and never an abuse limit, since it is public', async () => {
+    findKeyValue.mockResolvedValue(null as never);
+    const table = await getUsageLimitTierTable();
+    const ids = table.map((entry) => entry.id);
+    expect(ids).toContain('posts.daily');
+    expect(ids).toContain('gifts.monthly');
+    // resource-loads.daily has per-tier values but is an abuse limit.
+    expect(ids).not.toContain('resource-loads.daily');
+    const gifts = table.find((entry) => entry.id === 'gifts.monthly');
+    const giftsDef = getUsageLimitDef('gifts.monthly');
+    expect(gifts?.tiers.free.limit).toBe(giftsDef.base);
+    expect(gifts?.tiers.gold).toEqual(giftsDef.byTier?.gold);
+  });
+
+  it('serves the KeyValue override, so the plan page shows what enforcement uses', async () => {
+    findKeyValue.mockResolvedValue(row({ 'gifts.monthly': { byTier: { gold: { limit: 90 } } } }));
+    const gifts = (await getUsageLimitTierTable()).find((entry) => entry.id === 'gifts.monthly');
+    expect(gifts?.tiers.gold.limit).toBe(90);
+    // An override's byTier replaces the code one whole, so bronze falls back to the base.
+    expect(gifts?.tiers.bronze.limit).toBe(3);
+  });
+});

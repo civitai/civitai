@@ -12,6 +12,7 @@ const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustC
 
 vi.mock('~/server/services/image.service', () => ({
   resetBlockedNsfwLevel: mockResetNsfwLevel,
+  refreshImageLevelCaches: vi.fn(async () => undefined),
   dropBlockedImageDeleteQueue: mockDropDeleteQueue,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
 }));
@@ -32,6 +33,7 @@ import {
   PRIOR_NEEDS_REVIEW_KEY,
 } from '~/server/utils/image-removal-mode';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -92,8 +94,9 @@ const METADATA_LOOKUP = /^\(?"metadata"->>\?::text\)?(::"\w+")?$/;
 const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
 const CLAIM_START =
-  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
-const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
+  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"[\s\S]*?\s+FROM "Image" i\s+WHERE\s/;
+// Bounded, and locking what it claims: see account-deletion-restore-race.pg.test.ts.
+const BOUNDED_CLAIM = /^LIMIT \?\s*FOR UPDATE OF i\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
 const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
@@ -212,8 +215,10 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
   const staged = claimed.map((row) => {
     const next: Partial<ImageRow> = {};
     for (const { column, expr, keys } of assignments) {
-      // Which review flag survives is pinned on Postgres, in scan-outcome-csam-block.behavior.test.ts.
-      if (column === 'needsReview') continue;
+      // Which review flag survives, and the rating put back, are pinned on Postgres, in
+      // scan-outcome-csam-block.behavior.test.ts.
+      if (column === 'needsReview' || column === 'nsfwLevel' || column === 'nsfwLevelLocked')
+        continue;
       if (METADATA_MINUS.test(expr)) {
         const metadata = { ...row.metadata };
         for (const key of keys) delete metadata[key];
@@ -233,6 +238,7 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
     needsReview: row.needsReview ?? null,
     currentReview: row.needsReview ?? null,
     recordedReview,
+    recordedLevel: null,
   }));
 }
 
@@ -275,8 +281,18 @@ function matchesQueueDelete(sql: string, values: unknown[], row: QueueRow) {
       const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
       if (/^\s*type = \?/.test(clause)) return row.type === args[0];
       if (/^\s*"entityType" = \?/.test(clause)) return row.entityType === args[0];
-      if (/^\s*"entityId" IN \(SELECT i\.id FROM "Image" i WHERE i\."userId" = \?\)/.test(clause))
+      if (
+        /^\s*"entityId" IN \(\s*SELECT i\.id FROM "Image" i\s+WHERE i\."userId" = \?\s*$/.test(
+          clause
+        )
+      )
         return images.some((image) => image.userId === args[0] && image.id === row.entityId);
+      // `->`, so a JSON-null breadcrumb counts as present.
+      if (/^\s*\(i\."metadata" -> \?::text\) IS NOT NULL\s*\)\s*$/.test(clause))
+        return images.some(
+          (image) =>
+            image.id === row.entityId && !!image.metadata && (args[0] as string) in image.metadata
+        );
       throw new Error(`unrecognized JobQueue delete predicate: ${clause.trim()}`);
     });
 }
@@ -289,14 +305,14 @@ beforeEach(() => {
   ownerLive = true;
   mockSysRedis.sAdd.mockResolvedValue(1);
 
-  mockDbWrite.$queryRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
-      if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
-      if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
-      throw new Error(`unexpected read: ${sql}`);
-    }
-  );
+  mockDbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
+    // Nested fragments flattened, as Prisma sends them.
+    const { strings: flat, values } = Prisma.sql(strings, ...(raw as never[]));
+    const sql = flat.join('?');
+    if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
+    if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
+    throw new Error(`unexpected read: ${sql}`);
+  });
 
   mockDbWrite.$executeRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -384,7 +400,7 @@ describe('unblockAccountDeletionImages', () => {
     expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', metadata: {} });
     // Control: the other image is restored and goes through the unhide follow-ups.
     expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
-    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2]]]);
+    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2], { unlockedOnly: true }]]);
     expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
   });
 
@@ -438,7 +454,7 @@ describe('unblockAccountDeletionImages', () => {
 
     // A still-blocked row has to keep its Blocked rating; only the rows the block hid get the
     // reset-and-recompute that undoes the forced level and the rating lock.
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1]);
+    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1], { unlockedOnly: true });
     expect(mockQueueSearchIndex).toHaveBeenCalledWith({
       ids: [1],
       action: SearchIndexUpdateQueueAction.Update,
@@ -558,7 +574,7 @@ describe('unblockAccountDeletionImages', () => {
       metadata: { [PRIOR_INGESTION_KEY]: 'Scannned' },
     });
     expect(result).toEqual({ unblocked: 2, stillBlocked: 0, skipped: 1, drained: true });
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3]);
+    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3], { unlockedOnly: true });
   });
 
   it('stops instead of spinning when a claimed row comes back unchanged', async () => {
@@ -662,6 +678,44 @@ describe('recordPendingImageRestore', () => {
 });
 
 describe('disarmAccountDeletionImagePurge', () => {
+  it('keeps the purge of a block written during the grace period, in Postgres', async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, metadata jsonb);
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        UNIQUE ("entityType", "entityId", type)
+      );
+      -- 1: still grace-blocked. 2: a JSON-null breadcrumb, still grace-blocked. 3: a block written
+      -- during the grace period, which strips the breadcrumb. 4: no metadata. 5: another account.
+      INSERT INTO "Image" VALUES
+        (1, 7, '{"${PRIOR_INGESTION_KEY}": "Scanned", "keepMe": 1}'),
+        (2, 7, '{"${PRIOR_INGESTION_KEY}": null}'),
+        (3, 7, '{"keepMe": 3}'),
+        (4, 7, NULL),
+        (5, 8, '{"${PRIOR_INGESTION_KEY}": "Scanned"}');
+      INSERT INTO "JobQueue" SELECT id, 'Image', 'BlockedImageDelete' FROM "Image";
+    `);
+    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+    }) as never);
+
+    await disarmAccountDeletionImagePurge(7);
+
+    const { rows } = await db.query<{ entityId: number }>(
+      `SELECT "entityId" FROM "JobQueue" ORDER BY "entityId"`
+    );
+    // Only the grace rows lose their purge; the block that outlives the restore keeps its own.
+    expect(rows.map((r) => r.entityId)).toEqual([3, 4, 5]);
+    await db.close();
+  });
+
   it('drops the delete-queue rows for this account images only', async () => {
     images = [hidden(1, 'Scanned'), { ...hidden(2, 'Scanned'), userId: 8 }];
     queue = [
@@ -701,7 +755,7 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
-      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
       CREATE TABLE "JobQueue" (
         "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
         data jsonb, UNIQUE ("entityType", "entityId", type)
@@ -715,12 +769,13 @@ describe('releaseAccountDeletionPendingDeletes', () => {
         (4, 'Image', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'),
         (10, 'Post', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}');
     `);
-    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+    await db.exec(imageUseTablesSql);
+    mockDbWrite.$queryRaw.mockImplementationOnce((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
-      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
     }) as never);
 
     await releaseAccountDeletionPendingDeletes(7);
@@ -733,6 +788,51 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       { entityId: 2, data: { ownerId: 7 } },
       { entityId: 3, data: { deletedBy: 'moderator:99', moderatorDelete: true } },
       { entityId: 4, data: { deletedBy: 'remove-deleted-user-images' } },
+    ]);
+    await db.close();
+  });
+
+  it("keeps the drain's delete of what an open case keeps, so the restore cannot publish it", async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        data jsonb, UNIQUE ("entityType", "entityId", type)
+      );
+    `);
+    await db.exec(imageUseTablesSql);
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", "needsReview") VALUES (1, 7, 'csam'), (2, 7, NULL);
+      INSERT INTO "Post" VALUES (10, 7), (11, 7);
+      INSERT INTO "Report" (id) VALUES (1); UPDATE "Report" SET reason = 'CSAM' WHERE id = 1;
+      INSERT INTO "PostReport" VALUES (10, 1);
+      INSERT INTO "JobQueue" SELECT e.id, e.t::"EntityType", 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'
+        FROM (VALUES (1, 'Image'), (2, 'Image'), (10, 'Post'), (11, 'Post')) e(id, t);
+    `);
+    mockDbWrite.$queryRaw.mockImplementationOnce((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
+    }) as never);
+
+    await releaseAccountDeletionPendingDeletes(7);
+
+    const { rows } = await db.query<{ entityType: string; entityId: number; released: boolean }>(
+      `SELECT "entityType"::text AS "entityType", "entityId", data ? 'releasedOnRestore' AS released
+       FROM "JobQueue" ORDER BY 1, 2`
+    );
+    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes;
+    // the account's others wait with it, to be released together.
+    expect(rows).toEqual([
+      { entityType: 'Image', entityId: 1, released: true },
+      { entityType: 'Image', entityId: 2, released: true },
+      { entityType: 'Post', entityId: 10, released: true },
+      { entityType: 'Post', entityId: 11, released: true },
     ]);
     await db.close();
   });

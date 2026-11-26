@@ -5,6 +5,7 @@ import { searchSemanticCrucibles } from '~/server/services/semantic-crucible-sea
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 
 export const semanticCrucibleSearchRouter = router({
   search: publicProcedure
@@ -20,6 +21,7 @@ export const semanticCrucibleSearchRouter = router({
       ])
     )
     .input(semanticCrucibleSearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticCrucibles({

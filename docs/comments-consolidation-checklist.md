@@ -911,7 +911,7 @@ With the old tables (before the drops below):
       `comment-v3-reverse-copy.sql.behavior`, `comment-v3-parity-verdict`,
       `jobs/__tests__/comment-v3-parity`, the v2 cases of
       `commentv3/__tests__/scam-cleanup.sql.behavior`, and the v2 arms of
-      `bulk-delete-comments.behavior.test.ts` and `remove-all-content-legal-hold.behavior.test.ts`;
+      `bulk-delete-comments.behavior.test.ts` and `remove-all-content.behavior.test.ts`;
       `commentsv2.threadMute.service.test.ts` is gone. `comment-v3-mirror.sql.behavior` went in Phase 6.
       `comment-v3-fixture.ts` stays: the SQL tests replay the real migration history from it, and
       the moderation, scam-cleanup and write tests replay it through the Phase 6 teardown

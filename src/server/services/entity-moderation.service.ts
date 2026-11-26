@@ -247,6 +247,13 @@ export type ModerationAdapter = {
   isEnabled?: (args: { entityId: number }) => Promise<boolean>;
 
   /**
+   * Optional: true only when `isEnabled` is false for every entity of the type. The retry job
+   * leaves such a type out of its query, so its rows cannot fill a batch ahead of live ones. An
+   * adapter that overrides `isEnabled` must override this to match.
+   */
+  isDarkForAll?: () => Promise<boolean>;
+
+  /**
    * Optional: business logic to apply after a successful moderation
    * callback has been recorded onto EM (e.g. publish/unpublish, notify,
    * recompute downstream aggregates).

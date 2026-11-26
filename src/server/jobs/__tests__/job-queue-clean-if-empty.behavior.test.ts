@@ -20,9 +20,8 @@ const job = jobQueueJobs.find((j) => j.name === 'job-queue-clean-if-empty')!;
 const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
 
 const OWNER = 7;
-const HELD = 8; // named on a pending report
-const MARKED = 9; // held by a hold marker
-const BAN_NOTE = 10; // banned with a note naming CSAM, no hold: not held
+const REPORTED = 8; // named on a pending report
+const BAN_NOTE = 10; // banned with a note naming CSAM
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -34,7 +33,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer,
-      "nsfwLevel" integer NOT NULL DEFAULT 0
+      "nsfwLevel" integer NOT NULL DEFAULT 0, "publishedAt" timestamp, metadata jsonb
     );
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "postId" integer REFERENCES "Post"(id), "userId" integer,
@@ -44,8 +43,6 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
     );
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
-    CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
     CREATE TABLE "Thread" (
       id int PRIMARY KEY, "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
       "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
@@ -54,8 +51,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL,
       "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
     );
-    INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
-    INSERT INTO "EvidenceHold" VALUES (${MARKED});
+    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "bannedAt" timestamp(3));
     CREATE TABLE "ModActivity" (
       "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3)
@@ -156,7 +152,7 @@ describe('job-queue-clean-if-empty', () => {
     expect(await remainingPostIds()).toEqual([1]);
   });
 
-  it('deletes the empty post of an owner banned with a CSAM note and no hold', async () => {
+  it('deletes the empty post of an owner banned with a CSAM note', async () => {
     await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${BAN_NOTE})`);
     queuePosts(1);
 
@@ -180,16 +176,16 @@ describe('job-queue-clean-if-empty', () => {
     expect(rows).toEqual([]);
   });
 
-  it.each([HELD, MARKED])("leaves a held owner's empty post (owner %i)", async (owner) => {
-    await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${owner})`);
+  it('deletes the empty post of an owner a report names', async () => {
+    await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${REPORTED})`);
     queuePosts(1);
 
     await runJob();
 
-    expect(await remainingPostIds()).toEqual([1]);
+    expect(await remainingPostIds()).toEqual([]);
   });
 
-  it.each([HELD, MARKED, OWNER])(
+  it.each([REPORTED, OWNER])(
     "takes a comment on the deleted post's thread (author %i)",
     async (author) => {
       await holder.db.exec(`

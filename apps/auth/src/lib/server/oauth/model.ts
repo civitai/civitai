@@ -7,7 +7,8 @@ import type {
   User,
 } from '@node-oauth/oauth2-server';
 import { isHttpError } from '@sveltejs/kit';
-import { AccessDeniedError } from '@node-oauth/oauth2-server';
+import { AccessDeniedError, InvalidGrantError } from '@node-oauth/oauth2-server';
+import { MemorializedAccountError } from '$lib/server/auth/account-refusal';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pack } from 'msgpackr';
@@ -298,6 +299,7 @@ export const oauthModel = {
     } catch (err) {
       // The library turns any non-OAuth error into a 503, which a client retries; a refusal is final.
       if (isHttpError(err, 403)) throw new AccessDeniedError(err.body.message);
+      if (err instanceof MemorializedAccountError) throw new InvalidGrantError(err.message);
       throw err;
     }
   },

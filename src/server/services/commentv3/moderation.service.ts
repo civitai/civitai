@@ -4,14 +4,21 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { onTopicCommentsRemoved } from '~/server/events/points/hooks';
 import {
+  type CommentGoneCause,
   deleteComments,
   prismaRunner,
   setCommentFlags,
 } from '~/server/services/commentv3/write.service';
 import { logToAxiom } from '~/server/logging/client';
+import { TRPCError } from '@trpc/server';
+import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/commentv3/review-hold';
+import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { getTextScanProfile } from '~/server/services/text-scan/profiles';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
-
-/** Moderator actions on comments. */
+import { ReportEntity } from '~/shared/utils/report-helpers';
+import { FP_AUTO_HIDE_REPORT_COMMENT } from '@civitai/db-queries/feature-page-comments';
 
 /**
  * Removes comments as ToS violations: the flag takes them off the page, their ToS reports are
@@ -76,37 +83,43 @@ export async function bulkSetCommentV3TosViolation({
   return { count: flagged.length + already.length, notified, rewardedReports: reports.length };
 }
 
+/** The ToS clear's writes in the caller's transaction: rows locked in id order, then cleared. */
+export async function clearCommentV3TosViolationIn(tx: Prisma.TransactionClient, ids: number[]) {
+  const rows = await tx.$queryRaw<{ id: number; fp: boolean }[]>`
+    SELECT c.id, c."entityType"::text = 'featurePage' AS fp FROM "CommentV3" c
+    WHERE c.id = ANY(${ids}::int[]) AND c."tosViolation" AND c."deletedAt" IS NULL
+    ORDER BY c.id FOR UPDATE`;
+  const candidates = rows.map((r) => r.id);
+  const cleared = await setCommentFlags(prismaRunner(tx), candidates, {
+    tosViolation: false,
+  });
+  // In the clear's transaction, so a clear never lands without its reports reopened.
+  const reopened = cleared.length
+    ? await tx.$queryRaw<{ id: number }[]>`
+        UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
+        FROM "CommentV3Report" c
+        WHERE c."reportId" = r.id
+          AND c."commentId" = ANY(${cleared.map((c) => c.id)}::int[])
+          AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+          AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
+        RETURNING r.id`
+    : [];
+  // Feature Pages comments stay removed: setCommentFlags clears none of them.
+  return { cleared, reopenedReports: reopened.length, held: rows.filter((r) => r.fp).length };
+}
+
 /**
  * Restores comments removed as ToS violations and reopens the ToS reports that removal actioned.
  * No reward claw-back and no notification, as for the v2 restore.
  */
 export async function bulkClearCommentV3TosViolation({ ids }: { ids: number[] }) {
-  const none = { count: 0, reopenedReports: 0, failed: 0 };
+  const none = { count: 0, reopenedReports: 0, held: 0, failed: 0 };
   if (!ids.length) return none;
   try {
-    const { cleared, reopenedReports } = await dbWrite.$transaction(async (tx) => {
-      const candidates = (
-        await tx.$queryRaw<{ id: number }[]>`
-          SELECT c.id FROM "CommentV3" c
-          WHERE c.id = ANY(${ids}::int[]) AND c."tosViolation" AND c."deletedAt" IS NULL
-          ORDER BY c.id
-          FOR UPDATE`
-      ).map((r) => r.id);
-      const cleared = await setCommentFlags(prismaRunner(tx), candidates, { tosViolation: false });
-      // In the clear's transaction, so a clear never lands without its reports reopened.
-      const reopened = cleared.length
-        ? await tx.$queryRaw<{ id: number }[]>`
-            UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
-            FROM "CommentV3Report" c
-            WHERE c."reportId" = r.id
-              AND c."commentId" = ANY(${cleared.map((c) => c.id)}::int[])
-              AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-              AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
-            RETURNING r.id`
-        : [];
-      return { cleared, reopenedReports: reopened.length };
-    });
-    return { count: cleared.length, reopenedReports, failed: 0 };
+    const { cleared, reopenedReports, held } = await dbWrite.$transaction((tx) =>
+      clearCommentV3TosViolationIn(tx, ids)
+    );
+    return { count: cleared.length, reopenedReports, held, failed: 0 };
   } catch (e) {
     logToAxiom({
       type: 'error',
@@ -118,12 +131,18 @@ export async function bulkClearCommentV3TosViolation({ ids }: { ids: number[] })
   }
 }
 
-/** Deletes comments in the caller's transaction; one with replies stays as a placeholder for them. */
-export function deleteCommentsV3(tx: Prisma.TransactionClient, ids: number[]) {
-  return deleteComments(prismaRunner(tx), ids);
+/**
+ * Deletes comments in the caller's transaction; one with replies stays as a placeholder for them.
+ * The author's own delete is deleteOwnCommentV3.
+ */
+export function deleteCommentsV3(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  cause?: Exclude<CommentGoneCause, 'author'>
+) {
+  return deleteComments(prismaRunner(tx), ids, cause);
 }
 
-/** Run after the delete's transaction commits. */
 export function afterCommentsV3Deleted(deleted: Awaited<ReturnType<typeof deleteCommentsV3>>) {
   void onTopicCommentsRemoved(deleted);
 }
@@ -163,4 +182,189 @@ export async function setFlagsInBatches(
     );
   }
   return changed;
+}
+
+type FileReport = (input: {
+  userId: number;
+  isModerator: boolean;
+  id: number;
+  type: ReportEntity;
+  reason: ReportReason;
+  details: Record<string, unknown>;
+  foldIntoPendingOnly: boolean;
+}) => Promise<{ id: number } | null | undefined>;
+
+/**
+ * A Feature Pages comment is shown at once and hidden if its scan flags it (scam or csam), with a
+ * system report in the existing queue, filed or folded before each hide, a retry included. Any other
+ * comment is left to the site's own rules. A text version a moderator already lifted the scan's hide
+ * for is left as it is, with no report: a repeated scan of it changes nothing, and neither does one
+ * whose text could not be read.
+ */
+export async function hideFlaggedFpComment(
+  commentId: number,
+  deps: {
+    createReport?: FileReport;
+    db?: Pick<typeof dbWrite, '$queryRawUnsafe' | '$transaction'>;
+    /** The text the scan judged, by `textScanTextHash`. */
+    textHash?: string;
+    currentTextHash?: typeof currentFpTextHash;
+  } = {}
+) {
+  const client = deps.db ?? dbWrite;
+  const read = () =>
+    prismaRunner(client as never).query<{
+      entityType: string;
+      version: number | null;
+      liftGrantedVersion: number | null;
+    }>(
+      // Compared as text: this runs for every flagged comment, before the featurePage label exists.
+      `SELECT c."entityType"::text AS "entityType", m.version, m."liftGrantedVersion"
+       FROM "CommentV3" c LEFT JOIN "FeaturePageCommentMirror" m ON m."commentId" = c.id
+       WHERE c.id = $1`,
+      [commentId]
+    );
+  const [first] = (await read()).rows;
+  if (first?.entityType !== 'featurePage') return false;
+
+  // The version whose text the scan judged: the text hashed now is that version's only when no edit
+  // bumped the version around the hash read (every edit of it bumps it). A failed read throws after,
+  // for the retry to bind.
+  let failure: unknown;
+  let judged: ScanJudged = { kind: 'other' };
+  if (deps.textHash !== undefined)
+    try {
+      const hash = await (deps.currentTextHash ?? currentFpTextHash)(commentId);
+      const [after] = (await read()).rows;
+      if (hash === deps.textHash && after?.version != null && after.version === first.version)
+        judged = { kind: 'version', version: after.version };
+    } catch (e) {
+      failure = e;
+      judged = { kind: 'unread' };
+    }
+  const lifted =
+    judged.kind === 'version'
+      ? first.liftGrantedVersion === judged.version
+      : judged.kind === 'unread' &&
+        first.version != null &&
+        first.liftGrantedVersion === first.version;
+  if (lifted) {
+    if (failure) throw failure;
+    return false;
+  }
+
+  const createReport =
+    deps.createReport ??
+    ((await import('~/server/services/report.service')).createReport as FileReport);
+  // The report commits before the hide, so the author's delete is refused from the moment it is
+  // hidden. A failed report never holds the hide back: hidden, then thrown for the retry to file.
+  let reportId: number | null = null;
+  try {
+    const report = await createReport({
+      userId: constants.system.user.id,
+      isModerator: true,
+      id: commentId,
+      type: ReportEntity.CommentV3,
+      reason: ReportReason.AdminAttention,
+      details: { reason: 'Other', comment: FP_AUTO_HIDE_REPORT_COMMENT },
+      foldIntoPendingOnly: true,
+    });
+    reportId = report?.id ?? null;
+  } catch (e) {
+    failure ??= e;
+  }
+  const hid = await client.$transaction((tx) =>
+    hideAsScan(prismaRunner(tx), commentId, reportId, judged)
+  );
+  if (failure) throw failure;
+  return hid;
+}
+
+async function currentFpTextHash(commentId: number) {
+  const subject = (await getTextScanProfile('CommentV3')?.load([commentId]))?.get(commentId);
+  return subject && textScanTextHash(subject);
+}
+
+/**
+ * What a scan judged: one text version; another than the current, or none named, which no lift
+ * skips; or unread, as its text read failed. Unread skips only a lift of the current version: no
+ * text write leaves the version as it was.
+ */
+type ScanJudged = { kind: 'version'; version: number } | { kind: 'other' } | { kind: 'unread' };
+
+/**
+ * Hides as the scan and records the hide, its report and, when it is still the current one under the
+ * lock, the text version the scan judged on the mirror row. Any other hide clears that record in
+ * setCommentFlags; a retry while the scan's hide still stands records it again. With no report or no
+ * version, no dismissal lifts it. Returns false, writing nothing, once a moderator has lifted the
+ * version the scan judged, or the current one when it is unread.
+ */
+async function hideAsScan(
+  db: ReturnType<typeof prismaRunner>,
+  commentId: number,
+  reportId: number | null,
+  judged: ScanJudged
+) {
+  const judgedVersion = judged.kind === 'version' ? judged.version : null;
+  // Locked, then read in a statement of its own, so a lift committed meanwhile is seen.
+  await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+  const { rows } = await db.query<{ lifted: boolean; scanHiddenAt: string | null }>(
+    `SELECT COALESCE(m."liftGrantedVersion" = m.version AND (m.version = $2 OR $3::boolean), false)
+         AS lifted,
+       CASE WHEN c.hidden AND c."hiddenAt" = m."scanHiddenAt" THEN m."scanHiddenAt"::text END
+         AS "scanHiddenAt"
+     FROM "CommentV3" c LEFT JOIN "FeaturePageCommentMirror" m ON m."commentId" = c.id
+     WHERE c.id = $1`,
+    [commentId, judgedVersion, judged.kind === 'unread']
+  );
+  if (rows[0]?.lifted) return false;
+  const changed = await setCommentFlags(db, [commentId], { hidden: true });
+  if (changed.length)
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" m SET "scanHiddenAt" = c."hiddenAt",
+         "scanHiddenVersion" = CASE WHEN m.version = $3::int THEN m.version END,
+         "scanHideReportId" = $2
+       FROM "CommentV3" c WHERE m."commentId" = $1 AND c.id = m."commentId"`,
+      [commentId, reportId, judgedVersion]
+    );
+  else if (rows[0]?.scanHiddenAt)
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" SET "scanHiddenAt" = $2::timestamptz,
+         "scanHideReportId" = $3,
+         "scanHiddenVersion" = CASE WHEN version = $4::int THEN version ELSE "scanHiddenVersion" END
+       WHERE "commentId" = $1`,
+      [commentId, rows[0].scanHiddenAt, reportId, judgedVersion]
+    );
+  return true;
+}
+
+const fpDeleteRefused = () =>
+  new TRPCError({ code: 'FORBIDDEN', message: 'This comment is under review.' });
+
+/**
+ * The author's own delete, a moderator's included. A Feature Pages comment that is ToS-removed,
+ * reported or held is kept as evidence and the delete refused. Read under the hold decision's lock,
+ * then the row's, as a hold, a report and a ToS removal each wait on one of them.
+ */
+export async function deleteOwnCommentV3(
+  tx: Prisma.TransactionClient,
+  comment: { id: number; entityType: string }
+) {
+  const db = prismaRunner(tx);
+  if (comment.entityType === 'featurePage') {
+    await lockCsamHold(tx, 'CommentV3', comment.id);
+    const { rows } = await db.query<{ tosViolation: boolean }>(
+      `SELECT "tosViolation" FROM "CommentV3" WHERE id = $1 AND "deletedAt" IS NULL FOR UPDATE`,
+      [comment.id]
+    );
+    if (rows[0]) {
+      if (rows[0].tosViolation || (await hasOpenCommentReport(db, comment.id)))
+        throw fpDeleteRefused();
+      const hold = await commentV3CsamHold(comment.id, tx);
+      if (hold === 'unverified')
+        throw new TRPCError({ code: 'CONFLICT', message: 'This comment is being checked.' });
+      if (hold !== 'clear') throw fpDeleteRefused();
+    }
+  }
+  return deleteComments(db, [comment.id], 'author');
 }

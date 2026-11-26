@@ -3,6 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { UserIdentity, UserProfileText } from '$lib/server/user-lookup.service';
 
   // What an account shows the world about itself — avatar, covers, bio, profile message, location.
@@ -16,7 +17,12 @@
   }: {
     identity: Pick<
       UserIdentity,
-      'id' | 'username' | 'profilePictureUrl' | 'profilePictureType' | 'profilePictureNsfwLevel'
+      | 'id'
+      | 'username'
+      | 'profilePictureUrl'
+      | 'profilePictureType'
+      | 'profilePictureNsfwLevel'
+      | 'profilePictureRestricted'
     >;
     profile: UserProfileText | null;
     /** Rendered under the profile text, when there is any — User Lookup's "Clear profile text". */
@@ -40,12 +46,13 @@
   // alternative is loading the profile of an account you may be about to act on.
   const media = $derived(
     [
-      identity.profilePictureUrl
+      identity.profilePictureUrl || identity.profilePictureRestricted
         ? {
             label: 'Avatar',
-            url: identity.profilePictureUrl,
+            url: identity.profilePictureUrl ?? '',
             type: identity.profilePictureType,
             nsfwLevel: identity.profilePictureNsfwLevel,
+            restricted: identity.profilePictureRestricted,
           }
         : null,
       profile?.coverImage ? { label: 'Cover', ...profile.coverImage } : null,
@@ -71,13 +78,21 @@
     <div class="mt-4 flex flex-wrap gap-3">
       {#each media as m (m.label)}
         <figure class="w-28">
-          <EdgeMedia
-            src={m.url}
-            type={m.type === 'video' ? 'video' : 'image'}
-            width={240}
-            alt="{m.label} for {identity.username ?? identity.id}"
-            class="size-28 rounded-md border border-dark-4 object-cover"
-          />
+          {#if m.restricted}
+            <div
+              class="grid size-28 place-items-center rounded-md border border-dark-4 p-1 text-center text-[10px] text-dark-2"
+            >
+              {RETRACTED_REFUSED}
+            </div>
+          {:else}
+            <EdgeMedia
+              src={m.url}
+              type={m.type === 'video' ? 'video' : 'image'}
+              width={240}
+              alt="{m.label} for {identity.username ?? identity.id}"
+              class="size-28 rounded-md border border-dark-4 object-cover"
+            />
+          {/if}
           <figcaption class="mt-1 flex items-baseline justify-between gap-1 text-xs text-dark-2">
             {m.label}
             <Badge variant={(m.nsfwLevel ?? 0) >= 8 ? 'destructive' : 'secondary'}>
@@ -95,13 +110,21 @@
       <div class="flex flex-wrap gap-4">
         {#each media as m (m.label)}
           <figure class="w-40">
-            <EdgeMedia
-              src={m.url}
-              type={m.type === 'video' ? 'video' : 'image'}
-              width={320}
-              alt="{m.label} for {identity.username ?? identity.id}"
-              class="h-32 w-40 rounded-md border border-dark-4 object-cover"
-            />
+            {#if m.restricted}
+              <div
+                class="grid h-32 w-40 place-items-center rounded-md border border-dark-4 p-2 text-center text-xs text-dark-2"
+              >
+                {RETRACTED_REFUSED}
+              </div>
+            {:else}
+              <EdgeMedia
+                src={m.url}
+                type={m.type === 'video' ? 'video' : 'image'}
+                width={320}
+                alt="{m.label} for {identity.username ?? identity.id}"
+                class="h-32 w-40 rounded-md border border-dark-4 object-cover"
+              />
+            {/if}
             <figcaption class="mt-1 flex items-baseline gap-2 text-xs text-dark-2">
               {m.label}
               <Badge variant={(m.nsfwLevel ?? 0) >= 8 ? 'destructive' : 'secondary'}>

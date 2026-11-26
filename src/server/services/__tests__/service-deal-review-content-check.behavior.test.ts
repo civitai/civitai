@@ -198,10 +198,14 @@ const MIGRATIONS = [
   '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
   '20261028150000_creator_service_max_nsfw_level',
+  '20261028160000_creator_service_deal_file_entries',
   '20261028170000_creator_service_offering_takedown',
   '20270106120000_service_offering_content_scan',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -521,6 +525,21 @@ describe('a csam verdict on review text', () => {
     await q(`UPDATE "TextScanHold" SET status = 'Dismissed', meta = '{"decision":"dismiss"}'`);
     await adapter.requeueBlockedServiceDealReviewText('ServiceDealReview', REVIEW);
     expect((await statuses()).comment).toBe('Pending');
+  });
+
+  it('settles and shows a review whose held comment the buyer cleared, once the hold is dismissed', async () => {
+    await seed(X);
+    await textScan({ csam: true });
+    // The edit keeps a held comment Blocked, whatever it is changed to.
+    await q(`UPDATE "ServiceDealReview" SET comment = NULL, "scanWorkflowId" = NULL`);
+
+    await q(`UPDATE "TextScanHold" SET status = 'Dismissed', meta = '{"decision":"dismiss"}'`);
+    await adapter.requeueBlockedServiceDealReviewText('ServiceDealReview', REVIEW);
+    expect((await statuses()).comment).toBe('Scanned');
+    const [{ publishedAt }] = await q<{ publishedAt: Date | null }>(
+      `SELECT "publishedAt" FROM "ServiceDealReview"`
+    );
+    expect(publishedAt).not.toBeNull();
   });
 
   it('holds a reply under the seller, its author, and a comment under the buyer', async () => {

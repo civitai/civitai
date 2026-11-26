@@ -9,7 +9,12 @@
 // name the source by slug and leave the basis to the server (the adapter on the registry path, the
 // site on REST). The answer is
 //
-//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
+//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}]}
+//
+// `version` is the document's store version, the number a write's `ifVersion` is compared against;
+// `rev` is kept beside it, opaque. A registry item carries `version` when the adapter's private feed
+// sent it (format k3 on); an item without one omits the field (the SDK then reads version 0, which
+// no stored document has, so a write built from it is refused `version_conflict`, never applied).
 //
 // `keyPrefix` keeps only the records whose storage key starts with it, on both paths (the
 // document store's own `keyPrefix` on REST). A registry item carries its key beside its URN, as the
@@ -33,12 +38,21 @@
 // unfloored). Also the keyed get,
 //
 //	GET /v1/apps/{slug}/collections/{collection}/records/{key}[?major=N][&minSeq=S]
-//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"data":{…}}}
+//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}}
 //
 // answered from the stream (base plus overlay) only: a key the stream does not hold, or a stream
 // that holds nothing, is `404 not_found`, and a stream that cannot answer is `401` or `503` with
 // its reason as the code (streamRefusal), never a REST read. Writes off, `minSeq` is not read and
 // the keyed get is the mux's 404.
+//
+// CUT OVER. With APP_DATA_WRITES on, a read is a cut-over app's (only an app the site has moved to
+// this service calls it; the per-app flag that moves it is the site's to evaluate): it is never read
+// from REST. Each reason the registry cannot answer is its answer (streamRefusal), and an empty
+// stream is an empty answer (WRITES-DESIGN.md, "The empty stream"). Only the site's shadow, which
+// sends RegistryOnlyHeader, still gets its `source: none` answer. Writes off, the REST fallback
+// stands, unchanged.
+//
+// Shared collections and signed-out viewers are package shared's (shared.go here).
 //
 // Also /healthz, /readyz and /metrics.
 package api
@@ -62,6 +76,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
@@ -105,6 +120,15 @@ type Server struct {
 	// Writes, when set (APP_DATA_WRITES on), adds the write routes and `info` (writes.Forwarder).
 	// Nil registers none of them: each answers 404, as any path the mux does not know.
 	Writes Routes
+	// Shared, when set (APP_DATA_WRITES on, with the registry path), serves shared collections and
+	// signed-out viewers (shared.go). Nil: a collection the private feed does not serve answers as
+	// before, and the `@me` routes are the mux's 404.
+	Shared SharedReads
+	// Anonymous verifies a signed-out viewer's block token (exchange.BlockVerifier.CheckAnonymous).
+	// Nil refuses every signed-out read `401 sign_in_required`.
+	Anonymous func(ctx context.Context, token string) (exchange.AnonymousClaims, error)
+
+	shared sharedSchemas
 }
 
 // Routes registers a set of routes on the API's mux.
@@ -126,6 +150,10 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", writes.Preflight)
 		// The key path's preflight (writes.Preflight, registered with the writes) allows GET too.
 		mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/{key}", s.record)
+		if s.Shared != nil {
+			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me", s.mine)
+			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me/{parent}", s.mine)
+		}
 		s.Writes.Register(mux)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -137,7 +165,28 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
-	return mux
+	return withEdge(mux)
+}
+
+// withEdge puts what the edge named about the viewer in each request's context:
+//   - their address (exchange.ClientIPHeader): the user exchange charges a token it has not seen
+//     exchanged to it (exchange.Guard) and forwards it to the hub. A request without the header
+//     carries none;
+//   - their region (sign.ReadRegion): a stream a read opens for them carries it to the adapter
+//     (session.WithRegion) when its manager forwards regions (session.Options.Region, on with
+//     APP_DATA_FORWARD_REGION); otherwise it is read and never sent. A request with none, or with a
+//     malformed one, carries none, and the adapter holds it to SFW, as before.
+func withEdge(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if ip := exchange.ClientIPFrom(r.Header); ip != "" {
+			ctx = exchange.WithClientIP(ctx, ip)
+		}
+		if region, bad := sign.ReadRegion(r.Header); bad == "" {
+			ctx = session.WithRegion(ctx, region)
+		}
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // An app calls this from its sandboxed frame, an opaque origin, with a bearer token and no cookies,
@@ -147,6 +196,8 @@ func cors(h http.Header) {
 	h.Set("Access-Control-Allow-Headers", "Authorization")
 	h.Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	h.Set("Access-Control-Max-Age", "600")
+	// A passed-on 429 names its delay; the frame reading it can see the header only if exposed.
+	h.Set("Access-Control-Expose-Headers", "Retry-After")
 }
 
 func preflight(w http.ResponseWriter, _ *http.Request) {
@@ -155,10 +206,17 @@ func preflight(w http.ResponseWriter, _ *http.Request) {
 }
 
 type item struct {
-	URN  string          `json:"urn,omitempty"`
-	Key  string          `json:"key,omitempty"`
-	Rev  string          `json:"rev"`
-	Data json.RawMessage `json:"data"`
+	URN string `json:"urn,omitempty"`
+	Key string `json:"key,omitempty"`
+	Rev string `json:"rev"`
+	// Version is the document's store version (see the package comment); omitted when unknown (0).
+	Version int64           `json:"version,omitempty"`
+	Data    json.RawMessage `json:"data"`
+}
+
+// entityItem is a private stream record as a read answers it.
+func entityItem(e registry.Entity) item {
+	return item{URN: e.URN, Key: e.Key, Rev: e.Rev, Version: e.Version, Data: e.Body}
 }
 
 type answer struct {
@@ -177,9 +235,11 @@ type keyed struct {
 var minSeqRE = regexp.MustCompile(`^[0-9]{1,15}$`)
 
 type readParams struct {
-	schema string
-	minSeq int64
-	token  string
+	schema           string
+	slug, collection string
+	major            int
+	minSeq           int64
+	token            string
 }
 
 // params reads the schema, the floor (writes on only) and the token, or answers the refusal and
@@ -208,7 +268,7 @@ func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time)
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
 		return p, false
 	}
-	p.schema = schema
+	p.schema, p.slug, p.collection, p.major = schema, r.PathValue("slug"), r.PathValue("collection"), major
 	token, ok := bearer(r)
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
@@ -235,6 +295,9 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case s.sharedPath(p):
+		s.sharedGet(w, r, start, p, k)
+		return
 	case s.Streams == nil:
 		s.streamRefusal(w, start, "registry_off")
 		return
@@ -246,6 +309,10 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ents, err := s.Streams.ReadAt(ctx, p.token, p.schema, p.minSeq)
 	switch {
+	case errors.Is(err, session.ErrNotPrivate) && s.Shared != nil:
+		s.shared.mark(p.schema, time.Now())
+		s.sharedGet(w, r, start, p, k)
+		return
 	case errors.Is(err, session.ErrFloorNotMet):
 		s.streamRefusal(w, start, "floor_not_met")
 		return
@@ -269,7 +336,7 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 		s.write(w, start, http.StatusNotFound, errBody("not_found", "document not found"), "registry", "not_found")
 		return
 	}
-	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: item{URN: found.URN, Key: found.Key, Rev: found.Rev, Data: found.Body}}, "registry", "ok")
+	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: entityItem(*found)}, "registry", "ok")
 }
 
 // refusedReasons are the stream reasons the keyed get answers 401 (WRITES-DESIGN.md, the
@@ -321,6 +388,12 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := p.token
+	if s.sharedPath(p) {
+		s.sharedList(w, r, start, p)
+		return
+	}
+	// Never REST for a cut-over app's read (see CUT OVER); the shadow keeps its registry-only answer.
+	cutover := s.Writes != nil && r.Header.Get(RegistryOnlyHeader) != "1"
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.Deadline)
 	defer cancel()
@@ -337,9 +410,23 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
 		switch {
+		case errors.Is(err, session.ErrNotPrivate) && s.Shared != nil:
+			s.shared.mark(p.schema, time.Now())
+			s.sharedList(w, r, start, p)
+			return
 		case errors.Is(err, session.ErrFloorNotMet):
 			// Never REST: a client that sent a floor retries this service.
 			s.streamRefusal(w, start, "floor_not_met")
+			return
+		case cutover && err != nil:
+			s.streamRefusal(w, start, fallbackReason(err))
+			return
+		case cutover && keyPrefix != "" && !allKeyed(ents):
+			s.streamRefusal(w, start, "unkeyed")
+			return
+		case cutover:
+			// The empty stream is accepted for v1: an empty answer, never a REST read.
+			s.write(w, start, http.StatusOK, registryAnswer(ents, keyPrefix), "registry", "ok")
 			return
 		case err != nil || len(ents) == 0:
 			reason = fallbackReason(err)
@@ -347,15 +434,13 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 			reason = "unkeyed"
 		default:
 			// The stream holds records, so it was not refused: a prefix that keeps none is an empty answer.
-			out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
-			for _, e := range ents {
-				if strings.HasPrefix(e.Key, keyPrefix) {
-					out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
-				}
-			}
-			s.write(w, start, http.StatusOK, out, "registry", "ok")
+			s.write(w, start, http.StatusOK, registryAnswer(ents, keyPrefix), "registry", "ok")
 			return
 		}
+	}
+	if cutover {
+		s.streamRefusal(w, start, reason)
+		return
 	}
 	if r.Header.Get(RegistryOnlyHeader) == "1" {
 		s.write(w, start, http.StatusOK, answer{Source: "none", Reason: reason, Items: []item{}}, "none", "registry_only")
@@ -380,9 +465,20 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	}
 	out := answer{Source: "rest", Items: make([]item, 0, len(docs))}
 	for _, d := range docs {
-		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
+		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Version: d.Version, Data: d.Data})
 	}
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
+}
+
+// registryAnswer is a private stream's records under keyPrefix.
+func registryAnswer(ents []registry.Entity, keyPrefix string) answer {
+	out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Key, keyPrefix) {
+			out.Items = append(out.Items, entityItem(e))
+		}
+	}
+	return out
 }
 
 // keyPrefixRE is a document key's grammar (the store's `[A-Za-z0-9._:-]{1,128}`): a prefix of one.
@@ -446,8 +542,12 @@ func (s *Server) restError(w http.ResponseWriter, start time.Time, err error) {
 	var re *rest.Error
 	switch {
 	case errors.As(err, &re) && re.Status >= 400 && re.Status < 500:
-		// The site's own refusal (401, 403, 404, 429…), passed on as it sent it.
+		// The site's own refusal (401, 403, 404, 429…), passed on as it sent it: its body (a 429's
+		// carries the `rateLimit` meta) and its Retry-After.
 		w.Header().Set("Content-Type", "application/json")
+		if re.RetryAfter != "" {
+			w.Header().Set("Retry-After", re.RetryAfter)
+		}
 		w.WriteHeader(re.Status)
 		body := re.Body
 		if body == nil {

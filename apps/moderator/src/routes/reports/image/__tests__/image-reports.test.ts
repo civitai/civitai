@@ -40,7 +40,7 @@ describe('/reports/image', () => {
       url: url('/reports/image?level=1'),
       locals: { user: { id: 1 }, grants: { 'image.moderate': true } },
     } as never);
-    expect(loadImageQueue).toHaveBeenCalledWith('reported', expect.any(URL));
+    expect(loadImageQueue).toHaveBeenCalledWith('reported', expect.any(URL), { id: 1 });
     expect(data).toMatchObject({ kind: 'reported', title: 'Image reports', canAct: true });
   });
 
@@ -110,7 +110,12 @@ describe('/images/reported', () => {
   });
 
   it('still serves the other image queues', async () => {
-    await imagesLoad({ params: { slug: 'minor' }, url: url('/images/minor') } as never);
-    expect(loadImageQueue).toHaveBeenCalledWith('minor', expect.any(URL));
+    const user = { id: 2, roles: [] };
+    await imagesLoad({
+      params: { slug: 'minor' },
+      url: url('/images/minor'),
+      locals: { user },
+    } as never);
+    expect(loadImageQueue).toHaveBeenCalledWith('minor', expect.any(URL), user);
   });
 });

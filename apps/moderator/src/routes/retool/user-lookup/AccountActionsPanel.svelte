@@ -6,12 +6,6 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
-  import {
-    deleteButtonState,
-    deleteButtonView,
-    holdButtonView,
-    type DeleteHold,
-  } from '$lib/legal-hold';
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -39,7 +33,6 @@
     canBan,
     canPurge,
     canDelete,
-    deleteHold,
   }: {
     identity: Identity;
     canAct: boolean;
@@ -48,8 +41,6 @@
     canBan: boolean;
     canPurge: boolean;
     canDelete: boolean;
-    /** Anything but `clear` disables Delete account and Purge: a hold, or a status that could not be read. */
-    deleteHold: DeleteHold | null;
   } =
     $props();
 
@@ -65,17 +56,7 @@
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : SSR_PENDING);
   const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
-  const deleteButton = $derived(
-    deleteButtonState({ canDelete, deleted: !!identity.deletedAt, hold: deleteHold })
-  );
-  const deleteView = $derived(deleteButtonView(deleteButton));
-  // A deleted account can still be purged, so `deleted` does not hide this one.
-  const purgeView = $derived(
-    holdButtonView(
-      deleteButtonState({ canDelete: canPurge, deleted: false, hold: deleteHold }),
-      'Purge content'
-    )
-  );
+  const showDelete = $derived(canDelete && !identity.deletedAt);
 
   // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`
   // in the main app refuses it, which is what this panel posts through. Without this the panel offered
@@ -207,25 +188,16 @@
         {/if}
       {/if}
 
-      {#if purgeView}
-        <Button
-          size="sm"
-          variant="destructive"
-          disabled={purgeView.disabled}
-          onclick={() => (confirming = 'purge')}
-        >
-          {purgeView.label}
+      <!-- A deleted account can still be purged. -->
+      {#if canPurge}
+        <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
+          Purge content
         </Button>
       {/if}
 
-      {#if deleteView}
-        <Button
-          size="sm"
-          variant="destructive"
-          disabled={deleteView.disabled}
-          onclick={() => (confirming = 'delete')}
-        >
-          {deleteView.label}
+      {#if showDelete}
+        <Button size="sm" variant="destructive" onclick={() => (confirming = 'delete')}>
+          Delete account
         </Button>
       {/if}
     </div>
@@ -271,7 +243,7 @@
       </div>
     {/if}
 
-    {#if confirming === 'purge' && purgeView && !purgeView.disabled}
+    {#if confirming === 'purge' && canPurge}
       <form method="POST" action="?/purgeContent" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
@@ -300,7 +272,7 @@
           </div>
         </div>
       </form>
-    {:else if confirming === 'delete' && deleteButton === 'enabled'}
+    {:else if confirming === 'delete' && showDelete}
       <form method="POST" action="?/deleteAccount" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">

@@ -1,5 +1,14 @@
-import type { Prisma } from '@prisma/client';
-import { sql, type Kysely, type RawBuilder } from 'kysely';
+import { Prisma } from '@prisma/client';
+import {
+  DummyDriver,
+  Kysely as KyselyCompiler,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  sql,
+  type Kysely,
+  type RawBuilder,
+} from 'kysely';
 import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 
 /**
@@ -21,6 +30,30 @@ export function fromPrismaSql<T>(statement: Prisma.Sql): RawBuilder<T> {
   // Kysely's tag only reads the pieces in order, never `.raw`, so a plain array stands in for the
   // TemplateStringsArray its signature names.
   return sql<T>(statement.strings as unknown as TemplateStringsArray, ...statement.values);
+}
+
+// Compiles only; never connects.
+const compiler = new KyselyCompiler<Record<string, never>>({
+  dialect: {
+    createAdapter: () => new PostgresAdapter(),
+    createDriver: () => new DummyDriver(),
+    createIntrospector: (db) => new PostgresIntrospector(db),
+    createQueryCompiler: () => new PostgresQueryCompiler(),
+  },
+});
+
+/**
+ * A Kysely `sql` fragment as a `Prisma.sql` one, its values bound in the same order, for a statement
+ * that has to stay on Prisma (one that joins a batch `$transaction`). Refuses a fragment whose text
+ * holds a `$<digit>` of its own, which would bind values out of place.
+ */
+export function toPrismaSql(fragment: RawBuilder<unknown>): Prisma.Sql {
+  const { sql: text, parameters } = fragment.compile(compiler);
+  const pieces = text.split(/\$\d+/);
+  if (pieces.length !== parameters.length + 1)
+    throw new Error('toPrismaSql: the fragment has a "$<digit>" of its own');
+  // Like `fromPrismaSql`, a plain array stands in for the TemplateStringsArray.
+  return Prisma.sql(pieces as unknown as TemplateStringsArray, ...(parameters as unknown[]));
 }
 
 /**

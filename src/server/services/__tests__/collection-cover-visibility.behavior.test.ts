@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -124,6 +125,12 @@ const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (N
 beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
+    CREATE TABLE "User" (id int PRIMARY KEY, username text);
+    CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
     CREATE TABLE "Image" (
       minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,
@@ -459,6 +466,59 @@ describe('updateCollectionCoverImage', () => {
   it('lets staff set any cover', async () => {
     await setCover(REMOVED, true);
     expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
+  });
+
+  describe('an image a deal file points at', () => {
+    beforeEach(() =>
+      holder.db.exec(
+        `INSERT INTO "ServiceDealFile" ("imageId") VALUES (${PUBLISHED}), (${REMOVED})`
+      )
+    );
+    afterEach(() => holder.db.exec(`TRUNCATE "ServiceDealFile"`));
+
+    it('is refused as a cover the owner could otherwise see', async () => {
+      await expect(setCover(PUBLISHED)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a cover', () => setCover(REMOVED)],
+      [
+        'a collection item',
+        () =>
+          assertCollectionItemsVisibleToViewer({
+            itemKey: 'imageId',
+            ids: [REMOVED],
+            userId: OWNER,
+          }),
+      ],
+    ])(
+      'answers as %s the viewer cannot see, never saying it is a delivery file',
+      async (_, use) => {
+        await expect(use()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      }
+    );
+
+    it('is refused as a collection item to staff too', async () => {
+      await expect(
+        assertCollectionItemsVisibleToViewer({
+          itemKey: 'imageId',
+          ids: [REMOVED],
+          userId: OWNER,
+          isModerator: true,
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+
+    it('is refused as a collection item the viewer could otherwise see', async () => {
+      await expect(
+        assertCollectionItemsVisibleToViewer({
+          itemKey: 'imageId',
+          ids: [PUBLISHED],
+          userId: OWNER,
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
   });
 });
 

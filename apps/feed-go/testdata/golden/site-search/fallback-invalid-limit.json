@@ -1,0 +1,18 @@
+{
+  "name": "fallback-invalid-limit",
+  "description": "A negative limit: zod refuses it (400).",
+  "request": {
+    "path": "/api/search/indexes/tools_v2/search",
+    "body": "{\"limit\":-1}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": null,
+  "expect": {
+    "fallback": "search-input-invalid",
+    "nodeStatus": 400
+  }
+}

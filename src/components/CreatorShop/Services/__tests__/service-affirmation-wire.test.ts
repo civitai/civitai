@@ -6,7 +6,10 @@ import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as Mantine from '@mantine/core';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import {
+  BUYER_DISCLOSURE_VERSION,
+  SERVICES_TERMS_VERSION,
+} from '~/shared/constants/creator-service-terms.constants';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
@@ -18,7 +21,7 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const mocks = vi.hoisted(() => ({
   setStatus: vi.fn(),
   request: vi.fn(),
-  upsert: vi.fn(async () => undefined),
+  upsert: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock('@mantine/core', async (importOriginal) => ({
@@ -42,13 +45,29 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: () => undefined }),
 }));
-vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'yellow' }));
+// The Buzz balance behind the real button needs a signed-in session; these tests are about what it sends.
+vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
+  BuzzTransactionButton: (props: {
+    label: string;
+    disabled?: boolean;
+    onPerformTransaction: () => void;
+  }) =>
+    createElement(
+      'button',
+      { disabled: props.disabled, onClick: () => props.onPerformTransaction() },
+      props.label
+    ),
+}));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({ CurrencyBadge: () => null }));
 // The uploader needs a signed-in session; these tests are about publishing.
 vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: () => null }));
 
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
+const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
+const { SessionWrapper } = await import(
+  '~/components/CreatorShop/Services/__tests__/SessionWrapper'
+);
 const { ServiceRequestModal } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
@@ -73,11 +92,22 @@ beforeAll(() => {
 });
 
 let container: HTMLElement | undefined;
-const mount = async (node: ReactNode) => {
+// Flags {} is a viewer outside every rollout, creatorServicesNext included.
+const mount = async (node: ReactNode, flags: object = {}) => {
   container = document.createElement('div');
   document.body.appendChild(container);
   await act(async () => {
-    createRoot(container!).render(createElement(MantineProvider, null, node));
+    createRoot(container!).render(
+      createElement(
+        MantineProvider,
+        null,
+        createElement(
+          SessionWrapper,
+          null,
+          createElement(FeatureFlagsProvider, { flags: flags as never } as never, node)
+        )
+      )
+    );
   });
   return container;
 };
@@ -147,24 +177,42 @@ describe('service form', () => {
 });
 
 describe('buyer request', () => {
-  it('sends the disclosure version with the request', async () => {
-    const offering = { id: 9, title: 'Badge', price: 2500, deliveryDays: 4, revisionsIncluded: 1 };
-    const root = await mount(
-      createElement(ServiceRequestModal, { offering, sellerUsername: 'seller' } as never)
-    );
+  const offering = { id: 9, title: 'Badge', price: 2500, deliveryDays: 4, revisionsIncluded: 1 };
+  const requestWith = async (text: string, flags?: object) => {
+    const modal = createElement(ServiceRequestModal, {
+      offering,
+      sellerUsername: 'seller',
+    } as never);
+    const root = await mount(modal, flags);
     const textarea = root.querySelector('textarea')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
         textarea,
-        'please draw my cat'
+        text
       );
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    return root;
+  };
+
+  it('sends the disclosure version with the request', async () => {
+    const root = await requestWith('please draw my cat');
     await click(button(root, /Hold 2,500 Buzz and send request/));
     expect(mocks.request.mock.calls[0][0]).toMatchObject({
       offeringId: 9,
       requestText: 'please draw my cat',
-      disclosureVersion: SERVICES_TERMS_VERSION,
+      disclosureVersion: BUYER_DISCLOSURE_VERSION,
+      disclosureReviewEnabled: false,
+    });
+  });
+
+  it('tells the server the buyer was shown the with-reviews disclosure inside the rollout', async () => {
+    const root = await requestWith('please draw my cat', { creatorServicesNext: true });
+    // Inside the rollout the hold goes through the Buzz transaction button, not the plain one.
+    await click(button(root, /Hold and send request/));
+    expect(mocks.request.mock.calls[0][0]).toMatchObject({
+      disclosureVersion: BUYER_DISCLOSURE_VERSION,
+      disclosureReviewEnabled: true,
     });
   });
 });

@@ -120,8 +120,8 @@ describe('elementBackend auto-label payer', () => {
 describe('elementBackend modelLive', () => {
   it("answers with the host's check", async () => {
     const modelLive = vi.fn(async () => false);
-    await expect(elementBackend({ ...host(), modelLive }).modelLive(77)).resolves.toBe(false);
-    expect(modelLive).toHaveBeenCalledWith(77);
+    await expect(elementBackend({ ...host(), modelLive }).modelLive(77, 770)).resolves.toBe(false);
+    expect(modelLive).toHaveBeenCalledWith(77, 770);
   });
 
   it('keeps the link on a host without the hook', async () => {

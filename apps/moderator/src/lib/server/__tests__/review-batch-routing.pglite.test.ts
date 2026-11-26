@@ -1,9 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
+import {
+  CSAM_RESTRICTION_CASES,
+  csamCaseCleanupSql,
+} from '../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 /**
  * Which images a review batch may show on the general tier (`imageRoutesHeld`, shared with the main
@@ -67,7 +71,6 @@ const CASES: [string, number, number][] = [
   ['a blockedFor signal pattern', 92, 93],
   ['an image listed on a CsamReport about another user', 100, 101],
   ['an image listed by bare id on a CsamReport', 102, 101],
-  ['an evidence hold on the image', 110, 101],
   ['a held row sharing its url', 120, 101],
   ['a row with a block-reason signal sharing its url', 130, 101],
 ];
@@ -107,7 +110,7 @@ beforeAll(async () => {
       (90, NULL, FALSE, 1, NULL, 'Blocked', 'never seen'), (91, NULL, FALSE, 1, NULL, 'Blocked', 'benign'),
       (92, NULL, FALSE, 1, NULL, 'Blocked', 'signal word'), (93, NULL, FALSE, 1, NULL, 'Blocked', 'tos'),
       (100, NULL, FALSE, 1, NULL, 'Scanned', NULL), (101, NULL, FALSE, 1, NULL, 'Scanned', NULL),
-      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL), (110, NULL, FALSE, 1, NULL, 'Scanned', NULL),
+      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL),
       (120, NULL, FALSE, 1, NULL, 'Scanned', NULL), (121, 'csam', FALSE, 1, NULL, 'Scanned', NULL),
       (130, NULL, FALSE, 1, NULL, 'Scanned', NULL), (131, NULL, FALSE, 1, NULL, 'Blocked', 'signal word');
     -- Each image its own bytes, so no row is another's url sibling.
@@ -115,7 +118,6 @@ beforeAll(async () => {
     -- Except these, each a copy of the row before it.
     UPDATE "Image" SET url = 'key-120' WHERE id = 121;
     UPDATE "Image" SET url = 'key-130' WHERE id = 131;
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (110);
     -- The report names user 999, not the images' owner (1), so only the listing can hold them.
     INSERT INTO "CsamReport" ("userId", "details", "images") VALUES
       (999, '{}', '[{"id": 100}, {"id": 7}]'), (999, '{}', '[102]');
@@ -167,6 +169,20 @@ describe('review batch routing', () => {
     expect({ id, held: await routesHeld(id) }).toEqual({ id, held: false });
   });
 
+  // civitai/civitai#10202: the review batch keeps a held account's media on the held tier, where
+  // each serve is a held view.
+  it('an image of a held account routes held', async () => {
+    await db.exec(`INSERT INTO "Image" (id, "userId", ingestion) VALUES (140, 990100140, 'Scanned');
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100140, '{}', '[]')`);
+    try {
+      expect(await routesHeld(140)).toBe(true);
+    } finally {
+      await db.exec(
+        `DELETE FROM "Image" WHERE id = 140; DELETE FROM "CsamReport" WHERE "userId" = 990100140`
+      );
+    }
+  });
+
   it("a CSAM label in the scanner's rows routes held", async () => {
     expect(await routesHeld(21)).toBe(false);
     scanner.csamHit.add(imageAuditContentHash(21));
@@ -180,5 +196,25 @@ describe('review batch routing', () => {
   it('an image that is gone, or an index past the batch, gives nothing to serve', async () => {
     expect(await getBatchMedia(batchOf(999), 0)).toBeNull();
     expect(await getBatchMedia(batchOf(21), 1)).toBeNull();
+  });
+});
+
+// civitai/civitai#10377 narrowed the moderator view's rule; the review batch keeps
+// `csamRestrictedSql`, so the shared cases run against it here with that rule's answers.
+describe('review batch routing, by rows sharing its url, its post text and its articles', () => {
+  const target = { id: 990900000, url: 'key-990900000' };
+  beforeAll(async () => {
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor") VALUES (${target.id}, '${target.url}', 990910000, 'Blocked', 'moderated')`
+    );
+  });
+  afterEach(async () => {
+    await db.exec(csamCaseCleanupSql(target));
+  });
+
+  it.each(CSAM_RESTRICTION_CASES)('$label', async (c) => {
+    await db.exec(c.mark(target));
+    const expected = !!c.held || (c.csamRestricted ?? c.restricts);
+    expect({ held: await routesHeld(target.id) }).toEqual({ held: expected });
   });
 });

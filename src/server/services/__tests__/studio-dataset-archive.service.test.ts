@@ -44,8 +44,6 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 }));
 const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow }));
-const ownerHeld = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/legal-hold.service', () => ({ ownerHeld, ownerHeldSql: () => '' }));
 const submitTrainingDataScanSafe = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('~/server/services/training-data-scan.service', () => ({ submitTrainingDataScanSafe }));
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
@@ -92,9 +90,17 @@ const swaps = () =>
   dbMock.dbWrite.modelFile.update.mock.calls
     .map(([args]) => args as { where: unknown; data: Record<string, unknown> })
     .filter((args) => 'url' in args.data);
+/** Whether the share-restriction read finds a restricted owner or content. */
+const restriction = vi.hoisted(() => ({ on: false }));
+/** `rows` for every raw read but the share-restriction read, which answers `restriction.on`. */
+const answerQueries = (rows: unknown[]) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      strings.join('').includes('AS restricted') ? [{ restricted: restriction.on }] : rows
+    )) as never);
 /** The row the swap locks and re-reads, as the archive sees it at write time. */
 const lockedRow = (metadata: Record<string, unknown> = {}) =>
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([
+  answerQueries([
     {
       metadata: {
         selectedEpochUrl: 'https://orch.example/v2/consumer/blobs/E.safetensors',
@@ -125,7 +131,7 @@ beforeEach(() => {
   dbMock.dbWrite.modelFile.update.mockReset().mockResolvedValue({});
   dbMock.dbWrite.$queryRaw.mockReset();
   lockedRow();
-  ownerHeld.mockReset().mockResolvedValue(false);
+  restriction.on = false;
 });
 
 describe('archiveStudioDataset', () => {
@@ -193,6 +199,26 @@ describe('archiveStudioDataset', () => {
     expect(dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata).toMatchObject({
       datasetArchive: { status: 'unavailable' },
     });
+  });
+
+  it('reads the run of a version added to a model that never came from the Studio', async () => {
+    const added = placeholder();
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...added,
+      modelVersion: {
+        meta: { trainingStudioWorkflowId: 'wf-added' },
+        model: { ...added.modelVersion.model, meta: null },
+      },
+    });
+    getWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND' }));
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      reason: 'workflow no longer exists',
+    });
+    expect(getWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-added' } })
+    );
   });
 
   it('never stores an empty zip: a run whose blobs all fail is retried, then given up on', async () => {
@@ -404,7 +430,7 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
 
   it('a restricted owner or content keeps a shared dataset Private', async () => {
     lockedRow(shared);
-    ownerHeld.mockResolvedValue(true);
+    restriction.on = true;
     expect(await archive()).toBe('Private');
   });
 
@@ -506,7 +532,7 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
   });
 
   it('a file swapped in while the zip was built is left alone', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    answerQueries([]);
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
     expect(swaps()).toHaveLength(0);
   });

@@ -260,12 +260,14 @@ describe('the article cover and banner on save', () => {
 
   const save = (
     images: { coverImage?: number | null; bannerImage?: number | null },
-    userId = AUTHOR
+    userId = AUTHOR,
+    reportListedViewer?: { seesReportListed: boolean; ownerSeesReportListed?: boolean }
   ) =>
     upsertArticle({
       id: ARTICLE_ID,
       userId,
       isModerator: userId === MODERATOR,
+      reportListedViewer,
       title: 'A title',
       content: '<p>had images</p>',
       status: 'Draft',
@@ -366,6 +368,39 @@ describe('the article cover and banner on save', () => {
 
     it("clears the owner's own withheld cover, which their form showed", async () => {
       expect(await saveWithoutCover(OLD_COVER, true)).toBeNull();
+    });
+  });
+
+  // The edit form never had a banner the report-listed rule hides (getArticleById), so a save
+  // without it keeps it, a moderator's included (#10489).
+  describe('a save without a banner the report-listed rule hides from the editor', () => {
+    const saveWithoutBanner = async (
+      listed: boolean,
+      reportListedViewer?: { seesReportListed: boolean }
+    ) => {
+      // Answers the report-listed lookup, whose CsamReport term arrives as a nested Prisma.Sql.
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        _strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        listed && values.some((v) => (v as { sql?: string })?.sql?.includes('"CsamReport"'))
+          ? [{ id: OLD_BANNER }]
+          : []) as never);
+      await save({ coverImage: OLD_COVER, bannerImage: null }, MODERATOR, reportListedViewer);
+      const [{ data }] = dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: any }];
+      return data.bannerId;
+    };
+
+    it('🔴 keeps a listed banner on the save of a moderator without the grant', async () => {
+      expect(await saveWithoutBanner(true)).toBeUndefined();
+    });
+
+    it('clears it for a viewer who sees report-listed images, whose form showed it', async () => {
+      expect(await saveWithoutBanner(true, { seesReportListed: true })).toBeNull();
+    });
+
+    it('clears a banner that is not listed', async () => {
+      expect(await saveWithoutBanner(false)).toBeNull();
     });
   });
 });

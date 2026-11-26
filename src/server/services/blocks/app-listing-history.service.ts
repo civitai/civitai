@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
 import {
   canonicalOwnerWhereBranches,
   listingEditorRole,
@@ -224,7 +225,9 @@ export function authorFailureDetail(row: {
   deployState: string | null;
   deployDetail: string | null;
 }): string | null {
-  return isAuthorFailure(row) ? row.deployDetail : null;
+  // Through the one author-facing redaction too: an approved+failed row carries a build failure,
+  // not a review preview's boot check, but nothing an author reads may skip it.
+  return isAuthorFailure(row) ? redactDeployDetailForAuthor(row.deployDetail) : null;
 }
 
 /** An approved version whose build or deploy failed: the one row the failure fields describe. */

@@ -22,11 +22,20 @@ import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  clickhouseDownloads,
+  queryDownloadsClickhouse,
+} from '~/server/clickhouse/downloads-client';
+import {
+  readsDedicatedDownloadsClickhouse,
+  withSharedClickhouseFallback,
+} from '~/server/services/downloads-clickhouse';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
 import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
+import { imageResourcesQuery } from '~/server/redis/image-resources.sql';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -2024,24 +2033,9 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
     // image-resource-use-write Flipt flag forces reads to the writer.
     const forceWrite = fromWrite || (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE));
     const db = forceWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
-    const resources = await db.$queryRaw<ImageResourceCacheItem[]>`
-      SELECT
-        ir."imageId",
-        ir."modelVersionId",
-        ir.strength,
-        ir.detected,
-        m.id as "modelId",
-        m.name as "modelName",
-        m.type as "modelType",
-        mv.name as "versionName",
-        mv."baseModel",
-        m.poi,
-        m.minor
-      FROM "ImageResourceNew" ir
-      JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-      JOIN "Model" m ON mv."modelId" = m.id
-      WHERE ir."imageId" IN (${Prisma.join(imageIds)})
-    `;
+    // Ordered by image then model version: the grouping below keeps row order, and that order is
+    // the cached order (`modelVersionIds`, and the first Checkpoint's `baseModel`).
+    const resources = await db.$queryRaw<ImageResourceCacheItem[]>(imageResourcesQuery(imageIds));
 
     // Group resources by imageId
     const grouped = resources.reduce((acc, resource) => {
@@ -2079,17 +2073,18 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  cacheNotFound: false,
+  // A user with no downloads is cached as "none" too. The marker lives only 10 minutes because the
+  // download row reaches the table asynchronously: a lookup that lands after bustUserDownloadsCache's
+  // window but before the row does pins "none" for at most this long.
+  cacheNotFound: true,
+  notFoundTtl: CacheTTL.md,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};
     if (userIds.length === 0) return {};
+    const shared = clickhouse;
 
-    const results = await clickhouse.$query<{
-      userId: number;
-      modelVersionId: number;
-      fileId: number;
-      lastDownloaded: string;
-    }>`
+    type Row = { userId: number; modelVersionId: number; fileId: number; lastDownloaded: string };
+    const query = `
       SELECT
         userId,
         modelVersionId,
@@ -2101,6 +2096,17 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
       ORDER BY lastDownloaded DESC
       LIMIT 2000 BY userId
     `;
+    const readShared = () => shared.$query<Row>(query);
+    const results = readsDedicatedDownloadsClickhouse(
+      'user-downloads',
+      clickhouseDownloads !== undefined
+    )
+      ? await withSharedClickhouseFallback(
+          'user-downloads',
+          () => queryDownloadsClickhouse<Row>(query),
+          readShared
+        )
+      : await readShared();
 
     // Group by userId
     const grouped = results.reduce((acc, { userId, modelVersionId, fileId, lastDownloaded }) => {

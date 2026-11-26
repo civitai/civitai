@@ -95,6 +95,17 @@ const choiceAsk = z.strictObject({
     .max(12),
 });
 
+/** The user hands the app one of their own images; a step names it in `references`. */
+const imageAsk = z.strictObject({
+  id,
+  kind: z.literal('image'),
+  prompt: text(120),
+  optional: z.boolean().optional(),
+});
+
+/** Beside a step's input; the edit engines take at most 3 images in all. */
+export const REMIX_STEP_MAX_REFERENCES = 2;
+
 const imageStep = z.strictObject({
   kind: z.literal('image'),
   prompt: text(2000),
@@ -102,6 +113,8 @@ const imageStep = z.strictObject({
   quantity: z.union([z.literal(1), z.literal(2), z.literal(4)]),
   /** `previous`: the first image the step before returned. */
   input: z.enum(['source', 'previous']),
+  /** Image asks whose answers go to the engine after `input`; a skipped optional one is left out. */
+  references: z.array(id).min(1).max(REMIX_STEP_MAX_REFERENCES).optional(),
 });
 
 const upscaleStep = z.strictObject({
@@ -112,7 +125,7 @@ const upscaleStep = z.strictObject({
 const declarativeSpec = z.strictObject({
   icon: z.enum(REMIX_APP_ICONS),
   engine: z.strictObject({ safe: engine, mature: engine.optional() }),
-  asks: z.array(z.discriminatedUnion('kind', [textAsk, choiceAsk])).max(4),
+  asks: z.array(z.discriminatedUnion('kind', [textAsk, choiceAsk, imageAsk])).max(4),
   steps: z
     .array(z.discriminatedUnion('kind', [imageStep, upscaleStep]))
     .min(1)
@@ -178,6 +191,7 @@ function checkWiring(
 
   // Every name in use, and whether a prompt can fill it: a choice's own id fills nothing.
   const names = new Map<string, boolean>();
+  const imageAsks = new Set(spec.asks.filter((a) => a.kind === 'image').map((a) => a.id));
   const claim = (name: string, fills: boolean, path: (string | number)[]) => {
     if (names.has(name)) issue(path, `"${name}" is already used`);
     names.set(name, fills);
@@ -201,6 +215,13 @@ function checkWiring(
     if (s === 0 && (step.kind === 'upscale' || step.input === 'previous'))
       issue(['steps', s], 'The first step works on the source image');
     if (step.kind !== 'image') return;
+    const references = new Set<string>();
+    step.references?.forEach((name, r) => {
+      if (!imageAsks.has(name))
+        issue(['steps', s, 'references', r], `"${name}" is not an image ask`);
+      else if (references.has(name)) issue(['steps', s, 'references', r], `"${name}" is repeated`);
+      references.add(name);
+    });
     for (const name of placeholdersOf(step.prompt))
       if (!names.get(name)) issue(['steps', s, 'prompt'], `{{${name}}} is not an ask or fragment`);
   });

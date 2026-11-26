@@ -88,3 +88,35 @@ describe('/apps/run/[slug] → PageBlockHost', () => {
     expect(m.hostProps?.signedScopes).toEqual(SIGNED);
   });
 });
+
+describe('/apps/run/[slug] → PageBlockHost: appData', () => {
+  // The other half of the chain, PageBlockHost → BLOCK_INIT.appData, is pinned by
+  // PageBlockHostInitContractV2.browser.test.tsx; this pins the page's hand-off, which no host
+  // test can see (they pass the prop directly).
+  const SERVICE = { url: 'https://records.example.test/v2', slug: 'my-app' };
+
+  it("forwards the mint's appData to the host as the hook returned it", async () => {
+    m.useBlockToken.mockReturnValue({
+      token: 't',
+      kind: 'block',
+      error: null,
+      missingScopes: [],
+      signedScopes: SIGNED,
+      appData: SERVICE,
+    });
+    const { default: RunPage } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    renderToStaticMarkup(createElement(RunPage, PROPS));
+    expect(m.hostProps).not.toBeNull();
+    expect(m.hostProps?.appData).toEqual({
+      url: 'https://records.example.test/v2',
+      slug: 'my-app',
+    });
+  });
+
+  it('no appData from the hook: the host gets none', async () => {
+    const { default: RunPage } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    renderToStaticMarkup(createElement(RunPage, PROPS));
+    expect(m.hostProps).not.toBeNull();
+    expect(m.hostProps?.appData).toBeUndefined();
+  });
+});

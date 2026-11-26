@@ -9,7 +9,7 @@ import {
   submitVersionSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
+import { sendSubmitRateLimited, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
 import {
   APP_BLOCKS_CLI_KEY_REFUSED,
   checkAppBlocksCliCredential,
@@ -185,7 +185,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // malformed counter is a 503, never a silent bypass). See `takeSubmitSlot`.
   const keySubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
   for (const rateSubject of [`user:${user.id}`, keySubject]) {
-    const slot = await takeSubmitSlot(rateSubject);
+    const slot = await takeSubmitSlot(rateSubject, user);
     if (!slot.ok && slot.reason !== 'limited') {
       req.log?.warn(
         slot.reason === 'unavailable'
@@ -197,14 +197,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       return;
     }
     if (!slot.ok) {
-      const retryAfter = slot.retryAfterSeconds;
-      res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-      res.status(429).json({
-        message: 'Rate limit exceeded',
-        retryAfterSeconds: retryAfter,
-        limit: SUBMIT_RATE_LIMIT.max,
-        windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
-      });
+      sendSubmitRateLimited(res, slot);
       return;
     }
   }
@@ -264,6 +257,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       status: 'pending',
       listing: result.listing ?? null,
       storageMigrationWarnings: result.storageMigrationWarnings ?? [],
+      // Never refuses: notes the developer may act on (`submitAdvisories`), `[]` when none.
+      advisories: result.advisories ?? [],
       // Only when a GitHub Actions token was verified: whether its run was stored.
       ...(result.actionsRunSourceRecorded === undefined
         ? {}
@@ -294,10 +289,12 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       { isStorageMigrationRefusal },
       { isStorageHookRefusal },
       { isManifestValidationRefusal },
+      { isModuleGraphRefusal },
     ] = await Promise.all([
       import('~/server/services/apps/storage-schema-migrations'),
       import('~/server/services/apps/storage-hooks'),
       import('~/server/services/blocks/manifest-submit-validation'),
+      import('~/server/services/blocks/bundle-module-graph'),
     ]);
     // A schema-migration refusal also carries the structured list (collection, pointer,
     // keyword, old → new) so a client can show each breaking change.
@@ -308,6 +305,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
       // A manifest the approve-time validator refuses carries every validator error.
       ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
+      // A module-graph refusal carries every import that would not load (importer, specifier).
+      ...(isModuleGraphRefusal(err) ? { moduleGraphErrors: err.problems } : {}),
     });
   }
 });

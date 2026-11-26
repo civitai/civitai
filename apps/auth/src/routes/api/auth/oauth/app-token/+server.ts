@@ -1,5 +1,6 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { parseTokenScope, TokenScope } from '@civitai/auth/token-scope';
+import { isAppAssistantClientAllowedFor } from '@civitai/auth/app-assistant-client';
 import { db } from '$lib/server/db/db';
 import { isInternalRequest } from '$lib/server/auth/internal';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
@@ -13,6 +14,7 @@ import {
 } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { AppBlockSuspendedError, createAppAccessToken } from '$lib/server/oauth/token-helpers';
+import { MemorializedAccountError } from '$lib/server/auth/account-refusal';
 import { isOfflineGrantOn } from '$lib/server/oauth/offline-grant';
 import {
   APP_TOKEN_DEFAULT_TTL,
@@ -41,6 +43,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
   if (!Number.isInteger(userId) || userId <= 0 || !clientId) {
     return bad('invalid_request', 'userId and clientId are required');
+  }
+  // An App Assistant client mints only for the user its id names, whatever consents exist.
+  if (!isAppAssistantClientAllowedFor(clientId, userId)) {
+    return bad('invalid_client', 'Unknown client');
   }
   if (requestedScope === null) {
     return bad('invalid_scope', 'Invalid scope value');
@@ -98,6 +104,9 @@ export const POST: RequestHandler = async ({ request }) => {
   } catch (err) {
     if (err instanceof AppBlockSuspendedError) {
       return bad('access_denied', 'This application is not currently available.', 403);
+    }
+    if (err instanceof MemorializedAccountError) {
+      return bad('access_denied', 'Account unavailable', 403);
     }
     throw err;
   }

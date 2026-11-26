@@ -10,6 +10,7 @@ import {
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 import { capNestedImages } from '~/server/utils/browsing-level';
 import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import {
@@ -82,6 +83,7 @@ export const getBountyEntryHandler = async ({
         isModerator: ctx.user?.isModerator,
         userId: ctx.user?.id,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        seesReportListed: seesReportListed(ctx),
         imagesPerId: canEdit ? constants.bounties.maxEntryImagesForEdit : 10,
       }),
       getRequestImageFilter(ctx),

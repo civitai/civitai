@@ -109,6 +109,9 @@
     { kind: 'search', key: 'q', label: 'Search prompt' },
   ];
 
+  const reviewImageIds = $derived(
+    new Set((data.batch?.items ?? []).filter((i) => i.isReviewImage).map((i) => i.id))
+  );
   const filteredItems = $derived(
     (data.batch?.items ?? []).filter((i) => {
       if (filters.rating && i.nsfwLevel !== Number(filters.rating)) return false;
@@ -384,12 +387,13 @@
     <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. -->
     <ImageActionBar
       {selected}
-      selectable={filteredItems.map((i) => i.id)}
+      selectable={filteredItems.filter((i) => !i.restricted).map((i) => i.id)}
       onSubmit={onSubmit.enhance}
       submitting={onSubmit.submitting}
       owners={selectedOwners}
       maxSelection={MAX_SELECTION}
       blockedIds={blockedIds}
+      {reviewImageIds}
       notify={data.canStrike}
       strike={data.canStrike}
     />

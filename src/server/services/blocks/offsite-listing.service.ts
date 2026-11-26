@@ -137,6 +137,9 @@ import {
   newUlid,
 } from '~/server/utils/app-block-ids';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import { STANDING_LIMIT_RETRY_SECONDS, throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE submission service (Design B1).
@@ -205,7 +208,8 @@ function slugTakenError(slug: string): TRPCError {
  * `rateLimit` bounds the submit RATE). Mods bypass the router rate-limit but are
  * still subject to this cap.
  */
-export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
+/** The code default; the enforced cap is the user's resolved `apps.offsite-pending`. */
+export const MAX_PENDING_OFFSITE_SUBMISSIONS = getUsageLimitDef('apps.offsite-pending').base;
 
 /**
  * The author-written text a submission or patch carries. Tagline and description edits on a
@@ -372,14 +376,20 @@ export async function submitExternalListing(opts: {
 
   // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
   // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
-  const pendingCount = await dbRead.appListingPublishRequest.count({
-    where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
-  });
-  if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
-    });
+  const [pendingCount, maxPending] = await Promise.all([
+    dbRead.appListingPublishRequest.count({
+      where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
+    }),
+    resolveUserAppLimit('apps.offsite-pending', userId),
+  ]);
+  if (pendingCount >= maxPending) {
+    // A standing allowance: it frees when a submission is withdrawn or reviewed, at no set time.
+    throwAppRateLimited(
+      'apps.offsite-pending',
+      STANDING_LIMIT_RETRY_SECONDS,
+      `You have ${pendingCount} pending submissions (max ${maxPending}). Withdraw one or wait for review before submitting another.`,
+      { limit: maxPending, used: pendingCount }
+    );
   }
 
   const slug = input.slug;

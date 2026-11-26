@@ -76,6 +76,7 @@ export async function searchSemanticStorylines({
     items: [] as HydratedStoryline[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,

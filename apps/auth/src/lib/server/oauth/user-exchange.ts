@@ -10,9 +10,13 @@ import { basicCredentials } from './http';
 import { findExchangeResource } from './exchange-resources';
 import {
   chargeTokenExchangeFailure,
+  chargeTokenExchangeMiss,
   checkTokenExchangeRateLimit,
+  oauthRateLimitRef,
   oauthRetryAfter,
   rateLimitedResponse,
+  tokenExchangeExhausted,
+  type OAuthRateLimitBucket,
 } from './rate-limit';
 import { parseScopeRequest } from './scope';
 import {
@@ -100,13 +104,21 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
   const { request, body } = input;
   const ctx: LogContext = {};
 
-  const refuse = (error: ExchangeError, reason: string, extra?: HeadersInit) => {
+  const refuse = (
+    error: ExchangeError,
+    reason: string,
+    extra?: HeadersInit,
+    limit?: OAuthRateLimitBucket
+  ) => {
     log('refused', ctx, error, reason);
     const headers = new Headers({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
     for (const [k, v] of new Headers(extra)) headers.set(k, v);
-    // token-exchange and token-exchange-ip share this window.
+    // token-exchange, token-exchange-ip and token-exchange-miss share this window. A relay reads the
+    // limit's id: only `token-exchange` (the client's whole budget) is a reason to hold every exchange.
     if (error === 'rate_limited') {
-      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error]);
+      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error], {
+        limit: limit && oauthRateLimitRef(limit),
+      });
     }
     return json(
       { error, error_description: DESCRIPTION[error] },
@@ -141,7 +153,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     const basicAttempted = /^basic /i.test(request.headers.get('authorization') ?? '');
     const unauthenticated = async (reason: string) => {
       const withinLimit = await chargeTokenExchangeFailure(input.clientIp);
-      if (!withinLimit) return refuse('rate_limited', reason);
+      if (!withinLimit) return refuse('rate_limited', reason, undefined, 'token-exchange-ip');
       return refuse(
         'invalid_client',
         reason,
@@ -155,8 +167,11 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     const caller = await authenticatedConfidentialClient(request, body);
     if (!caller) return unauthenticated('client authentication failed');
     ctx.caller = caller.id;
-    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
-      return refuse('rate_limited', 'client limit');
+    // A client whose budget is spent is refused before any lookup; the budget itself is charged only
+    // once the subject resolves and the exchange is allowed (after step 7), so a subject nobody holds,
+    // or one the resource does not accept, never spends it.
+    if (await tokenExchangeExhausted(caller.id, caller.tokenRateLimit)) {
+      return refuse('rate_limited', 'client limit', undefined, 'token-exchange');
     }
     if (caller.accessMode === 'disabled') return refuse('unauthorized_client', 'caller disabled');
 
@@ -169,28 +184,44 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
       return refuse('unauthorized_client', 'caller not listed for resource');
     }
 
-    // 5. The subject token.
+    // 5. The subject token, always looked up. A subject that does not resolve (unknown, revoked,
+    // expired, or not an exchangeable token), whose app the resource does not list (step 6), or that
+    // the caller may not exchange (step 7) is a miss: charged to the (client, caller IP) and to nothing
+    // else, and once that key is past its limit answered 429 instead. A subject the resource accepts
+    // never reads the miss limit, so a key flooded with bad tokens still exchanges every valid one
+    // (a bad token sent on a full key gets the 429, whoever sends it).
+    const miss = async (error: 'invalid_grant' | 'unauthorized_client', reason: string) => {
+      if (!(await chargeTokenExchangeMiss(caller.id, input.clientIp))) {
+        return refuse('rate_limited', 'subject miss limit', undefined, 'token-exchange-miss');
+      }
+      return refuse(error, reason);
+    };
     const now = new Date();
     const subject = await findSubjectTokenByHash(generateSecretHash(subjectToken), now);
-    if (!subject) return refuse('invalid_grant', 'subject token not found');
+    if (!subject) return await miss('invalid_grant', 'subject token not found');
     ctx.app = subject.clientId;
     ctx.userId = subject.userId;
     const subjectRefusal = await subjectTokenRefusal(subject);
-    if (subjectRefusal) return refuse('invalid_grant', subjectRefusal);
+    if (subjectRefusal) return await miss('invalid_grant', subjectRefusal);
 
     // 6. The app the token was issued to is allowed for this resource.
     if (!resource.apps.includes(subject.clientId)) {
-      return refuse('unauthorized_client', 'app not listed for resource');
+      return await miss('unauthorized_client', 'app not listed for resource');
     }
 
     // 7. A direct exchange by the app, or a relay acting for it.
     let actor: string | undefined;
     if (caller.id !== subject.clientId) {
       if (!resource.relays.includes(caller.id)) {
-        return refuse('unauthorized_client', 'caller is neither the app nor a relay');
+        return await miss('unauthorized_client', 'caller is neither the app nor a relay');
       }
       actor = caller.id;
       ctx.actor = actor;
+    }
+
+    // Only an exchange the resource allows spends the client's budget.
+    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
+      return refuse('rate_limited', 'client limit', undefined, 'token-exchange');
     }
 
     const app = await findExchangeClient(subject.clientId);

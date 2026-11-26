@@ -14,6 +14,7 @@ vi.mock('~/server/services/user-restriction.service', async (importOriginal) => 
 vi.mock('~/server/services/account-deletion-images', async (importOriginal) => ({
   ...(await importOriginal<typeof AccountDeletionImages>()),
   disarmAccountDeletionImagePurge: vi.fn(() => 'disarm-statement'),
+  lockAccountDeletionPendingDeletes: vi.fn(() => 'lock-statement'),
   releaseAccountDeletionPendingDeletes: vi.fn(() => 'release-statement'),
   recordPendingImageRestore: vi.fn(async () => true),
   countPendingAccountDeletionImageRestores: vi.fn(async () => 0),

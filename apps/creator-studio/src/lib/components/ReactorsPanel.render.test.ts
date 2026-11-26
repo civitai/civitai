@@ -74,6 +74,20 @@ describe('ReactorsPanel', () => {
     expect(tabs.map((t) => t.split(' ')[1])).toEqual(['Like', 'Heart', 'Laugh', 'Cry']);
     expect(text).toContain('Reacted Oct 1, 2026');
     expect(text).toContain('reactions · 1 shown');
+    expect(text).not.toContain('kept private');
+  });
+
+  it('says how many counted reactions the list keeps private', async () => {
+    answer({
+      reaction: 'Like',
+      counts: { ...emptyCounts(), Like: 38 },
+      hidden: 10,
+      reactors: [reactor],
+      next: null,
+      prev: null,
+    });
+    const { text } = await loaded({ endpoint: '/x/reactors', noun: 'image' });
+    expect(text).toContain('reactions · 1 shown · 10 kept private');
   });
 
   it('shows a single-type list without tabs, in its own words', async () => {

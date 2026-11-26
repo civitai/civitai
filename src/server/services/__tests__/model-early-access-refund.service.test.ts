@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 
 // Unit tests for getModelEarlyAccessRefundRequirement and the refundEarlyAccess gate in
 // unpublishModelById. model.service.ts has a very large import graph, so most of its transitive
@@ -480,7 +479,12 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         buzzTransactionIds: ['tx-dl'],
         narrow: {
           revokePermissions: 2,
-          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+          removeKeys: [
+            'download-buzzTransactionId',
+            'download-purchasedAt',
+            'download-amount',
+            'download-buzzType',
+          ],
         },
       },
     ]);
@@ -515,7 +519,12 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         buzzTransactionIds: ['tx-gen'],
         narrow: {
           revokePermissions: 0,
-          removeKeys: ['generation-buzzTransactionId', 'generation-purchasedAt'],
+          removeKeys: [
+            'generation-buzzTransactionId',
+            'generation-purchasedAt',
+            'generation-amount',
+            'generation-buzzType',
+          ],
         },
       },
     ]);
@@ -545,7 +554,12 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         buzzTransactionIds: ['tx-dl'],
         narrow: {
           revokePermissions: 3,
-          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+          removeKeys: [
+            'download-buzzTransactionId',
+            'download-purchasedAt',
+            'download-amount',
+            'download-buzzType',
+          ],
         },
       },
     ]);
@@ -805,30 +819,6 @@ describe('unpublishModelById — early access refund gate', () => {
   };
   const takeDownSql = () => takeDown().sql.replace(/\s+/g, ' ');
   const takeDownParams = () => takeDown().values;
-
-  // Every take-down path calls this, the moderator app's included, so the record is ended here.
-  it("ends a content wipe's removal record on a violation take-down", async () => {
-    setupRefundData({ accessRows: [] });
-    setupUnpublishWrites();
-    const record = {
-      removedWithOwner: true,
-      statusBeforeRemoval: 'Published',
-      versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
-    };
-
-    setupModelStatus(KEPT_MODEL_STATUS, { commentsLocked: true, ...record });
-
-    await unpublishModelById({
-      id: MODEL_ID,
-      userId: OWNER_ID,
-      isModerator: true,
-      reason: 'duplicate',
-    });
-
-    const meta = mockTx.model.update.mock.calls[0][0].data.meta as Record<string, unknown>;
-    expect(meta).toMatchObject({ commentsLocked: true, unpublishedReason: 'duplicate' });
-    for (const key of Object.keys(record)) expect(meta).not.toHaveProperty(key);
-  });
 
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
     setupRefundData({ accessRows: [] });

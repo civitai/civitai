@@ -3,10 +3,16 @@ import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 import { openLoginHere } from '~/components/Login/requireLogin';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
+  FeaturePageCommentEditInput,
+  FeaturePageCommentInput,
+  FeaturePageCommentReportInput,
+  FeaturePageCommentRetractInput,
   FeaturePageVoteInput,
   FeaturePageMineInput,
 } from '~/server/schema/feature-pages.schema';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { trpc } from '~/utils/trpc';
 import type { FeaturePageHostDeps } from './featurePageHostLogic';
 import { createFeaturePageHost, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
@@ -17,26 +23,41 @@ export function FeaturePageHost({
   src,
   origin,
   feature,
+  viewerAuthor,
 }: {
   src: string;
   origin: string;
   feature: string;
+  viewerAuthor: string | null;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const theme = useComputedColorScheme('dark');
   const utils = trpc.useUtils();
   const { mutateAsync: vote } = trpc.featurePages.vote.useMutation();
+  const { mutateAsync: comment } = trpc.featurePages.comment.useMutation();
+  const { mutateAsync: editComment } = trpc.featurePages.edit.useMutation();
+  const { mutateAsync: retractComment } = trpc.featurePages.retract.useMutation();
+  const { mutateAsync: reportComment } = trpc.featurePages.report.useMutation();
+  // The site masks profanity for viewers who blur mature content (RenderHtml does the same).
+  const maskProfanity = useBrowsingSettings((state) => state.blurNsfw);
   const signedIn = !!currentUser;
+  const discussion = useFeatureFlags().featurePagesDiscussion;
 
   const deps = useMemo<FrameDeps>(
     () => ({
       feature,
       theme,
       signedIn,
+      maskProfanity,
+      discussion,
+      viewerAuthor,
       openLogin: () => openLoginHere('perform-action'),
-      // The server validates both inputs; the frame's values are passed through unread.
       vote: (input) => vote(input as FeaturePageVoteInput),
+      comment: (input) => comment(input as FeaturePageCommentInput),
+      editComment: (input) => editComment(input as FeaturePageCommentEditInput),
+      retractComment: (input) => retractComment(input as FeaturePageCommentRetractInput),
+      reportComment: (input) => reportComment(input as FeaturePageCommentReportInput),
       mine: (input) =>
         utils.featurePages.mine.fetch(input as FeaturePageMineInput, { staleTime: 0 }),
       navigate: (req) => {
@@ -44,7 +65,21 @@ export function FeaturePageHost({
         else void router.push(req.href);
       },
     }),
-    [feature, theme, signedIn, router, utils, vote]
+    [
+      feature,
+      theme,
+      signedIn,
+      maskProfanity,
+      discussion,
+      viewerAuthor,
+      router,
+      utils,
+      vote,
+      comment,
+      editComment,
+      retractComment,
+      reportComment,
+    ]
   );
 
   return <FeaturePageFrame src={src} origin={origin} deps={deps} />;

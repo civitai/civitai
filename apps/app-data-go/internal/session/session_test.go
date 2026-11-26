@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,14 +79,22 @@ type fakeOrigin struct {
 	// exchange: what the fake hub refuses, by subject.
 	refuseExchange map[string]error
 	exchanges      map[string]int
-	now            func() time.Time
-	life           time.Duration // of an exchanged token; zero is a day
+	// addresses is the viewer address (exchange.ClientIP) each exchange's context carried, in order.
+	addresses []string
+	now       func() time.Time
+	life      time.Duration // of an exchanged token; zero is a day
+	// cursors is the Live cursor a token's stream sends (default liveCursor), and liveMetas the meta
+	// its Live carries in place of heads'; subMetas the request meta each token's subscriptions named.
+	cursors   map[string]string
+	liveMetas map[string]json.RawMessage
+	subMetas  map[string][]string
 }
 
-func (o *fakeOrigin) Exchange(_ context.Context, subject string) (exchange.Token, error) {
+func (o *fakeOrigin) Exchange(ctx context.Context, subject string) (exchange.Token, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.exchanges[subject]++
+	o.addresses = append(o.addresses, exchange.ClientIP(ctx))
 	if err := o.refuseExchange[subject]; err != nil {
 		return exchange.Token{}, err
 	}
@@ -99,15 +108,23 @@ func (o *fakeOrigin) Exchange(_ context.Context, subject string) (exchange.Token
 func newOrigin() *fakeOrigin {
 	return &fakeOrigin{records: map[string][]registry.Entity{}, noLive: map[string]bool{}, heads: map[string]int64{},
 		refuse: map[string]error{}, byToken: map[string]int{},
-		refuseExchange: map[string]error{}, exchanges: map[string]int{}}
+		refuseExchange: map[string]error{}, exchanges: map[string]int{},
+		cursors: map[string]string{}, liveMetas: map[string]json.RawMessage{}, subMetas: map[string][]string{}}
 }
 
 // exchanged is what the fake hub turns a user's token into.
 func exchanged(subject string) string { return "x." + subject }
 
-func (o *fakeOrigin) Subscribe(_ context.Context, schema, presented string) (Stream, error) {
+func (o *fakeOrigin) Subscribe(ctx context.Context, schema, presented string) (Stream, error) {
+	return o.SubscribeMeta(ctx, schema, presented, nil)
+}
+
+func (o *fakeOrigin) SubscribeMeta(_ context.Context, schema, presented string, meta json.RawMessage) (Stream, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if t, ok := strings.CutPrefix(presented, "x."); ok && meta != nil {
+		o.subMetas[t] = append(o.subMetas[t], string(meta))
+	}
 	o.opened.Add(1)
 	// 🔴 The origin only ever sees exchanged tokens: a user's own token reaching it is a leak.
 	token, ok := strings.CutPrefix(presented, "x.")
@@ -125,8 +142,14 @@ func (o *fakeOrigin) Subscribe(_ context.Context, schema, presented string) (Str
 	}
 	if !o.noLive[token] {
 		live := registry.Event{Type: registry.Live, Cursor: liveCursor}
+		if c, ok := o.cursors[token]; ok {
+			live.Cursor = c
+		}
 		if h, ok := o.heads[token]; ok {
 			live.Meta = headMeta(h)
+		}
+		if m, ok := o.liveMetas[token]; ok {
+			live.Meta = m
 		}
 		s.events <- step{ev: live}
 	}
@@ -1049,5 +1072,27 @@ func TestAReadOfAnEndingSessionWaitsForTheEnd(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("never returned after the end finished")
+	}
+}
+
+// The address of the viewer whose read opened a stream goes with the stream to its exchange (which
+// runs on the manager's context, not the read's), so the user exchange can charge and forward it.
+func TestAStreamsExchangeCarriesTheAddressOfTheReadThatOpenedIt(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/a", "A")}
+	ctx, cancel := context.WithTimeout(exchange.WithClientIP(context.Background(), "203.0.113.5"), 2*time.Second)
+	defer cancel()
+	if _, err := h.m.ReadAt(ctx, "tok-a", schemaA, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Control: a read naming no address opens a stream whose exchange carries none.
+	if _, err := read(t, h.m, "tok-b", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	h.o.mu.Lock()
+	got := slices.Clone(h.o.addresses)
+	h.o.mu.Unlock()
+	if !slices.Equal(got, []string{"203.0.113.5", ""}) {
+		t.Fatalf("addresses %q", got)
 	}
 }

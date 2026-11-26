@@ -41,9 +41,9 @@ type RefreshQueue = {
 
 /**
  * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane, with the
- * collection's points in the same id range, flushing the
- * queue whenever it fills. A failed read or flush stops the pass, and the next tick resumes it from
- * the same cursor; a tick is skipped while the previous pass runs. With `startupDelayMs`, one more
+ * collection's points in the same id range, flushing the queue whenever it fills. A failed read or
+ * flush stops the pass, and the next tick resumes it from the same cursor; a tick is skipped while
+ * the previous pass runs. With `startupDelayMs`, one more
  * tick runs that long after start: the cursor lives in memory, so a process restarting more often
  * than `everyMs` would otherwise never finish a pass.
  */
@@ -66,10 +66,10 @@ export function startRefreshers(
     const pass = async () => {
       do {
         if (queue.isFull) await queue.flush();
+        const from = cursor + 1;
         const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
         // A deleted row is not in the table to walk, so its point is found from the collection
         // side: every point in this batch's id range is queued too, and one with no row is deleted.
-        const from = cursor + 1;
         const points = store
           ? await store
               .idsInRange(from, next === 0 ? Number.MAX_SAFE_INTEGER : next + 1)

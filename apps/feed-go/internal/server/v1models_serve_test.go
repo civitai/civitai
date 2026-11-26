@@ -534,6 +534,137 @@ func TestServeV1ModelsComputeFallbacks(t *testing.T) {
 	}
 }
 
+// The ETag Next's generateETag gives Node's not-found body for id 42 (node, 2026-11-25).
+const v1NotFoundETag = `"i8ghaxzmqqv"`
+
+// notFoundV1Server is serveV1Server with the real `[id]` compute over a replica whose model statement
+// returns no row and an empty cache: every `[id]` request is Node's not-found answer.
+func notFoundV1Server(t *testing.T, reg *prometheus.Registry, answerNotFound bool) (*Server, *v1Upstream, *testkit.Redis) {
+	t.Helper()
+	s, up, _ := serveV1Server(t, reg, true)
+	s.computeV1ModelsFn = nil
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	cache := testkit.NewRedis()
+	db := &testkit.DB{Routes: []testkit.Route{{Match: `as "cursorId"`, Rows: func([]any) (*testkit.Rows, error) {
+		return testkit.NewRows([]string{"id"}), nil
+	}}}}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	s.V1Models = &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config: v1models.Config{
+			ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second,
+			AnswerNotFound: answerNotFound,
+		},
+		Now: func() time.Time { return now },
+	}}
+	return s, up, cache
+}
+
+// FEED_GO_V1_MODELS_ANSWER_NOT_FOUND on: a model the statement finds no row for, its lag flag clean,
+// is answered here with exactly Node's 404 (the body res.json writes, the headers of a 200 over that
+// body, Next's JSON Content-Type), counted as outcome not_found and not as a fallback; a request
+// naming its ETag gets Next's 304. Off, or with the lag flag set, the same request is handed to the
+// app (`v1-models-not-found`), as before. Through the real compute: the switch, the statement and
+// the flag are each read where production reads them.
+func TestServeV1ModelsAnswersNotFound(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s, up, cache := notFoundV1Server(t, reg, true)
+	w := httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	// Errorf, not Fatalf, from here to the 304: the status, the headers and the outcome are each
+	// reported, so a regression in one is not hidden behind another.
+	if up.count() != 0 {
+		t.Fatalf("proxied %d, want the 404 answered here (code=%d)", up.count(), w.Code)
+	}
+	if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"No model with id 42"}` {
+		t.Errorf("code=%d body=%s, want Node's 404", w.Code, w.Body.String())
+	}
+	got := map[string]string{}
+	for k, v := range w.Header() {
+		if len(v) != 1 {
+			t.Fatalf("%s sent %d times: %q", k, len(v), v)
+		}
+		got[k] = v[0]
+	}
+	want := map[string]string{
+		"X-Frame-Options":              "DENY",
+		"Vary":                         "Authorization",
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Headers": "Authorization, Content-Type, *",
+		"Access-Control-Allow-Methods": "GET",
+		"Cache-Control":                "private, no-store",
+		"Etag":                         v1NotFoundETag,
+		"Content-Type":                 "application/json; charset=utf-8",
+		"Content-Length":               "31",
+		"X-Feed-Go-Served":             "go",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("404 headers:\n got  %v\n want %v", got, want)
+	}
+	if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": OutcomeNotFound}); n != 1 {
+		t.Errorf("not_found = %v, want 1", n)
+	}
+	for _, o := range []string{"served", "served_empty", "fallback"} {
+		if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": o}); n != 0 {
+			t.Errorf("%s = %v, want 0", o, n)
+		}
+	}
+	if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}); n != 0 {
+		t.Errorf("v1-models-not-found = %v, want 0", n)
+	}
+
+	// Next's 304 to a request naming the 404's ETag (sendEtagResponse runs whatever the status).
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", map[string]string{"If-None-Match": v1NotFoundETag}))
+	if w.Code != http.StatusNotModified || w.Body.Len() != 0 || w.Header().Get("ETag") != v1NotFoundETag || up.count() != 0 {
+		t.Fatalf("If-None-Match: code=%d body=%q ETag=%q proxied=%d, want a 304", w.Code, w.Body.String(), w.Header().Get("ETag"), up.count())
+	}
+
+	// A credentialed request gets the credentialed Vary on the 404, as on the 200.
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", map[string]string{"Cookie": "__Secure-civ-token=t"}))
+	if w.Code != http.StatusNotFound || w.Header().Get("Vary") != "Authorization, Cookie" {
+		t.Errorf("with a session cookie: code=%d Vary=%q, want 404 and the credentialed Vary", w.Code, w.Header().Get("Vary"))
+	}
+
+	// Control: a fresh origin cache entry for the model is Node's 200 (fetchModelResponseCached reads
+	// it before any statement), never the 404, whatever the statement would find.
+	reg2 := prometheus.NewRegistry()
+	s2, up2, cache2 := notFoundV1Server(t, reg2, true)
+	cache2.SetString(v1models.KeyPublicModelResponse+":v2:42:31", jspack.Pack(jspack.Obj{
+		{K: "data", V: jspack.Obj{{K: "id", V: int64(42)}, {K: "name", V: "cached"}}},
+		{K: "cachedAt", V: float64(time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC).Add(-time.Minute).UnixMilli())},
+	}))
+	w = httptest.NewRecorder()
+	s2.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusOK || up2.count() != 0 ||
+		v1Count(t, reg2, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": "served_cached"}) != 1 {
+		t.Errorf("cached model: code=%d proxied=%d body=%s, want the cached 200", w.Code, up2.count(), w.Body.String())
+	}
+
+	// The lag flag set: a recent write the replica may not show yet, handed to the app.
+	cache.SetString("lag-helper:model:42", []byte("1"))
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusTeapot || up.count() != 1 ||
+		v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}) != 1 {
+		t.Fatalf("lag flag set: code=%d proxied=%d, want a v1-models-not-found fallback", w.Code, up.count())
+	}
+
+	// The switch off (the default): handed to the app, as before.
+	reg = prometheus.NewRegistry()
+	s, up, _ = notFoundV1Server(t, reg, false)
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusTeapot || up.count() != 1 ||
+		v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}) != 1 ||
+		v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": OutcomeNotFound}) != 0 {
+		t.Fatalf("switch off: code=%d proxied=%d, want a v1-models-not-found fallback", w.Code, up.count())
+	}
+}
+
 // Inputs the port does not answer fall back through the real compute (no test hook): the text
 // search, a limit Node answers 400, an `[id]` that is not one.
 func TestServeV1ModelsUnsupportedInputs(t *testing.T) {
@@ -554,6 +685,48 @@ func TestServeV1ModelsUnsupportedInputs(t *testing.T) {
 		v1Handler(s, c.target)(httptest.NewRecorder(), v1Request(c.target, nil))
 		if up.count() != 1 || v1Count(t, reg, v1Endpoint(c.target), "feed_go_fallback_total", map[string]string{"reason": c.reason}) != 1 {
 			t.Errorf("%s: proxied=%d, want 1 under %s", c.target, up.count(), c.reason)
+		}
+	}
+}
+
+// countingSearcher answers every text search with no hit and counts the calls.
+type countingSearcher struct{ calls int }
+
+func (c *countingSearcher) SearchModelIDs(context.Context, v1models.SearchRequest) ([]int, error) {
+	c.calls++
+	return []int{}, nil
+}
+
+// A list text query is served only with FEED_GO_V1_MODELS_SERVE_QUERY (Config.ServeQuery): off, it is
+// the `v1-models-query` fallback with no search made, even with a search backend configured; on, it
+// is answered from the search (here no hit: Node's empty page). Through the real compute.
+func TestServeV1ModelsTextQuerySwitch(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		reg := prometheus.NewRegistry()
+		up := &v1Upstream{}
+		search := &countingSearcher{}
+		s := &Server{
+			Metrics: NewMetrics(reg), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			ServeV1Models: true, V1Fallback: up, Resolver: &auth.Resolver{},
+			V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+				Search: search,
+				Config: v1models.Config{BaseURL: "https://s.example", ImageLocation: "https://i.example", ServeQuery: on},
+			}},
+		}
+		w := httptest.NewRecorder()
+		s.ServeV1ModelsHTTP(w, v1Request("/api/v1/models?query=golden&limit=5", nil))
+		if !on {
+			if up.count() != 1 || search.calls != 0 || v1Count(t, reg, EndpointV1Models, "feed_go_fallback_total", map[string]string{"reason": "v1-models-query"}) != 1 {
+				t.Errorf("off: proxied=%d searches=%d, want 1 proxied under v1-models-query and no search", up.count(), search.calls)
+			}
+			continue
+		}
+		if up.count() != 0 || search.calls != 1 || w.Code != http.StatusOK || w.Body.String() != `{"items":[],"metadata":{}}` ||
+			w.Header().Get(ServedByHeader) != ServedByGo {
+			t.Errorf("on: proxied=%d searches=%d code=%d body=%s served-by=%s", up.count(), search.calls, w.Code, w.Body.String(), w.Header().Get(ServedByHeader))
+		}
+		if v := v1Count(t, reg, EndpointV1Models, "feed_go_requests_total", map[string]string{"outcome": "served_empty"}); v != 1 {
+			t.Errorf("on: served_empty = %v, want 1", v)
 		}
 	}
 }
@@ -631,7 +804,8 @@ func TestPublicEndpointNamesTheModelRoutes(t *testing.T) {
 		"/api/v1/models/42":   EndpointV1ModelsID,
 		"/api/v1/models/42/x": EndpointV1ModelsID,
 		"/api/v1/modelsx":     "",
-		"/api/v1/images":      "",
+		"/api/v1/images":      EndpointV1Images,
+		"/api/v1/images/42":   "",
 	} {
 		if got := PublicEndpoint(path); got != want {
 			t.Errorf("PublicEndpoint(%q) = %q, want %q", path, got, want)

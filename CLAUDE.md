@@ -79,7 +79,7 @@ pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 - Run the suites covering your change while iterating (find them with
   `grep -rln '<symbol>' src --include=*.test.ts`); the full suite runs in CI (`full-ci` label).
   `vitest related` does **not** narrow this codebase.
-- Run `pnpm run test:lint-rules` (~1s) whenever you touch a transaction, a mock, or a module-scope
+- Run `pnpm run test:lint-rules` (~30s) whenever you touch a transaction, a mock, or a module-scope
   constant — those convention guards are tests, not eslint rules.
 - Never put unit tests under `src/pages` — `next build` treats them as routes and fails.
 

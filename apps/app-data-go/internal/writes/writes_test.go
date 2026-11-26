@@ -303,18 +303,13 @@ func TestEachRouteIsForwardedExactly(t *testing.T) {
 		{"delete with a padded ifVersion", "delete",
 			call{method: "DELETE", path: "/v1/apps/stamp-book/collections/pages/records/p:2?ifVersion=007", auth: "Bearer civitai_tok-delz-85"},
 			"DELETE", "/api/internal/blocks/storage/pages/p:2", "from=stamp-book&ifVersion=7", 200, `{"deleted":false}`},
-		{"mark", "mark",
-			call{method: "PATCH", path: "/v1/apps/meme-poll/collections/entries/records/e-5", auth: "Bearer civitai_tok-mark-96",
-				body: []byte(`{"$mark":"vote"}`)},
-			"PATCH", "/api/internal/blocks/storage/entries/e-5", "from=meme-poll", 200, `{"marked":true,"count":4,"markSeq":3}`},
-		{"unmark", "unmark",
-			call{method: "PATCH", path: "/v1/apps/star-chart/collections/stars/records/s-6", auth: "Bearer civitai_tok-unmark-17",
-				body: []byte(`{"$unmark":"fave"}`)},
-			"PATCH", "/api/internal/blocks/storage/stars/s-6", "from=star-chart", 200, `{"marked":false,"count":0,"markSeq":9}`},
-		{"increment", "increment",
-			call{method: "PATCH", path: "/v1/apps/click-count/collections/counters/records/c-7", auth: "Bearer civitai_tok-inc-28",
-				body: []byte(`{"$inc":{"clicks":2}}`)},
-			"PATCH", "/api/internal/blocks/storage/counters/c-7", "from=click-count", 429, `{"code":"rate_limited"}`},
+		{"put refused 429", "put",
+			call{method: "PUT", path: "/v1/apps/click-count/collections/counters/records/c-7", auth: "Bearer civitai_tok-inc-28",
+				body: []byte(`{"data":{"clicks":2}}`)},
+			// The site's 429 carries the house rateLimit meta; it is passed on byte for byte. An INVARIANT
+			// guard: the pass-through predates the meta, so this pins it rather than covering a regression.
+			"PUT", "/api/internal/blocks/storage/counters/c-7", "from=click-count", 429,
+			`{"code":"rate_limited","rateLimit":{"retryAfterSeconds":7,"retryAt":"2026-01-01T00:00:07.000Z","id":"apps.doc-store","kind":"abuse"}}`},
 		{"info", "info",
 			call{method: "GET", path: "/v1/apps/quota-view/info", auth: "Bearer civitai_tok-info-39"},
 			"GET", "/api/internal/blocks/storage", "from=quota-view", 200, `{"usage":{"bytes":10}}`},
@@ -591,8 +586,8 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 			if auth == "" {
 				auth = "Bearer " + blockToken(t, siteKey, map[string]any{"jti": "blk-nf-" + strings.ReplaceAll(name, " ", "-")})
 			}
-			rec := r.do(t, call{method: "PATCH", path: "/v1/apps/not-sent/collections/votes/records/v-1", auth: auth,
-				body: []byte(`{"$mark":"vote"}`)})
+			rec := r.do(t, call{method: "PUT", path: "/v1/apps/not-sent/collections/votes/records/v-1", auth: auth,
+				body: []byte(`{"data":{"vote":1}}`)})
 			e := decode(t, rec)
 			if rec.Code != 503 || e.Code != "not_forwarded" || rec.Header().Get("Retry-After") == "" {
 				t.Fatalf("%d %+v; want 503 not_forwarded with Retry-After", rec.Code, e)
@@ -600,7 +595,7 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 			if n := len(r.site.requests()); n != 0 {
 				t.Fatalf("🔴 the site received %d requests", n)
 			}
-			if r.writes("mark", "unavailable") != 1 {
+			if r.writes("put", "unavailable") != 1 {
 				t.Fatal("not counted as unavailable")
 			}
 		})
@@ -676,8 +671,8 @@ func TestTheSitesRefusalOfTheForwardIsNotForwarded(t *testing.T) {
 // (`Cf-Ipcountry != "GB"`).
 func TestTheRegionHeadersAreForwardedAndChecked(t *testing.T) {
 	r := newRig(t)
-	rec := r.do(t, call{method: "PATCH", path: "/v1/apps/region-app/collections/polls/records/q-1", auth: "Bearer civitai_tok-region-1",
-		body: []byte(`{"$unmark":"vote"}`), header: map[string]string{"CF-IPCountry": "GB", "X-IsUK": "1"}})
+	rec := r.do(t, call{method: "PUT", path: "/v1/apps/region-app/collections/polls/records/q-1", auth: "Bearer civitai_tok-region-1",
+		body: []byte(`{"data":{"vote":0}}`), header: map[string]string{"CF-IPCountry": "GB", "X-IsUK": "1"}})
 	got := r.site.requests()
 	if rec.Code != 200 || len(got) != 1 {
 		t.Fatalf("%d, %d requests", rec.Code, len(got))
@@ -792,10 +787,6 @@ func TestShapeRefusalsSendNothing(t *testing.T) {
 		{"bad key", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/bad*key", body: []byte(`{}`)}, 400, "invalid_request", "put"},
 		{"key too long", call{method: "DELETE", path: "/v1/apps/shape-app/collections/notes/records/" + strings.Repeat("k", 129)}, 400, "invalid_request", "delete"},
 		{"oversized body", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/big-1", body: pad(BodyLimit + 1)}, 413, "too_large", "put"},
-		{"two operators", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-1", body: []byte(`{"$mark":"vote","$unmark":"vote"}`)}, 400, "invalid_request", "patch"},
-		{"one operator twice", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-2", body: []byte(`{"$mark":"vote","$mark":"star"}`)}, 400, "invalid_request", "patch"},
-		{"another operator", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-3", body: []byte(`{"$set":{"a":1}}`)}, 400, "invalid_request", "patch"},
-		{"no operator", call{method: "PATCH", path: "/v1/apps/shape-app/collections/notes/records/p-4", body: []byte(`{}`)}, 400, "invalid_request", "patch"},
 		{"an array body", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/a-1", body: []byte(`[{"data":1}]`)}, 400, "invalid_request", "put"},
 		{"invalid JSON", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/a-2", body: []byte(`{"data":`)}, 400, "invalid_request", "put"},
 		{"two values", call{method: "PUT", path: "/v1/apps/shape-app/collections/notes/records/a-3", body: []byte(`{} {}`)}, 400, "invalid_request", "put"},
@@ -874,11 +865,34 @@ func TestThePreflightsAllowTheWrites(t *testing.T) {
 		rec := r.do(t, call{method: "OPTIONS", path: path})
 		methods := strings.Split(rec.Header().Get("Access-Control-Allow-Methods"), ", ")
 		sort.Strings(methods)
-		if rec.Code != 204 || strings.Join(methods, ",") != "DELETE,GET,OPTIONS,PATCH,POST,PUT" ||
+		if rec.Code != 204 || strings.Join(methods, ",") != "DELETE,GET,OPTIONS,POST,PUT" ||
 			rec.Header().Get("Access-Control-Allow-Headers") != "Authorization, Content-Type" ||
 			rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Fatalf("%s: %d %v", path, rec.Code, rec.Header())
 		}
+	}
+}
+
+// The tally PATCH ($inc, $mark, $unmark) was removed with App Storage's tallies: PATCH is no route
+// here, so the mux answers 405 and nothing reaches the site.
+// Fails on origin/main: the PATCH route forwarded `{"$mark":"vote"}` there (one site request).
+func TestTheTallyPatchIsNotARoute(t *testing.T) {
+	r := newRig(t)
+	for _, body := range []string{`{"$mark":"vote"}`, `{"$inc":{"plays":1}}`, `{"$unmark":"vote"}`} {
+		rec := r.do(t, call{method: "PATCH", path: "/v1/apps/tally-gone/collections/votes/records/v-1",
+			auth: "Bearer civitai_tok-tally-gone-1", body: []byte(body)})
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s: %d %s; want 405", body, rec.Code, rec.Body)
+		}
+	}
+	if n := len(r.site.requests()); n != 0 {
+		t.Fatalf("🔴 the site received %d requests for a removed route", n)
+	}
+	// Positive control: a PUT on the same path is forwarded.
+	rec := r.do(t, call{method: "PUT", path: "/v1/apps/tally-gone/collections/votes/records/v-1",
+		auth: "Bearer civitai_tok-tally-gone-2", body: []byte(`{"data":{"vote":1}}`)})
+	if rec.Code != 200 || len(r.site.requests()) != 1 {
+		t.Fatalf("the PUT control: %d, %d requests", rec.Code, len(r.site.requests()))
 	}
 }
 

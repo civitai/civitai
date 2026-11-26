@@ -179,7 +179,7 @@ function register(
   const replay: RemixReplayer =
     'source' in spec
       ? userRemixReplayer(slug, remixBlockId(slug), loadSource)
-      : (source, log) => replayRemixApp(app, source, log);
+      : (source, log, references) => replayRemixApp(app, source, log, references);
   const firstRequest =
     'source' in spec ? userRemixFirstRequest(slug, remixBlockId(slug), loadSource) : undefined;
   const authorPrompt =

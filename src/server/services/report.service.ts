@@ -24,6 +24,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { constants } from '~/server/common/constants';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CreateEntityAppealInput,
@@ -219,6 +220,7 @@ export const findReportToFoldInto = ({
   reason,
   details,
   pendingOnly,
+  filedBySystem,
   tx,
 }: {
   reportType: ReportEntity;
@@ -227,6 +229,8 @@ export const findReportToFoldInto = ({
   details?: MixedObject;
   /** Fold only into a report still waiting for a moderator. */
   pendingOnly?: boolean;
+  /** Fold only into a report the system filed (true) or one a person filed (false). */
+  filedBySystem?: boolean;
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
@@ -254,6 +258,9 @@ export const findReportToFoldInto = ({
       reason,
       [reportType]: { [entityIdField]: entityReportId },
       ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
+      ...(filedBySystem === undefined
+        ? {}
+        : { userId: filedBySystem ? constants.system.user.id : { not: constants.system.user.id } }),
       ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
@@ -267,6 +274,8 @@ const validateReportCreation = async ({
   reason,
   details,
   pendingOnly,
+  whilePending,
+  filedBySystem,
   tx,
 }: {
   userId: number;
@@ -275,6 +284,9 @@ const validateReportCreation = async ({
   reason: ReportReason;
   details?: MixedObject;
   pendingOnly?: boolean;
+  /** Fold only if the report is still Pending when written, else return null so a new one is filed. */
+  whilePending?: boolean;
+  filedBySystem?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -284,6 +296,7 @@ const validateReportCreation = async ({
     reason,
     details,
     pendingOnly,
+    filedBySystem,
     tx,
   });
 
@@ -297,29 +310,20 @@ const validateReportCreation = async ({
 
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
-  if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
-    const updatedReport = await db.report.update({
-      where: { id },
-      data: {
-        status: ReportStatus.Pending,
-        previouslyReviewedCount: 0,
-        alsoReportedBy: [...alsoReportedBy, userId],
-        ...(mergedDetails ? { details: mergedDetails } : {}),
-      },
-    });
+  const data: Prisma.ReportUpdateInput = {
+    ...(previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2
+      ? { status: ReportStatus.Pending, previouslyReviewedCount: 0 }
+      : {}),
+    alsoReportedBy: [...alsoReportedBy, userId],
+    ...(mergedDetails ? { details: mergedDetails } : {}),
+  };
+  if (!whilePending) return db.report.update({ where: { id }, data });
 
-    return updatedReport;
-  }
-
-  const updatedReport = await db.report.update({
-    where: { id },
-    data: {
-      alsoReportedBy: [...alsoReportedBy, userId],
-      ...(mergedDetails ? { details: mergedDetails } : {}),
-    },
+  const { count } = await db.report.updateMany({
+    where: { id, status: ReportStatus.Pending },
+    data: data as Prisma.ReportUpdateManyMutationInput,
   });
-
-  return updatedReport;
+  return count ? db.report.findUnique({ where: { id } }) : null;
 };
 
 const reportTypeNameMap: Record<ReportEntity, string> = {
@@ -451,6 +455,13 @@ async function readReportedServiceDealReview(reviewId: number) {
   return review;
 }
 
+async function isFeaturePageComment(db: Prisma.TransactionClient, commentId: number) {
+  // primary: the fold below is decided by it. Compared as text: the label may not exist yet.
+  const [row] = await db.$queryRaw<{ fp: boolean }[]>`
+    SELECT "entityType"::text = 'featurePage' AS fp FROM "CommentV3" WHERE id = ${commentId}`;
+  return !!row?.fp;
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -535,6 +546,10 @@ export const createReport = async ({
       throw throwBadRequestError('You cannot report your own text.');
   }
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
+  // A Feature Pages comment's delete, edit and refusal read its open reports under lock, so a
+  // report on one is open or it is a new row, whoever files it.
+  const reportsFeaturePageComment =
+    type === ReportEntity.CommentV3 && (await isFeaturePageComment(callerTx ?? dbWrite, id));
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
   // on tags yet. Without them nothing automated acts on it, so, like a crucible's, game's,
@@ -583,7 +598,14 @@ export const createReport = async ({
             reportsStorylineChapter ||
             type === ReportEntity.PostText ||
             type === ReportEntity.ServiceDealReview ||
+            reportsFeaturePageComment ||
             foldIntoPendingOnly,
+          whilePending: reportsFeaturePageComment,
+          // The scan's report on a Feature Pages comment is what a moderator's dismissal lifts its
+          // hide by, and a person's report holds that lift: neither is folded into the other.
+          filedBySystem: reportsFeaturePageComment
+            ? userId === constants.system.user.id
+            : undefined,
           tx: callerTx,
         })
       : null;
@@ -683,7 +705,7 @@ export const createReport = async ({
                         userId: userId,
                         weight: 3,
                       },
-                      update: { nsfwLevel: maxRating },
+                      update: { nsfwLevel: maxRating, status: 'Pending' },
                     }),
                     dbWrite.image.update({ where: { id }, data: { nsfwLevelLocked: false } }),
                   ]);
@@ -815,6 +837,17 @@ export async function bulkSetReportStatus({
       ? await removedReporterIds(ids)
       : new Set<number>();
 
+  // Only a set holding a report on a Feature Pages comment reads the mirror table, so every other
+  // set runs as before, whatever this environment has of that table.
+  const touchesFeaturePages =
+    status === ReportStatus.Unactioned &&
+    (
+      await dbWrite.$queryRaw<{ found: number }[]>`
+        SELECT 1 AS found FROM "CommentV3Report" cr JOIN "CommentV3" c ON c.id = cr."commentId"
+        WHERE cr."reportId" = ANY(${ids}::int[]) AND c."entityType"::text = 'featurePage'
+        LIMIT 1`
+    ).length > 0;
+
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
   // its reporters are not paid a second time. Who is paid comes from the rows this changed.
@@ -833,6 +866,13 @@ export async function bulkSetReportStatus({
       }
     WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
       ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
+      ${
+        // A batch lifts no scan hide: the scan's report on its hide waits for its own dismissal.
+        touchesFeaturePages
+          ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "FeaturePageCommentMirror" m
+              WHERE m."scanHideReportId" = "Report".id)`
+          : Prisma.empty
+      }
     RETURNING id, "userId", "alsoReportedBy", details
   `;
 
@@ -1424,49 +1464,14 @@ export async function getAppealExcludedIds({
           WHERE ur."userId" = c.id AND r.reason = 'CSAM'
         )
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
-        -- A hold marker's kept image reads as a moderator block, so an appeal would tip them off.
-        OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c.id)
     `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
 }
 
 /**
- * The images whose appeal a hold marker refuses: all of them while the owner is under one, else
- * those a hold kept. An image the check cannot read counts as refused.
- */
-export async function getHoldMarkerBlockedImageIds({
-  imageIds,
-  userId,
-}: {
-  imageIds: number[];
-  userId: number;
-}) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await dbWrite.$queryRaw<{ id: number; blocked: unknown }[]>`
-    SELECT c.id,
-      EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId})
-        OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" h WHERE h."imageId" = c.id) AS blocked
-    FROM unnest(${imageIds}::int[]) AS c(id)
-  `;
-  const allowed = new Set(rows.filter((r) => r.blocked === false).map((r) => Number(r.id)));
-  return new Set(imageIds.filter((id) => !allowed.has(id)));
-}
-
-/** Whether the owner is under a hold marker or the image is one it kept. Unreadable counts as yes. */
-export async function isAppealBlockedByHoldMarker({
-  imageId,
-  userId,
-}: {
-  imageId: number;
-  userId: number;
-}) {
-  return (await getHoldMarkerBlockedImageIds({ imageIds: [imageId], userId })).has(imageId);
-}
-
-/**
- * The images whose appealable-looking block is refused anyway: a hold marker keeps them, or the
- * appeal flow excludes the image or its owner. The endpoint, the owner's image page and the
+ * The images whose appealable-looking block is refused anyway: the appeal flow excludes the image or
+ * its owner. The endpoint, the owner's image page and the
  * removed-images list all read this. The owner query runs even with no images.
  */
 export async function getAppealRefusedImageIds({
@@ -1476,12 +1481,9 @@ export async function getAppealRefusedImageIds({
   imageIds: number[];
   userId: number;
 }) {
-  const [held, excluded] = await Promise.all([
-    getHoldMarkerBlockedImageIds({ imageIds, userId }),
-    getAppealExcludedIds({ imageIds, userIds: [userId] }),
-  ]);
+  const excluded = await getAppealExcludedIds({ imageIds, userIds: [userId] });
   if (excluded.users.has(userId)) return new Set(imageIds);
-  return new Set(imageIds.filter((id) => held.has(id) || excluded.images.has(id)));
+  return new Set(imageIds.filter((id) => excluded.images.has(id)));
 }
 
 export async function isImageAppealRefused({
@@ -1593,10 +1595,7 @@ function closeDismissedReviewAppeals(limit: number) {
 /** ModActivity row for a notice not sent. Ids only. */
 export const DEFERRED_NOTICE_WITHHELD_ACTIVITY = 'deferredNoticeWithheld';
 
-/**
- * Users whose notice is not sent. Read on the primary; a failed read returns all of them. A different
- * set from `accountHoldSql`'s, on purpose: do not swap one for the other.
- */
+/** Users whose notice is not sent. Read on the primary; a failed read returns all of them. */
 async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
   try {
@@ -1605,8 +1604,6 @@ async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> 
       UNION
       SELECT u.id FROM "CsamReport" c, unnest(${userIds}::int[]) AS u(id)
       WHERE c.details ->> 'secondaryUserId' = u.id::text
-      UNION
-      SELECT "userId" FROM "EvidenceHold" WHERE "userId" = ANY(${userIds}::int[])
     `;
     return new Set(rows.map((r) => r.userId));
   } catch (e) {

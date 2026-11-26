@@ -43,11 +43,12 @@
  * that subject check.
  *
  * A record's URN carries its stored `record_id`, not its key: a private key is unique only within
- * one user's key space. The key itself travels beside the body, as the entity's `key`, and so does
- * the document's `seq`, the entity's `seq` ({@link PRIVATE_BODY_FORMAT}): the body stays the
- * document its schemas claim, and a private stream belongs to one user's token, so neither reaches
- * another user. The public feeds carry none. The HTTP binding sends both (an SSE upsert is the whole
- * entity); the gRPC binding's `Entity` message has no field for them.
+ * one user's key space. The key itself travels beside the body, as the entity's `key`, and so do
+ * the document's `seq`, the entity's `seq`, and its store `version`, the entity's `version` (the
+ * number a write's `ifVersion` is compared against; {@link PRIVATE_BODY_FORMAT}): the body stays
+ * the document its schemas claim, and a private stream belongs to one user's token, so none of them
+ * reaches another user. The public feeds carry none. The HTTP binding sends all three (an SSE
+ * upsert is the whole entity); the gRPC binding's `Entity` message has no field for them.
  *
  * THE HEAD. Each poll reads the app namespace's write head (`usage_app.last_seq`, one counter for
  * every collection of the app, `PrivateDocSource.head`) BEFORE its keyset, never after: every write
@@ -63,13 +64,14 @@
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
+import { parseClientIdList } from '~/server/registry-adapter/auth';
 import { hasScope } from '~/server/registry-adapter/auth.jwt';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
 import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
-import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
+import { compareCodeUnits, sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
 import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import type {
@@ -86,12 +88,10 @@ export const PRIVATE_STATE_RETENTION_SECONDS = PRIVATE_CURSOR_TTL_MS / 1000;
 
 /**
  * The relays allowed to read private data (`REGISTRY_ADAPTER_PRIVATE_RELAYS`): the OAuth client
- * ids a relay exchanges tokens as (a token's `act.sub`), separated by commas or whitespace. Unset
- * or empty is the empty set: no private stream exists.
+ * ids a relay exchanges tokens as (a token's `act.sub`), as a client-id list
+ * ({@link parseClientIdList}). Unset or empty is the empty set: no private stream exists.
  */
-export function parsePrivateRelays(raw: string | undefined): ReadonlySet<string> {
-  return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
-}
+export const parsePrivateRelays = parseClientIdList;
 
 /** Whether the token was presented by one of `relays` (its `act.sub`). */
 export function isListedRelay(
@@ -189,12 +189,12 @@ export const PRIVATE_PAGE = 500;
 const STATE_FORMAT = 'p1';
 /**
  * The version of what a private entity carries: `k1` was the body plus the record's storage `key`;
- * `k2` adds the document's `seq`. It is folded into every private `rev` and into the poll's read
- * digest, so a cursor saved under an earlier format resumes as a change: its read digest no longer
- * matches, every record's rev differs, and each is sent again, now with its key and seq. No cursor
- * has to be expired for it.
+ * `k2` added the document's `seq`; `k3` adds its store `version`. It is folded into every private
+ * `rev` and into the poll's read digest, so a cursor saved under an earlier format resumes as a
+ * change: its read digest no longer matches, every record's rev differs, and each is sent again, now
+ * with its key, seq and version. No cursor has to be expired for it.
  */
-export const PRIVATE_BODY_FORMAT = 'k2';
+export const PRIVATE_BODY_FORMAT = 'k3';
 
 /**
  * A private entity's rev: the document feed's `docRev`, under {@link PRIVATE_BODY_FORMAT}, the key
@@ -403,6 +403,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         body: d.data,
         key: d.key,
         seq: d.seq,
+        version: d.version,
       });
     }
     return {
@@ -418,7 +419,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         head,
         served: [...entities.values()]
           .map((e) => [e.urn, e.rev] as [string, string])
-          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+          .sort((a, b) => compareCodeUnits(a[0], b[0])),
       },
       entities,
       head,

@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
+import type { dbRead } from '~/server/db/client';
 import { dbWrite } from '~/server/db/client';
-import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
+import {
+  eventPlayerEligibleSql,
+  eventPointsExcludedFromSql,
+} from '~/server/events/player-eligibility';
 import { logToAxiom } from '~/server/logging/client';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 
@@ -40,7 +44,7 @@ export const eventPrizesSchema = z.object({
     .optional(),
 });
 export type EventPrizes = z.infer<typeof eventPrizesSchema>;
-type ComebackConfig = NonNullable<EventPrizes['comeback']>;
+export type ComebackConfig = NonNullable<EventPrizes['comeback']>;
 
 /**
  * The `prizes` field of the flagRace key's JSON; invalid throws. Undefined when the field is absent: a
@@ -61,7 +65,12 @@ type CupWindows = Pick<ComebackConfig, 'baseline' | 'week' | 'floorPerDay'>;
  * exactly, cross-multiplied in BigInt (every team's week is the same length); every team on the
  * highest ratio wins. A team with no points in the week can't win.
  */
-export function comebackCup(teams: ComebackTeam[], { baseline, week, floorPerDay }: CupWindows) {
+export function comebackCup(
+  teams: ComebackTeam[],
+  { baseline, week, floorPerDay }: CupWindows,
+  // The days the week points were earned over: the whole week, or the part of it played so far.
+  weekDays = daysIn(week)
+) {
   const baselineDays = daysIn(baseline);
   const floor = BigInt(floorPerDay) * BigInt(baselineDays);
   const scored = teams.map((t) => {
@@ -82,23 +91,32 @@ export function comebackCup(teams: ComebackTeam[], { baseline, week, floorPerDay
       team,
       baseline: b,
       week: w,
-      ratio: w / daysIn(week) / (Number(denominator) / baselineDays),
+      ratio: w / weekDays / (Number(denominator) / baselineDays),
     })),
   };
 }
 
-type PrizeEvent = { name: string; startDate: Date; endDate: Date; teams: readonly string[] };
+export type PrizeEvent = { name: string; startDate: Date; endDate: Date; teams: readonly string[] };
 
-// Play points only, from the daily snapshot, without the users the standings hide.
-async function comebackTeams(event: PrizeEvent, { baseline, week }: CupWindows) {
-  const rows = await dbWrite.$queryRaw<{ team: string; baseline: bigint; week: bigint }[]>`
+// Play points only, from the daily snapshot. A user flagged ExcludeFromEventPoints counts for no day,
+// whatever their exclusion start; the standings still count their days before it.
+export async function comebackTeams(
+  event: PrizeEvent,
+  { baseline, week }: CupWindows,
+  db: typeof dbRead | typeof dbWrite = dbWrite
+) {
+  const rows = await db.$queryRaw<{ team: string; baseline: bigint; week: bigint }[]>`
     SELECT d.team,
-      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${baseline.from}::date AND d.day < ${baseline.to}::date), 0)::bigint AS baseline,
-      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${week.from}::date AND d.day < ${week.to}::date), 0)::bigint AS week
+      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${baseline.from}::date AND d.day < ${
+    baseline.to
+  }::date), 0)::bigint AS baseline,
+      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${week.from}::date AND d.day < ${
+    week.to
+  }::date), 0)::bigint AS week
     FROM "EventCosmeticScoreDaily" d
     JOIN "User" u ON u.id = d."userId"
     WHERE d.event = ${event.name}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND d.day < COALESCE(${eventPointsExcludedFromSql()}, 'infinity'::date)
       AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0
     GROUP BY d.team
   `;

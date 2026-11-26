@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
-import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import {
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS,
   SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS,
@@ -52,9 +51,7 @@ const parties = Prisma.sql`(d."buyerId", d."sellerId")`;
  * report on the offering keeps them for a full window after it was filed or last handled.
  */
 export const dealFilesHeld = Prisma.sql`(
-  ${ownerHeldSql(Prisma.sql`d."buyerId"`)}
-  OR ${ownerHeldSql(Prisma.sql`d."sellerId"`)}
-  OR EXISTS (SELECT 1 FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
+  EXISTS (SELECT 1 FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
     WHERE sr."serviceOfferingId" = o."id" AND (r."status"::text IN ('Pending', 'Processing')
       OR GREATEST(r."createdAt", r."statusSetAt") + ${retentionWindow} > now()))
   OR EXISTS (SELECT 1 FROM "User" bu

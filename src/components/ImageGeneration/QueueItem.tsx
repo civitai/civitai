@@ -28,7 +28,7 @@ import {
   IconLink,
   IconListDetails,
 } from '@tabler/icons-react';
-import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetailsTable } from '~/components/ImageGeneration/GenerationDetails';
@@ -51,6 +51,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResourceValue } from '~/shared/types/generation.types';
+import { capsAsPrivateGeneration } from '~/shared/utils/resource.utils';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import {
   orchestratorCompletedStatuses,
@@ -73,25 +74,18 @@ import {
   type OutputAction,
 } from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { getRefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import {
-  encodeGenerationHandoff,
-  GENERATION_HANDOFF_PARAM,
-} from '~/components/generation_v2/utils/generation-url-handoff';
-import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
-import type {
-  AudioBlob,
-  BlobData,
-  ImageBlob,
-  VideoBlob,
+  blockedReasonMessage,
+  PRIVATE_GEN,
+  PRIVATE_GEN_MESSAGE,
 } from '~/shared/orchestrator/workflow-data';
-import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
 import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -206,10 +200,8 @@ export function QueueItem({
           ecosystem: replayEcosystem,
           workflow:
             (replayParams?.workflow as string | undefined) ??
-            // Items without a stored workflow: non-PolyGen replays use img2model3d;
-            // only PolyGen's `process` is consulted.
-            // `multiImageTo3D` is Meshy v7's multi-view operation — also
-            // image-driven, so it must not fall through to txt2model3d.
+            // `multiImageTo3D` is Meshy v7's multi-view operation, image-driven, so
+            // it must not fall through to txt2model3d.
             (replayEcosystem !== 'PolyGen' ||
             request.steps.some(
               (s) =>
@@ -717,7 +709,7 @@ function StepOutputs({
       >
         {displayImages.map((image) =>
           image.blockedReason === 'siteRestricted' ? (
-            <SiteRestrictedBlock key={image.id} image={image} />
+            <SiteRestrictedBlock key={image.id} />
           ) : outputActions && image.type === 'image' && image.available && !image.blockedReason ? (
             <div key={image.id} className="flex flex-col gap-1.5">
               <GeneratedOutput image={image} />
@@ -743,6 +735,7 @@ function StepOutputs({
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
           transactions={request.transactions}
+          resources={request.resources}
         />
         {(processing || (pending && !waitingOnDownloads)) && awaitingOutput && (
           <TwCard
@@ -896,21 +889,8 @@ function SubmitBlockedImagesForReviewButton({
   );
 }
 
-const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> = {
-  ChildReference: 'An inappropriate child reference was detected.',
-  Bestiality: 'Bestiality detected.',
-  'Child Sexual - Anime': 'Inappropriate minor content detected.',
-  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
-  NsfwLevel: 'Mature content restriction.',
-  NSFWLevel:
-    'One or more resources used in this generation cannot be used to generate mature content',
-  NSFWLevelSourceImageRestricted: UNMARKED_SOURCE_IMAGE_MESSAGE,
-  // the following keys are managed in generationRequestHooks.ts
-  privateGen: 'Private Generation is limited to PG and PG-13 content.',
-  [NSFW_CAPPED]:
-    "This output was rated mature, and this generation is limited to PG-13, so it can't be shown.",
-  siteRestricted: 'Images with mature ratings are unavailable on this site',
-  enableNsfw: EnableNsfwBlock,
+const blockedReasonBlocks: Record<string, React.ComponentType<any>> = {
+  [PRIVATE_GEN]: PrivateGenBlock,
   canUpgrade: CanUpgradeBlock,
 };
 
@@ -921,23 +901,10 @@ function countOccurrences(arr: string[]): Record<string, number> {
   }, {} as Record<string, number>);
 }
 
-/**
- * Per-image card shown on .com when NSFW output is blocked.
- * Displays a prompt/seed summary and a CTA to view on civitai.red.
- */
-function SiteRestrictedBlock({ image }: { image: BlobData }) {
+/** Per-image card shown on .com when a mature output is blocked. */
+function SiteRestrictedBlock() {
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
-
-  const buildRedUrl = () => {
-    const base = `//${redDomain}/generate`;
-    const cached = getGenerationSnapshotCache();
-    if (!cached) return syncAccount(base);
-    const handoff = encodeGenerationHandoff(cached.snapshot, {
-      computedKeys: cached.computedKeys,
-    });
-    return syncAccount(handoff ? `${base}?${GENERATION_HANDOFF_PARAM}=${handoff}` : base);
-  };
 
   return (
     <TwCard className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3">
@@ -950,7 +917,7 @@ function SiteRestrictedBlock({ image }: { image: BlobData }) {
       {redDomain && (
         <Button
           component="a"
-          href={buildRedUrl()}
+          href={syncAccount(`//${redDomain}/generate`)}
           target="_blank"
           rel="noreferrer nofollow"
           color="red"
@@ -968,6 +935,7 @@ function BlockedBlocks(props: {
   blockedReasons: string[];
   workflowId: string;
   transactions: TransactionInfo[];
+  resources: GenerationResourceValue[];
 }) {
   const map = countOccurrences(props.blockedReasons);
   const items = Object.entries(map).map(([value, count]) => ({ value, count }));
@@ -975,7 +943,7 @@ function BlockedBlocks(props: {
   return (
     <>
       {items.map(({ value, count }) => {
-        const message = imageBlockedReasonMap[value] ?? value;
+        const message = blockedReasonBlocks[value] ?? blockedReasonMessage(value);
 
         return (
           <TwCard
@@ -989,6 +957,7 @@ function BlockedBlocks(props: {
               ? renderBlockedReason(message, {
                   workflowId: props.workflowId,
                   transactions: props.transactions,
+                  resources: props.resources,
                 })
               : null}
           </TwCard>
@@ -1014,13 +983,16 @@ function renderBlockedReason(
   }
 }
 
-function EnableNsfwBlock() {
+function PrivateGenBlock({ resources }: { resources: GenerationResourceValue[] }) {
+  // Resources are read back at their current state, so a model published since names nothing.
+  const names = resources.filter(capsAsPrivateGeneration).map((r) => r.model.name);
   return (
     <Text align="center" size="sm">
-      To view this content, enable mature content in your{' '}
-      <Anchor component={NextLink} href="/user/account">
-        account settings
-      </Anchor>
+      {names.length
+        ? `${names.join(
+            ', '
+          )} can only generate PG and PG-13 content, so this mature result can't be shown.`
+        : PRIVATE_GEN_MESSAGE}
     </Text>
   );
 }
@@ -1216,12 +1188,13 @@ function Model3DQueueCardOutputs({
         })}
       >
         {blob.blockedReason === 'siteRestricted' ? (
-          <SiteRestrictedBlock image={blob} />
+          <SiteRestrictedBlock />
         ) : (
           <BlockedBlocks
             blockedReasons={[blob.blockedReason]}
             workflowId={request.id}
             transactions={request.transactions}
+            resources={request.resources}
           />
         )}
       </div>

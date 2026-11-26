@@ -220,7 +220,13 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                     onClick={() =>
                       dialogStore.trigger({
                         component: ServiceRequestModal,
-                        props: { offering, sellerUsername },
+                        props: {
+                          offering,
+                          sellerUsername,
+                          seller,
+                          sellerId: seller.id,
+                          origin: 'page',
+                        },
                       })
                     }
                   >

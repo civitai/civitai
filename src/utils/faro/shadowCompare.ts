@@ -39,7 +39,35 @@ export type ShadowLegResponse = {
   fallback?: boolean;
   /** Who answered, as the candidate reports it. Beaconed; keep it to a few fixed values. */
   servedBy?: string;
+  /** The edge cache's verdict on this leg (`edgeCacheStatus`); absent when the edge sent none. */
+  cacheStatus?: string;
 };
+
+/**
+ * The edge cache's verdict header. A signed-out answer is edge-cacheable on both legs' paths, each
+ * its own cache entry, so either leg can be an older stored copy of a feed that has moved since: a
+ * signed-out compare is evidence about the Go service only when neither leg was served from the
+ * cache. Both legs' verdicts are beaconed (`control_cache`, `candidate_cache`) for that filter.
+ */
+export const EDGE_CACHE_STATUS_HEADER = 'cf-cache-status';
+
+const EDGE_CACHE_STATUSES = new Set([
+  'hit',
+  'miss',
+  'expired',
+  'stale',
+  'updating',
+  'revalidated',
+  'dynamic',
+  'bypass',
+]);
+
+/** A cache verdict as a fixed low-cardinality value: lowercased, `other` when unknown, `undefined` when absent. */
+export function edgeCacheStatus(value: string | null | undefined): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  const v = value.trim().toLowerCase();
+  return EDGE_CACHE_STATUSES.has(v) ? v : 'other';
+}
 
 /** The control leg's request as it was sent, for a candidate to ask the same question. */
 export type ShadowCandidateRequest = {
@@ -89,11 +117,13 @@ export const goTransportCandidate: ShadowCandidate = {
     const url = controlUrl.replace(CONTROL_PATH_PREFIX, `$1${GO_TRANSPORT_URL}/`);
     const response = await globalThis.fetch(url, { ...controlInit, signal });
     const servedBy = goServedBy(response.headers.get(GO_SERVED_HEADER));
+    const cacheStatus = edgeCacheStatus(response.headers.get(EDGE_CACHE_STATUS_HEADER));
     return {
       status: response.status,
       text: await response.text(),
       fallback: servedBy !== 'go',
       servedBy,
+      ...(cacheStatus === undefined ? {} : { cacheStatus }),
     };
   },
 };
@@ -118,6 +148,11 @@ export type ShadowCompareFetchOptions = {
   now?: () => number;
   /** Faro's `pushMeasurement`. Default: the global Faro's, a no-op until Faro is initialised. */
   pushMeasurement?: PushMeasurement;
+  /**
+   * `signed_out` for a signed-out browser's compare, beaconed as `viewer`; absent (a signed-in
+   * compare, as every compare was before the signed-out cohort existed) beacons none.
+   */
+  viewer?: 'signed_out';
 };
 
 type ShadowFetch = (input: RequestInfo | URL | string, init?: RequestInit) => Promise<Response>;
@@ -184,7 +219,13 @@ export function createShadowCompareFetch(options: ShadowCompareFetchOptions): Sh
         try {
           // A clone, so the app's response body is never touched.
           const text = await response.clone().text();
-          return legOf({ status: response.status, text }, now() - start);
+          const cacheStatus = edgeCacheStatus(response.headers?.get(EDGE_CACHE_STATUS_HEADER));
+          return legOf(
+            cacheStatus === undefined
+              ? { status: response.status, text }
+              : { status: response.status, text, cacheStatus },
+            now() - start
+          );
         } catch {
           return { ok: false, status: response.status, ms: now() - start };
         }
@@ -275,6 +316,12 @@ async function settle(
   if (candidateStatus !== undefined) context.candidate_status = String(candidateStatus);
   if (candidate.ok && candidate.response.servedBy !== undefined) {
     context.candidate_served_by = candidate.response.servedBy;
+  }
+  if (options.viewer) context.viewer = options.viewer;
+  if (control.ok && control.response.cacheStatus)
+    context.control_cache = control.response.cacheStatus;
+  if (candidate.ok && candidate.response.cacheStatus) {
+    context.candidate_cache = candidate.response.cacheStatus;
   }
   if (diff) {
     context.diff_path = diff.path;

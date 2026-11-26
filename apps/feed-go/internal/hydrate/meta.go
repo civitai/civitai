@@ -204,6 +204,15 @@ func (s *Sources) imageMetasFrom(ctx context.Context, r *metaRead) (map[int]any,
 	if s.Compute == nil {
 		return nil, fallback.Safef("image-meta-miss", "%d ids", len(miss))
 	}
+	if p := presenceOf(ctx); p != nil {
+		// As fill: a Go-first probe records the miss and its one lookup and answers "no entry" (a null
+		// meta), with no query.
+		p.recordComputed(MissImageMeta, len(miss))
+		for _, id := range miss {
+			out[id] = nil
+		}
+		return out, nil
+	}
 	c := s.Compute
 	records, err := c.lookupShared(ctx, MissImageMeta, miss, s.lookupImageMeta)
 	if err != nil {

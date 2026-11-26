@@ -3,14 +3,7 @@ import {
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
-import {
-  HOLD_UNKNOWN_REFUSAL,
-  LEGAL_HOLD_REFUSAL,
-  LEGAL_HOLD_STOPPED,
-  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
-  PURGE_ARCHIVE_REFUSAL,
-  type DeleteHold,
-} from '$lib/legal-hold';
+import { PURGE_ARCHIVE_REFUSAL } from '@civitai/shared/account-action-texts';
 import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
@@ -25,7 +18,8 @@ import type {
   MembershipResyncResult,
 } from '$lib/membership-extend';
 import type { CompGiftPreview, CompGiftResult, CompGiftTier } from '$lib/membership-gift-comp';
-import { civitaiAppUrl } from './civitai-url';
+import { tryCivitaiInternalUrl } from './civitai-url';
+import { mainAppHostFetch } from './main-app-fetch';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
@@ -45,6 +39,13 @@ import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
 import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
+import { usersByIds } from './users.service';
+import {
+  memorialOf,
+  type MemorialBasis,
+  type MemorialState,
+  type MemorialTribute,
+} from '@civitai/shared/memorial';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
 import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
@@ -74,6 +75,9 @@ export type ActionResult =
     }
   | { ok: false; error: string; retryAfterSeconds?: number };
 
+const INTERNAL_URL_UNSET =
+  'The main app is unreachable from here: CIVITAI_INTERNAL_URL is not set.';
+
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
  *  the client, so every one of these is called from a form action, never proxied. */
 async function callMainApp(
@@ -84,10 +88,11 @@ async function callMainApp(
   const token = env.WEBHOOK_TOKEN;
   if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
 
-  const base = civitaiAppUrl();
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return { ok: false, error: INTERNAL_URL_UNSET };
   const query = new URLSearchParams({ ...params, token });
   try {
-    const res = await fetch(`${base}${path}?${query}`, {
+    const res = await mainAppHostFetch(`${base}${path}?${query}`, {
       method: 'POST',
       signal: AbortSignal.timeout(15_000),
     });
@@ -155,7 +160,8 @@ async function postJson(opts: {
   /** `'session'` only: forward this cookie instead of the current request's. */
   cookie?: string;
 }): Promise<JsonResult> {
-  const base = civitaiAppUrl();
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return { ok: false, error: INTERNAL_URL_UNSET, requestNeverSent: true };
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   let url = `${base}${opts.path}`;
 
@@ -204,7 +210,7 @@ async function postJson(opts: {
   }
 
   try {
-    const res = await fetch(url, {
+    const res = await mainAppHostFetch(url, {
       method: isGet ? 'GET' : 'POST',
       headers,
       ...(isGet ? {} : { body: JSON.stringify(opts.body) }),
@@ -319,6 +325,9 @@ export type ModEndpoint =
   | 'user/membership-cancel'
   | 'user/membership-extend'
   | 'user/membership-resync'
+  | 'user/memorial-confirm'
+  | 'user/memorial-propose'
+  | 'user/memorial-reverse'
   | 'user/message-as-civitai'
   | 'user/personal-data-export-release'
   | 'user/remove-link'
@@ -349,7 +358,6 @@ export type ModReadEndpoint =
   | 'creator-services/disputes'
   | 'messages/inbox'
   | 'messages/thread'
-  | 'user/legal-hold'
   | 'user/membership-cancel-preview'
   | 'user/membership-extend-preview'
   | 'user/membership-resync-preview'
@@ -1615,7 +1623,7 @@ async function inChunks(
   /** Attribution for the chunk that just landed. Runs INSIDE the loop on purpose: written after it,
    *  a later chunk's timeout returns early and the images already actioned end up with no record of
    *  who actioned them — the exact thing the per-image rows exist to prevent. */
-  onSent?: (chunk: number[]) => Promise<void>
+  onSent?: (chunk: number[], body: Record<string, unknown>) => Promise<void>
 ): Promise<CountResult> {
   let affected = 0;
   for (let i = 0; i < imageIds.length; i += CHUNK) {
@@ -1628,7 +1636,7 @@ async function inChunks(
     const count = countOf(result.body, ['images']);
     affected += count;
     // A chunk that matched nothing gets no attribution: those ids do not exist.
-    if (count > 0) await onSent?.(chunk);
+    if (count > 0) await onSent?.(chunk, result.body);
   }
   return { ok: true, count: affected };
 }
@@ -1734,6 +1742,18 @@ export async function removeAllImagesForUser(input: {
   return { ok: true, count: countOf(result.body, ['images']) };
 }
 
+/** The ids of `chunk` that `/api/mod/restore-images` restored. It skips one only the CSAM review may
+ *  restore and keeps one blocked while its owner is deleted; neither is a restore to log. A response
+ *  from before `restored` existed falls back to its `skipped` list. */
+export function restoredIdsOf(chunk: number[], body: Record<string, unknown>) {
+  if (Array.isArray(body.restored)) {
+    const restored = new Set(body.restored);
+    return chunk.filter((id) => restored.has(id));
+  }
+  const skipped = new Set(Array.isArray(body.skipped) ? body.skipped : []);
+  return chunk.filter((id) => !skipped.has(id));
+}
+
 export async function restoreImages(input: {
   imageIds: number[];
   moderatorId: number;
@@ -1750,9 +1770,9 @@ export async function restoreImages(input: {
         { imageIds: chunk, userId: input.moderatorId },
         'Image restore'
       ),
-    (chunk) =>
+    (chunk, body) =>
       Promise.all(
-        chunk.map((id) =>
+        restoredIdsOf(chunk, body).map((id) =>
           recordModActivity({
             userId: input.moderatorId,
             entityType: 'image',
@@ -1815,8 +1835,7 @@ export const PURGE_MAY_BE_RUNNING =
 
 // PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
 // posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
-// act on an id that does not resolve, so a mistyped id cannot reach the endpoint, and on an account
-// under a legal hold. The endpoint refuses a held account too; this answers before anything is sent.
+// act on an id that does not resolve, so a mistyped id cannot reach the endpoint.
 export async function purgeAllContent(input: {
   userId: number;
   moderatorId: number;
@@ -1828,10 +1847,6 @@ export async function purgeAllContent(input: {
     .executeTakeFirst();
   if (!exists) return { ok: false, error: 'User not found.' };
 
-  const hold = await deleteAccountHold(input.userId);
-  if (hold === 'held') return { ok: false, error: LEGAL_HOLD_REFUSAL };
-  if (hold !== 'clear') return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
-
   const result = await postJson({
     path: '/api/mod/remove-all-content',
     body: {},
@@ -1841,19 +1856,6 @@ export async function purgeAllContent(input: {
     timeoutMs: 15_000,
   });
   if (!result.ok) {
-    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
-      return { ok: false, error: LEGAL_HOLD_REFUSAL };
-    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
-      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
-    // A hold stopped it part-way, after some of the account was deleted: that is recorded.
-    if (
-      result.status === 409 &&
-      (result.reason === LEGAL_HOLD_STOPPED ||
-        result.reason === LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE)
-    ) {
-      await logAction('purgeAllContent', input.userId, input.moderatorId);
-      return { ok: false, error: result.reason };
-    }
     if (result.status === 503 && result.reason === PURGE_ARCHIVE_REFUSAL)
       return { ok: false, error: PURGE_ARCHIVE_REFUSAL };
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
@@ -2139,16 +2141,6 @@ export async function revokeCreatorScoreGrant(input: {
   return { ok: true, total };
 }
 
-/** Whether a legal hold blocks deleting the account. Only `held: false` is `clear`; the endpoint
- *  refuses a held account regardless. */
-export async function deleteAccountHold(userId: number): Promise<DeleteHold> {
-  // Short: the Admin tab waits on this, and a slow answer blocks deletion anyway.
-  const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check', 5_000);
-  if (!result.ok) return 'unknown';
-  if (result.body.held === false) return 'clear';
-  return result.body.held === true ? 'held' : 'unknown';
-}
-
 export async function deleteAccount(input: {
   userId: number;
   /** The account's current username. **REQUIRED by the endpoint for any account that has one** —
@@ -2181,10 +2173,6 @@ export async function deleteAccount(input: {
   // window the operator reads as a failed deletion.
   const result = await callModEndpoint('user/delete', body, 'Account deletion', 60_000);
   if (!result.ok) {
-    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
-      return { ok: false, error: LEGAL_HOLD_REFUSAL };
-    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
-      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // 🔴 ONE QUESTION: could this request have reached the handler?
     //
     // `deleteUser` commits before an unbounded post-commit step, so a lost response does NOT mean
@@ -2315,7 +2303,7 @@ export async function clearProfileText(input: {
   const fields = input.fields.filter((f) => PROFILE_FIELD_KEYS.includes(f));
   if (!fields.length) return { ok: false, error: 'Nothing selected to clear.' };
 
-  // Through the main app, which archives the profile first where a CSAM report or hold names the
+  // Through the main app, which archives the profile first where a CSAM report names the
   // user, and records the clear itself: a `logAction` here would be a second ModActivity row.
   const result = await callModEndpoint(
     'user/clear-profile',
@@ -2527,5 +2515,84 @@ export async function removePlacement(input: {
     return { ok: false, error: 'That placement was already settled — reload.' };
 
   // The endpoint writes its own ModActivity row against the real moderator id, so none here.
+  return { ok: true };
+}
+
+const MEMORIAL_CONFIRM_TIMEOUT_MS = 60_000;
+const MEMORIAL_MAY_HAVE_COMPLETED =
+  'Outcome unknown: the change may have gone through. Reload the page before trying again.';
+const memorialFailure = (result: Extract<JsonResult, { ok: false }>): ActionResult => ({
+  ok: false,
+  error: writeFailureError(result, MEMORIAL_MAY_HAVE_COMPLETED),
+});
+export type MemorialPanelState = {
+  memorial: MemorialState | null;
+  proposedBy: string | null;
+  confirmedBy: string | null;
+};
+
+export async function getMemorialPanelState(userId: number): Promise<MemorialPanelState> {
+  const row = await dbWrite
+    .selectFrom('User')
+    .select('meta')
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  const memorial = memorialOf(row?.meta);
+  const ids = [memorial?.proposedBy, memorial?.confirmedBy].filter(
+    (id): id is number => typeof id === 'number'
+  );
+  const users = await usersByIds(ids);
+  const name = (id?: number) => (id ? users.get(id)?.username ?? `#${id}` : null);
+  return {
+    memorial,
+    proposedBy: name(memorial?.proposedBy),
+    confirmedBy: name(memorial?.confirmedBy),
+  };
+}
+
+export async function proposeMemorial(input: {
+  userId: number;
+  basis: MemorialBasis;
+  tributes: MemorialTribute[];
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/memorial-propose',
+    { userId: input.userId, basis: input.basis, tributes: input.tributes },
+    'Memorialization proposal'
+  );
+  if (!result.ok) return memorialFailure(result);
+  if (result.body.status !== 'pending') return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
+  return { ok: true };
+}
+
+export async function confirmMemorial(userId: number, proposedAt: string): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/memorial-confirm',
+    { userId, proposedAt },
+    'Memorialization',
+    MEMORIAL_CONFIRM_TIMEOUT_MS
+  );
+  if (!result.ok) return memorialFailure(result);
+  const { status, sessionsRevoked, keysRevoked, orchestratorConfirmed } = result.body;
+  if (status !== 'active') return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
+  const gaps = [
+    sessionsRevoked === false && 'its sessions were not signed out (use Force logout)',
+    keysRevoked === false && 'its API keys were not expired',
+    keysRevoked !== false &&
+      orchestratorConfirmed === false &&
+      'the generation service did not confirm revoking its tokens',
+  ].filter(Boolean);
+  if (gaps.length) return { ok: true, warning: `Memorialized, but ${gaps.join('; ')}.` };
+  return { ok: true };
+}
+
+export async function reverseMemorial(userId: number): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/memorial-reverse',
+    { userId },
+    'Reverse memorialization'
+  );
+  if (!result.ok) return memorialFailure(result);
+  if (result.body.memorialized !== false) return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
   return { ok: true };
 }

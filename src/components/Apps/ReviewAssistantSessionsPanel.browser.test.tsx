@@ -122,6 +122,50 @@ describe('ReviewAssistantSessionsPanel', () => {
     ]);
   });
 
+  // Two tests, never a manual unmount between renders: the render helper's `unmount` is async, and
+  // one left un-awaited leaves React's act scope open, so every later test in the file renders nothing.
+  test('a v1 row is judged from its own evidence: one colour of its own is still the stock look', async () => {
+    answer({
+      ...TRACE,
+      trace: {
+        ...TRACE.trace,
+        signals: {
+          ...TRACE.trace.signals,
+          themeCustomized: true,
+          theme: {
+            ...TRACE.trace.signals.theme,
+            customColorCount: 25,
+            customColorFiles: ['a.css'],
+          },
+        },
+      },
+    });
+    await renderWithProviders(<ReviewAssistantSessionsPanel publishRequestId={REQUEST} />);
+    await expect
+      .element(page.getByTestId('apps-review-sessions-theme'))
+      .toHaveTextContent('Default theme');
+  });
+
+  test('a v2 row shows its stored accentCustomized', async () => {
+    answer({
+      ...TRACE,
+      trace: {
+        ...TRACE.trace,
+        signals: {
+          ...TRACE.trace.signals,
+          signalsVersion: 2,
+          themeCustomized: true,
+          accentCustomized: true,
+          theme: { ...TRACE.trace.signals.theme, tokenOverrides: ['--civitai-color-primary'] },
+        },
+      },
+    });
+    await renderWithProviders(<ReviewAssistantSessionsPanel publishRequestId={REQUEST} />);
+    await expect
+      .element(page.getByTestId('apps-review-sessions-theme'))
+      .toHaveTextContent('Own look');
+  });
+
   test('opens a frozen transcript with each tool’s output collapsed until opened', async () => {
     await renderWithProviders(<ReviewAssistantSessionsPanel publishRequestId={REQUEST} />);
     await page.getByRole('button', { name: 'Show transcript' }).click();

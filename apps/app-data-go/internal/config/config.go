@@ -37,8 +37,19 @@ type Config struct {
 	// the hub (exchange.BlockVerifier). Required with BlockExchange, refused without it.
 	BlockJWKSURL string
 
-	// MaxStreams caps the streams open at once in this process (APP_DATA_MAX_STREAMS, default 100).
+	// MaxStreams caps the private streams open at once in this process (APP_DATA_MAX_STREAMS, default
+	// 100). Every stream, private, level or per-viewer, also counts against MaxSubscriptions.
 	MaxStreams int
+	// MaxSubscriptions caps the adapter subscriptions this process holds at once, over the private,
+	// level and per-viewer streams together (APP_DATA_MAX_SUBSCRIPTIONS, default 100: the replica's
+	// share of the adapter's subscription caps, DESIGN.md "Stream budget against the adapter's caps").
+	MaxSubscriptions int
+	// CacheBudgetBytes caps the bytes the streams' caches may reach together
+	// (APP_DATA_CACHE_BUDGET_BYTES, default 234881024, 224 MiB): each open stream reserves its
+	// manager's per-stream bound (a private stream MaxBytes, plus MaxOverlayBytes with the writes on;
+	// a level stream LevelMaxBytes; a per-viewer stream ViewerMaxBytes), and a stream that would pass
+	// the budget is not opened (`capacity`). See MemoryBudget for the arithmetic.
+	CacheBudgetBytes int
 	// MaxStreamsPerToken caps the streams one bearer token holds open (APP_DATA_MAX_STREAMS_PER_TOKEN,
 	// default 4): one per collection it reads. At most MaxStreams.
 	MaxStreamsPerToken int
@@ -55,11 +66,29 @@ type Config struct {
 	// RequestDeadline bounds one request, the REST fallback included (APP_DATA_REQUEST_DEADLINE_MS,
 	// default 4000).
 	RequestDeadline time.Duration
-	// MaxRecords and MaxBytes bound one stream's cache (APP_DATA_MAX_RECORDS_PER_STREAM default 1000,
-	// APP_DATA_MAX_BYTES_PER_STREAM default 2097152). A stream that outgrows either is closed and its
-	// reads go to REST. Memory held by caches is at most MaxStreams × MaxBytes.
+	// MaxRecords and MaxBytes bound one private stream's cache (APP_DATA_MAX_RECORDS_PER_STREAM default
+	// 1000, APP_DATA_MAX_BYTES_PER_STREAM default 2097152). A stream that outgrows either is closed and
+	// its reads go to REST. What all the caches hold together is bounded by CacheBudgetBytes.
 	MaxRecords int
 	MaxBytes   int
+	// MaxOverlayBytes bounds one private stream's read-your-writes overlays, apart from its records
+	// (APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM, default 131072; at least 98304, so one record of the
+	// store's largest body, 64 KiB, always fits). Read with the writes on only.
+	MaxOverlayBytes int
+	// LevelMaxStreams, LevelMaxRecords and LevelMaxBytes bound the shared collections' level streams
+	// (APP_DATA_LEVEL_MAX_STREAMS default 10, APP_DATA_LEVEL_MAX_RECORDS default 3000,
+	// APP_DATA_LEVEL_MAX_BYTES default 8388608), read only with SharedReads. A level stream holds up
+	// to the adapter's own bound (REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS, default 2500, always above
+	// 2000), so LevelMaxRecords must be at least that: a level stream past it is closed here and its
+	// reads answer 503 too_large.
+	LevelMaxStreams, LevelMaxRecords, LevelMaxBytes int
+	// ViewerMaxStreams, ViewerMaxRecords and ViewerMaxBytes bound the per-viewer streams
+	// (APP_DATA_VIEWER_MAX_STREAMS default 40, APP_DATA_VIEWER_MAX_RECORDS default 20000,
+	// APP_DATA_VIEWER_MAX_BYTES default 4194304), read only with SharedReads. The adapter ends a
+	// per-viewer stream past its own bound (REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS, default
+	// 20000), so ViewerMaxRecords at that bound closes nothing the adapter would serve. A per-viewer
+	// stream past ViewerMaxBytes is closed and its reads answer 503 too_large.
+	ViewerMaxStreams, ViewerMaxRecords, ViewerMaxBytes int
 	// RESTMaxInFlight caps concurrent REST reads (APP_DATA_REST_MAX_INFLIGHT, default 64): when the
 	// registry stalls every read falls back, and this keeps that from becoming unbounded load on the
 	// site. A read over it answers 503.
@@ -86,6 +115,29 @@ type Config struct {
 	// this plus 30 s, and a floor reopens a stream at most once per it. Zero with Writes off.
 	AdapterPoll time.Duration
 
+	// SharedReads is on with Writes and the registry path together: shared collections and signed-out
+	// viewers are read from the adapter's level and per-viewer streams (package shared), the level
+	// streams under this service's own service token (Service, client credentials).
+	SharedReads bool
+	// Service is this service's own service client, the level streams' token is minted as
+	// (APP_DATA_SERVICE_CLIENT_ID; the secret from APP_DATA_SERVICE_CLIENT_SECRET_FILE, or
+	// APP_DATA_SERVICE_CLIENT_SECRET, never both), at the relay's token endpoint for the relay's
+	// resource. It is a client of its own: the hub mints a service token only for a client whose
+	// grants are exactly the service grant, and refuses a client that is both a relay and a service,
+	// so the relay client can never mint it. Nil when unset: shared reads are then refused
+	// `service_client_unconfigured` (with a start warning while SharedReads is on), never read under
+	// the relay client. Needs the registry path.
+	Service *ServiceClient
+
+	// ForwardRegion copies the edge's region headers (cf-ipcountry, cf-region-code, x-isuk) from a
+	// viewer's request onto the private and per-viewer subscriptions opened for that viewer, so the
+	// adapter judges the viewer's region rather than this relay's, which has none and is held to SFW
+	// (APP_DATA_FORWARD_REGION: `true`/`1` on, unset/`false`/`0` off; default off). Turn it on only
+	// while this service is reachable through the edge alone, which sets those headers and strips any
+	// a client sent (WRITES-DESIGN.md, "Region", precondition). Level streams never carry a region:
+	// they are read as a service, which no region holds. Needs the registry path.
+	ForwardRegion bool
+
 	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
 	// (comma-separated, so Config stays comparable); Warnings reports them.
 	ignoredWrites string
@@ -108,12 +160,29 @@ const (
 	TerminationGrace = 30 * time.Second
 )
 
-// Warnings are settings that were read but do nothing; the start logs each and goes on.
+// Warnings are settings that were read but do nothing, or a feature on without what it needs; the
+// start logs each and goes on.
 func (c *Config) Warnings() []string {
-	if c.ignoredWrites == "" {
-		return nil
+	var w []string
+	if c.ignoredWrites != "" {
+		w = append(w, c.ignoredWrites+" set with APP_DATA_WRITES off: ignored")
 	}
-	return []string{c.ignoredWrites + " set with APP_DATA_WRITES off: ignored"}
+	switch {
+	case c.SharedReads && c.Service == nil:
+		w = append(w, NoServiceClientWarning)
+	case !c.SharedReads && c.Service != nil:
+		w = append(w, "APP_DATA_SERVICE_CLIENT_ID set without shared reads (APP_DATA_WRITES and APP_DATA_REGISTRY_URL): ignored")
+	}
+	return w
+}
+
+// NoServiceClientWarning is the start warning for shared reads with no service client.
+const NoServiceClientWarning = "shared reads are on without a service client (APP_DATA_SERVICE_CLIENT_ID): " +
+	"every shared and signed-out read is refused service_client_unconfigured"
+
+// ServiceClient is the hub client the level streams' service token is minted as (token.Config).
+type ServiceClient struct {
+	ClientID, ClientSecret string
 }
 
 // minSigningKeyBytes is the shortest signing key accepted: 256 bits, the HMAC-SHA256 block's half.
@@ -165,6 +234,29 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("the relay client is set without APP_DATA_REGISTRY_URL; set both or neither")
 	}
 	c.Relay = relay
+	service, err := serviceFromEnv(getenv, readFile)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case service != nil && relay == nil:
+		return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID needs the registry path (APP_DATA_REGISTRY_URL and the relay client): the service token is minted at its token endpoint")
+	case service != nil && service.ClientID == relay.ClientID:
+		// The hub refuses a client that is both a relay and a service; this is the case the separate
+		// client exists to end.
+		return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID must be a service client of its own, not the relay client APP_DATA_CLIENT_ID")
+	}
+	c.Service = service
+	switch v := getenv("APP_DATA_FORWARD_REGION"); v {
+	case "", "false", "0":
+	case "true", "1":
+		if c.RegistryURL == "" {
+			return nil, errors.New("APP_DATA_FORWARD_REGION needs the registry path (APP_DATA_REGISTRY_URL and the relay client)")
+		}
+		c.ForwardRegion = true
+	default:
+		return nil, errors.New("APP_DATA_FORWARD_REGION must be true, 1, false or 0")
+	}
 	switch v := getenv("APP_DATA_BLOCK_EXCHANGE"); v {
 	case "", "false", "0":
 	case "true", "1":
@@ -178,6 +270,7 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 	if err := writesFromEnv(getenv, c); err != nil {
 		return nil, err
 	}
+	c.SharedReads = c.Writes && c.RegistryURL != ""
 	c.BlockJWKSURL = getenv("APP_DATA_BLOCK_JWKS_URL")
 	switch {
 	case c.BlockExchange && c.BlockJWKSURL == "":
@@ -202,6 +295,9 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return time.Duration(num(name, def, lo, hi)) * time.Millisecond
 	}
 	c.MaxStreams = num("APP_DATA_MAX_STREAMS", 100, 1, 10_000)
+	c.MaxSubscriptions = num("APP_DATA_MAX_SUBSCRIPTIONS", 100, 1, 10_000)
+	c.CacheBudgetBytes = num("APP_DATA_CACHE_BUDGET_BYTES", DefaultCacheBudgetBytes, 8<<20, 16<<30)
+	c.MaxOverlayBytes = num("APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM", 128<<10, 96<<10, 64<<20)
 	c.MaxStreamsPerToken = num("APP_DATA_MAX_STREAMS_PER_TOKEN", 4, 1, 50)
 	c.IdleTTL = ms("APP_DATA_STREAM_IDLE_TTL_MS", 300_000, 1_000, 3_600_000)
 	c.MaxAge = ms("APP_DATA_STREAM_MAX_AGE_MS", 840_000, 1_000, 900_000)
@@ -210,6 +306,12 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 	c.MaxRecords = num("APP_DATA_MAX_RECORDS_PER_STREAM", 1_000, 1, 100_000)
 	c.MaxBytes = num("APP_DATA_MAX_BYTES_PER_STREAM", 2<<20, 64<<10, 64<<20)
 	c.RESTMaxInFlight = num("APP_DATA_REST_MAX_INFLIGHT", 64, 1, 10_000)
+	c.LevelMaxStreams = num("APP_DATA_LEVEL_MAX_STREAMS", 10, 1, 1_000)
+	c.LevelMaxRecords = num("APP_DATA_LEVEL_MAX_RECORDS", 3_000, 2_001, 100_000)
+	c.LevelMaxBytes = num("APP_DATA_LEVEL_MAX_BYTES", 8<<20, 1<<20, 256<<20)
+	c.ViewerMaxStreams = num("APP_DATA_VIEWER_MAX_STREAMS", 40, 1, 10_000)
+	c.ViewerMaxRecords = num("APP_DATA_VIEWER_MAX_RECORDS", 20_000, 1, 1_000_000)
+	c.ViewerMaxBytes = num("APP_DATA_VIEWER_MAX_BYTES", 4<<20, 64<<10, 256<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -220,8 +322,48 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("APP_DATA_STREAM_MAX_AGE_MS must be at least APP_DATA_STREAM_IDLE_TTL_MS")
 	case c.LiveWait >= c.RequestDeadline:
 		return nil, errors.New("APP_DATA_LIVE_WAIT_MS must be less than APP_DATA_REQUEST_DEADLINE_MS, so the REST fallback has time")
+	case c.CacheBudgetBytes < c.PrivateReserve():
+		return nil, errors.New("APP_DATA_CACHE_BUDGET_BYTES must hold at least one private stream (APP_DATA_MAX_BYTES_PER_STREAM, plus APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM with the writes on)")
+	case c.SharedReads && (c.CacheBudgetBytes < c.LevelMaxBytes || c.CacheBudgetBytes < c.ViewerMaxBytes):
+		return nil, errors.New("APP_DATA_CACHE_BUDGET_BYTES must hold at least one level stream and one per-viewer stream (APP_DATA_LEVEL_MAX_BYTES, APP_DATA_VIEWER_MAX_BYTES)")
 	}
 	return c, nil
+}
+
+// PrivateReserve is what one private stream reserves from the cache budget: its records' bound, plus
+// its overlays' with the writes on.
+func (c *Config) PrivateReserve() int {
+	if !c.Writes {
+		return c.MaxBytes
+	}
+	return c.MaxBytes + c.MaxOverlayBytes
+}
+
+// MaxSharedOverlayBytes bounds the acknowledged shared writes held in all (cmd/app-data-go), apart
+// from the cache budget.
+const MaxSharedOverlayBytes = 16 << 20
+
+// The memory the defaults are sized against: the deployment's GOMEMLIMIT of 400 MiB, under a 512 Mi
+// container limit.
+const (
+	DeploymentMemLimit = 400 << 20
+
+	// DefaultCacheBudgetBytes is 224 MiB. With the shared overlays' 16 MiB it is 240 MiB of cache,
+	// 60% of GOMEMLIMIT, the other 160 MiB left to the runtime, each cached record's own overhead
+	// past its counted bytes, and in-flight requests. What it holds at the defaults, for example:
+	// 100 private streams with the writes off (100 × 2 MiB = 200 MiB) or on (100 × 2.125 MiB =
+	// 212.5 MiB), as before any budget; with shared reads, 10 level streams (10 × 8 MiB = 80 MiB) and
+	// 20 per-viewer (20 × 4 MiB = 80 MiB) leave 64 MiB, 30 private streams (63.75 MiB). Whatever the
+	// mix, at most MaxSubscriptions (100) streams and this many bytes. config_test pins the sum.
+	DefaultCacheBudgetBytes = 224 << 20
+)
+
+// MemoryBudget is the most the streams' caches and the shared overlays may hold together.
+func (c *Config) MemoryBudget() int {
+	if !c.SharedReads {
+		return c.CacheBudgetBytes
+	}
+	return c.CacheBudgetBytes + MaxSharedOverlayBytes
 }
 
 // writesFromEnv reads the write settings into c. With APP_DATA_WRITES off they do nothing: any that
@@ -317,6 +459,34 @@ func relayFromEnv(getenv func(string) string, readFile func(string) ([]byte, err
 		return nil, errors.New("APP_DATA_EXCHANGE_RESOURCE must be the adapter's https resource identifier")
 	}
 	return r, nil
+}
+
+// serviceFromEnv reads the service client: nil when every setting is unset; an error when only some
+// are.
+func serviceFromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) (*ServiceClient, error) {
+	id := getenv("APP_DATA_SERVICE_CLIENT_ID")
+	secret, secretFile := getenv("APP_DATA_SERVICE_CLIENT_SECRET"), getenv("APP_DATA_SERVICE_CLIENT_SECRET_FILE")
+	if id == "" {
+		if secret != "" || secretFile != "" {
+			return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID is required with APP_DATA_SERVICE_CLIENT_SECRET or APP_DATA_SERVICE_CLIENT_SECRET_FILE")
+		}
+		return nil, nil
+	}
+	switch {
+	case secret != "" && secretFile != "":
+		return nil, errors.New("set APP_DATA_SERVICE_CLIENT_SECRET or APP_DATA_SERVICE_CLIENT_SECRET_FILE, not both")
+	case secretFile != "":
+		raw, err := readFile(secretFile)
+		if err != nil {
+			// The path is configuration, not a secret; the file's content never appears.
+			return nil, errors.New("APP_DATA_SERVICE_CLIENT_SECRET_FILE could not be read")
+		}
+		secret = strings.TrimRight(string(raw), "\r\n")
+	}
+	if secret == "" {
+		return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID needs a secret: APP_DATA_SERVICE_CLIENT_SECRET_FILE or APP_DATA_SERVICE_CLIENT_SECRET")
+	}
+	return &ServiceClient{ClientID: id, ClientSecret: secret}, nil
 }
 
 func secureURL(raw string) bool {

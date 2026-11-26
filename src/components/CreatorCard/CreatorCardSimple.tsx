@@ -156,6 +156,8 @@ const CreatorCardSimpleContent = ({
                 left: 0,
                 width: '100%',
                 height: '100%',
+                // Decorative: out of hit-testing so no <video> sits under the name or buttons.
+                pointerEvents: 'none',
               },
             }}
             contain

@@ -57,7 +57,7 @@ const PRELUDE = `
     "deletedAt" TIMESTAMP, "customerId" TEXT, "paddleCustomerId" TEXT, "autoplayGifs" BOOLEAN,
     "leaderboardShowcase" TEXT, "filePreferences" JSONB NOT NULL DEFAULT '{}',
     "settings" JSONB NOT NULL DEFAULT '{}', "meta" JSONB NOT NULL DEFAULT '{}',
-    "profilePictureId" INTEGER
+    "profilePictureId" INTEGER, "flags" INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE "Image" (
     "id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
@@ -380,5 +380,23 @@ describe("produceSessionUser — a User.image naming another of the user's own i
     const external = 'https://avatars.githubusercontent.com/u/1?v=4';
     await seed(`"blockedFor" = 'tos'`, external);
     expect((await produceSessionUser(BUILDER))?.image).toBe(external);
+  });
+});
+
+describe('produceSessionUser — a memorialized account', () => {
+  it('carries memorialized: true and never the raw flags', async () => {
+    await pg.query(`UPDATE "User" SET "flags" = 4 | 1 WHERE "id" = $1`, [BUILDER]);
+
+    const user = await produceSessionUser(BUILDER);
+
+    expect(user).toMatchObject({ id: BUILDER, memorialized: true });
+    expect(user).not.toHaveProperty('flags');
+  });
+
+  it('carries no marker for another flag alone, or none (control)', async () => {
+    await pg.query(`UPDATE "User" SET "flags" = 1 WHERE "id" = $1`, [BUILDER]);
+
+    expect((await produceSessionUser(BUILDER))?.memorialized).toBeUndefined();
+    expect((await produceSessionUser(NEIGHBOUR))?.memorialized).toBeUndefined();
   });
 });

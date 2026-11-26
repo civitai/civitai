@@ -110,9 +110,10 @@ async function handler(
   // headers the answer depends on and that body are POSTed to feed-go's internal compare endpoint
   // from `setImmediate`, never awaited. A sample holds nothing until `finish`; one that ends in
   // another status is counted `skipped_status`. Never throws. See `~/server/trpc/feed-go-shadow`.
-  // Not sampled: a text `query` (the Meilisearch path) and a signed-in caller, both of which feed-go
-  // always answers with a fallback (`v1-models-query`, `v1-models-session`).
-  const shadow = query || user ? undefined : beginFeedGoShadowV1Models(req, 'list');
+  // Not sampled: a signed-in caller, which feed-go always answers with a fallback
+  // (`v1-models-session`). A text `query` (the search path) is sampled only with
+  // FEED_GO_SHADOW_V1_MODELS_QUERY on (the sampler decides).
+  const shadow = user ? undefined : beginFeedGoShadowV1Models(req, 'list');
   publishTrainingDataRulesLive();
 
   // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
