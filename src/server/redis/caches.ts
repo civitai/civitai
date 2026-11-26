@@ -31,7 +31,7 @@ import {
   withSharedClickhouseFallback,
 } from '~/server/services/downloads-clickhouse';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { hasBlockMarkerSql } from '~/server/common/image-visibility';
+import { hasBlockMarkerSql, ownerMediaAllowedSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
 import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
@@ -1589,7 +1589,8 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
 /** The thumbnail rows `thumbnailCache` hands out. */
 export const thumbnailRowsSql = (thumbnailIds: (number | string)[]) => Prisma.sql`
   SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId",
-    ${hasBlockMarkerSql('Image')} AS "blockMarked"
+    ${hasBlockMarkerSql('Image')} AS "blockMarked",
+    ${ownerMediaAllowedSql('Image')} AS "ownerMediaAllowed"
   FROM "Image"
   WHERE id IN (${Prisma.join(thumbnailIds)})
 `;
@@ -1601,6 +1602,8 @@ export type ThumbnailCacheItem = {
   height: number | null;
   nsfwLevel: NsfwLevel;
   blockMarked: boolean;
+  /** `ownerMediaAllowed`; absent on an entry cached before it was read, which counts as false. */
+  ownerMediaAllowed?: boolean;
   parentId?: number;
 };
 
@@ -1636,6 +1639,7 @@ export const thumbnailCache = createCachedObject<ThumbnailCacheItem>({
         height: number | null;
         nsfwLevel: NsfwLevel;
         blockMarked: boolean;
+        ownerMediaAllowed: boolean;
         parentId: number;
       }[]
     >(thumbnailRowsSql(thumbnailIds));

@@ -131,3 +131,32 @@ describe('upsertArticleHandler — bannerImage', () => {
     expect(lastUpsertArg().bannerImage).toEqual(banner);
   });
 });
+
+describe('upsertArticleHandler — a moderator on a scoped key', () => {
+  beforeEach(() => {
+    mockUpsertArticle.mockReset();
+    mockUpsertArticle.mockResolvedValue({ id: 5, publishedAt: null });
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ publishedAt: null });
+    dbMock.dbRead.tag.findMany.mockResolvedValue([]);
+  });
+
+  // getArticleById reads them as a member, so their save must keep what that read withheld.
+  it('saves as a member', async () => {
+    const scoped = {
+      ...(ctx(true) as object),
+      apiKeyId: 1,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 1 },
+      tokenScope: BigInt(1),
+    } as never;
+    await upsertArticleHandler({ input: input(), ctx: scoped });
+
+    expect(lastUpsertArg().isModerator).toBe(false);
+  });
+
+  it('saves as a moderator on a session', async () => {
+    await upsertArticleHandler({ input: input(), ctx: ctx(true) });
+
+    expect(lastUpsertArg().isModerator).toBe(true);
+  });
+});

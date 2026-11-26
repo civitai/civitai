@@ -1061,7 +1061,8 @@ export async function getAppealDetails({
     case EntityType.Image:
       entityDetails = await dbRead.image.findUnique({
         where: { id: appeal.entityId },
-        select: { id: true, url: true, userId: true },
+        // An appealed image is a removed or blocked one: its media goes to moderators only.
+        select: { id: true, url: !!isModerator, userId: true },
       });
       break;
     case EntityType.Model:

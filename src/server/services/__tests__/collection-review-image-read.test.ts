@@ -109,7 +109,7 @@ describe("a collection review's image read", () => {
       { pending: true, reviewCollectionId: COLLECTION }
     );
     expect(text).toMatch(/i\."needsReview" IS NULL OR i\."userId" = \$\d+/);
-    expect(text).toMatch(/i\."blockedFor" IS NULL OR i\."userId" = \$\d+/);
+    expect(text).toMatch(/i\."blockedFor" IS NULL OR \(i\."userId" = \$\d+ AND /);
     expect(text).toMatch(/i\."ingestion" != 'Blocked'/);
     expect(text).toMatch(/p\."availability" != \$\d+/);
   });

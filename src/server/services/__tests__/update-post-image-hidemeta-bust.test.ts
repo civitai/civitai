@@ -362,9 +362,54 @@ describe('updatePostImage — another scan', () => {
   it('case 3', async () => {
     wire('moderated');
 
-    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'p' } } as any);
+    // A moderator: the owner is refused a meta edit under this block (below).
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'p' } } as any, { asModerator: true });
 
     expect(mockRequeueUnverifiedImages).not.toHaveBeenCalled();
     expect(updateData()).toBeDefined();
+  });
+});
+
+// The post editor gives the owner of an image whose block refuses them the media its meta with the
+// media references stripped; a meta save from there would overwrite what moderation reviews.
+describe('updatePostImage — a meta edit on an image under a moderation block', () => {
+  const STORED_META = { prompt: 'p', comfy: '{"nodes":[]}', images: [{ url: 'src-key' }] };
+  const wireBlocked = (blockedFor: string) => {
+    mockFindUniqueOrThrow.mockResolvedValue({
+      hideMeta: false,
+      ingestion: 'Blocked',
+      blockedFor,
+      metadata: {},
+      nsfwLevel: 1,
+      meta: STORED_META,
+    });
+    mockImageUpdate.mockResolvedValue({ id: IMAGE_ID, url: IMAGE_URL, userId: USER_ID });
+  };
+
+  it.each(['tos', 'moderated'])('refuses the owner, writing nothing (%s)', async (blockedFor) => {
+    wireBlocked(blockedFor);
+
+    await expect(
+      updatePostImage({ id: IMAGE_ID, meta: { prompt: 'edited' } } as any)
+    ).rejects.toThrow('under moderation');
+    expect(mockImageUpdate).not.toHaveBeenCalled();
+  });
+
+  it('still takes a hide/show-prompt toggle, which leaves meta alone', async () => {
+    wireBlocked('tos');
+
+    await updatePostImage({ id: IMAGE_ID, hideMeta: true } as any);
+
+    expect(updateData().meta).toBeUndefined();
+  });
+
+  it("takes a moderator's meta edit, whose editor carried the full meta", async () => {
+    wireBlocked('tos');
+
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'edited' } } as any, {
+      asModerator: true,
+    });
+
+    expect(updateData().meta).toBeDefined();
   });
 });

@@ -54,6 +54,7 @@ import {
   upsertArticle,
 } from '~/server/services/article.service';
 import { articlesSearchIndex } from '~/server/search-index';
+import { withheldMediaPlaceholders } from '~/server/utils/article-withheld-media';
 import { expandBlurbs } from '~/server/services/blurb-materialize.service';
 
 const ARTICLE_ID = 21;
@@ -327,6 +328,47 @@ describe('the article cover and banner on save', () => {
     expect(saved.bannerId).toBeNull();
   });
 
+  // getArticleById withholds a cover or banner whose block refuses the author the media, so the
+  // author's form sends null for it.
+  describe('a cover and banner blocked by a moderation action', () => {
+    beforeEach(() => {
+      const base = dbMock.dbWrite.image.findMany.getMockImplementation();
+      dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+        args.select?.blockedFor
+          ? args.where.id.in.map((id: number) => ({
+              id,
+              ingestion: 'Blocked',
+              blockedFor: id === OLD_COVER ? 'tos' : 'moderated',
+            }))
+          : base?.(args)) as never);
+    });
+
+    it('keeps both when the author saves without them', async () => {
+      await save({ coverImage: null, bannerImage: null });
+
+      expect(saved).toEqual({ coverId: OLD_COVER, bannerId: OLD_BANNER });
+      expect(queuedIds()).toEqual([]);
+    });
+
+    it('replaces the cover when the author saves a new image of theirs', async () => {
+      await save({ coverImage: NEW_IMAGE, bannerImage: null });
+
+      expect(saved).toEqual({ coverId: NEW_IMAGE, bannerId: OLD_BANNER });
+    });
+
+    it('still refuses an image the author does not own as the replacement', async () => {
+      await expect(save({ coverImage: FOREIGN, bannerImage: null })).rejects.toThrow(
+        'Invalid cover image'
+      );
+    });
+
+    it("clears them on a moderator's save, whose form carried them", async () => {
+      await save({ coverImage: null, bannerImage: null }, MODERATOR);
+
+      expect(saved).toEqual({ coverId: null, bannerId: null });
+    });
+  });
+
   it('still applies the content change when queueing the replaced images fails', async () => {
     queueImageDeletes.mockRejectedValueOnce(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -598,5 +640,91 @@ describe('a new article', () => {
       { data: { content: string } }
     ];
     expect(data.content).toBe('<p>expanded</p>');
+  });
+});
+
+// getArticleById withholds a body image whose block refuses its author the media, as a placeholder on
+// the edit form; a save must put it back, so a lifted block or won appeal still has it.
+describe("a body image blocked by a moderation action, on the author's save", () => {
+  const TOS_BODY = {
+    id: 40,
+    url: 'tos-key',
+    needsReview: null,
+    ingestion: 'Blocked',
+    blockedFor: 'tos',
+  };
+  const MOD_BODY = {
+    id: 41,
+    url: 'mod-key',
+    needsReview: null,
+    ingestion: 'Blocked',
+    blockedFor: 'moderated',
+  };
+  const CLEAN_BODY = {
+    id: 42,
+    url: 'clean-key',
+    needsReview: null,
+    ingestion: 'Scanned',
+    blockedFor: null,
+  };
+  // As the sanitizer stores a body.
+  const STORED = `<p>text</p><img src="${TOS_BODY.url}" /><img src="${MOD_BODY.url}" /><img src="${CLEAN_BODY.url}" />`;
+  let savedContent: string | undefined;
+
+  beforeEach(() => {
+    savedContent = undefined;
+    const stored = { ...storedArticle, content: STORED };
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbRead.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
+      [TOS_BODY, MOD_BODY, CLEAN_BODY].map((image) => ({ imageId: image.id, image })) as never
+    );
+    dbMock.dbWrite.article.update.mockImplementation((async ({ data }: any) => {
+      savedContent = data.content;
+      return { ...stored, ...data };
+    }) as never);
+  });
+
+  const save = (content: string, opts: { editForm?: boolean; userId?: number } = {}) =>
+    upsertArticle({
+      id: ARTICLE_ID,
+      userId: opts.userId ?? AUTHOR,
+      isModerator: opts.userId === MODERATOR,
+      editForm: opts.editForm ?? true,
+      title: 'A new title',
+      content,
+      status: 'Draft',
+    } as never);
+
+  it('keeps both, byte-identical, through a title-only edit-form save', async () => {
+    // What getArticleById({ edit: true }) hands the author's form.
+    const form = withheldMediaPlaceholders(STORED, new Set([TOS_BODY.url, MOD_BODY.url]));
+    expect(form).not.toContain(TOS_BODY.url);
+    expect(form).not.toContain(MOD_BODY.url);
+
+    await save(form);
+
+    expect(savedContent).toBe(STORED);
+  });
+
+  it('keeps both when a save from outside the edit form leaves them out', async () => {
+    await save(`<p>text</p><img src="${CLEAN_BODY.url}">`, { editForm: false });
+
+    expect(savedContent).toContain(TOS_BODY.url);
+    expect(savedContent).toContain(MOD_BODY.url);
+  });
+
+  it('refuses a placeholder that names a body image the author could see', async () => {
+    // The clean image is the third medium: ref 2. A placeholder can only stand for a withheld one.
+    const forged = withheldMediaPlaceholders(STORED, new Set([CLEAN_BODY.url]));
+
+    await expect(save(forged)).rejects.toThrow('names an image it does not hold');
+  });
+
+  it("lets a moderator's save, whose form carried them, remove them", async () => {
+    await save(`<p>text</p><img src="${CLEAN_BODY.url}">`, { userId: MODERATOR });
+
+    expect(savedContent).not.toContain(TOS_BODY.url);
+    expect(savedContent).not.toContain(MOD_BODY.url);
   });
 });

@@ -109,10 +109,9 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { Context } from '~/server/createContext';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 
 /** Moderator authority on the listing editor needs a session or full-access key, never an app-scoped token. */
-const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 const listingEditorUser = (ctx: Context) => ({ ...ctx.user!, isModerator: actsAsModerator(ctx) });
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';

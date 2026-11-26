@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
 import {
   router,
@@ -103,6 +104,7 @@ export const articleRouter = router({
       getArticles({
         ...input,
         sessionUser: ctx?.user,
+        asModerator: credentialViews(ctx).asModerator,
         reportListedViewer: reportListedViewerOf(ctx),
         include: ['cosmetics'],
         // Uncached per viewer, so a flagged viewer may see decorations before launch.
@@ -126,7 +128,8 @@ export const articleRouter = router({
         getArticleById({
           ...input,
           userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
+          // A moderator on a session or a full-access key, as the media rule reads one.
+          isModerator: credentialViews(ctx).asModerator,
           reportListedViewer: reportListedViewerOf(ctx),
         }),
         // The hat the cover wears. A signed-out response is edge-cached for every signed-out
@@ -262,7 +265,9 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
-    .query(({ input }) => getArticleScanStatus(input)),
+    .query(({ input, ctx }) =>
+      getArticleScanStatus({ ...input, viewerIsModerator: credentialViews(ctx).asModerator })
+    ),
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
     .use(isFlagProtected('articleImageScanning'))

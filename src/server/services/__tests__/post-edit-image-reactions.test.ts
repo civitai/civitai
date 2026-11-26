@@ -170,9 +170,12 @@ describe("post.getEdit and the owner's held image", () => {
 
   beforeAll(async () => {
     harness = await startPglitePrisma(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM
+        ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
       CREATE TABLE "Image" (
         id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1,
-        "needsReview" text
+        "needsReview" text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+        "blockedFor" text
       );
     `);
     await harness.pg.exec(`
