@@ -11,7 +11,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({

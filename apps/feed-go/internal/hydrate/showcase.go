@@ -35,8 +35,9 @@ const (
 	ShowcaseUncurated Showcase = iota
 	// ShowcaseCurated: some version's entry holds a row, or does not have the shape the Node reader
 	// assumes, or its read failed (Node's routes then keep the default list from a read of their own,
-	// which this service cannot see, so the request is Node's); or, for a version with no usable
-	// entry, the replica holds a row or could not be read (ShowcaseState).
+	// which this service cannot see, so the request is Node's; ShowcaseState also returns the read's
+	// error, so the caller's fallback names the failure rather than a curation); or, for a version
+	// with no usable entry, the replica holds a row or could not be read (ShowcaseState).
 	ShowcaseCurated
 	// ShowcaseUnknown: some version has no entry Node's fetch would use as it is (no key, an
 	// undecodable value, a bust's debounce marker). Node computes such an entry from the database
@@ -67,8 +68,8 @@ func (p *PackedReader) QueueShowcases(b *Batch, ids []int) *ShowcaseRead {
 // the other entries say), then ShowcaseUnknown over ShowcaseStale. Sources.ShowcaseState answers the
 // ShowcaseUnknown versions from the replica instead.
 func (r *ShowcaseRead) State(ids []int) Showcase {
-	curated, missing, _, stale := r.classify(ids)
-	return showcaseOf(curated, len(missing) > 0, stale)
+	curated, missing, _, stale, failed := r.classify(ids)
+	return showcaseOf(curated || failed != nil, len(missing) > 0, stale)
 }
 
 // showcaseOf is the precedence State and ShowcaseState share: curated, then unknown, then stale.
@@ -84,13 +85,14 @@ func showcaseOf(curated, unknown, stale bool) Showcase {
 	return ShowcaseUncurated
 }
 
-// classify sorts ids by their entries: curated when any entry says so (it ends the scan: nothing
-// else can change the answer), else missing (the ids with no entry Node's fetch would use as it
-// is, each once), held (one of them is a bust's debounce marker) and stale (some uncurated entry is
-// past ShowcaseTTL).
-func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, stale bool) {
+// classify sorts ids by their entries: failed when any GET failed for a reason other than redis.Nil
+// (checked first, so it wins whatever the order), curated when any entry says so (it ends the scan),
+// else
+// missing (the ids with no entry Node's fetch would use as it is, each once), held (one of them is a
+// bust's debounce marker) and stale (some uncurated entry is past ShowcaseTTL).
+func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, stale bool, failed error) {
 	if len(ids) == 0 {
-		return false, nil, false, false
+		return false, nil, false, false, nil
 	}
 	var at map[int]int
 	var p *PackedReader
@@ -105,6 +107,14 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 	if p != nil && p.Now != nil {
 		now = p.Now()
 	}
+	// A failed GET (not redis.Nil) among the asked ids wins over every entry, whatever the order.
+	for _, id := range ids {
+		if i, ok := at[id]; ok {
+			if err := r.read.cmds[i].Err(); err != nil && !errors.Is(err, redis.Nil) {
+				return false, nil, false, false, err
+			}
+		}
+	}
 	seen := make(map[int]bool, len(ids))
 	for _, id := range ids {
 		i, ok := at[id]
@@ -116,9 +126,6 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 			continue
 		}
 		cmd := r.read.cmds[i]
-		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
-			return true, nil, false, false
-		}
 		e, st := entryState(cmd, ShowcaseTTL, now, decodeOpts{})
 		if st == stateHeld {
 			held = true
@@ -138,13 +145,13 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 			// No `rows` array: curatedSiteFor's `entry?.rows.some(...)` throws in Node, and the
 			// route's catch answers from a read this service cannot see. Either way the port cannot
 			// answer it.
-			return true, nil, false, false
+			return true, nil, false, false, nil
 		}
 		if e.Stale {
 			stale = true
 		}
 	}
-	return false, missing, held, stale
+	return false, missing, held, stale, nil
 }
 
 // sqlShowcaseCurated is the first query of getVersionShowcaseCache's lookupFn
@@ -160,7 +167,9 @@ const sqlShowcaseCurated = `SELECT 1 FROM "ModelVersionShowcaseItem" WHERE "mode
 // no key, an undecodable value, an id not queued) answered from the replica when s
 // computes misses (s.Compute): one query over all of them (sqlShowcaseCurated); no row and they are
 // uncurated, a row and the answer is ShowcaseCurated (curatedSiteFor's decision). A failed query is
-// ShowcaseCurated with its error: the caller falls back (`<reason>-miss-failed`) and Node decides.
+// ShowcaseCurated with its error: the caller falls back (`<reason>-miss-failed`) and Node decides. So
+// is a cache GET that failed (other than redis.Nil) and a lag-flag read that failed: each is a read
+// failure, never a curation or a miss, so it is reported as one.
 // Without s.Compute, or with no replica, they stay ShowcaseUnknown. A stale entry is not looked up:
 // Node's reader that wins the revalidate lock rebuilds it, and ShowcaseStale still falls back. Nor is
 // a version whose entry is a bust's debounce marker: a bust usually follows a curation write, the
@@ -168,10 +177,11 @@ const sqlShowcaseCurated = `SELECT 1 FROM "ModelVersionShowcaseItem" WHERE "mode
 //
 // The query reads the replica, where Node's lookup reads the primary for a version a recent write
 // flagged (getDbWithoutLagBatch('modelVersion', ids)). So the missed versions' lag flags are read
-// first (lagFlagged, one pipeline, the keys and value test lagAwareDB reads): any flag set, or a flag
-// read that fails, and nothing is computed: ShowcaseUnknown, so the caller falls back as a miss and
-// Node reads the primary. refreshVersionShowcases, which the curation writes run once they commit,
-// sets exactly these flags (preventReplicationLagBatch('modelVersion', ids)) before it rebuilds the
+// first (lagFlagged, one pipeline, the keys and value test lagAwareDB reads): any flag set and
+// nothing is computed: ShowcaseUnknown, so the caller falls back as a miss and Node reads the
+// primary. A flag read that fails (and no flag found set) computes nothing either: ShowcaseCurated
+// with the read's error, as above. refreshVersionShowcases, which the curation writes run once they
+// commit, sets exactly these flags (preventReplicationLagBatch('modelVersion', ids)) before it rebuilds the
 // entries, for REPLICATION_LAG_DELAY seconds (markFresh's `EX`, packages/civitai-db/src/lag.ts). What
 // still reads the replica, as Node's own lag-aware read does: a curation whose flag expired before the
 // replica caught up (a lag longer than REPLICATION_LAG_DELAY) or read between its commit and the flag,
@@ -183,7 +193,10 @@ const sqlShowcaseCurated = `SELECT 1 FROM "ModelVersionShowcaseItem" WHERE "mode
 // "computed"; a failed query "error"), except under a Go-first probe (WithPresence), which counts
 // nothing there.
 func (s *Sources) ShowcaseState(ctx context.Context, r *ShowcaseRead, ids []int) (Showcase, error) {
-	curated, missing, held, stale := r.classify(ids)
+	curated, missing, held, stale, failed := r.classify(ids)
+	if failed != nil {
+		return ShowcaseCurated, fmt.Errorf("version showcase cache read: %w", failed)
+	}
 	if curated || len(missing) == 0 {
 		return showcaseOf(curated, false, stale), nil
 	}
@@ -193,8 +206,12 @@ func (s *Sources) ShowcaseState(ctx context.Context, r *ShowcaseRead, ids []int)
 	if s == nil || s.Compute == nil || s.Replica == nil {
 		return ShowcaseUnknown, nil
 	}
-	if flagged, err := s.lagFlagged(ctx, "modelVersion", missing); flagged || err != nil {
+	flagged, err := s.lagFlagged(ctx, "modelVersion", missing)
+	if flagged {
 		return ShowcaseUnknown, nil
+	}
+	if err != nil {
+		return ShowcaseCurated, fmt.Errorf("version showcase lag flag read: %w", err)
 	}
 	found, err := s.showcaseRowExists(ctx, missing)
 	if presenceOf(ctx) == nil {

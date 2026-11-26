@@ -18,6 +18,7 @@ import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import {
   IMAGE_REVIEW_PRECEDENCE,
+  CSAM_REVIEW_FLAG,
   REVIEWS_KEPT_WHEN_LIFTED,
 } from '@civitai/shared/image-review-types';
 import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
@@ -37,7 +38,7 @@ import {
   minusPriorKeysSql,
 } from '~/server/utils/image-removal-mode';
 
-export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
+export { CSAM_REVIEW_FLAG, KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
 
 /**
@@ -493,6 +494,14 @@ END)`;
  */
 export const csamBlockedSql = (alias?: 'i') =>
   Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
+
+/** An unblock may lift the image: it has no CSAM block and no CSAM review flag. */
+export const liftableByUnblock = (image: {
+  blockedFor: string | null;
+  needsReview: string | null;
+}) => image.blockedFor !== BlockedReason.CSAM && image.needsReview !== CSAM_REVIEW_FLAG;
+/** `liftableByUnblock` as the unblock statement's own gate. */
+export const liftableByUnblockSql = Prisma.sql`("blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM} AND "needsReview" IS DISTINCT FROM ${CSAM_REVIEW_FLAG})`;
 
 /** An appeal on the image whose id is `imageId` is still Pending. */
 export const pendingImageAppealSql = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (

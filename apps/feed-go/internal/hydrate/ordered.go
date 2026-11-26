@@ -95,6 +95,22 @@ func (r *OrderedRead) Entries() map[int]OrderedEntry {
 	return out
 }
 
+// Failed is, after the batch's Exec, each id whose GET failed for a reason other than redis.Nil (a
+// transport failure, a shard down), with that error: Entries leaves those ids out as it leaves a
+// miss out, and Failed tells the two apart. nil when no GET failed.
+func (r *OrderedRead) Failed() map[int]error {
+	var out map[int]error
+	for i, cmd := range r.cmds {
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			if out == nil {
+				out = map[int]error{}
+			}
+			out[r.ids[i]] = err
+		}
+	}
+	return out
+}
+
 // GetOrdered is one key's raw value decoded with UnpackOrdered (a non-map value is a miss); ok false
 // for a miss or a read failure. Used for keys that are not per-id cache records.
 func (p *PackedReader) GetOrdered(ctx context.Context, key string) (superjson.Object, bool) {

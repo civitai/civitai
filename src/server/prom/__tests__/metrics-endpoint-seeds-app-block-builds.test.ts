@@ -10,7 +10,7 @@ import '~/__tests__/mocks/db.mock';
  */
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 const NAME = 'civitai_app_block_builds_total';

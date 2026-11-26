@@ -24,7 +24,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // `endpoint-helpers` spreads `env.TRPC_ORIGINS` at module load; stub the wrapper so none of that
 // graph is needed. Same seam as the sibling suite.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 // src/__tests__/setup.ts wholesale-mocks this module and omits `instrumentationRegistry`, which the

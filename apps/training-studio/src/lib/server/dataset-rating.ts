@@ -39,17 +39,17 @@ const DAILY_LIMITS: Record<DailyKind, number> = {
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING;
 const DAILY_KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
-const SENT_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_SENT;
+const SENT_KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING_SENT;
 /**
  * Until this date a rating the cache cluster does not hold is also read from system Redis, where
- * ratings were written before they moved. Without it, an image rated before the move whose sent
- * marker (SENT_TTL_SECONDS, still in system Redis) is live would read as unrated and not be sent
- * again until that marker lapses. Past it, delete the fallback (`sysCacheKey`, the branch in
+ * ratings were written before they moved. Without it, an image rated before the move would read as
+ * unrated and be sent to the rater again. Past it, delete the fallback (`sysCacheKey`, the branch in
  * readRatings) and REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING with it.
  */
 export const DATASET_RATING_SYS_FALLBACK_UNTIL = new Date('2027-01-15T00:00:00Z');
 const SYS_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING;
-/** How long a blob sent to the rater is not sent again, whatever came back. */
+/** How long a blob sent to the rater is not sent again, whatever came back. The marker is on the cache
+ *  cluster: one evicted early sends that blob once more, within the daily allowance. */
 const SENT_TTL_SECONDS = 7 * 24 * 60 * 60;
 // By rater and mature level: a verdict at one level is not a verdict at another. Blob ids are
 // case-insensitive.
@@ -227,7 +227,7 @@ export async function rateImage(
  *  answered, is not sent again by every view, poll and pod. A Redis failure claims nothing. */
 async function claimSend(level: number, blobKey: string): Promise<boolean> {
   try {
-    const set = await getSysRedis().set(sentKey(level, blobKey), '1', {
+    const set = await getCacheRedis().set(sentKey(level, blobKey), '1', {
       NX: true,
       EX: SENT_TTL_SECONDS,
     });
@@ -241,7 +241,7 @@ async function claimSend(level: number, blobKey: string): Promise<boolean> {
 async function unsentKeys(level: number, blobKeys: string[]): Promise<string[]> {
   if (blobKeys.length === 0) return [];
   try {
-    const sent = await getSysRedis().mGet(blobKeys.map((k) => sentKey(level, k)));
+    const sent = await getCacheRedis().mGet(blobKeys.map((k) => sentKey(level, k)));
     return blobKeys.filter((_, i) => sent[i] == null);
   } catch {
     return [];
@@ -250,7 +250,7 @@ async function unsentKeys(level: number, blobKeys: string[]): Promise<string[]> 
 
 async function releaseSend(level: number, blobKey: string): Promise<void> {
   try {
-    await getSysRedis().del(sentKey(level, blobKey));
+    await getCacheRedis().del(sentKey(level, blobKey));
   } catch {
     // best-effort: the blob waits out the marker on its upload rating
   }

@@ -21,6 +21,7 @@ const {
   mockCacheRefresh,
   mockSettingsBust,
   mockSendModerationEmail,
+  mockRefreshSession,
 } = vi.hoisted(() => ({
   mockQueueUpdate: vi.fn(async () => undefined),
   mockRemoveContent: vi.fn(async () => undefined),
@@ -28,6 +29,7 @@ const {
   mockCacheRefresh: vi.fn(async () => undefined),
   mockSettingsBust: vi.fn(async () => undefined),
   mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
+  mockRefreshSession: vi.fn(async (..._a: unknown[]) => undefined),
 }));
 const v3Tos = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
 vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
@@ -50,7 +52,7 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => {
 });
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
-  refreshSession: vi.fn(async () => undefined),
+  refreshSession: mockRefreshSession,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -130,6 +132,7 @@ const { toggleBan, toggleContestBan, AlreadyBannedError } = await import(
   '~/server/services/user.service'
 );
 const { BanReasonCode } = await import('~/server/common/enums');
+const { toggleBanHandler } = await import('~/server/controllers/user.controller');
 
 const USER_ID = 5501;
 const ACTOR_ID = 5502;
@@ -204,7 +207,7 @@ describe('toggleBan -> user search index', () => {
     });
     mockQueueUpdate.mockRejectedValueOnce(new Error('redis is down'));
 
-    await expect(call()).resolves.toEqual({ id: USER_ID, paddleCustomerId: null });
+    await expect(call()).resolves.toEqual({ id: USER_ID, paddleCustomerId: null, changed: true });
 
     expect(mockSendModerationEmail).toHaveBeenCalledTimes(1);
     expect(mockSendModerationEmail.mock.calls[0]?.[0]).toMatchObject({
@@ -794,5 +797,163 @@ describe('toggleContestBan when the replica lags the primary', () => {
 
     expect(userUpdate).toHaveBeenCalledTimes(1);
     expect(writtenContestBan()).toBeUndefined();
+  });
+});
+
+describe('toggleBan with an explicit setTo', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const banTo = (setTo?: boolean) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Other,
+      userId: ACTOR_ID,
+      isModerator: true,
+      setTo,
+    } as Parameters<typeof toggleBan>[0]);
+  const writtenBannedAt = () =>
+    (userUpdate.mock.calls.at(-1)?.[0] as { data: { bannedAt: Date | null } } | undefined)?.data
+      .bannedAt;
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID, bannedAt: null });
+  });
+
+  it.each([
+    ['no setTo, unbanned', undefined, null, 'ban'],
+    ['no setTo, banned', undefined, ALREADY_BANNED_AT, 'unban'],
+    ['setTo true, unbanned', true, null, 'ban'],
+    ['setTo false, banned', false, ALREADY_BANNED_AT, 'unban'],
+  ] as const)('%s: %ss', async (_, setTo, bannedAt, direction) => {
+    userFindUnique.mockResolvedValue(row(bannedAt));
+
+    const result = await banTo(setTo);
+
+    expect(result.changed).toBe(true);
+    if (direction === 'ban') expect(writtenBannedAt()).toBeInstanceOf(Date);
+    else expect(writtenBannedAt()).toBeNull();
+  });
+
+  it.each([
+    ['setTo true on a banned account', true, ALREADY_BANNED_AT],
+    ['setTo false on an unbanned account', false, null],
+  ] as const)('%s writes nothing and runs no ban side effect', async (_, setTo, bannedAt) => {
+    // With an address, so a ban or unban that ran would send its email.
+    userFindUnique.mockResolvedValue({ ...row(bannedAt), email: 'someone@example.com' });
+
+    const result = await banTo(setTo);
+
+    expect(result).toMatchObject({ changed: false });
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(mockRemoveContent).not.toHaveBeenCalled();
+    expect(mockQueueUpdate).not.toHaveBeenCalled();
+    expect(mockInvalidateSession).not.toHaveBeenCalled();
+    expect(mockSendModerationEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleContestBan with an explicit setTo', () => {
+  const banned = { meta: { contestBanDetails: { bannedAt: ALREADY_BANNED_AT } } };
+  const contestBanTo = (setTo?: boolean) =>
+    toggleContestBan({ id: USER_ID, userId: ACTOR_ID, setTo } as Parameters<
+      typeof toggleContestBan
+    >[0]);
+  const writtenContestBan = () =>
+    (
+      userUpdate.mock.calls.at(-1)?.[0] as
+        | { data: { meta: { contestBanDetails?: { bannedAt: Date } } } }
+        | undefined
+    )?.data.meta.contestBanDetails;
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID });
+  });
+
+  it.each([
+    ['no setTo, unbanned', undefined, { meta: {} }, 'ban'],
+    ['no setTo, banned', undefined, banned, 'unban'],
+    ['setTo true, unbanned', true, { meta: {} }, 'ban'],
+    ['setTo false, banned', false, banned, 'unban'],
+  ] as const)('%s: %ss', async (_, setTo, current, direction) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(current);
+
+    const result = await contestBanTo(setTo);
+
+    expect(result.changed).toBe(true);
+    expect(userUpdate).toHaveBeenCalledTimes(1);
+    if (direction === 'ban') expect(writtenContestBan()?.bannedAt).toBeInstanceOf(Date);
+    else expect(writtenContestBan()).toBeUndefined();
+  });
+
+  it.each([
+    ['setTo true on a contest-banned account', true, banned],
+    ['setTo false on an account without a contest ban', false, { meta: {} }],
+  ] as const)('%s writes nothing', async (_, setTo, current) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(current);
+
+    const result = await contestBanTo(setTo);
+
+    expect(result).toMatchObject({ changed: false });
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleBanHandler audit', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const handle = (input: { setTo?: boolean; type?: 'contest' }) => {
+    const userActivity = vi.fn(async () => undefined);
+    const ctx = { user: { id: ACTOR_ID, isModerator: true }, track: { userActivity } } as never;
+    const run = toggleBanHandler({
+      input: { id: USER_ID, reasonCode: BanReasonCode.Other, ...input } as never,
+      ctx,
+    });
+    return { run, userActivity };
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID, bannedAt: null });
+  });
+
+  it('records one Banned activity for a ban that lands', async () => {
+    userFindUnique.mockResolvedValue(row(null));
+    userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null, bannedAt: new Date() });
+
+    const { run, userActivity } = handle({ setTo: true });
+    await run;
+
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith({ type: 'Banned', targetUserId: USER_ID });
+  });
+
+  it('records one Unbanned activity for an unban that lands', async () => {
+    userFindUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+    userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null, bannedAt: null });
+
+    const { run, userActivity } = handle({ setTo: false });
+    await run;
+
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith({ type: 'Unbanned', targetUserId: USER_ID });
+  });
+
+  it.each([
+    ['setTo true on a banned account', true, ALREADY_BANNED_AT],
+    ['setTo false on an unbanned account', false, null],
+  ] as const)('%s records no activity', async (_, setTo, bannedAt) => {
+    userFindUnique.mockResolvedValue(row(bannedAt));
+
+    const { run, userActivity } = handle({ setTo });
+    await run;
+
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records no activity for a contest ban', async () => {
+    userFindUnique.mockResolvedValue({ meta: {} });
+
+    const { run, userActivity } = handle({ type: 'contest' });
+    await expect(run).resolves.toMatchObject({ changed: true });
+
+    expect(userActivity).not.toHaveBeenCalled();
   });
 });

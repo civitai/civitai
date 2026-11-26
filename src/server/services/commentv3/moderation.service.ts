@@ -196,9 +196,10 @@ type FileReport = (input: {
 
 /**
  * A Feature Pages comment is shown at once and hidden if its scan flags it (scam or csam), with a
- * system report in the existing queue, filed or folded on every call, a retry included. Any other
+ * system report in the existing queue, filed or folded before each hide, a retry included. Any other
  * comment is left to the site's own rules. A text version a moderator already lifted the scan's hide
- * for is left as it is: a repeated scan of it changes nothing.
+ * for is left as it is, with no report: a repeated scan of it changes nothing, and neither does one
+ * whose text could not be read.
  */
 export async function hideFlaggedFpComment(
   commentId: number,
@@ -227,20 +228,30 @@ export async function hideFlaggedFpComment(
   if (first?.entityType !== 'featurePage') return false;
 
   // The version whose text the scan judged: the text hashed now is that version's only when no edit
-  // bumped the version around the hash read (every edit of it bumps it). Unknown (the read failed)
-  // hides it bound to no version, then throws for the retry to bind.
+  // bumped the version around the hash read (every edit of it bumps it). A failed read throws after,
+  // for the retry to bind.
   let failure: unknown;
-  let judgedVersion: number | null = null;
+  let judged: ScanJudged = { kind: 'other' };
   if (deps.textHash !== undefined)
     try {
       const hash = await (deps.currentTextHash ?? currentFpTextHash)(commentId);
       const [after] = (await read()).rows;
       if (hash === deps.textHash && after?.version != null && after.version === first.version)
-        judgedVersion = after.version;
+        judged = { kind: 'version', version: after.version };
     } catch (e) {
       failure = e;
+      judged = { kind: 'unread' };
     }
-  if (judgedVersion !== null && first.liftGrantedVersion === judgedVersion) return false;
+  const lifted =
+    judged.kind === 'version'
+      ? first.liftGrantedVersion === judged.version
+      : judged.kind === 'unread' &&
+        first.version != null &&
+        first.liftGrantedVersion === first.version;
+  if (lifted) {
+    if (failure) throw failure;
+    return false;
+  }
 
   const createReport =
     deps.createReport ??
@@ -263,7 +274,7 @@ export async function hideFlaggedFpComment(
     failure ??= e;
   }
   const hid = await client.$transaction((tx) =>
-    hideAsScan(prismaRunner(tx), commentId, reportId, judgedVersion)
+    hideAsScan(prismaRunner(tx), commentId, reportId, judged)
   );
   if (failure) throw failure;
   return hid;
@@ -275,27 +286,36 @@ async function currentFpTextHash(commentId: number) {
 }
 
 /**
+ * What a scan judged: one text version; another than the current, or none named, which no lift
+ * skips; or unread, as its text read failed. Unread skips only a lift of the current version: no
+ * text write leaves the version as it was.
+ */
+type ScanJudged = { kind: 'version'; version: number } | { kind: 'other' } | { kind: 'unread' };
+
+/**
  * Hides as the scan and records the hide, its report and, when it is still the current one under the
  * lock, the text version the scan judged on the mirror row. Any other hide clears that record in
  * setCommentFlags; a retry while the scan's hide still stands records it again. With no report or no
  * version, no dismissal lifts it. Returns false, writing nothing, once a moderator has lifted the
- * version the scan judged.
+ * version the scan judged, or the current one when it is unread.
  */
 async function hideAsScan(
   db: ReturnType<typeof prismaRunner>,
   commentId: number,
   reportId: number | null,
-  judgedVersion: number | null
+  judged: ScanJudged
 ) {
+  const judgedVersion = judged.kind === 'version' ? judged.version : null;
   // Locked, then read in a statement of its own, so a lift committed meanwhile is seen.
   await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
   const { rows } = await db.query<{ lifted: boolean; scanHiddenAt: string | null }>(
-    `SELECT COALESCE(m."liftGrantedVersion" = m.version AND m.version = $2, false) AS lifted,
+    `SELECT COALESCE(m."liftGrantedVersion" = m.version AND (m.version = $2 OR $3::boolean), false)
+         AS lifted,
        CASE WHEN c.hidden AND c."hiddenAt" = m."scanHiddenAt" THEN m."scanHiddenAt"::text END
          AS "scanHiddenAt"
      FROM "CommentV3" c LEFT JOIN "FeaturePageCommentMirror" m ON m."commentId" = c.id
      WHERE c.id = $1`,
-    [commentId, judgedVersion]
+    [commentId, judgedVersion, judged.kind === 'unread']
   );
   if (rows[0]?.lifted) return false;
   const changed = await setCommentFlags(db, [commentId], { hidden: true });
