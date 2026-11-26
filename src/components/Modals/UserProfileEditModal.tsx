@@ -1079,6 +1079,31 @@ export default function UserProfileEditModal() {
       : []),
   ];
 
+  const header = (
+    <Group justify="space-between">
+      <Text fz={24} fw={590}>
+        Customize Profile
+      </Text>
+
+      <Group>
+        <Button radius="xl" size="md" loading={loading} type="submit">
+          Save Changes
+        </Button>
+        <CloseButton
+          size="md"
+          radius="xl"
+          variant="transparent"
+          ml="auto"
+          iconSize={20}
+          loading={loading}
+          onClick={() => {
+            dialog.onClose();
+          }}
+        />
+      </Group>
+    </Group>
+  );
+
   return (
     <Modal {...dialog} withCloseButton={false} closeOnEscape={false} withinPortal={false} size="xl">
       <Form
@@ -1092,30 +1117,10 @@ export default function UserProfileEditModal() {
         }}
       >
         <Stack>
-          <Group justify="space-between">
-            <Text fz={24} fw={590}>
-              Customize Profile
-            </Text>
-
-            <Group>
-              <Button radius="xl" size="md" loading={loading} type="submit">
-                Save Changes
-              </Button>
-              <CloseButton
-                size="md"
-                radius="xl"
-                variant="transparent"
-                ml="auto"
-                iconSize={20}
-                loading={loading}
-                onClick={() => {
-                  dialog.onClose();
-                }}
-              />
-            </Group>
-          </Group>
+          {!featureFlags.profileRedesign && header}
           {featureFlags.profileRedesign ? (
             <ProfileCustomizerTabs
+              header={header}
               panels={customizerPanels}
               value={customizerTab}
               onChange={setCustomizerTab}
