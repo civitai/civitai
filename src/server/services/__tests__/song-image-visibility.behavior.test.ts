@@ -63,6 +63,7 @@ import { getCollectionCoverImages } from '~/server/services/collection.service';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getImageHandler } from '~/server/controllers/image.controller';
+import { commentSurfaces } from '~/server/services/commentv3/surfaces';
 import {
   assertImageVisibleToViewer,
   imageVisibilityConditions,
@@ -371,6 +372,13 @@ describe('reads that open an image by id (assertImageVisibleToViewer)', () => {
     expect(await opens({ id: OWNER }, false)).toEqual([...NO_SONGS, SONG]);
   });
 
+  it('opens no song but their own to a viewer when the caller leaves the flag out', async () => {
+    expect(await opens(undefined)).toEqual(NO_SONGS);
+    expect(await opens({ id: FAN })).toEqual(NO_SONGS);
+    expect(await opens({ id: OWNER })).toEqual([...NO_SONGS, SONG]);
+    expect(await opens({ id: MOD, isModerator: true })).toEqual(ALL);
+  });
+
   it('opens every song to a flagged viewer and to a moderator', async () => {
     expect(await opens({ id: STRANGER }, true)).toEqual(ALL);
     expect(await opens({ id: MOD, isModerator: true }, false)).toEqual(ALL);
@@ -390,6 +398,32 @@ describe('reads that open an image by id (assertImageVisibleToViewer)', () => {
       withSignedOutVerdict: true,
     });
     expect([song.visibleSignedOut, picture.visibleSignedOut]).toEqual([false, true]);
+  });
+});
+
+describe("an image's comment section (commentSurfaces.image)", () => {
+  const opens = (viewer: Viewer, music = false) =>
+    Promise.all(
+      ALL.map((id) =>
+        commentSurfaces.image.assertVisible!(id, {
+          user: viewer,
+          features: { music },
+        } as never).then(
+          () => id,
+          () => undefined
+        )
+      )
+    ).then((found) => found.filter((id) => id !== undefined));
+
+  it("opens no song's thread but their own to a viewer without the flag", async () => {
+    expect(await opens(undefined)).toEqual(NO_SONGS);
+    expect(await opens({ id: STRANGER })).toEqual([...NO_SONGS, STRANGERS_SONG]);
+    expect(await opens({ id: OWNER })).toEqual([...NO_SONGS, SONG]);
+  });
+
+  it("opens every song's thread to a flagged viewer and to a moderator", async () => {
+    expect(await opens({ id: FAN }, true)).toEqual(ALL);
+    expect(await opens({ id: MOD, isModerator: true })).toEqual(ALL);
   });
 });
 

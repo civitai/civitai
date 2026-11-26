@@ -173,7 +173,11 @@ describe('getTimed: a song’s timed comments for the player', () => {
 
   it('reads the image’s section with the section’s gate and exclusions', async () => {
     await timed();
-    expect(gate).toHaveBeenCalledWith({ entityType: 'image', entityId: 20 }, expect.anything());
+    expect(gate).toHaveBeenCalledWith(
+      { entityType: 'image', entityId: 20 },
+      expect.anything(),
+      expect.objectContaining({ ownerSeesHeld: expect.any(Boolean) })
+    );
     const [, entity, viewer] = read.getTimedComments.mock.calls[0] as unknown[];
     expect(entity).toEqual({ entityType: 'image', entityId: 20 });
     expect([...(viewer as { excludedUserIds: number[] }).excludedUserIds].sort()).toEqual([

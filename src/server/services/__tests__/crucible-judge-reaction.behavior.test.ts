@@ -28,6 +28,7 @@ const JUDGE = 40;
 const LOW_SCORE = 41;
 const BLOCKER = 7; // blocked the judge
 const MISSING_IMAGE = 999;
+const SONG = 30; // a song on a published post
 
 // Crucibles
 const ACTIVE = 1;
@@ -136,6 +137,7 @@ beforeAll(async () => {
       (${SCHEDULED_BY_BLOCKER_ENTRY}, ${SCHEDULED_BY_BLOCKER_ENTRY}, false),
       (${DRAFT_ENTRY}, ${DRAFT_ENTRY}, false),
       (${SCHEDULED_NO_END_ENTRY}, ${SCHEDULED_NO_END_ENTRY}, false);
+    INSERT INTO "Image" (id, "postId", type) VALUES (${SONG}, ${PUBLISHED_ENTRY}, 'audio');
     INSERT INTO "Image" (id, "postId", "needsReview") VALUES
       (${SCHEDULED_IN_REVIEW_ENTRY}, ${SCHEDULED_IN_REVIEW_ENTRY}, 'minor');
     INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES
@@ -212,9 +214,13 @@ beforeEach(() => {
   );
 });
 
-const as = (id: number, features: { isGreen?: boolean; crucible?: boolean } = {}) =>
+const as = (
+  id: number,
+  features: { isGreen?: boolean; crucible?: boolean; music?: boolean } = {},
+  isModerator = false
+) =>
   ({
-    user: { id, isModerator: false },
+    user: { id, isModerator },
     features: { trpcFlagGuardPerRequest: true, crucible: true, isGreen: false, ...features },
   } as never);
 const react = (entityId: number, userId = JUDGE, features?: Parameters<typeof as>[1]) =>
@@ -235,6 +241,25 @@ const asMissing = async () => {
   expect(missing).toEqual(expect.objectContaining({ code: 'NOT_FOUND' }));
   return expect.objectContaining({ code: missing.code, message: missing.message });
 };
+
+describe('a reaction to a song', () => {
+  it('is refused as a missing image to a viewer without the music flag', async () => {
+    expect(await react(SONG, JUDGE)).toEqual(await asMissing());
+  });
+
+  it('gets past the image check for a viewer with the flag, and for its owner', async () => {
+    expect(await react(SONG, JUDGE, { music: true })).toEqual(pastTheCheck);
+    expect(await react(SONG, ENTRANT)).toEqual(pastTheCheck);
+  });
+
+  it('gets past the image check for a moderator without the flag', async () => {
+    const moderatorReacts = await toggleReactionHandler({
+      ctx: as(JUDGE, { music: false }, true),
+      input: { entityType: 'image', entityId: SONG, reaction: 'Like' },
+    }).catch((error: unknown) => error);
+    expect(moderatorReacts).toEqual(pastTheCheck);
+  });
+});
 
 // Pins the judging exception to the single-image rule on reactions (#9789), from #10344.
 describe('a reaction to a crucible entry while it is judged', () => {

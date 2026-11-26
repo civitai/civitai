@@ -273,12 +273,15 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict = false,
   ownerSeesHeld = false,
   judgingCrucibleIds,
-  music,
+  music = false,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
-  /** `imageVisibilityConditions`' `music`: pass `canSeeSongs` from a read that serves the image. */
+  /**
+   * The viewer's `music` flag (`ctx.features.music`, or `canSeeSongs`). Left out, a song is not
+   * found except by its owner and moderators.
+   */
   music?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`. */
   ownerSeesHeld?: boolean;
