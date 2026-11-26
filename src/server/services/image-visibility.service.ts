@@ -280,7 +280,7 @@ export async function assertImageVisibleToViewer({
   isModerator?: boolean;
   /**
    * The viewer's `music` flag (`ctx.features.music`, or `canSeeSongs`). Left out, a song is not
-   * found except by its owner and moderators: a new caller cannot open songs by accident.
+   * found except by its owner and moderators.
    */
   music?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`. */
