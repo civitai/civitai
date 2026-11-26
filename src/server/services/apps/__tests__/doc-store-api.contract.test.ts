@@ -5565,8 +5565,10 @@ describe('viewer-keyed documents', () => {
 // Rollout step 5 (docs/app-storage-generic-core.md): marks, counters, their tallies, counter
 // documents and server-side publish are REMOVED. Pinned here:
 //   (a) every document reply still carries `counters: {}`, `marks: {}` and `viewer`, because
-//       `@civitai/sdk` up to 0.30 refuses a document without them (its `toDocument`, ported below
-//       as `sdk030ToDocument` and checked against a reply that lacks them);
+//       `@civitai/sdk` 0.14 through 0.32 refuses a document without them (its `toDocument`, the
+//       same code in each of those releases, ported below as `sdk030ToDocument` and checked
+//       against a reply that lacks them). They stay while any approved app runs 0.32 or older.
+//       An info reply's collections, by contrast, carry no `counters` or `marks` (see (b));
 //   (b) approved manifests that still DECLARE marks, counters or `write: "none"` (the shapes two
 //       approved apps hold) keep parsing and serving: their plain documents work, the
 //       declarations are inert, and `write: "none"` is read-only, never `own`;
@@ -5576,7 +5578,8 @@ describe('viewer-keyed documents', () => {
 
 /**
  * A LITERAL PORT of `toDocument` (and the `toCounts` / `toAuthor` / `toDate` it calls) from
- * `@civitai/sdk` 0.30.1, `dist/doc-store/index.js`: what every app bundle built on 0.30 does with
+ * `@civitai/sdk` 0.30.1, `dist/doc-store/index.js` (byte-identical in 0.14.0 and 0.32.0; 0.33.0
+ * is the first lenient one): what every app bundle built on 0.14 to 0.32 does with
  * each document a storage call answers. It throws "malformed" on a reply without `counters` /
  * `marks` objects of numbers, or without `viewer` (null, or `{ marks: string[] }`). Kept as the
  * SDK wrote it, so a reply that passes here passes there.
@@ -5709,7 +5712,7 @@ const NO_TALLY_ROWS = { doc_tally: 0, doc_mark: 0, mark_head: 0 };
 // (a) The SDK compatibility fields
 // ---------------------------------------------------------------------------
 
-describe('(a) every document reply carries empty counters, marks and viewer (SDK 0.30 compatibility)', () => {
+describe('(a) every document reply carries empty counters, marks and viewer (SDK 0.14-0.32 compatibility)', () => {
   it('the port of the SDK parse refuses a reply without them (instrument control)', () => {
     const doc = {
       key: 'k',
@@ -5801,21 +5804,35 @@ describe('(b) an approved manifest declaring marks, counters or write "none" kee
     expect([plays?.write, plays?.counters]).toEqual(['none', ['plays']]);
   });
 
-  it('the mark app: its plain documents serve, info lists no marks, and the declared mark is not a route', async () => {
+  it('the mark app: its plain documents serve, info carries no marks or counters keys, and the declared mark is not a route', async () => {
     const app = freshApps('approved', MARK_APP_MANIFEST).A;
     const t = await goneMint(app, VIEWER_IDS.v1);
     const info = await goneOk(call({ token: t, method: 'GET', path: '' }));
     const collections = goneBody(info).collections as Record<string, Record<string, unknown>>;
+    // The EXACT key set of a declaration: `counters` and `marks` are gone from info, even on a
+    // collection whose manifest declares a mark (no SDK release reads them there). `toEqual`
+    // alone would also pass a key present as `undefined`, so the keys are pinned separately.
     expect(collections.picks).toEqual({
       kind: 'docs',
       visibility: 'shared',
       write: 'own',
-      counters: [],
-      marks: [],
       indexes: {},
       showAuthor: false,
     });
-    // Kept at 0, never dropped: every SDK from 0.14 to 0.31 types it as a required number.
+    expect(Object.keys(collections.picks).sort()).toEqual([
+      'indexes',
+      'kind',
+      'showAuthor',
+      'visibility',
+      'write',
+    ]);
+    expect(Object.keys(collections.prefs).sort()).toEqual([
+      'indexes',
+      'kind',
+      'showAuthor',
+      'visibility',
+    ]);
+    // Kept at 0, never dropped: every SDK from 0.14 to 0.32 types it as a required number.
     expect(
       (goneBody(info).limits as { rate: Record<string, unknown> }).rate.marksAndCountersPerMinute
     ).toBe(0);
@@ -5840,7 +5857,15 @@ describe('(b) an approved manifest declaring marks, counters or write "none" kee
     const t = await goneMint(app, VIEWER_IDS.v1);
     const info = await goneOk(call({ token: t, method: 'GET', path: '' }));
     const plays = (goneBody(info).collections as Record<string, Record<string, unknown>>).plays;
-    expect([plays.write, plays.counters, plays.marks]).toEqual(['none', [], []]);
+    expect(plays.write).toBe('none');
+    // A declared counter does not bring `counters` (or `marks`) back into info: the exact key set.
+    expect(Object.keys(plays).sort()).toEqual([
+      'indexes',
+      'kind',
+      'showAuthor',
+      'visibility',
+      'write',
+    ]);
     for (const [method, path, body] of [
       ['PUT', '/plays/song-1', { data: { n: 1 } }],
       ['POST', '/plays', { data: { n: 1 } }],
