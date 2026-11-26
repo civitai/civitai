@@ -27,6 +27,28 @@ var FallbackReasons = []string{
 	"block_spent", "block_cache_full", "unkeyed", "cursor_expired",
 }
 
+// SharedRefusalReasons are the `reason` values of app_data_shared_refusals_total: why a shared or
+// signed-out read (api/shared.go: the level streams and the per-viewer stream) was answered with a
+// refusal (401, 503) instead of documents. Each is the code the answer carries, except where one code
+// covers two causes or names none:
+//   - viewer_refused, block_mismatch (both answer `refused`), block_token_refused (`unauthenticated`:
+//     a signed-out block token the verifier refused), signed_out_busy (`capacity`: shared.ErrSignedOutBusy;
+//     `capacity` itself is the stream caps, session.ErrCapacity);
+//   - the stream reasons (capacity … cursor_expired, failed) are the ones app_data_fallbacks_total
+//     names, from the same mapping (api.fallbackReason), but a shared read never goes to REST, so no
+//     read is counted in both;
+//   - `other` is a reason not in this list: never expected, and a sign this list needs the new one.
+//
+// Not refusals, not counted: 200, 404 not_found, and a 400 (a request this service does not take).
+var SharedRefusalReasons = []string{
+	"token_not_exchangeable", "unverifiable", "block_token_refused", "sign_in_required", "viewer_refused",
+	"block_mismatch", "unkeyed", "too_large", "floor_not_met", "not_resolved", "service_client_unconfigured",
+	"service_token_refused", "service_token_unavailable", "signed_out_busy",
+	"capacity", "token_capacity", "not_live", "stalled", "cooling_down", "invalid_token", "exchange_refused",
+	"not_private", "ended", "closed", "block_spent", "block_cache_full", "cursor_expired", "failed",
+	"other",
+}
+
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
 var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen",
 	// A stream its one read released when it moved to another schema major (session.CloseReleased).
@@ -105,6 +127,9 @@ type Metrics struct {
 	// SignedOutReads counts signed-out viewers' shared reads by outcome (Outcomes); zero while
 	// APP_DATA_WRITES is off.
 	SignedOutReads *prometheus.CounterVec
+	// SharedRefusals counts shared and signed-out reads answered with a refusal, by reason
+	// (SharedRefusalReasons; ObserveSharedRefusal); zero while APP_DATA_WRITES is off.
+	SharedRefusals *prometheus.CounterVec
 	// ServiceTokenFetches counts each call to the hub's token endpoint for the level streams' service
 	// token, by outcome (token.Outcomes: ok, refused, unavailable); zero without a service client.
 	ServiceTokenFetches *prometheus.CounterVec
@@ -175,6 +200,10 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_signed_out_reads_total",
 			Help: "Signed-out viewers' shared-collection reads, served from the level streams, by outcome.",
 		}, []string{"outcome"}),
+		SharedRefusals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_shared_refusals_total",
+			Help: "Shared-collection and signed-out reads answered with a refusal (401, 503) instead of documents, by why. Each is also one app_data_reads_total{source=\"registry\"} refused, unavailable or floor_not_met (and, signed out, one app_data_signed_out_reads_total); never an app_data_fallbacks_total, as a shared read never goes to REST.",
+		}, []string{"reason"}),
 		ServiceTokenFetches: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_service_token_fetch_total",
 			Help: "Calls to the hub's token endpoint for the level streams' service token, by outcome (ok; refused: the hub refused this client; unavailable: unreachable, a 429 or 5xx, or no token in the answer).",
@@ -186,7 +215,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		})
 	}
 	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges, m.UserExchangeGuard,
-		m.Writes, m.WriteForward, m.FloorReopens, m.ImpliedMajor, m.Overlays, m.SignedOutReads, m.ServiceTokenFetches,
+		m.Writes, m.WriteForward, m.FloorReopens, m.ImpliedMajor, m.Overlays, m.SignedOutReads, m.SharedRefusals, m.ServiceTokenFetches,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -221,6 +250,9 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	for _, o := range Outcomes {
 		m.SignedOutReads.WithLabelValues(o)
 	}
+	for _, r := range SharedRefusalReasons {
+		m.SharedRefusals.WithLabelValues(r)
+	}
 	for _, op := range WriteOps {
 		m.WriteForward.WithLabelValues(op)
 		for _, o := range WriteOutcomes {
@@ -245,9 +277,42 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	return m
 }
 
+// ObserveSharedRefusal counts one shared read answered with a refusal. A reason outside
+// SharedRefusalReasons is counted as `other`, so the label set stays the registered one.
+func (m *Metrics) ObserveSharedRefusal(reason string) {
+	if !sharedRefusalReason[reason] {
+		reason = "other"
+	}
+	m.SharedRefusals.WithLabelValues(reason).Inc()
+}
+
+var sharedRefusalReason = func() map[string]bool {
+	out := make(map[string]bool, len(SharedRefusalReasons))
+	for _, r := range SharedRefusalReasons {
+		out[r] = true
+	}
+	return out
+}()
+
+// Log messages for a block token not exchanged (ObserveBlockExchange), by what its read does next.
+const (
+	// BlockNotExchangedREST: APP_DATA_WRITES off, the read falls back to REST (a registry-only read
+	// answers `source: none`).
+	BlockNotExchangedREST = "block token not exchanged; the read falls back to REST"
+	// BlockNotExchangedRefused: APP_DATA_WRITES on, every read is cut over (private) or shared, and
+	// neither has a REST fallback: the read is answered with its refusal (401 or 503).
+	BlockNotExchangedRefused = "block token not exchanged; the read is refused (no REST fallback with APP_DATA_WRITES on)"
+)
+
 // ObserveBlockExchange is the exchange.BlockCache observer: it counts each outcome and logs every one
-// that sends the read to REST, with the hub's refusal code. Neither carries a token, user or app.
-func (m *Metrics) ObserveBlockExchange(log *slog.Logger) func(outcome, code string) {
+// that leaves the read without a stream, with the hub's refusal code and what the read does instead:
+// writes is APP_DATA_WRITES (BlockNotExchangedREST, BlockNotExchangedRefused). Neither carries a
+// token, user or app.
+func (m *Metrics) ObserveBlockExchange(log *slog.Logger, writes bool) func(outcome, code string) {
+	msg, next := BlockNotExchangedREST, "rest"
+	if writes {
+		msg, next = BlockNotExchangedRefused, "refused"
+	}
 	return func(outcome, code string) {
 		m.BlockExchanges.WithLabelValues(outcome, code).Inc()
 		// A token refused here or not checkable here is counted, not logged: a flood of made-up tokens (or a
@@ -256,6 +321,6 @@ func (m *Metrics) ObserveBlockExchange(log *slog.Logger) func(outcome, code stri
 			outcome == exchange.BlockUnverifiable || code == exchange.LocalRefusalCode {
 			return
 		}
-		log.Info("block token not exchanged; the read goes to REST", "outcome", outcome, "error", code)
+		log.Info(msg, "outcome", outcome, "error", code, "read", next)
 	}
 }

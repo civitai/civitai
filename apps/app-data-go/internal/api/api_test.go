@@ -338,7 +338,7 @@ func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) 
 	if blockOn {
 		router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
 			Observe: func(outcome, code string) {
-				s.m.ObserveBlockExchange(slog.New(slog.DiscardHandler))(outcome, code)
+				s.m.ObserveBlockExchange(slog.New(slog.DiscardHandler), s.srv.Writes != nil)(outcome, code)
 			}}
 	}
 	opts.Exchange = router.Exchange
