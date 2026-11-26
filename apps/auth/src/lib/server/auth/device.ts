@@ -149,10 +149,13 @@ export async function touchAccount(deviceId: string, userId: number): Promise<vo
 // Account list (KEYS[1]). No list: create one with both accounts when a distinct prior account is signed in (2),
 // else write nothing (0). A list: joined (1) when the new account, or the account of the browser's prior hub
 // session, is in it and used within ACCOUNT_IDLE_MS; otherwise -1.
-// Family record (KEYS[2], when given): joined by a list join, or when it holds the new or the prior family;
-// created when absent; otherwise -1. Either -1 writes nothing to both.
-// ARGV: new user, prior user ('' if none), now (ms), list TTL (s), idle limit (ms), family, prior family
-// ('' if none), family record TTL (s).
+// Family record (KEYS[2], when given): with a new family, joined by a list join, or when it holds the new or the
+// prior family; otherwise -1. Either -1 writes nothing to both. With no new family (a hand-off that minted
+// none) an existing record is left as it is. An absent record is created, holding the new and the prior family,
+// when the account list is created or joined (so a sign-out ends the list's family and forgets the list), or when
+// the prior family is a different family from the new one; a browser with a single family gets none.
+// ARGV: new user, prior user ('' if none), now (ms), list TTL (s), idle limit (ms), family ('' if none), prior
+// family ('' if none), family record TTL (s).
 const JOIN_SCRIPT = `
   local listed
   if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -167,9 +170,10 @@ const JOIN_SCRIPT = `
     end
     listed = 1
   end
-  local fam = KEYS[2] ~= nil and ARGV[6] ~= ''
-  local famExists = fam and redis.call('EXISTS', KEYS[2]) == 1
-  if famExists and listed ~= 1 and redis.call('SISMEMBER', KEYS[2], ARGV[6]) == 0
+  local rec = KEYS[2] ~= nil
+  local fam = rec and ARGV[6] ~= ''
+  local famExists = rec and redis.call('EXISTS', KEYS[2]) == 1
+  if famExists and fam and listed ~= 1 and redis.call('SISMEMBER', KEYS[2], ARGV[6]) == 0
     and not (ARGV[7] ~= '' and redis.call('SISMEMBER', KEYS[2], ARGV[7]) == 1) then
     return -1
   end
@@ -179,9 +183,15 @@ const JOIN_SCRIPT = `
     redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
   end
   if listed ~= 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
-  if fam then
-    redis.call('SADD', KEYS[2], ARGV[6])
-    redis.call('EXPIRE', KEYS[2], ARGV[8])
+  if famExists then
+    if fam then
+      redis.call('SADD', KEYS[2], ARGV[6])
+      redis.call('EXPIRE', KEYS[2], ARGV[8])
+    end
+  elseif rec and (listed ~= 0 or (fam and ARGV[7] ~= '' and ARGV[7] ~= ARGV[6])) then
+    if ARGV[7] ~= '' then redis.call('SADD', KEYS[2], ARGV[7]) end
+    if fam then redis.call('SADD', KEYS[2], ARGV[6]) end
+    if redis.call('EXISTS', KEYS[2]) == 1 then redis.call('EXPIRE', KEYS[2], ARGV[8]) end
   end
   return listed
 `;
@@ -189,7 +199,8 @@ const JOIN_SCRIPT = `
 /**
  * Add a signed-in account to this browser's account list (the switcher) and, with `families`, its session family
  * to the browser's family record. `priorUserId` and `families.proofFamily` come from the verified hub session the
- * browser held before this sign-in, never from the request.
+ * browser held before this sign-in, never from the request. `families.family` is absent when the sign-in minted
+ * no session (a hand-off): a new list's record is then seeded with the proof family alone.
  *
  * `'created'`: a new list holds both accounts. `'joined'`: the account joined an existing list. `'none'`: there
  * is no list (a single-account browser). `'rotate'`: the browser has a list or family record this sign-in can't
@@ -199,7 +210,7 @@ export async function linkAccount(
   deviceId: string,
   newUserId: number,
   priorUserId?: number | null,
-  families?: { family: string; proofFamily?: string }
+  families?: { family?: string; proofFamily?: string }
 ): Promise<'created' | 'joined' | 'none' | 'rotate'> {
   const result = Number(
     await evalSys(
