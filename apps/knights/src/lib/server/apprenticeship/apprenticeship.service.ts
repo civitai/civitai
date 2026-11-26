@@ -178,16 +178,7 @@ const seenBy = (
   sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId}
     AND s."imageId" = ${sql.ref(refs.imageId)} AND s."questionKey" = ${sql.ref(refs.questionKey)})
   AND NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId}
-    AND s.${sql.ref(column)} = ${sql.ref(refs.id)})${
-    column === 'yesNoReferenceId'
-      ? sql`
-  AND NOT EXISTS (SELECT 1 FROM "KnightsUnsure" u WHERE u."playerId" = ${playerId}
-    AND (u."yesNoReferenceId" = ${sql.ref(refs.id)}
-      OR (u."imageId" = ${sql.ref(refs.imageId)} AND u."questionKey" = ${sql.ref(
-          refs.questionKey
-        )})))`
-      : sql``
-  }`;
+    AND s.${sql.ref(column)} = ${sql.ref(refs.id)})`;
 
 /** Re-dealt after every answer, yet the same until then, so a reload cannot reroll the item on screen. */
 const shuffled = (playerId: number, position: number, idRef: string) =>
@@ -316,21 +307,13 @@ async function findNext(
   playerId: number,
   skillCheckRate = 0
 ): Promise<NextItem | null> {
-  // Every answer the player ever gave, not just this career's: the no-repeat rule spans resets too. A "Not sure" on a
-  // pair moves the stream on like an answer, so the next slot is not another yes/no.
+  // Every answer the player ever gave, not just this career's: the no-repeat rule spans resets too.
   const position = Number(
     (
       await db
-        .selectNoFrom((eb) =>
-          sql<string>`(${eb
-            .selectFrom('KnightsApprenticeAnswer')
-            .select(sql<string>`count(*)`.as('n'))
-            .where('playerId', '=', playerId)}) + (${eb
-            .selectFrom('KnightsUnsure')
-            .select(sql<string>`count(*)`.as('n'))
-            .where('playerId', '=', playerId)
-            .where('yesNoReferenceId', 'is not', null)})`.as('n')
-        )
+        .selectFrom('KnightsApprenticeAnswer')
+        .select(sql<string>`count(*)`.as('n'))
+        .where('playerId', '=', playerId)
         .executeTakeFirstOrThrow()
     ).n
   );
@@ -611,60 +594,6 @@ type TxResult =
   | (Extract<AnswerResult, { status: 'recorded' }> & { resetDue: boolean });
 
 /** Moves a player past the recap they are looking at. Safe to repeat; does nothing when no checkpoint is waiting. */
-export type UnsureResult = { status: 'recorded' } | Extract<AnswerResult, { status: 'rejected' }>;
-
-/**
- * "Not sure" on the practice pair on screen: one `KnightsUnsure` row, so confusing pairs stay countable, and the pair is
- * never dealt to the player again. No answer row, so no XP, no smite and nothing in the accuracy window.
- */
-export async function unsureApprentice(
-  db: Kysely<DB>,
-  input: { userId: number; referenceId: number; version: string | null },
-  deps: ApprenticeDeps
-): Promise<UnsureResult> {
-  const { userId, referenceId, version } = input;
-  return db.transaction().execute(async (trx): Promise<UnsureResult> => {
-    const player = await trx
-      .selectFrom('NewOrderPlayer')
-      .select('rankType')
-      .where('userId', '=', userId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!player) return { status: 'rejected', reason: 'no-player' };
-    if (player.rankType !== 'Acolyte') return { status: 'rejected', reason: 'not-acolyte' };
-    if ((await activeSmiteCount(trx, userId)) >= SMITES.max) {
-      return { status: 'rejected', reason: 'reset-pending' };
-    }
-    if ((await standingOf(trx, userId)).checkpointPending) {
-      return { status: 'rejected', reason: 'checkpoint-pending' };
-    }
-    const current = await findNext(trx, userId, deps.skillCheckRate ?? 0);
-    if (!current || current.kind !== 'yesno' || current.referenceId !== referenceId) {
-      return { status: 'rejected', reason: 'not-current' };
-    }
-    const pair = await trx
-      .selectFrom('KnightsYesNoReference')
-      .select(['active', sql<string>`"updatedAt"::text`.as('version')])
-      .where('id', '=', referenceId)
-      .executeTakeFirst();
-    if (!pair || !pair.active || !version || pair.version !== version) {
-      return { status: 'rejected', reason: 'not-current' };
-    }
-    await trx
-      .insertInto('KnightsUnsure')
-      .values({
-        playerId: userId,
-        yesNoReferenceId: referenceId,
-        questionKey: current.questionKey,
-        imageId: current.imageId,
-        createdAt: utc(deps.now()),
-      })
-      .onConflict((oc) => oc.columns(['playerId', 'yesNoReferenceId']).doNothing())
-      .execute();
-    return { status: 'recorded' };
-  });
-}
-
 export async function acknowledgeCheckpoint(
   db: Kysely<DB>,
   playerId: number,

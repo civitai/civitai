@@ -30,11 +30,11 @@ escalation and settle sweeps never touch it (it has no `expiresAt`; its own stag
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
 "Not sure" answers are stored in `KnightsUnsure` (migration `20271128120100_knights_unsure`, by hand, then SELECT and INSERT for
-Knights' database role plus USAGE on `KnightsUnsure_id_seq`, before deploying): one row per player and question (`itemId`, or
-`yesNoReferenceId` for an Acolyte practice pair), with the question key and image as a snapshot and no foreign keys, so a count
-outlives the item. It is never a vote and nothing is paid, graded or decided from it. Count per question with
+Knights' database role plus USAGE on `KnightsUnsure_id_seq`, before deploying): one row per player and question item, with the
+question key and image as a snapshot and no foreign keys, so a count outlives the item. It is never a vote and nothing is paid, graded or decided from it. Count per question with
 `SELECT "itemId", count(*) FROM "KnightsUnsure" GROUP BY 1`. It lives in Postgres rather than ClickHouse because the game reads it
-back (an Acolyte pair answered "Not sure" is not dealt again).
+back (a "Not sure" counts toward ending a run of questions). The `yesNoReferenceId` column is unused: Acolyte practice pairs are
+graded, so they offer no "Not sure".
 
 ## Import
 
@@ -214,9 +214,9 @@ and whichever side rules first takes it out of the other's queue. Off unless the
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
 any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
-action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. An Acolyte's practice pair has the same pill
-(`?/apprentice` with the answer `unsure`, `unsureApprentice`): a `KnightsUnsure` row and no answer row, so no XP, no smite and nothing
-in the accuracy window; the stream moves on as after an answer. A run of questions opens with "Question time" and ends with a "Questions done"
+action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. An Acolyte's practice pair has no "Not sure": every
+pair is graded, and abstaining would keep a wrong answer out of the promotion window (`?/apprentice` refuses `unsure` as an answer
+not on offer). A run of questions opens with "Question time" and ends with a "Questions done"
 banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
 

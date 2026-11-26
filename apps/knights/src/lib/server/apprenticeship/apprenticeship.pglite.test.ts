@@ -17,7 +17,6 @@ import {
   type ApprenticeDeps,
   type ApprenticeItem,
   type ApprenticeView,
-  unsureApprentice,
 } from './apprenticeship.service';
 
 const T0 = new Date('2026-12-25T12:00:00Z');
@@ -910,84 +909,41 @@ describe('answers outlive their reference', () => {
 });
 
 describe('"Not sure" on a practice pair', () => {
-  const unsure = (userId: number, item: ApprenticeItem) =>
-    unsureApprentice(db, { userId, referenceId: item.referenceId, version: item.version }, deps());
-  const unsureRows = async () =>
-    (
-      await pg.query<{ playerId: number; yesNoReferenceId: number; itemId: number | null }>(
-        `SELECT "playerId", "yesNoReferenceId", "itemId" FROM "KnightsUnsure" ORDER BY id`
-      )
-    ).rows;
-  const answerCount = async () =>
-    Number(
-      (await pg.query<{ n: string }>(`SELECT count(*) AS n FROM "KnightsApprenticeAnswer"`)).rows[0]
-        .n
+  const answer = (userId: number, item: ApprenticeItem, value: string) =>
+    answerApprentice(
+      db,
+      {
+        userId,
+        kind: item.kind,
+        referenceId: item.referenceId,
+        version: item.version,
+        answer: value,
+      },
+      deps()
     );
-  const smiteCount = async () =>
-    Number((await pg.query<{ n: string }>(`SELECT count(*) AS n FROM "NewOrderSmite"`)).rows[0].n);
+  const countOf = async (table: string) =>
+    Number((await pg.query<{ n: string }>(`SELECT count(*) AS n FROM "${table}"`)).rows[0].n);
 
-  it('stores one countable row, records no answer, pays no XP, smites nothing, and never deals the pair again', async () => {
+  // Every practice pair is graded, so abstaining on one would keep a wrong answer out of the promotion window.
+  it('is refused as an answer not on offer, storing nothing and leaving the pair on screen', async () => {
     await player(1);
-    const a = await yesNo(20);
-    const b = await yesNo(21);
-    const first = question(await getApprentice(db, 1)).item;
-    expect(first.kind).toBe('yesno');
-
-    expect(await unsure(1, first)).toEqual({ status: 'recorded' });
-
-    expect(await unsureRows()).toEqual([
-      { playerId: 1, yesNoReferenceId: first.referenceId, itemId: null },
-    ]);
-    expect(await answerCount()).toBe(0);
-    expect(await expOf(1)).toBe(0);
-    expect(await smiteCount()).toBe(0);
-    expect(mirrorXp).not.toHaveBeenCalled();
-    const second = question(await getApprentice(db, 1)).item;
-    expect(second.referenceId).toBe(first.referenceId === a ? b : a);
-
-    await unsure(1, second);
-    expect((await getApprentice(db, 1)).kind).toBe('exhausted');
-  });
-
-  it('moves the stream on like an answer: the next slot is not another yes/no', async () => {
-    await player(1);
-    for (let i = 0; i < 4; i++) await rating(1 + i, { source: 'core', explanation: 'x' });
-    for (let i = 0; i < 2; i++) await yesNo(20 + i);
-    await play(1, 2);
+    await yesNo(20);
     const pair = question(await getApprentice(db, 1)).item;
     expect(pair.kind).toBe('yesno');
 
-    await unsure(1, pair);
+    expect(await answer(1, pair, 'unsure')).toEqual({ status: 'rejected', reason: 'bad-answer' });
 
-    expect(await sourceOf(question(await getApprentice(db, 1)).item)).toBe('core');
+    expect(await countOf('KnightsApprenticeAnswer')).toBe(0);
+    expect(await countOf('KnightsUnsure')).toBe(0);
+    expect(question(await getApprentice(db, 1)).item.referenceId).toBe(pair.referenceId);
   });
 
-  it('refuses a pair that is not the one on screen, a rating, or a stale pair, storing nothing', async () => {
+  it('still grades a Yes on the same pair', async () => {
     await player(1);
     await yesNo(20);
-    const item = question(await getApprentice(db, 1)).item;
+    const pair = question(await getApprentice(db, 1)).item;
 
-    expect(await unsure(1, { ...item, referenceId: item.referenceId + 99 })).toEqual({
-      status: 'rejected',
-      reason: 'not-current',
-    });
-    expect(await unsure(1, { ...item, version: 'stale' })).toEqual({
-      status: 'rejected',
-      reason: 'not-current',
-    });
-    await pg.exec(`TRUNCATE "KnightsYesNoReference" RESTART IDENTITY CASCADE`);
-    await rating(30);
-    const ratingItem = question(await getApprentice(db, 1)).item;
-    expect(await unsure(1, ratingItem)).toEqual({ status: 'rejected', reason: 'not-current' });
-    expect(await unsureRows()).toEqual([]);
-  });
-
-  it('is for Acolytes only', async () => {
-    await player(1);
-    await yesNo(20);
-    const item = question(await getApprentice(db, 1)).item;
-    await pg.query(`UPDATE "NewOrderPlayer" SET "rankType" = 'Knight' WHERE "userId" = 1`);
-    expect(await unsure(1, item)).toEqual({ status: 'rejected', reason: 'not-acolyte' });
-    expect(await unsureRows()).toEqual([]);
+    expect(await answer(1, pair, 'yes')).toMatchObject({ status: 'recorded' });
+    expect(await countOf('KnightsApprenticeAnswer')).toBe(1);
   });
 });

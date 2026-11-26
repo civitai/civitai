@@ -199,11 +199,7 @@
     if (event.key === ' ') {
       if (!spaceSkips(screen)) return;
       event.preventDefault();
-      // A practice pair's "Not sure" is an answer the form carries; the queue's skip needs none.
-      const unsure = screen.apprentice
-        ? skipForm?.querySelector<HTMLButtonElement>('button[value="unsure"]')
-        : null;
-      skipForm?.requestSubmit(unsure ?? undefined);
+      skipForm?.requestSubmit();
       return;
     }
     if (imageFailed) return;
@@ -908,20 +904,7 @@
             {@render pill(option, index, false, false)}
           {/each}
         </form>
-        {#if yesNo}
-          <form class="skip" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={skipForm}>
-            {@render practiceFields(apprentice.item)}
-            <AnswerPill
-              option={{ value: 'unsure', label: 'Not sure' }}
-              index={0}
-              yesNo
-              icon="circle-help"
-              keyHint="Space"
-              hint="Not sure (Space)"
-              disabled={submitting}
-            />
-          </form>
-        {:else}
+        {#if !yesNo}
           <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>

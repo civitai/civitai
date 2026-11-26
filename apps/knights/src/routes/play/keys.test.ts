@@ -102,12 +102,12 @@ describe('optionsOnScreen', () => {
 });
 
 describe('spaceSkips', () => {
-  it('leaves Space to the browser on an apprenticeship rating, and sends "Not sure" on a practice pair', () => {
+  it('leaves Space to the browser on every apprenticeship item, practice pairs included (graded, no skip)', () => {
     expect(
       spaceSkips({ apprentice: { kind: 'question', options, item: { kind: 'rating' } } })
     ).toBe(false);
     expect(spaceSkips({ apprentice: { kind: 'question', options, item: { kind: 'yesno' } } })).toBe(
-      true
+      false
     );
     expect(spaceSkips({ question: { options } })).toBe(true);
   });

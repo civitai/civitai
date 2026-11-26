@@ -56,14 +56,12 @@ import {
   answerApprentice,
   getApprentice,
   getApprenticeProgress,
-  unsureApprentice,
 } from '$lib/server/apprenticeship/apprenticeship.service';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
 import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
 import { requestStanding, requireRequestMember } from '$lib/server/request-reads';
-import { UNSURE_ANSWER } from '$lib/server/yesno/keys';
 import type { Actions, PageServerLoad } from './$types';
 
 const BLOCK_REASON_TEXT = 'Choose a reason from the list when you block an image.';
@@ -533,27 +531,6 @@ export const actions: Actions = {
       ...apprenticeDeps,
       skillCheckRate: (await skillChecks()).enabled ? (await hiddenSettings()).rate : 0,
     };
-    if (kind === 'yesno' && answer === UNSURE_ANSWER) {
-      try {
-        const result = await unsureApprentice(
-          db,
-          {
-            userId: locals.user.id,
-            referenceId,
-            version: typeof version === 'string' ? version : null,
-          },
-          deps
-        );
-        if (result.status === 'rejected') {
-          return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });
-        }
-        if (onCard) await dismissProgress(seenStore, locals.user.id, onCard);
-        return { success: true };
-      } catch (error) {
-        console.error('knights: apprenticeship Not sure failed', { referenceId, error });
-        return fail(500, { message: 'Your answer could not be recorded. Try again in a moment.' });
-      }
-    }
     try {
       const result = await answerApprentice(
         db,

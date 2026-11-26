@@ -164,25 +164,29 @@ describe('apprentice action', () => {
     expect(await post(valid)).toMatchObject({ status: 500 });
   });
 
-  it('sends "Not sure" on a pair to the ledger as no answer, and answers only success', async () => {
-    unsureApprentice.mockResolvedValue({ status: 'recorded' });
+  it('refuses "Not sure" on a graded practice pair: it goes to the ledger as an answer, which turns it down', async () => {
+    answerApprentice.mockResolvedValue({ status: 'rejected', reason: 'bad-answer' });
 
     expect(
       await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'unsure' })
-    ).toEqual({ success: true });
-    expect(unsureApprentice).toHaveBeenCalledWith(
+    ).toMatchObject({ status: 409, data: { message: 'That answer is not on offer.' } });
+    expect(answerApprentice).toHaveBeenCalledWith(
       {},
-      { userId: 7, referenceId: 5, version: 'v1' },
-      expect.objectContaining({ skillCheckRate: 1 })
+      expect.objectContaining({ userId: 7, kind: 'yesno', referenceId: 5, answer: 'unsure' }),
+      expect.anything()
     );
-    expect(answerApprentice).not.toHaveBeenCalled();
   });
 
-  it('turns a refused "Not sure" into a 409', async () => {
-    unsureApprentice.mockResolvedValue({ status: 'rejected', reason: 'not-current' });
+  it('still records a Yes on a practice pair', async () => {
+    answerApprentice.mockResolvedValue({
+      status: 'recorded',
+      correct: true,
+      xp: 10,
+      promoted: false,
+    });
     expect(
-      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'unsure' })
-    ).toMatchObject({ status: 409 });
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'yes' })
+    ).toMatchObject({ success: true, correct: true });
   });
 
   it('moves past a checkpoint for the signed-in player', async () => {
