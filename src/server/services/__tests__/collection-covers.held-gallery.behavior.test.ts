@@ -45,6 +45,7 @@ beforeAll(async () => {
       availability text NOT NULL DEFAULT 'Public'
     );
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
       ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,

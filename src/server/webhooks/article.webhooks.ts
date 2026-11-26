@@ -5,9 +5,13 @@ import {
   withoutMinorFlag,
 } from '~/server/common/image-visibility';
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
-import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
-import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import {
+  articleContentImageSelect,
+  articleDetailSelect,
+} from '~/server/selectors/article.selector';
+import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
+import { readerArticleBody } from '~/server/utils/article-body-media';
+import { getArticleImageHolds } from '~/server/services/article-image-holds';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
@@ -36,12 +40,39 @@ export const articleWebhooks = createWebhookProcessor({
       if (!articles.length) return [];
 
       // The cover goes out only as a signed-out viewer would see it.
-      const withheld = await getModelWithheldImageIds(
-        articles.map((article) => article.coverImage?.id).filter((id): id is number => !!id),
-        prisma
-      );
+      const coverIds = articles
+        .map((article) => article.coverImage?.id)
+        .filter((id): id is number => !!id);
+      const bodyImages = await prisma.imageConnection.findMany({
+        where: {
+          entityType: 'Article',
+          entityId: { in: articles.map((article) => article.id) },
+          ...connectionImageExists,
+        },
+        select: {
+          entityId: true,
+          image: { select: { ...articleContentImageSelect, minor: true } },
+        },
+      });
+      const { withheldByModel: withheld, listedHidden: listed } = await getArticleImageHolds({
+        coverIds,
+        bodyIds: bodyImages.map((connection) => connection.image.id),
+        db: prisma,
+      });
+      // The body as a signed-out reader is served it.
+      const publicBody = (articleId: number, content: string | null) =>
+        content &&
+        readerArticleBody(
+          content,
+          bodyImages.filter((c) => c.entityId === articleId).map((c) => c.image),
+          listed
+        ).content;
       const publicCover = (image: (typeof articles)[number]['coverImage']) =>
-        image && !hasBlockMarker(image) && !withheld.has(image.id) && !isMinorMatureImage(image)
+        image &&
+        !hasBlockMarker(image) &&
+        !withheld.has(image.id) &&
+        !listed.has(image.id) &&
+        !isMinorMatureImage(image)
           ? servableArticleImage(image)
           : null;
 
@@ -59,6 +90,7 @@ export const articleWebhooks = createWebhookProcessor({
 
         return {
           ...article,
+          content: publicBody(article.id, article.content),
           coverImage: shownCover && withoutMinorFlag(shownCover),
           type: categories[0] ?? 'article',
           tags,

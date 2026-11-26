@@ -10,8 +10,10 @@ export const seesReportListed = (
   ctx: Pick<Context, 'user' | 'features' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>
 ) => isSessionOrFullUserKey(ctx) && !!ctx.user?.isModerator && !!ctx.features?.csamReports;
 
-/** The report-listed viewer a read takes: `seesReportListed`, and the uploader's own on a session or a
- *  full-access key only. */
+/**
+ * `seesReportListed`, and the uploader's own report-listed images on a session or a full-access
+ * key only.
+ */
 export const reportListedViewerOf = (
   ctx: Pick<Context, 'user' | 'features' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>
 ) => ({

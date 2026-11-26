@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -28,9 +29,12 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   amIBlockedByUser: mockAmIBlockedByUser,
 }));
 
-const { getChallengeDetail, getCompletedChallengesWithWinners } = await import(
-  '~/server/services/challenge.service'
-);
+const {
+  getChallengeDetail,
+  getChallengeEvents,
+  getChallengeForEdit,
+  getCompletedChallengesWithWinners,
+} = await import('~/server/services/challenge.service');
 
 const WINNER_URL = 'winner-image-url';
 const VIEWER = 333;
@@ -201,10 +205,18 @@ describe('getChallengeDetail — cover image', () => {
     viewerId: number | undefined,
     isGreen: boolean,
     challenge: Record<string, unknown> = completedSystemChallenge,
-    image: Record<string, unknown> = {}
+    image: Record<string, unknown> = {},
+    listed = false
   ) {
     mockGetChallengeById.mockResolvedValue({ ...challenge, coverImageId: 80 });
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    // The report-listed lookup names the cover when `listed`; every other raw read finds nothing.
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      listed && Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: 80 }]
+        : []) as never);
     dbMock.dbRead.image.findFirst.mockResolvedValue({
       id: 80,
       url: 'cover-image-url',
@@ -231,6 +243,10 @@ describe('getChallengeDetail — cover image', () => {
 
   it('withholds a PG-13 cover on the green site from a signed-out viewer', async () => {
     expect(await cover(NsfwLevel.PG13, undefined, true)).toBeNull();
+  });
+
+  it('🔴 withholds a cover listed on a report', async () => {
+    expect(await cover(NsfwLevel.PG, VIEWER, false, completedSystemChallenge, {}, true)).toBeNull();
   });
 
   it('keeps an SFW cover on the green site', async () => {
@@ -318,5 +334,48 @@ describe('getChallengeDetail — user challenge gates', () => {
       select: Record<string, boolean>;
     }) => Object.fromEntries(Object.entries(row).filter(([key]) => select[key]))) as never);
     expect(await getChallengeDetail(500, VIEWER, false, false, true)).toBeNull();
+  });
+});
+
+describe('the moderator edit views of a cover listed on a report', () => {
+  const listedCover = {
+    id: 80,
+    url: 'cover-image-url',
+    nsfwLevel: NsfwLevel.PG,
+    hash: 'cover-hash',
+    width: 512,
+    height: 512,
+    type: 'image',
+    ingestion: 'Scanned',
+    blockedFor: null,
+  };
+  beforeEach(() => {
+    mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: 80 }]
+        : []) as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(listedCover as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([listedCover] as never);
+    dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
+      { id: 7, title: 'Event', coverImageId: 80, _count: { challenges: 0 } },
+    ] as never);
+  });
+
+  it('🔴 keep its id but not its source without the grant', async () => {
+    const edit = await getChallengeForEdit(500);
+    expect(edit?.coverImage).toMatchObject({ id: 80, url: '', hash: null });
+    const [event] = await getChallengeEvents({} as never);
+    expect(event.coverImage).toMatchObject({ id: 80, url: '', hash: null });
+  });
+
+  it('keep it whole for a held-media viewer (control)', async () => {
+    const edit = await getChallengeForEdit(500, { seesReportListed: true });
+    expect(edit?.coverImage).toMatchObject({ id: 80, url: 'cover-image-url' });
+    const [event] = await getChallengeEvents({} as never, { seesReportListed: true });
+    expect(event.coverImage).toMatchObject({ id: 80, url: 'cover-image-url' });
   });
 });

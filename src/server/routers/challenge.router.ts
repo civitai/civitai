@@ -1,3 +1,4 @@
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
@@ -271,7 +272,9 @@ export const challengeRouter = router({
   getForEdit: moderatorProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeForEdit(input.id)),
+    .query(({ input, ctx }) =>
+      getChallengeForEdit(input.id, { seesReportListed: seesReportListed(ctx) })
+    ),
 
   // User: create-eligibility status for the create page (non-throwing; mirrors the create gate).
   // Read-only and returns only the caller's own score/limits, so it is NOT behind `userChallenges`:
@@ -424,7 +427,9 @@ export const challengeRouter = router({
   getEvents: moderatorProcedure
     .input(getChallengeEventsSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeEvents(input)),
+    .query(({ input, ctx }) =>
+      getChallengeEvents(input, { seesReportListed: seesReportListed(ctx) })
+    ),
 
   // Moderator: Create or update a challenge event
   upsertEvent: moderatorProcedure
