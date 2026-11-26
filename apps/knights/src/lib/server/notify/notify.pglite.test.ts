@@ -358,7 +358,7 @@ describe('sendNotifications', () => {
     it('still sends verdicts and streak warnings when the new-images lookup times out', async () => {
       await seedOneOfEach();
       const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      // The new-images lookup's first read is the only transaction a plan opens.
+      // Only the new-images lookup opens transactions while planning; its first one fails.
       vi.spyOn(db, 'transaction').mockImplementationOnce(
         () =>
           ({

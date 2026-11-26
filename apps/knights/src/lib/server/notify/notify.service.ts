@@ -9,13 +9,15 @@ import { servableItems } from '../queue/queue.service';
 import { metrics } from '../metrics';
 import { SMITES } from '../smites/config';
 import { stagesWorkedBy } from '../queue/ranks';
-import { RANKS } from '../ranks';
+import { RANKS, type Rank } from '../ranks';
 import type { SilenceType } from './silence-types';
 import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
 const CLAIM_CHUNK = 1000;
 const SILENCE_CHUNK = 20_000;
+/** Open items gated per read; small enough that the planner probes each item's image (`servableOpenItems`). */
+const GATE_CHUNK = 1000;
 
 export type NotificationBatch = { kind: NotifyKind; type: string; key: string; userIds: number[] };
 export type SendBatch = (batch: NotificationBatch) => Promise<void>;
@@ -187,6 +189,40 @@ async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
 }
 
 /**
+ * The servable open items at `stages`, newest first, so the player read below usually stops at the first item it
+ * tries. The gate runs on `GATE_CHUNK` ids at a time: given all open items at once (about 26k on 2026-11-26), the
+ * planner hashed every Image and Post through the gate instead of probing each item's image.
+ */
+async function servableOpenItems(db: Kysely<DB>, stages: Rank[]) {
+  const ids = await db
+    .selectFrom('KnightsQueueItem')
+    .select('id')
+    .where('status', '=', 'Open')
+    .where('minRank', 'in', stages)
+    .orderBy('createdAt', 'desc')
+    .orderBy('id', 'desc')
+    .execute();
+  const items = new Map<
+    string,
+    { imageId: number; questionKey: string; minRank: string; userId: number | null }
+  >();
+  for (let at = 0; at < ids.length; at += GATE_CHUNK) {
+    const chunk = ids.slice(at, at + GATE_CHUNK).map((r) => r.id);
+    const rows = await readWithoutJit(db, (trx) =>
+      servableItems(trx)
+        .where('i.id', '=', sql<number>`any(${chunk}::int[])`)
+        .select(['i.id', 'i.imageId', 'i.questionKey', 'i.minRank', 'img.userId'])
+        .execute()
+    );
+    const position = new Map(chunk.map((id, at) => [id, at]));
+    rows.sort((a, b) => position.get(a.id)! - position.get(b.id)!);
+    for (const { id: _, ...row } of rows)
+      items.set(`${row.imageId}:${row.questionKey}:${row.minRank}`, row);
+  }
+  return [...items.values()];
+}
+
+/**
  * Two reads: the servable open items, then per rank the players one of them waits for. Under one EXISTS per player the
  * planner joined every Image and Post through the gate before probing the open items, and timed out in production.
  */
@@ -197,13 +233,7 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
   ).filter(({ stages }) => stages.length > 0);
   const stages = [...new Set(worked.flatMap((w) => w.stages))];
   if (stages.length === 0) return [];
-  const waiting = await readWithoutJit(db, (trx) =>
-    servableItems(trx)
-      .where('i.minRank', 'in', stages)
-      .select(['i.imageId', 'i.questionKey', 'i.minRank', 'img.userId'])
-      .distinct()
-      .execute()
-  );
+  const waiting = await servableOpenItems(db, stages);
   if (waiting.length === 0) return [];
 
   const activeFrom = utc(dayStart(addDays(day, -NOTIFY.activeDays)));
