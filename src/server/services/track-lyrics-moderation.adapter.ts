@@ -7,6 +7,7 @@ import {
 import { holdSongForCsam } from '~/server/services/csam-image-review';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 // Both dynamic imports below: large graphs the moderation registry should not load.
 async function decideSong(imageId: number) {
@@ -40,12 +41,24 @@ async function removeHeldSongFromSearch(imageId: number) {
  * takes it out of search.
  */
 export const trackLyricsModerationAdapter: ModerationAdapter = {
+  // A song without lyrics resolves to its title, which is scanned alone, so the row is not dropped.
   resolveContent: async (ids) => {
     const rows = await dbRead.trackLyrics.findMany({
       where: { imageId: { in: ids } },
       select: { imageId: true, text: true },
     });
-    return new Map(rows.map((row) => [row.imageId, row.text]));
+    const content = new Map(rows.map((row) => [row.imageId, row.text]));
+    const withoutLyrics = ids.filter((id) => !content.has(id));
+    if (!withoutLyrics.length) return content;
+    const songs = await dbRead.image.findMany({
+      where: { id: { in: withoutLyrics }, type: MediaType.audio },
+      select: { id: true, metadata: true },
+    });
+    for (const song of songs) {
+      const title = (song.metadata as { title?: unknown } | null)?.title;
+      if (typeof title === 'string' && title.trim()) content.set(song.id, title);
+    }
+    return content;
   },
 
   // Only the retry cron calls submit.

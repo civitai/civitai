@@ -413,8 +413,14 @@ changes: the cover's scan lands, a moderator removes the cover, or a lyrics or l
 on a decided song.
 
 The song's title (`Image.metadata.title`) is a field of the lyrics text-scan subject
-(`track-lyrics.profile.ts`), so its level counts with theirs; a title edit sends the lyrics for a
-new verdict. A song without lyrics has no such scan yet, so its title is not scanned.
+(`track-lyrics.profile.ts`, one `TrackLyrics` row for both), so its level counts with theirs; a
+title edit sends them for a new verdict. A song with a title and no lyrics is scanned on its title
+alone, and never waits on it: it goes public on its audio verdict, its title is sent once it is
+decided (and on each title edit), and the verdict only re-rates it (`rerateSong`). It still counts as
+a song without lyrics everywhere else (`readLyricsVerdict`, the lyrics wait, visibility, the lyrics
+shown). The title scan runs only while the text scan is active for `TrackLyrics`, since an XGuard
+verdict rates nothing. Clearing the title of such a song drops its title verdict, which stops
+counting at the song's next re-rate.
 
 The language level comes from XGuard's profanity mode on the lyrics text, sent when the lyrics are
 saved at post time (`submitTrackLyricsLanguageScan`) under its own `EntityModeration` row,

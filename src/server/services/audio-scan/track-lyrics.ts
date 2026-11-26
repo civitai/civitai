@@ -46,8 +46,9 @@ export async function saveGeneratedTrackLyrics({
 }
 
 /**
- * Sends a song's lyrics for their verdict: the text scan while it is active for them, XGuard
- * otherwise, so a verdict always comes.
+ * Sends a song's lyrics, and its title, for their verdict: the text scan while it is active for
+ * them, XGuard otherwise, so a verdict always comes for lyrics. A song with a title and no lyrics
+ * gets the text scan only; XGuard rates nothing, so it sends nothing then.
  */
 export async function submitTrackLyricsScan({
   imageId,
@@ -60,6 +61,13 @@ export async function submitTrackLyricsScan({
     entityType: TRACK_LYRICS_ENTITY_TYPE,
     entityId: imageId,
     fromRetry,
+    // No lyrics and no title left (a cleared title): an old title verdict must stop rating the song.
+    onActiveSkip: async (reason) => {
+      if (reason === 'missing')
+        await dbWrite.entityModeration.deleteMany({
+          where: { entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId },
+        });
+    },
     xguard: async () => {
       // primary: the lyrics are written just before their scan is submitted
       const lyrics = await dbWrite.trackLyrics.findUnique({

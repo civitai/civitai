@@ -5,6 +5,7 @@ import { songVerdict } from '~/server/services/audio-scan/song-scan';
 import {
   readLyricsVerdict,
   sendTrackLyricsScan,
+  submitTrackLyricsScan,
   type LyricsVerdict,
 } from '~/server/services/audio-scan/track-lyrics';
 import { dbWrite } from '~/server/db/client';
@@ -126,6 +127,8 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
   // A later lyrics verdict (a rescan, an edited title) re-rates a decided song; it never decides one.
   if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return rerateSong(imageId);
   const lyrics = await readLyricsVerdict(imageId);
+  // A song without lyrics never waits on its title's verdict: that only re-rates it.
+  if (fromLyrics && lyrics.state === 'none') return rerateSong(imageId);
   const verdict = songVerdict(audio, lyrics.state !== 'none');
 
   if (verdict.action === 'retry') {
@@ -169,6 +172,18 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
       log: SONG_SCAN_LOG,
     });
     await applyIngestionSideEffects({ image, outcome });
+    // A title without lyrics is scanned once the song is public; its verdict re-rates the song.
+    if (
+      lyrics.state === 'none' &&
+      outcome.ingestion === ImageIngestionStatus.Scanned &&
+      (image.metadata as { title?: unknown } | null)?.title
+    )
+      submitTrackLyricsScan({ imageId }).catch((error: Error) =>
+        logToAxiom(
+          { name: SONG_SCAN_LOG.name, type: 'error', message: error.message, imageId },
+          'webhooks'
+        )
+      );
   } catch (error) {
     logToAxiom(
       {

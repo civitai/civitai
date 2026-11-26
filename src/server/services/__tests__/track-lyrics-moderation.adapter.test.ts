@@ -74,6 +74,38 @@ describe('the TrackLyrics text-scan profile', () => {
   });
 });
 
+describe('the TrackLyrics text-scan profile, for a song with a title and no lyrics', () => {
+  it('scans its title alone (decision L10: the song never waits on it)', async () => {
+    w.trackLyrics.findMany.mockResolvedValue([] as never);
+    w.image.findMany.mockResolvedValue([
+      { id: 8, userId: 3, metadata: { title: 'Solo' } },
+      { id: 9, userId: 3, metadata: {} },
+    ] as never);
+
+    const subjects = await getTextScanProfile('TrackLyrics')!.load([8, 9]);
+
+    expect(subjects.get(8)).toEqual({
+      userId: 3,
+      declared: {},
+      fields: [{ heading: 'Title', text: 'Solo' }],
+    });
+    expect(subjects.has(9)).toBe(false);
+  });
+
+  it('is kept by the retry cron, which resubmits its title rather than dropping the row as gone', async () => {
+    dbMock.dbRead.trackLyrics.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 8, metadata: { title: 'Solo' } },
+      { id: 9, metadata: {} },
+    ] as never);
+
+    const content = await getModerationAdapter('TrackLyrics')!.resolveContent([8, 9]);
+
+    expect(content.get(8)).toBe('Solo');
+    expect(content.has(9)).toBe(false);
+  });
+});
+
 describe('the TrackLyrics moderation adapter', () => {
   const applyTextScan = () => getModerationAdapter('TrackLyrics')?.applyTextScan;
 

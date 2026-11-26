@@ -14,10 +14,11 @@ vi.mock('~/server/services/image-scan-pipeline', async () => ({
   extractFailedSteps: () => [],
 }));
 vi.mock('~/server/services/job-queue.service', () => ({ removeImageScanJobQueue: vi.fn() }));
-const lyricsScan = vi.hoisted(() => ({ submit: vi.fn() }));
+const lyricsScan = vi.hoisted(() => ({ submit: vi.fn(), submitTitle: vi.fn() }));
 vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   sendTrackLyricsScan: lyricsScan.submit,
+  submitTrackLyricsScan: lyricsScan.submitTitle,
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -64,6 +65,7 @@ beforeEach(() => {
   dbMock.dbWrite.entityModeration.findMany.mockResolvedValue([]);
   pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Scanned', blockedFor: null });
   pipeline.markImageScanError.mockResolvedValue({ retryCount: 1, userId: 2, failureClass: 'x' });
+  lyricsScan.submitTitle.mockResolvedValue({ id: 'wf-title' });
 });
 
 describe('a song the scan flagged', () => {
@@ -113,6 +115,42 @@ describe('a song the scan did not flag', () => {
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
     );
+  });
+});
+
+// Decision L10 of the synced-lyrics feature: a title-only song never waits on its title's verdict.
+describe('a song with a title and no lyrics', () => {
+  it('is decided on its audio verdict, then sends its title to be scanned', async () => {
+    await run(scanned(false), song({ metadata: { duration: 30, title: 'Solo' } }));
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
+    );
+    expect(lyricsScan.submitTitle).toHaveBeenCalledWith({ imageId: 7 });
+  });
+
+  it('sends nothing for a song with neither, or one the scan blocked', async () => {
+    await run(scanned(false));
+    pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Blocked', blockedFor: 'tos' });
+    await run(scanned(true), song({ metadata: { title: 'Solo' } }));
+
+    expect(lyricsScan.submitTitle).not.toHaveBeenCalled();
+  });
+
+  it('is only re-rated, never decided, when its title verdict lands', async () => {
+    dbMock.dbWrite.imageAudioScan.findUnique.mockResolvedValue({
+      status: 'Succeeded',
+      workflowId: 'wf-audio',
+      flagged: false,
+      hasAudio: true,
+      result: {},
+    } as never);
+    pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Pending' }));
+
+    await applySongLyricsVerdict(7);
+
+    expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    expect(pipeline.rerateSong).toHaveBeenCalledWith(7);
   });
 });
 
