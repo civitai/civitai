@@ -474,8 +474,8 @@ func TestServeInfiniteFeedPage(t *testing.T) {
 			t.Errorf("%s missing from the wire", k)
 		}
 	}
-	if _, ok := first["baseModel"]; ok {
-		t.Error("baseModel must be undefined (omitted)")
+	if v, ok := first["baseModel"]; !ok || v != nil {
+		t.Errorf("baseModel = %v (present %v), want undefined: null plus its annotation", v, ok)
 	}
 	if a, _ := ann["items.0.baseModel"].([]any); len(a) != 1 || a[0] != "undefined" {
 		t.Fatalf("baseModel annotation = %v", ann["items.0.baseModel"])
@@ -504,7 +504,7 @@ func TestServeInfiniteFeedPage(t *testing.T) {
 }
 
 func TestServeInfiniteEmptyAnswers(t *testing.T) {
-	const handlerEmpty = `{"items":[]}|{"nextCursor":["undefined"]}`
+	const handlerEmpty = `{"items":[],"nextCursor":null}|{"nextCursor":["undefined"]}`
 	cases := []struct {
 		name     string
 		m        map[string]any
@@ -537,18 +537,18 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		{
 			name: "only blocked tags (index path: no source)",
 			m:    map[string]any{"tags": []any{num("5161")}},
-			want: `{"items":[]}|{"nextCursor":["undefined"]}`, trivial: true,
+			want: `{"items":[],"nextCursor":null}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
 			name:  "only blocked tags (Postgres path: the handler's source)",
 			m:     map[string]any{"tags": []any{num("5161")}, "postId": num("701")},
 			setup: func(f *infFixture) {},
-			want:  `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+			want:  `{"items":[],"nextCursor":null,"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
 			name: "a moderator's level of unselectable bits only (Postgres path)",
 			m:    map[string]any{"postId": num("701"), "browsingLevel": num("32")},
-			want: `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+			want: `{"items":[],"nextCursor":null,"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
 			uncapped: true, viewer: &Viewer{ID: 7, IsModerator: true}, noQuery: true,
 		},
 		{
@@ -563,14 +563,14 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		{
 			name:     "a signed-in level of unselectable bits only",
 			m:        map[string]any{"limit": num("2"), "browsingLevel": num("32")},
-			want:     `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`,
+			want:     `{"items":[],"nextCursor":null,"source":"feed"}|{"nextCursor":["undefined"]}`,
 			trivial:  true,
 			uncapped: true, viewer: &Viewer{ID: 7},
 		},
 		{
 			name: "a shape the feed cannot express",
 			m:    map[string]any{"generation": []any{"txt2img"}},
-			want: `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,
+			want: `{"items":[],"nextCursor":null,"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
 			name: "a feed page with no ids keeps its cursor",
@@ -679,12 +679,13 @@ func TestServeInfinitePostScopeIsThePostgresPage(t *testing.T) {
 	// A NULL index on the look-ahead row is a null cursor, an index of 0 a 0.
 	c.CursorID, c.CursorNull = 0, true
 	f.rows = []RawImage{a, b, c}
-	j, _, _, err = serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
+	j, ann, _, err := serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := j["nextCursor"]; !ok || v != nil {
-		t.Fatalf("null index cursor = %v (present %v)", v, ok)
+	// A real null: written as null with NO ["undefined"] annotation (an undefined is null plus one).
+	if v, ok := j["nextCursor"]; !ok || v != nil || ann["nextCursor"] != nil {
+		t.Fatalf("null index cursor = %v (present %v, annotation %v)", v, ok, ann["nextCursor"])
 	}
 	c.CursorNull = false
 	f.rows = []RawImage{a, b, c}
@@ -697,12 +698,16 @@ func TestServeInfinitePostScopeIsThePostgresPage(t *testing.T) {
 	}
 	// The end of the post: no look-ahead row, an undefined cursor.
 	f.rows = []RawImage{a}
-	j, _, _, err = serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
+	j, ann, _, err = serveInf(t, f, map[string]any{"postId": num("701"), "limit": num("2")}, InfiniteRequest{Cap: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := j["nextCursor"]; ok {
-		t.Fatalf("end of post: nextCursor = %v, want undefined", j["nextCursor"])
+	// Undefined, as Node's superjson writes it: null in json plus the ["undefined"] annotation.
+	if v, ok := j["nextCursor"]; !ok || v != nil {
+		t.Fatalf("end of post: nextCursor = %v (present %v), want null", v, ok)
+	}
+	if a, _ := ann["nextCursor"].([]any); len(a) != 1 || a[0] != "undefined" {
+		t.Fatalf("end of post: nextCursor annotation = %v, want [undefined]", ann["nextCursor"])
 	}
 }
 
