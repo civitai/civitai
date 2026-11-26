@@ -5,6 +5,7 @@ import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { findHandGrantsForDeposit } from '~/server/services/nowpayments-manual-credit';
 import { OPEN_DEPOSIT_STATUSES } from '~/server/common/chain-config';
+import { probeAuthorization } from '~/server/utils/probe-token';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -731,8 +732,10 @@ export async function checkSiteStatus(): Promise<string> {
   const [healthResult, incidentResult] = await Promise.all([
     (async () => {
       try {
-        const url = `${env.NEXTAUTH_URL}/api/health?token=${env.WEBHOOK_TOKEN}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        const res = await fetch(`${env.NEXTAUTH_URL}/api/health`, {
+          headers: { authorization: probeAuthorization() },
+          signal: AbortSignal.timeout(10_000),
+        });
         if (!res.ok) return { error: `Health endpoint returned ${res.status}` };
         return (await res.json()) as HealthResponse;
       } catch (err) {

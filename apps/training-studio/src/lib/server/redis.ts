@@ -17,8 +17,8 @@ export function getSysRedis(): RedisSysClient {
   return sysClient;
 }
 
-// The shared cache cluster: cached ratings and the daily allowances. A MULTI or script here must
-// keep to one hash slot.
+// The shared cache cluster: cached ratings, the rating sent markers and the daily allowances. A
+// MULTI or script here must keep to one hash slot.
 export function getCacheRedis(): RedisCacheClient {
   if (!cacheClient) cacheClient = createCacheRedis();
   return cacheClient;

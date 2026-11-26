@@ -1040,6 +1040,7 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
     });
   });
 
+  // Who may lift what: civitai/civitai#10409.
   describe("a moderator's lift of the scan's hide", () => {
     /** textScanTextHash of the comment's text now, as the CommentV3 scan profile builds it. */
     const textHashOf = async (id: number) => {

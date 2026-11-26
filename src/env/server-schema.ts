@@ -464,8 +464,8 @@ export const serverSchema = z
     // Accepted alongside WEBHOOK_TOKEN while callers move to a new value. Unset or blank: only
     // WEBHOOK_TOKEN is accepted (~/server/utils/webhook-token).
     WEBHOOK_TOKEN_PREVIOUS: z.string().optional(),
-    // Also accepted by /api/live, /api/ready and /api/health only, so probes need not carry
-    // WEBHOOK_TOKEN. Unset or blank matches nothing.
+    // Also accepted by /api/live, /api/ready, /api/health, /api/metrics and the event-loop watchdog
+    // port only, so probes and scrapes need not carry WEBHOOK_TOKEN. Unset or blank matches nothing.
     PROBE_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
     // Header token for /api/admin/provider-download-token. Unset: the endpoint refuses everything.

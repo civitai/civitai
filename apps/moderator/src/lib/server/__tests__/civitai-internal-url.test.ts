@@ -10,6 +10,11 @@ vi.mock('$lib/server/db', async () => {
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
 vi.mock('$env/dynamic/private', () => ({ env }));
+// The fetch stub below stands in for the network; the Host dispatcher is covered by
+// main-app-internal-url.test.ts against a real server.
+vi.mock('../main-app-fetch', () => ({
+  mainAppHostFetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
+}));
 vi.mock('$app/server', () => ({
   getRequestEvent: () => ({
     locals: {},

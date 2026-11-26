@@ -490,8 +490,8 @@ export function WebhookEndpoint(
 }
 
 /**
- * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready and /api/health
- * only (pinned by webhook-endpoint-probe-token.test.ts).
+ * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready, /api/health and
+ * /api/metrics only (pinned by webhook-endpoint-probe-token.test.ts).
  */
 export function ProbeEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>

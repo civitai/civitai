@@ -2638,9 +2638,6 @@ export const REDIS_SYS_KEYS = {
     // only as the fallback for ratings written before the move. Remove with that fallback, after
     // DATASET_RATING_SYS_FALLBACK_UNTIL in apps/training-studio/src/lib/server/dataset-rating.ts.
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
-    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:<blobId lowercased>,
-    // so a failed or unanswered rating is not sent again on every view.
-    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -3241,6 +3238,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
     // without re-rating.
     MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
+    MODEL3D_PREVIEW_V2_PENDING: 'generation:model3d-preview-v2-pending',
+    MODEL3D_RATING_V2_CLEAR: 'generation:model3d-rating-v2-clear',
   },
   TRAINING: {
     // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
@@ -3260,6 +3259,10 @@ const REDIS_KEYS_UNPREFIXED = {
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
     // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
     STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:m<level>:<blobId
+    // lowercased>, so a failed or unanswered rating is not sent again on every view. Lost early, the
+    // blob is sent once more, within the daily allowance.
+    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
     // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
     // acts on, and how. Written by hand with an expiry; deleting it, or its eviction, refuses every call.
     RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
