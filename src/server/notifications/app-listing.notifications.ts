@@ -1,5 +1,10 @@
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { NotificationCategory } from '~/server/common/enums';
+import {
+  appReviewByline,
+  withApprovalNote,
+  type AppReviewAttributionDetails,
+} from '~/server/notifications/app-review-attribution';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 /**
@@ -30,7 +35,9 @@ export type AppListingModerationNotificationDetails = {
   reason?: string | null;
   /** The listing id (`apl_<ULID>`) for a future deep-link. */
   listingId?: string | null;
-};
+  /** `app-listing-approved` only: the moderator's approval note, when they left one. */
+  approvalNote?: string | null;
+} & AppReviewAttributionDetails;
 
 /**
  * Every owner-facing app-listing notification points the owner at their submissions/history view.
@@ -98,8 +105,12 @@ export const appListingNotifications = createNotificationProcessor({
     prepareMessage: (notification) => {
       const details = notification.details as AppListingModerationNotificationDetails;
       return {
-        message: `${appLabel(details)} was approved and is now live in the app store.`,
+        message: withApprovalNote(
+          `${appLabel(details)} was approved and is now live in the app store.`,
+          details.approvalNote
+        ),
         url: OWNER_SUBMISSIONS_URL,
+        byline: appReviewByline(details),
       };
     },
   },
@@ -113,6 +124,7 @@ export const appListingNotifications = createNotificationProcessor({
       return {
         message: withReason(`${appLabel(details)} was not approved`, details.reason),
         url: OWNER_SUBMISSIONS_URL,
+        byline: appReviewByline(details),
       };
     },
   },
@@ -128,6 +140,7 @@ export const appListingNotifications = createNotificationProcessor({
           details.reason
         ),
         url: OWNER_SUBMISSIONS_URL,
+        byline: appReviewByline(details),
       };
     },
   },

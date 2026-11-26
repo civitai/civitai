@@ -87,6 +87,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       withdrawExternalRequest: mutationStub('withdrawExternalRequest'),
     },
     blocks: { withdrawPublishRequest: mutationStub('withdrawPublishRequest') },
+    // The reviewer byline's avatar asks for a user only when it has no user object; it always
+    // has one here, so this answers nothing.
+    user: {
+      getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) },
+      getCreator: { useQuery: () => ({ data: undefined, isLoading: false, isError: false }) },
+    },
   },
 }));
 
@@ -185,6 +191,33 @@ describe('the stream', () => {
     await expect
       .element(page.getByTestId('apps-history-notes-rej_1'))
       .toHaveTextContent('Icon is 32px, needs 256px');
+  });
+
+  test('a decided entry says who reviewed it, linking to their profile', async () => {
+    renderWithProviders(
+      <ListingHistoryPanelView
+        entries={[
+          entry({
+            id: 'rev_named',
+            status: 'rejected',
+            rejectionReason: 'Missing screenshot',
+            reviewer: { account: { username: 'reviewer_ada', image: null } },
+          }),
+          entry({ id: 'rev_gone', status: 'approved', reviewer: { account: null } }),
+          entry({ id: 'rev_none', status: 'pending', version: '3.0.0', reviewer: null }),
+        ]}
+      />
+    );
+    const named = page.getByTestId('apps-history-reviewer-rev_named');
+    await expect.element(named).toHaveTextContent(/Reviewed by.*reviewer_ada.*Civitai App Review/);
+    const link = named.element().querySelector('a');
+    expect(link?.getAttribute('href')).toBe('/user/reviewer_ada');
+    // A closed reviewer account reads as the team, never as a blank or a dead profile link.
+    const gone = page.getByTestId('apps-history-reviewer-rev_gone');
+    await expect.element(gone).toHaveTextContent('Reviewed by Civitai App Review');
+    expect(gone.element().querySelector('a')).toBeNull();
+    // Nobody has decided a pending request yet.
+    expect(page.getByTestId('apps-history-reviewer-rev_none').query()).toBeNull();
   });
 
   test('an app with no history says so rather than rendering an empty box', async () => {

@@ -1,6 +1,12 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+import {
+  decisionReviewer,
+  type DecisionReviewer,
+  type DecisionReviewerRow as ReviewerRow,
+} from '~/server/notifications/app-review-attribution';
+import { reviewerBylineSelect } from '~/server/selectors/review-user-chip.selector';
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
@@ -77,6 +83,8 @@ export type ListingHistoryEntry = {
   reviewedAt: Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /** Who decided it — see {@link DecisionReviewer}. `null` on an undecided entry. */
+  reviewer: DecisionReviewer | null;
   /** Author-written note, on `listing` entries only. */
   changelog: string | null;
   /** `building | deploying | live | failed`, on `version` entries only. */
@@ -282,6 +290,7 @@ export async function listListingHistory(opts: {
         rejectionReason: true,
         approvalNotes: true,
         changelog: true,
+        reviewedBy: { select: reviewerBylineSelect },
       },
     }),
     blockWhere
@@ -301,6 +310,7 @@ export async function listListingHistory(opts: {
             deployState: true,
             deployDetail: true,
             deployUpdatedAt: true,
+            reviewedBy: { select: reviewerBylineSelect },
           },
         })
       : Promise.resolve([]),
@@ -327,6 +337,7 @@ export async function listListingHistory(opts: {
         rejectionReason: string | null;
         approvalNotes: string | null;
         changelog: string | null;
+        reviewedBy: ReviewerRow;
       }) => ({
         id: r.id,
         source: 'listing' as const,
@@ -336,6 +347,7 @@ export async function listListingHistory(opts: {
         reviewedAt: r.reviewedAt,
         rejectionReason: r.rejectionReason,
         approvalNotes: r.approvalNotes,
+        reviewer: decisionReviewer(r.status, r.reviewedBy),
         changelog: r.changelog,
         deployState: null,
         deployDetail: null,
@@ -357,6 +369,7 @@ export async function listListingHistory(opts: {
         deployState: string | null;
         deployDetail: string | null;
         deployUpdatedAt: Date | null;
+        reviewedBy: ReviewerRow;
       }) => ({
         id: r.id,
         source: 'version' as const,
@@ -366,6 +379,7 @@ export async function listListingHistory(opts: {
         reviewedAt: r.reviewedAt,
         rejectionReason: r.rejectionReason,
         approvalNotes: r.approvalNotes,
+        reviewer: decisionReviewer(r.status, r.reviewedBy),
         changelog: null,
         deployState: r.deployState,
         deployDetail: authorFailureDetail(r),
@@ -398,6 +412,7 @@ export type OrphanedSubmission = {
   reviewedAt: Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  reviewer: DecisionReviewer | null;
   canWithdraw: boolean;
 };
 
@@ -492,6 +507,7 @@ export async function listMyOrphanedSubmissions(opts: {
       reviewedAt: true,
       rejectionReason: true,
       approvalNotes: true,
+      reviewedBy: { select: reviewerBylineSelect },
     },
   });
   if (rows.length === 0) return [];
@@ -522,6 +538,7 @@ export async function listMyOrphanedSubmissions(opts: {
           reviewedAt: Date | null;
           rejectionReason: string | null;
           approvalNotes: string | null;
+          reviewedBy: ReviewerRow;
         }) => ({
           id: r.id,
           slug: r.slug,
@@ -531,6 +548,7 @@ export async function listMyOrphanedSubmissions(opts: {
           reviewedAt: r.reviewedAt,
           rejectionReason: r.rejectionReason,
           approvalNotes: r.approvalNotes,
+          reviewer: decisionReviewer(r.status, r.reviewedBy),
           // Always the submitter here, by construction — but routed through the SAME helper
           // the app-keyed entries use, so the pending-only half of the rule has one home.
           canWithdraw: canWithdrawRequest(r.status, opts.userId, opts.userId),

@@ -930,6 +930,7 @@ describe('delistListing', () => {
       expect.objectContaining({
         type: 'app-listing-hidden',
         userId: OWNER,
+        attribution: { kind: 'moderator', userId: REVIEWER },
         details: expect.objectContaining({ slug: SLUG, reason: GOOD_REASON }),
       })
     );

@@ -787,6 +787,7 @@ export async function delistListing(opts: {
     // Keyed by the audit event id so each distinct hide (delist→relist→delist)
     // notifies once, without a fresh nonce.
     key: `app-listing-hidden:${eventId}`,
+    attribution: { kind: 'moderator', userId: reviewerUserId },
     details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
   });
 
