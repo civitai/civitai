@@ -1,18 +1,21 @@
 import type { NextApiRequest } from 'next';
 import { redactCredentials } from '@civitai/axiom/redact-credentials';
-import { env } from '~/env/server';
+import { createLogWindowCap } from '@civitai/shared/log-window-cap';
 import { logToAxiom } from '~/server/logging/client';
 import { reconstructApiRoute } from '~/server/prom/http-errors';
+import { configuredTokenValues } from '~/server/utils/admin-token';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { redactKnownValues } from '~/server/utils/redact-known-values';
 import type { TokenMatchSlot } from '~/server/utils/webhook-token';
 
-export type AdminAuditCredential = 'header' | 'bearer' | 'query';
+/** `header` is x-webhook-token, `admin-header` is x-admin-token. */
+export type AdminAuditCredential = 'header' | 'admin-header' | 'bearer' | 'query';
 export type AdminAuditOutcome = 'accepted' | 'rejected' | 'error';
 
 export type AdminAuditEntry = {
   action: string;
-  slot: TokenMatchSlot | 'none';
+  /** `admin`: the endpoint's own x-admin-token matched. */
+  slot: TokenMatchSlot | 'admin' | 'none';
   /** Where a credential was sent, not which one matched: `slot` says that. */
   presented: AdminAuditCredential[];
   outcome: AdminAuditOutcome;
@@ -39,10 +42,31 @@ function withoutTokenKey(value: unknown) {
   return rest;
 }
 
-/** One record per call to an audited admin endpoint, accepted or not. Never throws. */
+// A flood of refused calls must not become a flood of records: past the cap, one count per window.
+const refusedCap = createLogWindowCap({
+  limit: 20,
+  windowMs: 60_000,
+  onSummary: (summary) =>
+    logToAxiom({
+      name: 'admin-endpoint-audit',
+      type: 'info',
+      message: 'refused-calls-dropped',
+      payload: { outcome: 'rejected', summary: true, ...summary },
+    }),
+});
+
+/**
+ * One record per call to an audited admin endpoint, accepted or not; refused calls past the cap are
+ * counted instead. Never throws.
+ */
 export function recordAdminEndpointAudit(req: NextApiRequest, entry: AdminAuditEntry): void {
   try {
-    const secrets = [env.WEBHOOK_TOKEN, env.WEBHOOK_TOKEN_PREVIOUS, env.PROBE_TOKEN];
+    if (
+      entry.outcome === 'rejected' &&
+      !refusedCap.admit({ key: entry.action, clientIp: getTrustedClientIp(req) })
+    )
+      return;
+    const secrets = configuredTokenValues();
     // Redacted before it is cut, so a cut cannot leave half a token behind.
     // Key-name redaction must run on the object: logToAxiom's own pass cannot see inside a string.
     const params = redactKnownValues(

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/setup';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -327,6 +327,18 @@ describe('getRunnerDevTunnelUser (the runner’s dev-tunnel endpoints)', () => {
   });
 });
 
+/** The App Assistant client as `enableAppAssistant` keeps it (no `accessMode`). */
+const CANONICAL_CLIENT = {
+  secret: null,
+  name: 'App Assistant',
+  description: 'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
+  redirectUris: [],
+  allowedOrigins: [],
+  isConfidential: false,
+  grants: [],
+  allowedScopes: SCOPE,
+};
+
 describe('enableAppAssistant', () => {
   it("creates the user's own client and consents them with a daily cap", async () => {
     await enableAppAssistant(USER_ID);
@@ -335,7 +347,8 @@ describe('enableAppAssistant', () => {
     expect(CLIENT_ID.startsWith('firstparty-')).toBe(false);
     const upsert = dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0];
     expect(upsert.where).toEqual({ id: CLIENT_ID });
-    expect(upsert.update).toEqual({ allowedScopes: SCOPE });
+    expect(upsert.update).toEqual(CANONICAL_CLIENT);
+    expect(upsert.update).not.toHaveProperty('accessMode');
     expect(upsert.create).toMatchObject({
       id: CLIENT_ID,
       userId: USER_ID,
@@ -359,8 +372,7 @@ describe('enableAppAssistant', () => {
     expect(mintAppTokenMock).not.toHaveBeenCalled();
   });
 
-  it('writes nothing once client and consent are in place, so a limit the user changed survives', async () => {
-    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ allowedScopes: SCOPE });
+  it('leaves a consent already in place alone, so a limit the user changed survives', async () => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({
       scope: SCOPE,
       buzzLimit: [{ type: 'sliding', unit: 1, window: 'day', limit: 250 }],
@@ -369,7 +381,6 @@ describe('enableAppAssistant', () => {
     await enableAppAssistant(USER_ID);
 
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -403,11 +414,67 @@ describe('enableAppAssistant', () => {
     );
   });
 
-  it('heals a client whose allowed scopes were narrowed', async () => {
-    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ allowedScopes: TokenScope.UserRead });
-    await enableAppAssistant(USER_ID);
-    expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).toEqual({
+  it('🔴 repairs a client edited before edits were refused: every field back to its canonical value', async () => {
+    // A row renamed and given a redirect URI while its scopes stayed right: the update is the whole
+    // canonical shape whatever the row holds.
+    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({
       allowedScopes: SCOPE,
+      name: 'Totally Official App',
+      redirectUris: ['https://attacker.example/cb'],
+    });
+    await enableAppAssistant(USER_ID);
+    expect(dbMock.dbWrite.oauthClient.upsert).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).toEqual(CANONICAL_CLIENT);
+  });
+
+  // A ban marks the self-only client it disables (oauth-ban-marker, whose re-open SQL is tested on
+  // real rows there); only a marked client is re-opened. The mark lives on the cache Redis, a
+  // process boundary.
+  describe('a disabled client', () => {
+    const marks = new Map<string, string>();
+    const reopenCalls = () => dbMock.dbWrite.$executeRaw.mock.calls;
+    beforeEach(() => {
+      marks.clear();
+      redisMock.redis.get.mockImplementation(
+        (async (key: string) => [...marks].find(([m]) => key.endsWith(m))?.[1] ?? null) as never
+      );
+      redisMock.redis.del.mockImplementation((async (key: string) => {
+        const hit = [...marks.keys()].find((m) => key.endsWith(m));
+        return hit && marks.delete(hit) ? 1 : 0;
+      }) as never);
+      dbMock.dbWrite.$executeRaw.mockReset();
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+    });
+    afterEach(() => {
+      redisMock.redis.get.mockReset();
+      redisMock.redis.del.mockReset();
+    });
+
+    it('🔴 one staff disabled (no ban mark) stays disabled when App Assistant is turned on', async () => {
+      dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({
+        allowedScopes: SCOPE,
+        accessMode: 'disabled',
+      });
+      await enableAppAssistant(USER_ID);
+      expect(reopenCalls()).toHaveLength(0);
+      // The canonical upsert never carries a mode either.
+      expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).not.toHaveProperty(
+        'accessMode'
+      );
+    });
+
+    it('🔴 one a ban disabled is re-opened once the user turns App Assistant on again', async () => {
+      marks.set(`oauth:ban-disabled:${CLIENT_ID}`, 'open');
+      await enableAppAssistant(USER_ID);
+      expect(reopenCalls()).toHaveLength(1);
+      expect(marks.size).toBe(0);
+    });
+
+    it('🔴 a cache Redis error does not fail the enable: no re-open, the consent is still written', async () => {
+      redisMock.redis.get.mockRejectedValue(new Error('cache down'));
+      await expect(enableAppAssistant(USER_ID)).resolves.toBeUndefined();
+      expect(reopenCalls()).toHaveLength(0);
+      expect(dbMock.dbWrite.oauthConsent.upsert).toHaveBeenCalled();
     });
   });
 });

@@ -14,6 +14,13 @@ export type AppAccessReviewSource = (typeof APP_ACCESS_REVIEW_SOURCES)[number];
 export const APP_ACCESS_REQUEST_DECISIONS = ['approved', 'declined'] as const;
 export type AppAccessRequestDecision = (typeof APP_ACCESS_REQUEST_DECISIONS)[number];
 
+/**
+ * How old an account must be, in days, before `app-access-auto-approve` may approve its request on
+ * submit. A younger account still gets a request, PENDING, for a moderator to decide: the age check
+ * routes it to the queue, it never declines it.
+ */
+export const APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS = 7;
+
 /** "What do you want to build?" — optional, and short enough to read in a queue. */
 export const APP_ACCESS_WHAT_TO_BUILD_MAX = 2000;
 

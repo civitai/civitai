@@ -471,6 +471,8 @@ export const serverSchema = z
     // Header token for /api/admin/provider-download-token. Unset: the endpoint refuses everything.
     PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
+    // x-admin-token for /api/admin/refresh-sessions and refresh-user-sessions. Unset: both return 404.
+    SESSION_RESET_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
