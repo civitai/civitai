@@ -171,7 +171,6 @@
     }
   }
 
-  /* B12: the lede sits 10px under the title, and the page gap alone parts it from the first section. */
   header .page-title {
     margin-bottom: 0.625rem;
   }

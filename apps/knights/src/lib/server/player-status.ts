@@ -110,8 +110,8 @@ export async function getPlayerStatus(
     .executeTakeFirst();
   if (!player) return null;
   const next = nextLadderEntry(player.rankType);
-  // Sequential on purpose: the pool has 20 connections and the live stats broadcast reads this for several voters at
-  // once, so a fan-out would starve the votes.
+  // Sequential on purpose: the live stats broadcast reads this for several voters at once, so a fan-out per call
+  // would take the pool's connections from the votes.
   return statusFrom(player.rankType, player.exp, {
     ...player,
     goldSpendable: (await getGoldBalance(db, userId)).convertible,
