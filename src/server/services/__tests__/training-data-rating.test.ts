@@ -130,6 +130,22 @@ describe('extractionRating over a captioned zip', () => {
     expect(mockHeadBlob).toHaveBeenCalledTimes(1);
   });
 
+  it('rates a text-typed entry that carries a level as media; one with no level stays a caption', async () => {
+    const leveledText = { ...caption, blob: { nsfwLevel: 'r' } };
+    expect(await extractionRating({ entries: [image04, leveledText] }, 'wf-1')).toEqual({
+      nsfwLevel: NsfwLevel.PG | NsfwLevel.R,
+      fullyRated: true,
+    });
+    // Control: a text entry with no level is skipped, not read as an unrated image.
+    expect(
+      await extractionRating(
+        { entries: [image04, { ...caption, blob: { nsfwLevel: null } }] },
+        'wf-1'
+      )
+    ).toEqual({ nsfwLevel: NsfwLevel.PG, fullyRated: true });
+    expect(mockHeadBlob).not.toHaveBeenCalled();
+  });
+
   it('counts a rejected entry as unrated', async () => {
     expect(
       await extractionRating({ entries: [image04, caption], rejected: [{ air: 'x' }] }, 'wf-1')
