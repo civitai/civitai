@@ -25,8 +25,7 @@ import (
 
 // SHARED COLLECTIONS through the handler (shared.go): the real handler and private-stream stack, with
 // the shared reader faked so each answer is the board the case sets. Every key, seq and canary is
-// distinct. Fails on origin/main: there is no Server.Shared (the test does not compile); there, a
-// shared collection's read is `501 not_private` with the writes on.
+// distinct.
 
 type fakeShared struct {
 	mu     sync.Mutex
@@ -379,7 +378,7 @@ func TestASignedOutViewerReadsTheSharedPath(t *testing.T) {
 
 // CUT OVER: with the writes on, a private read is never read from REST: an empty stream is an empty
 // answer, and a stream that cannot answer is its refusal. The shadow's registry-only header keeps its
-// `source: none` answer. Fails on origin/main: an empty stream with the writes on reads REST there.
+// `source: none` answer.
 func TestACutOverPrivateReadNeverFallsBack(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	s.store.by["civitai_empty-c"] = restAnswer{200, `{"items":[{"key":"rest-1","data":{"t":"REST"},"version":1}],"nextCursor":null}`}

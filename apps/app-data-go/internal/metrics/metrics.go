@@ -86,8 +86,7 @@ var BlockOutcomes = []string{
 var GuardOutcomes = []string{exchange.GuardThrottled, exchange.GuardRemembered, exchange.GuardJoined}
 
 // WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the
-// write routes, WRITES-DESIGN.md "The API"). The tally PATCH (increment, mark, unmark) was removed
-// with App Storage's tallies (docs/app-storage-generic-core.md, rollout step 5).
+// write routes, WRITES-DESIGN.md "The API"). PATCH is no write route: the mux answers it 405.
 var WriteOps = []string{"create", "put", "delete", "info"}
 
 // WriteOutcomes are the `outcome` values of app_data_writes_total. `2xx`, `4xx` and `501` are the

@@ -36,8 +36,7 @@ func (r *regionTap) SubscribeMeta(ctx context.Context, sch, token string, meta j
 
 // 🔴 REGION through the real managers NewReader builds: with ForwardRegion the viewer's region goes on
 // their per-viewer stream, the one the adapter judges it on, and NEVER on a level stream, which every
-// viewer shares and the adapter reads as a service, held by no region. Fails on the commit before it:
-// there is no Build.ForwardRegion nor session.WithRegion (the test does not compile).
+// viewer shares and the adapter reads as a service, held by no region.
 func TestTheRegionGoesOnThePerViewerStreamNeverALevelStream(t *testing.T) {
 	tap := &regionTap{seamAdapter: &seamAdapter{}}
 	bounds := Bounds{MaxStreams: 10, MaxRecords: 100, MaxBytes: 1 << 20}

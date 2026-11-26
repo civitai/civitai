@@ -115,8 +115,6 @@ func withFloorCount(opts Options, into floorReads) Options {
 // 1. An acknowledgement applies only at or above both the overlay's and the base's seq, and above the
 // stream's head. Out of order: the write at seq 31 is answered before the one at 30, and 30 never
 // replaces it.
-// Fails on origin/main: there is no Manager.Ack (the test does not compile); the behavioural
-// assertion is `k1=ACK-31` after the late ack 30.
 func TestAnAckOlderThanTheOverlayOrTheBaseIsIgnored(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-20"), rec("r2", "k2", 40, "BASE-40")}
@@ -142,8 +140,6 @@ func TestAnAckOlderThanTheOverlayOrTheBaseIsIgnored(t *testing.T) {
 // 2. An overlay is dropped once the stream shows its write: an upsert of its key at a seq at or above
 // it, or the stream's head reaching it. An older upsert, or one without a seq, replaces the base
 // underneath and leaves the overlay.
-// Fails on origin/main: no Manager.Ack (does not compile); the behavioural assertion is
-// `k1=STREAM-31` once the stream's upsert at 31 arrives.
 func TestAnOverlayIsDroppedOnceTheStreamCatchesUp(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-20"), rec("r2", "k2", 21, "BASE-21")}
@@ -186,8 +182,6 @@ func TestAnOverlayIsDroppedOnceTheStreamCatchesUp(t *testing.T) {
 // 3. An overlay its stream never caught up with is dropped OverlayTTL after it was set, showing the
 // base again, never nothing; a record the base never held then goes until the stream sends it. On a
 // read, and on a sweep.
-// Fails on origin/main: no Manager.Ack (does not compile); the behavioural assertion is
-// `k1=BASE-20` at 91 s.
 func TestAnOverlayExpiresShowingTheBase(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-20")}
@@ -216,8 +210,6 @@ func TestAnOverlayExpiresShowingTheBase(t *testing.T) {
 // stream Delete of the marker's own URN drops it (and the base); one of another URN (the old row of a
 // re-created key) leaves it. A Delete of a written record's URN (a moderator hide after the write)
 // wins over its overlay.
-// Fails on origin/main: no Manager.Ack (does not compile); the behavioural assertion is `k2=BASE-2`
-// alone right after the delete's ack.
 func TestADeleteLeavesAMarkerUntilTheStreamDeletesItsURN(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-1"), rec("r2", "k2", 21, "BASE-2")}
@@ -260,9 +252,6 @@ func TestADeleteLeavesAMarkerUntilTheStreamDeletesItsURN(t *testing.T) {
 // 5. For a block token, a floor is met by an acknowledgement this replica holds for the token's
 // stream of the collection read: no reopen. One held for another collection is no credit, and an
 // expired one is none either.
-// Fails on origin/main: no Manager.ReadAt or Ack (does not compile); the behavioural assertion is
-// one subscription for the floor read. The cross-collection assertion (ErrFloorNotMet, 3 opened)
-// fails on 3c012af11b, where an ack in any collection of the app counted.
 func TestABlockTokensFloorIsMetByItsOwnAckWithoutAReopen(t *testing.T) {
 	floors := floorReads{}
 	h := newHarness(t, withFloorCount(overlayOpts(), floors))
@@ -293,7 +282,6 @@ func TestABlockTokensFloorIsMetByItsOwnAckWithoutAReopen(t *testing.T) {
 
 // A stream that names no head (one the origin refused, or that holds nothing) cannot be compared
 // with a floor, so a floored read of it is answered as an unfloored one: no reopen, no 503.
-// Fails on 3c012af11b: every such read was ErrFloorNotMet (`err != nil`).
 func TestAHeadlessStreamAnswersAFlooredReadUnfloored(t *testing.T) {
 	floors := floorReads{}
 	h := newHarness(t, withFloorCount(overlayOpts(), floors))
@@ -311,7 +299,6 @@ func TestAHeadlessStreamAnswersAFlooredReadUnfloored(t *testing.T) {
 
 // A stream that holds nothing and names no head answers empty whatever is overlaid, so the caller
 // still reads REST; one that names a head shows the overlay.
-// Fails on 3c012af11b: the refused stream answered the overlay record (`k1=ACK-5`).
 func TestARefusedStreamStaysEmptyUnderAnAck(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.reads(t, hubTok, "")
@@ -325,7 +312,6 @@ func TestARefusedStreamStaysEmptyUnderAnAck(t *testing.T) {
 }
 
 // The manager's size counts overlays: they are bounded apart from the records.
-// Fails on 3c012af11b: Stats counted records only (Records 1, not 2).
 func TestStatsCountOverlays(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-20")}
@@ -340,7 +326,6 @@ func TestStatsCountOverlays(t *testing.T) {
 
 // With the writes off, a head that went back is main's failure: an adapter `cursor_expired` closes
 // the stream as an error and cools the key down, and a head below the one held is not read at all.
-// Fails on 3c012af11b: there the end closed `cursor_expired` with no cooldown whatever the flag.
 func TestWithTheWritesOffAHeadThatWentBackIsAFailureAsBefore(t *testing.T) {
 	h := newHarness(t, Options{})
 	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-off1", "OFF1")}
@@ -374,8 +359,6 @@ func TestWithTheWritesOffAHeadThatWentBackIsAFailureAsBefore(t *testing.T) {
 // interval: still behind, the read is ErrFloorNotMet; another read in the interval is ErrFloorNotMet
 // with no reopen; after the interval a reopen whose snapshot's head meets it is answered. Reads with
 // no floor are answered throughout.
-// Fails on origin/main: no Manager.ReadAt (does not compile); the behavioural assertion is the second
-// read's ErrFloorNotMet with still 2 subscriptions.
 func TestAFloorNotMetReopensOnceThenAnswersFloorNotMet(t *testing.T) {
 	floors := floorReads{}
 	h := newHarness(t, withFloorCount(overlayOpts(), floors))
@@ -414,8 +397,6 @@ func TestAFloorNotMetReopensOnceThenAnswersFloorNotMet(t *testing.T) {
 
 // 7. A hub token's floor is the head alone: its own acknowledgement, which a block token's floor would
 // count, does not meet it, and the read reopens. The overlay is carried across the reopen.
-// Fails on origin/main: no Manager.ReadAt or Ack (does not compile); the behavioural assertion is the
-// hub read's ErrFloorNotMet after 2 subscriptions, beside the block token's 1.
 func TestAHubTokensFloorIsTheHeadAlone(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	for _, tok := range []string{hubTok, blockTok} {
@@ -436,8 +417,6 @@ func TestAHubTokensFloorIsTheHeadAlone(t *testing.T) {
 
 // 8a. A head that went back, writes on: the adapter ends the stream `cursor_expired`
 // (private-feed.ts). That is not a failure: no cooldown, and the next read opens a fresh stream.
-// Fails on origin/main: the end is classified as an error and cools the key down, so the read after
-// it is ErrCoolingDown (`err != nil`). Uses only what main has.
 func TestACursorExpiredEndReopensWithoutACooldown(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-ce1", "CE1")}
@@ -455,8 +434,6 @@ func TestACursorExpiredEndReopensWithoutACooldown(t *testing.T) {
 // 8b. A head below the one held is the same: the stream closes `cursor_expired`, its overlays
 // (numbered in the old order) are dropped, and the next read opens a fresh stream. A read waiting on
 // a stream that ends so opens the fresh one itself, once.
-// Fails on origin/main: no head is read there and no Manager.Ack (does not compile); the behavioural
-// assertion is the `cursor_expired` close.
 func TestAHeadThatWentBackReopensAFreshStream(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-20")}

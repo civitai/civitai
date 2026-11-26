@@ -25,7 +25,7 @@ export const config = { api: { bodyParser: false } };
 // allowOpaqueOrigin: an UNVERIFIED block direct-fetches this from an opaque origin
 // (`Origin: null`); the Bearer block-JWT (no cookies) remains the sole authz gate — see
 // WithBlockScopeOpts.allowOpaqueOrigin. extraCorsMethods: documents are written with PUT and
-// deleted with DELETE, which the preflight must allow. (PATCH went with the tally operators.)
+// deleted with DELETE, which the preflight must allow.
 export default withBlockScope(withAxiom(createStorageHandler()), {
   endpoint: storageEndpointLabel,
   requiredScope: 'apps:storage',
