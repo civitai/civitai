@@ -195,12 +195,38 @@ describe('appReviewDetailFetcher', () => {
     expect((live.details as Record<string, unknown>).actor).not.toHaveProperty('id');
     expect(gone.details).not.toHaveProperty('actor');
     expect(getNotificationMessage(gone)?.byline).toBe('Reviewed by Civitai App Review');
+    expect(getNotificationMessage(live)?.byline).toBe(
+      'Reviewed by @reviewer_ada, Civitai App Review'
+    );
+  });
+
+  it('🔴 returns no reviewer account id, for a resolved and a deleted reviewer', async () => {
+    const { ctx: c } = ctx([{ id: 31, username: 'reviewer_ada' }]);
+    const live = { id: 1, type: 'app-block-approved', details: { ...BASE, reviewerUserId: 31 } };
+    const gone = { id: 2, type: 'app-listing-rejected', details: { ...BASE, reviewerUserId: 44 } };
+    const unset = { id: 3, type: 'app-block-rejected', details: { ...BASE, reviewerUserId: null } };
+    await appReviewDetailFetcher.fetcher([live, gone, unset], c);
+
+    for (const n of [live, gone, unset]) expect(n.details).not.toHaveProperty('reviewerUserId');
+    // Nothing in what the client receives carries either id.
+    expect(JSON.stringify([live, gone, unset])).not.toMatch(/\b(31|44)\b/);
+    expect(live.details).toEqual({
+      ...BASE,
+      actor: { username: 'reviewer_ada' },
+      reviewedByModerator: true,
+    });
+    expect(gone.details).toEqual({ ...BASE, reviewedByModerator: true });
+    // A null id named nobody: no byline, as before attribution.
+    expect(unset.details).toEqual(BASE);
+    expect(getNotificationMessage(unset)?.byline).toBeUndefined();
   });
 
   it('makes no query for notifications without a reviewer', async () => {
     const { findMany, ctx: c } = ctx([]);
-    await appReviewDetailFetcher.fetcher([{ id: 1, type: 'app-block-rejected', details: BASE }], c);
+    const n = { id: 1, type: 'app-block-rejected', details: { ...BASE } };
+    await appReviewDetailFetcher.fetcher([n], c);
     expect(findMany).not.toHaveBeenCalled();
+    expect(n.details).toEqual(BASE);
   });
 });
 

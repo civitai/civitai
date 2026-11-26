@@ -8,7 +8,7 @@
  * `reviewedByTeam: true` for a decision attributed to the team and never to a person. The
  * reviewer's name and avatar are NOT stored: `appReviewDetailFetcher` resolves them into
  * `actor` when the notification is read or emailed, so a renamed reviewer shows the current
- * name and a deleted one shows none.
+ * name and a deleted one shows none, and removes `reviewerUserId` from what it returns.
  *
  * Pure and dependency-free: the processors that call it are in the client graph.
  */
@@ -44,6 +44,12 @@ export type AppReviewAttributionDetails = {
   reviewedByTeam?: boolean;
   /** Filled at read time by `appReviewDetailFetcher`; never stored. */
   actor?: AppReviewActor | null;
+  /**
+   * Set at read time by `appReviewDetailFetcher` in place of `reviewerUserId`, which it removes
+   * so the id never reaches the client: a person decided, so the byline falls back to the team
+   * when no actor resolved (the account is gone). Never stored.
+   */
+  reviewedByModerator?: boolean;
 };
 
 /** The details fields an emitter stores for `attribution`. */
@@ -73,7 +79,9 @@ export function appReviewByline(details: AppReviewAttributionDetails): string | 
   const actor = details.actor;
   const username = typeof actor?.username === 'string' ? actor.username.trim() : '';
   if (username && !actor?.deletedAt) return `Reviewed by @${username}, ${APP_REVIEW_TEAM_NAME}`;
-  if (typeof details.reviewerUserId === 'number') return `Reviewed by ${APP_REVIEW_TEAM_NAME}`;
+  if (typeof details.reviewerUserId === 'number' || details.reviewedByModerator === true) {
+    return `Reviewed by ${APP_REVIEW_TEAM_NAME}`;
+  }
   return undefined;
 }
 
