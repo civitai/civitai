@@ -149,9 +149,10 @@ export async function touchAccount(deviceId: string, userId: number): Promise<vo
 // Account list (KEYS[1]). No list: create one with both accounts when a distinct prior account is signed in (2),
 // else write nothing (0). A list: joined (1) when the new account, or the account of the browser's prior hub
 // session, is in it and used within ACCOUNT_IDLE_MS; otherwise -1.
-// Family record (KEYS[2], when given): with a new family, joined by a list join, or when it holds the new or the
-// prior family; otherwise -1. Either -1 writes nothing to both. With no new family (a hand-off that minted
-// none) an existing record is left as it is. An absent record is created, holding the new and the prior family,
+// Family record (KEYS[2], when given): joined by a list join, or when it holds the new or the prior family;
+// otherwise -1. A hand-off mints no new family, so it needs the prior family in the record. Either -1 writes
+// nothing to both. A join slides the record's TTL only while it holds two families or the browser has a list,
+// so an existing single-family record drains. An absent record is created, holding the new and the prior family,
 // when the account list is created or joined (so a sign-out ends the list's family and forgets the list), or when
 // the prior family is a different family from the new one; a browser with a single family gets none.
 // ARGV: new user, prior user ('' if none), now (ms), list TTL (s), idle limit (ms), family ('' if none), prior
@@ -173,7 +174,8 @@ const JOIN_SCRIPT = `
   local rec = KEYS[2] ~= nil
   local fam = rec and ARGV[6] ~= ''
   local famExists = rec and redis.call('EXISTS', KEYS[2]) == 1
-  if famExists and fam and listed ~= 1 and redis.call('SISMEMBER', KEYS[2], ARGV[6]) == 0
+  if famExists and listed ~= 1
+    and not (fam and redis.call('SISMEMBER', KEYS[2], ARGV[6]) == 1)
     and not (ARGV[7] ~= '' and redis.call('SISMEMBER', KEYS[2], ARGV[7]) == 1) then
     return -1
   end
@@ -184,8 +186,8 @@ const JOIN_SCRIPT = `
   end
   if listed ~= 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
   if famExists then
-    if fam then
-      redis.call('SADD', KEYS[2], ARGV[6])
+    if fam then redis.call('SADD', KEYS[2], ARGV[6]) end
+    if redis.call('SCARD', KEYS[2]) >= 2 or redis.call('EXISTS', KEYS[1]) == 1 then
       redis.call('EXPIRE', KEYS[2], ARGV[8])
     end
   elseif rec and (listed ~= 0 or (fam and ARGV[7] ~= '' and ARGV[7] ~= ARGV[6])) then

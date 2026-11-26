@@ -61,6 +61,8 @@ async function isFamilyLive(family: string): Promise<boolean> {
 // (or an account list, which device.ts JOIN_SCRIPT records): a browser with one family has nothing more for a
 // sign-out to end, so no record is written for it. A new record holds both the new family and the proof family.
 // A browser with an account list but no record yet gets none: a sign-out from it would forget that list.
+// A join slides the TTL only while the record holds two families or the browser has an account list, so a
+// single-family record from before this rule drains (as TOUCH_SCRIPT lets single-account lists drain).
 // 0: created, or nothing to record (a single family); 1: joined; -1: refused.
 const ADD_FAMILY_SCRIPT = `
   if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -74,7 +76,9 @@ const ADD_FAMILY_SCRIPT = `
   if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
     or (ARGV[2] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1) then
     redis.call('SADD', KEYS[1], ARGV[1])
-    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    if redis.call('SCARD', KEYS[1]) >= 2 or redis.call('EXISTS', KEYS[2]) == 1 then
+      redis.call('EXPIRE', KEYS[1], ARGV[3])
+    end
     return 1
   end
   return -1

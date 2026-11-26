@@ -18,7 +18,7 @@ import { evalSys } from '../redis';
 import { cookieDomain } from './cookie';
 import { setDeviceCookie } from './device';
 import { clearLegacyCookies } from './legacy-cookies';
-import { acceptHubSession, addDeviceFamily, markFamilyLive } from './lineage';
+import { acceptHubSession, markFamilyLive } from './lineage';
 import { sessions } from './registry';
 import {
   canHoldSession,
@@ -111,9 +111,10 @@ function carryDeviceId(cookies: Cookies): string {
   return id;
 }
 
+// The copy keeps the session's family and 90-day clock, so the browser's family record has nothing new to hold.
 async function recordFamily(cookies: Cookies, family: string | undefined): Promise<void> {
   await markFamilyLive(family);
-  await addDeviceFamily(carryDeviceId(cookies), family, { proofFamily: family });
+  carryDeviceId(cookies);
 }
 
 /**

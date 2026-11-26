@@ -337,9 +337,9 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     );
   });
 
-  // Regression (lazy family records): origin/main wrote a one-family record for every browser it moved. The
-  // record from before keeps working (invariant guard).
-  it('the move writes no family record for a single-family browser, and joins one already there', async () => {
+  // Regression (lazy family records): origin/main wrote a one-family record for every browser it moved, and
+  // joined (sliding the TTL of) a record already there. The copy keeps its family, so neither is written now.
+  it('the move writes no family record, and leaves one already there as it is', async () => {
     sharedSession();
     const moved = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
     expect((await visit(moved)).session).toMatchObject({ sub: '100', sid: 'j0' });
@@ -348,9 +348,11 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
 
     sharedSession({ jti: 'j1' });
     h.sys.sets.set(deviceFamiliesKey('dev-e'), new Set(['j1', 'spoke-fam']));
-    await visit(jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-e' }));
+    const second = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-e' });
+    expect((await visit(second)).session).toMatchObject({ sub: '100', sid: 'j1' });
+    expect(second.get(HOST_DEVICE())).toBe('dev-e');
     expect([...h.sys.sets.get(deviceFamiliesKey('dev-e'))!].sort()).toEqual(['j1', 'spoke-fam']);
-    expect(h.sys.ttls.get(deviceFamiliesKey('dev-e'))).toBe(91 * 24 * 60 * 60);
+    expect(h.sys.ttls.has(deviceFamiliesKey('dev-e'))).toBe(false);
   });
 
   it('two tabs racing on the same token get one session', async () => {
