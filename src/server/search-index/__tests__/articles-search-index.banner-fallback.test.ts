@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 
 const meili = vi.hoisted(() => ({ updateDocs: vi.fn(), cleanup: vi.fn() }));
@@ -12,6 +13,7 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
 
 import {
   articleSelect,
+  getIndexWithheldImageIds,
   pushData,
   transformData,
 } from '~/server/search-index/articles.search-index';
@@ -69,7 +71,7 @@ describe('articles search index', () => {
     const data = await transformData({
       articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],
       cosmetics: {},
-      modelWithheldImageIds: new Set([10]),
+      withheldImageIds: new Set([10]),
     });
     await pushData({ indexName: 'articles' }, data);
     const [sent] = meili.updateDocs.mock.calls[0][0].documents as Record<string, unknown>[];
@@ -81,7 +83,7 @@ describe('articles search index', () => {
     const records = await recordsOf({
       articles: [article({ coverImage: null, bannerImage: image(11, 1) })],
       cosmetics: {},
-      modelWithheldImageIds: new Set([11]),
+      withheldImageIds: new Set([11]),
     });
     expect(records).toHaveLength(0);
   });
@@ -241,5 +243,41 @@ describe('articles search index', () => {
     }[];
     // The pending one overwrites its old document's cover with null: the update merges.
     expect(sent.map((d) => [d.id, 'coverImage' in d, d.coverImage])).toEqual([[8, true, null]]);
+  });
+});
+
+describe('the images the articles index withholds', () => {
+  // Answers the report-listed lookup with `listed`, and the model lookup with `byModel`.
+  const dbAnswering = ({ listed = [] as number[], byModel = [] as number[] }) =>
+    ({
+      $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = Prisma.sql(strings, ...(values as never[])).sql;
+        return (sql.includes('"CsamReport"') ? listed : byModel).map((id) => ({ id }));
+      },
+    } as never);
+
+  it('🔴 withholds a cover listed on a report, and does not fall back to the banner', async () => {
+    const withheldImageIds = await getIndexWithheldImageIds([10, 11], dbAnswering({ listed: [10] }));
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],
+      cosmetics: {},
+      withheldImageIds,
+    });
+    expect(record).toHaveProperty('coverImage', undefined);
+  });
+
+  it('🔴 leaves out a banner-only article whose banner is listed on a report', async () => {
+    const withheldImageIds = await getIndexWithheldImageIds([11], dbAnswering({ listed: [11] }));
+    const records = await recordsOf({
+      articles: [article({ coverImage: null, bannerImage: image(11, 1) })],
+      cosmetics: {},
+      withheldImageIds,
+    });
+    expect(records).toHaveLength(0);
+  });
+
+  it('withholds what its model withholds too, and nothing else (control)', async () => {
+    const ids = await getIndexWithheldImageIds([10, 11, 12], dbAnswering({ byModel: [12] }));
+    expect([...ids]).toEqual([12]);
   });
 });

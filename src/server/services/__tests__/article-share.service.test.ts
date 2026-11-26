@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import path from 'path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ArticleService from '~/server/services/article.service';
 import type * as TextScanRoute from '~/server/services/text-scan/route';
 import type * as UserService from '~/server/services/user.service';
@@ -833,5 +835,105 @@ describe('moderators and share links', () => {
     await expect(
       getArticleShareLinks({ articleId: ARTICLE, userId: STRANGER, isModerator: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('getArticleByShareToken: images listed on a report', () => {
+  const COVER = 5;
+  const BANNER = 6;
+  const LISTED_BODY = 501;
+  const CLEAN_BODY = 502;
+  const bodyUrl = (id: number) => `${id}${id}${id}aaaa-bbbb-4ccc-8ddd-${String(id).repeat(4)}`;
+  const content = [LISTED_BODY, CLEAN_BODY]
+    .map((id) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${bodyUrl(id)}/x.jpeg">`)
+    .join('');
+  const image = (id: number) => ({
+    id,
+    url: id === COVER || id === BANNER ? `key-${id}` : bodyUrl(id),
+    nsfwLevel: 1,
+    userId: AUTHOR,
+    hash: 'h',
+    width: 8,
+    height: 10,
+    ingestion: 'Scanned',
+    needsReview: null,
+    tosViolation: false,
+    modelRestricted: false,
+    minor: false,
+    meta: null,
+    metadata: null,
+    tags: [],
+  });
+
+  let pg: PGlite;
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
+      INSERT INTO "Image" (id, "userId") VALUES
+        (${COVER}, ${AUTHOR}), (${BANNER}, ${AUTHOR}), (${LISTED_BODY}, ${AUTHOR}), (${CLEAN_BODY}, ${AUTHOR});
+      INSERT INTO "CsamReport" (images) VALUES ('[{"id": ${COVER}}, {"id": ${LISTED_BODY}}]');
+    `);
+  });
+  afterAll(() => pg?.close());
+
+  beforeEach(() => {
+    // The report-listed lookup runs on Postgres; the model lookup finds nothing withheld.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return sql.text.includes('"CsamReport"') ? (await pg.query(sql.text, sql.values)).rows : [];
+    }) as never);
+    articles({ content, coverImage: image(COVER), bannerImage: image(BANNER) });
+    shareCheck({ textHash: sharedArticleTextHash({ title: `Article ${ARTICLE}`, content }) });
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([
+      { image: image(LISTED_BODY) },
+      { image: image(CLEAN_BODY) },
+    ] as never);
+  });
+
+  const readAs = (
+    viewerId: number | undefined,
+    reportListedViewer?: { seesReportListed: boolean; ownerSeesReportListed?: boolean }
+  ) => getArticleByShareToken({ articleId: ARTICLE, shareToken: TOKEN, viewerId, reportListedViewer });
+
+  const seen = async (...args: Parameters<typeof readAs>) => {
+    const result = await readAs(...args);
+    if (result.status !== 'ok') throw new Error(`read was ${result.status}`);
+    const sent = JSON.stringify(result);
+    return {
+      cover: result.article.coverImage?.id,
+      banner: result.article.bannerImage?.id,
+      body: result.article.contentImages.map((i) => i.id),
+      listedBodyInHtml: sent.includes(bodyUrl(LISTED_BODY)),
+    };
+  };
+
+  it.each<[string, number | undefined, Parameters<typeof readAs>[1]]>([
+    ['a signed-out link holder', undefined, undefined],
+    ['a signed-in link holder', STRANGER, { seesReportListed: false, ownerSeesReportListed: true }],
+    ['the uploader on a scoped key', AUTHOR, { seesReportListed: false, ownerSeesReportListed: false }],
+  ])('🔴 withholds the listed cover and body image from %s', async (_, viewerId, viewer) => {
+    expect(await seen(viewerId, viewer)).toEqual({
+      cover: undefined,
+      banner: BANNER,
+      body: [CLEAN_BODY],
+      listedBodyInHtml: false,
+    });
+  });
+
+  it.each<[string, number | undefined, Parameters<typeof readAs>[1]]>([
+    ['their uploader', AUTHOR, { seesReportListed: false, ownerSeesReportListed: true }],
+    ['a held-media viewer', STRANGER, { seesReportListed: true, ownerSeesReportListed: true }],
+  ])('shows them to %s (control)', async (_, viewerId, viewer) => {
+    expect(await seen(viewerId, viewer)).toEqual({
+      cover: COVER,
+      banner: BANNER,
+      body: [LISTED_BODY, CLEAN_BODY],
+      listedBodyInHtml: true,
+    });
   });
 });

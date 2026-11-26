@@ -22,7 +22,12 @@ import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import type { dbRead } from '~/server/db/client';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -78,20 +83,32 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
+/** Cover or banner images no searcher is shown: withheld by their model, or listed on a report. */
+export async function getIndexWithheldImageIds(
+  imageIds: number[],
+  db: Pick<typeof dbRead, '$queryRaw'>
+) {
+  const [byModel, listed] = await Promise.all([
+    getModelWithheldImageIds(imageIds, db),
+    getReportListedHiddenImageIds(imageIds, SIGNED_OUT_REPORT_LISTED, db),
+  ]);
+  return new Set([...byModel, ...listed]);
+}
+
 export const transformData = async ({
   articles,
   cosmetics,
-  modelWithheldImageIds = new Set(),
+  withheldImageIds = new Set(),
 }: {
   articles: Article[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
-  /** Cover or banner images their model withholds: a withheld cover leaves no card image. */
-  modelWithheldImageIds?: Set<number>;
+  /** From `getIndexWithheldImageIds`: a withheld cover leaves no card image. */
+  withheldImageIds?: Set<number>;
 }) => {
   // A restricted minor image, or one restricted by its base model, is withheld like one its model
   // withholds: the index has no viewer.
   const withheld = (image: NonNullable<Article['coverImage']>) =>
-    modelWithheldImageIds.has(image.id) || isMinorMatureImage(image) || isRestrictedImage(image);
+    withheldImageIds.has(image.id) || isMinorMatureImage(image) || isRestrictedImage(image);
   const servable = (image: Article['coverImage']) =>
     image && !withheld(image) ? servableArticleImage(image) : null;
   const records = articles
@@ -264,7 +281,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled cosmetics`);
 
-    const modelWithheldImageIds = await getModelWithheldImageIds(
+    const withheldImageIds = await getIndexWithheldImageIds(
       articles.flatMap((a) => [a.coverImage?.id, a.bannerImage?.id]).filter(isDefined),
       db
     );
@@ -272,7 +289,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     return {
       articles,
       cosmetics,
-      modelWithheldImageIds,
+      withheldImageIds,
     };
   },
   transformData,

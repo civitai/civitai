@@ -22,6 +22,13 @@ export type ReportListedViewer = {
 const notListedFor = ({ userId, ownerSeesReportListed }: ReportListedViewer) =>
   notReportListedSql(ownerSeesReportListed ? userId : undefined);
 
+/** A read with no viewer: the search indexes, og images, shared documents. */
+export const SIGNED_OUT_REPORT_LISTED: ReportListedViewer = { seesReportListed: false };
+
+/** SQL over `"Image" i`: this viewer may see the image under the report-listed rule. */
+export const reportListedImageSql = (viewer: ReportListedViewer) =>
+  viewer.seesReportListed ? Prisma.sql`TRUE` : notListedFor(viewer);
+
 /** SQL: the image `idSql` names is one this viewer may see under the report-listed rule. */
 export const reportListedVisibleSql = (idSql: Prisma.Sql, viewer: ReportListedViewer) =>
   viewer.seesReportListed

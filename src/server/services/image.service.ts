@@ -102,7 +102,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
-  notReportListedSql,
+  reportListedImageSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
   isReviewImageBlockedForViewer,
@@ -6090,9 +6090,11 @@ export const getEntityCoverImage = async ({
 
   // A report-listed image is its uploader's and `seesReportListed` viewers' alone, on every branch
   // that can pick a bounty, entry or article cover.
-  const reportListedVisible = Prisma.sql`(${seesReportListed}::boolean OR ${notReportListedSql(
-    signedIn ? viewerId ?? undefined : undefined
-  )})`;
+  const reportListedVisible = reportListedImageSql({
+    userId: signedIn ? viewerId ?? undefined : undefined,
+    seesReportListed,
+    ownerSeesReportListed: true,
+  });
   // A blocked or ToS-violating cover is its owner's and moderators' alone.
   const coverNotBlocked = Prisma.join(
     [

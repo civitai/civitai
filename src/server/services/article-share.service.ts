@@ -4,6 +4,11 @@ import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+  type ReportListedViewer,
+} from '~/server/services/report-listed-visibility';
 import { isDefined } from '~/utils/type-guards';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -198,10 +203,12 @@ export async function getArticleByShareToken({
   articleId,
   shareToken,
   viewerId,
+  reportListedViewer = SIGNED_OUT_REPORT_LISTED,
 }: {
   articleId: number;
   shareToken: string | undefined;
   viewerId?: number;
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
 }): Promise<SharedArticleResult> {
   if (!shareToken || !shareTokenSchema.safeParse(shareToken).success) return UNAVAILABLE;
   const row = await resolveAccessToken(shareToken, 'Article');
@@ -258,16 +265,22 @@ export async function getArticleByShareToken({
     },
     select: { image: { select: { ...articleContentImageSelect, minor: true } } },
   });
-  const withheldByModel = await getModelWithheldImageIds(
-    [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
-    dbWrite
-  );
+  const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
+  const [withheldByModel, listedHidden] = await Promise.all([
+    getModelWithheldImageIds(ownImageIds, dbWrite),
+    getReportListedHiddenImageIds(
+      [...ownImageIds, ...connections.map((c) => c.image.id)],
+      { userId: viewerId, ...reportListedViewer },
+      dbWrite
+    ),
+  ]);
   return {
     status: 'ok',
     article: toSharedArticle(
       article,
       connections.map((c) => c.image),
-      withheldByModel
+      withheldByModel,
+      listedHidden
     ),
   };
 }
@@ -328,11 +341,14 @@ function toSharedArticle(
     minor: boolean | null;
   })[],
   /** Cover or banner images their model withholds. */
-  withheldByModel: Set<number>
+  withheldByModel: Set<number>,
+  listedHidden: Set<number>
 ) {
   const { id, title, nsfwLevel, updatedAt } = article;
   // A link holder is a reader: media only its owner and moderators may get leaves the body.
-  const servable = contentImages.filter(isServableBodyImage);
+  const servable = contentImages.filter(
+    (image) => isServableBodyImage(image) && !listedHidden.has(image.id)
+  );
   const withheld = contentImages
     .filter((image) => !servable.includes(image))
     .map((image) => image.url);
@@ -348,6 +364,7 @@ function toSharedArticle(
   const shown = (image: Row | null) =>
     image &&
     !withheldByModel.has(image.id) &&
+    !listedHidden.has(image.id) &&
     servableArticleImage(image) !== null &&
     !isMinorMatureImage(image)
       ? image

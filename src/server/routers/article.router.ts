@@ -209,6 +209,7 @@ export const articleRouter = router({
         articleId: input.articleId,
         shareToken: ctx.req?.cookies?.[articleShareCookieName(input.articleId)],
         viewerId: ctx.user?.id,
+        reportListedViewer: reportListedViewerOf(ctx),
       })
     ),
   getMyDraftArticles: protectedProcedure
