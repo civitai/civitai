@@ -55,6 +55,8 @@ export const listMyServiceDealsSchema = z.object({
 });
 
 export const serviceDealActionSchema = dealId;
+/** The seller's own system instructions; the request text is read from the deal, never sent. */
+export const expandServiceDealPromptSchema = dealId.extend({ instructions: text(4000) });
 export const reviewServiceDealSchema = dealId.extend({
   verdict: z.enum(['Happy', 'NotQuite']),
   comment: text(2000).optional(),
