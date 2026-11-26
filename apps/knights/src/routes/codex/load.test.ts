@@ -40,11 +40,10 @@ describe('codex load', () => {
     expect(page.ranks[0]).toHaveProperty('accuracyBar');
   });
 
-  it("carries the player's status, the large badge images and the date they were sworn in", async () => {
+  it("carries the player's status and the large badge images", async () => {
     const page = await run();
     expect(page.status).toEqual({ rank: 'Knight', level: 12 });
     expect(page.badges).toEqual({ Knight: 'k450' });
-    expect(page.swornIn).toBe('2026-03-14T00:00:00.000Z');
   });
 
   it('quotes the rules facts, with the fervor formula read from config', async () => {
@@ -52,10 +51,5 @@ describe('codex load', () => {
     expect(page.facts.hearts.max).toBe(3);
     expect(page.facts.fervor).toMatchObject({ scale: 100, windowDays: 7 });
     expect(page.fervorExample.sum).toBe('100 × 100 × 80% × 80% = 6,400');
-  });
-
-  it('has no sworn-in date for someone without a career yet', async () => {
-    startAtRow.value = undefined;
-    expect((await run()).swornIn).toBeNull();
   });
 });

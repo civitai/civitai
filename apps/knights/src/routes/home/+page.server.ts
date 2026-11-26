@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
 import { moderatorStats } from '$lib/server/inquisitor/context';
 import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
-import { getPlayerStatus } from '$lib/server/player-status';
+import { requestPlayerStatus } from '$lib/server/request-reads';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
 import { consented, requireMember } from '$lib/server/membership';
@@ -48,7 +48,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     .executeTakeFirst();
 
   // The status and the Watch streak also feed the header's stat pills through page data.
-  const status = player ? await getPlayerStatus(db, locals.user.id) : null;
+  const status = player ? await requestPlayerStatus(db, locals) : null;
   const now = queueDeps.now();
   const playerId = locals.user.id;
   // The recap card replaces the daily popup: yesterday's verdicts, read whether or not they were already seen. The page marks
