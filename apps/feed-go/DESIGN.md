@@ -3819,9 +3819,10 @@ stub can never be read as an answer: the harness records a case Go hands back as
 reason, and never replays it to Node through this pod. Every public route ends a request it does not
 answer at `handBack` (the one caller of the proxy), so no route can reach an upstream past the stub:
 `TestEvalModeStubsEveryPublicRoute` drives every route `PublicMux` mounts (a ledger of the route
-set), and `TestProxyViaIsCalledOnlyFromHandBack` pins that the proxy has no other caller. The
-fallback URLs still decide which REST routes are mounted (as they do off), but are never dialled; a
-pod with none still listens publicly and answers the tRPC routes' stubs. A client gone before the
+set), and `TestProxyViaIsCalledOnlyFromHandBack` pins that the proxy has no other caller. Every
+public route is mounted in eval mode whether its fallback URL is set or not (an unmounted route would
+answer the mux's 404, which a harness could read as Node's own 404); the URLs are never dialled, and a
+pod with none still listens publicly and answers every route's stubs. A client gone before the
 hand-back (`canceled`) is answered nothing, as off. Answers written here rather than handed back
 (`FEED_GO_ANSWER_REGION_BLOCKED`'s 451, `FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE`'s 503) are
 answers, not hand-backs, and are written as off.
@@ -3830,7 +3831,8 @@ answers, not hand-backs, and are written as off.
 refuses eval mode beside any switch that sends this pod's traffic, or a copy of it, to the Node app or
 to the corpus (`config.EvalConflicts`): `FEED_GO_SHADOW_WORKERS` (the shadow's only switch on this
 side), `FEED_GO_SERVE_PARITY_SAMPLE_RATE`, `FEED_GO_EVAL_CAPTURE` and `FEED_GO_EVAL_CAPTURE_SERVE_RATE`
-(§19.6). Each must be unset or an explicit off (`0`, `false`, `no`, `off`); junk counts as on, so the
+(§19.6), and `FEED_GO_CACHE_WRITEBACK` (write-back stamps entries with the wall clock while an eval
+pod reads staleness on the frozen one, and writes caches other pods read). Each must be unset or an explicit off (`0`, `false`, `no`, `off`); junk counts as on, so the
 refusal errs towards not starting. A `FEED_GO_EVAL_MODE` that is neither on (`true`, `1`, `yes`) nor
 off (unset, `false`, `0`, `no`) is refused too: a typo must not leave an eval pod proxying, nor a
 serving pod stubbing.
@@ -3849,7 +3851,17 @@ write budgets, and the miss computer's `cachedAt` stamps and recent-answer memo:
 freeze the process, not the answer. `internal/clock`'s ledger test pins every `clock.Now` read by file
 (a read put back on `time.Now` fails it), and the `TestEvalClockReaches*` tests (auth, feed, hydrate,
 server) show each package's answer move with the frozen instant, at instants the wall clock cannot
-reach.
+reach. The ledger guards the known sites only: it cannot see a new `time.Now()` or a SQL `now()`.
+
+**Known unfrozen: the database's clock.** These queries compare against Postgres's own `now()`, which
+`FEED_GO_EVAL_NOW` does not reach: the published-before-now filter and the period window of the
+Postgres feed path (`feed/query.go`), the review visibility filter (`feed/gallery.go`), and the paid
+access and subscription windows (`modelfeed/query.go`, `v1models/raw.go`, `v1models/stores.go`). On
+those paths an eval answer selects rows at the database's wall time and builds them at the frozen
+instant, so a case near a publish or subscription boundary can answer differently between two runs.
+Binding the instant as a query parameter is a later change (it moves every fixture's query text); until
+then a harness should freeze the clock near the corpus's capture time and treat boundary cases as
+unstable.
 
 Not in scope here: what the eval pod reads (its stores, flags, caches) and whether its cache
 write-back is on are the harness's environment's to set.

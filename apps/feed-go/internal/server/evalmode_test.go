@@ -58,9 +58,22 @@ func assertStub(t *testing.T, w *httptest.ResponseRecorder, fb *proxyRecorder, r
 // is a ledger: a route added to (or dropped from) publicRoutes fails here until its expected hand-back
 // is written down, so no route can join the public mux without being shown to stub.
 func TestEvalModeStubsEveryPublicRoute(t *testing.T) {
+	for _, upstreams := range []bool{true, false} {
+		t.Run(map[bool]string{true: "upstreams", false: "no upstreams"}[upstreams], func(t *testing.T) {
+			testEvalModeStubsEveryPublicRoute(t, upstreams)
+		})
+	}
+}
+
+// testEvalModeStubsEveryPublicRoute is TestEvalModeStubsEveryPublicRoute with every route upstream set
+// (a recorder that must never be called), or none: an eval pod mounts and stubs every route either way.
+func testEvalModeStubsEveryPublicRoute(t *testing.T, upstreams bool) {
 	s := muxServer()
 	s.EvalMode = true
-	fb := evalUpstreams(s)
+	fb := &proxyRecorder{}
+	if upstreams {
+		fb = evalUpstreams(s)
+	}
 	// Every serve switch is off (the zero Server), so each route hands back for its own off reason;
 	// the gallery procedure has no switch and hands back a request with no Origin (`origin`).
 	want := map[string]string{

@@ -40,17 +40,19 @@ func publicRoutes(s *Server) []publicRoute {
 		{"/api/trpc/" + ProcedureModelGetAll, http.HandlerFunc(s.ServeModelGetAllHTTP)},
 		{"/api/trpc/" + ProcedureInfinite, http.HandlerFunc(s.ServeInfiniteHTTP)},
 	}
-	if s.V1Fallback != nil {
+	// In eval mode every route is mounted, its upstream or not: the stub never dials one (handBack), and
+	// an unmounted route would answer the mux's 404, which a harness could read as Node's own 404.
+	if s.V1Fallback != nil || s.EvalMode {
 		routes = append(routes,
 			publicRoute{V1ModelsPath, http.HandlerFunc(s.ServeV1ModelsHTTP)},
 			// The subtree: `{id}`, and any deeper path, which the compute falls back on (`v1-models-path`).
 			publicRoute{V1ModelsPath + "/", http.HandlerFunc(s.ServeV1ModelsIDHTTP)})
 	}
-	if s.V1ImagesFallback != nil {
+	if s.V1ImagesFallback != nil || s.EvalMode {
 		// The exact path: nothing under /api/v1/images/ is this route (Node's are other pages).
 		routes = append(routes, publicRoute{V1ImagesPath, http.HandlerFunc(s.ServeV1ImagesHTTP)})
 	}
-	if s.SearchFallback != nil {
+	if s.SearchFallback != nil || s.EvalMode {
 		routes = append(routes, publicRoute{SearchPath + "/", http.HandlerFunc(s.ServeSearchHTTP)})
 	}
 	return routes

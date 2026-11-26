@@ -91,7 +91,7 @@ func TestLoadEvalRefusals(t *testing.T) {
 // The conflict list is a contract: each name is a switch that sends traffic to the Node app or the
 // corpus. A switch added there without a refusal here (or the reverse) fails.
 func TestEvalConflictsLedger(t *testing.T) {
-	want := []string{"FEED_GO_SHADOW_WORKERS", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", "FEED_GO_EVAL_CAPTURE", "FEED_GO_EVAL_CAPTURE_SERVE_RATE"}
+	want := []string{"FEED_GO_SHADOW_WORKERS", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", "FEED_GO_EVAL_CAPTURE", "FEED_GO_EVAL_CAPTURE_SERVE_RATE", "FEED_GO_CACHE_WRITEBACK"}
 	if strings.Join(EvalConflicts, ",") != strings.Join(want, ",") {
 		t.Fatalf("EvalConflicts = %v, want %v", EvalConflicts, want)
 	}

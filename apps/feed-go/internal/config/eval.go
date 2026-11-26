@@ -30,6 +30,9 @@ var EvalConflicts = []string{
 	"FEED_GO_SERVE_PARITY_SAMPLE_RATE",
 	"FEED_GO_EVAL_CAPTURE",
 	"FEED_GO_EVAL_CAPTURE_SERVE_RATE",
+	// Write-back stamps a cache entry with the wall clock while an eval pod reads staleness on the
+	// frozen one, and writes the caches other pods read: an eval pod writes no cache.
+	"FEED_GO_CACHE_WRITEBACK",
 }
 
 // LoadEval reads the Eval settings through getenv (os.Getenv in Load). It refuses:

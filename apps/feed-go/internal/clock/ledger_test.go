@@ -15,7 +15,10 @@ import (
 // an answer holds, which FEED_GO_EVAL_NOW must reach (the package doc). The ledger fails when a read
 // is added (decide it belongs here, then add it) and when one goes (a read put back on time.Now is
 // exactly what eval mode cannot see). Behaviour is pinned per package by the TestEvalClockReaches*
-// tests (auth, feed, hydrate, server); this pins every site, including the ones those do not drive.
+// tests (auth, feed, hydrate, server); this pins every EXISTING clock.Now site, including the ones those
+// do not drive. It cannot see a new answer-affecting time.Now() nor a SQL now() (DESIGN.md §19.7 lists
+// the queries that still read the database's clock): it is an invariant guard on the known sites, not
+// proof that the seam is complete.
 var wantNowReads = map[string]int{
 	"auth/bearer.go":      1, // API-key expiry
 	"auth/jwt.go":         1, // session-token exp / nbf / signedAt (tokenNow; the key set's pacing stays on the wall clock)
