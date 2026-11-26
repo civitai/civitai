@@ -82,7 +82,6 @@ func vent(id, k string, seq, version int64, canary string) registry.Entity {
 	return e
 }
 
-// Fails on origin/main: the item has no `version` (`n-a=<absent>`).
 func TestAPrivateRegistryItemCarriesItsVersionOnTheListAndTheKeyedGet(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	// Versions pairwise distinct, distinct from every seq, and never 0 or 1 (the SDK's default and a
@@ -111,7 +110,6 @@ func TestAPrivateRegistryItemCarriesItsVersionOnTheListAndTheKeyedGet(t *testing
 	}
 }
 
-// Fails on origin/main: the REST item carries the version only as `rev` (`k1=<absent>`).
 func TestAPrivateRESTItemCarriesItsVersion(t *testing.T) {
 	s := newStack(t, false, session.Options{})
 	s.store.by["civitai_rhea"] = restAnswer{200, `{"items":[{"key":"k1","data":{"text":"REST-V"},"version":23}],"nextCursor":null}`}
@@ -171,8 +169,6 @@ func newVersionSite(t *testing.T, seq int64, versions map[string]int64) *version
 // The SDK's read-then-write: a put whose `ifVersion` is the version a read answered is written; the
 // read after it answers the new version (the write's acknowledgement, before any poll), and a put
 // with the stale version is refused `version_conflict`, passed on as the site answered it.
-// Fails on origin/main: the read carries no version, so there is nothing to put with
-// (`read version <absent>`).
 func TestAPutWithTheVersionAReadAnsweredIsWrittenAndAStaleOneIsRefused(t *testing.T) {
 	site := newVersionSite(t, 60, map[string]int64{"c-1": 6})
 	var m = newStack(t, true, session.Options{OverlayTTL: 90 * time.Second, ReopenEvery: time.Minute})

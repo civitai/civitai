@@ -56,7 +56,7 @@ one wins. What it makes of migration step 1:
 | Internal route, store `seq`/`recordId`, `app_storage_requests_total{via}` | site | built, #10128, #10142 |
 | The internal route's delete answer names its key (an `@me` delete's derived key) | site | #10392 |
 | `Entity.seq`, `k2`, the private head | adapter | built, #10128 |
-| `Entity.version` on private entities, `k3`; a private item's `version` | adapter, here | this change |
+| `Entity.version` on private entities, `k3`; a private item's `version` | adapter, here | built, #10507 |
 | Level streams of plain documents, the shared-level allowlist | adapter | built, dark, #10302, #10343 |
 | `meta.truncated` on level streams | adapter | #10392 |
 | The per-viewer stream | adapter | #10392 |
