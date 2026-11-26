@@ -23,9 +23,10 @@
  * ACCESS.
  *   - push / supersede / modList: moderators (`moderatorProcedure` at the router, re-checked here
  *     against the database for push).
- *   - listPending / verifyCommit / resolve: the app's owner or an ACCEPTED collaborator, by the
- *     same `assertAppEditAccess` gate the CLI's other app commands use. "No such app" and "not
- *     yours" answer the same, so an app id is not an oracle.
+ *   - listPending (OPEN updates: pending + conflicted) / verifyCommit / resolve: the app's owner
+ *     or an ACCEPTED collaborator, by the same `assertAppEditAccess` gate the CLI's other app
+ *     commands use. "No such app" and "not yours" answer the same, so an app id is not an
+ *     oracle.
  *
  * 🔴 Dark until migration `20271205140000_app_platform_updates` is applied by hand AND the
  * `app-blocks-platform-updates` flag is on ({@link isPlatformUpdatesEnabled}).
@@ -125,7 +126,7 @@ const ROW_COLUMNS = Prisma.sql`u."id", u."app_block_id" AS "appBlockId", u."slug
   s."bannedAt" AS "staffBannedAt", s."deletedAt" AS "staffDeletedAt"`;
 
 type RowFilter =
-  | { kind: 'pending-for-app'; appBlockId: string }
+  | { kind: 'open-for-app'; appBlockId: string }
   | { kind: 'all-for-app'; appBlockId: string }
   | { kind: 'commit'; appBlockId: string; commitSha: string }
   | { kind: 'id'; id: string };
@@ -137,8 +138,9 @@ function filterSql(filter: RowFilter): Prisma.Sql {
     case 'commit':
       return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId}
         AND u."commit_sha" = ${filter.commitSha} LIMIT 1`;
-    case 'pending-for-app':
-      return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId} AND u."status" = 'pending'
+    case 'open-for-app':
+      return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId}
+        AND u."status" IN ('pending', 'conflicted')
         ORDER BY u."created_at" ASC, u."id" ASC LIMIT 100`;
     case 'all-for-app':
       return Prisma.sql`WHERE u."app_block_id" = ${filter.appBlockId}
@@ -261,13 +263,21 @@ async function appForOwner(userId: number, ref: AppRef): Promise<ResolvedApp> {
 // Owner API
 // ---------------------------------------------------------------------------
 
-/** The app's PENDING updates, oldest first. Empty when the table is missing. */
-export async function listPendingPlatformUpdates(args: {
+/**
+ * The app's OPEN updates — `pending` AND `conflicted` — oldest first, each with its `status`.
+ * Empty when the table is missing.
+ *
+ * 🔴 A `conflicted` update stays listed until it is merged or superseded: the client that hit
+ * the conflict reported it once, but the owner has not merged it yet, so every later pull must
+ * re-print the hand-merge instructions (or retry the merge) and every later submit must still
+ * refuse over it. Listing pending only made the update vanish after that one report.
+ */
+export async function listOpenPlatformUpdates(args: {
   userId: number;
   app: AppRef;
 }): Promise<OwnerPlatformUpdate[]> {
   const app = await appForOwner(args.userId, args.app);
-  const rows = await readRows({ kind: 'pending-for-app', appBlockId: app.id });
+  const rows = await readRows({ kind: 'open-for-app', appBlockId: app.id });
   return (rows ?? []).map(ownerView);
 }
 

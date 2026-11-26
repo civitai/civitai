@@ -27,8 +27,8 @@ import type * as FliptClient from '~/server/flipt/client';
  *   - an app with no source repo gets one as a FORK of its build repo first (the build repo is
  *     only read), so an owner's existing checkout of the build repo merges the update cleanly;
  *   - the record names the commit's real parent, and whether the update touches the manifest;
- *   - the owner list returns only this app's PENDING updates, to the owner or an accepted
- *     collaborator only;
+ *   - the owner list returns this app's OPEN updates (pending AND conflicted, oldest first, each
+ *     with its status; never merged or superseded), to the owner or an accepted collaborator only;
  *   - "verified staff" comes from the record and the author's standing now (moderator, not
  *     banned), never from a commit's text; a superseded update is not verified;
  *   - supersede, modList, conflicted → merged, and the flag off for every owner procedure.
@@ -836,7 +836,7 @@ describe('the record', () => {
 });
 
 describe('the owner API', () => {
-  it('lists only this app’s PENDING updates, to the owner and an accepted collaborator only', async () => {
+  it('lists this app’s pending updates, to the owner and an accepted collaborator only', async () => {
     await existingSourceRepo({ 'package.json': PKG_OLD });
     const first = await pushAsMod();
     const second = await svc.pushPlatformUpdate({
@@ -1089,8 +1089,11 @@ describe('resolve: conflicted, then merged by hand', () => {
       merge_commit_sha: null,
       resolved_by_user_id: OWNER,
     });
-    // Still offered? No: the owner list is PENDING only; a conflicted update waits for the owner.
-    expect(await caller(OWNER).listPending({ slug: SLUG })).toEqual({ updates: [] });
+    // 🔴 Still listed, as conflicted: the owner has not merged it, so every later pull must see it
+    // again (re-print the hand-merge instructions) and every later submit must still refuse.
+    expect((await caller(OWNER).listPending({ slug: SLUG })).updates).toMatchObject([
+      { id: pushed.id, commitSha: pushed.commitSha, status: 'conflicted' },
+    ]);
     expect(
       (await caller(EDITOR).resolve({ id: pushed.id, outcome: 'conflicted' })).update
     ).toMatchObject({ status: 'conflicted' });
@@ -1112,6 +1115,34 @@ describe('resolve: conflicted, then merged by hand', () => {
       merge_commit_sha: MERGE,
       resolved_by_user_id: EDITOR,
     });
+    // Merged: off the owner list.
+    expect(await caller(OWNER).listPending({ slug: SLUG })).toEqual({ updates: [] });
+  });
+
+  it('the owner list is OPEN updates: pending and conflicted, oldest first; never merged or superseded', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const a = await pushAsMod(); // stays pending
+    const b = await pushAsMod(); // → conflicted
+    const c = await pushAsMod(); // → merged
+    const d = await pushAsMod(); // → superseded
+    const e = await pushAsMod(); // → conflicted, then superseded
+    await caller(OWNER).resolve({ id: b.id, outcome: 'conflicted' });
+    await caller(OWNER).resolve({ id: c.id, outcome: 'merged', mergeCommitSha: '8'.repeat(40) });
+    await caller(MOD).supersede({ id: d.id });
+    await caller(OWNER).resolve({ id: e.id, outcome: 'conflicted' });
+    await caller(MOD).supersede({ id: e.id });
+    // Order by created_at, made strictly increasing with b OLDEST, so a list that ignored the
+    // order (or sorted by id) would not pass by accident.
+    for (const [i, id] of [b.id, a.id, c.id, d.id, e.id].entries())
+      await pg.query(
+        `UPDATE app_platform_updates SET created_at = '2027-01-01T00:00:0${i}Z' WHERE id = $1`,
+        [id]
+      );
+    const { updates } = await caller(OWNER).listPending({ slug: SLUG });
+    expect(updates.map((u) => [u.id, u.status])).toEqual([
+      [b.id, 'conflicted'],
+      [a.id, 'pending'],
+    ]);
   });
 });
 

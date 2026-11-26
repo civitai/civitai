@@ -64,15 +64,20 @@ export function toChanges(input: PushPlatformUpdateInput['changes']): PlatformUp
 }
 
 export const appPlatformUpdatesRouter = router({
-  /** The app's pending platform updates, oldest first. */
+  /**
+   * The app's OPEN platform updates — `pending` AND `conflicted` (never merged or superseded) —
+   * oldest first, each with its `status`. The name predates conflicted updates being listed; it
+   * is kept so existing clients keep working. A client re-prints hand-merge instructions for a
+   * `conflicted` one (or retries the merge and, if it now applies, reports `resolve merged`).
+   */
   listPending: protectedProcedure
     .meta(cliScope)
     .input(platformUpdateAppSchema)
     .query(async ({ ctx, input }) => {
       if (!(await ownerEnabled(ctx))) return { updates: [] };
-      const { listPendingPlatformUpdates } = await svc();
+      const { listOpenPlatformUpdates } = await svc();
       return {
-        updates: await listPendingPlatformUpdates({
+        updates: await listOpenPlatformUpdates({
           userId: ctx.user.id,
           app: { appBlockId: input.appBlockId, slug: input.slug },
         }),
