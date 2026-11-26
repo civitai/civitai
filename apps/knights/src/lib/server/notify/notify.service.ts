@@ -46,7 +46,7 @@ export type NotifyResult = {
   accessUnknown: boolean;
   /** The types to check for "turned everything off" were unavailable, so nothing was sent. */
   skipped: boolean;
-  /** Types whose players could not be looked up, so none were sent; the other types still went out. */
+  /** Not sent this run: a type whose lookup failed and every type below it. Higher types still went out. */
   unplanned: NotifyKind[];
 };
 
