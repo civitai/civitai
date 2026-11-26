@@ -15,11 +15,10 @@ import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
 // The civitai-sticker-track node pack (our fork of rmatif/comfyui-sticker-track) follows the
 // subject under a sticker and returns a v1 track.
-// Each run installs the pack onto COMFY_IMAGE in a first step (a cache hit once the layer exists)
-// and tracks with that layer. Keep COMFY_IMAGE on the image the workers serve: a run pinned to an
-// image they have dropped waits minutes while one is fetched. After changing COMFY_IMAGE or
-// NODE_PACK, submit one run before deploying: the orchestrator briefly caches a brand-new layer as
-// missing, so the first run that builds it fails its track step.
+// Keep COMFY_IMAGE on the image the workers serve: a run pinned to an image they have dropped
+// waits minutes while one is fetched. After changing COMFY_IMAGE or NODE_PACK, submit one run
+// before deploying: the orchestrator briefly caches a brand-new layer as missing, so the first
+// run that builds it fails its track step.
 const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.65';
 const NODE_PACK = 'urn:air:comfy:nodepack:comfyregistry:civitai/civitai-sticker-track@1.3.0';
 const INSTALL_STEP = 'install';

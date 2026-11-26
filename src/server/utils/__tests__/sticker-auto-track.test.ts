@@ -25,7 +25,6 @@ const BLOB_URL = 'https://orchestration.example/v2/consumer/blobs/track.json?sig
 const finished = (blobs: unknown[], userId = PLACER) => ({
   status: 'succeeded',
   metadata: { stickerAutoTrack: { userId, imageId: IMAGE, startMs: START } },
-  // The install step comes first and carries no file.
   steps: [
     { name: 'install', output: { results: [{ layerAir: 'urn:air:comfy:nodepacklayer:x' }] } },
     { name: 'track', output: { blobs } },
@@ -92,6 +91,17 @@ describe('readStickerAutoTrackWorkflow', () => {
       url: BLOB_URL,
       imageId: IMAGE,
       startMs: START,
+    });
+  });
+
+  it('still reads a run submitted before the install step, with one unnamed step', () => {
+    const run = {
+      ...finished([]),
+      steps: [{ output: { blobs: [{ id: 'sticker_track_00001.json', url: BLOB_URL }] } }],
+    };
+    expect(readStickerAutoTrackWorkflow(run, PLACER)).toMatchObject({
+      status: 'download',
+      url: BLOB_URL,
     });
   });
 });
@@ -571,6 +581,27 @@ describe('buildStickerAutoTrackWorkflow', () => {
         input: { workflow: Record<string, { inputs: Record<string, unknown> }> };
       }[]
     ).find((s) => s.name === 'track')!.input.workflow;
+
+  it('tracks with the node pack layer its install step builds on the same image', () => {
+    const [install, track] = buildStickerAutoTrackWorkflow({
+      videoAir: 'air',
+      pose,
+      startMs: 0,
+      maxMs: 1000,
+    }) as unknown as {
+      $type: string;
+      name: string;
+      input: { comfyImage: string; nodepacks?: string[]; resources?: unknown[] };
+    }[];
+    expect(install).toMatchObject({ $type: 'comfyNodepackSnapshot', name: 'install' });
+    expect(install.input.nodepacks).toEqual([expect.stringContaining('civitai-sticker-track@')]);
+    expect(track).toMatchObject({ $type: 'customComfy', name: 'track' });
+    expect(track.input.comfyImage).toBe(install.input.comfyImage);
+    expect(track.input.resources?.[0]).toEqual({
+      $ref: install.name,
+      path: 'output.results[0].layerAir',
+    });
+  });
 
   it('also segments whatever is under the sticker, in pixels of the loaded frame', () => {
     // A 1920x1080 video loads at 1024x576.
