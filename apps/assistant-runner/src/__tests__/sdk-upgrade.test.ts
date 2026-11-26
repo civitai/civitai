@@ -5,6 +5,7 @@ import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppAssistantTools } from '../app-assistant/provider';
+import { SDK_REMOVED_APIS, SDK_UPGRADED_BEFORE_SUBMIT } from '../app-assistant/sdk-pin';
 import type { OpenTools, ToolContext } from '../core/interfaces';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
 
@@ -26,6 +27,13 @@ const INSTALL = 'cd my-app && npm install --no-audit --no-fund';
 const INSTALLED = 'my-app/node_modules/@civitai/sdk/package.json';
 /** The words the reply is told to start with after an upgrade. */
 const USER_LINE = `Updated this app's Civitai SDK to ${CURRENT_MINOR} to match the current Civitai app host.`;
+/** What the assistant is told 0.33 removed, and the replacement of each (@civitai/sdk CHANGELOG 0.33.0). */
+const REMOVED_APIS_TEXT =
+  "If the typecheck fails after this upgrade because the app calls something @civitai/sdk 0.33 removed, tell the user that Civitai has removed it, and offer to move the app to its replacement. The removed calls and their replacements: " +
+  "collection update, increment, mark and unmark, the markedBy and mark list options, the counter: and mark: sorts, and the counters, marks and viewer fields of a document: a vote, like or per-viewer entry is the viewer's own document in a viewer-keyed collection (keyedBy: 'viewer' or 'parent+viewer' in the manifest, with getMine, putMine and deleteMine), counted by listing with keyPrefix; " +
+  'a report (a report mark): app.moderation.report({ collection, key }); ' +
+  'collection publish and unpublish: put each shared copy, and delete it, one by one; ' +
+  "app.storage.get, set, delete, list and getQuota, and app.sharedStorage: a private collection for each viewer's own data, a shared collection for data every viewer sees, through app.storage.collection(name).";
 
 let fake: FakeSandboxService;
 let logs: { level: string; object: object; message: string | undefined }[];
@@ -356,19 +364,41 @@ describe('the runner upgrades an app on an old @civitai/sdk itself', () => {
     expect(state.installed).toBe(CURRENT_VERSION);
   });
 
-  it('the page-elements scaffold pin (^0.30.0, 0.30.1 installed) is lifted to ^0.32.0, the app-data transport', async () => {
-    // Literal, not read from the root manifest, so a floor below 0.32.0 fails here; move it with
+  it('the page-elements scaffold pin (^0.30.0, 0.30.1 installed) is lifted to ^0.33.0', async () => {
+    // Literal, not read from the root manifest, so a floor below 0.33.0 fails here; move it with
     // the next floor bump.
     fake.add('my-app');
     const state = app({ pkg: pkg4('^0.30.0'), installed: '0.30.1' });
     const tools = await open(provider());
-    expect(state.writes).toEqual([pkg4('^0.32.0')]);
-    expect(state.installed).toBe('0.32.0');
+    expect(state.writes).toEqual([pkg4('^0.33.0')]);
+    expect(state.installed).toBe('0.33.0');
     expect(installCount()).toBe(1);
     expect(tools.instructions).toContain(
-      "Updated this app's Civitai SDK to 0.32 to match the current Civitai app host."
+      "Updated this app's Civitai SDK to 0.33 to match the current Civitai app host."
     );
     expect(failed()).toEqual([]);
+  });
+
+  it('an upgrade tells the assistant what 0.33 removed and what replaces each, for a typecheck that then fails', async () => {
+    // The whole text, pinned: the assistant relays it to the user, so a reword is a change to review.
+    expect(SDK_REMOVED_APIS).toBe(REMOVED_APIS_TEXT);
+    fake.add('my-app');
+    app({ pkg: pkg4('^0.30.0'), installed: '0.30.1' });
+    const tools = await open(provider());
+    expect(tools.instructions).toContain(REMOVED_APIS_TEXT);
+    // After the "tell the user what broke" rule it refines, not before it.
+    expect(tools.instructions!.indexOf(REMOVED_APIS_TEXT)).toBeGreaterThan(
+      tools.instructions!.indexOf('tell the user what broke instead of rewriting the app')
+    );
+    // The submit-time answer carries it too (an app scaffolded during the reply is upgraded there).
+    expect(SDK_UPGRADED_BEFORE_SUBMIT.endsWith(` ${REMOVED_APIS_TEXT}`)).toBe(true);
+  });
+
+  it('an app already current is told nothing about removed APIs', async () => {
+    fake.add('my-app');
+    app({ pkg: pkg4(CURRENT), installed: CURRENT_VERSION });
+    const tools = await open(provider());
+    expect(tools.instructions).not.toContain('@civitai/sdk 0.33 removed');
   });
 
   it('a current pin with a current SDK installed makes no change at all', async () => {

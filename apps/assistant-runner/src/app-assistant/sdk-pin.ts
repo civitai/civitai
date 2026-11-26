@@ -38,8 +38,20 @@ const FLOOR_MINOR = CIVITAI_SDK_FLOOR.split('.').slice(0, 2).join('.');
 /** The one line a reply starts with after the runner upgraded its app. */
 export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} to match the current Civitai app host.`;
 
+/**
+ * What an upgraded app that no longer typechecks most likely hit, told to the assistant with every
+ * upgrade: the storage calls @civitai/sdk 0.33.0 removed (civitai.com removed them first: the legacy
+ * stores on 2026-11-10, tallies and publish with civitai/civitai#10391), and what replaces each one.
+ */
+export const SDK_REMOVED_APIS =
+  "If the typecheck fails after this upgrade because the app calls something @civitai/sdk 0.33 removed, tell the user that Civitai has removed it, and offer to move the app to its replacement. The removed calls and their replacements: " +
+  "collection update, increment, mark and unmark, the markedBy and mark list options, the counter: and mark: sorts, and the counters, marks and viewer fields of a document: a vote, like or per-viewer entry is the viewer's own document in a viewer-keyed collection (keyedBy: 'viewer' or 'parent+viewer' in the manifest, with getMine, putMine and deleteMine), counted by listing with keyPrefix; " +
+  'a report (a report mark): app.moderation.report({ collection, key }); ' +
+  'collection publish and unpublish: put each shared copy, and delete it, one by one; ' +
+  "app.storage.get, set, delete, list and getQuota, and app.sharedStorage: a private collection for each viewer's own data, a shared collection for data every viewer sees, through app.storage.collection(name).";
+
 /** What `submit_for_review` answers when the runner upgraded the app's SDK as it was offered. */
-export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
+export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again. ${SDK_REMOVED_APIS}`;
 
 /** What `submit_for_review` answers when the upgrade it ran first failed after changing the app. */
 export const SDK_UPGRADE_FAILED_BEFORE_SUBMIT = `Not submitted yet: the runner tried to update this app's Civitai SDK to ${TARGET_RANGE} and it failed, so it put the app's packages back; the app changed after its checks all the same. Do not tell the user about the SDK. Run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
@@ -383,6 +395,7 @@ export class SdkUpgrades {
         }: do not do that again.`,
         `Start your reply with this one line for the user, then go on with what they asked: ${SDK_UPGRADED_LINE}`,
         'Change no code for this upgrade unless the user asks. If the typecheck or tests fail because of the newer SDK, tell the user what broke instead of rewriting the app.',
+        SDK_REMOVED_APIS,
       ].join(' ');
       return { kind: 'upgraded', instructions };
     } catch (error) {
