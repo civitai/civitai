@@ -48,7 +48,9 @@ import {
   isApprovedEdit,
   isOwnerEdit,
   listingEditHeaderCopy,
+  listingCopyFromManifest,
   listingLinksFromManifest,
+  MANIFEST_COPY_FIELD_NOTE,
   MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
@@ -123,6 +125,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
   // On-site: both links come from block.manifest.json and render read-only here.
   const linksFromManifest = listingLinksFromManifest(edit);
+  // On-site: name, tagline and description come from block.manifest.json too.
+  const copyFromManifest = listingCopyFromManifest(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -256,6 +260,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     if (linksFromManifest) {
       delete nextErrors.sourceRepoUrl;
       delete nextErrors.issueTrackerUrl;
+    }
+    if (copyFromManifest) {
+      delete nextErrors.name;
+      delete nextErrors.tagline;
+      delete nextErrors.description;
     }
     // SENSITIVE-only justification model (parity with create): every sensitive scope
     // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
@@ -509,18 +518,37 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         >
           <FadeIn>
             <Stack gap="md" mt="md">
-              <TextInput
-                label="Name"
-                value={values.name}
-                onChange={(e) => setField('name', e.currentTarget.value)}
-                error={errors.name}
-                maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
-                required
-                data-testid="apps-offsite-edit-name"
-                // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
-                data-material-field="name"
-                disabled={materialBlocked}
-              />
+              {/* 🔴 ON-SITE: name, tagline and description are MANIFEST-GOVERNED (minted at submit,
+                re-synced on every block-version approve), so they are shown read-only with where
+                they come from, like the links below, rather than offered as an edit the next
+                approve would overwrite (or, on a live listing, the assets-only revision apply
+                would drop). The server refuses the keys too. `data-material-field` stays on the
+                name so the repair-state ledger still sees every material field as disabled. */}
+              {copyFromManifest ? (
+                <TextInput
+                  label="Name"
+                  description={MANIFEST_COPY_FIELD_NOTE.name}
+                  value={values.name}
+                  readOnly
+                  disabled
+                  rightSection={<IconLock size={14} />}
+                  data-testid="apps-offsite-edit-name-manifest"
+                  data-material-field="name"
+                />
+              ) : (
+                <TextInput
+                  label="Name"
+                  value={values.name}
+                  onChange={(e) => setField('name', e.currentTarget.value)}
+                  error={errors.name}
+                  maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
+                  required
+                  data-testid="apps-offsite-edit-name"
+                  // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
+                  data-material-field="name"
+                  disabled={materialBlocked}
+                />
+              )}
 
               <TextInput
                 label="Slug"
@@ -532,26 +560,55 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 data-testid="apps-offsite-edit-slug"
               />
 
-              <TextInput
-                label="Tagline"
-                description="A short one-liner (optional)."
-                value={values.tagline}
-                onChange={(e) => setField('tagline', e.currentTarget.value)}
-                error={errors.tagline}
-                maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
-              />
+              {copyFromManifest ? (
+                <>
+                  <TextInput
+                    label="Tagline"
+                    description={MANIFEST_COPY_FIELD_NOTE.tagline}
+                    value={values.tagline}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-tagline-manifest"
+                  />
+                  <Textarea
+                    label="Description"
+                    description={MANIFEST_COPY_FIELD_NOTE.description}
+                    autosize
+                    minRows={3}
+                    maxRows={8}
+                    value={values.description}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    data-testid="apps-offsite-edit-description-manifest"
+                  />
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    label="Tagline"
+                    description="A short one-liner (optional)."
+                    value={values.tagline}
+                    onChange={(e) => setField('tagline', e.currentTarget.value)}
+                    error={errors.tagline}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
+                  />
 
-              <Textarea
-                label="Description"
-                description="What the app does (optional)."
-                autosize
-                minRows={3}
-                maxRows={8}
-                value={values.description}
-                onChange={(e) => setField('description', e.currentTarget.value)}
-                error={errors.description}
-                maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
-              />
+                  <Textarea
+                    label="Description"
+                    description="What the app does (optional)."
+                    autosize
+                    minRows={3}
+                    maxRows={8}
+                    value={values.description}
+                    onChange={(e) => setField('description', e.currentTarget.value)}
+                    error={errors.description}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+                  />
+                </>
+              )}
 
               {linksFromManifest ? (
                 <>

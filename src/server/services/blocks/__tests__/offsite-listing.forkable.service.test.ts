@@ -196,24 +196,26 @@ describe('updateListing — the fork opt-in', () => {
     await expect(
       updateListing({
         listingId: LISTING,
-        patch: { forkable: true, tagline: 'new tagline' },
+        patch: { forkable: true, category: 'games' },
         userId: OWNER,
       })
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: FORKABLE_UNAVAILABLE_MESSAGE });
-    // Hoisted: the tagline half was not applied either.
+    // Hoisted: the category half was not applied either.
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
     expect(forkableWrites()).toEqual([]);
   });
 
-  it('rides along with a trivial edit: the tagline in place, the opt-in on the same live row', async () => {
+  // On-site tagline/description are manifest-governed (refused), so the trivial edit here is the
+  // category, which an on-site listing still takes in place.
+  it('rides along with a trivial edit: the category in place, the opt-in on the same live row', async () => {
     await updateListing({
       listingId: LISTING,
-      patch: { tagline: 'new tagline', forkable: true },
+      patch: { category: 'games', forkable: true },
       userId: OWNER,
     });
     expect(mockWrite.appListing.update).toHaveBeenCalledWith({
       where: { id: LISTING },
-      data: { tagline: 'new tagline' },
+      data: { category: 'games' },
     });
     expect(forkableWrites()).toEqual([[true, LISTING]]);
   });
@@ -231,7 +233,9 @@ describe('updateListing — the fork opt-in', () => {
     );
     const res = await updateListing({
       listingId: LISTING,
-      patch: { name: 'Renamed App', forkable: true },
+      // The content rating: the material field an on-site listing still takes (its name is
+      // manifest-governed and refused).
+      patch: { contentRating: 'pg13', forkable: true },
       userId: OWNER,
     });
     expect(res.requiresReview).toBe(true);

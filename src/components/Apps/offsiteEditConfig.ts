@@ -180,7 +180,7 @@ export function materialEditBlockedReason(
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
-    ? 'name, source repository, issue tracker and content rating'
+    ? 'content rating'
     : ctx.connectClientId != null
     ? 'name, App URL, source repository, issue tracker, content rating and permission ' +
       'justifications (including offline access)'
@@ -227,6 +227,24 @@ export function materialEditBlockedReason(
       `NOTHING on this screen can be saved — not the tagline, description or category ` +
       `either. To edit anything, ${scopeWayOut}; the new permissions are then reviewed ` +
       `along with your changes.`
+    );
+  }
+
+  // 🔴 ON-SITE: the only material field this form can still change is the content rating. The
+  // name, tagline, description and both links come from block.manifest.json
+  // (`listingCopyFromManifest` / `listingLinksFromManifest`) and are never editable here, in
+  // any status, so they are neither "locked until republish" nor "editable now".
+  if (isOnsiteEdit(ctx)) {
+    const onsiteWayOut = isOwnerEdit(ctx)
+      ? `Republish the app from the Publishing tab first, then edit it — the edit is staged ` +
+        `for review.`
+      : `The app's owner has to republish it before it can be edited — the Publishing tab ` +
+        `that does it is theirs, not yours.`;
+    return (
+      `This app is unpublished, so its ${fields} is locked. Changing it needs moderator ` +
+      `review, and an unpublished listing has no way to reach it. ${onsiteWayOut} Its name, ` +
+      `tagline, description, source repository and issue tracker come from ` +
+      `block.manifest.json. Category can be edited now.`
     );
   }
 
@@ -362,7 +380,7 @@ export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
  * at submit and re-synced from them on every approve, so an edit here would be overwritten (or,
  * on a live listing, dropped by the assets-only revision apply). The form then shows both
  * read-only, `buildScalarPatch` never emits them, and the server refuses them
- * (`assertNoOnsiteManifestLinkPatch`). Off-site listings own their links, so they stay editable.
+ * (`assertNoOnsiteManifestPatch`). Off-site listings own their links, so they stay editable.
  * Inherits `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
  */
 export function listingLinksFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
@@ -376,6 +394,36 @@ export const MANIFEST_LINK_FIELD_NOTE = {
     'version; the listing takes it when that version is approved.',
   issueTrackerUrl:
     'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+} as const;
+
+/**
+ * Do this listing's name, tagline and description come from `block.manifest.json` rather than
+ * from this form? PURE.
+ *
+ * True for an ON-SITE listing, for the reason {@link listingLinksFromManifest} gives for the
+ * links: the draft is minted with the manifest's `name` / `tagline` / `description` at submit
+ * and every block-version approve re-syncs all three (`buildListingScalarSync`), while an on-site
+ * revision apply copies assets only. So an edit here is either overwritten at the next approve or
+ * (on a live listing, staged on a revision) dropped. The form shows the three read-only,
+ * `buildScalarPatch` never emits them, and the server refuses them
+ * (`assertNoOnsiteManifestPatch`). Off-site listings own their copy, so it stays editable.
+ * Inherits `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
+ */
+export function listingCopyFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+  return isOnsiteEdit(ctx);
+}
+
+/** The explanation the read-only on-site name / tagline / description fields carry. */
+export const MANIFEST_COPY_FIELD_NOTE = {
+  name:
+    'Comes from "name" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  tagline:
+    'Comes from "tagline" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  description:
+    'Comes from "description" in block.manifest.json. Change it there and submit a new ' +
     'version; the listing takes it when that version is approved.',
 } as const;
 
@@ -453,8 +501,13 @@ export function buildScalarPatch(
   const original = editContextToForm(ctx);
   const patch: UpdateListingPatchInput = {};
 
-  const name = current.name.trim();
-  if (name !== original.name.trim()) patch.name = name;
+  // 🔴 NEVER on an ON-SITE listing: the manifest owns name, tagline and description
+  // (`listingCopyFromManifest`), and the server refuses the keys outright.
+  const copyFromManifest = listingCopyFromManifest(ctx);
+  if (!copyFromManifest) {
+    const name = current.name.trim();
+    if (name !== original.name.trim()) patch.name = name;
+  }
 
   // 🔴 NEVER patch `externalUrl` on an ON-SITE listing. Its CTA is its hosted page; an
   // external URL is not a field it has, and the edit form must not be able to write one
@@ -524,14 +577,16 @@ export function buildScalarPatch(
     }
   }
 
-  const tagline = current.tagline.trim();
-  const originalTagline = original.tagline.trim();
-  if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
+  if (!copyFromManifest) {
+    const tagline = current.tagline.trim();
+    const originalTagline = original.tagline.trim();
+    if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
 
-  const description = current.description.trim();
-  const originalDescription = original.description.trim();
-  if (description !== originalDescription)
-    patch.description = description.length > 0 ? description : null;
+    const description = current.description.trim();
+    const originalDescription = original.description.trim();
+    if (description !== originalDescription)
+      patch.description = description.length > 0 ? description : null;
+  }
 
   if ((current.category ?? null) !== (original.category ?? null)) {
     patch.category = current.category ?? null;

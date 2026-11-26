@@ -317,8 +317,9 @@ describe('🔴 an OWNER-UNPUBLISHED listing: material fields are shown, and lock
     await expect.element(notice).toBeInTheDocument();
     await expect.element(notice).not.toHaveTextContent(/App URL/);
     await expect.element(notice).toHaveTextContent(/source repository/i);
-    // On-site opens straight on Details (no URL step), and every field it HAS is locked.
-    await expect.element(page.getByTestId('apps-offsite-edit-name')).toBeInTheDocument();
+    // On-site opens straight on Details (no URL step), and every field it HAS is locked. Its
+    // name is the read-only manifest-governed input (still tagged `data-material-field`).
+    await expect.element(page.getByTestId('apps-offsite-edit-name-manifest')).toBeInTheDocument();
 
     // 🔴 DERIVED FROM THE SERVER'S CONSTANT, NOT HAND-LISTED. This used to spell
     // `['name', 'contentRating', 'sourceRepoUrl']` — three of the four members of

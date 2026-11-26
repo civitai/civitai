@@ -1535,22 +1535,38 @@ export const ONSITE_MANIFEST_LINK_MESSAGE =
   '`bugs` keys in block.manifest.json. Set them there and submit a new version; the listing ' +
   'takes them when that version is approved.';
 
+/** The refusal for an edit of an on-site listing's manifest-governed name / tagline / description. */
+export const ONSITE_MANIFEST_COPY_MESSAGE =
+  "An on-site app's name, tagline and description come from the `name`, `tagline` and " +
+  '`description` keys in block.manifest.json. Set them there and submit a new version; the ' +
+  'listing takes them when that version is approved.';
+
 /**
- * 🔴 An ON-SITE listing's `sourceRepoUrl` / `issueTrackerUrl` are MANIFEST-GOVERNED: the draft is
- * minted with them at submit and every approve re-syncs both from `repository` / `bugs`
- * (`publish-request.service`), and an on-site revision apply copies assets only. A listing write
- * of either would therefore be overwritten at the next approve (draft / pending) or dropped by
- * the revision apply (approved) while reporting success, so it is refused up front instead. The
- * key being PRESENT is the trigger — an explicit `null` clear is refused too. Off-site listings,
- * whose links the author owns, are untouched.
+ * 🔴 An ON-SITE listing's `name` / `tagline` / `description` and `sourceRepoUrl` /
+ * `issueTrackerUrl` are MANIFEST-GOVERNED: the draft is minted with them at submit and every
+ * block-version approve re-syncs all five from the manifest (`buildListingScalarSync` and the
+ * issue-tracker sync in `publish-request.service`), and an on-site revision apply copies assets
+ * only. A listing write of any of them would therefore be overwritten at the next approve
+ * (draft / pending / owner-unpublished) or dropped by the revision apply (approved) while
+ * reporting success, so it is refused up front instead. The key being PRESENT is the trigger —
+ * an explicit `null` clear is refused too. Off-site listings, whose copy and links the author
+ * owns, are untouched. Each group keeps its own message, so the refusal names the manifest keys
+ * the caller actually sent.
  */
-export function assertNoOnsiteManifestLinkPatch(
+export function assertNoOnsiteManifestPatch(
   kind: string | null,
-  patch: Pick<UpdateListingPatch, 'sourceRepoUrl' | 'issueTrackerUrl'>
+  patch: Pick<
+    UpdateListingPatch,
+    'name' | 'tagline' | 'description' | 'sourceRepoUrl' | 'issueTrackerUrl'
+  >
 ): void {
   if (kind !== 'onsite') return;
-  if (patch.sourceRepoUrl === undefined && patch.issueTrackerUrl === undefined) return;
-  throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_LINK_MESSAGE });
+  if (patch.name !== undefined || patch.tagline !== undefined || patch.description !== undefined) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_COPY_MESSAGE });
+  }
+  if (patch.sourceRepoUrl !== undefined || patch.issueTrackerUrl !== undefined) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_LINK_MESSAGE });
+  }
 }
 
 /**
@@ -1582,7 +1598,7 @@ export async function updateListing(opts: {
     );
   }
   // Before anything is written, and before any branch can open a shadow revision.
-  assertNoOnsiteManifestLinkPatch(listing.kind, patch);
+  assertNoOnsiteManifestPatch(listing.kind, patch);
   // Before any branch below can open a shadow revision, for the reason the hoists below give.
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
@@ -1734,6 +1750,8 @@ export async function updateListing(opts: {
       //
       // The feature this branch exists for is untouched: `tagline`, `description` and
       // `category` are not material, so "unpublish → fix your copy → republish" still works.
+      // (Off-site only for tagline/description: an on-site listing's copy comes from its
+      // manifest and `assertNoOnsiteManifestPatch` refused it above.)
       const material = materialPatchChanges(effectivePatch, {
         externalUrl: listing.externalUrl,
         name: listing.name,
@@ -1750,7 +1768,11 @@ export async function updateListing(opts: {
             `because that change needs moderator review and an unpublished listing has no ` +
             `way to reach it. Republish the listing first, then edit ` +
             `${material.length > 1 ? 'those fields' : 'that field'} — the edit will be ` +
-            `staged for review. Tagline, description and category can be edited now.`
+            `staged for review. ` +
+            // On-site tagline/description are manifest-governed and refused above.
+            (listing.kind === 'onsite'
+              ? `Category can be edited now.`
+              : `Tagline, description and category can be edited now.`)
         );
       }
       // Everything left is trivial, so edit IN PLACE exactly like draft/pending: the
@@ -3178,7 +3200,7 @@ export async function updateRevisionDraft(opts: {
     throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
   }
   // A shadow carries its parent's kind, so an on-site revision is refused the same way.
-  assertNoOnsiteManifestLinkPatch(shadow.kind, patch);
+  assertNoOnsiteManifestPatch(shadow.kind, patch);
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
     surface: 'offsite-listing',
