@@ -183,6 +183,7 @@ import {
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { audioMetadataSchema, lyricLineSchema, type LyricLine } from '~/server/schema/media.schema';
 import {
+  dropTitleVerdictWithoutLyrics,
   saveGeneratedTrackLyrics,
   submitTrackLyricsLanguageScan,
   submitTrackLyricsScan,
@@ -2366,7 +2367,9 @@ export const updatePostImage = async (
     ...(title ? [writeSongTitle(image.id, title)] : title === '' ? [clearSongTitle(image.id)] : []),
     ...(allowRemix !== undefined ? [writeSongAllowRemix(image.id, allowRemix)] : []),
   ]);
-  // The title is scanned with the lyrics (a song without lyrics sends nothing); not awaited, as at post time.
+  // A new title is scanned with the lyrics, or alone on a song without them; not awaited, as at post
+  // time. A cleared one leaves no text to scan on a song without lyrics.
+  if (title === '') await dropTitleVerdictWithoutLyrics(image.id);
   if (title !== undefined) submitTrackLyricsScan({ imageId: image.id }).catch(handleLogError);
   // Blocked for missing metadata: another scan, decided on the row as it stands now.
   const requeued = shouldIngest ? await requeueUnverifiedImages([image.id]) : [];

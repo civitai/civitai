@@ -4,6 +4,7 @@ import {
   submitTrackLyricsScan,
   TRACK_LYRICS_ENTITY_TYPE,
 } from '~/server/services/audio-scan/track-lyrics';
+import { songTitle } from '~/server/services/audio-scan/song-title';
 import { holdSongForCsam } from '~/server/services/csam-image-review';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
@@ -55,8 +56,8 @@ export const trackLyricsModerationAdapter: ModerationAdapter = {
       select: { id: true, metadata: true },
     });
     for (const song of songs) {
-      const title = (song.metadata as { title?: unknown } | null)?.title;
-      if (typeof title === 'string' && title.trim()) content.set(song.id, title);
+      const title = songTitle(song.metadata);
+      if (title) content.set(song.id, title);
     }
     return content;
   },

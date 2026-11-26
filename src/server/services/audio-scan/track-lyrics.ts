@@ -92,13 +92,6 @@ export async function submitTrackLyricsScan({
     entityType: TRACK_LYRICS_ENTITY_TYPE,
     entityId: imageId,
     fromRetry,
-    // No lyrics and no title left (a cleared title): an old title verdict must stop rating the song.
-    onActiveSkip: async (reason) => {
-      if (reason === 'missing')
-        await dbWrite.entityModeration.deleteMany({
-          where: { entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId },
-        });
-    },
     xguard: async () => {
       // primary: the lyrics are written just before their scan is submitted
       const lyrics = await dbWrite.trackLyrics.findUnique({
@@ -138,6 +131,22 @@ export async function submitTrackLyricsLanguageScan({
     entityId: imageId,
     content: lyrics.text,
     rearmRetries: !fromRetry,
+  });
+}
+
+/**
+ * A song whose title was cleared and that has no lyrics has no text left: its title verdict goes,
+ * so it cannot raise the song at a later re-rate. With lyrics the verdict still rates them.
+ */
+export async function dropTitleVerdictWithoutLyrics(imageId: number) {
+  // primary: decides a delete of the verdict that still rates any lyrics
+  const lyrics = await dbWrite.trackLyrics.findUnique({
+    where: { imageId },
+    select: { imageId: true },
+  });
+  if (lyrics) return;
+  await dbWrite.entityModeration.deleteMany({
+    where: { entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId },
   });
 }
 

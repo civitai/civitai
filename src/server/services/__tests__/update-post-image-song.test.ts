@@ -165,6 +165,25 @@ describe("updatePostImage — a song's title and remix setting", () => {
     );
   });
 
+  // Before the handler's re-rate: a song with no lyrics loses the title's verdict with its title.
+  it('drops the title verdict of a song without lyrics when its title is cleared', async () => {
+    dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue(null);
+
+    await update({ title: '   ' });
+
+    expect(dbMock.dbWrite.entityModeration.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'TrackLyrics', entityId: SONG },
+    });
+  });
+
+  it('keeps the verdict of a song with lyrics, which still rates them', async () => {
+    dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ imageId: SONG } as never);
+
+    await update({ title: '   ' });
+
+    expect(dbMock.dbWrite.entityModeration.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('clears the title when it is emptied', async () => {
     await update({ title: '   ' });
 

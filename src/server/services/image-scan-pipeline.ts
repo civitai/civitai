@@ -1436,7 +1436,6 @@ export async function applyIngestionSideEffects({
   image: ScanImage;
   outcome: ScanOutcome;
 }) {
-  // A song's own cover is a postless image; its rating counts toward the song's.
   if (image.type === MediaType.image && image.postId == null) await rerateSongOfCover(image.id);
 
   // handle blocked image updates

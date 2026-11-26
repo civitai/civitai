@@ -14,11 +14,16 @@ vi.mock('~/server/services/image-scan-pipeline', async () => ({
   extractFailedSteps: () => [],
 }));
 vi.mock('~/server/services/job-queue.service', () => ({ removeImageScanJobQueue: vi.fn() }));
-const lyricsScan = vi.hoisted(() => ({ submit: vi.fn(), submitTitle: vi.fn() }));
+const lyricsScan = vi.hoisted(() => ({
+  submit: vi.fn(),
+  submitTitle: vi.fn(),
+  submitLanguage: vi.fn(),
+}));
 vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   sendTrackLyricsScan: lyricsScan.submit,
   submitTrackLyricsScan: lyricsScan.submitTitle,
+  submitTrackLyricsLanguageScan: lyricsScan.submitLanguage,
 }));
 const orchestrator = vi.hoisted(() => ({ align: vi.fn() }));
 vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
@@ -71,6 +76,7 @@ beforeEach(() => {
   pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Scanned', blockedFor: null });
   pipeline.markImageScanError.mockResolvedValue({ retryCount: 1, userId: 2, failureClass: 'x' });
   lyricsScan.submitTitle.mockResolvedValue({ id: 'wf-title' });
+  lyricsScan.submitLanguage.mockResolvedValue({ id: 'wf-language' });
 });
 
 describe('a song the scan flagged', () => {
@@ -78,6 +84,8 @@ describe('a song the scan flagged', () => {
     pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Blocked', blockedFor: 'tos' });
 
     await run(scanned(true));
+
+    expect(pipeline.rerateSong).not.toHaveBeenCalled();
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -107,6 +115,16 @@ describe('a song the scan did not flag', () => {
     expect(pipeline.applyIngestionSideEffects).toHaveBeenCalledTimes(1);
   });
 
+  // A cover or language verdict landing while the song was being decided would otherwise be lost.
+  it('is re-rated once its Scanned verdict is written', async () => {
+    await run(scanned(false));
+
+    expect(pipeline.rerateSong).toHaveBeenCalledWith(7);
+    expect(pipeline.resolveScanOutcome.mock.invocationCallOrder[0]).toBeLessThan(
+      pipeline.rerateSong.mock.invocationCallOrder[0]
+    );
+  });
+
   it('is cleared as an instrumental when the scan found no audio and none was stored', async () => {
     const noAudio: AudioScanParse = {
       ok: true,
@@ -123,7 +141,7 @@ describe('a song the scan did not flag', () => {
   });
 });
 
-// Decision L10 of the synced-lyrics feature: a title-only song never waits on its title's verdict.
+// A title-only song never waits on its title's verdict (docs/features/music.md "A song's rating").
 describe('a song with a title and no lyrics', () => {
   it('is decided on its audio verdict, then sends its title to be scanned', async () => {
     await run(scanned(false), song({ metadata: { duration: 30, title: 'Solo' } }));
@@ -217,7 +235,7 @@ describe('a song with lyrics', () => {
     );
   });
 
-  // Decision L6 of the synced-lyrics feature: an nsfw lyrics verdict raises the song, never blocks it.
+  // An nsfw lyrics verdict raises the song, never blocks it (docs/features/music.md "A song's rating").
   it('is Scanned at the level its text-scan verdict gave, never blocked by it', async () => {
     withLyrics({ status: 'Succeeded', blocked: false });
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
@@ -403,6 +421,13 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
   });
 
+  // S4: transcribed lyrics are rated the same as generator lyrics, language included.
+  it('sends the saved lyrics for their language level', async () => {
+    await run(transcribed('Rain on the window. Sun on the floor.'), pending);
+
+    expect(lyricsScan.submitLanguage).toHaveBeenCalledWith({ imageId: 7 });
+  });
+
   it('sends the saved lyrics to be timed against the song', async () => {
     await run(transcribed('Rain on the window. Sun on the floor.'), pending);
 
@@ -451,6 +476,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
 
     expect(orchestrator.align).not.toHaveBeenCalled();
     expect(lyricsScan.submit).not.toHaveBeenCalled();
+    expect(lyricsScan.submitLanguage).not.toHaveBeenCalled();
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
     );

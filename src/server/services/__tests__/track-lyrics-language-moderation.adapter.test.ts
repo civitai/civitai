@@ -5,7 +5,7 @@ import { getModerationAdapter } from '~/server/services/moderation-adapters';
 
 /**
  * A song's lyrics profanity verdict (XGuard `mode: 'profanity'`): languageLevel 0, 1, 2 rate PG,
- * PG-13, R (decision L6 of the music synced-lyrics feature), and null rates nothing. That the
+ * PG-13, R (docs/features/music.md "A song's rating"), and null rates nothing. That the
  * level counts toward the song is `song-rating.test.ts`'s subject.
  */
 

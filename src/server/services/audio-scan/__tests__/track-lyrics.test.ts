@@ -53,17 +53,6 @@ describe("sending a song's lyrics", () => {
     );
   });
 
-  // A song whose title was cleared and that has no lyrics has no text left: its old title verdict
-  // must stop raising the song (docs/features/music.md "A song's rating").
-  it('drops the stored verdict of a song left with no text to scan', async () => {
-    await sendTrackLyricsScan(7).catch(() => undefined);
-    await mocks.route.mock.calls[0][0].onActiveSkip('missing');
-
-    expect(dbMock.dbWrite.entityModeration.deleteMany).toHaveBeenCalledWith({
-      where: { entityType: 'TrackLyrics', entityId: 7 },
-    });
-  });
-
   it('reports lyrics deleted before the XGuard send as gone, sending nothing', async () => {
     dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue(null);
     await sendTrackLyricsScan(7);

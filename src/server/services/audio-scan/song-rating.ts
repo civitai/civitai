@@ -1,8 +1,8 @@
 import { isSongsOwnCover } from '@civitai/db-queries/profile-picture-clear';
 import { NsfwLevel } from '~/server/common/enums';
+import { judgeRatingFloor } from '~/server/common/judge-rating';
 import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { dbWrite } from '~/server/db/client';
-import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 // Defined here, not beside the scan submits: those sit in an import cycle this module must stay out
@@ -14,13 +14,6 @@ export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';
 const RATINGS: number[] = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 const asRating = (level: unknown) =>
   typeof level === 'number' && RATINGS.includes(level) ? level : NsfwLevel.PG;
-
-function judgeFloor(metadata: unknown) {
-  const rating = (metadata as Record<string, { nsfwLevel?: unknown } | undefined> | null)?.[
-    JUDGE_RATING_METADATA_KEY
-  ];
-  return asRating(rating?.nsfwLevel);
-}
 
 /**
  * A song's level (docs/features/music.md "A song's rating"): the highest of PG, its lyrics and title
@@ -71,12 +64,30 @@ export async function songLevel(song: { id: number; userId: number }) {
   return Math.max(NsfwLevel.PG, ...levels);
 }
 
+/** Reads before giving up on a level another writer keeps moving: a race, not a loop. */
+const RATE_ATTEMPTS = 3;
+
 /**
- * Writes a decided song's level again after one of its inputs changed, and runs `onRated` with the
- * level when it changed. A blocked or undecided song is left to its own scan, and a locked level is
- * a moderator's review; neither is touched. A collection judge's rating stays a floor.
+ * Raises a decided song's level to `songLevel` after one of its inputs changed, never lowering it,
+ * and runs `onRated` with the level when it changed. A blocked or undecided song is left to its own
+ * scan, and a locked level is a moderator's review; neither is touched. A collection judge's rating
+ * stays a floor.
  */
 export async function rateSong(songId: number, onRated: (nsfwLevel: number) => Promise<void>) {
+  for (let attempt = 0; attempt < RATE_ATTEMPTS; attempt++) {
+    const written = await writeSongLevel(songId);
+    if (written === 'changed') continue;
+    if (written !== null) await onRated(written);
+    return written;
+  }
+  return null;
+}
+
+/**
+ * Reads, computes and writes the level once. 'changed' when the row moved between the read and the
+ * write, so the caller reads again: dropping it would leave the song rated by the stale read.
+ */
+async function writeSongLevel(songId: number): Promise<number | 'changed' | null> {
   // primary: guards the level write below
   const song = await dbWrite.image.findUnique({
     where: { id: songId },
@@ -99,12 +110,15 @@ export async function rateSong(songId: number, onRated: (nsfwLevel: number) => P
   )
     return null;
 
+  // Only ever raised: a level above the inputs is someone's rating (an owner's own raise is not
+  // locked), and a race between two re-rates then ends at the higher one.
   const level = Math.max(
+    song.nsfwLevel,
     await songLevel({ id: songId, userId: song.userId }),
-    judgeFloor(song.metadata)
+    judgeRatingFloor(song.metadata)
   );
   if (level === song.nsfwLevel) return null;
-  // Written only over the level read above: a block, a lock or another rating since then stands.
+  // Written only over the level read above; a block or a lock since then is seen on the next read.
   const { count } = await dbWrite.image.updateMany({
     where: {
       id: songId,
@@ -117,9 +131,7 @@ export async function rateSong(songId: number, onRated: (nsfwLevel: number) => P
     // A lock on no level is not a rating, so it goes, as the scan's write drops it.
     data: { nsfwLevel: level, nsfwLevelLocked: false },
   });
-  if (!count) return null;
-  await onRated(level);
-  return level;
+  return count ? level : 'changed';
 }
 
 /** The song whose own cover link names this image, if any. */

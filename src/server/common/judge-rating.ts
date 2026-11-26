@@ -47,3 +47,11 @@ export const judgeRatingFloorSql = (column = '"metadata"') => {
     ELSE 0
   END)`;
 };
+
+/** `judgeRatingFloorSql` over an `Image.metadata` value already read. */
+export function judgeRatingFloor(metadata: unknown): number {
+  const level = (metadata as Record<string, { nsfwLevel?: unknown } | undefined> | null)?.[
+    JUDGE_RATING_METADATA_KEY
+  ]?.nsfwLevel;
+  return typeof level === 'number' && [1, 2, 4, 8, 16].includes(level) ? level : 0;
+}

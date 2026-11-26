@@ -3,10 +3,12 @@ import { logToAxiom } from '~/server/logging/client';
 import { alignTrackLyrics } from '~/server/services/audio-scan/lyrics-alignment';
 import { songLevel } from '~/server/services/audio-scan/song-rating';
 import { songVerdict } from '~/server/services/audio-scan/song-scan';
+import { songTitle } from '~/server/services/audio-scan/song-title';
 import {
   readLyricsVerdict,
   saveTranscribedTrackLyrics,
   sendTrackLyricsScan,
+  submitTrackLyricsLanguageScan,
   submitTrackLyricsScan,
   type LyricsVerdict,
 } from '~/server/services/audio-scan/track-lyrics';
@@ -120,6 +122,8 @@ async function promoteTranscript(imageId: number, transcript: string) {
     handleLogError(error as Error);
     return;
   }
+  // Rated like generator lyrics; the song never waits on it.
+  submitTrackLyricsLanguageScan({ imageId }).catch(handleLogError);
   // primary: the song row this callback is deciding
   const image = await dbWrite.image.findUnique({ where: { id: imageId }, select: { url: true } });
   if (image) alignTrackLyrics({ imageId, url: image.url }).catch(handleLogError);
@@ -138,8 +142,7 @@ const UNDECIDED: string[] = [ImageIngestionStatus.Pending, ImageIngestionStatus.
 /**
  * A song goes public only once its audio and, when it has lyrics, its lyrics have a verdict;
  * whichever lands last decides, at the song's level (`songLevel`), and lyrics XGuard blocked block
- * the song. A clean song waiting on
- * its lyrics stays Pending so the ingest cron re-drives it.
+ * the song. A clean song waiting on its lyrics stays Pending so the ingest cron re-drives it.
  */
 async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: SongDecision) {
   const image = await loadImageForScan(imageId);
@@ -204,11 +207,14 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
       log: SONG_SCAN_LOG,
     });
     await applyIngestionSideEffects({ image, outcome });
+    // `songLevel` was read before the write: a cover or language verdict that landed since then was
+    // refused by the re-rate it ran, which waits for a decided song, so it is counted now.
+    if (outcome.ingestion === ImageIngestionStatus.Scanned) await rerateSong(imageId);
     // A title without lyrics is scanned once the song is public; its verdict re-rates the song.
     if (
       lyrics.state === 'none' &&
       outcome.ingestion === ImageIngestionStatus.Scanned &&
-      (image.metadata as { title?: unknown } | null)?.title
+      songTitle(image.metadata)
     )
       submitTrackLyricsScan({ imageId }).catch((error: Error) =>
         logToAxiom(

@@ -4,8 +4,8 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { rateSong, songOfCover } from '~/server/services/audio-scan/song-rating';
 
 /**
- * A song's level is the highest of PG, its text scan, its lyrics profanity and its own cover
- * (docs/features/music.md "A song's rating", decision L6 of the music synced-lyrics feature).
+ * A song's level is the highest of PG, its text scan, its lyrics profanity and its own cover, and a
+ * re-rate only raises it (docs/features/music.md "A song's rating").
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -130,12 +130,30 @@ describe('a decided song', () => {
     expect(await level()).toBe(PG);
   });
 
-  it('comes back down when its cover goes, but never below PG', async () => {
-    await song(`"nsfwLevel" = ${R}`);
-    await languageVerdict(null);
+  // An owner's own raise is applied unlocked; a re-rate (a title save, a new cover) must keep it.
+  it('is never lowered by a re-rate, so an owner raise stands', async () => {
+    await song(`"nsfwLevel" = ${X}`);
+    await languageVerdict(PG13);
 
-    expect(await rate()).toBe(PG);
-    expect(await level()).toBe(PG);
+    expect(await rate()).toBeNull();
+    expect(await level()).toBe(X);
+    expect(onRated).not.toHaveBeenCalled();
+  });
+
+  // Two re-rates racing: the one whose write finds the level changed reads again, so the end
+  // state counts every input present at its last attempt.
+  it('reads again and writes when another rating landed between its read and write', async () => {
+    await song();
+    await languageVerdict(R);
+    const prisma = h.prisma as unknown as { image: { updateMany: (a: unknown) => unknown } };
+    vi.mocked(dbMock.dbWrite.image.updateMany).mockImplementationOnce((async (args: unknown) => {
+      await q(`UPDATE "Image" SET "nsfwLevel" = ${PG13} WHERE id = ${SONG}`);
+      return prisma.image.updateMany(args);
+    }) as never);
+
+    expect(await rate()).toBe(R);
+    expect(await level()).toBe(R);
+    expect(onRated).toHaveBeenCalledWith(R);
   });
 
   it('keeps a collection judge rating as a floor', async () => {

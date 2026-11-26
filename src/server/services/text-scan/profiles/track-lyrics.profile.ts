@@ -1,12 +1,8 @@
 import { dbWrite } from '~/server/db/client';
+import { songTitle } from '~/server/services/audio-scan/song-title';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
 import type { TextScanField, TextScanSubject } from '~/server/services/text-scan/types';
 import { MediaType } from '~/shared/utils/prisma/enums';
-
-const titleOf = (metadata: unknown) => {
-  const title = (metadata as { title?: unknown } | null)?.title;
-  return typeof title === 'string' && title.trim() ? title : undefined;
-};
 
 // Never `notPublic`, even on a draft post: the song stays Pending until its lyrics verdict lands.
 // The title rides along, so its level counts toward the song's (`songLevel`). A song with a title
@@ -22,7 +18,7 @@ registerTextScanProfile({
     });
     const subjects = new Map<number, TextScanSubject>(
       rows.map((row) => {
-        const title = titleOf(row.image.metadata);
+        const title = songTitle(row.image.metadata);
         const fields: TextScanField[] = [
           ...(title ? [{ heading: 'Title', text: title }] : []),
           { heading: 'Lyrics', text: row.text },
@@ -38,7 +34,7 @@ registerTextScanProfile({
       select: { id: true, userId: true, metadata: true },
     });
     for (const song of songs) {
-      const title = titleOf(song.metadata);
+      const title = songTitle(song.metadata);
       if (title)
         subjects.set(song.id, {
           userId: song.userId,

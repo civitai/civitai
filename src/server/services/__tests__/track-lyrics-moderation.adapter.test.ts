@@ -75,7 +75,7 @@ describe('the TrackLyrics text-scan profile', () => {
 });
 
 describe('the TrackLyrics text-scan profile, for a song with a title and no lyrics', () => {
-  it('scans its title alone (decision L10: the song never waits on it)', async () => {
+  it('scans its title alone; the song never waits on that verdict', async () => {
     w.trackLyrics.findMany.mockResolvedValue([] as never);
     w.image.findMany.mockResolvedValue([
       { id: 8, userId: 3, metadata: { title: 'Solo' } },
