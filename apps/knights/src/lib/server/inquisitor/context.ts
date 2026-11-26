@@ -93,7 +93,7 @@ export type ModeratorStats = {
 
 const WEEK_MS = 7 * 86_400_000;
 export const WAITING_CAP = 1000;
-const WAITING_TIMEOUT_MS = 3_000;
+const WAITING_TIMEOUT_MS = 5_000;
 
 export async function moderatorStats(
   db: Kysely<DB>,
