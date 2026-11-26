@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
@@ -55,6 +56,11 @@ vi.mock('~/server/services/user.service', () => ({
 const trackModActivity = vi.fn(async () => undefined);
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: (...a: unknown[]) => trackModActivity(...(a as [])),
+}));
+const removeErasedOwnerRecords = vi.fn<(userId: number) => Promise<unknown>>(async () => ({}));
+vi.mock('~/server/jobs/appeal-decision-records', () => ({
+  removeErasedOwnerRecords: (userId: number) => removeErasedOwnerRecords(userId),
+  appealOwnerHash: () => 'opaque-owner-hash',
 }));
 const hasModeratorGrant = vi.fn<(...a: unknown[]) => Promise<boolean>>(async () => true);
 vi.mock('~/server/services/moderator-grants', () => ({
@@ -554,5 +560,39 @@ describe('user.delete — a failed deletion', () => {
     expect(body).toEqual(
       restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE)
     );
+  });
+});
+
+describe('user.delete — appeal training copies', () => {
+  it("removes the erased account's appeal records once the account is deleted", async () => {
+    const order: string[] = [];
+    deleteUser.mockImplementationOnce(async () => (order.push('deleteUser'), {}));
+    removeErasedOwnerRecords.mockImplementationOnce(async () => (order.push('appeal'), {}));
+
+    expect((await call({ userId: String(TARGET), username: NAME })).status).toBe(200);
+    expect(removeErasedOwnerRecords).toHaveBeenCalledExactlyOnceWith(TARGET);
+    expect(order).toEqual(['deleteUser', 'appeal']);
+  });
+
+  it('does not touch them when the deletion is refused', async () => {
+    expect((await call({ userId: String(TARGET), username: 'someone_else' })).status).toBe(400);
+    expect(removeErasedOwnerRecords).not.toHaveBeenCalled();
+  });
+
+  it('still reports the erasure when the cleanup fails, and logs the owner hash, not the id', async () => {
+    removeErasedOwnerRecords.mockRejectedValueOnce(new Error('db down'));
+
+    const { status, body } = await call({ userId: String(TARGET), username: NAME });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
+    const logged = vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([entry]) => entry as { name?: string })
+      .filter((entry) => entry.name === 'mod-delete-appeal-copies-failed');
+    expect(logged).toEqual([
+      expect.objectContaining({ details: { ownerHash: 'opaque-owner-hash' } }),
+    ]);
+    expect(JSON.stringify(logged)).not.toContain(String(TARGET));
   });
 });

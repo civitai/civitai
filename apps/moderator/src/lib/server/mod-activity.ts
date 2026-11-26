@@ -19,6 +19,18 @@ export async function recordModActivity(input: ModActivityInsert): Promise<void>
   }
 }
 
+/**
+ * Marks an image removed for a likeness/DMCA request. The main app's appeal-decision-records sweep
+ * deletes the image's appeal training copies by this row (`LIKENESS_REQUEST_ACTIVITY` there).
+ */
+export const recordLikenessRequest = (userId: number, imageId: number) =>
+  recordModActivity({
+    userId,
+    entityType: 'image',
+    entityId: imageId,
+    activity: 'likenessRequest',
+  });
+
 type ModActivityInsert = {
   userId: number;
   entityType: string | null;

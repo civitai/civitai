@@ -56,35 +56,73 @@ const ineligibleRecord = (r: Prisma.Sql) => {
   )`;
 };
 
-/**
- * Deletes ineligible records, the training labels this job wrote for any excluded image (with or
- * without a record), and expired records, then their training objects.
- */
-export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
-  const r = Prisma.raw('r');
-  const reportedOwners = await reportedOwnerHashes();
-  const [{ swept, labels, keys }] = await dbWrite.$queryRaw<
-    { swept: number; labels: number; keys: string[] }[]
-  >`
+/** Written by `/api/mod/user/delete`, the erasure endpoint, and not by self-serve deletion. */
+const ERASURE_ACTIVITY = 'deleteAccount';
+/** Written on an image removed because the person depicted, or a rights holder, asked. */
+export const LIKENESS_REQUEST_ACTIVITY = 'likenessRequest';
+
+/** By appeal, or by owner hash for a record whose appeal row is gone. */
+const ownersRecord = (r: Prisma.Sql, userIds: number[]) => Prisma.sql`(
+  ${r}."ownerHash" = ANY(${ownerHashesOf(userIds)}::text[])
+  OR EXISTS (
+    SELECT 1 FROM "Appeal" a WHERE a.id = ${r}."appealId" AND a."userId" = ANY(${userIds}::int[])
+  )
+)`;
+
+// Keyed on the request, never on a moderator's realPerson call: those records are copied on purpose.
+const requestRemovedRecord = (r: Prisma.Sql) => Prisma.sql`(
+  ${r}."removalLabel" = ${ViolationType.LikenessRequest}
+  OR EXISTS (
+    SELECT 1 FROM "ModActivity" m
+    WHERE m."entityType" = 'image' AND m."entityId" = ${r}."imageId"
+      AND m.activity = ${LIKENESS_REQUEST_ACTIVITY}
+  )
+)`;
+
+/** Deletes matching records and the training labels this job wrote for their images. */
+async function deleteRecords(where: Prisma.Sql, alsoLabelWhere: Prisma.Sql = Prisma.sql`false`) {
+  const [row] = await dbWrite.$queryRaw<{ swept: number; labels: number; keys: string[] }[]>`
     WITH removed AS (
-      DELETE FROM "AppealDecisionRecord" r
-      WHERE ${ineligibleRecord(r)} OR r."ownerHash" = ANY(${reportedOwners}::text[])
+      DELETE FROM "AppealDecisionRecord" r WHERE ${where}
       RETURNING r."imageUrl", r."trainingObjectKey"
     ),
     labels AS (
       DELETE FROM training_labels tl
       WHERE tl.source = ${CORRECTION_SOURCE}
-        AND (
-          tl.url IN (SELECT "imageUrl" FROM removed)
-          OR EXISTS (
-            SELECT 1 FROM "Image" li WHERE li.url = tl.url AND ${excludedImageRow(Prisma.raw('li'))}
-          )
-        )
+        AND (tl.url IN (SELECT "imageUrl" FROM removed) OR ${alsoLabelWhere})
       RETURNING 1
     )
     SELECT (SELECT count(*) FROM removed)::int AS swept, (SELECT count(*) FROM labels)::int AS labels,
       ARRAY(SELECT "trainingObjectKey" FROM removed WHERE "trainingObjectKey" IS NOT NULL) AS keys
   `;
+  return row;
+}
+
+/**
+ * Removes an erased account's records and their training objects, rows first. The nightly sweep
+ * removes the same records, so a failure here waits at most a day.
+ */
+export async function removeErasedOwnerRecords(userId: number, store?: AppealTrainingStore | null) {
+  const { swept, keys } = await deleteRecords(ownersRecord(Prisma.raw('r'), [userId]));
+  return { removed: swept, objects: await discardTrainingObjects(store, keys) };
+}
+
+/**
+ * Deletes ineligible records, records of erased accounts and of request-removed images, the training
+ * labels this job wrote for any excluded image (with or without a record), and expired records, then
+ * their training objects.
+ */
+export async function sweepExcludedRecords(store?: AppealTrainingStore | null) {
+  const r = Prisma.raw('r');
+  const reportedOwners = await reportedOwnerHashes();
+  const erasedOwners = await erasedOwnerIds();
+  const { swept, labels, keys } = await deleteRecords(
+    Prisma.sql`${ineligibleRecord(r)} OR r."ownerHash" = ANY(${reportedOwners}::text[])
+      OR ${ownersRecord(r, erasedOwners)} OR ${requestRemovedRecord(r)}`,
+    Prisma.sql`EXISTS (
+      SELECT 1 FROM "Image" li WHERE li.url = tl.url AND ${excludedImageRow(Prisma.raw('li'))}
+    )`
+  );
   const expiredRows = await dbWrite.$queryRaw<{ key: string | null }[]>`
     DELETE FROM "AppealDecisionRecord" WHERE "createdAt" < now() - ${RECORD_RETENTION}
     RETURNING "trainingObjectKey" AS key
@@ -190,13 +228,29 @@ const forgetOrphanKey = (key: string) => dbWrite.$executeRaw`
 const ownerHash = (key: string, userId: number) =>
   createHmac('sha256', key).update(String(userId)).digest('hex');
 
-async function reportedOwnerHashes() {
+/** The opaque owner id records carry, for logs that must not name an erased account. */
+export const appealOwnerHash = (userId: number) => ownerHashesOf([userId])[0] ?? null;
+
+/** Without the key no record carries a hash, so there is nothing to match. */
+function ownerHashesOf(userIds: number[]) {
   const key = env.APPEAL_OWNER_HASH_KEY;
-  if (!key) return [];
+  return key ? userIds.map((userId) => ownerHash(key, userId)) : [];
+}
+
+async function reportedOwnerHashes() {
+  if (!env.APPEAL_OWNER_HASH_KEY) return [];
   const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
     SELECT DISTINCT "userId" FROM "CsamReport" WHERE "userId" IS NOT NULL
   `;
-  return owners.map((o) => ownerHash(key, o.userId));
+  return ownerHashesOf(owners.map((o) => o.userId));
+}
+
+async function erasedOwnerIds() {
+  const owners = await dbWrite.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT "entityId" AS "userId" FROM "ModActivity"
+    WHERE "entityType" = 'user' AND activity = ${ERASURE_ACTIVITY} AND "entityId" IS NOT NULL
+  `;
+  return owners.map((o) => o.userId);
 }
 
 /** Deletes training objects; keys it could not delete are kept for the next sweep to retry. */

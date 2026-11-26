@@ -12,8 +12,11 @@ import { hasModeratorGrant } from '~/server/services/moderator-grants';
 export type { HeldRemoval };
 
 // 'other' says nothing about what the image showed, so two removals filed under it cannot be told apart.
-const COMPARABLE_REASONS: ReadonlySet<string> = new Set(
-  Object.values(ViolationType).filter((v) => v !== ViolationType.Other)
+// A likeness request says who asked, not what the image showed, and was filed under 'other' until now.
+export const COMPARABLE_REASONS: ReadonlySet<string> = new Set(
+  Object.values(ViolationType).filter(
+    (v) => v !== ViolationType.Other && v !== ViolationType.LikenessRequest
+  )
 );
 
 /**

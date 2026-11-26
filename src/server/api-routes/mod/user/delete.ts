@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { isModerationAccountRow } from '~/server/auth/moderation-account';
 import { dbWrite } from '~/server/db/client';
+import { appealOwnerHash, removeErasedOwnerRecords } from '~/server/jobs/appeal-decision-records';
 import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -138,6 +139,19 @@ export default defineModeratorEndpoint('user.delete', {
       if (e instanceof MemorializedAccountError)
         throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
       throw e;
+    }
+
+    // Best-effort, like the audit below: the nightly appeal-decision-records sweep removes the same
+    // records by this endpoint's ModActivity row. Logged by owner hash, never the erased id.
+    try {
+      await removeErasedOwnerRecords(input.userId);
+    } catch (e) {
+      logToAxiom({
+        type: 'error',
+        name: 'mod-delete-appeal-copies-failed',
+        message: (e as Error).message,
+        details: { ownerHash: appealOwnerHash(input.userId) },
+      });
     }
 
     // 🔴 THE SPOKE DELIBERATELY DOES NOT LOG THIS ONE — see `deleteAccount` in

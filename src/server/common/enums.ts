@@ -247,6 +247,8 @@ export enum ViolationType {
   Hate = 'hate',
   NonAi = 'non-ai',
   Spam = 'spam',
+  /** Removed at the request of the person depicted or a rights holder (likeness, TAKE IT DOWN, DMCA). */
+  LikenessRequest = 'likenessRequest',
   Other = 'other',
 }
 

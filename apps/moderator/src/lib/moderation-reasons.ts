@@ -131,8 +131,8 @@ export const TOS_REASONS: CannedReason[] = [
   {
     label: 'Likeness/DMCA',
     message: 'Person depicted has requested to have images taken down',
-    // The label-keyed map had no entry for this one, so DMCA removals filed unclassified.
-    violation: 'other',
+    // Its own type: the appeal training copies of a request-removed image are deleted by it.
+    violation: 'likenessRequest',
     // 9.3(b)(i) and §12 are the real citation, but the modal anchors at section level and neither is
     // the prohibited-content list — better to cite nothing than to send them to the wrong section.
   },
