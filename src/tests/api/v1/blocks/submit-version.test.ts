@@ -956,3 +956,41 @@ describe('/api/v1/blocks/submit-version under bearer-scope-tighten', () => {
     expect(res._getStatusCode()).toBe(200);
   });
 });
+
+describe('POST /api/v1/blocks/submit-version — staff platform updates', () => {
+  beforeEach(() => {
+    // The bearer-scope-tighten block above leaves its variant set; this one runs with it off.
+    mockFliptVariant.mockReset();
+  });
+
+  it('🔴 a bundle missing an unshipped update answers 409 platform_update_missing with the updates', async () => {
+    const { PlatformUpdateMissingRefusal } = await import(
+      '~/server/services/blocks/platform-update-bundle-check'
+    );
+    const missing = [
+      { id: 'apu_1', reason: 'Fix the deprecated SDK call', by: 'mod-jane', paths: ['src/a.ts'] },
+    ];
+    const refusal = new PlatformUpdateMissingRefusal(missing);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(refusal);
+    const { req, res } = createMocks({ headers: { authorization: 'Bearer key' }, body: goodBody });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(409);
+    expect(res._getJSONData()).toEqual({
+      message: refusal.message,
+      code: 'platform_update_missing',
+      details: { updates: missing },
+    });
+  });
+
+  it('passes the CLI’s allowUnmergedPlatformUpdate through to the service', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: { ...goodBody, allowUnmergedPlatformUpdate: true },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].allowUnmergedPlatformUpdate).toBe(true);
+  });
+});

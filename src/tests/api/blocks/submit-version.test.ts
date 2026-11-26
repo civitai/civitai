@@ -546,3 +546,55 @@ describe('POST /api/blocks/submit-version', () => {
     expect(res2._body).toEqual({ message: 'Invalid bundle payload' });
   });
 });
+
+describe('POST /api/blocks/submit-version — staff platform updates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.value = MOD;
+    mockEnv.BUNDLE_S3_ENDPOINT = 'https://s3.example';
+    mockEnv.BUNDLE_S3_BUCKET = 'bundles';
+    mockOther.isProd = false;
+    mockIsAllowedOrigin.mockReturnValue(true);
+    mockIsAppBlocksEnabled.mockResolvedValue(true);
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+    mockTakeSubmitSlot.mockResolvedValue({ ok: true });
+    mockSubmitVersion.mockReset();
+    mockSubmitVersion.mockResolvedValue(SERVICE_RESULT);
+  });
+
+  it('🔴 a bundle missing an unshipped update answers 409 platform_update_missing with the updates', async () => {
+    const { PlatformUpdateMissingRefusal } = await import(
+      '~/server/services/blocks/platform-update-bundle-check'
+    );
+    const missing = [
+      { id: 'apu_1', reason: 'Fix the deprecated SDK call', by: 'mod-jane', paths: ['src/a.ts'] },
+    ];
+    const refusal = new PlatformUpdateMissingRefusal(missing);
+    mockSubmitVersion.mockRejectedValue(refusal);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(409);
+    expect(res._body).toEqual({
+      message: refusal.message,
+      code: 'platform_update_missing',
+      details: { updates: missing },
+    });
+  });
+
+  it('passes allowUnmergedPlatformUpdate through to the service; absent stays absent', async () => {
+    await invoke(makeReq({ body: { bundleBase64, allowUnmergedPlatformUpdate: true } }), makeRes());
+    expect(mockSubmitVersion.mock.calls[0][0].allowUnmergedPlatformUpdate).toBe(true);
+    await invoke(makeReq({ body: { bundleBase64 } }), makeRes());
+    expect(mockSubmitVersion.mock.calls[1][0].allowUnmergedPlatformUpdate).toBeUndefined();
+  });
+
+  it('400s a non-boolean allowUnmergedPlatformUpdate with a message naming the field', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, allowUnmergedPlatformUpdate: 'yes' } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({
+      message: 'Invalid submit payload: allowUnmergedPlatformUpdate must be a boolean',
+    });
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+});

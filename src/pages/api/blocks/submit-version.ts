@@ -133,6 +133,9 @@ export default AuthedEndpoint(
         sourceCommit: parsed.data.sourceCommit,
         sourceDirty: parsed.data.sourceDirty,
         sdkFloorOverride: parsed.data.sdkFloorOverride,
+        // `--allow-unmerged-platform-update`: queue a bundle that lacks an unshipped staff platform
+        // update (recorded for the moderator); absent, such a bundle is refused 409.
+        allowUnmergedPlatformUpdate: parsed.data.allowUnmergedPlatformUpdate,
         // GitHub Actions OIDC token: dropped here unless `app-blocks-oidc-verified-submit` is on
         // for this submitter, so with the flag off it is never verified or stored.
         // (The verifier module is loaded only when a token was sent.)
@@ -164,6 +167,15 @@ export default AuthedEndpoint(
       // Surface as 400 so the form can render them inline.
       if (err instanceof AppDeveloperTermsNotAcceptedError) {
         res.status(403).json({ message: err.message });
+        return;
+      }
+      // A bundle that lacks a staff platform update no approved version has shipped, sent without
+      // the override: 409, with each update (id, reason, by, paths) for the client to show.
+      const { isPlatformUpdateMissingRefusal } = await import(
+        '~/server/services/blocks/platform-update-bundle-check'
+      );
+      if (isPlatformUpdateMissingRefusal(err)) {
+        res.status(err.status).json({ message: err.message, code: err.code, details: err.details });
         return;
       }
       // A GitHub Actions OIDC token that failed verification: 400 (fix the pipeline) or 503 (GitHub's

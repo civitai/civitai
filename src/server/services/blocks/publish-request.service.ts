@@ -95,6 +95,10 @@ import {
 } from '~/shared/utils/review-boot-check';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import type { Advisory } from '~/server/services/blocks/submit-advisories';
+import type {
+  MissingPlatformUpdate,
+  PlatformUpdatesMissingRecord,
+} from '~/server/services/blocks/platform-update-bundle-check';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -244,6 +248,13 @@ export type SubmitVersionParams = {
    * reading under `fileSummary.sdkFloor`; it changes nothing else.
    */
   sdkFloorOverride?: { package: string; installed: string; minimum: string }[];
+  /**
+   * `civitai app submit --allow-unmerged-platform-update`: queue the bundle even when it lacks a
+   * staff platform update no approved version has shipped (`platform-update-bundle-check.ts`).
+   * What it left out is recorded for the moderator under `fileSummary.platformUpdatesMissing`.
+   * Absent or false: such a bundle is refused (`PlatformUpdateMissingRefusal`).
+   */
+  allowUnmergedPlatformUpdate?: boolean;
 };
 
 export type SubmitVersionResult = {
@@ -1153,6 +1164,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     sourceDirty,
     githubOidcToken,
     sdkFloorOverride,
+    allowUnmergedPlatformUpdate,
   } = params;
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
@@ -1460,6 +1472,23 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     });
   }
 
+  // STAFF PLATFORM UPDATES — refused HERE too, before the upload and the review-repo push: a bundle
+  // of an existing app that lacks a staff update no approved version has shipped, unless the
+  // client sent `allowUnmergedPlatformUpdate` (then what it left out is recorded below for the
+  // moderator). Reads only the paths the updates touch. Off with the flag, or while the manual
+  // migrations are missing. See `platform-update-bundle-check.ts`.
+  const {
+    assertBundleHasPlatformUpdates,
+    platformUpdatesMissingRecord,
+    platformUpdateMissingAdvisories,
+  } = await import('./platform-update-bundle-check');
+  const platformUpdatesMissing = await assertBundleHasPlatformUpdates({
+    appBlockId: existingApp?.id ?? null,
+    readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    allow: allowUnmergedPlatformUpdate === true,
+  });
+  const platformUpdatesRecorded = platformUpdatesMissingRecord(platformUpdatesMissing, 'override');
+
   // GITHUB ACTIONS OIDC — verified HERE: after the validation gates above and before the first
   // side effect (the upload), so a refused token leaves nothing behind. The token is present only
   // when the flag is on (the routes filter it). A token that fails refuses the submit: a bad token
@@ -1553,9 +1582,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         bundleKey: key,
         bundleSha256,
         bundleSizeBytes: BigInt(bundleBuffer.length),
-        fileSummary: (sdkFloorRecorded
-          ? { ...fileSummary, sdkFloor: sdkFloorRecorded }
-          : fileSummary) as object,
+        fileSummary: {
+          ...fileSummary,
+          ...(sdkFloorRecorded ? { sdkFloor: sdkFloorRecorded } : {}),
+          ...(platformUpdatesRecorded ? { platformUpdatesMissing: platformUpdatesRecorded } : {}),
+        } as object,
         manifestDiffSummary: manifestDiffSummary as object,
         status: 'pending',
         // #4059 — the client's UNVERIFIED provenance claim, stored as a claim.
@@ -1735,7 +1766,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
-    advisories: [...advisories, ...sdkFloorAdvisories(sdkFloor.lockfile, sdkFloor.below)],
+    advisories: [
+      ...advisories,
+      ...sdkFloorAdvisories(sdkFloor.lockfile, sdkFloor.below),
+      ...platformUpdateMissingAdvisories(platformUpdatesMissing, 'override'),
+    ],
   };
 }
 
@@ -2466,7 +2501,9 @@ export async function computePushDiffSummaries(
 export async function enrichPushRequestRow(
   publishRequestId: string,
   slug: string,
-  ref: string
+  ref: string,
+  /** Recorded at park time (`recordPendingFromPush`) and kept: the diff replaces the summary. */
+  carry: { platformUpdatesMissing?: PlatformUpdatesMissingRecord | null } = {}
 ): Promise<void> {
   try {
     const { fileSummary, manifestDiffSummary, bundleSizeBytes } = await computePushDiffSummaries(
@@ -2477,7 +2514,12 @@ export async function enrichPushRequestRow(
     await dbWrite.appBlockPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
       data: {
-        fileSummary: fileSummary as object,
+        fileSummary: {
+          ...fileSummary,
+          ...(carry.platformUpdatesMissing
+            ? { platformUpdatesMissing: carry.platformUpdatesMissing }
+            : {}),
+        } as object,
         manifestDiffSummary: manifestDiffSummary as object,
         bundleSizeBytes: BigInt(bundleSizeBytes),
       },
@@ -2526,7 +2568,7 @@ export async function recordPendingFromPush(args: {
   version: string;
   /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
   pusherUserId?: number | null;
-}): Promise<{ publishRequestId: string }> {
+}): Promise<{ publishRequestId: string; advisories: Advisory[] }> {
   // Single sink for every push-recorded manifest.
   trimManifestStringFields(args.manifest as Record<string, unknown>);
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
@@ -2591,8 +2633,33 @@ export async function recordPendingFromPush(args: {
       where: { id: existingForSha.id },
       data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
     });
-    return { publishRequestId: existingForSha.id };
+    return { publishRequestId: existingForSha.id, advisories: [] };
   }
+
+  // STAFF PLATFORM UPDATES — the commit is checked like a bundle (only the paths the updates
+  // touch are read, at the pushed sha) but NEVER refused: it is already in the repo, and a push
+  // has no client to send the override, so refusing would only drop the review request. What it
+  // left out is recorded for the moderator (`via: 'push'`) and returned as an advisory. A check
+  // that fails is logged and records nothing. See `platform-update-bundle-check.ts`.
+  const { checkPlatformUpdates, platformUpdatesMissingRecord, platformUpdateMissingAdvisories } =
+    await import('./platform-update-bundle-check');
+  let pushMissing: MissingPlatformUpdate[] = [];
+  try {
+    pushMissing =
+      (
+        await checkPlatformUpdates({
+          appBlockId: args.appBlockId,
+          readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
+        })
+      )?.missing ?? [];
+  } catch (err) {
+    console.warn(
+      `[recordPendingFromPush] platform-update check failed for ${args.slug}@${
+        args.sha
+      }; recorded without it: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const pushPlatformUpdates = platformUpdatesMissingRecord(pushMissing, 'push');
 
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)
@@ -2645,7 +2712,13 @@ export async function recordPendingFromPush(args: {
         bundleKey: '',
         bundleSha256: '',
         bundleSizeBytes: BigInt(0),
-        fileSummary: { files: [], added: [], removed: [], changed: [] },
+        fileSummary: {
+          files: [],
+          added: [],
+          removed: [],
+          changed: [],
+          ...(pushPlatformUpdates ? { platformUpdatesMissing: pushPlatformUpdates } : {}),
+        },
         manifestDiffSummary: {
           kind: 'first-version' as const,
           fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
@@ -2677,7 +2750,7 @@ export async function recordPendingFromPush(args: {
         select: { id: true },
       }));
     if (!winner) throw err; // index fired but no pending row visible — re-throw
-    return { publishRequestId: winner.id };
+    return { publishRequestId: winner.id, advisories: [] };
   }
 
   // FORK PROVENANCE — same carry as `submitVersion`: the block's own server-written pair onto the
@@ -2693,7 +2766,9 @@ export async function recordPendingFromPush(args: {
   // Fire-and-forget: fill in the real diff + bundle size. enrichPushRequestRow
   // has its own try/catch + is scoped to status='pending', so it never gates the
   // park and can't clobber a row that was approved/rejected/superseded.
-  void enrichPushRequestRow(publishRequestId, args.slug, args.sha).catch(() => undefined);
+  void enrichPushRequestRow(publishRequestId, args.slug, args.sha, {
+    platformUpdatesMissing: pushPlatformUpdates,
+  }).catch(() => undefined);
 
   announceNewPendingRequest({
     publishRequestId,
@@ -2704,7 +2779,10 @@ export async function recordPendingFromPush(args: {
     origin: 'push',
   });
 
-  return { publishRequestId };
+  return {
+    publishRequestId,
+    advisories: platformUpdateMissingAdvisories(pushMissing, 'push'),
+  };
 }
 
 // Type-only, so the big store service stays out of this module's runtime graph (the
@@ -5099,6 +5177,18 @@ async function approveRequestUnderClaim(
       priorListing,
     })
   );
+  // STAFF PLATFORM UPDATES — this request is approved now: every unshipped update the approved
+  // bytes contain is marked shipped by it, so no later submit is checked for it. Re-checked here
+  // against these bytes; the submit-time answer is not reused. Never throws (a failure leaves the
+  // updates unshipped). See `platform-update-bundle-check.ts`.
+  {
+    const { markShippedPlatformUpdates } = await import('./platform-update-bundle-check');
+    await markShippedPlatformUpdates({
+      appBlockId,
+      publishRequestId: request.id,
+      readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    });
+  }
   // A held version must not build, deploy or be announced; a moderator clears the hold first.
   // The suspended block stops only the on-site runtime, so the live pointer comes down too.
   if (lateHoldIds.length) {
