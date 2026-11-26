@@ -800,6 +800,22 @@ describe('a url whose upload is not in the image store', () => {
     expect(await ingestion()).toBe('Pending');
   });
 
+  it('stops probing at the first unreadable answer, linking the rest as before', async () => {
+    const keys = Array.from(
+      { length: 12 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    for (const key of keys) await recordUploadKeyOwner(key, AUTHOR);
+    const content = `<p>${keys.map(img).join('')}</p>`;
+    await givenArticle({ content });
+    store.down = true;
+    s3Send.mockClear();
+    await link({ content });
+    // One round of the 4 concurrent probes, not all 12.
+    expect(s3Send.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(await rows()).toHaveLength(keys.length);
+  });
+
   it('control: links as before when the store cannot be read', async () => {
     store.absent.add(KEY);
     store.down = true;

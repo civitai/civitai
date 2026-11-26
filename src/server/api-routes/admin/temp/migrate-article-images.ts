@@ -332,7 +332,11 @@ async function processBatch(
     ).map((img) => img.url)
   );
   const absent = new Set(
-    await urlsWithAbsentUploads([...allUrls].filter((url) => !existingUrls.has(url)))
+    // A one-off pass, not re-run every settle, so every new url is probed.
+    await urlsWithAbsentUploads(
+      [...allUrls].filter((url) => !existingUrls.has(url)),
+      { max: Infinity }
+    )
   );
   for (const url of absent) allUrls.delete(url);
   stats.uploadsAbsent += absent.size;
