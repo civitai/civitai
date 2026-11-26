@@ -28,6 +28,7 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Published',
       "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode "ModelModifier",

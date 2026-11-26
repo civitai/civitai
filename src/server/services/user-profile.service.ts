@@ -38,6 +38,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
@@ -173,6 +174,7 @@ export const getUserWithProfile = async ({
         ? isRestrictedImage(coverImage)
         : !servableArticleImage(coverImage);
       if (!sameUser && hidden) return null;
+      if (sameUser && !isModerator && !ownerMediaAllowed(coverImage)) return null;
 
       return {
         ...coverImage,
@@ -531,10 +533,13 @@ export const updateUserProfile = async ({
   creatorCardStatsPreferences,
   domain,
   sessionUserId,
+  asModerator = false,
   ...profile
 }: UserProfileUpdateSchema & {
   userId: number;
   isModerator?: boolean;
+  /** The moderator view the editor's profile read had (`actsAsModerator`). */
+  asModerator?: boolean;
   domain?: ColorDomain;
   /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
   sessionUserId: number;
@@ -618,6 +623,20 @@ export const updateUserProfile = async ({
         WHERE "id" = ${userId}`;
 
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
+  }
+
+  // A stored cover the editor's read withheld (`ownerMediaAllowed`) never reached the form, so the
+  // null it sends back keeps it.
+  const withheld = { coverImage: false, sfwCoverImage: false };
+  if (!asModerator && (coverImage === null || sfwCoverImage === null)) {
+    const coverBlock = { select: { ingestion: true, blockedFor: true } };
+    // primary: it decides what this save keeps.
+    const stored = await dbWrite.userProfile.findUnique({
+      where: { userId },
+      select: { coverImage: coverBlock, sfwCoverImage: coverBlock },
+    });
+    withheld.coverImage = !!stored?.coverImage && !ownerMediaAllowed(stored.coverImage);
+    withheld.sfwCoverImage = !!stored?.sfwCoverImage && !ownerMediaAllowed(stored.sfwCoverImage);
   }
 
   const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
@@ -750,8 +769,14 @@ export const updateUserProfile = async ({
               : profile.sfwMessage
               ? new Date()
               : null,
-          coverImage: buildCoverImageUpdate(coverImage),
-          sfwCoverImage: buildCoverImageUpdate(sfwCoverImage),
+          coverImage:
+            coverImage === null && withheld.coverImage
+              ? undefined
+              : buildCoverImageUpdate(coverImage),
+          sfwCoverImage:
+            sfwCoverImage === null && withheld.sfwCoverImage
+              ? undefined
+              : buildCoverImageUpdate(sfwCoverImage),
         },
       });
 

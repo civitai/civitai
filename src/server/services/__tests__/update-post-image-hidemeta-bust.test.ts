@@ -410,6 +410,6 @@ describe('updatePostImage — a meta edit on an image under a moderation block',
       asModerator: true,
     });
 
-    expect(updateData().meta).toBeDefined();
+    expect(updateData().meta).toMatchObject({ prompt: 'edited' });
   });
 });
