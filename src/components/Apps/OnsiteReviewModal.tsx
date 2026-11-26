@@ -53,6 +53,7 @@ import {
 } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import { reviewProvenanceLines } from '~/components/Apps/reviewSourceProvenance';
+import { reviewSdkFloorLines } from '~/components/Apps/reviewSdkFloor';
 import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
 import { PREVIEW_CHIP_COLORS, previewChipState } from '~/components/Apps/reviewQueueSignals';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -376,6 +377,30 @@ export function ReviewSourceProvenanceMeta({
             </Text>
           ) : null}
         </div>
+      ))}
+    </Stack>
+  );
+}
+
+/**
+ * The OUTDATED-SDK lines a submit recorded (`reviewSdkFloorLines`): the bundle lockfile's packages
+ * below the platform minimum, and whether the client submitted past its own check with
+ * `--allow-outdated-sdk`. Renders nothing when the request records neither.
+ */
+export function ReviewSdkFloorMeta({ fileSummary }: { fileSummary: unknown }) {
+  const lines = reviewSdkFloorLines(fileSummary);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-sdk-floor">
+      {lines.map((line) => (
+        <Text size="xs" key={line.key} data-review-sdk-floor-line={line.key}>
+          <Text span size="xs" c="orange">
+            {line.heading}:{' '}
+          </Text>
+          <Text span size="xs" ff="monospace">
+            {line.value}
+          </Text>
+        </Text>
       ))}
     </Stack>
   );
@@ -776,6 +801,7 @@ export function OnsiteReviewModalBody({
     <Stack gap="md">
       <ReviewSubmitterMeta request={request} now={now} />
       <ReviewSourceProvenanceMeta provenance={request.sourceProvenance} />
+      <ReviewSdkFloorMeta fileSummary={request.fileSummary} />
 
       <ReviewDecisionAlert selection={selection} now={now} />
 
