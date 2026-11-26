@@ -53,7 +53,6 @@ const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeS
 });
 
 const CBBTC_UNSUPPORTED = 'cbBTC (wrapped Bitcoin) is not supported.';
-/** The EVM deposit cards that also say cbBTC is not supported. */
 const CBBTC_NETWORKS = ['base', 'eth'];
 
 export function DepositCardContent({ depositAddress, error, loading, onRetry, chain, onCurrencySelect }: DepositCardProps) {
@@ -348,7 +347,7 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   </Group>
                 )}
                 {chain === 'evm' &&
-                  CBBTC_NETWORKS.includes(currencyState.selectedNetwork?.network ?? '') && (
+                  CBBTC_NETWORKS.includes(currencyState.selectedNetwork?.network?.toLowerCase() ?? '') && (
                     <Group gap="xs" wrap="nowrap" align="flex-start">
                       <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                       <Text size="xs" c="dimmed">

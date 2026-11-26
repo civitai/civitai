@@ -85,7 +85,7 @@ describe('DepositCardContent Solana network warning', () => {
 describe('DepositCardContent cbBTC notice', () => {
   const cbBtc = /cbBTC \(wrapped Bitcoin\) is not supported\./;
 
-  it.each(['base', 'eth'])('is on the %s card', async (network) => {
+  it.each(['base', 'eth', 'BASE'])('is on the %s card', async (network) => {
     renderCard('evm', 'usdc', network);
     await expect.element(page.getByText(cbBtc)).toBeInTheDocument();
   });
