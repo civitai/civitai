@@ -66,6 +66,8 @@ function replaceSlices(html: string, replacements: (Slice & { text: string })[])
   let out = '';
   let at = 0;
   for (const { start, end, text } of replacements) {
+    // A slice nested in one already replaced went with it.
+    if (start < at) continue;
     out += html.slice(at, start) + text;
     at = end;
   }

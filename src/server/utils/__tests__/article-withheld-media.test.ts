@@ -23,6 +23,14 @@ describe('the edit form body', () => {
     expect(edited.match(/data-type="withheldMedia"/g)).toHaveLength(2);
   });
 
+  it('🔴 swaps a medium nested in another once, as part of the outer one', () => {
+    const nested = `<edge-media url="${HIDDEN}">${img(HIDDEN)}</edge-media><p>end</p>`;
+    const out = withheldMediaPlaceholders(nested, hidden);
+    expect(out).not.toContain(HIDDEN);
+    expect(out.match(/data-type="withheldMedia"/g)).toHaveLength(1);
+    expect(out.match(/<p>end<\/p>/g)).toHaveLength(1);
+  });
+
   it('🔴 saves back byte for byte when nothing changed', () => {
     expect(restoreWithheldMedia(edited, stored, hidden)).toBe(stored);
   });
