@@ -48,7 +48,9 @@ import {
   isApprovedEdit,
   isOwnerEdit,
   listingEditHeaderCopy,
-  listingLinksFromManifest,
+  listingFieldsFromManifest,
+  onsiteCategoryEditableByModerator,
+  MANIFEST_COPY_FIELD_NOTE,
   MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
@@ -121,8 +123,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
-  // On-site: both links come from block.manifest.json and render read-only here.
-  const linksFromManifest = listingLinksFromManifest(edit);
+  // On-site: name, tagline, description, category and both links come from the app and
+  // render read-only here.
+  const fromManifest = listingFieldsFromManifest(edit);
+  // …except the category, which a moderator may still set on the listing itself.
+  const categoryReadOnly = fromManifest && !onsiteCategoryEditableByModerator(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -253,10 +258,14 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     const nextErrors = validateOffsiteSubmitForm(values);
     // A read-only link is never sent, so a stored value the current rules reject must not
     // block saving the fields the author CAN change.
-    if (linksFromManifest) {
+    if (fromManifest) {
       delete nextErrors.sourceRepoUrl;
       delete nextErrors.issueTrackerUrl;
+      delete nextErrors.name;
+      delete nextErrors.tagline;
+      delete nextErrors.description;
     }
+    if (categoryReadOnly) delete nextErrors.category;
     // SENSITIVE-only justification model (parity with create): every sensitive scope
     // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
     // read-only + never required. No connect client → no scopes → nothing to check.
@@ -509,18 +518,37 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         >
           <FadeIn>
             <Stack gap="md" mt="md">
-              <TextInput
-                label="Name"
-                value={values.name}
-                onChange={(e) => setField('name', e.currentTarget.value)}
-                error={errors.name}
-                maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
-                required
-                data-testid="apps-offsite-edit-name"
-                // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
-                data-material-field="name"
-                disabled={materialBlocked}
-              />
+              {/* 🔴 ON-SITE: name, tagline and description are MANIFEST-GOVERNED (minted at submit,
+                re-synced on every block-version approve), so they are shown read-only with where
+                they come from, like the links below, rather than offered as an edit the next
+                approve would overwrite (or, on a live listing, the assets-only revision apply
+                would drop). The server refuses the keys too. `data-material-field` stays on the
+                name so the repair-state ledger still sees every material field as disabled. */}
+              {fromManifest ? (
+                <TextInput
+                  label="Name"
+                  description={MANIFEST_COPY_FIELD_NOTE.name}
+                  value={values.name}
+                  readOnly
+                  disabled
+                  rightSection={<IconLock size={14} />}
+                  data-testid="apps-offsite-edit-name-manifest"
+                  data-material-field="name"
+                />
+              ) : (
+                <TextInput
+                  label="Name"
+                  value={values.name}
+                  onChange={(e) => setField('name', e.currentTarget.value)}
+                  error={errors.name}
+                  maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
+                  required
+                  data-testid="apps-offsite-edit-name"
+                  // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
+                  data-material-field="name"
+                  disabled={materialBlocked}
+                />
+              )}
 
               <TextInput
                 label="Slug"
@@ -532,28 +560,57 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 data-testid="apps-offsite-edit-slug"
               />
 
-              <TextInput
-                label="Tagline"
-                description="A short one-liner (optional)."
-                value={values.tagline}
-                onChange={(e) => setField('tagline', e.currentTarget.value)}
-                error={errors.tagline}
-                maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
-              />
+              {fromManifest ? (
+                <>
+                  <TextInput
+                    label="Tagline"
+                    description={MANIFEST_COPY_FIELD_NOTE.tagline}
+                    value={values.tagline}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-tagline-manifest"
+                  />
+                  <Textarea
+                    label="Description"
+                    description={MANIFEST_COPY_FIELD_NOTE.description}
+                    autosize
+                    minRows={3}
+                    maxRows={8}
+                    value={values.description}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    data-testid="apps-offsite-edit-description-manifest"
+                  />
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    label="Tagline"
+                    description="A short one-liner (optional)."
+                    value={values.tagline}
+                    onChange={(e) => setField('tagline', e.currentTarget.value)}
+                    error={errors.tagline}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
+                  />
 
-              <Textarea
-                label="Description"
-                description="What the app does (optional)."
-                autosize
-                minRows={3}
-                maxRows={8}
-                value={values.description}
-                onChange={(e) => setField('description', e.currentTarget.value)}
-                error={errors.description}
-                maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
-              />
+                  <Textarea
+                    label="Description"
+                    description="What the app does (optional)."
+                    autosize
+                    minRows={3}
+                    maxRows={8}
+                    value={values.description}
+                    onChange={(e) => setField('description', e.currentTarget.value)}
+                    error={errors.description}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+                  />
+                </>
+              )}
 
-              {linksFromManifest ? (
+              {fromManifest ? (
                 <>
                   {/* 🔴 ON-SITE: both links are MANIFEST-GOVERNED (minted at submit, re-synced
                     on every approve from `repository` / `bugs`), so they are shown read-only
@@ -665,18 +722,33 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               )}
 
               <Group grow align="flex-start">
-                <Select
-                  label="Category"
-                  placeholder="No category"
-                  data={OFFSITE_CATEGORY_OPTIONS}
-                  value={values.category}
-                  onChange={(v: string | null) =>
-                    setField('category', (v as MarketplaceCategory) || null)
-                  }
-                  error={errors.category}
-                  clearable
-                  data-testid="apps-offsite-edit-category"
-                />
+                {categoryReadOnly ? (
+                  // 🔴 ON-SITE: the listing takes the app's category on every approve, so it is
+                  // read-only here like the name and links; the note says where it comes from.
+                  <Select
+                    label="Category"
+                    description={MANIFEST_COPY_FIELD_NOTE.category}
+                    placeholder="Not set"
+                    data={OFFSITE_CATEGORY_OPTIONS}
+                    value={values.category}
+                    readOnly
+                    disabled
+                    data-testid="apps-offsite-edit-category-manifest"
+                  />
+                ) : (
+                  <Select
+                    label="Category"
+                    placeholder="No category"
+                    data={OFFSITE_CATEGORY_OPTIONS}
+                    value={values.category}
+                    onChange={(v: string | null) =>
+                      setField('category', (v as MarketplaceCategory) || null)
+                    }
+                    error={errors.category}
+                    clearable
+                    data-testid="apps-offsite-edit-category"
+                  />
+                )}
                 <Select
                   label="Content rating"
                   data={OFFSITE_CONTENT_RATING_OPTIONS}
