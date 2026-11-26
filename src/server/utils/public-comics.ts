@@ -31,7 +31,14 @@ import { slugitOr } from '~/utils/string-helpers';
 // then narrowed to the caller's browsing level, so the default (PG) response can sit in the shared
 // cache.
 
-const anonymous: PublicComicsCtx = { user: undefined, features: { isGreen: false } };
+const anonymous: PublicComicsCtx = {
+  user: undefined,
+  apiKeyId: undefined,
+  apiKeyType: undefined,
+  subject: undefined,
+  tokenScope: undefined,
+  features: { isGreen: false },
+} as PublicComicsCtx;
 
 const PAGE_WIDTH = 1600;
 

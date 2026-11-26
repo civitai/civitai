@@ -59,6 +59,7 @@ import {
   imageNotRestrictedWhere,
   imageRestrictionSelect,
   isImageServable,
+  ownerMediaAllowedWhere,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comics/panel-metadata';
@@ -1032,7 +1033,15 @@ export const comicsRouter = router({
                 where: {
                   OR: [
                     { imageId: null },
-                    { image: imageNotRestrictedWhere({ viewerId: ctx.user.id }) },
+                    {
+                      image: {
+                        AND: [
+                          imageNotRestrictedWhere({ viewerId: ctx.user.id }),
+                          // The thumbnail is media: a blocked panel gives none to its owner.
+                          actsAsModerator(ctx) ? {} : ownerMediaAllowedWhere(),
+                        ],
+                      },
+                    },
                   ],
                 },
                 take: 1,
@@ -2893,7 +2902,6 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
-      // The panel's stored image, unless a block has since refused it to its owner.
       const storedImageUrl =
         panel.image && !actsAsModerator(ctx) && !ownerMediaAllowed(panel.image)
           ? null

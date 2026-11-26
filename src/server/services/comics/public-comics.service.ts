@@ -7,6 +7,7 @@ import { imageNotRestrictedWhere, imageRestrictionSelect } from '~/server/common
 import { dbRead } from '~/server/db/client';
 import { parseComicProjectMeta } from '~/server/schema/comics.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import {
   coverBlockSelect,
   isComicProjectHidden,
@@ -45,7 +46,10 @@ import { COMIC_ON_RED_ERROR } from '~/utils/comic-helpers';
 // The public comic feed and reader, shared by the comics tRPC router and the public REST API.
 
 /** The viewer the feed and reader evaluate for: `user` undefined is anonymous. */
-export type PublicComicsCtx = Pick<Context, 'user'> & {
+export type PublicComicsCtx = Pick<
+  Context,
+  'user' | 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'
+> & {
   features: Pick<Context['features'], 'isGreen'>;
 };
 
@@ -577,7 +581,7 @@ export async function getPublicComicProjects({
   const items = projects.map((p) => {
     const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
     const chapterCount = p.chapters.length;
-    const moderator = ctx.user?.isModerator === true;
+    const moderator = actsAsModerator(ctx);
     const { coverImage: servableCover } = withServableCover(
       p,
       'coverImage',
@@ -837,7 +841,7 @@ export async function getPublicComicForReader({
     };
   });
 
-  withholdRestrictedPanelImages(chapters, ctx.user?.id, ctx.user?.isModerator === true);
+  withholdRestrictedPanelImages(chapters, ctx.user?.id, actsAsModerator(ctx));
   // On green, strip imageUrl from NSFW panels so they appear blocked.
   if (ctx.features.isGreen) {
     stripNsfwPanelImages(chapters, !!ctx.user);
@@ -846,8 +850,13 @@ export async function getPublicComicForReader({
   // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
   const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
   const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
-  const { coverImage } = withServableCover(project, 'coverImage', ctx.user?.id, isModerator);
-  const { heroImage } = withServableCover(project, 'heroImage', ctx.user?.id, isModerator);
+  const { coverImage } = withServableCover(
+    project,
+    'coverImage',
+    ctx.user?.id,
+    actsAsModerator(ctx)
+  );
+  const { heroImage } = withServableCover(project, 'heroImage', ctx.user?.id, actsAsModerator(ctx));
 
   return {
     id: project.id,

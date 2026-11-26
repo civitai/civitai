@@ -3,10 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { imageBlockedForConditions, ownerMediaSql } from '~/server/common/image-visibility';
-import {
-  entityImageVisibilityConditions,
-  notReportListedSql,
-} from '~/server/services/image-visibility.service';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 
 /**
  * A block refuses an image's media to its owner too, on the reads that serve media, run against
@@ -119,7 +116,7 @@ const ids = async (where: Prisma.Sql[]) => {
 
 // The bounty image read: the entity rules and the CsamReport exclusion.
 const bountyImages = (userId?: number) =>
-  ids([...entityImageVisibilityConditions({ userId }), notReportListedSql()]);
+  ids(entityImageVisibilityConditions({ userId, seesReportListed: false }));
 // The image feed's block terms (`getAllImagesUncaptured` and the post image lists).
 const feedImages = (userId?: number) =>
   ids([
@@ -153,8 +150,7 @@ describe.each([
     const served =
       read === bountyImages
         ? await ids([
-            ...entityImageVisibilityConditions({ isModerator: true }),
-            notReportListedSql(),
+            ...entityImageVisibilityConditions({ isModerator: true, seesReportListed: false }),
           ])
         : await ids([...imageBlockedForConditions({ isModerator: true }), Prisma.sql`TRUE`]);
     expect(served).toEqual(read === bountyImages ? all.filter((id) => id !== 9) : all);

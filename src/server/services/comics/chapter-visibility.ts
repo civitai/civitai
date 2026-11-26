@@ -1,4 +1,4 @@
-import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { hasBlockMarker, ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   imageRestrictionSelect,
   isImageServable,
@@ -56,10 +56,10 @@ export function blockLeavesMedia(
 ) {
   if (actsAsModerator) return true;
   if (viewerId != null && image.userId === viewerId) return ownerMediaAllowed(image);
-  return image.blockedFor == null && image.ingestion !== ImageIngestionStatus.Blocked;
+  return !hasBlockMarker(image);
 }
 
-/** `withServableImage` for a comic cover or hero image, also withheld when `blockLeavesMedia` says so. */
+/** `withServableImage` for a cover or hero image, also withheld where `blockLeavesMedia` is false. */
 export function withServableCover<
   K extends PropertyKey,
   T extends { [P in K]: PanelImage | null | undefined }

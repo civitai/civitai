@@ -92,6 +92,8 @@ describe('an image made with a base model that restricts mature images', () => {
     nsfwLevel,
     modelRestricted,
     userId: OWNER,
+    ingestion: 'Scanned',
+    blockedFor: null as string | null,
   });
   const servedPanel = (img: ReturnType<typeof image>, viewerId?: number) => {
     const chapter = {

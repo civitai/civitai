@@ -10,6 +10,7 @@ import {
 } from '~/server/common/image-visibility';
 
 /**
+ * Blocked images show their owner the block notice, not the media (civitai/civitai#10505).
  * `ownerMediaAllowed` and its two database encodings answer every cell of one matrix alike: each
  * ingestion state against every block reason, a reason no code writes ('zzz') and none. Only no
  * block, or the metadata hold alone, leaves the owner the media.

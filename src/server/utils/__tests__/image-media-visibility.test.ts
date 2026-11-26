@@ -102,6 +102,8 @@ async function withViewerMedia(
     nsfwLevel: image.nsfwLevel,
     userId: image.user.id,
     postId: null,
+    ingestion: 'Scanned',
+    blockedFor: null,
   });
   return canSee ? image : withoutMedia(image);
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { BlockedReason, NsfwLevel, OnboardingSteps } from '~/server/common/enums';
 import { comicsRouter } from '../comics.router';
+import { ownerMediaAllowedWhere } from '~/server/common/image-visibility';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // A Blocked rating stays with its uploader (civitai/civitai#9809); a block does not.
@@ -27,11 +28,12 @@ const blockedImage = (blockedFor: string | null) => ({
   ingestion: 'Scanned',
 });
 
-const callerFor = (viewer: { id: number; isModerator: boolean }) =>
+const callerFor = (viewer: { id: number; isModerator: boolean }, scopedKey = false) =>
   comicsRouter.createCaller({
     user: { ...viewer, onboarding: OnboardingSteps.Buzz, muted: false },
     acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
+    tokenScope: scopedKey ? TokenScope.MediaRead : TokenScope.Full,
+    ...(scopedKey ? { apiKeyId: 9 } : {}),
     features: { trpcFlagGuardPerRequest: true, comicCreator: true, isGreen: false },
     req: undefined,
     res: { setHeader: () => undefined },
@@ -262,4 +264,59 @@ it('a Blocked ingestion with no reason refuses the panel to its uploader', async
     { id: 7, imageUrl: null, image: { ...cleanImage, id: 1, ingestion: 'Blocked' } },
     cleanPanel,
   ]);
+});
+
+describe('the public reader and a moderator', () => {
+  const blockedPg = { ...blockedImage(BlockedReason.Moderated), nsfwLevel: NsfwLevel.PG };
+  const read = async (scopedKey: boolean) => {
+    dbMock.dbRead.comicProject.findUnique.mockResolvedValue({
+      id: 3,
+      name: 'Comic',
+      userId: OWNER,
+      status: 'Active',
+      tosViolation: false,
+      publishedAt: new Date(0),
+      nsfwLevel: 1,
+      user: { username: 'creator', bannedAt: null },
+      meta: null,
+      coverImage: { ...blockedPg },
+      heroImage: null,
+      chapters: [
+        {
+          id: 1,
+          projectId: 3,
+          name: 'One',
+          position: 0,
+          status: 'Published',
+          nsfwLevel: 1,
+          publishedAt: new Date(0),
+          availability: 'Public',
+          earlyAccessEndsAt: null,
+          earlyAccessConfig: null,
+          panels: [{ id: 7, imageUrl: 'panel-key', image: { ...blockedPg } }],
+        },
+      ],
+    } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    const comic = await callerFor(MODERATOR, scopedKey).getPublicProjectForReader({ id: 3 });
+    return { cover: comic.coverImage?.id ?? null, panel: comic.chapters[0].panels[0].imageUrl };
+  };
+
+  it('keeps a blocked cover and panel on a session, and not on a scoped key', async () => {
+    expect(await read(false)).toEqual({ cover: blockedPg.id, panel: 'panel-key' });
+    expect(await read(true)).toEqual({ cover: null, panel: null });
+  });
+});
+
+describe("the owner's project list", () => {
+  it('takes its thumbnail only from a panel whose media the block leaves the owner', async () => {
+    dbMock.dbRead.comicProject.findMany.mockResolvedValue([] as never);
+    await callerFor(UPLOADER).getMyProjects();
+    const { include } = dbMock.dbRead.comicProject.findMany.mock.calls.at(-1)![0] as {
+      include: { chapters: { include: { panels: { where: { OR: unknown[] } } } } };
+    };
+    expect(include.chapters.include.panels.where.OR[1]).toEqual({
+      image: { AND: [expect.anything(), ownerMediaAllowedWhere()] },
+    });
+  });
 });
