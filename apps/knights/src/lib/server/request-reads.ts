@@ -4,8 +4,8 @@ import { memberOrRedirect } from './membership';
 import { getPlayerStatus, type PlayerStatus } from './player-status';
 import { getStanding, type Standing } from './standing';
 
-// Reads made once per request and shared by everything that serves it. Keep them to reads nothing in the request changes
-// first: an action that writes reads `getPlayerStatus` itself, after its write.
+// Shared per-request reads. An action that writes calls `getPlayerStatus` itself, after its write, not
+// `requestPlayerStatus`.
 
 /** The signed-in user's ban and mute, read once per request. */
 export function requestStanding(db: Kysely<DB>, locals: App.Locals): Promise<Standing> {

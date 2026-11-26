@@ -74,7 +74,6 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
   const civitaiUrl = civitaiSiteUrl();
   const user = locals.user;
   const inquisitor = await inquisitorQueueOpen(user);
-  // Also gates header stats: only a player has a career or stats.
   const playerRow = user
     ? db
         .selectFrom('NewOrderPlayer')

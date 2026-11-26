@@ -1,9 +1,7 @@
 /**
- * Tag groups a Knights player can hide in Knights settings: an image carrying an enabled tag of a hidden group is not
- * served to them, and stays open for everyone else. The main site's browsing categories are a separate list. Never a browsing level or
- * a whole kind of sexual content: Knights exists for the community to rate mature content, so it must stay served. Nor a
- * tag that only names an orientation. Never reuse a retired key (anime, political): players may still have it stored, and it
- * would hide that group again without their choosing.
+ * Tag groups a player can hide in Knights settings. Never a browsing level or a whole kind of sexual content (Knights
+ * exists to rate mature content), nor a tag that only names an orientation. Never reuse a retired key (anime,
+ * political): players may still have it stored, and it would hide that group again without their choosing.
  */
 export const KNIGHTS_TAG_GROUPS = [
   {
