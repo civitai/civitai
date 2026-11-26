@@ -8,11 +8,13 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
  * GET endpoint to batch update Image.blockedFor to null for images with blockedFor = 'moderated',
- * and nsfwLevel not in (0, 32).
+ * nsfwLevel not in (0, 32) and ingestion not Blocked. A Blocked ingestion is a ToS removal: clearing
+ * its blockedFor would leave it Blocked with no reason.
  * Secured for moderators only.
  */
 
@@ -40,6 +42,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
           AND "blockedFor" IN ('moderated', 'Moderated')
           AND "needsReview" IS NULL
           AND "nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})
+          AND ingestion <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
       `;
       if (rows.length) {
         candidateIds.push(...rows.map((r) => r.id));
@@ -60,6 +63,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
         blockedFor: { in: ['moderated', 'Moderated'] },
         needsReview: null,
         nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
+        ingestion: { not: ImageIngestionStatus.Blocked },
       },
       data: { blockedFor: null },
       select: { id: true },
@@ -69,9 +73,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
     );
 
-    // This clears `blockedFor` without touching `ingestion`, so any row still sitting at
-    // ingestion='Blocked' would be armed for purge by trg_blocked_image_delete_queue on the
-    // very update that was meant to unblock it.
+    // No row cleared here is at ingestion='Blocked', so trg_blocked_image_delete_queue arms none;
+    // the drop is kept as a backstop.
     await dropBlockedImageDeleteQueue(unblockedIds);
 
     // Update search index for the unblocked images

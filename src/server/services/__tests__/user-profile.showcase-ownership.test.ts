@@ -219,6 +219,36 @@ describe('assertShowcaseItemsOwned', () => {
     ).resolves.toBeUndefined();
     expect(db.image.findMany).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { ingestion: 'Blocked', blockedFor: 'tos' },
+    { ingestion: 'Blocked', blockedFor: null },
+  ])("refuses the owner's own blocked image (%o)", async (block) => {
+    db.image.findMany.mockResolvedValueOnce([{ id: OWN_IMAGE, ...block }] as never);
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+        currentShowcaseItems: [],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A blocked image cannot be added to your showcase',
+    });
+  });
+
+  it("accepts the owner's image blocked only for an unverified AI claim", async () => {
+    db.image.findMany.mockResolvedValueOnce([
+      { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'AiNotVerified' },
+    ] as never);
+    await expect(
+      assertShowcaseItemsOwned({
+        userId: OWNER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+        currentShowcaseItems: [],
+      })
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('updateUserProfile — showcase ownership', () => {

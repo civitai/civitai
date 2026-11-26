@@ -83,6 +83,7 @@ describe('/api/mod/unblock-images', () => {
         blockedFor: { in: ['moderated', 'Moderated'] },
         needsReview: null,
         nsfwLevel: { notIn: [0, 32] },
+        ingestion: { not: 'Blocked' },
       },
       data: { blockedFor: null },
       select: { id: true },
@@ -92,5 +93,20 @@ describe('/api/mod/unblock-images', () => {
       expect.objectContaining({ ids: [11] })
     );
     expect(body).toMatchObject({ updated: 1 });
+  });
+
+  it('leaves a ToS removal (ingestion Blocked) out of the replica scan', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ maxId: 12 }]).mockResolvedValueOnce([]);
+
+    await call(unblockImages);
+
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[1] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const at = strings.findIndex((part) => /\bAND ingestion <> $/.test(part));
+    expect(at).toBeGreaterThan(-1);
+    expect(values[at]).toBe('Blocked');
+    expect(strings.join(' ')).not.toMatch(/\bOR\b/);
   });
 });
