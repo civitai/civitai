@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,9 +7,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { CSAM_LINK_TABLES_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 /**
- * Where a loosening writer's `csamReview` comes from. The services take it as an argument, so the
- * one line in each router, controller or endpoint that derives it from the caller decides whether
- * the withheld rule applies at all: a hard-coded `true` there would leave every service test green.
+ * The grant reaches a loosening writer from the caller, through the router. Where each entry point
+ * may set `csamReview` from is the guard `no-hardcoded-withheld-grant`.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -115,45 +112,5 @@ describe('tag.addTagVotes, through the router', () => {
   it('records it with the grant', async () => {
     await downvote(true).catch(() => undefined);
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-  });
-});
-
-/**
- * Every entry point that passes `csamReview` to a loosening writer, with how many times. Each
- * argument derives the grant from its caller, or is `false` where no grant reaches (a token naming
- * no moderator). A new entry point is added here with how it reads the grant.
- */
-const ENTRY_POINTS: Record<string, number> = {
-  'src/server/routers/image.router.ts': 2,
-  'src/server/routers/games.router.ts': 1,
-  'src/server/routers/challenge.router.ts': 2,
-  'src/server/routers/article.router.ts': 3,
-  'src/server/controllers/image.controller.ts': 3,
-  'src/server/controllers/tag.controller.ts': 2,
-  'src/server/api-routes/mod/set-image-nsfw-level.ts': 1,
-  'src/server/api-routes/mod/image/set-nsfw-level.ts': 1,
-  'src/server/api-routes/admin/rescan-images.ts': 1,
-};
-const FROM_CALLER = [
-  '!!ctx.features?.csamReports',
-  'ctx.user.isModerator && !!ctx.features?.csamReports',
-  '!!getFeatureFlags({ user, req }).csamReports',
-  '!!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports',
-  'false',
-];
-
-describe('the grant each entry point passes', () => {
-  const root = path.resolve(__dirname, '../../../..');
-  it.each(Object.entries(ENTRY_POINTS))('%s reads it from the caller', (file, count) => {
-    const source = readFileSync(path.join(root, file), 'utf8');
-    const args = [...source.matchAll(/csamReview: /g)].map((m) =>
-      source.slice(m.index + m[0].length)
-    );
-    expect(args).toHaveLength(count);
-    for (const arg of args) expect(FROM_CALLER.some((form) => arg.startsWith(form))).toBe(true);
-  });
-
-  it('control: a hard-coded grant does not read as one from the caller', () => {
-    expect(FROM_CALLER.some((form) => 'true })'.startsWith(form))).toBe(false);
   });
 });
