@@ -536,3 +536,73 @@ describe('submitVersion — advisories', () => {
     await settleFollowUps();
   });
 });
+
+describe('submitVersion — a staff submit on the owner’s behalf (platform update)', () => {
+  const ON_BEHALF = {
+    platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+    staffUsername: 'mod-ana',
+    ownerUserId: 7101,
+    ownerUsername: 'owner-olga',
+  };
+  const existingApp = () =>
+    db.appBlockFindFirst.mockResolvedValue({
+      id: 'apb_1',
+      appId: 'app_1',
+      trustTier: 'unverified',
+      app: { userId: 7101, allowedOrigins: ['https://my-app.civit.ai'] },
+    });
+
+  it('files the request with the MODERATOR as its submitter, and records who it was for', async () => {
+    existingApp();
+    await submitVersion({
+      bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+      submittedByUserId: 8001,
+      submitterIsModerator: true,
+      onBehalf: ON_BEHALF,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    const data = (
+      db.createPublishRequest.mock.calls[0]![0] as unknown as {
+        data: {
+          submittedByUserId: number;
+          appBlockId: string;
+          fileSummary: Record<string, unknown>;
+        };
+      }
+    ).data;
+    expect(data.submittedByUserId).toBe(8001);
+    expect(data.appBlockId).toBe('apb_1');
+    expect(data.fileSummary.onBehalf).toEqual({ ...ON_BEHALF, staffUserId: 8001 });
+    expect(Array.isArray(data.fileSummary.files)).toBe(true);
+    await settleFollowUps();
+  });
+
+  it('refuses an on-behalf submit from a non-moderator, before anything is stored', async () => {
+    existingApp();
+    await expect(
+      submitVersion({
+        bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+        submittedByUserId: 8002,
+        submitterIsModerator: false,
+        onBehalf: ON_BEHALF,
+      })
+    ).rejects.toThrow('only a moderator can submit on behalf of an app owner');
+    expect(db.createPublishRequest).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: an ordinary submit records no on-behalf line', async () => {
+    existingApp();
+    await submitVersion({
+      bundleBuffer: await bundle({ ...VALID, version: '0.2.0' }),
+      submittedByUserId: 8001,
+      submitterIsModerator: true,
+    });
+    const data = (
+      db.createPublishRequest.mock.calls[0]![0] as unknown as {
+        data: { fileSummary: Record<string, unknown> };
+      }
+    ).data;
+    expect(data.fileSummary).not.toHaveProperty('onBehalf');
+    await settleFollowUps();
+  });
+});

@@ -3,6 +3,10 @@ import {
   appPlatformUpdateNotifications,
   type AppPlatformUpdateNotificationDetails,
 } from '~/server/notifications/app-platform-update.notifications';
+import {
+  appPlatformUpdateSubmitNotifications,
+  type AppPlatformUpdateSubmittedNotificationDetails,
+} from '~/server/notifications/app-platform-update-submit.notifications';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 
@@ -57,6 +61,40 @@ describe('app-platform-update', () => {
         "Drop the unused storage scope. It changes your app's manifest or a storage hook, which " +
         'decide what your app is allowed to do. It is merged into your app the next time you ' +
         'pull it or open it in the App Assistant, if it applies cleanly.',
+      url: OWNER_SUBMISSIONS_URL,
+    });
+  });
+});
+
+describe('app-platform-update-submitted', () => {
+  type SubmitDef = (typeof appPlatformUpdateSubmitNotifications)['app-platform-update-submitted'];
+  const submitDef = (appPlatformUpdateSubmitNotifications as Record<string, SubmitDef>)[
+    'app-platform-update-submitted'
+  ];
+
+  it('is registered, not toggleable', () => {
+    expect(notificationProcessors['app-platform-update-submitted']).toBe(submitDef);
+    expect(submitDef.toggleable).toBe(false);
+  });
+
+  it('names the staff member, the version, the app and the update, and links the owner’s apps', () => {
+    const details: AppPlatformUpdateSubmittedNotificationDetails = {
+      slug: 'pixel-garden',
+      updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      publishRequestId: 'pubreq_01JABCDEFGHJKMNPQRSTVWXYZ0',
+      version: '1.2.1',
+      byUsername: 'mod-ana',
+      reason: 'Bump @civitai/app-sdk to 2.4.0.',
+    };
+    expect(
+      submitDef.prepareMessage({ details } as unknown as Parameters<SubmitDef['prepareMessage']>[0])
+    ).toEqual({
+      message:
+        'mod-ana (verified Civitai staff) submitted version 1.2.1 of your app "pixel-garden" for ' +
+        'review on your behalf: your approved version with their update (Bump @civitai/app-sdk ' +
+        'to 2.4.0.). A moderator reviews it like any other submission. The update also stays on ' +
+        'its branch and is merged into your app the next time you pull it or open it in the App ' +
+        'Assistant.',
       url: OWNER_SUBMISSIONS_URL,
     });
   });

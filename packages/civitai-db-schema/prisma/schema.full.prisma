@@ -5347,6 +5347,11 @@ model AppPlatformUpdate {
   mergeCommitSha   String?   @map("merge_commit_sha")
   resolvedByUserId Int?      @map("resolved_by_user_id")
   resolvedAt       DateTime? @map("resolved_at") @db.Timestamptz(6)
+  // The last staff on-behalf submit of this update (`app-platform-update-submit.service.ts`);
+  // migration `20271206120000_app_platform_update_submissions`, applied by hand.
+  submittedPublishRequestId String?   @map("submitted_publish_request_id")
+  submittedByUserId         Int?      @map("submitted_by_user_id")
+  submittedAt               DateTime? @map("submitted_at") @db.Timestamptz(6)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 

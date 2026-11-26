@@ -152,7 +152,7 @@ function filterSql(filter: RowFilter): Prisma.Sql {
  * Rows matching `filter`, each joined to its staff account as it is NOW; `null` when the table is
  * missing.
  */
-async function readRows(
+export async function readRows(
   filter: RowFilter,
   db: Pick<typeof dbRead, '$queryRaw'> = dbRead
 ): Promise<UpdateRow[] | null> {
@@ -222,9 +222,9 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
 
 export type AppRef = { appBlockId?: string; slug?: string };
 
-type ResolvedApp = { id: string; slug: string; status: string; ownerUserId: number | null };
+export type ResolvedApp = { id: string; slug: string; status: string; ownerUserId: number | null };
 
-async function resolveApp(ref: AppRef): Promise<ResolvedApp | null> {
+export async function resolveApp(ref: AppRef): Promise<ResolvedApp | null> {
   const select = { id: true, blockId: true, status: true, app: { select: { userId: true } } };
   const block = ref.appBlockId
     ? await dbRead.appBlock.findUnique({ where: { id: ref.appBlockId }, select })

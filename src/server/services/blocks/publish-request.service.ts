@@ -244,6 +244,22 @@ export type SubmitVersionParams = {
    * reading under `fileSummary.sdkFloor`; it changes nothing else.
    */
   sdkFloorOverride?: { package: string; installed: string; minimum: string }[];
+  /**
+   * A STAFF SUBMIT ON THE OWNER'S BEHALF of a recorded platform update
+   * (`app-platform-update-submit.service.ts`), the only caller that passes it. The submitter
+   * (`submittedByUserId`) is the moderator; this names the update and the owner it was submitted
+   * for. Stored under `fileSummary.onBehalf` for the review UI ("submitted by <staff> for
+   * <owner>"). Refused unless the submitter is a moderator.
+   */
+  onBehalf?: OnBehalfSubmission;
+};
+
+/** What `fileSummary.onBehalf` records for a staff submit on the owner's behalf. */
+export type OnBehalfSubmission = {
+  platformUpdateId: string;
+  staffUsername: string | null;
+  ownerUserId: number;
+  ownerUsername: string | null;
 };
 
 export type SubmitVersionResult = {
@@ -1153,7 +1169,10 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     sourceDirty,
     githubOidcToken,
     sdkFloorOverride,
+    onBehalf,
   } = params;
+  if (onBehalf && !submitterIsModerator)
+    throw new Error('only a moderator can submit on behalf of an app owner');
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTerms(submittedByUserId);
@@ -1553,9 +1572,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         bundleKey: key,
         bundleSha256,
         bundleSizeBytes: BigInt(bundleBuffer.length),
-        fileSummary: (sdkFloorRecorded
-          ? { ...fileSummary, sdkFloor: sdkFloorRecorded }
-          : fileSummary) as object,
+        fileSummary: {
+          ...fileSummary,
+          ...(sdkFloorRecorded ? { sdkFloor: sdkFloorRecorded } : {}),
+          ...(onBehalf ? { onBehalf: { ...onBehalf, staffUserId: submittedByUserId } } : {}),
+        } as object,
         manifestDiffSummary: manifestDiffSummary as object,
         status: 'pending',
         // #4059 — the client's UNVERIFIED provenance claim, stored as a claim.
@@ -7467,7 +7488,7 @@ export async function getPublishRequestScreenshots(opts: {
  * fileSummary), the line diff needs the actual bytes, so this GETs the prior
  * bundle from MinIO (ZIP path) or reconstructs it from Forgejo (push path).
  */
-async function getPreviousApprovedFiles(
+export async function getPreviousApprovedFiles(
   slug: string,
   excludePublishRequestId?: string
 ): Promise<Array<{ path: string; content: Buffer }> | null> {

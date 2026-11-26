@@ -53,6 +53,7 @@ import {
 } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import { reviewProvenanceLines } from '~/components/Apps/reviewSourceProvenance';
+import { reviewOnBehalfLine } from '~/components/Apps/reviewOnBehalf';
 import { reviewSdkFloorLines } from '~/components/Apps/reviewSdkFloor';
 import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
 import { PREVIEW_CHIP_COLORS, previewChipState } from '~/components/Apps/reviewQueueSignals';
@@ -379,6 +380,25 @@ export function ReviewSourceProvenanceMeta({
         </div>
       ))}
     </Stack>
+  );
+}
+
+/**
+ * "Submitted by <staff> for <owner>" when Civitai staff filed this request on the owner's behalf
+ * (`reviewOnBehalfLine`). Renders nothing for any other request.
+ */
+export function ReviewOnBehalfMeta({ fileSummary }: { fileSummary: unknown }) {
+  const line = reviewOnBehalfLine(fileSummary);
+  if (!line) return null;
+  return (
+    <Text size="xs" data-testid="apps-review-on-behalf">
+      <Text span size="xs" c="blue">
+        {line.heading}:{' '}
+      </Text>
+      <Text span size="xs">
+        {line.value}
+      </Text>
+    </Text>
   );
 }
 
@@ -800,6 +820,7 @@ export function OnsiteReviewModalBody({
   return (
     <Stack gap="md">
       <ReviewSubmitterMeta request={request} now={now} />
+      <ReviewOnBehalfMeta fileSummary={request.fileSummary} />
       <ReviewSourceProvenanceMeta provenance={request.sourceProvenance} />
       <ReviewSdkFloorMeta fileSummary={request.fileSummary} />
 
