@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { CSAM_LINK_TABLES_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -80,8 +81,27 @@ beforeAll(async () => {
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor" text,
-      "updatedAt" timestamp NOT NULL DEFAULT '2020-01-01'
+      "updatedAt" timestamp NOT NULL DEFAULT '2020-01-01',
+      "url" text NOT NULL DEFAULT 'key-7301',
+      "needsReview" text,
+      "userId" integer NOT NULL DEFAULT 1,
+      "pHash" bigint
     );
+    ${CSAM_LINK_TABLES_SQL}
+    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
+    CREATE TABLE "BlockedImage" (hash bigint, reason text);
+    CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+    CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+    CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
+    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
+    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL, "deniedAt" timestamptz NOT NULL DEFAULT now(), "retractedAt" timestamptz DEFAULT now());
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
   `);
 });
 afterAll(async () => {
@@ -94,6 +114,7 @@ type Row = {
   metadata: Record<string, unknown>;
   ingestion: string;
   blockedFor: string | null;
+  needsReview: string | null;
 };
 const IMAGE = 7301;
 const PLAYER = 4242;
@@ -105,12 +126,13 @@ async function seed(o: Partial<Row> = {}) {
     metadata: {},
     ingestion: 'Scanned',
     blockedFor: null,
+    needsReview: null,
     ...o,
   };
   await pg.query(`DELETE FROM "Image"`);
   await pg.query(
-    `INSERT INTO "Image" ("id","postId","metadata","nsfwLevel","nsfwLevelLocked","ingestion","blockedFor")
-     VALUES ($1, 55, $2, $3, $4, $5::"ImageIngestionStatus", $6)`,
+    `INSERT INTO "Image" ("id","postId","metadata","nsfwLevel","nsfwLevelLocked","ingestion","blockedFor","needsReview")
+     VALUES ($1, 55, $2, $3, $4, $5::"ImageIngestionStatus", $6, $7)`,
     [
       IMAGE,
       JSON.stringify(row.metadata),
@@ -118,6 +140,7 @@ async function seed(o: Partial<Row> = {}) {
       row.nsfwLevelLocked,
       row.ingestion,
       row.blockedFor,
+      row.needsReview,
     ]
   );
 }
@@ -187,6 +210,29 @@ describe('setImageNsfwLevelFromKnights', () => {
     expect(await stored()).toMatchObject({ nsfwLevel: 2, nsfwLevelLocked: true });
     expect(refreshThumbnailCache).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.imageRatingRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  // A vote holds no grant: it does not lower what is withheld from a moderator without one. The
+  // Knights app reads `locked` as final and hands the image to a moderator at its current level.
+  it('does not lower a withheld image, and answers locked at its current level', async () => {
+    await seed({ needsReview: 'csam' });
+    expect(await write(2)).toEqual({ applied: false, reason: 'locked', currentLevel: 4 });
+    expect((await stored()).nsfwLevel).toBe(4);
+    expect(refreshThumbnailCache).not.toHaveBeenCalled();
+  });
+
+  it('does not give an unrated withheld image its first rating', async () => {
+    await seed({ needsReview: 'csam', nsfwLevel: 0 });
+    expect(await write(4)).toEqual({ applied: false, reason: 'locked', currentLevel: 0 });
+    expect((await stored()).nsfwLevel).toBe(0);
+  });
+
+  it('control: raises a withheld image, and lowers a clean one', async () => {
+    await seed({ needsReview: 'csam' });
+    expect(await write(8)).toEqual({ applied: true });
+    await seed();
+    expect(await write(2)).toEqual({ applied: true });
+    expect((await stored()).nsfwLevel).toBe(2);
   });
 
   it('leaves a moderator-locked image with no recorded reason alone', async () => {
