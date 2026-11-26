@@ -81,8 +81,8 @@ export function feedSearchPathname(features: FeedSearchFlags, index: SearchIndex
 // tab's own images. Drafts, private models, training and reactions render other lists.
 const SEARCHABLE_PROFILE_SECTIONS: unknown[] = [undefined, 'published', 'images'];
 
-// /videos searches the video index (`searchVideos`), which has its own flag on top of the feed's.
-const videoFeedSearchOn = (features: FeedSearchFlags) =>
+/** /videos searches the video index (`searchVideos`), which has its own flag on top of the feed's. */
+export const videoFeedSearchOn = (features: FeedSearchFlags) =>
   !!features.videoFeedSearch && !!features.feedSearch && !!features.semanticVideoSearch;
 
 /**
@@ -133,7 +133,7 @@ export function searchSectionFromPath(path: string) {
   return section === 'user' && username && isFeedTab ? tab : section;
 }
 
-/** The section the header bar's target follows, with /videos searching the images index. */
+/** The section the header bar's target follows: on /videos, the Images target, whose search there runs on the video index. */
 export function searchSectionFor(path: string, features: FeedSearchFlags) {
   const section = searchSectionFromPath(path);
   return section === 'videos' && videoFeedSearchOn(features) ? 'images' : section;

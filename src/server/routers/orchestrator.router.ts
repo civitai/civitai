@@ -69,6 +69,7 @@ import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/wo
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
+  isFlagProtected,
   middleware,
   moderatorProcedure,
   protectedProcedure,
@@ -96,6 +97,8 @@ import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/cli
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
+import { expandServiceDealPrompt } from '~/server/services/creator-service-expand-prompt.service';
+import { expandServiceDealPromptSchema } from '~/server/schema/creator-service-deal.schema';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -266,6 +269,22 @@ export const orchestratorRouter = router({
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     }),
+  expandServiceDealPrompt: orchestratorEnhanceProcedure
+    .use(isFlagProtected('creatorServices'))
+    .use(rateLimit({ limit: 60, period: 3600 }))
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(expandServiceDealPromptSchema)
+    .mutation(({ ctx, input }) =>
+      expandServiceDealPrompt({
+        dealId: input.id,
+        sellerId: ctx.user.id,
+        instructions: input.instructions,
+        token: ctx.token,
+        isGreen: ctx.domain === 'green',
+        isModerator: ctx.user.isModerator,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      })
+    ),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
   queryWorkflowsByTags: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

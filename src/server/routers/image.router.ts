@@ -178,7 +178,11 @@ export const imageRouter = router({
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
-  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanImageById(input)),
+  rescan: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      rescanImageById({ ...input, csamReview: !!ctx.features?.csamReports })
+    ),
   getEntitiesCoverImage: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)
@@ -290,7 +294,9 @@ export const imageRouter = router({
     })),
   toggleImageFlag: moderatorProcedure
     .input(toggleImageFlagSchema)
-    .mutation(({ input, ctx }) => toggleImageFlag({ ...input })),
+    .mutation(({ input, ctx }) =>
+      toggleImageFlag({ ...input, csamReview: !!ctx.features?.csamReports })
+    ),
   refreshImageResources: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(getByIdSchema)

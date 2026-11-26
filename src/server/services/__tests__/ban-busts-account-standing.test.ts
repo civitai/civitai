@@ -4,6 +4,16 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
+
 // A ban and an unban must reach the account-standing cache, or block submits and comic generation
 // keep answering from the standing cached before it.
 

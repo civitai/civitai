@@ -97,7 +97,7 @@ describe('How it works', () => {
     ]);
   });
 
-  // Ellie review (2026-10-09): the coloured icon first, then the number, the words under them.
+  // Design review (2026-10-09): the coloured icon first, then the number, the words under them.
   it('leads each tile with its icon, then the number, with the words underneath', () => {
     const tiles = render().querySelector('[data-testid="event-points"]')!;
     const shape = [...tiles.children].map((t) => {

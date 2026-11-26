@@ -94,7 +94,12 @@ describe('a moderator changing an image acceptable-minor flag', () => {
   const flip = (from: boolean, to: boolean) => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ acceptableMinor: from } as never);
     dbMock.dbWrite.image.update.mockResolvedValue({ id: IMAGE, acceptableMinor: to } as never);
-    return updateImageAcceptableMinor({ id: IMAGE, collectionId: 1, acceptableMinor: to });
+    return updateImageAcceptableMinor({
+      csamReview: true,
+      id: IMAGE,
+      collectionId: 1,
+      acceptableMinor: to,
+    });
   };
   const purgedFiles = () => cfPurge.mock.calls.flatMap(([, { files }]) => files as string[]);
   const deleted = () => redisMock.redis.del.mock.calls.map(([key]) => String(key));

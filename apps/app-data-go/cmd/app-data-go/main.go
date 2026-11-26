@@ -129,7 +129,7 @@ func run(log *slog.Logger) error {
 		if cfg.BlockExchange {
 			// Each block token is verified against the site's JWKS before it is sent to the hub.
 			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Verify: verifier.Check, Margin: expiryMargin,
-				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
+				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"), cfg.Writes)}
 		}
 		srv.Exchangeable = router.Accepts
 		// One budget over every stream this process opens, private, level and per-viewer

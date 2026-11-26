@@ -117,8 +117,7 @@ func (s *Server) viewer(ctx context.Context, w http.ResponseWriter, start time.T
 	var re *exchange.RefusedError
 	switch {
 	case errors.As(err, &re):
-		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
-		s.writeShared(w, start, http.StatusUnauthorized, storeErr("unauthenticated", "the block token was refused"), true, "refused")
+		s.sharedDenied(w, start, "block_token_refused", storeErr("unauthenticated", "the block token was refused"), true)
 		return shared.Viewer{}, false
 	case err != nil:
 		s.sharedRefusal(w, start, "unverifiable", true)
@@ -152,14 +151,11 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request, start time.Time, 
 func (s *Server) sharedError(w http.ResponseWriter, start time.Time, err error, anon bool) {
 	switch {
 	case errors.Is(err, shared.ErrViewerRefused):
-		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
-		s.writeShared(w, start, http.StatusUnauthorized, storeErr("refused", "the origin refused this viewer"), anon, "refused")
+		s.sharedDenied(w, start, "viewer_refused", storeErr("refused", "the origin refused this viewer"), anon)
 	case errors.Is(err, shared.ErrBlockMismatch):
-		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
-		s.writeShared(w, start, http.StatusUnauthorized, storeErr("refused", "the token is not for this app's approved block"), anon, "refused")
+		s.sharedDenied(w, start, "block_mismatch", storeErr("refused", "the token is not for this app's approved block"), anon)
 	case errors.Is(err, shared.ErrSignInRequired):
-		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
-		s.writeShared(w, start, http.StatusUnauthorized, storeErr("sign_in_required", "sign in required"), anon, "refused")
+		s.sharedDenied(w, start, "sign_in_required", storeErr("sign_in_required", "sign in required"), anon)
 	case errors.Is(err, shared.ErrUnkeyed):
 		s.sharedRefusal(w, start, "unkeyed", anon)
 	case errors.Is(err, shared.ErrOutsideWindow):
@@ -170,10 +166,12 @@ func (s *Server) sharedError(w http.ResponseWriter, start time.Time, err error, 
 		// This service's own token, refused on a level stream: never the viewer's 401.
 		s.sharedRefusal(w, start, "service_token_refused", anon)
 	case errors.Is(err, shared.ErrSignedOutBusy):
-		s.sharedRefusal(w, start, "capacity", anon)
+		// Answered `capacity`, counted apart from the stream caps' own `capacity`.
+		s.sharedRefusalAs(w, start, "capacity", "signed_out_busy", anon)
 	case errors.Is(err, shared.ErrNoServiceClient):
 		// No service client is configured: no level stream can be read until one is, and waiting does
 		// not change that, so no Retry-After.
+		s.Metrics.ObserveSharedRefusal("service_client_unconfigured")
 		s.writeShared(w, start, http.StatusServiceUnavailable,
 			storeErr("service_client_unconfigured", "shared collections cannot be read: no service client is configured"), anon, "unavailable")
 	case errors.Is(err, shared.ErrServiceTokenRefused):
@@ -192,8 +190,23 @@ func (s *Server) sharedError(w http.ResponseWriter, start time.Time, err error, 
 	}
 }
 
-// sharedRefusal is streamRefusal for a shared read, in the store's envelope, counted.
+// sharedDenied answers a shared read 401 with body, counted under reason
+// (app_data_shared_refusals_total).
+func (s *Server) sharedDenied(w http.ResponseWriter, start time.Time, reason string, body map[string]string, anon bool) {
+	s.Metrics.ObserveSharedRefusal(reason)
+	w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
+	s.writeShared(w, start, http.StatusUnauthorized, body, anon, "refused")
+}
+
+// sharedRefusal is streamRefusal for a shared read, in the store's envelope, counted under its reason
+// (app_data_shared_refusals_total).
 func (s *Server) sharedRefusal(w http.ResponseWriter, start time.Time, reason string, anon bool) {
+	s.sharedRefusalAs(w, start, reason, reason, anon)
+}
+
+// sharedRefusalAs is sharedRefusal answering reason, counted under label.
+func (s *Server) sharedRefusalAs(w http.ResponseWriter, start time.Time, reason, label string, anon bool) {
+	s.Metrics.ObserveSharedRefusal(label)
 	if code, ok := refusedReasons[reason]; ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
 		s.writeShared(w, start, http.StatusUnauthorized, storeErr(code, "the token cannot read this collection"), anon, "refused")

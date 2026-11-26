@@ -215,7 +215,10 @@ down for 30 s. Each block exchange is counted in
 `failed`, `spent`, `full`, `unverifiable`, `rate_limited`: a `429` or its hold; `error` is the hub's OAuth code for `refused` and
 `remembered`, or `local` for a token refused here, else `none`). Every outcome but `issued`, `reused`,
 `unverifiable` and a `local` refusal is logged with that code (those are counted only, so a flood or a
-JWKS outage is not a flood of log lines). Neither carries a token, user or app.
+JWKS outage is not a flood of log lines), and with what the read does instead (`read`): `rest` with
+`APP_DATA_WRITES` off, the fallback above; `refused` with it on, where no read has a REST fallback
+(WRITES-DESIGN.md, the cut-over private read and the shared read) and the read answers its refusal.
+Neither carries a token, user or app.
 
 **No wider than REST.** The site's document store reads a block token's own block, holds mature
 ratings to the token's ceiling, and refuses at once a token whose install was uninstalled, turned

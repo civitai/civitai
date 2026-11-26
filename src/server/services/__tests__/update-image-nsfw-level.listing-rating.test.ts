@@ -97,6 +97,7 @@ beforeEach(() => {
 describe('updateImageNsfwLevel → listing rating re-derive', () => {
   it('a moderator’s re-rate hands the hook the image, its PREVIOUS level and the moderator', async () => {
     const level = await updateImageNsfwLevel({
+      csamReview: true,
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.PG13,
       userId: MOD,
@@ -118,6 +119,7 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
 
   it('a Knights consensus locks through the moderator branch but does not reach the hook', async () => {
     await updateImageNsfwLevel({
+      csamReview: true,
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.PG13,
       userId: MOD,
@@ -137,6 +139,7 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
     } as never);
 
     await updateImageNsfwLevel({
+      csamReview: true,
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.PG13,
       userId: USER,
@@ -156,6 +159,7 @@ describe('updateImageNsfwLevel → version showcase cache', () => {
     } as never);
 
     await updateImageNsfwLevel({
+      csamReview: true,
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.X,
       userId: MOD,
@@ -170,6 +174,7 @@ describe('updateImageNsfwLevel → version showcase cache', () => {
 
   it('an image with no post has no showcase to refresh', async () => {
     await updateImageNsfwLevel({
+      csamReview: true,
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.X,
       userId: MOD,

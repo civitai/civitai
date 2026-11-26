@@ -291,6 +291,28 @@ describe('sendNotifications', () => {
     expect([...received().keys()]).toEqual([2]);
   });
 
+  it.each([
+    ['held for review', `UPDATE "Image" SET "needsReview"='minor' WHERE id=7`],
+    ['blocked', `UPDATE "Image" SET "blockedFor"='tos' WHERE id=7`],
+  ])(
+    'is silent when the only open item is an image the gate no longer serves (%s)',
+    async (_, change) => {
+      await seedPlayer(pg, 1);
+      await seedImage(pg, 7);
+      await seedImage(pg, 8);
+      await enqueueItem(db, { questionKey: Q, imageId: 7, source: 'test', expiresAt: null }, at(1));
+      await pg.query(change);
+      const { run, received } = runner();
+
+      await run(at(12));
+      expect(received().size).toBe(0);
+
+      await enqueueItem(db, { questionKey: Q, imageId: 8, source: 'test', expiresAt: null }, at(1));
+      await run(at(13));
+      expect([...received().keys()]).toEqual([1]);
+    }
+  );
+
   it('picks the best type: verdicts over the streak warning over new images', async () => {
     for (const id of [1, 2, 3]) {
       await seedPlayer(pg, id);
@@ -336,11 +358,15 @@ describe('sendNotifications', () => {
     it('still sends verdicts and streak warnings when the new-images lookup times out', async () => {
       await seedOneOfEach();
       const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      const selectFrom = db.selectFrom.bind(db);
-      vi.spyOn(db, 'selectFrom').mockImplementation(((table: never) => {
-        if (table === 'KnightsQueueItem') throw statementTimeout();
-        return selectFrom(table);
-      }) as typeof db.selectFrom);
+      // Only the new-images lookup opens transactions while planning; its first one fails.
+      vi.spyOn(db, 'transaction').mockImplementationOnce(
+        () =>
+          ({
+            execute: async () => {
+              throw statementTimeout();
+            },
+          } as never)
+      );
       const { run, received } = runner();
 
       const result = await run(at(21));

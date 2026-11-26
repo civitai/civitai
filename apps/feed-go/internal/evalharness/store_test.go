@@ -96,6 +96,7 @@ func TestCHStoreSelectCasesSendsParameters(t *testing.T) {
 	wantParams := map[string]string{
 		"param_endpoint": "model-getall", "param_day": "2026-11-26", "param_limit": "1499",
 		"param_from": "2026-10-27 04:05:06.007", "param_to": "2026-11-26 04:05:06.007", "database": "evaldb",
+		"param_promoted": "prod-mismatch",
 	}
 	for k, v := range wantParams {
 		if q.Get(k) != v {

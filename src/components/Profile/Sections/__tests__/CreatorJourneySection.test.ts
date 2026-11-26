@@ -57,7 +57,7 @@ afterEach(() => {
   mocks.tiers = [];
 });
 
-// Ellie's review (2026-10-09): three cards a row was too wide on desktop. The row sizes on its own
+// Design review (2026-10-09): three cards a row was too wide on desktop. The row sizes on its own
 // width, since the profile sidebar takes 320px of the viewport.
 describe('profile Creator Journey section', () => {
   it('shows the latest five achievements, five across once the row is wide enough', () => {
@@ -90,7 +90,7 @@ describe('profile Creator Journey section', () => {
     expect(heading?.parentElement?.className.split(' ')).toContain('@container');
   });
 
-  // Justin's call (2026-10-10): dated badges newest first, then the ones granted at launch, best
+  // Decided in #5700: dated badges newest first, then the ones granted at launch, best
   // first across tracks. Before this, launch grants carried the backfill run's time and led the row.
   it('leads with dated badges, then launch grants best first, whatever the track', () => {
     mocks.achievements = [

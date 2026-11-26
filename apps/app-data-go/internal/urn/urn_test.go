@@ -61,7 +61,6 @@ func TestTheSegmentGrammars(t *testing.T) {
 }
 
 // A document URN is the adapter's private-feed form, and anything it would refuse to name is refused.
-// Fails on origin/main: there is no Document (the test does not compile).
 func TestDocumentIsTheAdaptersRecordURN(t *testing.T) {
 	got, err := Document("model-benchmarking", "kv", "0b7e3c1a-55d2-4f0e-9c41-7d2a9e1f6b30")
 	if err != nil || got != "urn:apps.civitai.com:model-benchmarking/kv/0b7e3c1a-55d2-4f0e-9c41-7d2a9e1f6b30" {

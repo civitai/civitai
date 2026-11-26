@@ -80,7 +80,7 @@ describe('resolveIngestionError: models index', () => {
   it('hands the re-rated post image over', async () => {
     arm(10);
 
-    await resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
+    await resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
@@ -88,7 +88,7 @@ describe('resolveIngestionError: models index', () => {
   it('hands over an image on no post too', async () => {
     arm(null);
 
-    await resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
+    await resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });

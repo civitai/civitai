@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { isSelfOnlyClientFor } from '@civitai/auth/self-only-client';
+import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
 import { constants } from '~/server/common/constants';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbWrite } from '~/server/db/client';
@@ -22,13 +23,21 @@ export type BanCleanupDeps = {
   revokeCivitaiUserTokens: (args: { userId: number }) => Promise<unknown>;
   notifyModAlert: typeof notifyModAlert;
   markBanDisabledClients: (clients: { id: string; priorMode: string }[]) => Promise<void>;
+  revokeRunnerAuthorizations: (userId: number) => Promise<unknown>;
 };
+
+/** Revokes every run authorization the user gave any recipe runner. */
+export async function revokeRunnerAuthorizationsForBannedUser(userId: number) {
+  const { kyselyWrite } = await import('~/server/db/kyselyDb');
+  return revokeRunnerAuthorizations(kyselyWrite, { userId, clientId: null, reason: 'banned' });
+}
 
 const defaultDeps: BanCleanupDeps = {
   expireClientTokens,
   revokeCivitaiUserTokens,
   notifyModAlert,
   markBanDisabledClients,
+  revokeRunnerAuthorizations: revokeRunnerAuthorizationsForBannedUser,
 };
 
 export type OauthBanCleanup = {
@@ -97,6 +106,13 @@ export async function disableOauthForBannedUser(
     } catch (error) {
       failed('disable self-only clients')(error);
     }
+  }
+
+  // Before the consents: a run authorization outlives its consent row otherwise.
+  try {
+    await deps.revokeRunnerAuthorizations(userId);
+  } catch (error) {
+    failed('revoke run authorizations')(error);
   }
 
   let consents = 0;

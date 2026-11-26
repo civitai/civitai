@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
+	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 	"github.com/civitai/civitai/apps/app-data-go/internal/shared"
@@ -24,8 +25,7 @@ import (
 
 // SHARED COLLECTIONS through the handler (shared.go): the real handler and private-stream stack, with
 // the shared reader faked so each answer is the board the case sets. Every key, seq and canary is
-// distinct. Fails on origin/main: there is no Server.Shared (the test does not compile); there, a
-// shared collection's read is `501 not_private` with the writes on.
+// distinct.
 
 type fakeShared struct {
 	mu     sync.Mutex
@@ -378,7 +378,7 @@ func TestASignedOutViewerReadsTheSharedPath(t *testing.T) {
 
 // CUT OVER: with the writes on, a private read is never read from REST: an empty stream is an empty
 // answer, and a stream that cannot answer is its refusal. The shadow's registry-only header keeps its
-// `source: none` answer. Fails on origin/main: an empty stream with the writes on reads REST there.
+// `source: none` answer.
 func TestACutOverPrivateReadNeverFallsBack(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	s.store.by["civitai_empty-c"] = restAnswer{200, `{"items":[{"key":"rest-1","data":{"t":"REST"},"version":1}],"nextCursor":null}`}
@@ -441,5 +441,129 @@ func TestAKeyedGetLearnsASharedSchema(t *testing.T) {
 	// A block-token shape whose payload is not base64url JSON is not signed-out.
 	if anonymousShape("abc.b.c") {
 		t.Fatal("an undecodable payload")
+	}
+}
+
+// sharedRefusalCounts is every app_data_shared_refusals_total series, by reason.
+func sharedRefusalCounts(s *stack) map[string]float64 {
+	out := map[string]float64{}
+	for _, r := range metrics.SharedRefusalReasons {
+		out[r] = testutil.ToFloat64(s.m.SharedRefusals.WithLabelValues(r))
+	}
+	return out
+}
+
+// registryRefusals is app_data_reads_total{source="registry"} over the refusal outcomes.
+func registryRefusals(s *stack) float64 {
+	var n float64
+	for _, o := range []string{"refused", "unavailable", "floor_not_met"} {
+		n += testutil.ToFloat64(s.m.Reads.WithLabelValues("registry", o))
+	}
+	return n
+}
+
+// EVERY SHARED REFUSAL IS COUNTED BY ITS REASON: each refusal a shared or signed-out read can answer
+// moves exactly one app_data_shared_refusals_total series, its own, by one, and moves
+// app_data_reads_total{source="registry"}'s refusal outcomes by one too (the Help's relationship).
+// The cases reach every registered reason but `other`, and an answer that is not a refusal (200, 404,
+// 400) counts nothing.
+func TestEverySharedRefusalIsCountedByItsReason(t *testing.T) {
+	s, f := newSharedStack(t)
+	s.reg.notPrivate["civitai_shared-m"] = true
+	// Learn the schema (the memo), so every case below is a shared read.
+	if g := s.shared(t, notesPath, "civitai_shared-m"); g.status != 200 {
+		t.Fatalf("learning the schema: %d %s", g.status, g.body)
+	}
+	tok := anonToken("anon")
+	maxL, viewerL := int64(31), int64(1)
+	claims := exchange.AnonymousClaims{BlockID: "todo-app", AppBlockID: "apb_todo", MaxBrowsingLevel: &maxL, ViewerBrowsingLevel: &viewerL}
+	var verifyErr error
+	anonVerifier := func(_ context.Context, _ string) (exchange.AnonymousClaims, error) { return claims, verifyErr }
+	cases := []struct {
+		name, reason string
+		setup        func()
+		path, token  string
+	}{
+		{"viewer refused", "viewer_refused", func() { f.err = shared.ErrViewerRefused }, notesPath, "civitai_shared-m"},
+		{"block mismatch", "block_mismatch", func() { f.err = shared.ErrBlockMismatch }, notesPath, "civitai_shared-m"},
+		{"unkeyed", "unkeyed", func() { f.err = shared.ErrUnkeyed }, notesPath, "civitai_shared-m"},
+		{"outside the window", "too_large", func() { f.err = shared.ErrOutsideWindow }, notesPath, "civitai_shared-m"},
+		{"floor not met", "floor_not_met", func() { f.err = session.ErrFloorNotMet }, notesPath, "civitai_shared-m"},
+		{"not resolved", "not_resolved", func() { f.err = &session.EndedError{Reason: "not_resolved"} }, notesPath, "civitai_shared-m"},
+		{"ended", "ended", func() { f.err = &session.EndedError{Reason: "levels_on"} }, notesPath, "civitai_shared-m"},
+		{"service token refused by the registry", "service_token_refused", func() { f.err = shared.ErrServiceToken }, notesPath, "civitai_shared-m"},
+		{"service token refused by the hub", "service_token_refused", func() { f.err = shared.ErrServiceTokenRefused }, notesPath, "civitai_shared-m"},
+		{"service token unavailable", "service_token_unavailable", func() { f.err = shared.ErrServiceTokenUnavailable }, notesPath, "civitai_shared-m"},
+		{"no service client", "service_client_unconfigured", func() { f.err = shared.ErrNoServiceClient }, notesPath, "civitai_shared-m"},
+		{"signed-out probes busy", "signed_out_busy", func() { f.err = shared.ErrSignedOutBusy }, notesPath, "civitai_shared-m"},
+		{"capacity", "capacity", func() { f.err = session.ErrCapacity }, notesPath, "civitai_shared-m"},
+		{"token capacity", "token_capacity", func() { f.err = session.ErrTokenCapacity }, notesPath, "civitai_shared-m"},
+		{"not live", "not_live", func() { f.err = session.ErrNotLive }, notesPath, "civitai_shared-m"},
+		{"stalled", "stalled", func() { f.err = session.ErrStalled }, notesPath, "civitai_shared-m"},
+		{"cooling down", "cooling_down", func() { f.err = session.ErrCoolingDown }, notesPath, "civitai_shared-m"},
+		{"invalid token", "invalid_token", func() { f.err = session.ErrInvalidToken }, notesPath, "civitai_shared-m"},
+		{"exchange refused", "exchange_refused", func() { f.err = session.ErrRefused }, notesPath, "civitai_shared-m"},
+		{"not private", "not_private", func() { f.err = session.ErrNotPrivate }, notesPath, "civitai_shared-m"},
+		{"stream too large", "too_large", func() { f.err = session.ErrTooLarge }, notesPath + "/k-1", "civitai_shared-m"},
+		{"closed", "closed", func() { f.err = session.ErrClosed }, notesPath, "civitai_shared-m"},
+		{"block spent", "block_spent", func() { f.err = session.ErrBlockSpent }, notesPath, "civitai_shared-m"},
+		{"block cache full", "block_cache_full", func() { f.err = session.ErrBlockFull }, notesPath, "civitai_shared-m"},
+		{"cursor expired", "cursor_expired", func() { f.err = session.ErrCursorExpired }, notesPath, "civitai_shared-m"},
+		{"an unknown failure", "failed", func() { f.err = errors.New("boom") }, notesPath + "/@me", "civitai_shared-m"},
+		{"not exchangeable", "token_not_exchangeable", func() { f.err = nil }, notesPath, "not-an-app-token"},
+		{"signed out, no verifier", "sign_in_required", func() { f.err = nil; s.srv.Anonymous = nil }, notesPath, tok},
+		{"signed out, refused block token", "block_token_refused", func() {
+			s.srv.Anonymous, verifyErr = anonVerifier, &exchange.RefusedError{Code: exchange.LocalRefusalCode, Reason: "dev token"}
+		}, notesPath, tok},
+		{"signed out, unverifiable", "unverifiable", func() { verifyErr = exchange.ErrBlockUnverifiable }, notesPath, tok},
+	}
+	hit := map[string]bool{}
+	for _, c := range cases {
+		c.setup()
+		before, reads := sharedRefusalCounts(s), registryRefusals(s)
+		g := s.shared(t, c.path, c.token)
+		if g.status != 401 && g.status != 503 {
+			t.Errorf("%s: %d %s, want a refusal", c.name, g.status, g.body)
+			continue
+		}
+		after := sharedRefusalCounts(s)
+		for r := range after {
+			want := before[r]
+			if r == c.reason {
+				want++
+			}
+			if after[r] != want {
+				t.Errorf("%s: %s counted %v, want %v", c.name, r, after[r]-before[r], want-before[r])
+			}
+		}
+		if d := registryRefusals(s) - reads; d != 1 {
+			t.Errorf("%s: %v registry refusals counted in app_data_reads_total, want 1", c.name, d)
+		}
+		hit[c.reason] = true
+	}
+	for _, r := range metrics.SharedRefusalReasons {
+		if !hit[r] && r != "other" {
+			t.Errorf("reason %s is registered but no case reaches it", r)
+		}
+	}
+	if n := testutil.ToFloat64(s.m.SharedRefusals.WithLabelValues("other")); n != 0 {
+		t.Fatalf("🔴 %v refusals counted as other: a reason missing from SharedRefusalReasons", n)
+	}
+	// Not refusals: a page, a missing key, a request not taken here.
+	s.srv.Anonymous, verifyErr, f.err = nil, nil, nil
+	f.board = shared.Board{Docs: []shared.Doc{sdoc("k-ok", "OK", false)}}
+	before := sharedRefusalCounts(s)
+	for path, status := range map[string]int{notesPath: 200, notesPath + "/k-none": 404, notesPath + "?sort=createdAt": 400} {
+		if g := s.shared(t, path, "civitai_shared-m"); g.status != status {
+			t.Errorf("%s: %d %s, want %d", path, g.status, g.body, status)
+		}
+	}
+	for r, n := range sharedRefusalCounts(s) {
+		if n != before[r] {
+			t.Errorf("a non-refusal moved %s by %v", r, n-before[r])
+		}
+	}
+	if s.store.calls.Load() != 0 {
+		t.Fatalf("🔴 REST was read %d times", s.store.calls.Load())
 	}
 }

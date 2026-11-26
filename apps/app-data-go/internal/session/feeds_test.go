@@ -18,8 +18,7 @@ const levelCursor = "b1.0a1b2c3d4e5f60718293a4b5.l1.0123456789abcdef0123456789ab
 func acceptLevel(c string) bool { return strings.Contains(c, ".l1.") }
 
 // A manager whose Accept names another feed serves that feed's Live and refuses the private feed's:
-// the cursor test is the option, not the private feed's prefix. Fails on origin/main: Options has
-// no Accept (the test does not compile); behaviourally, a level cursor's stream is ErrNotPrivate there.
+// the cursor test is the option, not the private feed's prefix.
 func TestAcceptNamesTheFeedAManagerReads(t *testing.T) {
 	h := newHarness(t, Options{Accept: acceptLevel})
 	h.o.cursors["lvl"] = levelCursor
@@ -36,8 +35,7 @@ func TestAcceptNamesTheFeedAManagerReads(t *testing.T) {
 
 // SubscribeMeta names the request meta per subject, and is sent on the subscription; a manager whose
 // subscriber cannot send one fails the stream rather than open it without its meta (a level stream
-// opened without its level would be routed as some other feed). Fails on origin/main: Options has no
-// SubscribeMeta (the test does not compile).
+// opened without its level would be routed as some other feed).
 func TestSubscribeMetaIsSentAndNeverDropped(t *testing.T) {
 	meta := func(subject string) json.RawMessage {
 		if subject == "plain" {
@@ -78,7 +76,7 @@ func (p plainSubscriber) Subscribe(ctx context.Context, schema, token string) (S
 }
 
 // View answers the stream's latest meta and head beside its records: the Live's, then each
-// Progress's, and a Progress with no meta keeps the last one. Fails on origin/main: there is no View.
+// Progress's, and a Progress with no meta keeps the last one.
 func TestViewAnswersTheLatestMetaAndHead(t *testing.T) {
 	h := newHarness(t, overlayOpts())
 	h.o.liveMetas["tok-a"] = json.RawMessage(`{"head":{"seq":40},"mask":3}`)
@@ -108,8 +106,7 @@ func TestViewAnswersTheLatestMetaAndHead(t *testing.T) {
 
 // An end naming a reason is an EndedError, answered to the read that meets it and, while the key
 // cools down, to every later read (joined with ErrCoolingDown); an end naming none, or a reason
-// outside the grammar, is plain ErrEnded. Fails on origin/main: there is no EndedError, and an end's
-// meta is not read.
+// outside the grammar, is plain ErrEnded.
 func TestAnEndsReasonIsAnsweredThroughTheCooldown(t *testing.T) {
 	for meta, want := range map[string]string{`{"reason":"levels_off"}`: "levels_off", `{}`: "", `{"reason":"Not A Word"}`: ""} {
 		h := newHarness(t, Options{})

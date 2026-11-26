@@ -179,7 +179,15 @@ export interface BlockRecipe<P = unknown> {
   estimateBuzz(params: P): number;
   /** Recipe-level negative prompt (the prompt-audit re-point reads this in PR6). */
   negativePrompt: string;
+  /**
+   * The `params` keys a recipe runner may fill per run, and their type. Absent: none. A key here
+   * must not change `budgetFor` or the resources the recipe loads.
+   */
+  runnerSlots?: Readonly<Record<string, RunnerSlotType>>;
 }
+
+/** A per-run value a recipe runner fills: a Civitai-hosted image URL, or bounded text. */
+export type RunnerSlotType = 'image' | 'text';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyBlockRecipe = BlockRecipe<any>;

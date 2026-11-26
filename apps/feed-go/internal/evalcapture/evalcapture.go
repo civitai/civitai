@@ -103,7 +103,15 @@ const (
 const (
 	OriginSample   = "sample"
 	OriginMismatch = "prod-mismatch"
+	// OriginTempo: imported from a feed-bench Tempo capture (`feed-eval import-tempo`), never by
+	// feed-go. Its case ids are derived from a day namespaced by this origin (TempoCaseDay), so no
+	// imported case can share an id with a captured one.
+	OriginTempo = "tempo"
 )
+
+// TempoCaseDay is the day CaseID is given for an imported Tempo case: the record's UTC day prefixed
+// with OriginTempo, a string no capture day can equal.
+func TempoCaseDay(day string) string { return OriginTempo + ":" + day }
 
 // Defaults of the admission limits (Config zero values).
 const (
@@ -258,14 +266,23 @@ func Supported(endpoint string) bool {
 	return slices.Contains(evalcorpus.Endpoints, endpoint)
 }
 
+// MatchResults and MismatchResults are the comparison results (prod_result) of the match and the
+// mismatch outcome classes: the one list OutcomeClass and the harness's reconcile read them from.
+var (
+	MatchResults    = []string{"match", "match_empty", "match_cached"}
+	MismatchResults = []string{"fields", "order", "membership"}
+)
+
 // OutcomeClass is the class a production result is deduplicated under: match, mismatch, served,
 // handback, corpus-only or error.
 func OutcomeClass(prodResult string) string {
-	switch prodResult {
-	case "match", "match_empty", "match_cached":
+	switch {
+	case slices.Contains(MatchResults, prodResult):
 		return "match"
-	case "fields", "order", "membership":
+	case slices.Contains(MismatchResults, prodResult):
 		return "mismatch"
+	}
+	switch prodResult {
 	case ResultServed:
 		return "served"
 	case ResultHandback, "unsupported", "deadline":
@@ -296,8 +313,7 @@ func (r *Recorder) Record(s Sample) string {
 	if err != nil {
 		return OutcomeDropped
 	}
-	stored := StoredRequest{Input: redactSearchText(c.Input), Path: c.Path, Query: c.Query, Headers: c.Headers, Credential: c.Credential, Viewer: c.Viewer}
-	reqJSON, err := json.Marshal(stored)
+	reqJSON, err := Stored(c)
 	if err != nil {
 		return OutcomeDropped
 	}
@@ -348,6 +364,14 @@ func (r *Recorder) Record(s Sample) string {
 		return OutcomeDropped
 	}
 	return OutcomeWritten
+}
+
+// Stored is a case's `request` column: the stripped case as the replay rebuilds it, with any search
+// text replaced (redactSearchText). The one way a stored request is built, for a capture and for an
+// imported case alike.
+func Stored(c *evalcorpus.Case) ([]byte, error) {
+	return json.Marshal(StoredRequest{Input: redactSearchText(c.Input), Path: c.Path, Query: c.Query, Headers: c.Headers,
+		Credential: c.Credential, Viewer: c.Viewer})
 }
 
 // keepNodeAnswer: Node's answer is stored only for a request made with no session user (anon, or a

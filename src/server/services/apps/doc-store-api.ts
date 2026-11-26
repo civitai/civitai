@@ -21,15 +21,14 @@
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
 //
-// REMOVED (docs/app-storage-generic-core.md, rollout step 5): marks, counters, their tallies and
-// server-side publish. Their routes are not routes any more and answer exactly as any unknown
-// one: `PATCH /:c/:key` (the tally operators) a `405` naming the methods the path has,
-// `/:c/:key/counters/:name` and `/:c/:key/marks/:name` a `404 not_found`, `_publish` /
-// `_unpublish` a `404 not_found`, with ONE exception below. A list naming `markedBy` or `mark` is
-// refused as any unknown parameter, and `sort=counter:` / `sort=mark:` as any undeclared sort field. A document is
-// still presented with `counters: {}`, `marks: {}` and `viewer` (`presentDocs`), because
-// published SDK releases refuse a document without them. Reports go through the report API
-// (`doc-store-report-api.ts`); votes and per-viewer entries are viewer-keyed documents (`@me`).
+// NO MARKS, COUNTERS, TALLIES OR SERVER-SIDE PUBLISH (docs/app-storage-generic-core.md). Their
+// paths are not in the table above and answer as any unknown one: `PATCH /:c/:key` a `405` naming
+// the methods the path has, `/:c/:key/counters/:name`, `/:c/:key/marks/:name` and `_publish` /
+// `_unpublish` a `404 not_found`, but for the report mark alias below. A list naming `markedBy` or
+// `mark` is refused as any unknown parameter, and `sort=counter:` / `sort=mark:` as any undeclared
+// sort field. A document is presented with empty `counters: {}`, `marks: {}` and `viewer`
+// (`presentDocs`, which says why). Reports go through the report API (`doc-store-report-api.ts`);
+// votes and per-viewer entries are viewer-keyed documents (`@me`).
 //
 // THE REPORT MARK ALIAS. Apps bundled with an SDK older than 0.30 report with
 // `collection.mark(key, 'report')`, i.e. `PUT /:c/:key/marks/report`, and the `report` mark worked
@@ -37,7 +36,7 @@
 // a `PUT` files a report through `fileReport`, exactly the code the report API runs (same gates,
 // same budget, same `doc_mark` row and dedupe, same moderator queue), and answers `{marked: true}`,
 // the shape those SDKs read; a `DELETE` answers what it always did, `400 invalid_request` "a report
-// cannot be withdrawn", before any budget or trust lookup. Every other mark name is still no route.
+// cannot be withdrawn", before any budget or trust lookup. Every other mark name is no route.
 // It is public-route only: the internal route never served it.
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
@@ -166,7 +165,7 @@ import {
 
 /** Every literal path segment, and the one position each may occupy. */
 const GET_MANY_SEGMENT = '_get';
-/** The removed per-mark path's segment, kept for the report mark alias only. */
+/** The per-mark path's segment: the report mark alias only. */
 const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
   { segment: GET_MANY_SEGMENT, position: 0 },
@@ -624,13 +623,12 @@ export type PresentedDoc = {
   updatedAt: string;
   author: PresentedAuthor;
   /**
-   * 🔴 SDK COMPATIBILITY, NOT DATA. Counters, marks and their tallies were removed
-   * (docs/app-storage-generic-core.md, rollout step 5), but `@civitai/sdk` up to 0.30 refuses a
-   * document reply without `counters` and `marks` (each an object of numbers) and without
-   * `viewer` (`null`, or `{ marks: string[] }`): `toDocument` throws "malformed". So every
-   * document is sent with them EMPTY, on every collection, whatever its manifest declares:
-   * `{}`, `{}`, and `{ marks: [] }` for a signed-in viewer (`null` for an anonymous one). Drop
-   * them only once no supported SDK release reads them.
+   * 🔴 SDK COMPATIBILITY, NOT DATA. The store serves no counters or marks, but `@civitai/sdk` up
+   * to 0.30 refuses a document reply without `counters` and `marks` (each an object of numbers)
+   * and without `viewer` (`null`, or `{ marks: string[] }`): `toDocument` throws "malformed". So
+   * every document is sent with them EMPTY, on every collection, whatever its manifest declares:
+   * `{}`, `{}`, and `{ marks: [] }` for a signed-in viewer (`null` for an anonymous one). They
+   * stay while any approved app runs `@civitai/sdk` 0.31 or older.
    */
   counters: Record<string, never>;
   marks: Record<string, never>;
@@ -691,7 +689,7 @@ async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection, signe
 /**
  * `open`: whether a viewer-keyed collection takes `@me` writes (`isViewerKeyedWritable`).
  * `counters` and `marks` are always empty, whatever the manifest declares: the store serves
- * neither (docs/app-storage-generic-core.md, rollout step 5); the SDK's `StorageCollectionInfo`
+ * neither (docs/app-storage-generic-core.md); the SDK's `StorageCollectionInfo`
  * still types both as lists.
  */
 function presentDeclaration(decl: DeclaredStorageCollection, open: boolean) {
@@ -1184,8 +1182,8 @@ async function run(
           // `app-blocks-storage-unchanged-writes-free` is on for the app — every shared PUT,
           // changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
-          // The marks-and-counters bucket is gone with marks and counters (rollout step 5). Kept at
-          // 0, not dropped: every SDK from 0.14 to 0.31 types it as a required number.
+          // No marks or counters, so no bucket for them: 0, never dropped, as every SDK from 0.14
+          // to 0.31 types it as a required number.
           marksAndCountersPerMinute: 0,
           // The report API's daily budget (`assertReportGate`).
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
@@ -1216,8 +1214,8 @@ async function run(
       return ok({ marked: true });
     }
     case 'unreportMark':
-      // As the removed route answered it: a report cannot be withdrawn (re-filing after a
-      // moderator's dismissal would re-open it), refused before any budget or trust lookup.
+      // A report cannot be withdrawn (re-filing after a moderator's dismissal would re-open it):
+      // refused before any budget or trust lookup.
       throw new DocStoreError('invalid_request', 'a report cannot be withdrawn', {
         mark: REPORT_MARK,
       });
