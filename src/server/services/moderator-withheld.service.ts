@@ -3,12 +3,10 @@ import { TRPCError } from '@trpc/server';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
+import { NsfwLevel } from '~/server/common/enums';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 
 export const WITHHELD_LOOSENING_REFUSED = 'Not ruled on here. Ask a lead.';
-
-/** `NsfwLevel.Blocked`: setting it tightens, whatever the current level. */
-const BLOCKED_LEVEL = 32;
 
 /**
  * Whether rating an image `next` over `current` loosens it: a lower level, or a first rating of an
@@ -16,14 +14,16 @@ const BLOCKED_LEVEL = 32;
  * `loosensImageLevelSql` is the same rule in SQL; change the two together.
  */
 export const loosensImageLevel = (current: number, next: number) =>
-  next !== BLOCKED_LEVEL && (current === 0 || next < current);
+  next !== NsfwLevel.Blocked && (current === 0 || next < current);
 
 /** `loosensImageLevel` over a level column, for a guard inside a write. */
 export function loosensImageLevelSql(next: number, currentColumn: string) {
   if (!Number.isInteger(next)) throw new Error(`Bad level: ${next}`);
   if (!/^[a-z_][a-z0-9_]*\."[a-zA-Z]+"$/.test(currentColumn))
     throw new Error(`Bad column: ${currentColumn}`);
-  return next === BLOCKED_LEVEL ? 'false' : `(${currentColumn} = 0 OR ${next} < ${currentColumn})`;
+  return next === NsfwLevel.Blocked
+    ? 'false'
+    : `(${currentColumn} = 0 OR ${next} < ${currentColumn})`;
 }
 
 /**
