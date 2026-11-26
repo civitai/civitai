@@ -1,4 +1,5 @@
 import { mintAppToken } from '@civitai/auth';
+import { appAssistantClientId } from '@civitai/auth/app-assistant-client';
 import { dbWrite } from '~/server/db/client';
 import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import { APP_ASSISTANT_SCOPES } from '~/shared/constants/app-assistant.constants';
@@ -13,15 +14,12 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * One OAuth client per user rather than one shared row: an `OauthClient` belongs to the user in its
- * `userId`, who may edit or delete it through the OAuth-apps settings, so a shared row would be one
- * user's to break for everyone. Not `firstparty-`: the auth hub reserves that prefix for its own
- * trusted clients.
+ * `userId`, who may delete it through the OAuth-apps settings (which turns App Assistant off), so a
+ * shared row would be one user's to break for everyone. The id rule lives in
+ * `@civitai/auth/app-assistant-client`, shared with the hub.
  */
-export const APP_ASSISTANT_CLIENT_PREFIX = 'appassist-';
-
-export function appAssistantClientId(userId: number): string {
-  return `${APP_ASSISTANT_CLIENT_PREFIX}${userId}`;
-}
+export { APP_ASSISTANT_CLIENT_PREFIX } from '@civitai/auth/app-assistant-client';
+export { appAssistantClientId };
 
 /**
  * Who a token is for. The chat spends Buzz; the hosted sandbox service only needs to know who the

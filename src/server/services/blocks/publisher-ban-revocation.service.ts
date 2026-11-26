@@ -12,6 +12,7 @@ import { subjectForUserId } from '~/server/services/block-token-subject';
 import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
 import {
   clearQueuedBanRevoke,
+  releaseHoldsForUnbannedUser,
   revokePreviewsForBannedUser,
 } from '~/server/services/blocks/preview-revoke.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -377,5 +378,6 @@ export async function clearBlockInstancesForPublisher({
     return global.length + subjectScoped.length;
   } finally {
     await clearQueuedBanRevoke(userId);
+    await releaseHoldsForUnbannedUser(userId);
   }
 }

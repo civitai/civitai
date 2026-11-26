@@ -11,11 +11,9 @@ import {
   Text,
 } from '@mantine/core';
 import { useState } from 'react';
+import { reviewedByLabel } from '~/components/Moderation/AppAccessRequests/reviewedByLabel';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import type {
-  AppAccessRequestStatus,
-  AppAccessReviewSource,
-} from '~/shared/constants/app-access-request.constants';
+import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -33,15 +31,6 @@ const STATUS_COLOR: Record<AppAccessRequestStatus, string> = {
   approved: 'green',
   declined: 'gray',
 };
-
-/** Who decided a row, from its recorded source; a deleted moderator account reads "a moderator". */
-function reviewedByLabel(item: {
-  reviewSource: AppAccessReviewSource | null;
-  reviewedByUsername: string | null;
-}) {
-  if (item.reviewSource === 'system') return 'Approved automatically';
-  return item.reviewedByUsername ?? 'a moderator';
-}
 
 /**
  * The moderator queue for "Request access" on `/apps/build`. Approving GRANTS builder access —

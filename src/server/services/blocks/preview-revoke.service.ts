@@ -29,6 +29,12 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
  */
 
 export const PREVIEW_REVOKE_PATH = '/internal/v1/previews/revoke';
+/**
+ * The sandbox service's HOLD RELEASE: a ban's `"*"` revoke also holds the user's sandboxes (kept,
+ * not resumable), and an unban lifts that hold here. Same secret, headers and canonical scheme as
+ * the revoke, over its own path, and the same queue and retry. Body `{userId, reason}`.
+ */
+export const HOLD_RELEASE_PATH = '/internal/v1/holds/release';
 export const PREVIEW_REVOKE_HEADERS = {
   timestamp: 'x-preview-revoke-timestamp',
   signature: 'x-preview-revoke-signature',
@@ -36,10 +42,24 @@ export const PREVIEW_REVOKE_HEADERS = {
 /** Added to a `"*"` revoke's first send attempt: the clock difference between the two clusters, and a session opened while the ban propagates. */
 export const PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS = 120_000;
 /**
- * A queued revoke older than this is dropped (the 8 h session cap): every session host it could
- * match has expired by then.
+ * A queued per-session revoke older than this (the 8 h session cap) is dropped unsent: every
+ * session host it could match has expired by then. A late one cannot end a newer session either:
+ * its preview id is never opened again while the id's `used` marker lives, and that marker
+ * outlives this bound (DIRECT_USED_MARKER_SECONDS, dev-tunnel.service.ts).
  */
-export const PREVIEW_REVOKE_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+export const PREVIEW_REVOKE_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+/**
+ * A queued `"*"` revoke or hold release older than this (7 days) is dropped unsent. Longer than
+ * the session cap on purpose: a ban's hold and an unban's hold release do not expire with a
+ * session, so they must survive a long sandbox service outage. The queue key's TTL is floored at
+ * this bound, the longer of the two.
+ */
+export const PREVIEW_REVOKE_BAN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** `"*"` revokes and hold releases: the longer retry window, and drained first. */
+const isBanScoped = (r: Pick<PreviewRevoke, 'previewId' | 'op'>) =>
+  r.op === 'release' || r.previewId === '*';
+const maxAgeOf = (r: Pick<PreviewRevoke, 'previewId' | 'op'>) =>
+  isBanScoped(r) ? PREVIEW_REVOKE_BAN_MAX_AGE_MS : PREVIEW_REVOKE_SESSION_MAX_AGE_MS;
 const SEND_TIMEOUT_MS = 5_000;
 /** At most this many queued revokes are sent per reaper run, so a long outage cannot stall it. */
 const DRAIN_BATCH = 50;
@@ -56,6 +76,8 @@ export type PreviewRevoke = {
   /** Epoch milliseconds; required for "*", never sent otherwise. */
   issuedAt?: number;
   reason: string;
+  /** `release` lifts the user's sandbox holds (HOLD_RELEASE_PATH); absent, a preview revoke. */
+  op?: 'release';
 };
 
 type QueuedRevoke = PreviewRevoke & { queuedAt: number };
@@ -63,11 +85,12 @@ type QueuedRevoke = PreviewRevoke & { queuedAt: number };
 export type PreviewRevokeOutcome = 'sent' | 'retry' | 'drop';
 
 const QUEUE_KEY = `${REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER}:preview-revoke-queue` as const;
-const fieldOf = (r: Pick<PreviewRevoke, 'userId' | 'previewId'>) => `${r.userId}:${r.previewId}`;
+const fieldOf = (r: Pick<PreviewRevoke, 'userId' | 'previewId' | 'op'>) =>
+  r.op === 'release' ? `${r.userId}:release` : `${r.userId}:${r.previewId}`;
 const cluster = <T>(fn: string, op: () => Promise<T>) =>
   boundedClusterCall(`previewRevoke.${fn}`, op);
 
-/** HSET the entry and floor the queue's TTL at the session cap, in one script. */
+/** HSET the entry and floor the queue's TTL at PREVIEW_REVOKE_BAN_MAX_AGE_MS, in one script. */
 const ENQUEUE = `
   redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
   if redis.call('TTL', KEYS[1]) < tonumber(ARGV[3]) then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
@@ -79,18 +102,25 @@ const DEQUEUE_IF_UNCHANGED = `
   return 0
 `;
 
-/** The body (exact bytes) and headers of one signed revoke request at `nowMs`. */
+const pathOf = (r: Pick<PreviewRevoke, 'op'>) =>
+  r.op === 'release' ? HOLD_RELEASE_PATH : PREVIEW_REVOKE_PATH;
+
+/** The body (exact bytes) and headers of one signed revoke (or release) request at `nowMs`. */
 export function buildPreviewRevokeRequest(
   revoke: PreviewRevoke,
   secret: string,
   nowMs: number
 ): { body: string; headers: Record<string, string> } {
-  const body = JSON.stringify({
-    userId: revoke.userId,
-    previewId: revoke.previewId,
-    ...(revoke.previewId === '*' ? { issuedAt: revoke.issuedAt } : {}),
-    reason: revoke.reason.slice(0, 64),
-  });
+  const body = JSON.stringify(
+    revoke.op === 'release'
+      ? { userId: revoke.userId, reason: revoke.reason.slice(0, 64) }
+      : {
+          userId: revoke.userId,
+          previewId: revoke.previewId,
+          ...(revoke.previewId === '*' ? { issuedAt: revoke.issuedAt } : {}),
+          reason: revoke.reason.slice(0, 64),
+        }
+  );
   const timestamp = String(Math.floor(nowMs / 1000));
   return {
     body,
@@ -99,7 +129,7 @@ export function buildPreviewRevokeRequest(
       [PREVIEW_REVOKE_HEADERS.timestamp]: timestamp,
       [PREVIEW_REVOKE_HEADERS.signature]: signHibernationRequest(secret, {
         method: 'POST',
-        path: PREVIEW_REVOKE_PATH,
+        path: pathOf(revoke),
         timestamp,
         body: Buffer.from(body),
       }),
@@ -117,7 +147,7 @@ export function classifyPreviewRevokeStatus(status: number): PreviewRevokeOutcom
 /**
  * What one send attempt saw: the HTTP status, `network` (no answer: refused, reset, timed out) or
  * `unconfigured` (APP_ASSISTANT_SANDBOX_URL or the secret unset; nothing was sent). `unconfigured`
- * is retried, so a revoke is never lost to a configuration gap shorter than the session cap.
+ * is retried, so a revoke is never lost to a configuration gap shorter than the retry window.
  */
 export type PreviewRevokeAttemptStatus = number | 'network' | 'unconfigured';
 
@@ -135,7 +165,7 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> 
   const { body, headers } = buildPreviewRevokeRequest(revoke, secret, nowMs);
   let attempt: Attempt;
   try {
-    const res = await outboundFetch(`${base.replace(/\/+$/, '')}${PREVIEW_REVOKE_PATH}`, {
+    const res = await outboundFetch(`${base.replace(/\/+$/, '')}${pathOf(revoke)}`, {
       method: 'POST',
       headers,
       body,
@@ -148,7 +178,9 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> 
   if (attempt.outcome === 'drop')
     logToAxiom({
       type: 'app-assistant.preview-revoke.refused',
-      message: `Preview revoke refused with ${attempt.status}; dropped`,
+      message: `${revoke.op === 'release' ? 'Hold release' : 'Preview revoke'} refused with ${
+        attempt.status
+      }; dropped`,
       userId: revoke.userId,
       status: attempt.status,
       reason: revoke.reason,
@@ -156,7 +188,9 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> 
   else if (attempt.outcome === 'retry' && attempt.status !== 404)
     logToAxiom({
       type: 'app-assistant.preview-revoke.retry',
-      message: `Preview revoke failed with ${attempt.status}; kept for retry`,
+      message: `${revoke.op === 'release' ? 'Hold release' : 'Preview revoke'} failed with ${
+        attempt.status
+      }; kept for retry`,
       userId: revoke.userId,
       status: attempt.status,
       reason: revoke.reason,
@@ -172,7 +206,7 @@ async function enqueue(entry: QueuedRevoke): Promise<void> {
         arguments: [
           fieldOf(entry),
           JSON.stringify(entry),
-          String(Math.ceil(PREVIEW_REVOKE_MAX_AGE_MS / 1000)),
+          String(Math.ceil(PREVIEW_REVOKE_BAN_MAX_AGE_MS / 1000)),
         ],
       })
     );
@@ -219,6 +253,10 @@ export async function revokePreviewsForBannedUser(
   nowMs: number = Date.now()
 ): Promise<PreviewRevokeOutcome> {
   try {
+    // A release still queued from an earlier unban must not lift the hold this ban places.
+    await cluster('clearRelease', () =>
+      redis.hDel(QUEUE_KEY, fieldOf({ userId, previewId: '', op: 'release' }))
+    ).catch(() => undefined);
     return await deliver(
       {
         userId,
@@ -228,6 +266,22 @@ export async function revokePreviewsForBannedUser(
       },
       nowMs
     );
+  } catch {
+    return 'retry';
+  }
+}
+
+/**
+ * On unban: lift the user's sandbox holds (HOLD_RELEASE_PATH), queued and retried like a revoke.
+ * Fails safe: until it is delivered the hold stays (the sandboxes are kept, not resumable), and a
+ * failure is logged. Never throws.
+ */
+export async function releaseHoldsForUnbannedUser(
+  userId: number,
+  nowMs: number = Date.now()
+): Promise<PreviewRevokeOutcome> {
+  try {
+    return await deliver({ userId, previewId: '', reason: 'unban', op: 'release' }, nowMs);
   } catch {
     return 'retry';
   }
@@ -246,6 +300,7 @@ function parseQueued(raw: unknown): QueuedRevoke | null {
     const v = JSON.parse(raw) as Partial<QueuedRevoke>;
     if (!Number.isSafeInteger(v.userId) || typeof v.previewId !== 'string') return null;
     if (typeof v.reason !== 'string' || !Number.isFinite(v.queuedAt)) return null;
+    if (v.op !== undefined && v.op !== 'release') return null;
     if (v.previewId === '*' && !Number.isSafeInteger(v.issuedAt)) return null;
     return v as QueuedRevoke;
   } catch {
@@ -268,11 +323,13 @@ const isOutageStatus = (s: PreviewRevokeAttemptStatus) =>
 
 /**
  * Send every queued revoke (at most DRAIN_BATCH a run), each signed now and with its original
- * `issuedAt`. Sent and refused ones leave the queue; retryable ones stay; one older than the 8 h
- * cap, or unreadable, is dropped (an aged one is logged, so a revoke that never got through is
- * visible rather than silently lost). After DRAIN_MAX_CONSECUTIVE_FAILURES consecutive network or
- * 5xx failures the run stops and leaves the rest queued for the next one. Run by the dev-tunnel
- * reaper, which logs the counts. Never throws.
+ * `issuedAt`. `"*"` revokes and hold releases go first, so per-session revokes kept for retry
+ * cannot fill the batch ahead of them. Sent and refused ones leave the queue; retryable ones
+ * stay; one older than its retry window (PREVIEW_REVOKE_SESSION_MAX_AGE_MS for a per-session
+ * revoke, PREVIEW_REVOKE_BAN_MAX_AGE_MS otherwise), or unreadable, is dropped (an aged one is
+ * logged, so a revoke that never got through is visible rather than silently lost). After
+ * DRAIN_MAX_CONSECUTIVE_FAILURES consecutive network or 5xx failures the run stops and leaves the
+ * rest queued for the next one. Run by the dev-tunnel reaper, which logs the counts. Never throws.
  */
 export async function drainPreviewRevokeQueue(
   nowMs: number = Date.now()
@@ -284,7 +341,13 @@ export async function drainPreviewRevokeQueue(
   } catch {
     return out;
   }
-  const batch = Object.entries(entries).slice(0, DRAIN_BATCH);
+  const banScoped: [string, string][] = [];
+  const rest: [string, string][] = [];
+  for (const kv of Object.entries(entries)) {
+    const e = parseQueued(kv[1]);
+    (e && isBanScoped(e) ? banScoped : rest).push(kv);
+  }
+  const batch = [...banScoped, ...rest].slice(0, DRAIN_BATCH);
   let consecutiveFailures = 0;
   for (const [i, [field, raw]] of batch.entries()) {
     if (consecutiveFailures >= DRAIN_MAX_CONSECUTIVE_FAILURES) {
@@ -299,7 +362,7 @@ export async function drainPreviewRevokeQueue(
     const entry = parseQueued(raw);
     let outcome: PreviewRevokeOutcome;
     if (!entry) outcome = 'drop';
-    else if (nowMs - entry.queuedAt > PREVIEW_REVOKE_MAX_AGE_MS) {
+    else if (nowMs - entry.queuedAt > maxAgeOf(entry)) {
       outcome = 'drop';
       logToAxiom({
         type: 'app-assistant.preview-revoke.expired',

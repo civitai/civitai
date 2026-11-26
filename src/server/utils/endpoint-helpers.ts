@@ -46,6 +46,7 @@ import {
   type AdminAuditOutcome,
 } from '~/server/utils/admin-endpoint-audit';
 import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
+import { distinctAdminToken, type AdminEndpointTokenName } from '~/server/utils/admin-token';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -384,17 +385,19 @@ function presentedTokens(req: NextApiRequest) {
 
 const MIN_HEADER_TOKEN_LENGTH = 32;
 
+function isUsableHeaderToken(token: string | undefined): token is string {
+  return (
+    isConfiguredSecret(token) && token === token.trim() && token.length >= MIN_HEADER_TOKEN_LENGTH
+  );
+}
+
 export function HeaderTokenSecuredEndpoint(
   getToken: () => string | undefined,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const token = getToken();
-    if (
-      !isConfiguredSecret(token) ||
-      token !== token.trim() ||
-      token.length < MIN_HEADER_TOKEN_LENGTH
-    ) {
+    if (!isUsableHeaderToken(token)) {
       res.status(503).json({ error: 'Endpoint not configured' });
       return;
     }
@@ -411,6 +414,61 @@ export function HeaderTokenSecuredEndpoint(
     }
 
     await handler(req, res);
+  });
+}
+
+/**
+ * An admin endpoint with its own `x-admin-token` (`distinctAdminToken`): no webhook, probe or job
+ * token is accepted, in any position. 404 while the token is unset, too short, or equal to another
+ * token, so an unprovisioned route looks absent. Every call writes an `admin-endpoint-audit` record.
+ */
+export function AdminTokenEndpoint(
+  tokenName: AdminEndpointTokenName,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  options: { audit: string }
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    const startedAt = Date.now();
+    const adminHeader = req.headers['x-admin-token'];
+    const { bearer, queryToken, header } = presentedTokens(req);
+    const presented: AdminAuditCredential[] = [
+      ...(header !== undefined ? ['header' as const] : []),
+      ...(typeof adminHeader === 'string' && adminHeader !== '' ? ['admin-header' as const] : []),
+      ...(bearer !== undefined ? ['bearer' as const] : []),
+      ...(queryToken !== undefined ? ['query' as const] : []),
+    ];
+    let matched = false;
+    let outcome: AdminAuditOutcome = 'rejected';
+    try {
+      const token = distinctAdminToken(tokenName);
+      if (!isUsableHeaderToken(token)) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      if (req.url?.includes('?') || Object.keys(req.query ?? {}).length) {
+        res.status(400).json({ error: 'This endpoint takes no query string' });
+        return;
+      }
+      if (typeof adminHeader !== 'string' || !timingSafeEqualStrings(token, adminHeader)) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      matched = true;
+      outcome = 'error';
+      await handler(req, res);
+      outcome = 'accepted';
+    } finally {
+      recordAdminEndpointAudit(req, {
+        action: options.audit,
+        slot: matched ? 'admin' : 'none',
+        presented,
+        outcome,
+        // A throw before responding escapes to Next, which answers 500.
+        status: outcome === 'error' && !res.headersSent ? 500 : res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    }
   });
 }
 
