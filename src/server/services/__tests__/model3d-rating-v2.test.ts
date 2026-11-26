@@ -69,6 +69,7 @@ const gate = (verdicts: (boolean | null)[], previewUrls = fourAngles, overrides 
       user,
       req,
       previewUrls,
+      coverUrl: undefined,
       workflowId: 'wf-1',
     },
     deps(verdicts, overrides).deps
@@ -116,7 +117,14 @@ describe('3D post gate with the v2 rater', () => {
     });
     expect(
       await rateModel3DByV2(
-        { user, req, primaryModel: glb, previewUrls: [hosted(0)], workflowId: 'wf-1' },
+        {
+          user,
+          req,
+          primaryModel: glb,
+          previewUrls: [hosted(0)],
+          coverUrl: undefined,
+          workflowId: 'wf-1',
+        },
         d
       )
     ).toBe('clear');
@@ -147,7 +155,14 @@ describe('3D post gate with the v2 rater', () => {
     const five = [0, 1, 2, 3, 4].map(hosted);
     expect(
       await rateModel3DByV2(
-        { user, req, primaryModel: glb, previewUrls: five, workflowId: 'wf-1' },
+        {
+          user,
+          req,
+          primaryModel: glb,
+          previewUrls: five,
+          coverUrl: undefined,
+          workflowId: 'wf-1',
+        },
         d
       )
     ).toBe('mature');
@@ -197,7 +212,14 @@ describe('3D post gate with the v2 rater', () => {
   it('sends every angle once, keyed by position, at the flag level', async () => {
     const { rate, deps: d } = deps([false, false, false, false], { matureLevel: async () => 3 });
     await rateModel3DByV2(
-      { user, req, primaryModel: glb, previewUrls: fourAngles, workflowId: 'wf-9' },
+      {
+        user,
+        req,
+        primaryModel: glb,
+        previewUrls: fourAngles,
+        coverUrl: undefined,
+        workflowId: 'wf-9',
+      },
       d
     );
     expect(rate).toHaveBeenCalledTimes(1);
@@ -210,7 +232,14 @@ describe('3D post gate with the v2 rater', () => {
 
   it('is not asked when mature billing is on or the result is already mature', async () => {
     const { rate, deps: d } = deps([true]);
-    const base = { primaryModel: glb, user, req, previewUrls: [hosted(0)], workflowId: 'wf-1' };
+    const base = {
+      primaryModel: glb,
+      user,
+      req,
+      previewUrls: [hosted(0)],
+      coverUrl: undefined,
+      workflowId: 'wf-1',
+    };
     expect(
       await getModel3DPostBlock(
         { ...base, effectiveNsfwLevel: 'pg' as never, allowMatureContent: true },
@@ -235,6 +264,7 @@ describe('3D post gate with the v2 rater', () => {
           req,
           primaryModel: glb,
           previewUrls: [hosted(0), 'https://example.com/x.png'],
+          coverUrl: undefined,
           workflowId: 'wf-1',
         },
         d
@@ -294,6 +324,7 @@ describe('3D post gate with a four-angle render', () => {
         user,
         req,
         previewUrls: [hosted(0)],
+        coverUrl: undefined,
         workflowId: 'wf-1',
       },
       d
@@ -460,6 +491,7 @@ describe('3D post gate with a four-angle render', () => {
         user,
         req,
         previewUrls: [hosted(0), hosted(1)],
+        coverUrl: undefined,
         workflowId: 'wf-1',
       },
       partial.deps
@@ -491,6 +523,7 @@ describe('3D post gate with a four-angle render', () => {
           user,
           req,
           previewUrls: [hosted(0)],
+          coverUrl: undefined,
           workflowId: 'wf-1',
         },
         d
@@ -540,6 +573,25 @@ describe('3D post gate with a four-angle render', () => {
     });
     await expect(post(d)).rejects.toThrow('slow down');
     expect(rate).not.toHaveBeenCalled();
+  });
+
+  it('a failed read of a render asked for refuses the post until the expiry, then falls back', async () => {
+    const readPreview = async () => Promise.reject(new Error('orchestrator down'));
+    const fresh = deps([false], {
+      pendingPreview: async () => ({ workflowId: 'pv-1', at: 1_000_000 - 1000 }),
+      readPreview,
+    });
+    expect(await post(fresh.deps)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(fresh.rate).not.toHaveBeenCalled();
+    const old = deps([true], {
+      pendingPreview: async () => ({
+        workflowId: 'pv-1',
+        at: 1_000_000 - PREVIEW_EXPIRY_SECONDS * 1000 - 1,
+      }),
+      readPreview,
+    });
+    expect(await post(old.deps)).toMatch(/rated mature/);
+    expect(old.rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual([hosted(0)]);
   });
 
   // No render back falls to the renders the result already has; never a pass on no rating at all.

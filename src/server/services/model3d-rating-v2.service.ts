@@ -234,7 +234,8 @@ async function previewAngles(
   const pending = await deps.pendingPreview(user.id, workflowId).catch(() => null);
   let state: PreviewState;
   if (pending) {
-    state = await deps.readPreview(pending.workflowId).catch(() => ({ status: 'done', urls: [] }));
+    // A read that fails is no answer yet: the render may still come back.
+    state = await deps.readPreview(pending.workflowId).catch(() => ({ status: 'running' }));
     if (state.status === 'running') {
       return now - pending.at > PREVIEW_EXPIRY_SECONDS * 1000 ? [] : 'pending';
     }
@@ -277,8 +278,9 @@ export async function rateModel3DByV2(
     req: NextApiRequest;
     primaryModel: Pick<Model3dBlob, 'format' | 'url'>;
     previewUrls: string[];
-    /** The image the post shows as its cover: always among those rated. */
-    coverUrl?: string;
+    /** The image the post shows as its cover: always among those rated. Required, so a caller can't
+     *  leave it out by omission. */
+    coverUrl: string | undefined;
     workflowId: string;
   },
   deps: Model3dRatingV2Deps = defaultDeps
@@ -375,7 +377,7 @@ export async function getModel3DPostBlock(
     user: SessionUser;
     req: NextApiRequest;
     previewUrls: string[];
-    coverUrl?: string;
+    coverUrl: string | undefined;
     workflowId: string;
   },
   deps: Model3dRatingV2Deps = defaultDeps
