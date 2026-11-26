@@ -3102,7 +3102,7 @@ async function deleteBannedUserLinks({
 }
 
 async function unchangedUser(id: number) {
-  // primary: the caller decided "no change" from the primary; the row returned must agree with it.
+  // primary: the caller decided "no change" from the primary, so the returned row must too.
   const current = await dbWrite.user.findUniqueOrThrow({
     where: { id },
     omit: { subscriptionId: true },

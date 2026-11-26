@@ -130,6 +130,7 @@ const { toggleBan, toggleContestBan, AlreadyBannedError } = await import(
   '~/server/services/user.service'
 );
 const { BanReasonCode } = await import('~/server/common/enums');
+const { toggleBanHandler } = await import('~/server/controllers/user.controller');
 
 const USER_ID = 5501;
 const ACTOR_ID = 5502;
@@ -889,5 +890,54 @@ describe('toggleContestBan with an explicit setTo', () => {
 
     expect(result).toMatchObject({ changed: false });
     expect(userUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleBanHandler audit', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const handle = (input: { setTo?: boolean; type?: 'contest' }) => {
+    const userActivity = vi.fn(async () => undefined);
+    const ctx = { user: { id: ACTOR_ID, isModerator: true }, track: { userActivity } } as never;
+    const run = toggleBanHandler({
+      input: { id: USER_ID, reasonCode: BanReasonCode.Other, ...input } as never,
+      ctx,
+    });
+    return { run, userActivity };
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID, bannedAt: null });
+  });
+
+  it('records one Banned activity for a ban that lands', async () => {
+    userFindUnique.mockResolvedValue(row(null));
+    userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null, bannedAt: new Date() });
+
+    const { run, userActivity } = handle({ setTo: true });
+    await run;
+
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith({ type: 'Banned', targetUserId: USER_ID });
+  });
+
+  it.each([
+    ['setTo true on a banned account', true, ALREADY_BANNED_AT],
+    ['setTo false on an unbanned account', false, null],
+  ] as const)('%s records no activity', async (_, setTo, bannedAt) => {
+    userFindUnique.mockResolvedValue(row(bannedAt));
+
+    const { run, userActivity } = handle({ setTo });
+    await run;
+
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records no activity for a contest ban', async () => {
+    userFindUnique.mockResolvedValue({ meta: {} });
+
+    const { run, userActivity } = handle({ type: 'contest' });
+    await expect(run).resolves.toMatchObject({ changed: true });
+
+    expect(userActivity).not.toHaveBeenCalled();
   });
 });
