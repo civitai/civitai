@@ -8,6 +8,7 @@
 # the floor to N. Never lower a floor to get a red run green; a removed package goes off the list in
 # the same change that removes it. Packages without tests (testkit) are not listed.
 total 77
+cmd/feed-eval 94
 cmd/feed-go 23
 internal/apipolicy 88
 internal/auth 94
@@ -17,6 +18,7 @@ internal/chwrite 96
 internal/config 78
 internal/dbpool 95
 internal/devalue 91
+internal/evalcorpus 90
 internal/feed 76
 internal/fallback 91
 internal/flipt 88

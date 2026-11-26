@@ -3694,3 +3694,113 @@ written in `JSON.stringify`'s form, so there the bytes are equal.
 backend's answer, with Node's call and bytes or the fallback Go must take (and the status Node answers
 it with). `src/server/__tests__/feed-go-site-search.golden.test.ts` runs the real Node handler over them;
 `internal/server/sitesearch_golden_test.go` runs this service's compute over the same files.
+
+## 19. Production-derived evals
+
+The golden fixtures (`testdata/golden`) pin the shapes someone thought to write down; shadow diffs
+compare whatever production happens to send, but only while the Node implementation is alive to
+answer it. Production-derived evals close both gaps: a corpus of real request shapes, every way an
+endpoint is actually called, replayed against both implementations. The Node implementation must
+answer every case as recorded (a case it fails is a defect of the corpus or of the replay, not of
+Node); the Go implementation is expected to differ exactly where it hands a request back. Once a
+Node endpoint is deleted, the frozen corpus with Node's recorded answers is what tells a later change
+to the Go endpoint whether it broke a caller.
+
+This section is the request side: what a case is, how cases are grouped, and what is never stored.
+Code: `internal/evalcorpus` (pure, no I/O) and the offline estimator `cmd/feed-eval`. The capture
+(an extension of the shadow sampler) and the replay harness are later changes; nothing is wired
+yet. The corpus itself lives in private storage, never in this repository: this repository holds
+the code and synthetic tests only.
+
+First wave, the endpoints closest to having their Node implementation deleted: `as-posts`,
+`infinite`, `model-getall` and `v1-models-id` (`evalcorpus.Endpoints`).
+
+### 19.1 Shape signature
+
+A case's **shape** is a canonical JSON object (keys sorted at every level, no HTML escaping, no
+trailing newline) of:
+
+| key | what |
+|---|---|
+| `v` | `ShapeVersion`; bumped with any rule change, so changed rules start a new signature space |
+| `endpoint` | the endpoint label |
+| `input` | one entry per key the request sends, its **value class** (§19.2), plus the endpoint's derived `$`-keys |
+| `viewer` | the viewer descriptor: `class` (anon / crawler / banned / user / moderator), `browsingLevel`, `showNsfw`, `hiddenPrefs` (any hidden preference non-empty), `self` (the input named the viewer's own user or collection) |
+| `host` | the domain color of the `Host` (green / blue / red), `other`, or `unmapped` (no host colors configured) |
+| `region` | `none` (no country header), `open`, `restricted` (REGION_RESTRICTION_CONFIG), `blocked` (REGION_BLOCK_CONFIG); the country read as the server reads it (`x-isuk`, then `cf-ipcountry`, `cf-region-code` for a US state) |
+| `credential` | REST only: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name) |
+| `response`, `outcome` | optional, supplied by the caller, and always classes of the **Node** (reference) answer, never of Go's: a signature must not move when a Go handback is closed |
+
+The **signature** is xxhash64 of the shape's bytes as 16 lowercase hex digits (`github.com/cespare/xxhash/v2`,
+already in the module graph through the Prometheus client). It is not a security boundary: it only
+groups cases, and the shape is stored next to it, so a collision is detectable.
+
+### 19.2 Value classes
+
+The known keys of each tRPC endpoint are its zod schema's (`internal/inputschema/schemas.json`,
+drift-tested against the app), plus the client transport keys (`authed`, `direction`); any other key
+is recorded as `unknown:<key>` (`?` when the name does not look like a key), so a key the app adds
+becomes a new dimension without a code change here. The first rule that names a key wins:
+
+- **Endpoint rules.** `cursor`: image endpoints — `absent` (a falsy value), `numeric` / `numeric-str`,
+  `feed` (the feed service's keyset, `feedsvc.ParseCursor`), `offset` (`<offset>|<entry>`),
+  `random-seed` (`seed:sortKey:id`; `random-bad` when a part is not digits), `other`, `invalid`;
+  model.getAll — `absent`, `numeric`, or `entry:` and the kind of each `|` token (`t` timestamp,
+  `n` integer, `e` empty, `x` other; `entry:many` past four). image endpoints: `prioritizedUserIds`
+  of exactly `[-1]` is `[-1]`. model.getAll: `types` and `baseModels` are counts; `$paging`
+  (`none` / `page` / `cursor` / `both`); `$pin`, whether the official-checkpoint pin applies
+  (`none`, `first-page`, `later-page`: sort Hot with a base-model filter); `$checkpointFilter`
+  when `checkpointType` is set (`only` / `mixed` / `inert`: whether `types` lets the filter apply). `v1-models-id`: `$id`
+  (`id`: what `v1models.ParseID` accepts; `invalid`; `absent`) and one `q:<key>` per query key.
+- **Shared rules.** `limit` literal in a small set of common values, else bucketed
+  (`11-49`, `50-99`, `100-199`, `200+`); browsing-level bitmasks literal; `page` `1` / `2+`; enum
+  keys (`sort`, `period`, `periodMode`, `checkpointType`, `status`, …) literal, a value that does
+  not look like an enum `other`; enum lists (`types`, `include`, `reactions`, …) their sorted
+  members; keys ending in `Id` presence (`id`, or `id:zero` / `id:neg` / `id:nonint` / `id:str`);
+  a top-level superjson meta annotation `meta:<type>` (nested paths are ignored, as the server
+  ignores them).
+- **By type.** Booleans literal; `null`; a list `0` / `1` / `2+` and the kind of its members
+  (`int`, `num`, `str`, `str-empty`, `obj`, `mixed`); a string `empty` / `blank` / `str:true` /
+  `str:false` / `str:digits` / `nonempty`; a number `0` or `num`; an object `obj`.
+
+So two requests differing only in an id, a cursor position or a search text share a signature; two
+differing in sort, a list's cardinality, a flag, the viewer class, the domain or the region do not.
+
+### 19.3 What is never stored
+
+By construction, not by review (each pinned by `internal/evalcorpus`'s tests, the credential strip
+also by `FuzzStrip`):
+
+- **Headers are an allow-list**: `host`, `cf-ipcountry`, `cf-region-code`, `x-isuk`,
+  `x-civitai-verified-bot`, `origin`. Cookies, `Authorization`, the sampler's credential header, the
+  client address headers, the user agent and the referer are never copied; what a credential was is
+  kept as its class only. The viewer descriptor is derived from the session before the cookie is
+  dropped.
+- **Query strings** lose every pair whose name holds a credential word (`token` in any spelling or
+  escape among them), and every pair whose text holds one; **tRPC inputs** lose every
+  credential-named key (and its meta annotation).
+- **No viewer id**: the descriptor has no user id or name. An input naming the viewer's own user id
+  or username (`userId`, `username`, `user`, a `*UserIds` member) is stored with `$self`, one of the
+  viewer's collections (`collectionId`) with `$self-collection`; on REST, every `username` /
+  `userId` pair naming the viewer. The replay substitutes the eval account's own **before** decoding
+  the input (a placeholder under a `bigint` annotation is not a bigint). A stored tRPC input is always
+  re-encoded, never the raw text, so a repeated key cannot keep an earlier copy naming the viewer. Other users' ids (a creator's page) are public content and kept, so the case
+  replays.
+- An input that does not decode is not stored at all (it cannot be searched for the viewer); a
+  `[id]` path segment that is neither an id nor a plain token is stored as `$invalid`.
+- Never the client address or user agent, in any form.
+
+### 19.4 Masks
+
+`evalcorpus.Masks` lists, per endpoint, answer paths known to differ between two correct answers to
+one request (a JSONPath subset: `$`, `.<name>`, `[*]`). Empty to start: a path is added only on
+evidence that two Node answers to the same request differ there, never because Go differs there.
+
+### 19.5 Sizing (`feed-eval signatures`)
+
+`go run ./cmd/feed-eval signatures --in <rows.jsonl> [--top N] [--per-signature K]
+[--response-bytes B] [--hosts 'green=…;blue=…;red=…']` reads request rows in the format feed-bench's
+capture writes (`scripts/feed-bench/README.md`; optional `endpoint`, `path`, `query` fields for the
+other endpoints) and prints per endpoint the rows, the distinct signatures, the share of traffic the
+top N hold, and the bytes a corpus keeping K cases per signature would take. It makes no network
+call; a capture row says only whether the client was signed in, so the viewer is `user` or `anon`.
