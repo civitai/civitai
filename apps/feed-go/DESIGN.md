@@ -1057,14 +1057,17 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
 
    each also under `viewer`, the request's viewer class: on the three tRPC feeds the class the
    shadow counts per viewer (`server.FeedViewerClasses`: `anon`, `crawler`, `banned`, `user`,
-   `moderator`, from the same `feedViewerClass` over the session user the probe resolved), and
-   `unknown` (`server.GoFirstViewerUnknown`) for a probe that ended before its viewer was resolved
-   (a malformed probe, an input or request fallback taken before the session is read, such as a
-   bearer token or a verified bot, or a session-cache miss) and for every `GET /api/v1/images` probe
-   (an endpoint that reports no viewer class; its probe falls back on a session cookie before
-   computing). Every (endpoint, result, viewer) series is seeded at 0 (`server.GoFirstViewers`). The
-   go-first share of signed-out viewers reads `viewer="anon"` alone (below); its denominator holds
-   only the probes whose viewer was resolved, so read the `unknown` volume beside it;
+   `moderator`, from the same `feedViewerClass` over the session user the probe resolved). Serving
+   parses the input before it reads the session, so a probe that stops on a method or input fallback
+   reads the session for the label alone (`server.probeViewer`, read-only, the result unchanged): an
+   `unsupported` input fallback is counted under its viewer like any other probe. `unknown`
+   (`server.GoFirstViewerUnknown`) is left for a malformed probe, a probe whose viewer cannot be
+   resolved (an API credential: `bearer-token`; a verified bot on as-posts or model.getAll; a
+   session-cache miss), and every `GET /api/v1/images` probe (an endpoint that reports no viewer
+   class; its probe falls back on a session cookie before computing). Every (endpoint, result,
+   viewer) series is seeded at 0 (`server.GoFirstViewers`). The go-first share of signed-out viewers
+   reads `viewer="anon"` alone (below); its denominator holds only the probes whose viewer was
+   resolved (a signed-out request has no session to miss), so read the `unknown` volume beside it;
 
    and, once per probe for each cache that missed at least one id (whatever the result),
    `feed_go_gofirst_miss_total{feed_endpoint,cache}`, so the caches that block serving read in
@@ -1164,8 +1167,8 @@ sum(rate(feed_go_shadow_compare_total{feed_endpoint="as-posts",result="match"}[1
 #    (`raced` is not served).
 sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="would_serve"}[1h]))
   / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts"}[1h]))
-#    The same share for signed-out viewers alone (`viewer="anon"`; probes whose viewer was not
-#    resolved are `viewer="unknown"`, in neither side).
+#    The same share for signed-out viewers alone (`viewer="anon"`, input fallbacks included; probes
+#    whose viewer cannot be resolved are `viewer="unknown"`, in neither side).
 sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="would_serve",viewer="anon"}[1h]))
   / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",viewer="anon"}[1h]))
 

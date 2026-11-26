@@ -173,18 +173,19 @@ const maxProbeBody = 1 << 20
 // probeSpec is one procedure's probe: the feed_endpoint label it reports under, and how it resolves
 // the page ids and checks presence. run must resolve exactly what serving resolves and read only;
 // the recorder it is handed stands in for the page hydrator. run also returns the request's viewer
-// class (feedViewerClass, as the endpoint's compute reports it) once the viewer is resolved, and ""
-// when the probe ended before that (or the endpoint reports none): `viewer` on feed_go_gofirst_total,
-// GoFirstViewerUnknown for "".
+// class (feedViewerClass, as the endpoint's compute reports it; on a prepare-step fallback the class
+// probeViewer reads for the label), and "" when it cannot be resolved (or the endpoint reports none):
+// `viewer` on feed_go_gofirst_total, GoFirstViewerUnknown for "".
 type probeSpec struct {
 	endpoint string
 	run      func(s *Server, ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) (string, error)
 }
 
-// GoFirstViewerUnknown is the `viewer` of a go-first probe whose viewer class is not known: one that
-// ended before its viewer was resolved (a malformed probe, an input or request fallback taken before
-// the session is read, a session-cache miss), or a GET /api/v1/images probe (an endpoint that reports
-// no viewer class). Every other probe reports its class, one of FeedViewerClasses.
+// GoFirstViewerUnknown is the `viewer` of a go-first probe whose viewer class is not known: a malformed
+// probe, one whose viewer cannot be resolved (an API credential: bearer-token; a verified bot on
+// as-posts or model.getAll; a session-cache miss), or a GET /api/v1/images probe (an endpoint that
+// reports no viewer class). Every other probe reports its class, one of FeedViewerClasses, an input
+// or method fallback included (probeViewer).
 const GoFirstViewerUnknown = "unknown"
 
 // GoFirstViewers is every `viewer` value of feed_go_gofirst_total an endpoint can report, in a fixed
@@ -235,7 +236,7 @@ func (s *Server) probeAsPosts(ctx context.Context, req ProbeRequest, rec *hydrat
 	}
 	freq, user, err := s.prepareViewer(ctx, r)
 	if err != nil {
-		return "", err
+		return s.probeViewer(ctx, r, false), err
 	}
 	viewer := feedViewerClass(user, false) // as compute reports it
 	_, err = feed.Serve(ctx, probeDeps(s.Deps, rec), freq)
@@ -251,7 +252,7 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	}
 	ireq, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
 	if err != nil {
-		return "", err
+		return s.probeViewer(ctx, r, true), err
 	}
 	viewer := feedViewerClass(user, crawler) // as computeInfinite reports it
 	d := *s.Infinite
@@ -272,7 +273,7 @@ func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hy
 	}
 	mreq, user, err := s.prepareModelGetAllViewer(ctx, r)
 	if err != nil {
-		return "", err
+		return s.probeViewer(ctx, r, false), err
 	}
 	viewer := feedViewerClass(user, false) // as computeModelGetAll reports it
 	_, err = modelfeed.Serve(ctx, s.Models, mreq)
@@ -295,6 +296,28 @@ func (s *Server) probeV1Images(ctx context.Context, req ProbeRequest, rec *hydra
 	c, err := s.v1ImagesCompute(true)(ctx, r)
 	c.release()
 	return "", err
+}
+
+// probeViewer is the viewer class of a tRPC feed probe whose prepare step failed, read for the
+// feed_go_gofirst_total label only: the step parses the input (and its method and input fallbacks
+// return) before it reads the session, so without this an input fallback would hide its viewer. The
+// session is read as the prepare step reads it (Resolver.Resolve, read-only; the probe's credentials
+// are redacted), whatever the step's error, which the probe still returns unchanged. "" (unknown)
+// where serving cannot resolve a viewer either: a verified bot on the procedures that hand one back
+// (crawlerAware false: as-posts, model.getAll), an API credential (bearer-token), a session-cache miss.
+// crawlerAware is image.getInfinite's: a verified crawler is its own class (feedViewerClass).
+func (s *Server) probeViewer(ctx context.Context, r *http.Request, crawlerAware bool) string {
+	crawler := false
+	if crawlerAware {
+		crawler = verifiedCrawler(r)
+	} else if r.Header.Get(verifiedBotHeader) != "" {
+		return ""
+	}
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return ""
+	}
+	return feedViewerClass(user, crawler)
 }
 
 // probeDeps is d with the page hydrator replaced by rec and the query cache read-only.

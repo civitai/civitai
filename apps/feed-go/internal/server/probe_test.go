@@ -1021,9 +1021,9 @@ func TestProbeHandlerRejectsAndDrops(t *testing.T) {
 }
 
 // A probe's go-first count lands under its request's viewer class (feedViewerClass, as the
-// endpoint's compute reports it), so the go-first share reads for signed-out viewers alone; a probe
-// that ends before its viewer is resolved (a bearer token falls back before the session is read)
-// lands under unknown. Each class is probed a different number of times, so a label swapped or
+// endpoint's compute reports it), so the go-first share reads for signed-out viewers alone, input
+// fallbacks included (read for the label though serving stops before the session); a probe whose
+// viewer cannot be resolved (a bearer token) lands under unknown. Each class is probed a different number of times, so a label swapped or
 // pinned to one value moves the counts.
 func TestProbeCountsGoFirstByViewer(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -1041,12 +1041,16 @@ func TestProbeCountsGoFirstByViewer(t *testing.T) {
 	probe("as-posts", goldenSetup, Procedure, "version-signed-out-most-reactions", 1)
 	probe("as-posts", goldenSetup, Procedure, "version-signed-in-blue-newest", 2)
 	probe("as-posts", goldenSetup, Procedure, "fallback-bearer-token", 3)
+	// An input fallback, taken before serving reads the session: the probe still reads the viewer for
+	// its label, signed out (anon) and signed in (user) alike.
+	probe("as-posts", goldenSetup, Procedure, "fallback-random-sort", 6)
+	probe("infinite", goldenSetup, ProcedureInfinite, "fallback-published-only-off", 7)
 	probe("infinite", goldenSetup, ProcedureInfinite, "global-moderator-oldest", 4)
 	probe("model-getall", goldenSetupModels, ProcedureModelGetAll, "base-models-multi-signed-in", 5)
 
 	want := map[string]map[string]float64{
-		EndpointAsPosts:     {FeedViewerAnon: 1, FeedViewerUser: 2, GoFirstViewerUnknown: 3},
-		EndpointInfinite:    {FeedViewerModerator: 4},
+		EndpointAsPosts:     {FeedViewerAnon: 1 + 6, FeedViewerUser: 2, GoFirstViewerUnknown: 3},
+		EndpointInfinite:    {FeedViewerModerator: 4, FeedViewerUser: 7},
 		EndpointModelGetAll: {FeedViewerUser: 5},
 		EndpointV1Images:    {},
 	}
@@ -1059,6 +1063,15 @@ func TestProbeCountsGoFirstByViewer(t *testing.T) {
 			if n != byViewer[v] {
 				t.Errorf("feed_go_gofirst_total{feed_endpoint=%q,viewer=%q} = %v, want %v", e, v, n, byViewer[v])
 			}
+		}
+	}
+	// The input fallbacks are unsupported probes under their viewer.
+	for _, c := range []struct {
+		endpoint, viewer string
+		want             float64
+	}{{EndpointAsPosts, FeedViewerAnon, 6}, {EndpointInfinite, FeedViewerUser, 7}} {
+		if n := goFirst(t, reg, "feed_go_gofirst_total", map[string]string{"feed_endpoint": c.endpoint, "result": ProbeUnsupported, "viewer": c.viewer}); n != c.want {
+			t.Errorf("feed_go_gofirst_total{feed_endpoint=%q,result=\"unsupported\",viewer=%q} = %v, want %v", c.endpoint, c.viewer, n, c.want)
 		}
 	}
 }
