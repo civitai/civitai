@@ -403,9 +403,6 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(dev?.dev).toBe(true);
   });
 
-  // ---- RUNNER token (mintOrigin: 'runner') ------------------------------------
-  // Refused unless the caller opts in; only submitWorkflow does.
-
   it('[REG] refuses a runner token by default, and admits it only on opt-in', async () => {
     const token = await signRaw({ mintOrigin: 'runner' });
     expect(await verifyBlockToken(token)).toBeNull();

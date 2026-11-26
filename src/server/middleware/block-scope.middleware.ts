@@ -1134,8 +1134,7 @@ export async function verifyBlockToken(
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
       if (claims.mintOrigin !== undefined) {
-        // A runner token is a narrow, user-subject submit credential: refused by default,
-        // and never combined with a claim that widens or bypasses a spend cap.
+        // Runner tokens carry none of the dev/review/private-run/anonymous markers.
         if (claims.mintOrigin !== 'runner') return null;
         if (options.admitRunner !== true) return null;
         if (claims.sub === ANON_SUBJECT) return null;

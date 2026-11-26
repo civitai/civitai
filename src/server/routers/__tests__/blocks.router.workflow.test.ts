@@ -1014,7 +1014,6 @@ beforeEach(() => {
     }))) as never);
 });
 
-// The submit hold below is lifted by the runner attempt ledger (runner submit path).
 describe('runner block tokens (mintOrigin: runner)', () => {
   it('submitWorkflow verifies with the runner opt-in, then refuses until runner submit exists', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ mintOrigin: 'runner' }));

@@ -357,7 +357,6 @@ describe('#5063 STRUCTURAL — what the narrowing shifted onto a static gate', (
 });
 
 describe('a recipe-runner token is refused on block REST routes', () => {
-  // Real withBlockScope, real signature: the route verifies without the runner opt-in.
   async function signRunner(extra: Record<string, unknown>): Promise<string> {
     const { decodeProtectedHeader, importPKCS8, SignJWT } = await import('jose');
     const { env } = await import('~/env/server');
