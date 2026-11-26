@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   createImage: vi.fn(),
   submitTrackLyricsScan: vi.fn(async () => undefined),
+  alignTrackLyrics: vi.fn(async () => false),
   throwOnBlockedUserContent: vi.fn(),
   stageGenerationOutputImage: vi.fn(),
   deleteImages: vi.fn(async () => undefined),
@@ -99,6 +100,10 @@ vi.mock('~/server/redis/caches', () => {
 vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   submitTrackLyricsScan: mocks.submitTrackLyricsScan,
+}));
+// The alignment recipe crosses to the orchestrator; its rules are tested with it.
+vi.mock('~/server/services/audio-scan/lyrics-alignment', () => ({
+  alignTrackLyrics: mocks.alignTrackLyrics,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -327,12 +332,16 @@ describe('addPostImage — audio', () => {
     });
   });
 
-  it('sends the saved lyrics for their verdict', async () => {
+  it('sends the saved lyrics for their verdict, and to be timed against the song', async () => {
     mocks.music = true;
     createThenStop();
     mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
     expect(mocks.submitTrackLyricsScan).toHaveBeenCalledWith({ imageId: 11 });
+    expect(mocks.alignTrackLyrics).toHaveBeenCalledWith({
+      imageId: 11,
+      url: expect.any(String),
+    });
   });
 
   it('reaches the read after the create when the lyrics send rejects', async () => {
@@ -358,6 +367,7 @@ describe('addPostImage — audio', () => {
     expect(dbMock.dbWrite.trackLyrics.upsert).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
     expect(mocks.submitTrackLyricsScan).not.toHaveBeenCalled();
+    expect(mocks.alignTrackLyrics).not.toHaveBeenCalled();
   });
 
   it('ignores the lyrics the client sent when the workflow has lyrics', async () => {

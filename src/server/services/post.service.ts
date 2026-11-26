@@ -186,6 +186,7 @@ import {
   saveGeneratedTrackLyrics,
   submitTrackLyricsScan,
 } from '~/server/services/audio-scan/track-lyrics';
+import { alignTrackLyrics } from '~/server/services/audio-scan/lyrics-alignment';
 import {
   SONGS_UNAVAILABLE_MESSAGE,
   buildSongDetails,
@@ -2102,7 +2103,11 @@ export const addPostImage = async ({
       imageId: partialResult.id,
       text: song.lyrics,
     }).catch(handleLogError);
-    if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
+    if (saved) {
+      submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
+      // Up to a minute on a cold worker: never awaited, and the song is visible untimed meanwhile.
+      alignTrackLyrics({ imageId: partialResult.id, url: imageProps.url }).catch(handleLogError);
+    }
   }
   if (song && songWorkflow)
     await linkGeneratedSongCover({
