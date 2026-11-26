@@ -484,13 +484,25 @@ type KeyIssuerArgs = {
 
 /**
  * The keys among `keys` with an issue record or a logged upload request, i.e. minted by the current
- * upload path. A store that cannot be read records nothing, so its keys are left out.
+ * upload path, and to one of `issuedTo` when given. A store that cannot be read records nothing,
+ * so its keys are left out.
  */
-export async function recordedKeys(keys: string[], now = new Date()) {
-  if (!keys.length) return new Set<string>();
-  const { owners } = await ownersFromRedis(keys, now);
-  const logged = await ownersFromClickhouse(keys.filter((k) => !owners.has(k)));
-  return new Set([...owners.keys(), ...logged.owners.keys()]);
+export async function recordedKeys(
+  keys: string[],
+  { issuedTo, now = new Date() }: { issuedTo?: number[]; now?: Date } = {}
+) {
+  const recorded = new Set<string>();
+  let readFailed = false;
+  // Looked up MAX_KEYS at a time, as keyIssuers caps one lookup.
+  for (let i = 0; i < keys.length; i += MAX_KEYS) {
+    const chunk = keys.slice(i, i + MAX_KEYS);
+    const fromRecord = await ownersFromRedis(chunk, now);
+    const logged = await ownersFromClickhouse(chunk.filter((k) => !fromRecord.owners.has(k)));
+    readFailed ||= fromRecord.readFailed || logged.failed;
+    for (const [key, owner] of [...fromRecord.owners, ...logged.owners])
+      if (!issuedTo || issuedTo.includes(owner)) recorded.add(key);
+  }
+  return { recorded, readFailed };
 }
 
 /**

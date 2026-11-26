@@ -811,6 +811,18 @@ describe('a url whose upload is not in the image store', () => {
     expect(await rows()).toEqual([KEY2]);
   });
 
+  it('is refused, not deferred, when its key was issued to another user', async () => {
+    await recordUploadKeyOwner(KEY2, OTHER);
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(await hold()).toMatchObject({ deferred: [], refused: [KEY2] });
+    expect(await ingestion()).toBe('Blocked');
+  });
+
   it('links as before, not deferred, when its key has no issue record', async () => {
     // Such a key may predate the store the probe asks, so its absence there proves nothing.
     const content = `<p>${img(KEY2)}</p>`;
@@ -925,12 +937,27 @@ describe('a url still absent past the deferral backstop', () => {
     expect(createReport).not.toHaveBeenCalled();
   });
 
-  it('is refused, as any held unrecorded key, if its issue record is gone by then', async () => {
+  it('links, not refused, even if its issue record is gone by then', async () => {
     redis.clear();
     await settleContentLinkHolds(at(PAST));
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
+    expect(await ingestion()).not.toBe('Blocked');
+  });
+
+  it('stays deferred, not refused, if its issue record is gone within the backstop', async () => {
+    redis.clear();
+    await settleContentLinkHolds(at(10 * MINUTE));
     expect(await rows()).toEqual([]);
-    expect(await hold()).toMatchObject({ deferred: [], refused: [KEY2] });
-    expect(await ingestion()).toBe('Blocked');
+    expect(await hold()).toMatchObject({ deferred: [KEY2], refused: [] });
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('stays deferred, not linked early, while the issue record cannot be read', async () => {
+    lookupsDown();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
   });
 
   it('control: stays deferred within the backstop', async () => {

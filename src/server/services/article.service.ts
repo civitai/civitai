@@ -167,6 +167,7 @@ import {
   imageUrlUnavailableError,
   isUnfinishedUploadUrl,
   keyIssuers,
+  MAX_KEYS,
   recordedKeys,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
@@ -2529,25 +2530,30 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
-      // A held unrecorded key is refused from UNRECORDED_KEYS_ACCEPTED_UNTIL, so a url deferred for
-      // a missing upload stays out of classification until the store answers for it.
+      // A deferral for a missing upload never ends in a refusal: a url this hold deferred is probed
+      // whatever its issue record says, stays out of classification until its upload is proved
+      // present, and past the backstop is classified as never held unless its key is recorded.
       const wasRefused = new Set(previousHold?.refused ?? []);
       const wasDeferred = new Set(previousHold?.deferred ?? []);
-      // Only a key minted by the current upload path is known to live in the store the probe asks;
-      // any other key links as before.
-      const recorded = await recordedKeys(
-        unlinked.filter(
-          (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
-        ),
-        now
+      const candidates = unlinked.filter(
+        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
       );
-      const probeable = unlinked.filter((url) => recorded.has(url));
-      const { absent, present } = await probeContentUploads([
-        ...probeable.filter((url) => wasDeferred.has(url)),
-        ...probeable.filter((url) => !wasDeferred.has(url)),
-      ]);
-      // Past the backstop a still-absent url is classified and linked as on main; held, an
-      // unrecorded key is still refused.
+      const deferredCandidates = candidates.filter((url) => wasDeferred.has(url));
+      // A new key is probed only when the current upload path issued it to the owner or editor;
+      // any other key links as before. Past one lookup's worth, the rest link as before too.
+      const { recorded } = await recordedKeys(
+        [...deferredCandidates, ...candidates.filter((url) => !wasDeferred.has(url))].slice(
+          0,
+          MAX_KEYS
+        ),
+        { issuedTo: [ownerId, userId], now }
+      );
+      const probeable = [
+        ...deferredCandidates,
+        ...candidates.filter((url) => !wasDeferred.has(url) && recorded.has(url)),
+      ];
+      const { absent, present } = await probeContentUploads(probeable);
+      // Past the backstop a still-absent url is classified and linked as on main.
       const pastBackstop =
         !!previousHold?.deferredSince &&
         now.getTime() - previousHold.deferredSince.getTime() >= CONTENT_LINK_DEFERRAL_BACKSTOP_MS;
@@ -2563,7 +2569,10 @@ export async function linkArticleContentImages({
         urls: unlinked.filter((url) => !unsettled.has(url)),
         ownerId,
         editorId: userId,
-        wasHeld: new Set([...wasDeferred, ...wasRefused]),
+        // Held, an unrecorded key is refused; a released one with no record is not.
+        wasHeld: new Set(
+          [...wasDeferred, ...wasRefused].filter((url) => !released.has(url) || recorded.has(url))
+        ),
         now,
       });
       hold = nextContentLinkHold(

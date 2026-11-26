@@ -17,6 +17,7 @@ import {
 } from '~/server/services/article.service';
 import { deferContentUrls, probeContentUploads } from '~/server/services/article-content-link-hold';
 import { recordedKeys } from '~/server/services/image-url-ownership';
+import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -334,8 +335,15 @@ async function processBatch(
   // A one-off pass, not re-run every settle, so neither the count cap nor the time budget applies.
   // An unreadable store still stops it: the urls it never answered for are counted, and linked.
   // Only keys minted by the current upload path are known to live in the store the probe asks.
-  const recorded = await recordedKeys([...allUrls].filter((url) => !existingUrls.has(url)));
+  const bareNew = [...allUrls].filter((url) => !existingUrls.has(url) && isProbeableMediaKey(url));
+  const { recorded, readFailed } = await recordedKeys(bareNew);
   const newUrls = [...recorded];
+  if (readFailed) {
+    // Linked unprobed, as on main; counted, so a partial pass is visible.
+    const unread = bareNew.length - recorded.size;
+    stats.uploadsUnchecked += unread;
+    log(`  ⚠️  issue record lookup failed: up to ${unread} new urls unchecked`);
+  }
   const { absent, present } = await probeContentUploads(newUrls, {
     max: Infinity,
     budgetMs: Infinity,
