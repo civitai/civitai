@@ -1,9 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { ReportStatus } from '~/shared/utils/prisma/enums';
+import { OPEN_REPORT_STATUSES } from '@civitai/db-queries/image-removal-confirmation';
 
 /** A report still open, as `r.status IN ${openReportStatusesSql}`. */
-export const openReportStatusesSql = Prisma.sql`(${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
+export const openReportStatusesSql = Prisma.sql`(${Prisma.join(
+  OPEN_REPORT_STATUSES.map((status) => Prisma.sql`${status}::"ReportStatus"`)
+)})`;
 
 /**
  * Drops the copies of deleted storylines (`deleteStoryline`) once they are a year old and no report

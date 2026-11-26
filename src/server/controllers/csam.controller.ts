@@ -135,7 +135,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       select: { reportId: true, image: { select: { userId: true } } },
     });
 
-    // Bookkeeping only: a failure here must not stop the account being removed below.
+    // Bookkeeping only: a failure here must not stop the account being removed below. Every report
+    // on these images, whatever its status, on purpose.
     await bulkSetReportStatus({
       ids: imageReports.map((report) => report.reportId),
       status: ReportStatus.Actioned,

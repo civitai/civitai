@@ -393,6 +393,7 @@ import {
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
 import { childSafetyImageFinding } from '@civitai/db-queries/child-safety-case';
+import { openReportStatusesSql } from '~/server/services/held-review.service';
 import { sql, type RawBuilder } from 'kysely';
 import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -2054,6 +2055,7 @@ export const updateImageReportStatusByReason = ({
     WHERE i."reportId" = r.id
       AND i."imageId" = ${id}
       AND r.reason = ${reason}::"ReportReason"
+      AND r.status IN ${openReportStatusesSql}
     RETURNING id, "userId"
   `;
 };
@@ -2100,7 +2102,7 @@ export const actionPendingTosReports = async (ids: number[], actorId: number) =>
 /** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
 const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
-/** The image's reports for one reason that are not yet actioned. */
+/** The image's open reports (`OPEN_REPORT_STATUSES`) for one reason. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) =>
   (await getOpenImageReportIdsByImage([id], reason)).get(id) ?? [];
 
@@ -2113,7 +2115,7 @@ export const getOpenImageReportIdsByImage = async (imageIds: number[], reason: R
       JOIN "ImageReport" i ON i."reportId" = r.id
       WHERE i."imageId" = ANY(${ids}::int[])
         AND r.reason = ${reason}::"ReportReason"
-        AND r.status <> 'Actioned'::"ReportStatus"
+        AND r.status IN ${openReportStatusesSql}
     `;
     for (const { imageId, id } of rows) byImage.set(imageId, [...(byImage.get(imageId) ?? []), id]);
   }
@@ -6805,7 +6807,8 @@ export async function reportCsamImages({
     where: { id: { in: imageIds } },
     select: { userId: true, reports: { select: { reportId: true } } },
   });
-  // Every owner in the batch is being reported, so none is rewarded for any report in it.
+  // Every owner in the batch is being reported, so none is rewarded for any report in it. Every
+  // report on these images moves, whatever its status, on purpose.
   const owners = [...new Set(images.map((image) => image.userId))];
   await bulkSetReportStatus({
     ids: images.flatMap((image) => image.reports.map((report) => report.reportId)),
