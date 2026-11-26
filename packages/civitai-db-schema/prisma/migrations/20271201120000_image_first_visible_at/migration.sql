@@ -4,8 +4,9 @@
 -- The function bodies below are copied from programmability/image_post_triggers.sql.
 --
 -- NOT AUTO-APPLIED: a human runs this file by hand (see CLAUDE.md -> Database), dev first, then
--- production. The column is `@no-type` (raw SQL only), so Prisma never selects it and the code may
--- deploy before or after this runs.
+-- production. The column is `@no-type` (raw SQL only), so Prisma never selects it. The image readers
+-- (getAllImages, getImage, the event-engine image feed, feed-go) call image_sort_at() with
+-- "firstVisibleAt": this must be applied to every database they read before that code deploys.
 --
 -- Before applying, check which publications carry "Image" (pg_publication_tables) and with which
 -- columns: a publication of "Image" without a column list would ship the new column, and its
