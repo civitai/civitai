@@ -131,6 +131,8 @@ describe('decideRunnerMint', () => {
       { ...base, skipConsent: true },
       // As stored: the full grant-type URN.
       { ...base, grants: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code'] },
+      // A hand-written row with the bare name.
+      { ...base, grants: ['authorization_code', 'device_code'] },
       { ...base, accessMode: 'disabled' },
       { ...base, accessMode: 'testers' },
       null,

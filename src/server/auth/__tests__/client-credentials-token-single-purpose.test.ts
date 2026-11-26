@@ -201,15 +201,19 @@ describe('getSessionFromBearerToken and a runner token', () => {
     expect(await getServerAuthSession({ req: req(RUNNER_TOKEN), res: res() })).toBeNull();
   });
 
-  it('/api/v1/me answers 401 for it, and gets past authentication for an ordinary token', async () => {
+  // A merge condition from auth: the orchestrator's spend check on /me is no guarantee, so a runner
+  // token must never read a user (or a Buzz limit) here.
+  it('/api/v1/me answers 401 for it and runs no handler; an ordinary token gets 200', async () => {
     const { default: me } = await import('~/pages/api/v1/me');
     const refused = res();
     await me(req(RUNNER_TOKEN) as never, refused);
     expect(refused.statusCode).toBe(401);
-    // Control: the same route with an ordinary OAuth token is not refused at authentication.
+    expect(refused.body).not.toHaveProperty('id');
+    // Control: the same route with an ordinary OAuth token runs the handler.
     const ordinary = res();
     await me(req(ORDINARY_TOKEN) as never, ordinary);
-    expect(ordinary.statusCode).not.toBe(401);
+    expect(ordinary.statusCode).toBe(200);
+    expect(ordinary.body).toMatchObject({ id: OWNER });
   });
 
   it('AuthedEndpoint answers 401 for it and never runs the handler', async () => {

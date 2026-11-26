@@ -12,11 +12,7 @@ import {
   type OAuthRateLimitBucket,
 } from '$lib/server/oauth/rate-limit';
 import { basicCredentials, parseBody } from '$lib/server/oauth/http';
-import {
-  apiKeyRowScope,
-  carriesClientCredentialsOnlyScope,
-  carriesRunnerOnlyScope,
-} from '$lib/server/oauth/scope';
+import { apiKeyRowScope, carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
 import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
 import { introspectAccessTokenJwt, isAnyIntrospector } from '$lib/server/oauth/jwt-introspection';
@@ -128,13 +124,13 @@ export const POST: RequestHandler = async ({ request }) => {
     .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
-  // A client-credentials or runner token is single-purpose, so it reads as inactive like an
-  // unknown one.
+  // A client-credentials token is single-purpose, so it reads as inactive like an unknown one. A
+  // runner token reads as active: the orchestrator grants spend only on the AIServices scope names,
+  // which its scope never carries.
   if (
     !row ||
     isMemorializedFlags(row.flags) ||
-    carriesClientCredentialsOnlyScope(apiKeyRowScope(row)) ||
-    carriesRunnerOnlyScope(apiKeyRowScope(row))
+    carriesClientCredentialsOnlyScope(apiKeyRowScope(row))
   ) {
     return json({ active: false }, { headers: NO_STORE });
   }

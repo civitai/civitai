@@ -61,7 +61,8 @@ export type RunnerMintDecision =
 
 /**
  * The client may hold runner tokens at all: Civitai-owned, confidential, consented, no device
- * flow, and open (a disabled or testers-only client mints nothing).
+ * flow, and open (a disabled or testers-only client mints nothing). `grants` stores the URN; the
+ * bare name is refused too, so a hand-written row cannot slip past.
  */
 export function isRunnerClient(client: Awaited<ReturnType<RunnerMintReads['client']>>): boolean {
   return (
@@ -70,6 +71,7 @@ export function isRunnerClient(client: Awaited<ReturnType<RunnerMintReads['clien
     client.isConfidential === true &&
     client.skipConsent === false &&
     !client.grants.includes(DEVICE_CODE_GRANT) &&
+    !client.grants.includes('device_code') &&
     client.accessMode === 'open'
   );
 }

@@ -54,11 +54,13 @@ describe('oauth/userinfo', () => {
     expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
   });
 
-  it('refuses a recipe-runner token (the runner bit lives in the wide column)', async () => {
+  // Deliberate, per auth's ruling on the runner consent copy ("reads your profile and email"): a
+  // runner token answers here. Do not fold it back into the client-credentials refusal.
+  it('answers for a recipe-runner token (the runner bit lives in the wide column)', async () => {
     token(TokenScope.UserRead, {}, TokenScope.UserRead | TokenScope.RunnerMint);
     const res = await userinfo();
-    expect(res.status).toBe(401);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ sub: '1', username: 'owner' });
   });
 
   it("refuses a banned user's token", async () => {
