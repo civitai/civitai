@@ -451,12 +451,14 @@ describe('updateCollectionCoverImage', () => {
     vi.mocked(dbMock.dbWrite.image.findUnique).mockImplementation(
       (async (args: { where: { id: number } }) =>
         (
-          await holder.db.query(`SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1`, [
-            args.where.id,
-          ])
+          await holder.db.query(
+            `SELECT id, "userId", ingestion, "blockedFor" FROM "Image" WHERE id = $1`,
+            [args.where.id]
+          )
         ).rows[0] ?? null) as never
     );
   });
+  afterEach(() => vi.mocked(dbMock.dbWrite.image.findUnique).mockReset());
 
   const setCover = (imageId: number, isModerator = false, userId = OWNER) =>
     updateCollectionCoverImage({
@@ -557,7 +559,8 @@ describe('upsertCollection with no cover sent', () => {
   const edit = async (
     storedCover: number,
     isModerator = false,
-    coverViewer?: { id?: number; isModerator?: boolean }
+    coverViewer?: { id?: number; isModerator?: boolean },
+    imageId?: number
   ) => {
     vi.mocked(dbMock.dbWrite.collection.findUnique).mockResolvedValue({
       id: COLLECTION,
@@ -578,6 +581,7 @@ describe('upsertCollection with no cover sent', () => {
         id: COLLECTION,
         name: 'renamed',
         image: null,
+        ...(imageId != null && { imageId }),
         type: 'Image',
         read: 'Public',
         write: 'Private',
@@ -601,6 +605,12 @@ describe('upsertCollection with no cover sent', () => {
 
   it("keeps the editor's own blocked image, which their form never had", async () => {
     expect(await edit(OWNER_REMOVED)).toBeUndefined();
+  });
+
+  it('lets the editor replace their own blocked cover with a new one', async () => {
+    expect(await edit(OWNER_REMOVED, false, undefined, OWNER_UPLOAD)).toEqual({
+      connect: { id: OWNER_UPLOAD },
+    });
   });
 
   it("keeps the editor's own hidden image when they read it without the owner's view", async () => {
