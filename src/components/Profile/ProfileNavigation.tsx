@@ -17,10 +17,9 @@ import {
   IconTrophy,
   IconVideo,
 } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { canShowProfileAppsTab } from '~/components/Profile/profile-apps-tab';
 import {
@@ -38,14 +37,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
 
-const ProfileHiddenTabsModal = dynamic(
-  () => import('~/components/Profile/ProfileHiddenTabsModal'),
-  {
-    ssr: false,
-  }
-);
 const openProfileHiddenTabs = (props: ProfileHiddenTabsModalProps) =>
-  dialogStore.trigger({ component: ProfileHiddenTabsModal, props });
+  openDialog(() => import('~/components/Profile/ProfileHiddenTabsModal'), props);
 
 type ProfileNavigationProps = {
   username: string;
