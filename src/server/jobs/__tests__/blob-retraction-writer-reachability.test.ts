@@ -5,6 +5,16 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
 import { PRIOR_INGESTION_KEY, PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/image-removal-mode';
 
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
+
 /**
  * 🔴 REACHABILITY GUARD for blob retraction.
  *

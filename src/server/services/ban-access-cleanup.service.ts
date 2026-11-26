@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { isSelfOnlyClientFor } from '@civitai/auth/self-only-client';
+import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
 import { constants } from '~/server/common/constants';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbWrite } from '~/server/db/client';
@@ -25,13 +26,10 @@ export type BanCleanupDeps = {
   revokeRunnerAuthorizations: (userId: number) => Promise<unknown>;
 };
 
-/**
- * Revokes every run authorization the user gave any recipe runner.
- */
-export function revokeRunnerAuthorizationsForBannedUser(userId: number) {
-  return dbWrite.$executeRaw`
-    UPDATE runner_run_authorizations SET revoked_at = now(), revoked_reason = 'banned'
-    WHERE user_id = ${userId} AND revoked_at IS NULL`;
+/** Revokes every run authorization the user gave any recipe runner. */
+export async function revokeRunnerAuthorizationsForBannedUser(userId: number) {
+  const { kyselyWrite } = await import('~/server/db/kyselyDb');
+  return revokeRunnerAuthorizations(kyselyWrite, { userId, clientId: null, reason: 'banned' });
 }
 
 const defaultDeps: BanCleanupDeps = {

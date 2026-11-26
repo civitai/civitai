@@ -6896,6 +6896,19 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       await expect(
         submit({ body: ccBody({ params: { prompt: 'something else', engine: 'zimage-turbo' } }) })
       ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'runner submit refused: binding' });
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'runner-submit',
+          payload: expect.objectContaining({
+            reason: 'runner_binding_mismatch',
+            detail: 'mismatch',
+            runId: RUN,
+            authorizationId: 'rra_t',
+            recipeVersionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+            paramsHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+          }),
+        })
+      );
       expect(await attemptRows()).toEqual([]);
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       expect(mockRedis.set).not.toHaveBeenCalledWith(

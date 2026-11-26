@@ -6,7 +6,7 @@ import {
   type RunnerSlot,
 } from '~/server/services/blocks/runner-binding';
 
-// Binding v1: the hashes a runner submit must reproduce. The vector is the shared one, and was
+// Binding v1 (civitai/civitai#10573): the hashes a runner submit must reproduce. The vector is the shared one, and was
 // cross-checked against an independent sorted-key JSON + sha256 implementation; a change here
 // breaks every stored authorization.
 
@@ -60,8 +60,22 @@ describe('runner binding v1', () => {
     expect(
       hashes(inline({ image: IMAGE.replace('in.jpeg', 'other.png'), prompt: 'a dog' }))
     ).toEqual(base);
-    const reordered = JSON.parse(JSON.stringify(inline())) as Record<string, unknown>;
-    const shuffled = Object.fromEntries(Object.entries(reordered).reverse()) as RunnerBindingBody;
+    // Reversed at every depth, so a canonicaliser that sorts only the top level fails.
+    const reverseDeep = (v: unknown): unknown =>
+      Array.isArray(v)
+        ? v.map(reverseDeep)
+        : v !== null && typeof v === 'object'
+        ? Object.fromEntries(
+            Object.entries(v)
+              .reverse()
+              .map(([k, x]) => [k, reverseDeep(x)])
+          )
+        : v;
+    const shuffled = reverseDeep(inline()) as RunnerBindingBody;
+    const node = (shuffled as unknown as { workflow: Record<string, { inputs: object }> }).workflow[
+      '2'
+    ];
+    expect(Object.keys(node.inputs)).toEqual(['text', 'clip']);
     expect(hashes(shuffled)).toEqual(base);
   });
 
@@ -159,6 +173,8 @@ describe('runner binding v1', () => {
       expect(checkRunnerBinding(inline(), SLOTS, COST, wrong)).toEqual({
         ok: false,
         refusal: 'mismatch',
+        // Both derived hashes, for the audit log; nothing says which one differed.
+        derived: authorized,
       });
     }
   });

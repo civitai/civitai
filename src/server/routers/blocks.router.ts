@@ -1814,12 +1814,9 @@ async function reserveBlockBuzzSpendForClaims(
 }
 
 /**
- * A runner submit's answer carries its attempt as the ledger has it, so the runner can tell
- * submitted, refunded (may retry), and unknown (held) apart. A throw after the attempt was
- * reserved is answered the same way; a throw before it means no attempt exists. `runner.state` is
- * the answer and the snapshot is informational: a throw after the move to `submitted` (the settle record,
- * say) still reads `failed` there while the workflow runs and is charged. A retry after `refunded`
- * needs a freshly minted token: the token's jti is spent once its binding matches.
+ * A runner submit answers with its attempt's ledger state: `runner.state` is authoritative, the
+ * snapshot only informational. A throw before any attempt exists is rethrown. A retry after
+ * `refunded` needs a freshly minted token.
  */
 async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit: () => Promise<T>) {
   const attempt = async () => {
@@ -1884,7 +1881,7 @@ async function refundRunnerLeg(leg: RunnerLeg): Promise<boolean> {
 /**
  * Reserve the run's attempt in the ledger, the budget authority for runner spend: the offline cap,
  * the authorization's per-run and per-period limits and one live attempt per run, all under the
- * consent row lock. Refuses FORBIDDEN; a database error refuses too.
+ * consent row lock. Refuses FORBIDDEN; a database error throws SERVICE_UNAVAILABLE.
  */
 async function reserveRunnerLeg(
   claims: BlockTokenClaims,
@@ -11887,7 +11884,16 @@ async function submitCustomComfyWorkflow(opts: {
       logToAxiom({
         name: 'runner-submit',
         type: 'info',
-        payload: { outcome: 'refused', reason: 'runner_binding_mismatch', runId: runner.runId },
+        // The audit record: both derived hashes, never which one differed.
+        payload: {
+          outcome: 'refused',
+          reason: 'runner_binding_mismatch',
+          detail: binding.refusal,
+          runId: runner.runId,
+          authorizationId: runner.authorizationId,
+          recipeVersionHash: binding.derived?.recipeVersionHash ?? null,
+          paramsHash: binding.derived?.paramsHash ?? null,
+        },
       });
       refuseRunnerSubmit(runner.runId, 'binding');
     }
@@ -12184,9 +12190,6 @@ async function submitCustomComfyWorkflow(opts: {
     throw e;
   }
 
-  // A resolved submit is money-COMMITTED. Cache the terminal result under the
-  // idempotency key BEFORE the (awaited) settle-record persist below, so a lost-
-  // response retry replays it even if that persist throws. Best-effort.
   if (reservation.runner) {
     const { attemptId } = reservation.runner;
     const moved = await ledgerDb()
@@ -12209,6 +12212,9 @@ async function submitCustomComfyWorkflow(opts: {
     }
   }
 
+  // A resolved submit is money-COMMITTED. Cache the terminal result under the
+  // idempotency key BEFORE the (awaited) settle-record persist below, so a lost-
+  // response retry replays it even if that persist throws. Best-effort.
   const genResult = { snapshot };
   if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 

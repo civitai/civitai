@@ -138,6 +138,8 @@ export async function prepareRunnerSubmit(
     authorizationId: claims.authorizationId!,
     runKey: claims.runKey!,
     clientId,
+    // No slots is allowed on purpose: both hashes then cover the whole request, so only the exact
+    // authorized one matches.
     slots: input.runnerSlots ?? [],
     authorized: { recipeVersionHash: auth!.recipeVersionHash, paramsHash: auth!.paramsHash },
     attemptId: null,

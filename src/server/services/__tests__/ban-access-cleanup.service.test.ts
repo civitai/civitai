@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { BanCleanupDeps } from '../ban-access-cleanup.service';
 
-// Run authorizations are revoked over real SQL: `dbWrite.$executeRaw` runs against PGlite.
-const pgRef = { current: null as PGlite | null };
+// Run authorizations are revoked over real SQL.
+const { pgRef } = vi.hoisted(() => ({ pgRef: { current: null as PGlite | null } }));
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { kyselyWrite: pgliteKysely(() => pgRef.current!) };
+});
 
 const { disableOauthForBannedUser, revokeRunnerAuthorizationsForBannedUser } = await import(
   '../ban-access-cleanup.service'
@@ -40,15 +44,6 @@ beforeEach(async () => {
       revoked_at TIMESTAMPTZ, revoked_reason TEXT
     );
   `);
-  dbMock.dbWrite.$executeRaw.mockImplementation(
-    (async (strings: TemplateStringsArray, ...values: unknown[]) =>
-      (
-        await pgRef.current!.query(
-          strings.reduce((sql, part, i) => sql + '$' + i + part),
-          values
-        )
-      ).affectedRows) as never
-  );
   order = [];
   deps = {
     expireClientTokens: vi.fn(async (id: string) => void order.push(`expire:${id}`)),

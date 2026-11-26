@@ -13,7 +13,7 @@ import {
 /**
  * The attempt ledger over the real migration: the reserve re-runs every mint check against what
  * is committed, refuses a second live attempt per run, and moves attempts only from the state a
- * caller names. PGlite has one connection, so the `FOR UPDATE` lock itself is not exercised
+ * caller names (civitai/civitai#10573). PGlite has one connection, so the `FOR UPDATE` lock itself is not exercised
  * here; the race below is caught by the partial unique index. Ids are invented.
  */
 

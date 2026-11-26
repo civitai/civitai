@@ -1,8 +1,9 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import * as z from 'zod';
 import { SOURCE_IMAGE_URL_MAX } from '~/server/schema/blocks/civitai-image-url';
 import { canonicalJson } from '~/server/services/blocks/block-quote-grant.service';
 import { getRecipe, type RunnerSlotType } from '~/server/services/blocks/recipes';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 
 // Binds a runner submit to the run authorization it spends under (binding v1). The runner sends
 // the authorized `customComfy` body with only its declared slot values filled in; the server
@@ -133,12 +134,6 @@ function sha256Hex(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
-function sameHash(a: string, b: string): boolean {
-  const x = Buffer.from(a, 'utf8');
-  const y = Buffer.from(b, 'utf8');
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
 export type RunnerBindingHashes = { recipeVersionHash: string; paramsHash: string };
 
 /**
@@ -188,10 +183,15 @@ export function checkRunnerBinding(
   slots: readonly RunnerSlot[],
   cost: { ceiling: number; resources: readonly string[] },
   authorized: RunnerBindingHashes
-): { ok: true } | { ok: false; refusal: RunnerBindingRefusal } {
+): { ok: true } | { ok: false; refusal: RunnerBindingRefusal; derived?: RunnerBindingHashes } {
   const derived = runnerBindingHashes(body, slots, cost);
   if (!derived.ok) return derived;
-  const recipeOk = sameHash(derived.hashes.recipeVersionHash, authorized.recipeVersionHash);
-  const paramsOk = sameHash(derived.hashes.paramsHash, authorized.paramsHash);
-  return recipeOk && paramsOk ? { ok: true } : { ok: false, refusal: 'mismatch' };
+  const recipeOk = timingSafeEqualStrings(
+    derived.hashes.recipeVersionHash,
+    authorized.recipeVersionHash
+  );
+  const paramsOk = timingSafeEqualStrings(derived.hashes.paramsHash, authorized.paramsHash);
+  return recipeOk && paramsOk
+    ? { ok: true }
+    : { ok: false, refusal: 'mismatch', derived: derived.hashes };
 }
