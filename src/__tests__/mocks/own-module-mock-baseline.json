@@ -2687,7 +2687,6 @@
   "src/server/services/apps/__tests__/shared-data-moderation.test.ts": 1,
   "src/server/services/apps/__tests__/storage-migration-run.service.test.ts": 1,
   "src/server/services/apps/__tests__/storage-migration-run.sql.test.ts": 1,
-  "src/server/services/blocks/__tests__/agent-review-chat.service.test.ts": 3,
   "src/server/services/blocks/__tests__/agent-review.service.test.ts": 5,
   "src/server/services/blocks/__tests__/app-access.denormalized-owner-drift.test.ts": 4,
   "src/server/services/blocks/__tests__/app-access.kind-aware-owner.test.ts": 2,

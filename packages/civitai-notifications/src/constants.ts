@@ -62,4 +62,6 @@ export const emailNotificationTypes: readonly string[] = [
   // The app owner's copy of a staff on-behalf submit's review outcome.
   'app-platform-update-approved',
   'app-platform-update-rejected',
+  'app-review-reply-to-moderator',
+  'app-review-reply-to-developer',
 ];

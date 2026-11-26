@@ -75,6 +75,10 @@ import {
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
 import {
+  postReviewMessageSchema,
+  reviewThreadSubjectSchema,
+} from '~/server/schema/blocks/app-review-thread.schema';
+import {
   listSubListingQueueSchema,
   moderateSubListingSchema,
   withdrawMyCatalogSubListingSchema,
@@ -101,6 +105,8 @@ import {
 } from '~/server/services/app-blocks-flag';
 import {
   appDeveloperProcedure,
+  guardedProcedure,
+  isFlagProtected,
   middleware,
   moderatorProcedure,
   protectedProcedure,
@@ -469,7 +475,9 @@ function mapOffsiteError(err: unknown): TRPCError {
       // fourth spelling of the same code→TRPCError table, and the shapes that drift
       // between such copies are exactly the ones nobody re-reads (an unmapped code
       // silently becomes BAD_REQUEST).
-      err.name === 'AppModeratorMessageError') &&
+      err.name === 'AppModeratorMessageError' ||
+      // The review reply thread (NOT_FOUND, INVALID_TEXT, BLOCKED_LINK, BLOCKED_CONTENT).
+      err.name === 'AppReviewThreadError') &&
     typeof (err as { code?: unknown }).code === 'string'
   ) {
     const code = (err as { code?: unknown }).code as string;
@@ -512,6 +520,15 @@ function mapOffsiteError(err: unknown): TRPCError {
     cause: err,
   });
 }
+
+/**
+ * The reply thread on an app review decision. Every read and write of `app_review_messages` is
+ * behind the `appReviewReplies` flag (the table is applied by hand), checked here before the
+ * service is loaded. Who may read or post is the service's participant check: the request's
+ * developer side, or a moderator; anyone else gets NOT_FOUND.
+ */
+const reviewThreadProcedure = protectedProcedure.use(isFlagProtected('appReviewReplies'));
+const reviewThreadModeratorProcedure = moderatorProcedure.use(isFlagProtected('appReviewReplies'));
 
 export const appListingsRouter = router({
   /**
@@ -1637,6 +1654,80 @@ export const appListingsRouter = router({
         throw mapOffsiteError(err);
       }
     }),
+
+  /** REVIEW THREAD: the submission header its developer side sees (no user ids). */
+  getReviewThreadSubject: reviewThreadProcedure
+    .input(reviewThreadSubjectSchema)
+    .query(async ({ ctx, input }) => {
+      const { getReviewThreadSubject } = await import(
+        '~/server/services/blocks/app-review-thread.service'
+      );
+      try {
+        return await getReviewThreadSubject({
+          subjectId: input.subjectId,
+          viewer: { userId: ctx.user.id, isModerator: actsAsModerator(ctx) },
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /** REVIEW THREAD: the messages, oldest first, for the developer side or a moderator. */
+  listReviewMessages: reviewThreadProcedure
+    .input(reviewThreadSubjectSchema)
+    .query(async ({ ctx, input }) => {
+      const { listReviewMessages } = await import(
+        '~/server/services/blocks/app-review-thread.service'
+      );
+      try {
+        return await listReviewMessages({
+          subjectId: input.subjectId,
+          viewer: { userId: ctx.user.id, isModerator: actsAsModerator(ctx) },
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * REVIEW THREAD: post a message; the other side is notified (`routeReply`). The flag is checked
+   * before the rate limit, so nothing is counted while the feature is off. `rateLimit()` skips
+   * moderators, so it caps developers only; a moderator's reply goes to the developer side of one
+   * request, which is the bound on a moderator.
+   */
+  postReviewMessage: guardedProcedure
+    .use(isFlagProtected('appReviewReplies'))
+    .use(rateLimit(usageLimits('apps.review-replies')))
+    .input(postReviewMessageSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { postReviewMessage } = await import(
+        '~/server/services/blocks/app-review-thread.service'
+      );
+      try {
+        return await postReviewMessage({
+          input,
+          viewer: { userId: ctx.user.id, isModerator: actsAsModerator(ctx) },
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /** MOD: threads whose latest message is a developer's that went to no one (the queue badge). */
+  countRepliesAwaitingQueue: reviewThreadModeratorProcedure.query(async () => {
+    const { countRepliesAwaitingQueue } = await import(
+      '~/server/services/blocks/app-review-thread.service'
+    );
+    return { count: await countRepliesAwaitingQueue() };
+  }),
+
+  /** MOD: threads whose latest message is a developer's, oldest first (the queue's Replies tab). */
+  listRepliesAwaitingModerator: reviewThreadModeratorProcedure.query(async () => {
+    const { listRepliesAwaitingModerator } = await import(
+      '~/server/services/blocks/app-review-thread.service'
+    );
+    return listRepliesAwaitingModerator();
+  }),
 
   /**
    * MOD relist a removed listing (removed → approved), DUAL-KIND — the inverse of

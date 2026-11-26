@@ -32,6 +32,8 @@ describe('email notification types', () => {
         'app-access-request-declined',
         'app-platform-update-approved',
         'app-platform-update-rejected',
+        'app-review-reply-to-moderator',
+        'app-review-reply-to-developer',
       ])
     );
   });

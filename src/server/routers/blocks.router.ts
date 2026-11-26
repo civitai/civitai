@@ -163,7 +163,6 @@ import {
   placePublishRequestHoldSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
-  agentReviewChatSchema,
   agentReviewRequestSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
@@ -3362,8 +3361,10 @@ export const blocksRouter = router({
    * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
    *
    * CONNECT LANE: an `alpr_` id is an OAuth-connect listing request, gated instead on its own
-   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read and
-   * chat procedures below. Advisory only: no agent-review procedure approves or rejects.
+   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read
+   * procedures below and the review agent chat endpoint
+   * (`/api/mod/apps/review-agent/v1/chat/completions`). Advisory only: none of them approves or
+   * rejects.
    */
   startAgentReview: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -3476,52 +3477,6 @@ export const blocksRouter = router({
           error: safeError(err),
         });
         return { available: false, models: [] };
-      }
-    }),
-
-  /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
-   * report can ask follow-up questions ("why did you flag scope X", "show the call
-   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
-   *
-   * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
-   * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
-   * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
-   * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the PERSISTED report and answers as a STATELESS
-   * civitai→LLM completion grounded on that report (no live agent — a `failed`
-   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
-   * returning `{ reply }`.
-   */
-  agentReviewChat: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(agentReviewChatSchema)
-    .mutation(async ({ ctx, input }) => {
-      // Moderator, then the request's lane flag (on-site or connect): one gate for every
-      // agent-review procedure.
-      const { assertAgentReviewAccess } = await import(
-        '~/server/services/blocks/agent-review-lane'
-      );
-      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
-      const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
-      try {
-        return await agentReviewChat({
-          publishRequestId: input.publishRequestId,
-          messages: input.messages,
-          // The run on screen (report picker). Looked up within this request in the service.
-          reportId: input.reportId,
-        });
-      } catch (err) {
-        // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
-        // BAD_GATEWAY = agent unreachable/timeout/non-200) so the client can
-        // render the right inline message; only opaque errors collapse to
-        // BAD_REQUEST. NEVER a 500 leak.
-        if (err instanceof TRPCError) throw err;
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: (err as Error).message,
-          cause: err,
-        });
       }
     }),
 
@@ -5932,6 +5887,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.poll', pollRate.retryAfterSeconds),
           },
         };
       }
@@ -6268,6 +6225,8 @@ export const blocksRouter = router({
             status: 'processing' as const,
             // Not an observation: a block keeps its previous snapshot's values.
             throttled: true as const,
+            // The meta a thrown refusal by this limit would carry, so the block can wait it out.
+            rateLimit: appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
           },
         };
       }

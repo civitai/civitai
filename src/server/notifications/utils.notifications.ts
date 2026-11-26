@@ -14,6 +14,7 @@ import { appListingNotifications } from '~/server/notifications/app-listing.noti
 import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { appPlatformUpdateNotifications } from '~/server/notifications/app-platform-update.notifications';
 import { appPlatformUpdateSubmitNotifications } from '~/server/notifications/app-platform-update-submit.notifications';
+import { appReviewThreadNotifications } from '~/server/notifications/app-review-thread.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import {
@@ -83,6 +84,7 @@ export const notificationProcessors = {
   ...appModeratorMessageNotifications,
   ...appPlatformUpdateNotifications,
   ...appPlatformUpdateSubmitNotifications,
+  ...appReviewThreadNotifications,
   ...articleRatingReviewNotifications,
   ...ratingReviewNotifications,
   ...reportNotifications,
