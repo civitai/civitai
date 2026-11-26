@@ -1964,7 +1964,6 @@ describe('dataset maturity under the v2 rating', () => {
   it("refuses a blob this caller's HEAD could not read rather than use its stored rating", async () => {
     uploadRatings({ 'theirs-1': null });
     const read = vi.fn(async () => new Map([['theirs-1', { mature: true }]]));
-    // The shared cache's mature entry would reprice it; an unreadable blob is refused instead.
     await expect(
       submitWith(ratingAt(1, {}, read), { items: items('theirs-1') })
     ).rejects.toBeInstanceOf(DatasetUnreadableError);

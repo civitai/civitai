@@ -93,7 +93,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
         name: 'training-studio-dataset-unreadable',
         type: 'warning',
         userId: locals.user.id,
-        unreadable: err.unreadable,
+        payload: { unreadable: err.unreadable },
       });
       error(503, err.message);
     }
