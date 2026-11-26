@@ -231,13 +231,3 @@ describe('control: a history of transient failures only', () => {
     expect(row.reviewed).toBe(true);
   });
 });
-
-describe('a row released from an article hold', () => {
-  it('keeps its marker through a re-submit, so a later failure is still retryable', async () => {
-    await insert(7, { retryCount: 1, releasedAbsent: true, error: transient });
-    submitSucceeds();
-    await submit(7);
-    const row = await stored(7);
-    expect((row.scanJobs as { releasedAbsent?: boolean }).releasedAbsent).toBe(true);
-  });
-});

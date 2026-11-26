@@ -134,14 +134,3 @@ export function getImageScanRetryLimit(failureClass?: string | null): number {
       return IMAGE_SCAN_UNKNOWN_RETRY_LIMIT;
   }
 }
-
-/**
- * `scanJobs` of a row created for an article url released from its hold while its upload was still
- * absent. Its scan failures keep their reason-based class: bytes that land later must still be
- * scanned, not end in a permanent failure the cron never retries.
- */
-export const RELEASED_ABSENT_SCAN_JOBS = { releasedAbsent: true } as const;
-export const hasReleasedAbsentMarker = (scanJobs: unknown) =>
-  !!scanJobs &&
-  typeof scanJobs === 'object' &&
-  (scanJobs as { releasedAbsent?: unknown }).releasedAbsent === true;

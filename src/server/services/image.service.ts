@@ -2381,8 +2381,7 @@ export const ingestImage = async ({
               THEN to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
             ELSE "scanJobs"->'retryCount'
           END,
-          'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure'),
-          'releasedAbsent', "scanJobs"->'releasedAbsent'
+          'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
         )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
     `;

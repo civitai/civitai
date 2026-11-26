@@ -49,11 +49,7 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { queueScanSampleForKnights } from '~/server/services/knights/sources';
-import {
-  classifyImageScanFailure,
-  hasReleasedAbsentMarker,
-  ImageScanFailureClass,
-} from '~/server/services/image-scan-failure';
+import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
   refreshProfilePicturesForImages,
@@ -95,7 +91,6 @@ import {
   submitShadowSexualPromptScan,
 } from '~/server/services/shadow-sexual-prompt.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
-import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
@@ -302,10 +297,7 @@ export async function markImageScanError({
   userId: number | null;
   failureClass: string;
 }> {
-  let failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
-  const uploadAbsent =
-    failureClass !== ImageScanFailureClass.Permanent && (await scanUploadAbsent(imageId));
-  if (uploadAbsent) failureClass = ImageScanFailureClass.Permanent;
+  const failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
   // undefined keys are dropped by JSON.stringify, so absent reason/middleware
   // simply don't appear in the stored blob.
   const errorJson = JSON.stringify({
@@ -315,7 +307,6 @@ export async function markImageScanError({
     reason: reason ?? undefined,
     middleware: middleware ?? undefined,
     failureClass,
-    uploadAbsent: uploadAbsent || undefined,
     at: new Date().toISOString(),
   });
   const rows = await dbWrite.$queryRaw<
@@ -354,28 +345,6 @@ export async function markImageScanError({
     userId: rows[0]?.userId ?? null,
     failureClass,
   };
-}
-
-/** Per process: failures arrive in bursts, and one past this skips the check rather than wait. */
-export const SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX = 8;
-const scanUploadChecks = { inFlight: 0 };
-
-/**
- * Fails open: a read that fails, a check skipped at the cap, or a row released from an article hold
- * leaves the failure classed by its reason.
- */
-async function scanUploadAbsent(imageId: number) {
-  if (scanUploadChecks.inFlight >= SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX) return false;
-  scanUploadChecks.inFlight++;
-  try {
-    const image = await dbRead.image
-      .findUnique({ where: { id: imageId }, select: { url: true, scanJobs: true } })
-      .catch(() => null);
-    if (!image || hasReleasedAbsentMarker(image.scanJobs)) return false;
-    return (await probeCreatedImageMedia(image.url)) === 'absent';
-  } finally {
-    scanUploadChecks.inFlight--;
-  }
 }
 
 // Image loading
