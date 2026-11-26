@@ -515,7 +515,7 @@ async function pushLocked(args: {
     plan = planPlatformUpdateCommit(current, args.changes);
   } catch (err) {
     if (err instanceof PlatformUpdatePlanError)
-      throw new TRPCError({ code: 'BAD_REQUEST', message: err.message });
+      throw new TRPCError({ code: 'BAD_REQUEST', message: err.message, cause: err });
     throw err;
   }
   if (!plan.operations.length)
