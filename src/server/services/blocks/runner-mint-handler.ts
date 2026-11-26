@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isSystemAccountMeta } from '@civitai/auth';
 import { runnerMintReads, type RunnerMintReads } from '@civitai/db-queries/recipe-runner';
-import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
+import { bearerTokenFromHeader, getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -39,7 +39,7 @@ export function isRunnerMintRequest(body: unknown): boolean {
 }
 
 // checkFixedWindow, not claimRateLimitAttempt: these buckets key on an address and a client, not the
-// session user, and must not exempt moderators. The session mint beside it does the same.
+// session user, and must not exempt moderators.
 
 /** Per (runner client, user): a run needs one mint, so a burst is a bug or a replay. */
 const PER_USER_LIMIT = { max: 10, windowSeconds: 60 };
@@ -52,7 +52,6 @@ type SessionUser = NonNullable<
   NonNullable<Awaited<ReturnType<typeof getSessionFromBearerToken>>>['user']
 >;
 
-/** What the mint reads beyond the request and its bearer; the tests pass fakes. */
 export interface RunnerMintDeps {
   appBlocksOn(user: SessionUser, req: NextApiRequest): boolean;
   offlineGrantOn(): Promise<boolean>;
@@ -70,13 +69,6 @@ const liveDeps: RunnerMintDeps = {
   },
   viewerLevel: forcedSfwViewerLevel,
 };
-
-function bearerOf(req: NextApiRequest): string | null {
-  const header = req.headers.authorization;
-  if (typeof header !== 'string') return null;
-  const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
-  return match ? match[1] : null;
-}
 
 /**
  * Mint a block token for one recipe run, for a runner client acting on a user's offline grant.
@@ -109,7 +101,7 @@ export async function handleRunnerMint(
 
   const parsed = runnerRequestSchema.safeParse(req.body);
   if (!parsed.success) return refuse(400, 'body', 'Invalid request body');
-  const bearer = bearerOf(req);
+  const bearer = bearerTokenFromHeader(req.headers.authorization);
   if (!bearer) return refuse(401, 'no_bearer', 'Unauthorized');
 
   // Generous: one runner address serves every user. It bounds credential probing before the

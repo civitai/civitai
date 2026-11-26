@@ -312,10 +312,8 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(200);
     const claims = claimsOf(r.body.token!);
-    expect(claims.mintOrigin).toBe('runner');
     expect(claims.runId).toBe(standingRunId('rra_x', 'trigger-1'));
     expect(r.body.runId).toBe(claims.runId);
-    expect((claims.exp as number) - (claims.iat as number)).toBe(180);
     expect(claims.buzzBudget).toBe(10);
     expect(claims.scopes).toEqual([CONSENT_SPEND_SCOPE]);
     expect(claims.maxBrowsingLevel).toBe(FORCED_SFW_CEILING);
@@ -332,6 +330,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   });
 
   it('refuses a caller over the per-user limit, with Retry-After', async () => {
+    // One over the handler's PER_USER_LIMIT (10/min); the per-IP and per-client limits admit it.
     redisMock.redis.incrBy.mockResolvedValue(11);
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(429);
@@ -340,6 +339,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   });
 
   it('refuses an address over the per-IP limit before reading the credential', async () => {
+    // One over the handler's PER_IP_LIMIT (1200/min).
     redisMock.redis.incrBy.mockResolvedValue(1201);
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(429);

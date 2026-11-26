@@ -55,7 +55,7 @@ export interface RunnerMintReads {
   runsSince(authorizationId: string, since: Date): Promise<number>;
 }
 
-/** States whose amount counts against the offline cap (a failed attempt counts what it was charged). */
+/** Attempt states that hold or spent budget; also a run's live states. `failed` is counted separately in `capUsed`. */
 export const RUNNER_CAP_STATES = ['reserved', 'submitting', 'unknown', 'submitted', 'settled'];
 
 /**

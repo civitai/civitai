@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { SIMPLE_BUZZ_LIMIT_PERIOD_DAYS, SIMPLE_BUZZ_LIMIT_PERIODS } from '@civitai/auth/buzz-limit';
 import type { RunnerAppBlockRow, RunnerMintReads } from '@civitai/db-queries/recipe-runner';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -13,15 +14,14 @@ export const SYSTEM_CLIENT_OWNER_ID = -1;
 /** The exact scope a runner client's access token carries. */
 export const RUNNER_TOKEN_SCOPE = TokenScope.RunnerMint | TokenScope.UserRead;
 
-const PERIOD_DAYS = { day: 1, week: 7, month: 30 } as const;
-export type RunnerPeriod = keyof typeof PERIOD_DAYS;
+export type RunnerPeriod = (typeof SIMPLE_BUZZ_LIMIT_PERIODS)[number];
 
 function isPeriod(v: unknown): v is RunnerPeriod {
-  return typeof v === 'string' && Object.hasOwn(PERIOD_DAYS, v);
+  return (SIMPLE_BUZZ_LIMIT_PERIODS as readonly unknown[]).includes(v);
 }
 
 export function periodStart(period: RunnerPeriod, now: Date): Date {
-  return new Date(now.getTime() - PERIOD_DAYS[period] * 24 * 60 * 60 * 1000);
+  return new Date(now.getTime() - SIMPLE_BUZZ_LIMIT_PERIOD_DAYS[period] * 24 * 60 * 60 * 1000);
 }
 
 /** A standing authorization's run id: a replayed trigger is the same run. */

@@ -16,6 +16,7 @@
 -- Needs migration 20271204120000_recipe_runner_ledger applied. Refuses (and changes nothing) when:
 --   - the client is not a runner client (Civitai-owned, confidential, consent screen on, no device flow,
 --     access mode open);
+--   - the client is already bound to another app block, or its binding is suspended;
 --   - the app block is not approved;
 --   - the user has no offline grant for the client;
 --   - max_amount_per_run x max_runs_per_period exceeds the offline cap, or the periods differ.
