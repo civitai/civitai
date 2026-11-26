@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -303,13 +304,227 @@ func TestEvalCaptureServeFullQueueDrops(t *testing.T) {
 	}
 }
 
+// T1's weight is 1 / the sample's own sampleRate when it sends one in (0, 1], else 1 / the configured
+// FEED_GO_EVAL_CAPTURE_SHADOW_RATE: absent (an older sampler), above 1 or negative. The rates are
+// pairwise distinct, so a weight hardcoded to either one cannot pass every case.
+func TestEvalCaptureShadowWeightFromSampleRate(t *testing.T) {
+	const envRate = 0.0625 // weight 16
+	for _, c := range []struct {
+		name       string
+		sampleRate float64
+		want       float64
+	}{
+		{"sent", 0.125, 8},
+		{"sent, at the bound", 1, 1},
+		{"absent", 0, 16},
+		{"above 1", 1.5, 16},
+		{"negative", -0.25, 16},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := &fakeRecorder{}
+			s := serveServer(prometheus.NewRegistry(), resolving(func() (*computed, error) { return &computed{payload: []byte(servedPayload)}, nil }), nil)
+			s.EvalCapture = &EvalCapture{Recorder: rec, ShadowRate: envRate}
+			s.compare(context.Background(), EndpointAsPosts, ShadowRequest{
+				Input: `{"json":{"limit":5}}`, Headers: map[string]string{"host": "site.example"},
+				Node: json.RawMessage(`{"json":{"items":[]}}`), SampleRate: c.sampleRate,
+			})
+			got := rec.got()
+			if len(got) != 1 || got[0].Weight != c.want {
+				t.Fatalf("captures %+v, want one of weight %v", got, c.want)
+			}
+		})
+	}
+}
+
+// corpusOnlyBody is a corpus-only sample's POST body (synthetic values). A nil Node is marshalled as
+// `"node":null`, which carries no answer and is accepted as Node's absent member is.
+func corpusOnlyBody(t *testing.T, req ShadowRequest) *strings.Reader {
+	t.Helper()
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.NewReader(string(b))
+}
+
+// shadowCompareTotal is every feed_go_shadow_compare_total series of endpoint added up.
+func shadowCompareTotal(t *testing.T, reg *prometheus.Registry, endpoint string) float64 {
+	t.Helper()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := 0.0
+	for _, mf := range mfs {
+		if mf.GetName() != "feed_go_shadow_compare_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "feed_endpoint" && l.GetValue() == endpoint {
+					sum += m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return sum
+}
+
+// corpusOnlyServer is a shadow server whose v1-models compute fails the test if it ever runs: a
+// corpus-only sample is never computed.
+func corpusOnlyServer(t *testing.T, reg *prometheus.Registry, rec EvalRecorder) *Server {
+	t.Helper()
+	s := newPhaseServer(reg, 2, nil)
+	s.computeV1ModelsFn = func(context.Context, *http.Request) (*computed, error) {
+		t.Error("a corpus-only sample was computed")
+		return nil, errors.New("computed")
+	}
+	if rec != nil {
+		s.EvalCapture = &EvalCapture{Recorder: rec, ShadowRate: 0.5}
+	}
+	return s
+}
+
+func postCorpusOnly(t *testing.T, s *Server, req ShadowRequest) int {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.ShadowV1ModelsIDHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/api/v1/models/id", corpusOnlyBody(t, req)))
+	return w.Code
+}
+
+// T4: a corpus-only sample is recorded with source corpus-only, its credential class (header or query)
+// on the request, weight 1 / its own sampleRate (never the shadow's configured rate), no Node answer
+// and a signed-out viewer; it is never computed and no comparison result is counted.
+func TestEvalCaptureCorpusOnlyRecorded(t *testing.T) {
+	for _, class := range []string{"header", "query"} {
+		t.Run(class, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			rec := &fakeRecorder{}
+			s := corpusOnlyServer(t, reg, rec)
+			code := postCorpusOnly(t, s, ShadowRequest{
+				CorpusOnly: true, Credential: class, SampleRate: 0.03125,
+				Input: "limit=1", Path: "/api/v1/models/5001", Headers: map[string]string{"host": "site.example", "cf-ipcountry": "US"},
+			})
+			if code != http.StatusAccepted {
+				t.Fatalf("code %d, want 202", code)
+			}
+			got := rec.got()
+			if len(got) != 1 {
+				t.Fatalf("%d captures, want 1", len(got))
+			}
+			g := got[0]
+			if g.Source != evalcapture.SourceCorpusOnly || g.Request.Endpoint != EndpointV1ModelsID || g.Request.CredentialClass != class ||
+				g.Request.Path != "/api/v1/models/5001" || g.Request.Query != "limit=1" || g.Request.Headers["host"] != "site.example" {
+				t.Errorf("capture %+v", g)
+			}
+			if g.Weight != 32 || g.ProdResult != evalcapture.ResultCorpusOnly || g.NodeBody != nil || g.NodeHeaders != nil {
+				t.Errorf("weight %v result %q node %s %v", g.Weight, g.ProdResult, g.NodeBody, g.NodeHeaders)
+			}
+			if !g.ViewerKnown || g.Viewer.Class != FeedViewerAnon || g.Viewer.UserID != 0 {
+				t.Errorf("viewer %+v known=%v", g.Viewer, g.ViewerKnown)
+			}
+			if n := shadowCompareTotal(t, reg, EndpointV1ModelsID); n != 0 {
+				t.Errorf("%v comparison results counted, want 0", n)
+			}
+			if v, _ := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": EndpointV1ModelsID, "source": "corpus-only", "outcome": "written"}); v != 1 {
+				t.Errorf("written = %v, want 1", v)
+			}
+			if len(s.ShadowQueue) != 0 {
+				t.Errorf("queue holds %d slots after the sample", len(s.ShadowQueue))
+			}
+		})
+	}
+}
+
+// T4 refuses (400, counted refused, never recorded) a corpus-only sample that still carries a
+// credential of any kind, a credential class other than exactly header or query, or Node's answer.
+func TestEvalCaptureCorpusOnlyRefused(t *testing.T) {
+	ok := func() ShadowRequest {
+		return ShadowRequest{CorpusOnly: true, Credential: "header", SampleRate: 0.25, Input: "limit=1", Path: "/api/v1/models/5001",
+			Headers: map[string]string{"host": "site.example"}}
+	}
+	for _, c := range []struct {
+		name string
+		edit func(*ShadowRequest)
+	}{
+		{"an authorization header", func(r *ShadowRequest) { r.Headers["Authorization"] = "Bearer synthetic-key" }},
+		{"an authorization placeholder", func(r *ShadowRequest) { r.Headers["authorization"] = "present" }},
+		{"a credential description header", func(r *ShadowRequest) { r.Headers["x-feed-go-credential"] = "key:described" }},
+		{"a session cookie", func(r *ShadowRequest) { r.Headers["cookie"] = "theme=dark; __Secure-civitai-token=synthetic" }},
+		{"a token query pair", func(r *ShadowRequest) { r.Input = "limit=1&token=synthetic-key" }},
+		{"an escaped token query pair", func(r *ShadowRequest) { r.Input = "limit=1&%74oken=synthetic-key" }},
+		{"a credential-named query pair", func(r *ShadowRequest) { r.Input = "apiKey=synthetic-key" }},
+		{"a node body", func(r *ShadowRequest) { r.Node = json.RawMessage(`{"id":5001}`) }},
+		{"node response headers", func(r *ShadowRequest) { r.ResponseHeaders = map[string]string{"etag": "x"} }},
+		{"a search backend answer", func(r *ShadowRequest) { r.Upstream = json.RawMessage(`{"hits":[]}`) }},
+		{"no credential class", func(r *ShadowRequest) { r.Credential = "" }},
+		{"the session class", func(r *ShadowRequest) { r.Credential = "session" }},
+		{"a joined class", func(r *ShadowRequest) { r.Credential = "header+query" }},
+		{"a class in another case", func(r *ShadowRequest) { r.Credential = "Header" }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			rec := &fakeRecorder{}
+			s := corpusOnlyServer(t, reg, rec)
+			req := ok()
+			c.edit(&req)
+			if code := postCorpusOnly(t, s, req); code != http.StatusBadRequest {
+				t.Errorf("code %d, want 400", code)
+			}
+			if n := len(rec.got()); n != 0 {
+				t.Errorf("Record called %d times, want 0", n)
+			}
+			if v, _ := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": EndpointV1ModelsID, "source": "corpus-only", "outcome": "refused"}); v != 1 {
+				t.Errorf("refused = %v, want 1", v)
+			}
+			if n := shadowCompareTotal(t, reg, EndpointV1ModelsID); n != 0 {
+				t.Errorf("%v comparison results counted, want 0", n)
+			}
+		})
+	}
+	// The control: the same sample unedited is recorded, so each case above is refused for its edit.
+	rec := &fakeRecorder{}
+	if code := postCorpusOnly(t, corpusOnlyServer(t, prometheus.NewRegistry(), rec), ok()); code != http.StatusAccepted || len(rec.got()) != 1 {
+		t.Fatalf("the unedited sample: code %d, %d captures, want 202 and 1", code, len(rec.got()))
+	}
+}
+
+// T4 with the capture off (or on an endpoint it does not capture) is accepted and discarded: nothing
+// recorded, computed, compared or counted.
+func TestEvalCaptureCorpusOnlyDiscarded(t *testing.T) {
+	req := ShadowRequest{CorpusOnly: true, Credential: "query", SampleRate: 0.25, Path: "/api/v1/models/5001", Headers: map[string]string{"host": "site.example"}}
+	reg := prometheus.NewRegistry()
+	s := corpusOnlyServer(t, reg, nil)
+	if code := postCorpusOnly(t, s, req); code != http.StatusAccepted {
+		t.Fatalf("capture off: code %d, want 202", code)
+	}
+	if n := shadowCompareTotal(t, reg, EndpointV1ModelsID); n != 0 {
+		t.Errorf("capture off: %v comparison results counted", n)
+	}
+	rec := &fakeRecorder{}
+	s = corpusOnlyServer(t, prometheus.NewRegistry(), rec)
+	w := httptest.NewRecorder()
+	s.ShadowV1ModelsHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/api/v1/models", corpusOnlyBody(t, req)))
+	if w.Code != http.StatusAccepted || len(rec.got()) != 0 {
+		t.Fatalf("the list endpoint: code %d, %d captures, want 202 and 0", w.Code, len(rec.got()))
+	}
+}
+
 // feed_go_eval_capture_total is seeded: every outcome per source for the endpoints it captures (shadow
 // and serve: the four first-wave endpoints; serve-parity: the three tRPC ones), and nothing else.
 func TestEvalCaptureSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	if n := testutil.CollectAndCount(m.EvalCapture); n != 4*3+3*3+4*3 {
-		t.Fatalf("feed_go_eval_capture_total has %d series, want 33", n)
+	if n := testutil.CollectAndCount(m.EvalCapture); n != 4*3+3*3+4*3+1*4 {
+		t.Fatalf("feed_go_eval_capture_total has %d series, want 37", n)
+	}
+	for _, o := range []string{"written", "deduped", "dropped", "refused"} {
+		if v, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "corpus-only", "outcome": o}); !found || v != 0 {
+			t.Errorf("eval_capture{v1-models-id,corpus-only,%s} = %v found=%v, want a 0 series", o, v, found)
+		}
+	}
+	if _, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "as-posts", "source": "corpus-only", "outcome": "written"}); found {
+		t.Error("corpus-only is sent for v1-models-id only, but an as-posts series exists")
 	}
 	for source, endpoints := range map[string][]string{
 		"shadow":       {"as-posts", "infinite", "model-getall", "v1-models-id"},

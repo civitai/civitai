@@ -1133,9 +1133,19 @@ type ShadowRequest struct {
 	// Upstream is a site-search sample's search-backend response, as Node received it (its 200 body):
 	// the shadow reshapes it rather than asking the backend again (DESIGN.md §18.4).
 	Upstream json.RawMessage `json:"upstream,omitempty"`
-	// SampleRate is the rate the Node sampler took this sample at, after its own limits (0: not sent;
-	// no sampler sends it yet). Read only for the eval capture's weight (EvalCapture.ShadowRate).
+	// SampleRate is the effective rate the Node sampler took this sample at: its configured rate times
+	// the share of selected requests its per-second bucket and in-flight cap admitted for the endpoint
+	// over a recent window (0: not sent, an older sampler). Read only for the eval capture's weight;
+	// a value outside (0, 1] is ignored (sampleRateOr).
 	SampleRate float64 `json:"sampleRate,omitempty"`
+	// CorpusOnly marks a corpus-only sample (FEED_GO_SHADOW_CORPUS_ONLY_RATE, DESIGN.md §19.6 T4): a
+	// credentialed request Node took the credential out of, sent for the eval capture only. It is never
+	// computed or compared, carries no Node answer, and is refused if it still carries a credential
+	// (captureCorpusOnly).
+	CorpusOnly bool `json:"corpusOnly,omitempty"`
+	// Credential is a corpus-only sample's credential class: evalcorpus.CredentialHeader or
+	// evalcorpus.CredentialQuery, exactly (anything else is refused).
+	Credential string `json:"credential,omitempty"`
 }
 
 // ResponseHeaderSetREST marks a sample whose ResponseHeaders are shadow.RESTComparedHeaders.
@@ -1227,7 +1237,30 @@ func (s *Server) shadowHandlerLabelled(w http.ResponseWriter, r *http.Request, e
 		return
 	}
 	var req ShadowRequest
-	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
+	err = json.Unmarshal(body, &req)
+	if err == nil && req.CorpusOnly {
+		// Capture-only: never computed or compared, so no shadow result is counted. Done here rather
+		// than on a goroutine: the viewer is not resolved (a corpus-only request carries no cookie
+		// and no credential, so it is signed out) and Record only strips, signs and queues, so it
+		// costs no I/O. It holds the queue slot (released by defer) and the shutdown registration
+		// (s.shadows, released by this handler's defer) until it returns; a panic is recovered and
+		// counted as the sample goroutine's is, and answered 500.
+		s.endPhase(spanCtx, decode, endpoint, "decode", "ok")
+		code := http.StatusInternalServerError
+		func() {
+			defer func() { <-s.ShadowQueue }()
+			defer func() {
+				if p := recover(); p != nil {
+					s.panicked("eval-capture", p, debug.Stack())
+				}
+			}()
+			code = s.captureCorpusOnly(spanCtx, endpoint, req)
+		}()
+		setOutcome(span, "corpus_only")
+		w.WriteHeader(code)
+		return
+	}
+	if err != nil || len(req.Node) == 0 {
 		s.endPhase(spanCtx, decode, endpoint, "decode", "bad_request")
 		<-s.ShadowQueue
 		setOutcome(span, "bad_request")

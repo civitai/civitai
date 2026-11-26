@@ -40,6 +40,9 @@ import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
  *   an `/api/v1/models/[id]` request whose credential is an Authorization header (never a
  *   `?token=`) is mirrored with a description of it in place of the key
  *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
+ *   Corpus-only samples (`FEED_GO_SHADOW_CORPUS_ONLY_RATE`, default 0: off; feed-go DESIGN.md §19.6
+ *   T4): a further fraction of the `[id]` requests that would be `skipped_credential` is posted with
+ *   the credential taken out (`corpusOnly`), for feed-go's eval capture only. See `corpusOnly`.
  * - `POST /api/search/*` (flag `feed-go-shadow-site-search`): the request's JSON body, the search
  *   call Node made and the backend's 200 body (both captured by the site-search service), and the
  *   answer Node wrote, so feed-go reshapes the same backend answer for its own viewer and compares
@@ -56,6 +59,9 @@ import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
  * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
  * response) is synchronous on the event loop every other request shares, and the in-flight cap
  * does not bound it (a slot frees as soon as the compare endpoint answers).
+ *
+ * Every sample carries `sampleRate`, the effective rate it was taken at (`effectiveRate`): feed-go's
+ * eval capture weighs it by 1 / that rate.
  *
  * Forwarded: the raw `input`, the headers the answer depends on, and the SESSION cookies only
  * (the compare side re-verifies their signature). An API credential is forwarded only as the
@@ -251,6 +257,12 @@ export type FeedGoShadowConfig = {
    * feed-go answered it.
    */
   v1ModelsQuery?: boolean;
+  /**
+   * `FEED_GO_SHADOW_CORPUS_ONLY_RATE` (default 0: off; clamped to [0, 1], junk reads 0): the fraction
+   * of sampled `/api/v1/models/[id]` requests carrying an API credential that are posted as
+   * corpus-only samples rather than counted `skipped_credential` (see `corpusOnly`).
+   */
+  corpusOnlyRate?: number;
 };
 
 type Env = Record<string, string | undefined>;
@@ -326,6 +338,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     v1ModelsQuery: ['true', '1'].includes(
       (env.FEED_GO_SHADOW_V1_MODELS_QUERY ?? '').trim().toLowerCase()
     ),
+    corpusOnlyRate: envNumber(env.FEED_GO_SHADOW_CORPUS_ONLY_RATE, 0, 0, 1),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -362,6 +375,132 @@ function headerValue(v: string | string[] | undefined): string | undefined {
 function hasApiCredential(req: ShadowRequestLike) {
   return !!headerValue(req.headers.authorization) || req.query.token !== undefined;
 }
+
+/**
+ * Words that mark a query pair's name (or its whole text) as a credential's: feed-go's evalcorpus
+ * `credentialWords`, which feed-go applies again and refuses a corpus-only sample on (it is the one
+ * authority; this copy only keeps Node from sending a sample feed-go would refuse).
+ */
+const CREDENTIAL_WORDS = [
+  'token',
+  'secret',
+  'password',
+  'passwd',
+  'cookie',
+  'authorization',
+  'bearer',
+  'apikey',
+  'api_key',
+  'api-key',
+  'credential',
+  'session',
+] as const;
+
+function isCredentialName(name: string) {
+  const l = name.toLowerCase();
+  return CREDENTIAL_WORDS.some((w) => l.includes(w));
+}
+
+/**
+ * One `&`-separated query pair read as URLSearchParams reads it (what the app and the replay read):
+ * every valid escape decoded, each invalid one kept as written, `+` a space. `name` is its name,
+ * `text` the whole pair decoded (`name=value`, or `name` with no `=`). Decoding escape by escape
+ * matters: a pair with one bad escape still decodes the rest, so `decodeURIComponent` (which gives
+ * up on the whole string) would miss a key hidden behind an escaped character.
+ */
+function decodePair(pair: string): { name: string; text: string } {
+  const [entry] = [...new URLSearchParams(pair)];
+  const [name, value] = entry ?? ['', ''];
+  return { name, text: pair.includes('=') ? `${name}=${value}` : name };
+}
+
+/** A raw query string (or a path) decoded pair by pair as URLSearchParams reads it. */
+function decodeQuery(raw: string): string {
+  return raw
+    .split('&')
+    .map((pair) => decodePair(pair).text)
+    .join('&');
+}
+
+/** The values of `v`, a parsed query value. */
+function queryValues(v: string | string[] | undefined): string[] {
+  if (typeof v === 'string') return [v];
+  return Array.isArray(v) ? v : [];
+}
+
+/**
+ * A credentialed request's credential class as the app reads it (feed-go's evalcorpus
+ * `credentialClass`): `header` (an Authorization header) or `query` (a non-empty `token` value).
+ * Undefined for both at once (feed-go's class would be `header+query`, which a corpus-only sample
+ * cannot carry) and for neither (an empty `?token=` is no credential to the app).
+ */
+function credentialClassOf(req: ShadowRequestLike): 'header' | 'query' | undefined {
+  const header = !!headerValue(req.headers.authorization);
+  const query = queryValues(req.query.token).some((v) => v !== '');
+  if (header === query) return undefined;
+  return header ? 'header' : 'query';
+}
+
+/**
+ * The text a request's credentials are made of, each non-empty: the Authorization header and its
+ * key part(s), every `token` value, and every value of a query pair named like a credential. A
+ * corpus-only sample drops any query pair holding one and is not sent when its body holds one in
+ * any form checked (`leaksSecret`).
+ */
+function credentialSecrets(req: ShadowRequestLike, rawQuery: string): string[] {
+  const out = new Set<string>();
+  const auth = headerValue(req.headers.authorization)?.trim();
+  if (auth) {
+    out.add(auth);
+    const parts = auth.split(/\s+/).filter(Boolean);
+    for (const p of parts.length > 1 ? parts.slice(1) : parts) out.add(p);
+  }
+  for (const [k, v] of Object.entries(req.query)) {
+    if (isCredentialName(k)) for (const x of queryValues(v)) out.add(x);
+  }
+  for (const pair of rawQuery.split('&')) {
+    const { name, text } = decodePair(pair);
+    if (pair.includes('=') && isCredentialName(name)) out.add(text.slice(name.length + 1));
+  }
+  out.delete('');
+  return [...out];
+}
+
+/**
+ * A raw query string without every pair whose unescaped name or text holds a credential word
+ * (feed-go's `stripQuery`), and without every pair whose raw or unescaped text holds one of
+ * `secrets` (a key echoed under another name). Order and encoding kept.
+ */
+function stripCredentialPairs(rawQuery: string, secrets: readonly string[]): string {
+  return rawQuery
+    .split('&')
+    .filter((pair) => {
+      if (pair === '') return false;
+      const { name, text } = decodePair(pair);
+      if (isCredentialName(name) || isCredentialName(text)) return false;
+      return !secrets.some((sec) => pair.includes(sec) || text.includes(sec));
+    })
+    .join('&');
+}
+
+/** Whether `text` holds one of `secrets` as written, URI-encoded or JSON-escaped. */
+function leaksSecret(text: string, secrets: readonly string[]) {
+  return secrets.some(
+    (sec) =>
+      text.includes(sec) ||
+      text.includes(encodeURIComponent(sec)) ||
+      text.includes(JSON.stringify(sec).slice(1, -1))
+  );
+}
+
+/**
+ * The effective-rate window (`effectiveRate`): the share of bound checks the per-second bucket and
+ * the in-flight cap admitted is counted per endpoint over the current and the previous
+ * SAMPLE_RATE_WINDOW_MS window (so 60 to 120 s), and the configured rate is used alone while those
+ * hold fewer than SAMPLE_RATE_MIN_OBSERVATIONS checks (a share of a handful is noise).
+ */
+export const SAMPLE_RATE_WINDOW_MS = 60_000;
+export const SAMPLE_RATE_MIN_OBSERVATIONS = 20;
 
 /** The headers feed-go needs, and nothing else (see the module doc). */
 export function pickShadowHeaders(req: ShadowRequestLike): Record<string, string> {
@@ -441,6 +580,8 @@ export type FeedGoShadowSample = {
   responseHeaders?: Record<string, string>;
   /** `rest` when responseHeaders is FEED_GO_COMPARED_REST_RESPONSE_HEADERS (a REST sample). */
   responseHeaderSet?: 'rest';
+  /** The effective rate this sample was taken at, set when it is admitted (`effectiveRate`). */
+  sampleRate?: number;
   done: boolean;
 };
 
@@ -543,6 +684,11 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
   // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve another.
   const buckets = createPerSecondBuckets(FEED_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
+  /** Per endpoint, the bound checks `admit` made and passed, this window and the previous one. */
+  const admitWindows = new Map<
+    FeedGoShadowEndpoint,
+    { start: number; checked: number; admitted: number; prevChecked: number; prevAdmitted: number }
+  >();
 
   /** The mirrored REST routes: each one's compare URL and flag. */
   const restRoutes: Record<RestEndpoint, { url: string | undefined; enabled: () => boolean }> = {
@@ -626,6 +772,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         input: input ?? '',
         headers,
         startedAt,
+        sampleRate: effectiveRate(route.endpoint, config.rate),
         done: false,
       };
     } catch {
@@ -633,17 +780,56 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
-  /** The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop. */
+  /**
+   * The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop, and
+   * counts the check in the endpoint's effective-rate window.
+   */
   function admit(endpoint: FeedGoShadowEndpoint): boolean {
+    let ok = true;
     if (inFlight >= config.maxInFlight) {
       record('dropped_overload', endpoint);
-      return false;
-    }
-    if (!buckets.take(endpoint)) {
+      ok = false;
+    } else if (!buckets.take(endpoint)) {
       record('dropped_rate_limit', endpoint);
-      return false;
+      ok = false;
     }
-    return true;
+    const w = admitWindow(endpoint);
+    w.checked++;
+    if (ok) w.admitted++;
+    return ok;
+  }
+
+  /** The endpoint's effective-rate window, rolled forward to now. */
+  function admitWindow(endpoint: FeedGoShadowEndpoint) {
+    const t = now();
+    let w = admitWindows.get(endpoint);
+    if (!w) {
+      w = { start: t, checked: 0, admitted: 0, prevChecked: 0, prevAdmitted: 0 };
+      admitWindows.set(endpoint, w);
+    } else if (t - w.start >= SAMPLE_RATE_WINDOW_MS) {
+      // The current window becomes the previous one, unless it ended more than a window ago.
+      const recent = t - w.start < 2 * SAMPLE_RATE_WINDOW_MS;
+      w.prevChecked = recent ? w.checked : 0;
+      w.prevAdmitted = recent ? w.admitted : 0;
+      w.checked = 0;
+      w.admitted = 0;
+      w.start = t;
+    }
+    return w;
+  }
+
+  /**
+   * The rate a sample of `endpoint` admitted now was effectively taken at: `base` (the configured
+   * probability it was selected with) times the share of the endpoint's recent bound checks that
+   * passed (SAMPLE_RATE_WINDOW_MS; `base` alone below SAMPLE_RATE_MIN_OBSERVATIONS checks). The
+   * share is of checks, not of selections: a REST sample skipped before its check (a non-200, no
+   * capture) was not dropped for capacity, and its request's shape is what decided that.
+   */
+  function effectiveRate(endpoint: FeedGoShadowEndpoint, base: number): number {
+    const w = admitWindow(endpoint);
+    const checked = w.checked + w.prevChecked;
+    if (checked < SAMPLE_RATE_MIN_OBSERVATIONS) return base;
+    return (base * (w.admitted + w.prevAdmitted)) / checked;
   }
 
   /**
@@ -678,7 +864,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (hasApiCredential(req)) {
         described = credentialHeaders(endpoint, req, opts);
         if (!described) {
-          record('skipped_credential', endpoint);
+          if (!corpusOnly(endpoint, req)) record('skipped_credential', endpoint);
           return undefined;
         }
       }
@@ -732,6 +918,68 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
     if (!credential) return undefined;
     return { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
+  }
+
+  /**
+   * A corpus-only sample (feed-go DESIGN.md §19.6 T4) of a credentialed request `beginRest` would
+   * otherwise count `skipped_credential`: `/api/v1/models/[id]` only (the one REST endpoint feed-go's
+   * eval capture takes), at FEED_GO_SHADOW_CORPUS_ONLY_RATE of the sampled ones. Posted to the `[id]`
+   * compare URL as `{corpusOnly, credential, sampleRate, input, path, headers}`:
+   *
+   * - the credential is taken out of everything sent: no Authorization header and no credential
+   *   description, no cookie at all (the session cookie is a credential too), no query pair named
+   *   like a credential (`token` in any case or escape) and no pair holding the key's text; only the
+   *   headers COPIED_HEADERS names. `credential` is the class it was (`header` / `query`).
+   * - Node's answer is never sent and never waited for: the POST is queued now, before the handler
+   *   answers, and the handler's capture and finish never see it (beginRest returns undefined).
+   * - The same bounds as a sample: the in-flight cap and the `[id]` per-second bucket.
+   * - `sampleRate`: FEED_GO_SHADOW_SAMPLE_RATE x this rate x the bucket's admitted share.
+   *
+   * True when it took the request (sent, or dropped and counted); false when the caller counts
+   * `skipped_credential`: another route, the rate off or not picked, both credential kinds at once,
+   * or a body that would still hold the key (`leaksSecret` on the encoded input, path and headers,
+   * the last word; the rest of the body is constants and the rate). feed-go checks again and refuses
+   * a sample that still carries any credential (its evalcorpus rules, the authority).
+   */
+  function corpusOnly(endpoint: RestEndpoint, req: ShadowRequestLike): boolean {
+    const rate = config.corpusOnlyRate ?? 0;
+    if (endpoint !== 'v1-models-id' || rate <= 0 || !config.v1ModelsIdUrl) return false;
+    if (random() >= rate) return false;
+    const credential = credentialClassOf(req);
+    if (!credential) return false;
+    const target = req.url ?? '';
+    const q = target.indexOf('?');
+    const rawQuery = q < 0 ? '' : target.slice(q + 1);
+    const secrets = credentialSecrets(req, rawQuery);
+    const input = stripCredentialPairs(rawQuery, secrets);
+    const path = q < 0 ? target : target.slice(0, q);
+    const headers: Record<string, string> = {};
+    for (const name of COPIED_HEADERS) {
+      const v = headerValue(req.headers[name]);
+      if (v) headers[name] = v;
+    }
+    // As encoded, and as the reader decodes the query and the path (escape by escape).
+    const probe = [JSON.stringify({ input, path, headers }), decodeQuery(input), decodeQuery(path)];
+    if (probe.some((text) => leaksSecret(text, secrets))) return false;
+    const sample: FeedGoShadowSample = {
+      endpoint,
+      holdsSlot: false,
+      input,
+      path,
+      headers,
+      done: false,
+    };
+    if (!takeSlot(sample)) return true;
+    const body = JSON.stringify({
+      corpusOnly: true,
+      credential,
+      sampleRate: (sample.sampleRate ?? config.rate) * rate,
+      input,
+      path,
+      headers,
+    });
+    schedule(() => post(sample, body, 'corpus_only'));
+    return true;
   }
 
   /** `beginRest` for `GET /api/v1/images`. */
@@ -880,12 +1128,15 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const started = now();
       const captured = sample.captured!;
       // No status: only 200s are posted, and feed-go does not compare it.
-      const response = sample.responseHeaders
-        ? {
-            responseHeaders: sample.responseHeaders,
-            ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
-          }
-        : {};
+      const response = {
+        ...(sample.responseHeaders
+          ? {
+              responseHeaders: sample.responseHeaders,
+              ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
+            }
+          : {}),
+        ...(sample.sampleRate !== undefined ? { sampleRate: sample.sampleRate } : {}),
+      };
       if ('siteSearch' in captured) {
         body = siteSearchSampleBody(sample, captured.siteSearch, response);
       } else {
@@ -906,6 +1157,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       release(sample);
       return;
     }
+    post(sample, body, 'sent');
+  }
+
+  /** POST a sample's encoded body; counts `ok` on a 2xx, else what went wrong; frees the slot. */
+  function post(sample: FeedGoShadowSample, body: string, ok: 'sent' | 'corpus_only'): void {
+    const { endpoint } = sample;
     let pending: Promise<Response>;
     try {
       pending = doFetch(urlOf(endpoint)!, {
@@ -922,7 +1179,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     pending
       .then(
         (res) => {
-          record(res.ok ? 'sent' : 'rejected', endpoint);
+          record(res.ok ? ok : 'rejected', endpoint);
           // Free the connection; feed-go's 202 has no body worth reading.
           res.body?.cancel().catch(() => undefined);
         },
@@ -1059,6 +1316,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
     inFlight++;
     sample.holdsSlot = true;
+    sample.sampleRate = effectiveRate(sample.endpoint, config.rate);
     return true;
   }
 

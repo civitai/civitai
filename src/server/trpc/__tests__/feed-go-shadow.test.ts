@@ -178,6 +178,7 @@ describe('readFeedGoShadowConfig', () => {
       probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
       v1ModelsQuery: false,
+      corpusOnlyRate: 0,
     });
   });
 
@@ -212,6 +213,7 @@ describe('readFeedGoShadowConfig', () => {
       probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
       v1ModelsQuery: false,
+      corpusOnlyRate: 0,
     });
   });
 
@@ -244,6 +246,21 @@ describe('readFeedGoShadowConfig', () => {
       expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_QUERY: value }).v1ModelsQuery).toBe(
         want
       );
+    }
+  });
+
+  it('reads FEED_GO_SHADOW_CORPUS_ONLY_RATE: unset and junk are 0 (off), a number is clamped to [0, 1]', () => {
+    for (const [value, want] of [
+      [undefined, 0],
+      ['', 0],
+      ['on', 0],
+      ['-0.5', 0],
+      ['0.125', 0.125],
+      ['3', 1],
+    ] as const) {
+      expect(
+        readFeedGoShadowConfig({ FEED_GO_SHADOW_CORPUS_ONLY_RATE: value }).corpusOnlyRate
+      ).toBe(want);
     }
   });
 
@@ -445,6 +462,7 @@ describe('createFeedGoShadow — sampling decision', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.shadow.inFlight()).toBe(0);
@@ -573,6 +591,7 @@ describe('createFeedGoShadow — sampling decision', () => {
       input,
       headers: { host: 'civitai.com' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['model-associated']);
@@ -641,6 +660,38 @@ describe('createFeedGoShadow — never on the user path', () => {
     await h.flush();
     expect([serve(h), serve(h), serve(h), serve(h)].filter(Boolean)).toHaveLength(3);
     expect(h.fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  // feed-go's eval capture weighs a sample by 1 / sampleRate (apps/feed-go DESIGN.md §19.6 T1).
+  it('every sample carries sampleRate: the configured rate times the share its bounds admitted', async () => {
+    let t = 0;
+    const h = harness({
+      config: { rate: 0.5, maxPerSecond: 10, maxInFlight: 1000 },
+      now: () => t,
+    });
+    const burst = (n: number) => Array.from({ length: n }, () => serve(h)).filter(Boolean).length;
+    // 40 selected in one instant: the bucket admits its 10 and drops 30. Each of the 10 is admitted
+    // while the window holds fewer than 20 checks, so it carries the configured rate alone.
+    expect(burst(40)).toBe(10);
+    t = 1_000; // the bucket refills: 41 checks, 11 admitted
+    expect(burst(1)).toBe(1);
+    t = 70_000; // a new window: the previous one (41, 11) plus this one's; 25 checks, 10 admitted
+    expect(burst(25)).toBe(10);
+    t = 135_000; // a new window: the previous (25, 10) is still recent; 25 checks, 10 admitted
+    expect(burst(25)).toBe(10);
+    t = 300_000; // the last window ended over a minute ago: stale, so too few checks again
+    expect(burst(1)).toBe(1);
+    await h.flush();
+    const rates = h.fetchMock.mock.calls.map(
+      ([, init]) => (JSON.parse(init.body as string) as { sampleRate: number }).sampleRate
+    );
+    expect(rates).toHaveLength(32);
+    expect(rates.slice(0, 10)).toEqual(Array(10).fill(0.5));
+    expect(rates[10]).toBeCloseTo((0.5 * 11) / 41, 12);
+    expect(rates[11]).toBeCloseTo((0.5 * 12) / 42, 12);
+    expect(rates[21]).toBeCloseTo((0.5 * 11) / 26, 12);
+    // Counted with the stale window (25 checks) it would be 0.5 * 11 / 26.
+    expect(rates[31]).toBe(0.5);
   });
 
   it('a budget below one per second still admits one sample', () => {
@@ -862,7 +913,7 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
       '{"input":"modelVersionId=9&limit=2","path":"/api/v1/images",' +
         '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
         '"node":{"items":[{"id":11,"createdAt":"2024-03-01T10:00:00.000Z"}],' +
-        '"metadata":{"nextCursor":"feed:1:2"}}}'
+        '"metadata":{"nextCursor":"feed:1:2"}},"sampleRate":1}'
     );
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['v1-images']);
@@ -1045,7 +1096,7 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       '{"input":"limit=1&sort=Newest","path":"/api/v1/models",' +
         '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
         '"node":{"items":[{"id":5001,"name":"A","stats":{"downloadCount":null}}],' +
-        '"metadata":{"nextCursor":"7|5001"}}}'
+        '"metadata":{"nextCursor":"7|5001"}},"sampleRate":1}'
     );
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['v1-models']);
@@ -1062,6 +1113,7 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       path: '/api/v1/models/42',
       headers: { host: 'civitai.com', 'cf-ipcountry': 'GB', cookie: '__Secure-civ-token=t' },
       node: { id: 42 },
+      sampleRate: 1,
     });
     expect(h.endpoints).toEqual(['v1-models-id']);
   });
@@ -1259,6 +1311,217 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     });
   });
 
+  describe('corpus-only samples, with FEED_GO_SHADOW_CORPUS_ONLY_RATE', () => {
+    // A distinctive synthetic key: it must appear nowhere in what is sent. It holds no credential
+    // word, so a pair echoing it is dropped for holding the key, not for its spelling.
+    const KEY = 'zq7-synthetic-K3y-Hc93x'; // gitleaks:allow synthetic test key
+    const onlyHeaders = { host: 'civitai.com', 'cf-ipcountry': 'GB' };
+    const keyedHeaders = (extra: Record<string, string> = {}) => ({
+      ...onlyHeaders,
+      cookie: '__Secure-civ-token=session-value; theme=dark',
+      ...extra,
+    });
+    const bearer = { authorization: `Bearer ${KEY}` };
+
+    /** Every string the fetch mock was called with: the URL, the headers and the body. */
+    function sentText(h: ReturnType<typeof harness>) {
+      return h.fetchMock.mock.calls
+        .map(([url, init]) =>
+          [url, JSON.stringify(init.headers ?? {}), String(init.body)].join('\n')
+        )
+        .join('\n');
+    }
+
+    it.each([
+      [
+        'an Authorization bearer header',
+        modelsRequest('/api/v1/models/1?limit=1', {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', limit: '1' },
+        }),
+        'header',
+      ],
+      [
+        'a ?token= key',
+        modelsRequest(`/api/v1/models/1?token=${KEY}&limit=1`, {
+          headers: keyedHeaders(),
+          query: { id: '1', token: KEY, limit: '1' },
+        }),
+        'query',
+      ],
+      [
+        // `Token` is not a credential to the app (it reads `token`), so alone it is an ordinary
+        // sample; beside a bearer header it is still taken out.
+        'a bearer header and the key under ?Token=',
+        modelsRequest(`/api/v1/models/1?Token=${KEY}&limit=1`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', Token: KEY, limit: '1' },
+        }),
+        'header',
+      ],
+      [
+        'a percent-encoded %74oken= key',
+        modelsRequest(`/api/v1/models/1?%74oken=${KEY}&limit=1`, {
+          headers: keyedHeaders(),
+          query: { id: '1', token: KEY, limit: '1' },
+        }),
+        'query',
+      ],
+      [
+        'a bearer header and the key echoed under an ordinary name',
+        modelsRequest(`/api/v1/models/1?limit=1&note=${KEY}`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', limit: '1', note: KEY },
+        }),
+        'header',
+      ],
+      [
+        // URLSearchParams decodes each valid escape and keeps the bad trailing `%`, so the reader
+        // sees the key in this value although decodeURIComponent gives up on it.
+        'a bearer header and the key behind an escape and a bad escape',
+        modelsRequest(`/api/v1/models/1?limit=1&note=%7A${KEY.slice(1)}%`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', limit: '1', note: `${KEY}%` },
+        }),
+        'header',
+      ],
+      [
+        'a ?token= key echoed in another query value',
+        modelsRequest(`/api/v1/models/1?token=${KEY}&limit=1&note=${KEY}`, {
+          headers: keyedHeaders(),
+          query: { id: '1', token: KEY, limit: '1', note: KEY },
+        }),
+        'query',
+      ],
+    ] as const)(
+      '%s: posted with the credential taken out, its class, sampleRate and no Node answer',
+      async (_name, req, credential) => {
+        const h = harness({ config: { corpusOnlyRate: 0.5 } });
+        // The handler gets no sample: Node's answer is never captured or waited for.
+        expect(h.shadow.beginRest('v1-models-id', req)).toBeUndefined();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        await h.flush();
+        expect(h.fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = h.fetchMock.mock.calls[0];
+        expect(url).toBe(V1_MODEL_ID_URL);
+        const body = JSON.parse(init.body as string);
+        expect(body).toEqual({
+          corpusOnly: true,
+          credential,
+          sampleRate: 0.5,
+          input: 'limit=1',
+          path: '/api/v1/models/1',
+          headers: onlyHeaders,
+        });
+        expect(body).not.toHaveProperty('node');
+        expect(body).not.toHaveProperty('responseHeaders');
+        const sent = sentText(h);
+        expect(sent).not.toContain(KEY);
+        expect(sent).not.toContain('session-value');
+        expect(sent).not.toContain('x-feed-go-credential');
+        expect(h.outcomes).toEqual(['corpus_only']);
+        expect(h.endpoints).toEqual(['v1-models-id']);
+        expect(h.shadow.inFlight()).toBe(0);
+      }
+    );
+
+    const keyed = modelsRequest('/api/v1/models/1', {
+      headers: keyedHeaders(bearer),
+      query: { id: '1' },
+    });
+
+    it.each([
+      ['off (the default)', {}],
+      ['rate 0', { corpusOnlyRate: 0 }],
+    ] as const)('%s: still skipped_credential, nothing sent', async (_name, cfg) => {
+      const h = harness({ config: cfg });
+      expect(h.shadow.beginRest('v1-models-id', keyed)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it('a request whose kept headers hold the key is not sent: skipped_credential', async () => {
+      const h = harness({ config: { corpusOnlyRate: 1 } });
+      const req = modelsRequest('/api/v1/models/1', {
+        headers: { ...keyedHeaders(bearer), host: `${KEY}.example` },
+        query: { id: '1' },
+      });
+      expect(h.shadow.beginRest('v1-models-id', req)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    // All three factors distinct: base rate 0.4, admitted share 6/26, corpus-only rate 0.5.
+    it('sampleRate is the base rate times the [id] bucket share times the corpus-only rate', async () => {
+      let t = 0;
+      const h = harness({
+        config: { rate: 0.4, corpusOnlyRate: 0.5, maxPerSecond: 5, maxInFlight: 1000 },
+        now: () => t,
+      });
+      // 25 in one instant: the bucket admits 5 (each under 20 checks: 0.4 x 0.5) and drops 20.
+      for (let i = 0; i < 25; i++) h.shadow.beginRest('v1-models-id', keyed);
+      t = 1_000; // refilled: 26 checks, 6 admitted
+      h.shadow.beginRest('v1-models-id', keyed);
+      await h.flush();
+      const rates = h.fetchMock.mock.calls.map(
+        ([, init]) => (JSON.parse(init.body as string) as { sampleRate: number }).sampleRate
+      );
+      expect(rates).toHaveLength(6);
+      expect(rates.slice(0, 5)).toEqual(Array(5).fill(0.4 * 0.5));
+      expect(rates[5]).toBeCloseTo(0.4 * (6 / 26) * 0.5, 12);
+      expect(h.outcomes.filter((o) => o === 'dropped_rate_limit')).toHaveLength(20);
+      expect(h.outcomes.filter((o) => o === 'corpus_only')).toHaveLength(6);
+    });
+
+    it('not picked at its rate: skipped_credential', async () => {
+      const h = harness({ config: { corpusOnlyRate: 0.5 }, random: 0.5 });
+      expect(h.shadow.beginRest('v1-models-id', keyed)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it.each([
+      ['the list', 'v1-models', modelsRequest('/api/v1/models', { headers: keyedHeaders(bearer) })],
+      ['GET /api/v1/images', 'v1-images', restRequest({ headers: keyedHeaders(bearer) })],
+      [
+        '[id] with a bearer header and a ?token= at once',
+        'v1-models-id',
+        modelsRequest(`/api/v1/models/1?token=${KEY}`, {
+          headers: keyedHeaders(bearer),
+          query: { id: '1', token: KEY },
+        }),
+      ],
+    ] as const)('%s: unchanged, skipped_credential', async (_name, endpoint, req) => {
+      const h = harness({ config: { corpusOnlyRate: 1 } });
+      expect(h.shadow.beginRest(endpoint, req)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+      expect(h.endpoints).toEqual([endpoint]);
+    });
+
+    it('takes the shared in-flight cap and the [id] bucket like a sample', async () => {
+      const full = harness({ config: { corpusOnlyRate: 1, maxInFlight: 1 } });
+      // A gallery sample holds the only slot.
+      expect(full.shadow.begin(request())).toBeDefined();
+      expect(full.shadow.beginRest('v1-models-id', keyed)).toBeUndefined();
+      await full.flush();
+      expect(full.fetchMock).not.toHaveBeenCalled();
+      expect(full.outcomes).toEqual(['dropped_overload']);
+
+      const h = harness({ config: { corpusOnlyRate: 1, maxPerSecond: 1 }, now: () => 0 });
+      h.shadow.beginRest('v1-models-id', keyed);
+      await h.flush();
+      h.shadow.beginRest('v1-models-id', keyed);
+      await h.flush();
+      expect(h.outcomes).toEqual(['corpus_only', 'dropped_rate_limit']);
+      expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('each model route has its own per-second bucket', async () => {
     const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
     serveModels(h, 'v1-models', modelsRequest('/api/v1/models'));
@@ -1310,6 +1573,7 @@ describe('createFeedGoShadow — image.getInfinite', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['infinite']);
@@ -1487,6 +1751,7 @@ describe('createFeedGoShadow — model.getAll', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['model-getall']);
@@ -1838,6 +2103,7 @@ describe('createFeedGoShadow — POST /api/search/*', () => {
       },
       responseHeaders: { 'cache-control': 'private, no-store' },
       responseHeaderSet: 'rest',
+      sampleRate: 1,
     });
     expect(h.outcomes).toEqual(['sent']);
   });

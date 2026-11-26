@@ -85,6 +85,37 @@ type Request struct {
 	// Headers are the request headers, names in any case. Several values of one header are joined
 	// with ", " by the caller (cookies with "; ").
 	Headers map[string]string
+	// CredentialClass is the credential class of a request whose credential was taken out before it
+	// got here (a corpus-only sample, DESIGN.md §19.6 T4): CredentialHeader or CredentialQuery, "" for
+	// none. Read only when the request itself carries no credential (credentialClass reads
+	// CredentialNone); then the case's class and its signature are exactly those of the same request
+	// carrying a real credential of that class, so the corpus groups the two. Any other value is
+	// ErrCredentialClass.
+	CredentialClass string
+}
+
+// ErrCredentialClass is a Request.CredentialClass that is neither "", CredentialHeader nor
+// CredentialQuery.
+var ErrCredentialClass = errors.New("evalcorpus: credential class override must be header or query")
+
+// HasCredential reports whether req still carries anything Capture reads as a credential or strips as
+// one: an Authorization or SampleCredentialHeader header (present, even empty), a `token` query
+// credential or a session cookie (credentialClass), or a query pair named like a credential
+// (stripQuery). A caller that promises a request was stripped (a corpus-only sample) refuses one for
+// which this is true: the one rule for what a credential is lives here.
+func HasCredential(req Request) bool {
+	h := lowerHeaders(req.Headers)
+	if _, ok := h["authorization"]; ok {
+		return true
+	}
+	if _, ok := h[SampleCredentialHeader]; ok {
+		return true
+	}
+	if credentialClass(h, req.Query) != CredentialNone {
+		return true
+	}
+	_, dropped := stripQuery(req.Query)
+	return dropped
 }
 
 // Viewer is who made the request, as the caller resolved it from the session. The identity fields
@@ -178,6 +209,16 @@ func Capture(req Request, v Viewer, env Env, extra Extra) (*Case, error) {
 		Headers:    keptHeaderValues(headers),
 		Credential: credentialClass(headers, req.Query),
 	}
+	overridden := false
+	switch req.CredentialClass {
+	case "":
+	case CredentialHeader, CredentialQuery:
+		if c.Credential == CredentialNone {
+			c.Credential, overridden = req.CredentialClass, true
+		}
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrCredentialClass, req.CredentialClass)
+	}
 	self := selfMatcher{viewer: v}
 	var input map[string]any
 	if rules.rest {
@@ -186,6 +227,11 @@ func Capture(req Request, v Viewer, env Env, extra Extra) (*Case, error) {
 		input = inputShape
 		if id != "" {
 			input["$id"] = id
+		}
+		// A real query credential is a `token` pair, which restShape records as $credential-param:
+		// the override records it too, so the two sign alike.
+		if overridden && c.Credential == CredentialQuery {
+			input["$credential-param"] = "present"
 		}
 	} else {
 		stored, inputShape := trpcShape(req.Input, &self, rules)

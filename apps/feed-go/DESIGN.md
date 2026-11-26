@@ -2911,7 +2911,8 @@ One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeed
 in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent,
 unless the Node app runs with `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true` (default off): then an
 `[id]` request's Authorization credential is sent described, never forwarded (§16.10). The list
-never samples one.
+never samples one. With `FEED_GO_SHADOW_CORPUS_ONLY_RATE` above 0 (default off), a fraction of the
+`[id]` ones still skipped is sent for the eval capture only, the credential taken out (§19.6 T4).
 The list route does not sample a signed-in caller: feed-go answers every one with a fallback
 (`v1-models-session`). A text `query` is sampled only with `FEED_GO_SHADOW_V1_MODELS_QUERY=true` on the
 Node app (default off; the sampler decides, `beginRest`); an empty `query` is no text query, to the
@@ -3826,7 +3827,7 @@ call; a capture row says only whether the client was signed in, so the viewer is
 
 ### 19.6 Capture (`FEED_GO_EVAL_CAPTURE`, default off)
 
-Off, no tap does anything (no writer is started, no context value is added). On, three taps hand
+Off, no tap does anything (no writer is started, no context value is added). On, four taps hand
 each request they see to one entry point, `evalcapture.Recorder.Record`, which strips it
 (`evalcorpus.Capture`, §19.3), signs it, applies the admission limits below, and queues a `samples`
 row and, when admitted, a `cases` row to two `internal/chwrite` writers (one per table; the database
@@ -3836,15 +3837,16 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
 
 | tap | source | where | Node's answer | weight |
 |---|---|---|---|---|
-| T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate`, else 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (the Node sampler's configured rate; 0 when unset: unknown). No sampler sends `sampleRate` yet (TODO: C4) |
+| T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate` (the Node sampler's effective rate, below); when absent (an older sampler) or outside (0, 1], 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (its configured rate; 0 when unset: unknown) |
 | T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
 | T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
+| T4 | `corpus-only` | the `v1-models-id` shadow handler, for a sample marked `corpusOnly` (below); never computed or compared | none; the result is `corpus-only` | 1 / the sample's `sampleRate`; 0 when absent or outside (0, 1] (the shadow's configured rate is not its rate) |
 
 - **Viewer.** The one the computation resolved, read through `auth.WithResolveObserver` (no extra
   store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
   the sample's goroutine; T3 on one of `DefaultEvalCaptureWorkers` = 2 capture workers, after the
   answer, a full pool or shutdown dropping it), with credentials redacted, so an API key is never
-  looked up here: such a request is dropped (an API-key tap is a later change). The hidden
+  looked up here: such a request is dropped (T4 is how credentialed requests reach the corpus). The hidden
   preferences and the viewer's collections cost a read and are not known here: `hiddenPrefs` is
   always false and a `collectionId` input is stored as sent.
 - **Node's answer** (`node_body`, `node_headers`) is stored only for a request with no session user
@@ -3854,28 +3856,71 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   (forever when pinned), so a non-empty `query` (model.getAll's free-text search) is stored as
   `$search` (`evalcapture.SearchPlaceholder`); the shape keeps its class, so the signature does not
   change, and the replay supplies a search text of its own. No table stores the text.
-- **Weight caveat.** `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` is the Node sampler's configured rate, an
-  upper bound on its effective rate (its per-second and in-flight limits drop samples), so a weight
-  derived from it is a lower bound until the samples carry their own rate.
+- **`sampleRate`.** The Node sampler sends it with every sample (tRPC, REST, corpus-only): the
+  configured probability the request was selected with (`FEED_GO_SHADOW_SAMPLE_RATE`; for T4 times
+  `FEED_GO_SHADOW_CORPUS_ONLY_RATE`) times the share of that endpoint's in-flight / per-second bound
+  checks that passed over the current and previous 60 s window (`SAMPLE_RATE_WINDOW_MS`), or the
+  configured probability alone while they hold fewer than 20 checks. Per process, so a pod's share
+  stands for every pod's. **Caveat:** the share is of checks, not of selections: a REST sample skipped
+  before its check (a non-200, nothing captured) is not counted, so the weight assumes those skips do
+  not depend on load; and the window lags a burst by up to 2 minutes. The env fallback is the
+  configured rate, an upper bound on the effective one, so a weight derived from it is a lower bound.
 - **Admission** (per pod, per UTC day, reset at midnight): K = 3 cases per (endpoint, signature,
-  outcome class: match / mismatch / served / handback / error); a mismatch also needs one of its diff
+  outcome class: match / mismatch / served / handback / corpus-only / error); a mismatch also needs one of its diff
   categories (`none` when it has none) under 20 cases per (endpoint, category); at most 20 000 cases
   per endpoint; an identical case (same id) once. Every capture writes its sample row (case_id 0 when
   not admitted), so the samples weigh the traffic and the cases stay a few per shape.
 - **Outcomes.** `feed_go_eval_capture_total{feed_endpoint,source,outcome}`: `written` (admitted:
   both rows queued), `deduped` (sample row queued, not admitted), `dropped` (a row refused by a full or
   closed writer queue, a T3 capture with every worker busy, a viewer that could not be resolved, or a
-  request that built no case). Seeded at 0 for the endpoints each source captures (shadow and serve:
-  the four first-wave endpoints; serve-parity: the three tRPC ones). It counts rows queued; a row the
+  request that built no case), and for corpus-only only `refused` (below). Seeded at 0 for the
+  endpoints each source captures (shadow and serve: the four first-wave endpoints; serve-parity: the
+  three tRPC ones; corpus-only: `v1-models-id`, `refused` included). It counts rows queued; a row the
   writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
   `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
   logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
   only once it is queued: a sample never carries the id of a case that was not.
 - **Never blocks.** T1 and T2 run on their sample's or replay's goroutine; T3 copies what it needs
-  and returns; `Record` only queues (`chwrite.Writer.Add` never waits; a full queue drops the row).
+  and returns; T4 runs in the shadow handler before its answer (it resolves nothing and `Record` only
+  queues), holding the sample's queue slot and shutdown registration as a sample does; `Record` only
+  queues (`chwrite.Writer.Add` never waits; a full queue drops the row).
   At shutdown the writers flush after the taps have stopped.
 - **Timestamps** are RFC 3339 UTC with milliseconds; the writers send `date_time_input_format=
   best_effort`, so they are read with their zone whatever the server's.
+
+**T4: corpus-only samples (`FEED_GO_SHADOW_CORPUS_ONLY_RATE`, Node, default 0: off).** T1 never
+holds a credentialed REST request (the sampler counts it `skipped_credential`: Node's answer can echo
+the key). With the switch above 0, that fraction of the sampled `/api/v1/models/[id]` requests carrying
+exactly one API credential (an Authorization header, or a non-empty `token`; both at once stay
+`skipped_credential`) is posted to the `[id]` compare path instead, at once and whatever Node answers,
+under the same in-flight cap and per-second bucket, counted `corpus_only` on a 2xx. `v1-models-id` is
+the only first-wave REST endpoint, so the only one sent. A header credential that
+`FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` already mirrors as a described sample stays one.
+
+- **Sent:** `{corpusOnly: true, credential: "header" | "query", sampleRate, input, path, headers}`;
+  `input` is the raw query string less every pair named like a credential (`token` in any case or
+  escape) or holding the key's text, `headers` only `host`, `cf-ipcountry`, `cf-region-code`,
+  `x-isuk`, `x-civitai-verified-bot`. **Never sent:** the key in any form (a body that would still
+  hold it is not sent), Authorization, `x-feed-go-credential`, any cookie (the session cookie
+  included), `node`, `responseHeaders`.
+- **Refused here** (400, `feed_go_eval_capture_total{source="corpus-only",outcome="refused"}`, never
+  recorded): a sample still carrying a credential (`evalcorpus.HasCredential`: an `authorization` or
+  `x-feed-go-credential` header, even empty, a session cookie, a `token` or credential-named query
+  pair, by the same rules the strip uses), a `credential` that is not exactly `header` or `query`, or
+  any of Node's answer (`node`, `responseHeaders`, `upstream`). With the capture off, or on another
+  endpoint: 202, discarded.
+- **Recorded** with source `corpus-only`, result `corpus-only`, no Node answer, the viewer signed out
+  (or a verified crawler; nothing is resolved: no cookie, no credential), and the class on the request
+  (`evalcorpus.Request.CredentialClass`): the case's `credential` is `header` / `query`, and its
+  signature is exactly that of the same request carrying a real credential of that class (a `query`
+  class also records `$credential-param`), so the corpus groups the two and the replay uses the API-key
+  account. Lost by the strip, so these sign unlike the real request: a credential-named pair beside a
+  header credential, a session cookie beside either, and an ordinary pair dropped because its value
+  holds the key's text (the real request's shape has that `q:` key; the stripped one does not). Node
+  reads a pair as URLSearchParams does (escape by escape) when it looks for the key.
+- **Deploy order:** feed-go first, then the Node switch. A feed-go without T4 reads a corpus-only
+  sample as one with no `node` (`bad_request`, 400: Node counts it `rejected`), so nothing is stored,
+  but every one is a counted bad request.
 
 **Insert once (the `cases` pin contract).** `cases` is a ReplacingMergeTree versioned by
 `last_seen`: of the rows of one `(endpoint, case_id)`, the newest `last_seen` wins. The harness pins

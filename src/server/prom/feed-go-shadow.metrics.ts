@@ -43,6 +43,10 @@ export const FEED_GO_SHADOW_OUTCOMES = [
   // response can echo it (`metadata.nextPage` keeps `?token=`), and feed-go falls back on any
   // credential anyway. Counted so that share of the traffic is still visible.
   'skipped_credential',
+  // A corpus-only sample (FEED_GO_SHADOW_CORPUS_ONLY_RATE; v1-models-id only): a credentialed
+  // request posted with the credential taken out, for feed-go's eval capture only, and feed-go
+  // answered 2xx. Its other ends are the shared outcomes above (dropped_*, rejected, timeout, error).
+  'corpus_only',
 ] as const;
 
 export type FeedGoShadowOutcome = (typeof FEED_GO_SHADOW_OUTCOMES)[number];

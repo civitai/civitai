@@ -121,8 +121,8 @@ type Metrics struct {
 	// `v1-models-query` fallback too, which alone would not tell it from the switch being off.
 	SearchRejected *prometheus.CounterVec
 	// EvalCapture counts the eval capture's taps by outcome (feed_go_eval_capture_total: endpoint,
-	// source: evalcapture.Sources, outcome: evalcapture.Outcomes; evalcapture.go). Seeded per source
-	// for the endpoints it captures.
+	// source: evalcapture.Sources, outcome: evalcapture.Outcomes, and evalcapture.OutcomeRefused for
+	// corpus-only; evalcapture.go). Seeded per source for the endpoints it captures.
 	EvalCapture *prometheus.CounterVec
 	// EvalCaptureRowsDropped counts the eval capture's rows its writers dropped, by table (samples |
 	// cases) and chwrite reason (feed_go_eval_capture_rows_dropped_total): a batch ClickHouse refused

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"runtime/debug"
@@ -29,11 +31,14 @@ import (
 //     answer.
 //   - T3, source serve: a FEED_GO_EVAL_CAPTURE_SERVE_RATE fraction of the public requests of a
 //     first-wave endpoint, after the answer was served or handed back (no Node answer).
+//   - T4, source corpus-only: a Node corpus-only sample (a credentialed request with the credential
+//     taken out by Node, its class kept), in the shadow handler, never compared (captureCorpusOnly).
 //
 // The viewer is the one the computation resolved (auth.WithResolveObserver: no extra store read). A
 // request whose computation never resolved one (an early hand-back) is resolved in the background
 // (T1 on the sample's own goroutine; T3 on an eval-capture worker), with credentials redacted, so an
-// API key is never looked up for it: such a request is dropped (an API-key tap is a later change).
+// API key is never looked up for it: such a request is dropped; T4 is how credentialed requests reach
+// the corpus.
 
 // DefaultEvalCaptureWorkers bounds the T3 captures in flight per pod (EvalCapture.Queue's capacity).
 const DefaultEvalCaptureWorkers = 2
@@ -50,9 +55,9 @@ type EvalRecorder interface {
 type EvalCapture struct {
 	Recorder EvalRecorder
 	// ShadowRate is FEED_GO_EVAL_CAPTURE_SHADOW_RATE: the Node shadow sampler's configured rate, read
-	// for a T1 sample's weight when the sample does not carry its effective rate
-	// (ShadowRequest.SampleRate). 0: the weight is 0 (unknown).
-	// TODO(C4): drop once the Node sampler sends sampleRate with every sample.
+	// for a T1 sample's weight when the sample does not carry a usable effective rate
+	// (ShadowRequest.SampleRate absent, i.e. from a sampler older than it, or outside (0, 1]).
+	// 0: the weight is 0 (unknown). Not read for T4 (its rate is not the shadow's).
 	ShadowRate float64
 	// ServeRate is FEED_GO_EVAL_CAPTURE_SERVE_RATE (default 0: T3 off): the fraction of public
 	// first-wave requests captured.
@@ -72,6 +77,9 @@ func (m *Metrics) seedEvalCapture() {
 			for _, o := range evalcapture.Outcomes {
 				m.EvalCapture.WithLabelValues(e, source, o)
 			}
+			if source == evalcapture.SourceCorpusOnly {
+				m.EvalCapture.WithLabelValues(e, source, evalcapture.OutcomeRefused)
+			}
 		}
 	}
 	for _, table := range []string{evalcapture.SamplesTable, evalcapture.CasesTable} {
@@ -87,8 +95,12 @@ var EvalCaptureDropReasons = []string{chwrite.ReasonQueueFull, chwrite.ReasonMar
 	chwrite.ReasonHTTPOther, chwrite.ReasonHTTP5xx, chwrite.ReasonTransport, chwrite.ReasonShutdown}
 
 // evalCaptureEndpoints are the endpoints a source captures: every first-wave endpoint (all are shadowed
-// and have public routes), less the ones serve-parity does not replay.
+// and have public routes), less the ones serve-parity does not replay; corpus-only only
+// v1-models-id (the one first-wave endpoint the Node sampler sends corpus-only samples of).
 func evalCaptureEndpoints(source string) []string {
+	if source == evalcapture.SourceCorpusOnly {
+		return []string{EndpointV1ModelsID}
+	}
 	var out []string
 	for _, e := range evalcorpus.Endpoints {
 		if source == evalcapture.SourceServeParity && !isParityEndpoint(e) {
@@ -174,6 +186,15 @@ func (s *Server) recordEval(endpoint string, sample evalcapture.Sample) {
 	}
 }
 
+// sampleRateOr is a sample's own rate when it is a probability a sampler could have used, (0, 1];
+// else fallback (absent: an older sampler; out of range: not trusted).
+func sampleRateOr(rate, fallback float64) float64 {
+	if rate > 0 && rate <= 1 {
+		return rate
+	}
+	return fallback
+}
+
 // rateWeight is 1/rate, 0 when the rate is unknown.
 func rateWeight(rate float64) float64 {
 	if rate > 0 {
@@ -193,18 +214,58 @@ func (s *Server) captureShadow(ctx context.Context, endpoint string, req ShadowR
 	if !seen && s.Resolver != nil {
 		u, err = s.Resolver.Resolve(ctx, r)
 	}
-	rate := req.SampleRate
-	if rate <= 0 {
-		rate = s.EvalCapture.ShadowRate
-	}
 	s.recordEval(endpoint, evalcapture.Sample{
 		Source:  evalcapture.SourceShadow,
 		Request: evalRequest(endpoint, r.URL, r.Header, r.Host),
 		Viewer:  evalViewer(u, verifiedCrawler(r)), ViewerKnown: err == nil,
-		Weight:     rateWeight(rate),
+		Weight:     rateWeight(sampleRateOr(req.SampleRate, s.EvalCapture.ShadowRate)),
 		ProdResult: out.result, FallbackReason: out.reason, DiffCategories: out.categories, HeaderResult: out.header,
 		NodeBody: req.Node, NodeHeaders: req.ResponseHeaders,
 	})
+}
+
+// captureCorpusOnly is T4: a corpus-only sample of endpoint (ShadowRequest.CorpusOnly), recorded
+// with its credential class and never compared. It returns the status the shadow handler answers:
+//
+//   - 202, discarded, with the capture off or an endpoint it does not capture (not counted);
+//   - 400, refused (counted evalcapture.OutcomeRefused, never recorded), when the sample still
+//     carries a credential (evalcorpus.HasCredential: an Authorization or credential header, a
+//     session cookie, a `token` or credential-named query pair), its credential class is not exactly
+//     header or query, or it carries any of Node's answer (node, responseHeaders, upstream);
+//   - 202, recorded otherwise: source corpus-only, weight 1 / its sampleRate (0 when absent or out of
+//     range: the shadow's configured rate is not this sample's), result corpus-only, no Node answer,
+//     the viewer signed out (or a verified crawler): it carries no cookie and no credential.
+func (s *Server) captureCorpusOnly(ctx context.Context, endpoint string, req ShadowRequest) int {
+	if !s.EvalCapture.on() || !evalcapture.Supported(endpoint) || endpoint != EndpointV1ModelsID {
+		return http.StatusAccepted
+	}
+	creq := evalcorpus.Request{Endpoint: endpoint, Path: req.Path, Query: req.Input, Headers: req.Headers}
+	if (req.Credential != evalcorpus.CredentialHeader && req.Credential != evalcorpus.CredentialQuery) ||
+		carriesJSON(req.Node) || len(req.ResponseHeaders) > 0 || carriesJSON(req.Upstream) || evalcorpus.HasCredential(creq) {
+		s.Metrics.EvalCapture.WithLabelValues(endpoint, evalcapture.SourceCorpusOnly, evalcapture.OutcomeRefused).Inc()
+		return http.StatusBadRequest
+	}
+	creq.CredentialClass = req.Credential
+	// The verified-crawler header is read as a sample's is (verifiedCrawler: the app's own decision).
+	h := http.Header{}
+	for k, v := range req.Headers {
+		h.Set(k, v)
+	}
+	crawler := verifiedCrawler((&http.Request{Header: h}).WithContext(withSampled(ctx)))
+	s.recordEval(endpoint, evalcapture.Sample{
+		Source:  evalcapture.SourceCorpusOnly,
+		Request: creq,
+		Viewer:  evalViewer(nil, crawler), ViewerKnown: true,
+		Weight:     rateWeight(sampleRateOr(req.SampleRate, 0)),
+		ProdResult: evalcapture.ResultCorpusOnly,
+	})
+	return http.StatusAccepted
+}
+
+// carriesJSON reports whether a sample's raw JSON member holds a value (absent and null do not).
+func carriesJSON(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && !bytes.Equal(t, []byte("null"))
 }
 
 // captureParity is T2: a compared serve-parity replay, with Node's answer.
