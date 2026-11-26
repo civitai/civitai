@@ -76,6 +76,15 @@ export const backfillSchema = z
     selector: z.enum(['attributed', 'unattributed', 'all']).optional(),
   })
   .superRefine((input, ctx) => {
+    // A list is honoured only by a profanity unlock write; anywhere else it would be ignored.
+    const listWrite =
+      input.bucket === 'profanity-locks' && input.action === 'unlock' && !input.dryRun;
+    if (input.ids && !listWrite)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ids'],
+        message: 'ids are taken only by a profanity-locks unlock write',
+      });
     if (input.bucket !== 'profanity-locks') return;
     if (input.action === 'revert' && !input.selector)
       ctx.addIssue({
@@ -730,6 +739,12 @@ export async function runBackfill(
   const listed = profanity && action === 'unlock' && !dryRun ? input.ids : undefined;
   if (profanity && action === 'unlock' && !dryRun && !listed?.length)
     throw new Error('a profanity-locks unlock write must list the ids it may unlock');
+  if (input.ids && !listed) throw new Error('ids are taken only by a profanity-locks unlock write');
+  if (
+    listed &&
+    (listed.length > PROFANITY_BATCH_LIMIT || !listed.every((id) => Number.isInteger(id) && id > 0))
+  )
+    throw new Error(`a listed write takes at most ${PROFANITY_BATCH_LIMIT} positive integer ids`);
   const selector: Selector | undefined =
     !profanity || input.selector === 'all'
       ? undefined

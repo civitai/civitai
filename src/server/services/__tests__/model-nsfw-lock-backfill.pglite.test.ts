@@ -1226,8 +1226,19 @@ describe('model nsfw lock backfill: profanity locks', () => {
       );
       expect(result.changed).toEqual([UNATTRIBUTED]);
       expect(result.listed).toEqual({ count: 2, unlocked: 1, droppedByFreshCheck: [UNMARKED] });
-      // Selectable, but not on the list: untouched.
-      expect(await row(MODERATOR_LOCK_OLD_MATCHES)).toEqual(before);
+      // A repeated id is one id.
+      const again = await runBackfill(
+        backfillSchema.parse({
+          bucket: PROFANITY,
+          selector: 'unattributed',
+          dryRun: false,
+          ids: [MODERATOR_LOCK_OLD_MATCHES, MODERATOR_LOCK_OLD_MATCHES],
+        }),
+        effects
+      );
+      expect(again.listed).toEqual({ count: 1, unlocked: 1, droppedByFreshCheck: [] });
+      // Selectable, but not on the list: untouched (until the second call lists it).
+      expect(before.lockedProperties).toEqual(['nsfw']);
       expect((await row(UNMARKED)).lockedProperties).toEqual(['nsfw']);
     });
 
@@ -1251,6 +1262,30 @@ describe('model nsfw lock backfill: profanity locks', () => {
         )
       ).rejects.toThrow('must list the ids');
       expect(await row(UNATTRIBUTED)).toEqual(before);
+      expect(scanModelText).not.toHaveBeenCalled();
+    });
+
+    it('refuses ids anywhere a list would be ignored, and a list past the cap', async () => {
+      for (const input of [
+        { bucket: SCAN, dryRun: false, ids: [ELIGIBLE] },
+        { bucket: PROFANITY, action: 'revert', selector: 'all', dryRun: false, ids: [UNMARKED] },
+        { bucket: PROFANITY, ids: [UNMARKED] },
+      ])
+        expect(backfillSchema.safeParse(input).success).toBe(false);
+      const before = await row(ELIGIBLE);
+      const unchecked = (fields: object) =>
+        runBackfill({ limit: 200, afterId: 0, action: 'unlock', ...fields } as never, effects);
+      await expect(unchecked({ bucket: SCAN, dryRun: false, ids: [ELIGIBLE] })).rejects.toThrow(
+        'ids are taken only'
+      );
+      expect(await row(ELIGIBLE)).toEqual(before);
+      const tooMany = Array.from({ length: 201 }, (_, i) => i + 1);
+      await expect(
+        unchecked({ bucket: PROFANITY, selector: 'unattributed', dryRun: false, ids: tooMany })
+      ).rejects.toThrow('at most 200');
+      await expect(
+        unchecked({ bucket: PROFANITY, selector: 'unattributed', dryRun: false, ids: [-1] })
+      ).rejects.toThrow('positive integer');
       expect(scanModelText).not.toHaveBeenCalled();
     });
 
