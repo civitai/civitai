@@ -54,6 +54,7 @@ import {
   upsertArticle,
 } from '~/server/services/article.service';
 import { articlesSearchIndex } from '~/server/search-index';
+import { expandBlurbs } from '~/server/services/blurb-materialize.service';
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -515,5 +516,27 @@ describe('a save from the edit form with a body image listed on a report', () =>
       expect(deletedConnections()).toEqual([LISTED.id, SHOWN.id]);
       expect(queuedIds()).toEqual([SHOWN.id]);
     });
+  });
+});
+
+describe('a new article', () => {
+  it('🔴 stores the body the server expanded, which is the one it checked', async () => {
+    vi.mocked(expandBlurbs).mockResolvedValueOnce({
+      evaluated: true,
+      html: '<p>expanded</p>',
+      uses: [],
+    } as never);
+    dbMock.dbWrite.article.create.mockResolvedValue({ ...storedArticle, id: 99 } as never);
+    await upsertArticle({
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>as sent</p>',
+      status: 'Draft',
+    } as never).catch(() => undefined);
+    expect(dbMock.dbWrite.article.create).toHaveBeenCalled();
+    const [{ data }] = dbMock.dbWrite.article.create.mock.calls[0] as [
+      { data: { content: string } }
+    ];
+    expect(data.content).toBe('<p>expanded</p>');
   });
 });

@@ -1245,6 +1245,8 @@ export const upsertArticle = async ({
       restrictToBlurbIds,
     });
     data.content = expansion.html;
+    // What is checked below, written and scanned.
+    const body = expansion.html;
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
@@ -1349,7 +1351,7 @@ export const upsertArticle = async ({
         const article = await tx.article.create({
           data: {
             ...data,
-            content: sent,
+            content: body,
             publishedAt,
             scheduledAt: scheduledAtWrite,
             coverId,
