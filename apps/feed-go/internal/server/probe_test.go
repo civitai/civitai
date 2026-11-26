@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -128,7 +129,7 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
 	sr := goldenShadowRequest(fx, env.headers)
-	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: sr.Input, Path: sr.Path, Headers: sr.Headers}, rec)
+	_, err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: sr.Input, Path: sr.Path, Headers: sr.Headers}, rec)
 	result, missed := classifyProbe(err, rec.Misses(), rec.Raced(), checker.MissReason)
 	return result, missed, err
 }
@@ -618,8 +619,21 @@ func probeBody(t *testing.T, fx *goldenFixture, headers map[string]string, start
 	return strings.NewReader(string(b))
 }
 
+// goFirst is a series' value. On feed_go_gofirst_total, labels that name no viewer read the sum over
+// every viewer of the endpoint (GoFirstViewers): the probe's count whatever its viewer class.
 func goFirst(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) float64 {
 	t.Helper()
+	if _, ok := labels["viewer"]; name == "feed_go_gofirst_total" && !ok {
+		sum := 0.0
+		for _, viewer := range GoFirstViewers(labels[EndpointLabel]) {
+			withViewer := map[string]string{"viewer": viewer}
+			for k, v := range labels {
+				withViewer[k] = v
+			}
+			sum += goFirst(t, reg, name, withViewer)
+		}
+		return sum
+	}
 	v, _ := metricValue(t, reg, name, labels)
 	return v
 }
@@ -752,7 +766,7 @@ func TestProbeModelGetAllComputedFrameMiss(t *testing.T) {
 		before := cacheState(env.cache)
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
-		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		_, err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, CacheModelFrames) {
 			t.Fatalf("compute %v: missed %v, want model-frames reported", withCompute, missed)
@@ -874,7 +888,7 @@ func TestProbeModelGetAllComputedShowcaseMiss(t *testing.T) {
 		before := cacheState(env.cache)
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
-		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		_, err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, "version-images") {
 			t.Fatalf("compute %v: missed %v (err %v), want version-images reported", withCompute, missed, err)
@@ -930,7 +944,7 @@ func TestProbeModelGetAllComputedDecorationMiss(t *testing.T) {
 		before := cacheState(env.cache)
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
-		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		_, err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, "model-decorations") {
 			t.Fatalf("compute %v: missed %v, want model-decorations reported", withCompute, missed)
@@ -1006,13 +1020,82 @@ func TestProbeHandlerRejectsAndDrops(t *testing.T) {
 	}
 }
 
+// A probe's go-first count lands under its request's viewer class (feedViewerClass, as the
+// endpoint's compute reports it), so the go-first share reads for signed-out viewers alone; a probe
+// that ends before its viewer is resolved (a bearer token falls back before the session is read)
+// lands under unknown. Each class is probed a different number of times, so a label swapped or
+// pinned to one value moves the counts.
+func TestProbeCountsGoFirstByViewer(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	probe := func(dir string, setup func(testing.TB, *goldenFixture) *goldenEnv, procedure, fixture string, times int) {
+		t.Helper()
+		fx := goldenLoad(t, filepath.Join(goldenDir, dir, fixture+".json"))
+		env := setup(t, fx)
+		env.server.Metrics = m
+		env.server.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		for range times {
+			env.server.probe(context.Background(), probes[procedure], ProbeRequest{Input: fx.Request.Input, Headers: env.headers})
+		}
+	}
+	probe("as-posts", goldenSetup, Procedure, "version-signed-out-most-reactions", 1)
+	probe("as-posts", goldenSetup, Procedure, "version-signed-in-blue-newest", 2)
+	probe("as-posts", goldenSetup, Procedure, "fallback-bearer-token", 3)
+	probe("infinite", goldenSetup, ProcedureInfinite, "global-moderator-oldest", 4)
+	probe("model-getall", goldenSetupModels, ProcedureModelGetAll, "base-models-multi-signed-in", 5)
+
+	want := map[string]map[string]float64{
+		EndpointAsPosts:     {FeedViewerAnon: 1, FeedViewerUser: 2, GoFirstViewerUnknown: 3},
+		EndpointInfinite:    {FeedViewerModerator: 4},
+		EndpointModelGetAll: {FeedViewerUser: 5},
+		EndpointV1Images:    {},
+	}
+	for e, byViewer := range want {
+		for _, v := range []string{"anon", "crawler", "banned", "user", "moderator", "unknown"} {
+			n := 0.0
+			for _, r := range []string{ProbeWouldServe, ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError} {
+				n += goFirst(t, reg, "feed_go_gofirst_total", map[string]string{"feed_endpoint": e, "result": r, "viewer": v})
+			}
+			if n != byViewer[v] {
+				t.Errorf("feed_go_gofirst_total{feed_endpoint=%q,viewer=%q} = %v, want %v", e, v, n, byViewer[v])
+			}
+		}
+	}
+}
+
+// Every go-first result starts at 0 under every viewer its endpoint reports (GoFirstViewers): the five
+// tRPC feed classes and unknown on the tRPC feeds, unknown alone on GET /api/v1/images.
+func TestGoFirstViewerSeriesAreSeeded(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	results := []string{"would_serve", "would_miss", "raced", "unsupported", "error"}
+	viewers := map[string][]string{
+		"as-posts":     {"anon", "crawler", "banned", "user", "moderator", "unknown"},
+		"infinite":     {"anon", "crawler", "banned", "user", "moderator", "unknown"},
+		"model-getall": {"anon", "crawler", "banned", "user", "moderator", "unknown"},
+		"v1-images":    {"unknown"},
+	}
+	if n, want := testutil.CollectAndCount(m.GoFirst), 3*5*6+5; n != want {
+		t.Fatalf("feed_go_gofirst_total has %d series at construction, want %d", n, want)
+	}
+	for e, vs := range viewers {
+		for _, r := range results {
+			for _, v := range vs {
+				if n, found := metricValue(t, reg, "feed_go_gofirst_total", map[string]string{"feed_endpoint": e, "result": r, "viewer": v}); !found || n != 0 {
+					t.Errorf("gofirst{%s,%s,%s} = %v found=%v, want a 0 series", e, r, v, n, found)
+				}
+			}
+		}
+	}
+}
+
 func TestProbeErrors(t *testing.T) {
 	env, fx, reg := probeEnv(t)
 	s := env.server
 	req := ProbeRequest{Input: fx.Request.Input, Headers: env.headers}
 
 	// A panic in the probe: error, and counted where=probe.
-	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) error {
+	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) (string, error) {
 		panic("probe boom")
 	}}, req)
 	if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeError)); n != 1 {
@@ -1023,8 +1106,8 @@ func TestProbeErrors(t *testing.T) {
 	}
 
 	// A fallback that is not a cache miss: unsupported, its reason under mode=probe.
-	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) error {
-		return fallback.New("input-sort")
+	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) (string, error) {
+		return "", fallback.New("input-sort")
 	}}, req)
 	if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeUnsupported)); n != 1 {
 		t.Errorf("unsupported = %v, want 1", n)
@@ -1036,9 +1119,9 @@ func TestProbeErrors(t *testing.T) {
 	// A hydrator with no presence check (never in production): error, nothing run.
 	ran := false
 	s.Deps.Hydrator = struct{ feed.Hydrator }{}
-	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) error {
+	s.probe(context.Background(), probeSpec{endpoint: EndpointAsPosts, run: func(*Server, context.Context, ProbeRequest, *hydrate.PresenceProbe) (string, error) {
 		ran = true
-		return nil
+		return "", nil
 	}}, req)
 	if ran || goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeError)) != 2 {
 		t.Errorf("no presence check: ran=%v error=%v, want not run and error 2", ran, goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeError)))

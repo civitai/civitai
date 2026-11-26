@@ -172,10 +172,37 @@ const maxProbeBody = 1 << 20
 
 // probeSpec is one procedure's probe: the feed_endpoint label it reports under, and how it resolves
 // the page ids and checks presence. run must resolve exactly what serving resolves and read only;
-// the recorder it is handed stands in for the page hydrator.
+// the recorder it is handed stands in for the page hydrator. run also returns the request's viewer
+// class (feedViewerClass, as the endpoint's compute reports it) once the viewer is resolved, and ""
+// when the probe ended before that (or the endpoint reports none): `viewer` on feed_go_gofirst_total,
+// GoFirstViewerUnknown for "".
 type probeSpec struct {
 	endpoint string
-	run      func(s *Server, ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error
+	run      func(s *Server, ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) (string, error)
+}
+
+// GoFirstViewerUnknown is the `viewer` of a go-first probe whose viewer class is not known: one that
+// ended before its viewer was resolved (a malformed probe, an input or request fallback taken before
+// the session is read, a session-cache miss), or a GET /api/v1/images probe (an endpoint that reports
+// no viewer class). Every other probe reports its class, one of FeedViewerClasses.
+const GoFirstViewerUnknown = "unknown"
+
+// GoFirstViewers is every `viewer` value of feed_go_gofirst_total an endpoint can report, in a fixed
+// order: FeedViewerClasses and GoFirstViewerUnknown on the tRPC feeds (FeedViewerEndpoints), only
+// GoFirstViewerUnknown on the others.
+func GoFirstViewers(endpoint string) []string {
+	if !isFeedViewerEndpoint(endpoint) {
+		return []string{GoFirstViewerUnknown}
+	}
+	return append(append([]string(nil), FeedViewerClasses...), GoFirstViewerUnknown)
+}
+
+// goFirstViewer is the `viewer` label of a probe's viewer class ("" = unknown).
+func goFirstViewer(class string) string {
+	if class == "" {
+		return GoFirstViewerUnknown
+	}
+	return class
 }
 
 // ProbeEndpoints are the feed_endpoint labels the registered probes report under.
@@ -201,52 +228,55 @@ var probes = map[string]probeSpec{
 // input, viewer and gates (prepare), the same feed.Serve over the same feed service and replica —
 // with the hydrator replaced by the presence recorder and the page-query cache read-only. Its answer
 // is discarded unserialized.
-func (s *Server) probeAsPosts(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+func (s *Server) probeAsPosts(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) (string, error) {
 	r, err := SyntheticRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
 	if err != nil {
-		return err
+		return "", err
 	}
-	freq, _, err := s.prepare(ctx, r)
+	freq, user, err := s.prepareViewer(ctx, r)
 	if err != nil {
-		return err
+		return "", err
 	}
+	viewer := feedViewerClass(user, false) // as compute reports it
 	_, err = feed.Serve(ctx, probeDeps(s.Deps, rec), freq)
-	return err
+	return viewer, err
 }
 
-// probeInfinite is probeAsPosts for image.getInfinite: computeInfinite's steps (prepareInfinite,
+// probeInfinite is probeAsPosts for image.getInfinite: computeInfinite's steps (prepareInfiniteViewer,
 // feed.ServeInfinite) over the same deps with the same two swaps.
-func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) (string, error) {
 	r, err := SyntheticInfiniteRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
 	if err != nil {
-		return err
+		return "", err
 	}
-	ireq, _, err := s.prepareInfinite(ctx, r)
+	ireq, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
 	if err != nil {
-		return err
+		return "", err
 	}
+	viewer := feedViewerClass(user, crawler) // as computeInfinite reports it
 	d := *s.Infinite
 	d.Deps = probeDeps(s.Infinite.Deps, rec)
 	_, err = feed.ServeInfinite(ctx, &d, ireq)
-	return err
+	return viewer, err
 }
 
 // probeModelGetAll runs model.getAll's serving path under hydrate.WithPresence(rec): misses Go
 // computes are recorded on rec and never looked up, except the version showcases (read on the
 // replica: a model without images is dropped); any other cache miss falls back, and its reason is the
 // presence answer. Replica reads are not counted.
-func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) (string, error) {
 	ctx = hydrate.WithPresence(ctx, rec)
 	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
 	if err != nil {
-		return err
+		return "", err
 	}
-	mreq, _, err := s.prepareModelGetAll(ctx, r)
+	mreq, user, err := s.prepareModelGetAllViewer(ctx, r)
 	if err != nil {
-		return err
+		return "", err
 	}
+	viewer := feedViewerClass(user, false) // as computeModelGetAll reports it
 	_, err = modelfeed.Serve(ctx, s.Models, mreq)
-	return err
+	return viewer, err
 }
 
 // probeV1Images runs `GET /api/v1/images`'s serving compute (v1ImagesCompute(true): the serve-only
@@ -254,16 +284,17 @@ func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hy
 // misses Go computes are recorded on rec and never looked up; any other cache miss falls back, and its
 // reason is the presence answer. The feed service is asked for the page as serving asks (marked as
 // shadow traffic), and the replica reads for misses Go answers from the replica (basic users,
-// thumbnails, the gallery hold's lookups) run and are not counted. Its answer is discarded.
-func (s *Server) probeV1Images(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+// thumbnails, the gallery hold's lookups) run and are not counted. Its answer is discarded. The
+// endpoint reports no viewer class (GoFirstViewerUnknown).
+func (s *Server) probeV1Images(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) (string, error) {
 	ctx = hydrate.WithPresence(ctx, rec)
 	r, err := SyntheticV1Request(ctx, ShadowRequest{Input: req.Input, Path: req.Path, Headers: req.Headers})
 	if err != nil {
-		return err
+		return "", err
 	}
 	c, err := s.v1ImagesCompute(true)(ctx, r)
 	c.release()
-	return err
+	return "", err
 }
 
 // probeDeps is d with the page hydrator replaced by rec and the query cache read-only.
@@ -345,7 +376,7 @@ func (s *Server) probeHandlerLabelled(w http.ResponseWriter, r *http.Request, sp
 	}
 	if err != nil {
 		<-s.ProbeQueue
-		s.Metrics.GoFirst.WithLabelValues(spec.endpoint, ProbeError).Inc()
+		s.Metrics.GoFirst.WithLabelValues(spec.endpoint, ProbeError, GoFirstViewerUnknown).Inc()
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -376,20 +407,25 @@ func (s *Server) probeHandlerLabelled(w http.ResponseWriter, r *http.Request, sp
 func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 	checker, ok := s.Deps.Hydrator.(hydrate.PresenceChecker)
 	if !ok {
-		s.Metrics.GoFirst.WithLabelValues(spec.endpoint, ProbeError).Inc()
+		s.Metrics.GoFirst.WithLabelValues(spec.endpoint, ProbeError, GoFirstViewerUnknown).Inc()
 		s.Log.Error("go-first probe", "endpoint", spec.endpoint, "err", errNoPresence)
 		return
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker, RacedSince: racedSince(req.StartedAt)}
 	// The sample's credential is the sampler's placeholder, never a key (auth.WithRedactedCredentials).
-	err := s.within(auth.WithRedactedCredentials(ctx), "probe", func(ctx context.Context) error { return spec.run(s, ctx, req, rec) })
+	viewer := ""
+	err := s.within(auth.WithRedactedCredentials(ctx), "probe", func(ctx context.Context) error {
+		var err error
+		viewer, err = spec.run(s, ctx, req, rec)
+		return err
+	})
 	first, pages := rec.FirstCheck()
 	if pages > 0 {
 		observeLag(s.Metrics.GoFirstCheckLag, spec.endpoint, first, req.StartedAt)
 	}
 	raced := rec.Raced()
 	result, missed := classifyProbe(err, rec.Misses(), raced, checker.MissReason)
-	s.Metrics.GoFirst.WithLabelValues(spec.endpoint, result).Inc()
+	s.Metrics.GoFirst.WithLabelValues(spec.endpoint, result, goFirstViewer(viewer)).Inc()
 	for _, c := range missed {
 		s.Metrics.GoFirstMiss.WithLabelValues(spec.endpoint, c).Inc()
 	}

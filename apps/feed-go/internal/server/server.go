@@ -445,20 +445,11 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 	return out, nil
 }
 
-// prepareInfinite is computeInfinite up to the handler call, and whether createContext makes the
-// answer edge-cacheable (no session user at all, and no verified crawler); the Go-first probe runs
-// the same steps. A verified crawler (verifiedCrawler) counts as signed in for the domain cap where
-// NSFW is viewable (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
-func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
-	req, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
-	if err != nil {
-		return feed.InfiniteRequest{}, false, err
-	}
-	return req, user == nil && !crawler, nil
-}
-
-// prepareInfiniteViewer is prepareInfinite with the session user it resolved (nil: none) and whether
-// the request is a verified crawler's, instead of the cacheable verdict the two make.
+// prepareInfiniteViewer is computeInfinite up to the handler call, with the session user it resolved
+// (nil: none) and whether the request is a verified crawler's (createContext makes the answer
+// edge-cacheable with neither); the Go-first probe runs the same steps. A verified crawler
+// (verifiedCrawler) counts as signed in for the domain cap where NSFW is viewable
+// (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
 func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (feed.InfiniteRequest, *auth.SessionUser, bool, error) {
 	if s.Infinite == nil {
 		return feed.InfiniteRequest{}, nil, false, fallback.New("infinite-unconfigured")
@@ -534,14 +525,8 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	return out, nil
 }
 
-// prepareModelGetAll is computeModelGetAll up to the handler call, and whether there is no session
-// user at all; the Go-first probe runs the same steps.
-func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, bool, error) {
-	req, user, err := s.prepareModelGetAllViewer(ctx, r)
-	return req, user == nil, err
-}
-
-// prepareModelGetAllViewer is prepareModelGetAll with the session user it resolved (nil: none).
+// prepareModelGetAllViewer is computeModelGetAll up to the handler call, with the session user it
+// resolved (nil: none); the Go-first probe runs the same steps.
 func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) (modelfeed.Request, *auth.SessionUser, error) {
 	if s.Models == nil {
 		return modelfeed.Request{}, nil, fallback.New("model-getall-unconfigured")

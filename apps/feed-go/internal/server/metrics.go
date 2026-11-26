@@ -70,7 +70,7 @@ type Metrics struct {
 	ShadowPhaseSoloWall *prometheus.CounterVec
 
 	// The Go-first probe (probe.go, DESIGN.md "Go-first probe").
-	GoFirst        *prometheus.CounterVec // endpoint, result: would_serve | would_miss | raced | unsupported | error
+	GoFirst        *prometheus.CounterVec // endpoint, result: would_serve | would_miss | raced | unsupported | error; viewer: GoFirstViewers
 	GoFirstMiss    *prometheus.CounterVec // endpoint, cache: probes in which that cache missed an id
 	GoFirstDropped *prometheus.CounterVec // endpoint: probes dropped (queue full, shutting down)
 	GoFirstRaced   *prometheus.CounterVec // endpoint, cache: probes in which that cache had a raced entry
@@ -208,8 +208,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "phase", "outcome"}),
 		GoFirst: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_total",
-			Help: "Go-first probes by result: would_serve, would_miss (a cache Go falls back on missed), raced (an entry of a cache Go falls back on, filled after the request began), unsupported (another fallback), error.",
-		}, []string{EndpointLabel, "result"}),
+			Help: "Go-first probes by result: would_serve, would_miss (a cache Go falls back on missed), raced (an entry of a cache Go falls back on, filled after the request began), unsupported (another fallback), error; and viewer class (anon, crawler, banned, user, moderator; unknown: the probe ended before its viewer was resolved, or the endpoint reports none).",
+		}, []string{EndpointLabel, "result", "viewer"}),
 		GoFirstMiss: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_miss_total",
 			Help: "Go-first probes in which the cache missed at least one id, by cache (whatever the probe's result).",
@@ -331,7 +331,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for _, e := range ProbeEndpoints {
 		for _, r := range []string{ProbeWouldServe, ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError} {
-			m.GoFirst.WithLabelValues(e, r)
+			for _, v := range GoFirstViewers(e) {
+				m.GoFirst.WithLabelValues(e, r, v)
+			}
 		}
 		for _, c := range probeCaches() {
 			m.GoFirstMiss.WithLabelValues(e, c)
