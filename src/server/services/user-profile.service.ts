@@ -347,7 +347,10 @@ export const assertShowcaseItemsOwned = async ({
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
   const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
     imageIds.length
-      ? dbWrite.image.findMany({ where: { id: { in: imageIds }, userId }, select: { id: true } })
+      ? dbWrite.image.findMany({
+          where: { id: { in: imageIds }, userId },
+          select: { id: true, ingestion: true, blockedFor: true },
+        })
       : [],
     modelIds.length
       ? dbWrite.model.findMany({ where: { id: { in: modelIds }, userId }, select: { id: true } })
@@ -366,6 +369,8 @@ export const assertShowcaseItemsOwned = async ({
     ownedArticles.length !== articleIds.length
   )
     throw throwAuthorizationError('You can only add your own content to your showcase');
+  if (ownedImages.some((image) => !ownerMediaAllowed(image)))
+    throw throwBadRequestError('A blocked image cannot be added to your showcase');
   await assertNotDealFileImages(imageIds, 'used here');
 };
 
@@ -588,7 +593,7 @@ export const updateUserProfile = async ({
     await assertShowcaseItemsOwned({
       userId,
       // A moderator may curate another user's showcase, never fill their own with others' items.
-      isModerator: isModerator && sessionUserId !== userId,
+      isModerator: asModerator && sessionUserId !== userId,
       showcaseItems: profile.showcaseItems,
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });
