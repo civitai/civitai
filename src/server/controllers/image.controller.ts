@@ -173,8 +173,8 @@ export const moderateImageHandler = async ({
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    // If the spoke rejects the action with a 4xx (a bad/conflicting request rather than a server fault),
-    // surface it as the matching tRPC code with the spoke's clean message, not a generic 500.
+    // A spoke 4xx is a refusal, not a server fault: surface it as the matching tRPC code with the
+    // spoke's message, not a generic 500.
     if (error instanceof ModeratorClientError && error.status && error.status < 500)
       throw new TRPCError({
         code:
