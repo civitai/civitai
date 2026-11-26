@@ -6712,7 +6712,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({
         status: 'approved',
         approvedScopes: ['ai:write:budgeted'],
-        app: { user: { bannedAt: null } },
+        app: { userId: 7, user: { bannedAt: null } },
         appListing: null,
       } as never);
     });
@@ -6743,7 +6743,11 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happyCcResources();
       mockSubmitWorkflow.mockRejectedValue(new Error('socket hang up'));
       const result = await submit();
-      expect(result).toMatchObject({ runner: { state: 'unknown' } });
+      expect(result).toMatchObject({
+        snapshot: { error: 'runner submit temporarily unavailable' },
+        runner: { state: 'unknown' },
+      });
+      expect(JSON.stringify(result)).not.toContain('socket hang up');
       expect((await attemptRows()).map((r) => r.state)).toEqual(['unknown']);
       expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
       expect(mockRefundAppSpend).not.toHaveBeenCalled();
@@ -6867,6 +6871,23 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
     });
 
+    it('after a refund the run retries as a new attempt with a freshly minted token, not the spent one', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      const refused = new TRPCError({ code: 'BAD_REQUEST', message: 'invalid workflow' });
+      annotateOrchestratorSubmitFailure(refused, { attempt: 1, status: 400 });
+      mockSubmitWorkflow.mockRejectedValueOnce(refused);
+      expect(await submit()).toMatchObject({ runner: { state: 'refunded' } });
+      // The same token again: its jti was spent.
+      mockRedis.set.mockResolvedValueOnce(null as never);
+      await expect(submit()).rejects.toMatchObject({ message: 'runner submit refused: replay' });
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims({ jti: 'jti_runner_retry' }));
+      happyCcResources();
+      happySubmit();
+      expect(await submit()).toMatchObject({ runner: { state: 'submitted' } });
+      expect((await attemptRows()).map((r) => r.state)).toEqual(['refunded', 'submitted']);
+    });
+
     it('a request that does not match its authorization is refused before any spend, without using the token', async () => {
       mockVerifyBlockToken.mockResolvedValue(runnerClaims());
       happyCcResources();
@@ -6908,7 +6929,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValueOnce({
         status: 'approved',
         approvedScopes: ['user:read:self'],
-        app: { user: { bannedAt: null } },
+        app: { userId: 7, user: { bannedAt: null } },
         appListing: null,
       } as never);
       await expect(submit()).rejects.toMatchObject({
@@ -6917,7 +6938,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValueOnce({
         status: 'approved',
         approvedScopes: ['ai:write:budgeted'],
-        app: { user: { bannedAt: new Date() } },
+        app: { userId: 7, user: { bannedAt: new Date() } },
         appListing: null,
       } as never);
       await expect(submit()).rejects.toMatchObject({

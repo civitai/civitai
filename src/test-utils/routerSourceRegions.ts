@@ -82,8 +82,7 @@ export const MONEY_MARKERS = [
   // against a cap, so a disclosing estimate region that reached it would be reserving.
   'reservePrivateRunBuzzSpend(',
   'reserveReviewRunForRealBuzzSpend(',
-  // The recipe runner's attempt ledger: reserving an attempt counts against the user's offline
-  // cap, and refunding one gives it back.
+  // Recipe runner spend: the Redis legs, the ledger attempt, and their refunds.
   'reservePlatformAndConsentLegs(',
   'reserveRunnerAttempt(',
   'reserveRunnerLeg(',

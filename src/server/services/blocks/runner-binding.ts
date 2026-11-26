@@ -1,9 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import * as z from 'zod';
-import {
-  isCivitaiHostedImageUrl,
-  SOURCE_IMAGE_URL_MAX,
-} from '~/server/schema/blocks/civitai-image-url';
+import { SOURCE_IMAGE_URL_MAX } from '~/server/schema/blocks/civitai-image-url';
 import { canonicalJson } from '~/server/services/blocks/block-quote-grant.service';
 import { getRecipe, type RunnerSlotType } from '~/server/services/blocks/recipes';
 
@@ -95,14 +92,40 @@ function slotParent(
 }
 
 const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
+// The image CDN's own path shape: /<account key>/<image uuid>/[<transform>/]<file>.<image ext>.
+// Narrower than `isCivitaiHostedImageUrl` (any civitai host, any path), which would let a slot
+// point the worker at a model download.
+const IMAGE_CDN_HOST = 'image.civitai.com';
+const IMAGE_CDN_PATH =
+  /^\/[A-Za-z0-9_-]{22}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:[^/]+\/)?[^/]+\.(?:jpe?g|png|webp)$/i;
+
+function isImageCdnUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === 'https:' &&
+    url.hostname === IMAGE_CDN_HOST &&
+    !url.port &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    !url.hash &&
+    IMAGE_CDN_PATH.test(url.pathname)
+  );
+}
 const MODEL_FILE = /\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx)$/i;
 
 function slotValueAllowed(value: unknown, type: RunnerSlotType): boolean {
   if (typeof value !== 'string' || value.length === 0) return false;
   // A model is never a free slot: an AIR or a weights file name is refused whatever the type.
   if (/urn:air:/i.test(value) || MODEL_FILE.test(value)) return false;
-  if (type === 'image')
-    return value.length <= SOURCE_IMAGE_URL_MAX && isCivitaiHostedImageUrl(value);
+  if (type === 'image') return value.length <= SOURCE_IMAGE_URL_MAX && isImageCdnUrl(value);
+  // An embedding reference loads a model through the text encoder.
+  if (/embedding:/i.test(value)) return false;
   return value.length <= RUNNER_TEXT_SLOT_MAX && !CONTROL_CHAR.test(value);
 }
 

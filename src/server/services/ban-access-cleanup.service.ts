@@ -26,8 +26,7 @@ export type BanCleanupDeps = {
 };
 
 /**
- * Every run authorization the user gave any recipe runner. Through Prisma like the rest of this
- * leg, so every caller's tests already stub it.
+ * Revokes every run authorization the user gave any recipe runner.
  */
 export function revokeRunnerAuthorizationsForBannedUser(userId: number) {
   return dbWrite.$executeRaw`

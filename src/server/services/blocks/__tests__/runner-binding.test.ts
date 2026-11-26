@@ -10,7 +10,8 @@ import {
 // cross-checked against an independent sorted-key JSON + sha256 implementation; a change here
 // breaks every stored authorization.
 
-const IMAGE = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/original=true/in.jpeg';
+const IMAGE =
+  'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/5cd97133-1989-41bd-bdd9-7145e1b5cad6/original=true/in.jpeg';
 
 const inline = (over: { image?: unknown; prompt?: unknown; maxBuzz?: number } = {}) =>
   ({
@@ -56,7 +57,9 @@ describe('runner binding v1', () => {
 
   it('does not depend on the slot values or on key order', () => {
     const base = hashes();
-    expect(hashes(inline({ image: `${IMAGE}?v=2`, prompt: 'a dog' }))).toEqual(base);
+    expect(
+      hashes(inline({ image: IMAGE.replace('in.jpeg', 'other.png'), prompt: 'a dog' }))
+    ).toEqual(base);
     const reordered = JSON.parse(JSON.stringify(inline())) as Record<string, unknown>;
     const shuffled = Object.fromEntries(Object.entries(reordered).reverse()) as RunnerBindingBody;
     expect(hashes(shuffled)).toEqual(base);
@@ -123,6 +126,25 @@ describe('runner binding v1', () => {
       expect(refusal(inline({ prompt: value }), text), value).toBe('slot_value');
     }
     expect(refusal(inline({ image: 'https://evil.example/x.png' }), image)).toBe('slot_value');
+    for (const prompt of ['embedding:EasyNegative', 'a cat, (EMBEDDING:bad:1.2)']) {
+      expect(refusal(inline({ prompt }), text), prompt).toBe('slot_value');
+    }
+  });
+
+  it('an image slot takes only an image CDN file, never another civitai URL', () => {
+    const image = [{ path: '/workflow/1/inputs/image', type: 'image' as const }];
+    expect(refusal(inline(), image)).toBe('ok');
+    for (const url of [
+      'https://civitai.com/api/download/models/12345',
+      'https://image.civitai.com/api/download/models/12345',
+      'https://orchestration.civitai.com/v2/consumer/blobs/abc',
+      `${IMAGE}?download=1`,
+      IMAGE.replace('.jpeg', '.safetensors'),
+      IMAGE.replace('https:', 'http:'),
+      IMAGE.replace('image.civitai.com', 'image.civitai.com:8443'),
+    ]) {
+      expect(refusal(inline({ image: url }), image), url).toBe('slot_value');
+    }
   });
 
   it('accepts the authorized hashes and refuses any other, without saying which differed', () => {

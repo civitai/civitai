@@ -1817,8 +1817,9 @@ async function reserveBlockBuzzSpendForClaims(
  * A runner submit's answer carries its attempt as the ledger has it, so the runner can tell
  * submitted, refunded (may retry), and unknown (held) apart. A throw after the attempt was
  * reserved is answered the same way; a throw before it means no attempt exists. `runner.state` is
- * the answer and the snapshot is advisory: a throw after the move to `submitted` (the settle record,
- * say) still reads `failed` there while the workflow runs and is charged.
+ * the answer and the snapshot is informational: a throw after the move to `submitted` (the settle record,
+ * say) still reads `failed` there while the workflow runs and is charged. A retry after `refunded`
+ * needs a freshly minted token: the token's jti is spent once its binding matches.
  */
 async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit: () => Promise<T>) {
   const attempt = async () => {
@@ -1833,15 +1834,24 @@ async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit:
     return { ...result, runner: await attempt() };
   } catch (e) {
     if (!runner.attemptId) throw e;
+    // A reason code only: the detail goes to the log, never to the caller.
+    logToAxiom({
+      name: 'runner-submit',
+      type: 'error',
+      payload: { outcome: 'failed', runId: runner.runId, attemptId: runner.attemptId },
+      error: safeError(e),
+    });
     return {
-      snapshot: {
-        workflowId: 'failed',
-        status: 'failed' as const,
-        error: e instanceof Error ? e.message : String(e),
-      },
+      snapshot: { workflowId: 'failed', status: 'failed' as const, error: runnerFailureCode(e) },
       runner: await attempt(),
     };
   }
+}
+
+function runnerFailureCode(e: unknown): string {
+  return e instanceof TRPCError && e.code === 'BAD_REQUEST'
+    ? 'validation failed: the orchestrator refused the workflow'
+    : 'runner submit temporarily unavailable';
 }
 
 /** The primary: the ledger is read and written there only. */
@@ -2035,8 +2045,8 @@ async function reservePlatformAndConsentLegs(
  * Best-effort per key, like `refundBlockBuzzSpend`: a lost refund OVER-counts, which
  * makes a cap stricter — the safe direction. Never throws into the caller.
  *
- * False only for a runner reservation whose attempt another writer already moved: that writer
- * owns the refund, so the caller refunds no other leg either.
+ * False when this call did not move the runner attempt to `refunded` (another writer moved it, or
+ * the ledger failed): no Redis leg is refunded then, and the caller refunds no other leg either.
  */
 async function refundBlockBuzzReservation(
   reservation: BlockBuzzReservation,
@@ -12078,8 +12088,8 @@ async function submitCustomComfyWorkflow(opts: {
   // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
   // the author fee is skipped on one. Same hoist, same reason.
   let realizedPriceIsCap: boolean | null = null;
-  // A runner attempt is sent only by the submit that moves it to `submitting`. Not moved (the
-  // sweeper refunded a stalled attempt, or the ledger is down): never sent.
+  // A runner attempt is sent only by the submit that moves it to `submitting`. Not moved (another
+  // writer moved it, or the ledger failed): never sent.
   if (reservation.runner) {
     const { attemptId } = reservation.runner;
     const moved = await ledgerDb()
@@ -12189,7 +12199,7 @@ async function submitCustomComfyWorkflow(opts: {
         logRunnerLedgerError('submitted', attemptId, error);
         return false;
       });
-    // Still counted in `submitting`: the reconciler adopts it from the orchestrator's record.
+    // Not recorded: the attempt stays `submitting` and keeps counting.
     if (!moved) {
       logToAxiom({
         name: 'runner-attempt-unrecorded',

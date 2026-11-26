@@ -21,7 +21,7 @@ export type RunnerAttemptState =
   | 'refunded'
   | 'failed';
 
-/** Every transition PR3 makes. Settle, adoption and the sweeper's moves come with the reconciler. */
+/** Submit-path moves only; `transitionRunnerAttempt` throws on any other pair. */
 const TRANSITIONS: Readonly<Record<string, readonly RunnerAttemptState[]>> = {
   reserved: ['submitting', 'refunded'],
   submitting: ['submitted', 'refunded', 'unknown'],

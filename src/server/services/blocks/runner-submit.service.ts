@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { resolveCanonicalListingOwner } from '~/server/services/blocks/app-access.service';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { RUNNER_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token.service';
 import type { RunnerBindingHashes, RunnerSlot } from '~/server/services/blocks/runner-binding';
@@ -53,15 +54,19 @@ async function readRunnerAppBlock(appBlockId: string): Promise<RunnerAppBlockSta
     select: {
       status: true,
       approvedScopes: true,
-      app: { select: { user: { select: { bannedAt: true } } } },
-      appListing: { select: { kind: true, user: { select: { bannedAt: true } } } },
+      app: { select: { userId: true, user: { select: { bannedAt: true } } } },
+      appListing: { select: { kind: true, userId: true, user: { select: { bannedAt: true } } } },
     },
   });
   if (!row) return null;
-  // The canonical owner, as `canonicallyOwnedAppBlock` defines it: an off-site listing's owner,
-  // else the app client's.
-  const owner =
-    row.appListing && row.appListing.kind !== 'onsite' ? row.appListing.user : row.app.user;
+  const ownerId = row.appListing
+    ? resolveCanonicalListingOwner({
+        kind: row.appListing.kind,
+        blockOwnerUserId: row.app.userId,
+        listingUserId: row.appListing.userId,
+      })
+    : row.app.userId;
+  const owner = ownerId === row.app.userId ? row.app.user : row.appListing!.user;
   return {
     status: row.status,
     approvedScopes: row.approvedScopes,
