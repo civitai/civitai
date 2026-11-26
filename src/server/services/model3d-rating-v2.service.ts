@@ -34,13 +34,13 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
   max: 20_000,
   windowSeconds: 24 * 60 * 60,
 };
-/** Across all users, per fixed 24h window: bounds the system-paid preview renders of GLB and PLY
- *  results. */
 /** Per user, one unit per four-angle render asked for. */
 export const MODEL3D_PREVIEW_V2_RATE_LIMIT = {
   key: 'generation:model3dPreviewV2',
   rules: usageLimits('model3d-preview.submit', 'model3d-preview.daily'),
 };
+/** Across all users, per fixed 24h window: bounds the system-paid preview renders of GLB and PLY
+ *  results. */
 export const MODEL3D_PREVIEW_V2_GLOBAL_LIMIT = {
   key: 'model3d:preview-v2:global',
   max: 500,
@@ -148,6 +148,13 @@ function previewState(workflow: {
   return { status: 'done', urls };
 }
 
+/** The orchestrator answered the submit without a workflow: nothing was asked for. */
+export class Model3dPreviewRejectedError extends Error {
+  constructor(readonly answer: unknown) {
+    super('model3DPreview submit rejected');
+  }
+}
+
 /** Asks the orchestrator, on the system token, for the four-angle render of a mesh. */
 export async function submitModel3DPreview(
   mesh: { url: string; format: string },
@@ -171,7 +178,7 @@ export async function submitModel3DPreview(
     query: { wait: PREVIEW_WAIT_SECONDS },
     body: { tags: ['civitai', 'model3d', 'post-rating'], metadata, steps: [step], currencies: [] },
   });
-  if (!data?.id) toOrchestratorError(error);
+  if (!data?.id) throw new Model3dPreviewRejectedError(error);
   return { workflowId: data.id as string, state: previewState(data) };
 }
 
@@ -262,6 +269,7 @@ export const model3dRatingV2Deps: Model3dRatingV2Deps = {
   },
   releasePreview: async (windowKey) => {
     // A key that has expired is recreated by the decrement; it is a past window, so it is dropped.
+    // Two commands, not one: safe because only a past window can go below zero.
     if ((await redis.incrBy(windowKey as never, -1)) < 0) await redis.del(windowKey as never);
   },
   submitPreview: submitModel3DPreview,
@@ -372,9 +380,12 @@ async function submitOnce(
       userId: user.id,
       workflowId,
     });
-  } catch {
-    await deps.releasePreview(windowKey).catch(() => undefined);
-    await userClaim.refund();
+  } catch (e) {
+    // Given back only when nothing was asked for; a submit lost in transit may have been accepted.
+    if (e instanceof Model3dPreviewRejectedError) {
+      await deps.releasePreview(windowKey).catch(() => undefined);
+      await userClaim.refund();
+    }
     return [];
   }
   await deps
@@ -414,8 +425,8 @@ export async function rateModel3DByV2(
   const matureLevel = await deps.matureLevel(user).catch(() => null);
   if (matureLevel === null) return 'clear';
   if (await deps.remembered(workflowId).catch(() => false)) return 'mature';
-  // A GLB or PLY is rated from its own four-angle render; when none of it comes back, from the renders
-  // the result already has.
+  // A GLB or PLY is rated from its own four-angle render; when none of it comes back, even after its
+  // one retry, from the renders the result already has.
   const mesh = rateableMesh(primaryModel);
   const rendered = mesh ? await previewAngles({ user, req, mesh, workflowId }, deps) : [];
   if (rendered === 'pending') return 'pending';

@@ -11,6 +11,7 @@ import {
   clearStamp,
   MODEL3D_PREVIEW_PENDING,
   MODEL3D_PREVIEW_V2_GLOBAL_LIMIT,
+  Model3dPreviewRejectedError,
   previewWindowKey,
   MODEL3D_RATING_V2_GLOBAL_LIMIT,
   PREVIEW_EXPIRY_SECONDS,
@@ -632,7 +633,7 @@ describe('3D post gate with a four-angle render', () => {
       submitPreview: async () => {
         // The window rolls over while the submit is out.
         now += MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.windowSeconds * 1000;
-        throw new Error('orchestrator down');
+        throw new Model3dPreviewRejectedError({ status: 503 });
       },
       releasePreview,
     });
@@ -734,12 +735,30 @@ describe('3D post gate with a four-angle render', () => {
 
   it.each([
     ['the global window refuses', { claimPreview: async () => null }],
-    ['the submit throws', { submitPreview: async () => Promise.reject(new Error('down')) }],
+    [
+      'the submit is rejected',
+      {
+        submitPreview: async () => Promise.reject(new Model3dPreviewRejectedError({ status: 400 })),
+      },
+    ],
   ])("when %s, the user's own render is given back", async (_, overrides) => {
     const refund = vi.fn(async () => undefined);
     const { deps: d } = deps([true], { claimPreviewUser: async () => ({ refund }), ...overrides });
     expect(await post(d)).toMatch(/rated mature/);
     expect(refund).toHaveBeenCalledTimes(1);
+  });
+
+  it('a submit lost in transit keeps both the user claim and the slot', async () => {
+    const refund = vi.fn(async () => undefined);
+    const releasePreview = vi.fn<Model3dRatingV2Deps['releasePreview']>(async () => undefined);
+    const { deps: d } = deps([true], {
+      claimPreviewUser: async () => ({ refund }),
+      submitPreview: async () => Promise.reject(new TypeError('fetch failed')),
+      releasePreview,
+    });
+    expect(await post(d)).toMatch(/rated mature/);
+    expect(refund).not.toHaveBeenCalled();
+    expect(releasePreview).not.toHaveBeenCalled();
   });
 
   it('a lock that cannot be taken because the store is down falls back instead of waiting', async () => {
@@ -798,7 +817,6 @@ describe('3D post gate with a four-angle render', () => {
   });
 });
 
-// The store the gate keeps its windows, retries and claims in, over the shared Redis double.
 describe('the four-angle render store', () => {
   const store = new Map<string, number | string>();
   beforeEach(() => {
@@ -815,7 +833,6 @@ describe('the four-angle render store', () => {
       async (key: string, value: string, opts?: { NX?: boolean }) => {
         if (opts?.NX && store.has(key)) return null;
         store.set(key, value);
-        // The wrapper's SET answers '1' when it wrote, null when NX found the key.
         return '1';
       }
     );

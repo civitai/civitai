@@ -12,6 +12,7 @@ vi.mock('@civitai/orchestration-client', async () => ({
 }));
 
 import {
+  Model3dPreviewRejectedError,
   readModel3DPreview,
   submitModel3DPreview,
 } from '~/server/services/model3d-rating-v2.service';
@@ -66,6 +67,13 @@ describe('the four-angle render on the orchestrator', () => {
     expect(await readModel3DPreview('pv-1')).toEqual({ status: 'done', urls: [] });
     orch.getWorkflow.mockResolvedValue({ data: { status: 'scheduled', steps: [] } });
     expect(await readModel3DPreview('pv-1')).toEqual({ status: 'running' });
+  });
+
+  it('a submit answered without a workflow is a rejection', async () => {
+    orch.submitWorkflow.mockResolvedValue({ data: undefined, error: { status: 400 } });
+    await expect(submitModel3DPreview(mesh, { kind: 'test' })).rejects.toBeInstanceOf(
+      Model3dPreviewRejectedError
+    );
   });
 
   it('an orchestrator error throws instead of answering a state', async () => {
