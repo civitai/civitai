@@ -320,7 +320,9 @@ describe('readWithoutJit', () => {
   it('turns JIT and parallel workers off for the read only, whether it opens the transaction or joins one', async () => {
     // PGlite starts with 0 workers; a nonzero session value makes a leak of either setting visible.
     await pg.exec('SET max_parallel_workers_per_gather = 2');
-    onTestFinished(() => pg.exec('RESET max_parallel_workers_per_gather'));
+    onTestFinished(async () => {
+      await pg.exec('RESET max_parallel_workers_per_gather');
+    });
     const before = await settings(db);
     expect(before).toEqual({ jit: 'on', workers: '2' });
 
