@@ -301,6 +301,52 @@ describe('sendNotifications', () => {
     expect(received().get(3)).toEqual(['new-images']);
   });
 
+  describe('when the players for one type cannot be looked up', () => {
+    const statementTimeout = () =>
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+
+    async function seedOneOfEach() {
+      for (const id of [1, 2, 3]) await seedPlayer(pg, id);
+      await seedSettledVote(1);
+      await seedStreak(2);
+      await enqueueImage();
+    }
+
+    it('sends every type when every lookup succeeds', async () => {
+      await seedOneOfEach();
+      const { run, received } = runner();
+
+      const result = await run(at(21));
+
+      expect(Object.fromEntries(received())).toEqual({
+        1: ['verdicts'],
+        2: ['streak'],
+        3: ['new-images'],
+      });
+      expect(result.unplanned).toEqual([]);
+    });
+
+    it('still sends verdicts and streak warnings when the new-images lookup times out', async () => {
+      await seedOneOfEach();
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const selectFrom = db.selectFrom.bind(db);
+      vi.spyOn(db, 'selectFrom').mockImplementation(((table: never) => {
+        if (table === 'KnightsQueueItem') throw statementTimeout();
+        return selectFrom(table);
+      }) as typeof db.selectFrom);
+      const { run, received } = runner();
+
+      const result = await run(at(21));
+
+      expect(Object.fromEntries(received())).toEqual({ 1: ['verdicts'], 2: ['streak'] });
+      expect(result.unplanned).toEqual(['new-images']);
+      expect(logged).toHaveBeenCalledWith(
+        'knights: could not plan new-images notifications (57014)',
+        expect.objectContaining({ code: '57014' })
+      );
+    });
+  });
+
   it('skips a type the player turned off and falls back to the next best', async () => {
     await seedPlayer(pg, 1);
     await seedSettledVote(1);

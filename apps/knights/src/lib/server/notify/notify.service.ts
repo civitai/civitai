@@ -46,6 +46,8 @@ export type NotifyResult = {
   accessUnknown: boolean;
   /** The types to check for "turned everything off" were unavailable, so nothing was sent. */
   skipped: boolean;
+  /** Types whose players could not be looked up, so none were sent; the other types still went out. */
+  unplanned: NotifyKind[];
 };
 
 /**
@@ -234,15 +236,27 @@ export async function planNotifications(
   db: Kysely<DB>,
   now: Date,
   silenceTypes: SilenceType[]
-): Promise<Record<NotifyKind, number[]>> {
+): Promise<{ plan: Record<NotifyKind, number[]>; unplanned: NotifyKind[] }> {
   const day = utcDay(now);
   const warningOpen =
     now >= new Date(dayStart(day).getTime() + NOTIFY.streakWarningHourUtc * 3_600_000);
-  const [allVerdicts, allAtRisk, allWaiting] = await Promise.all([
-    withNewVerdicts(db, day, now),
-    withStreakAtRisk(db, day),
-    withImagesWaiting(db, day),
-  ]);
+  // A type whose lookup fails is skipped for this run, so a slow query for one cannot sink the others.
+  const unplanned: NotifyKind[] = [];
+  const lookups: [NotifyKind, Promise<number[]>][] = [
+    ['verdicts', withNewVerdicts(db, day, now)],
+    ['streak', withStreakAtRisk(db, day)],
+    ['new-images', withImagesWaiting(db, day)],
+  ];
+  const [allVerdicts, allAtRisk, allWaiting] = (
+    await Promise.allSettled(lookups.map(([, lookup]) => lookup))
+  ).map((outcome, at) => {
+    if (outcome.status === 'fulfilled') return outcome.value;
+    const kind = lookups[at][0];
+    const code = (outcome.reason as { code?: unknown } | null)?.code ?? 'no code';
+    console.error(`knights: could not plan ${kind} notifications (${code})`, outcome.reason);
+    unplanned.push(kind);
+    return [];
+  });
   const blocked = await resetPending(db);
   const silenced = await silencedAmong(
     db,
@@ -264,7 +278,7 @@ export async function planNotifications(
   }
   const held = new Set(warningOpen ? [] : atRisk);
   plan['new-images'] = waiting.filter((id) => !chosen.has(id) && !held.has(id));
-  return plan;
+  return { plan, unplanned };
 }
 
 /** Insert-first is the dedupe: concurrent or repeated runs cannot both send to a player. */
@@ -361,12 +375,14 @@ export async function sendNotifications(
     confirmFailed: 0,
     skipped: false,
     accessUnknown: false,
+    unplanned: [],
   };
   if (silenceTypes.length === 0) {
     console.warn('knights: no notification types to check for silenced players; sending nothing');
     return { ...result, skipped: true };
   }
-  const planned = await planNotifications(db, now, silenceTypes);
+  const { plan: planned, unplanned } = await planNotifications(db, now, silenceTypes);
+  result.unplanned = unplanned;
   const access = await accessible([...new Set(Object.values(planned).flat())]);
   const open = new Set(access.ids);
   result.accessUnknown = access.unknown;

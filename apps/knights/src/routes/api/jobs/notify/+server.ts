@@ -28,6 +28,7 @@ export const POST: RequestHandler = async ({ request }) => {
     }
     const incomplete =
       result.failed + result.unconfirmed + result.confirmFailed > 0 ||
+      result.unplanned.length > 0 ||
       result.skipped ||
       result.accessUnknown;
     return json(result, { status: incomplete ? 500 : 200 });
