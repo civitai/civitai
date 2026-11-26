@@ -946,9 +946,13 @@ export const getArticleById = async ({
     // edit form learns of one it may not see from the `...Withheld` flags, and a save that
     // leaves it out keeps it (upsertArticle).
     const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
+    const bodyImages = imageConnections.map((conn) => conn.image);
     const [withheldByModel, listedHidden] = await Promise.all([
       isModerator ? new Set<number>() : getModelWithheldImageIds(ownImageIds),
-      getReportListedHiddenImageIds(ownImageIds, { userId, ...reportListedViewer }),
+      getReportListedHiddenImageIds([...ownImageIds, ...bodyImages.map((image) => image.id)], {
+        userId,
+        ...reportListedViewer,
+      }),
     ]);
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
       !!image &&
@@ -971,19 +975,19 @@ export const getArticleById = async ({
 
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
-    const bodyImages = imageConnections.map((conn) => conn.image);
-    const keptImages = isModerator
-      ? bodyImages
-      : bodyImages.filter((image) =>
-          userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
-        );
+    const keptImages = bodyImages.filter(
+      (image) =>
+        !listedHidden.has(image.id) &&
+        (isModerator ||
+          (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
+    );
     const withheld = bodyImages
       .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
     const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;
     const content =
-      isModerator || !article.content
+      (isModerator && !withheld.length) || !article.content
         ? article.content
         : removeBodyMedia(article.content, {
             withheld,
