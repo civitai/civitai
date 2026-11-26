@@ -44,10 +44,7 @@ export async function withheldImageIds(
   return new Set(rows.map((r) => r.id));
 }
 
-/**
- * Refuses a moderator's loosening write (lower a level, clear a flag, accept, rescan, send to a
- * judge) on any image withheld from them, all or nothing. Tightening writes never call this.
- */
+/** Refuses a moderator's loosening write on any image withheld from them, all or nothing. */
 export async function assertMayLoosenImages(
   imageIds: number[],
   { csamReview }: { csamReview: boolean },
