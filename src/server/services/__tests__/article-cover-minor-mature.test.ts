@@ -609,13 +609,12 @@ describe('the article page body under the report-listed rule', () => {
       expect(content).not.toContain(uuid(OTHERS_BODY));
     });
 
-    it('🔴 strips every other spelling of a placeholdered image, links included', async () => {
-      const stored = `<p><img src="https://image.civitai.com/abc/${uuid(
-        OTHERS_BODY
-      )}/width=450"></p>`;
-      const linked = `<a href="https://image.civitai.com/abc/${uuid(
-        OTHERS_BODY
-      )}/original=true">src</a>`;
+    // Each listed image, as a link and as an upper-case source besides its plain image.
+    const spelledEveryWay = (id: number) =>
+      `<p><img src="https://image.civitai.com/abc/${uuid(id)}/width=450"></p>` +
+      `<p><a href="https://image.civitai.com/abc/${uuid(id)}/original=true">src</a></p>` +
+      `<p><img src="https://image.civitai.com/abc/${uuid(id).toUpperCase()}/width=450"></p>`;
+    const editReadOf = async (body: string, viewer: Viewer, reportListedViewer: typeof SESSION) => {
       dbMock.dbRead.article.findFirst.mockResolvedValue({
         id: 1,
         userId: OWNER,
@@ -623,13 +622,40 @@ describe('the article page body under the report-listed rule', () => {
         status: ArticleStatus.Published,
         ingestion: ArticleIngestionStatus.Scanned,
         tags: [],
-        content: stored + `<p>${linked}</p>`,
+        content: body,
         metadata: null,
         coverImage: null,
         bannerImage: null,
       } as never);
-      for (const viewer of [{ id: OWNER }, { id: MOD, isModerator: true }])
-        expect(await editRead(viewer, SESSION)).not.toContain(uuid(OTHERS_BODY));
+      return (await editRead(viewer, reportListedViewer)).toLowerCase();
+    };
+
+    it.each<[string, number, Viewer, typeof SESSION]>([
+      ['a moderator without the grant', OWN_BODY, { id: MOD, isModerator: true }, SESSION],
+      [
+        'the owner on a scoped key',
+        OWN_BODY,
+        { id: OWNER },
+        { ...SESSION, ownerSeesReportListed: false },
+      ],
+      ["the owner, for someone else's upload", OTHERS_BODY, { id: OWNER }, SESSION],
+    ])('🔴 gives %s no form of a listed image', async (_, id, viewer, reportListedViewer) => {
+      expect(await editReadOf(spelledEveryWay(id), viewer, reportListedViewer)).not.toContain(
+        uuid(id)
+      );
+    });
+
+    it.each<[string, Viewer, typeof SESSION]>([
+      ['its uploader', { id: OWNER }, SESSION],
+      [
+        'a held-media viewer',
+        { id: MOD, isModerator: true },
+        { ...SESSION, seesReportListed: true },
+      ],
+    ])('gives %s the listed image (control)', async (_, viewer, reportListedViewer) => {
+      expect(await editReadOf(spelledEveryWay(OWN_BODY), viewer, reportListedViewer)).toContain(
+        uuid(OWN_BODY)
+      );
     });
 
     it('gives no placeholder to a reader who cannot edit', async () => {
