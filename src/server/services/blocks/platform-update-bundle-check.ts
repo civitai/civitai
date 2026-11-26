@@ -79,7 +79,8 @@ const sourceRepoModules = () =>
     ([forgejo, orgs]) => ({ forgejo, org: orgs.FORGEJO_SOURCE_ORG })
   ));
 
-const liveDeps: BundleCheckDeps = {
+/** The production dependencies (exported so a test can replace only the git-host reads). */
+export const liveBundleCheckDeps: BundleCheckDeps = {
   // The flag's own module: with the flag off, the record service is never loaded.
   flagOn: async () => (await import('./app-platform-update-flag')).isPlatformUpdatesEnabled(),
   unshipped: async (appBlockId) =>
@@ -122,7 +123,7 @@ export async function checkPlatformUpdates(
     appBlockId: string | null;
     readFiles: (paths: string[]) => Promise<Map<string, Buffer>>;
   },
-  deps: BundleCheckDeps = liveDeps
+  deps: BundleCheckDeps = liveBundleCheckDeps
 ): Promise<PlatformUpdateCheck | null> {
   if (!(await deps.flagOn())) return null;
   if (!args.appBlockId) return null;

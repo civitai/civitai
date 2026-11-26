@@ -9,8 +9,10 @@ import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The staff platform-update check on a version's files (`platform-update-bundle-check.ts`), with
- * its REAL queries against the two manual migrations in PGlite, and a fake source repo at the
- * git-host boundary (`forgejo.service`). Claims:
+ * its REAL queries against the two manual migrations in PGlite, the real flag read and log, and a
+ * fake source repo in place of the git-host reads (`liveBundleCheckDeps` with `sourceTree` and
+ * `sourceBlob` replaced; the live reads' org and refs are pinned through `submitVersion` in
+ * publish-request.storage-hooks.test.ts). Claims:
  *   - a version missing an unshipped update is reported with its id, reason, staff username and
  *     the paths it lacks; one containing it (exact bytes, or hand-merged text) is not;
  *   - a delete update holds only when the path is gone;
@@ -26,7 +28,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const h = vi.hoisted(() => ({
   flag: true,
-  /** `${org}/${slug}@${commit}` → path → blob sha */
+  /** `${slug}@${commit}` → path → blob sha; blobs keyed `${slug}:${blobSha}` */
   trees: new Map<string, Map<string, string>>(),
   blobs: new Map<string, Buffer>(),
 }));
@@ -38,22 +40,33 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCKS_PLATFORM_UPDATES ? h.flag : false,
   };
 });
-vi.mock('~/server/services/blocks/forgejo.service', () => ({
-  listRepoTreeAtRef: vi.fn(async (slug: string, ref: string, org: string) => {
-    const tree = h.trees.get(`${org}/${slug}@${ref}`);
-    if (!tree) throw new Error(`no tree ${org}/${slug}@${ref}`);
-    return tree;
-  }),
-  getBlobContent: vi.fn(async (slug: string, sha: string, org: string) => {
-    const blob = h.blobs.get(`${org}/${slug}:${sha}`);
-    if (!blob) throw new Error(`no blob ${sha}`);
-    return blob;
-  }),
-}));
+const bundleCheck = await import('~/server/services/blocks/platform-update-bundle-check');
 
-const { checkPlatformUpdates, markShippedPlatformUpdates, assertBundleHasPlatformUpdates } =
-  await import('~/server/services/blocks/platform-update-bundle-check');
-const { FORGEJO_SOURCE_ORG } = await import('~/server/services/blocks/forgejo-orgs');
+/**
+ * The production dependencies (the real flag, the real queries, the real log-once) with only the
+ * git-host reads replaced: the source repo is the commit map above, keyed `<slug>@<commit>`.
+ */
+const deps = () => ({
+  ...bundleCheck.liveBundleCheckDeps,
+  sourceTree: async (slug: string, commitSha: string) => {
+    const tree = h.trees.get(`${slug}@${commitSha}`);
+    if (!tree) throw new Error(`no tree ${slug}@${commitSha}`);
+    return tree;
+  },
+  sourceBlob: async (slug: string, blobSha: string) => {
+    const blob = h.blobs.get(`${slug}:${blobSha}`);
+    if (!blob) throw new Error(`no blob ${blobSha}`);
+    return blob;
+  },
+});
+type Args<F extends (...a: never[]) => unknown> = Parameters<F>[0];
+const checkPlatformUpdates = (args: Args<typeof bundleCheck.checkPlatformUpdates>) =>
+  bundleCheck.checkPlatformUpdates(args, deps());
+const markShippedPlatformUpdates = (args: Args<typeof bundleCheck.markShippedPlatformUpdates>) =>
+  bundleCheck.markShippedPlatformUpdates(args, deps());
+const assertBundleHasPlatformUpdates = (
+  args: Args<typeof bundleCheck.assertBundleHasPlatformUpdates>
+) => bundleCheck.assertBundleHasPlatformUpdates(args, deps());
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -77,17 +90,17 @@ let seq = 0;
 function staffCommit(files: Record<string, string | null>): string {
   seq += 1;
   const sha = seq.toString(16).padStart(40, 'c');
-  const base = h.trees.get(`${FORGEJO_SOURCE_ORG}/${SLUG}@${BASE_SHA}`)!;
+  const base = h.trees.get(`${SLUG}@${BASE_SHA}`)!;
   const tree = new Map(base);
   for (const [p, content] of Object.entries(files)) {
     if (content === null) tree.delete(p);
     else {
       const blob = `blob-${sha}-${p}`;
-      h.blobs.set(`${FORGEJO_SOURCE_ORG}/${SLUG}:${blob}`, Buffer.from(content));
+      h.blobs.set(`${SLUG}:${blob}`, Buffer.from(content));
       tree.set(p, blob);
     }
   }
-  h.trees.set(`${FORGEJO_SOURCE_ORG}/${SLUG}@${sha}`, tree);
+  h.trees.set(`${SLUG}@${sha}`, tree);
   return sha;
 }
 
@@ -183,10 +196,10 @@ beforeEach(async () => {
   h.blobs = new Map();
   seq = 0;
   // The source repo's main at the updates' base: two files.
-  h.blobs.set(`${FORGEJO_SOURCE_ORG}/${SLUG}:blob-base-a`, Buffer.from(BASE_TEXT));
-  h.blobs.set(`${FORGEJO_SOURCE_ORG}/${SLUG}:blob-base-legacy`, Buffer.from(DELETED_TEXT));
+  h.blobs.set(`${SLUG}:blob-base-a`, Buffer.from(BASE_TEXT));
+  h.blobs.set(`${SLUG}:blob-base-legacy`, Buffer.from(DELETED_TEXT));
   h.trees.set(
-    `${FORGEJO_SOURCE_ORG}/${SLUG}@${BASE_SHA}`,
+    `${SLUG}@${BASE_SHA}`,
     new Map([
       ['src/a.ts', 'blob-base-a'],
       ['src/legacy.ts', 'blob-base-legacy'],
@@ -374,7 +387,7 @@ describe('checkPlatformUpdates', () => {
           allow: false,
         })
       ).toEqual([]);
-      await vi.waitFor(() => expect(logged() - before).toBe(1));
+      await vi.waitFor(() => expect(logged() - before).toBe(1), { timeout: 10_000 });
     } finally {
       await noTable.close();
       await noColumns.close();
