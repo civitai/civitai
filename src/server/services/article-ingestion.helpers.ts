@@ -141,17 +141,28 @@ export function ingestionErrorStep(
 }
 
 /**
- * The episode an author's save writes: the stored one, never one the client sent, and a silent one
- * for an article already at Error without one, so the save cannot lift the review hold.
+ * The metadata an author's save writes: the stored keys under the sent ones, with the stored Error
+ * episode and never one the client sent, and a silent one for an article already at Error without
+ * one, so the save cannot lift the review hold.
  */
-export function savedIngestionErrorState(
-  stored: unknown,
-  ingestion: ArticleIngestionStatus,
-  now: number
-): ArticleIngestionErrorState | undefined {
-  const state = readIngestionErrorState(stored);
-  if (state) return state;
-  return ingestion === ArticleIngestionStatus.Error ? silentIngestionErrorState(now) : undefined;
+export function savedArticleMetadata<T extends object>({
+  stored,
+  sent,
+  ingestion,
+  now,
+}: {
+  stored: T | null;
+  sent: T | undefined;
+  ingestion: ArticleIngestionStatus | undefined;
+  now: number;
+}): T & { ingestionError?: ArticleIngestionErrorState } {
+  const { ingestionError: _sent, ...merged } = { ...stored, ...sent } as T & {
+    ingestionError?: unknown;
+  };
+  const episode =
+    readIngestionErrorState(stored) ??
+    (ingestion === ArticleIngestionStatus.Error ? silentIngestionErrorState(now) : null);
+  return { ...(merged as T), ...(episode ? { ingestionError: episode } : {}) };
 }
 
 /**

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 import {
-  keepErrorEpisodeSql,
+  markArticleForRescan,
   recomputeArticleIngestionInTx,
 } from '~/server/services/article.service';
 
@@ -35,7 +35,8 @@ beforeAll(async () => {
     CREATE TABLE "Article" (
       id int PRIMARY KEY, title text NOT NULL, content text NOT NULL, "userId" int NOT NULL,
       "publishedAt" timestamp(3), status "ArticleStatus" NOT NULL, ingestion "ArticleIngestionStatus" NOT NULL,
-      "coverId" int, "bannerId" int, "moderatorNsfwLevel" int, metadata jsonb, "contentScannedAt" timestamp(3)
+      "coverId" int, "bannerId" int, "moderatorNsfwLevel" int, metadata jsonb, "contentScannedAt" timestamp(3),
+      "scanRequestedAt" timestamp(3)
     );
     CREATE TABLE "EntityModeration" (
       id serial PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL,
@@ -304,11 +305,7 @@ describe('an Error episode ending', () => {
 });
 
 describe('a rescan of an article at Error that has no recorded episode', () => {
-  const rescanWrite = () =>
-    h.prisma
-      .$executeRaw`UPDATE "Article" SET ingestion = 'Rescan', metadata = ${keepErrorEpisodeSql(
-      Date.now()
-    )} WHERE id = ${ARTICLE}`;
+  const rescanWrite = () => markArticleForRescan(h.prisma, ARTICLE);
 
   it('stays hidden while a scanned image awaits review', async () => {
     await seed({ ingestion: 'Error', content: { ingestion: 'Scanned', needsReview: 'minor' } });

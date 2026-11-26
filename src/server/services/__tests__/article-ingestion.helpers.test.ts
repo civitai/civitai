@@ -3,7 +3,7 @@ import type { ArticleIngestionInputs } from '~/server/services/article-ingestion
 import {
   deriveArticleIngestionState,
   ingestionErrorStep,
-  savedIngestionErrorState,
+  savedArticleMetadata,
   textCheckSpentRetries,
 } from '~/server/services/article-ingestion.helpers';
 import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
@@ -145,7 +145,7 @@ describe('ingestionErrorStep, the Error retry schedule', () => {
     expect(ingestionErrorStep({ enteredAt, rounds, checkedAt: at(day) }, at(day))).toBe(step);
   });
 
-  it("marks the episode exhausted a day after the last round, once that round's scans are back", () => {
+  it("marks the episode exhausted a day after the last round, giving that round's scans time to return", () => {
     const last = { enteredAt, rounds: 3, lastRoundAt: at(7), checkedAt: at(7) };
     expect(ingestionErrorStep(last, at(7.5))).toBe('wait');
     expect(ingestionErrorStep(last, at(8))).toBe('exhaust');
@@ -159,25 +159,34 @@ describe('ingestionErrorStep, the Error retry schedule', () => {
   });
 });
 
-describe('savedIngestionErrorState, the episode an author save writes', () => {
-  const stored = { ingestionError: { enteredAt: 5, rounds: 2, notifiedAt: 6 } };
+describe('savedArticleMetadata, the metadata an author save writes', () => {
+  const episode = { enteredAt: 5, rounds: 2, notifiedAt: 6 };
+  const save = (
+    stored: Record<string, unknown>,
+    sent: Record<string, unknown>,
+    ingestion: ArticleIngestionStatus
+  ) => savedArticleMetadata({ stored, sent, ingestion, now: 99 });
 
-  it('keeps the stored episode', () => {
-    expect(savedIngestionErrorState(stored, ArticleIngestionStatus.Rescan, 99)).toEqual(
-      stored.ingestionError
-    );
+  it('keeps the stored episode, whatever the client sent', () => {
+    expect(
+      save(
+        { ingestionError: episode, theme: 'a' },
+        { ingestionError: { bogus: true }, theme: 'b' },
+        ArticleIngestionStatus.Rescan
+      )
+    ).toEqual({ ingestionError: episode, theme: 'b' });
   });
 
-  it('records a silent one for an article at Error without one, so the save keeps the hold', () => {
-    expect(savedIngestionErrorState({}, ArticleIngestionStatus.Error, 99)).toEqual({
-      enteredAt: 99,
-      rounds: 0,
-      silent: true,
+  it('records a silent episode for an article at Error without one, so the save keeps the hold', () => {
+    expect(save({}, { ingestionError: episode }, ArticleIngestionStatus.Error)).toEqual({
+      ingestionError: { enteredAt: 99, rounds: 0, silent: true },
     });
   });
 
-  it('records none for an article that is not at Error', () => {
-    expect(savedIngestionErrorState({}, ArticleIngestionStatus.Scanned, 99)).toBeUndefined();
+  it('records none for an article that is not at Error, and drops a sent one', () => {
+    expect(
+      save({ theme: 'a' }, { ingestionError: episode }, ArticleIngestionStatus.Scanned)
+    ).toEqual({ theme: 'a' });
   });
 });
 

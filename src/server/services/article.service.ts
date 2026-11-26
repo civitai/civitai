@@ -6,7 +6,7 @@ import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
-import { omit, truncate } from 'lodash-es';
+import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   TEXT_MODERATION_RETRY_LIMIT,
@@ -68,7 +68,7 @@ import {
   articleModerationText,
   articleTextScanFields,
   readIngestionErrorState,
-  savedIngestionErrorState,
+  savedArticleMetadata,
   silentIngestionErrorState,
   type ArticleIngestionErrorState,
 } from '~/server/services/article-ingestion.helpers';
@@ -1573,9 +1573,6 @@ export const upsertArticle = async ({
         select: { title: true, content: true, metadata: true, ingestion: true },
       });
       const storedMetadata = (stored?.metadata as ArticleMetadata | null) ?? prevMetadata;
-      const errorEpisode = stored
-        ? savedIngestionErrorState(storedMetadata, stored.ingestion, Date.now())
-        : undefined;
       const textChanged =
         (data.title !== undefined && data.title !== stored?.title) ||
         (data.content !== undefined && data.content !== stored?.content);
@@ -1603,10 +1600,12 @@ export const upsertArticle = async ({
           ...(sharedSave || publicSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
-          metadata: {
-            ...omit({ ...storedMetadata, ...data.metadata }, ['ingestionError']),
-            ...(errorEpisode ? { ingestionError: errorEpisode } : {}),
-          },
+          metadata: savedArticleMetadata({
+            stored: storedMetadata,
+            sent: data.metadata,
+            ingestion: stored?.ingestion,
+            now: Date.now(),
+          }),
           publishedAt,
           scheduledAt: scheduledAtWrite,
           coverId,
@@ -3513,17 +3512,28 @@ async function markArticleImagesForRescan(imageIds: number[], articleUserId: num
 }
 
 /**
- * The `metadata` an article leaving Error for Rescan keeps: its episode, or a silent one when it has
+ * Sends an article back to Rescan. One at Error keeps its episode, or gets a silent one when it has
  * none, so the review hold still applies when the rescan settles.
  */
-export const keepErrorEpisodeSql = (now: number) => Prisma.sql`CASE
-  WHEN ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
-    AND metadata->'ingestionError' IS NULL
-  THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${JSON.stringify(
-    silentIngestionErrorState(now)
-  )}::jsonb)
-  ELSE metadata
-END`;
+export async function markArticleForRescan(
+  db: Pick<Prisma.TransactionClient, '$executeRaw'>,
+  id: number
+) {
+  const silent = JSON.stringify(silentIngestionErrorState(Date.now()));
+  await db.$executeRaw`
+    UPDATE "Article"
+    SET ingestion = ${ArticleIngestionStatus.Rescan}::"ArticleIngestionStatus",
+        "scanRequestedAt" = ${new Date()},
+        "contentScannedAt" = NULL,
+        metadata = CASE
+          WHEN ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
+            AND metadata->'ingestionError' IS NULL
+          THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${silent}::jsonb)
+          ELSE metadata
+        END
+    WHERE id = ${id}
+  `;
+}
 
 /** Content, cover and banner images, read from the primary: a block that landed seconds ago must not read as unblocked. */
 async function articleRescanCandidates(article: {
@@ -3651,14 +3661,7 @@ export async function rescanArticle({
   // --- Reset ingestion state ---
   // Raw SQL to avoid bumping Article.updatedAt — a rescan is not a user-edit
   // and shouldn't reorder the "Recently Updated" feed.
-  await dbWrite.$executeRaw`
-    UPDATE "Article"
-    SET ingestion = ${ArticleIngestionStatus.Rescan}::"ArticleIngestionStatus",
-        "scanRequestedAt" = ${new Date()},
-        "contentScannedAt" = NULL,
-        metadata = ${keepErrorEpisodeSql(Date.now())}
-    WHERE id = ${id}
-  `;
+  await markArticleForRescan(dbWrite, id);
   await preventReplicationLag('article', id);
   await preventReplicationLag('userArticles', article.userId);
 
