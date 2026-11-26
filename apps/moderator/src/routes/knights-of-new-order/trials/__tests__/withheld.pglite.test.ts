@@ -12,7 +12,7 @@ import { applyGrants } from '$lib/server/access';
  * What each Trials tab sends for an image the media access rule withholds from this moderator: the
  * item with no key or name, and the control image beside it as it is. The withheld image carries no
  * mark of its own; a copy on its url is blocked as CSAM. Each action that would grade Acolytes
- * against such an image is refused. Policy: civitai/civitai#10428 and its follow-up.
+ * against such an image is refused. Policy: civitai/civitai#10428, #10504.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
