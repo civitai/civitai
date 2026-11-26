@@ -107,14 +107,15 @@ export async function extractionRating(output: ExtractionOutput, workflowId: str
     rated.push(
       ...(await Promise.all(
         batch.map(async (entry) => {
-          // A text entry the orchestrator leveled was rated as media: it counts as media, not as
-          // a caption (an image named like a caption may come back typed text).
-          const leveledText = entry.mediaType === 'text' && !!entry.blob?.nsfwLevel;
+          // A text entry the orchestrator leveled or blocked was treated as media: it counts as
+          // media, not as a caption (an image named like a caption may come back typed text).
+          const textAsMedia =
+            entry.mediaType === 'text' && (!!entry.blob?.nsfwLevel || !!entry.blob?.blockedReason);
           return {
-            mediaType: leveledText ? 'image' : entry.mediaType,
+            mediaType: textAsMedia ? 'image' : entry.mediaType,
             nsfwLevel:
               // A blocked entry never counts as rated, whatever level it carries.
-              entry.blob?.blockedReason || (entry.mediaType === 'text' && !leveledText)
+              entry.blob?.blockedReason || (entry.mediaType === 'text' && !textAsMedia)
                 ? null
                 : entry.blob?.nsfwLevel ?? (await blobHeaderLevel(entry.air, workflowId, deadline)),
           };

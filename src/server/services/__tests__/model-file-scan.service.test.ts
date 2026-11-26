@@ -1529,7 +1529,12 @@ describe('model-file-scan.service', () => {
                   status: 'succeeded',
                   output: { status: 'clean', scannedFileCount: 3 },
                 },
-                { $type: 'archiveExtraction', status: 'failed' },
+                // A partial output: only a finished step's entries are a rating.
+                {
+                  $type: 'archiveExtraction',
+                  status: 'failed',
+                  output: { entries: [{ mediaType: 'image', blob: { nsfwLevel: 'pg' } }] },
+                },
               ],
             },
           });

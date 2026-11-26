@@ -26,7 +26,9 @@ describe('writeTrainingDataRating', () => {
         (3, '${ZIP}', 'Training Data', NULL),
         (4, '${ZIP}', 'Training Data', '{"datasetArchive": {}, "fullyRated": false}'),
         (5, 'https://storage.test/other.zip', 'Training Data', '{"fullyRated": false}'),
-        (6, '${ZIP}', 'Training Data', NULL);
+        (6, '${ZIP}', 'Training Data', NULL),
+        (7, '${ZIP}', 'Training Data', '{"nsfwLevel": 4, "fullyRated": true}'),
+        (8, '${ZIP}', 'Model', '{"fullyRated": false}');
     `);
   });
   const metadata = async (id: number) =>
@@ -70,6 +72,24 @@ describe('writeTrainingDataRating', () => {
       rating: { nsfwLevel: 4, fullyRated: true },
     });
     expect(await metadata(3)).toEqual({ nsfwLevel: 4, fullyRated: true });
+  });
+
+  it('drops a stale level when a rescan rates nothing', async () => {
+    await writeTrainingDataRating(db.prisma, {
+      fileId: 7,
+      url: ZIP,
+      rating: { nsfwLevel: undefined, fullyRated: false },
+    });
+    expect(await metadata(7)).toEqual({ fullyRated: false });
+  });
+
+  it('leaves a file that is not Training Data alone', async () => {
+    await writeTrainingDataRating(db.prisma, {
+      fileId: 8,
+      url: ZIP,
+      rating: { nsfwLevel: 1, fullyRated: true },
+    });
+    expect(await metadata(8)).toEqual({ fullyRated: false });
   });
 
   it('skips a Studio dataset row and a row whose zip was swapped', async () => {

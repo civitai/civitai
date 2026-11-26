@@ -151,9 +151,13 @@ function extensionFor(key: string, contentType: string | null): string {
 }
 
 const BLOCKED_BLOB_PATH = '/v2/consumer/blobs/blocked/';
-const blockedPlaceholder = (url: string) => {
+/** Whether `url` is the orchestrator's own blocked placeholder route. */
+const blockedPlaceholder = (url: string, baseUrl: string) => {
   try {
-    return new URL(url).pathname.startsWith(BLOCKED_BLOB_PATH);
+    const target = new URL(url);
+    return (
+      target.origin === new URL(baseUrl).origin && target.pathname.startsWith(BLOCKED_BLOB_PATH)
+    );
   } catch {
     return false;
   }
@@ -196,7 +200,7 @@ async function fetchBlob({
       nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
       blockedReason:
         response.headers.get('x-blocked-reason') ??
-        (blockedPlaceholder(response.url) ? 'blocked' : null),
+        (blockedPlaceholder(response.url, baseUrl) ? 'blocked' : null),
     };
   } catch {
     return null;

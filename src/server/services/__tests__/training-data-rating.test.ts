@@ -146,6 +146,14 @@ describe('extractionRating over a captioned zip', () => {
     expect(mockHeadBlob).not.toHaveBeenCalled();
   });
 
+  it('counts a blocked text-typed entry as unrated media, level or not', async () => {
+    for (const blob of [{ blockedReason: 'tos' }, { blockedReason: 'tos', nsfwLevel: 'pg' }])
+      expect(await extractionRating({ entries: [image04, { ...caption, blob }] }, 'wf-1')).toEqual({
+        nsfwLevel: NsfwLevel.PG,
+        fullyRated: false,
+      });
+  });
+
   it('counts a rejected entry as unrated', async () => {
     expect(
       await extractionRating({ entries: [image04, caption], rejected: [{ air: 'x' }] }, 'wf-1')
