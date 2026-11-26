@@ -38,7 +38,7 @@ async function send(
   articles: unknown[],
   ids: number[] = [],
   listedIds: number[] = [],
-  connections: { entityId: number; image: { id: number; url: string } }[] = []
+  connections: { entityId: number; image: Record<string, unknown> }[] = []
 ) {
   withheld.ids = new Set(ids);
   // The report-listed lookup: the only raw read here.
@@ -119,21 +119,27 @@ describe('new-article webhook payload', () => {
     expect(payload[0].cover).toEqual(expect.stringContaining('cover-key'));
   });
 
-  it('🔴 sends no body image listed on a report, and keeps the others', async () => {
-    const listedUuid = '66666666-aaaa-4bbb-8ccc-666666666666';
-    const shownUuid = '77777777-aaaa-4bbb-8ccc-777777777777';
+  it('🔴 sends the body as a signed-out reader is served it', async () => {
+    const uuids = {
+      listed: '66666666-aaaa-4bbb-8ccc-666666666666',
+      blocked: '88888888-aaaa-4bbb-8ccc-888888888888',
+      shown: '77777777-aaaa-4bbb-8ccc-777777777777',
+    };
     const src = (uuid: string) => `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid}/w`;
-    const body = `<p>a</p><img src="${src(listedUuid)}"><img src="${src(shownUuid)}">`;
-    const { payload } = await send(
-      [{ ...article(null), content: body }],
-      [],
-      [20],
-      [
-        { entityId: 1, image: { id: 20, url: listedUuid } },
-        { entityId: 1, image: { id: 21, url: shownUuid } },
-      ]
-    );
-    expect(payload[0].content).not.toContain(listedUuid);
-    expect(payload[0].content).toContain(shownUuid);
+    const body = Object.values(uuids)
+      .map((uuid) => `<img src="${src(uuid)}">`)
+      .join('');
+    const row = (id: number, url: string, extra: Record<string, unknown> = {}) => ({
+      entityId: 1,
+      image: { ...image(id), url, minor: false, tosViolation: false, ...extra },
+    });
+    const { payload } = await send([{ ...article(null), content: body }], [], [20], [
+      row(20, uuids.listed),
+      row(21, uuids.blocked, { ingestion: 'Blocked' }),
+      row(22, uuids.shown),
+    ] as never);
+    expect(payload[0].content).not.toContain(uuids.listed);
+    expect(payload[0].content).not.toContain(uuids.blocked);
+    expect(payload[0].content).toContain(uuids.shown);
   });
 });

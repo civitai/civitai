@@ -34,6 +34,7 @@ import {
   CSAM_HELD_REVIEW,
   isCsamHeldBodyImage,
   isServableBodyImage,
+  readerArticleBody,
   removeBodyMedia,
 } from '~/server/utils/article-body-media';
 import { eventEngine } from '~/server/events';
@@ -1004,13 +1005,13 @@ export const getArticleById = async ({
       placeholdered.length && article.content
         ? withheldMediaPlaceholders(article.content, new Set(placeholdered))
         : article.content;
-    const content =
-      (isModerator && !withheld.length) || !body
-        ? body
-        : removeBodyMedia(body, {
-            withheld,
-            keepEdgeMedia: nonOwner ? new Set(contentImages.map((image) => image.url)) : undefined,
-          });
+    const content = !body
+      ? body
+      : nonOwner
+      ? readerArticleBody(body, bodyImages, listedHidden).content
+      : isModerator && !withheld.length
+      ? body
+      : removeBodyMedia(body, { withheld });
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
     // branch let any author store a doc with node types the renderer has no schema entry for

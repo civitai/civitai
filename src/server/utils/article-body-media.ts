@@ -120,3 +120,21 @@ function edgeMediaAllKept(html: string, keepEdgeMedia: ReadonlySet<string> | und
   }
   return true;
 }
+
+/**
+ * The body a reader who is neither its owner nor a moderator is served, and the body images it
+ * keeps: servable ones not in `hiddenIds` (the report-listed images this reader may not see).
+ */
+export function readerArticleBody<
+  T extends ArticleBodyImageState & { id: number; minor: boolean | null }
+>(content: string, bodyImages: T[], hiddenIds: ReadonlySet<number>) {
+  const kept = bodyImages.filter((image) => !hiddenIds.has(image.id) && isServableBodyImage(image));
+  const withheld = bodyImages.filter((image) => !kept.includes(image)).map((image) => image.url);
+  return {
+    kept,
+    content: removeBodyMedia(content, {
+      withheld,
+      keepEdgeMedia: new Set(kept.map((image) => image.url)),
+    }),
+  };
+}

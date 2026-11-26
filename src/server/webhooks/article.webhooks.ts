@@ -11,7 +11,7 @@ import {
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
-import { removeBodyMedia } from '~/server/utils/article-body-media';
+import { readerArticleBody } from '~/server/utils/article-body-media';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -50,7 +50,21 @@ export const articleWebhooks = createWebhookProcessor({
           entityId: { in: articles.map((article) => article.id) },
           ...connectionImageExists,
         },
-        select: { entityId: true, image: { select: { id: true, url: true } } },
+        select: {
+          entityId: true,
+          image: {
+            select: {
+              id: true,
+              url: true,
+              nsfwLevel: true,
+              ingestion: true,
+              needsReview: true,
+              tosViolation: true,
+              modelRestricted: true,
+              minor: true,
+            },
+          },
+        },
       });
       const [withheld, listed] = await Promise.all([
         getModelWithheldImageIds(coverIds, prisma),
@@ -60,14 +74,14 @@ export const articleWebhooks = createWebhookProcessor({
           prisma
         ),
       ]);
-      // A listed body image leaves the body, as it does for a signed-out reader.
+      // The body as a signed-out reader is served it.
       const publicBody = (articleId: number, content: string | null) =>
         content &&
-        removeBodyMedia(content, {
-          withheld: bodyImages
-            .filter((c) => c.entityId === articleId && listed.has(c.image.id))
-            .map((c) => c.image.url),
-        });
+        readerArticleBody(
+          content,
+          bodyImages.filter((c) => c.entityId === articleId).map((c) => c.image),
+          listed
+        ).content;
       const publicCover = (image: (typeof articles)[number]['coverImage']) =>
         image &&
         !hasBlockMarker(image) &&
