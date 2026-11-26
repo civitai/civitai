@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   createImage: vi.fn(),
   submitTrackLyricsScan: vi.fn(async () => undefined),
   alignLyrics: vi.fn(async () => ({ data: undefined, response: { status: 204 } })),
+  submitWorkflow: vi.fn(async () => ({ data: { id: 'wf-language' }, response: { status: 200 } })),
   throwOnBlockedUserContent: vi.fn(),
   stageGenerationOutputImage: vi.fn(),
   deleteImages: vi.fn(async () => undefined),
@@ -104,6 +105,7 @@ vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => (
 vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   invokeLyricsAlignmentStepTemplate: mocks.alignLyrics,
+  submitWorkflow: mocks.submitWorkflow,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -332,7 +334,7 @@ describe('addPostImage — audio', () => {
     });
   });
 
-  it('sends the saved lyrics for their verdict, and to be timed against the song', async () => {
+  it('sends the saved lyrics for their verdict and language level, and to be timed against the song', async () => {
     mocks.music = true;
     createThenStop();
     // The alignment reads back the row the save just wrote.
@@ -343,6 +345,14 @@ describe('addPostImage — audio', () => {
     mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
     expect(mocks.submitTrackLyricsScan).toHaveBeenCalledWith({ imageId: 11 });
+    // And for their language level, under the row of its own the profanity verdict lands on.
+    await vi.waitFor(() =>
+      expect(dbMock.dbWrite.entityModeration.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { entityType_entityId: { entityType: 'TrackLyricsLanguage', entityId: 11 } },
+        })
+      )
+    );
     // Not awaited by the post: the saved lyrics go to the recipe with the song's own audio.
     await vi.waitFor(() => expect(mocks.alignLyrics).toHaveBeenCalledTimes(1));
     expect(mocks.alignLyrics.mock.calls[0][0].body).toEqual({

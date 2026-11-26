@@ -5,8 +5,8 @@ import { dbWrite } from '~/server/db/client';
 import { JUDGE_RATING_METADATA_KEY } from '~/shared/utils/block-provenance-metadata';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
-// Kept apart from the module that submits the scans: it sits in an import cycle this module must
-// stay out of, since the image scan pipeline re-rates a song from here.
+// Defined here, not beside the scan submits: those sit in an import cycle this module must stay out
+// of, since the image scan pipeline re-rates a song from here.
 export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
 /** A song's lyrics profanity verdict: its own row, as EntityModeration is one row per entity. */
 export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';

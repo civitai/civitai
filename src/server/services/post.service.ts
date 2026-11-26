@@ -184,6 +184,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { audioMetadataSchema, lyricLineSchema, type LyricLine } from '~/server/schema/media.schema';
 import {
   saveGeneratedTrackLyrics,
+  submitTrackLyricsLanguageScan,
   submitTrackLyricsScan,
 } from '~/server/services/audio-scan/track-lyrics';
 import { alignTrackLyrics } from '~/server/services/audio-scan/lyrics-alignment';
@@ -2105,6 +2106,7 @@ export const addPostImage = async ({
     }).catch(handleLogError);
     if (saved) {
       submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
+      submitTrackLyricsLanguageScan({ imageId: partialResult.id }).catch(handleLogError);
       // Not awaited: the recipe is slow on a cold worker.
       alignTrackLyrics({ imageId: partialResult.id, url: imageProps.url }).catch(handleLogError);
     }

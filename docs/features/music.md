@@ -404,12 +404,20 @@ there; a line without one is text. Image and video cards are unchanged.
 ## A song's rating
 
 A clean song's level is the highest of PG, its lyrics text-scan verdict (`EntityModeration`
-`TrackLyrics`, a text-scan verdict only: an XGuard one rates nothing) and its own cover's rating, once
-the cover is scanned and carries no block (`songLevel`, `src/server/services/audio-scan/song-rating.ts`).
-An nsfw lyrics verdict raises the song; it never blocks it. The song's own scan writes it when it
-decides the song (`decideSong`), and `rerateSong` (`image-scan-pipeline.ts`) writes it again,
-with a scan verdict's side effects, when an input changes: the cover's scan lands, a moderator
-removes the cover, or a lyrics verdict lands on a decided song. It may lower the level when an input
+`TrackLyrics`, a text-scan verdict only: an XGuard one rates nothing), its lyrics language and its own
+cover's rating, once the cover is scanned and carries no block (`songLevel`,
+`src/server/services/audio-scan/song-rating.ts`). An nsfw lyrics verdict raises the song; it never
+blocks it. The song's own scan writes it when it decides the song (`decideSong`), and `rerateSong`
+(`image-scan-pipeline.ts`) writes it again, with a scan verdict's side effects, when an input
+changes: the cover's scan lands, a moderator removes the cover, or a lyrics or language verdict lands
+on a decided song.
+
+The language level comes from XGuard's profanity mode on the lyrics text, sent when the lyrics are
+saved at post time (`submitTrackLyricsLanguageScan`) under its own `EntityModeration` row,
+`TrackLyricsLanguage`. Its `languageLevel` 0, 1 and 2 are stored as PG, PG-13 and R on that row's
+`nsfwLevel` (`track-lyrics-language-moderation.adapter.ts`); a null level (scoring failed) stores
+nothing and is not read as clean. The song never waits on this verdict, and it never blocks; the
+retry cron resubmits a failed one from the lyrics text. It may lower the level when an input
 goes away, never below PG or a collection judge's rating. A blocked or undecided song is left to its
 scan, and a locked level (a moderator's ruling) is never changed.
 

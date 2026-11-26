@@ -26,6 +26,7 @@ import {
   storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
+import { trackLyricsLanguageModerationAdapter } from '~/server/services/track-lyrics-language-moderation.adapter';
 import { trackLyricsModerationAdapter } from '~/server/services/track-lyrics-moderation.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
@@ -50,6 +51,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Storyline: storylineTextScanAdapter,
   ImageCaption: imageCaptionTextScanAdapter,
   TrackLyrics: trackLyricsModerationAdapter,
+  TrackLyricsLanguage: trackLyricsLanguageModerationAdapter,
   ServiceOffering: serviceOfferingModerationAdapter,
   ServiceDealReview: serviceDealReviewModerationAdapter,
   ServiceDealReviewReply: serviceDealReviewReplyModerationAdapter,

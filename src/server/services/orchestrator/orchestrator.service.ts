@@ -531,6 +531,8 @@ type XGuardModerationArgs = {
   rearmRetries?: boolean;
 } & (
   | { mode: 'text'; content: string }
+  /** Rates `content`'s language 0-2 (`languageLevel`); never blocks, and asks no labels. */
+  | { mode: 'profanity'; content: string }
   | {
       mode: 'prompt';
       positivePrompt: string;
@@ -589,6 +591,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   const contentHash =
     args.mode === 'text'
       ? hashContent(args.content + labelOverrideHashSuffix(labelOverrides))
+      : args.mode === 'profanity'
+      ? hashContent(args.content)
       : undefined;
   if (!args.forceRescan && entityType && entityId !== undefined && contentHash) {
     const existing = await dbRead.entityModeration.findUnique({
@@ -612,7 +616,14 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   // side; per-label policyHash comes back on each result and is what we record
   // as the per-label `version` column in the audit log.
   const input =
-    args.mode === 'text'
+    args.mode === 'profanity'
+      ? {
+          mode: 'profanity' as const,
+          text: args.content,
+          storeFullResponse: false,
+          includeReasoning: false,
+        }
+      : args.mode === 'text'
       ? {
           mode: 'text' as const,
           text: args.content,
@@ -653,7 +664,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
         steps: [
           {
             $type: 'xGuardModeration',
-            name: args.mode === 'text' ? 'textModeration' : 'promptModeration',
+            name: `${args.mode}Moderation`,
             metadata,
             priority,
             input,
