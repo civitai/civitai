@@ -5,6 +5,9 @@
 //	feed-eval run        [--node-url U] [--go-url U] [--endpoints a,b] [--window HH:MM-HH:MM] [--force-window]
 //	                     [--prom-url U] [--health 'name=<promql>;max=<float>']... [--health-file F] ...
 //	feed-eval publish    [--hq-url U] [--prefix P] [--viewers a,b] [--dry-run <dir>] [--runs N]
+//	feed-eval reconcile  [--window D] [--min-mismatches N] [--min-mismatch-share F] [--promote-per-signature K]
+//	                     [--max-promotions N] [--dry-run]
+//	feed-eval import-tempo [--in <file.jsonl>] [--endpoint <name>] [--per-signature K] [--hosts '…'] [--dry-run]
 //
 // signatures makes no network call. It reads request records as JSON lines — the rows feed-bench's
 // Tempo capture writes (scripts/feed-bench/README.md: `{t, host, input, authed, durMs}`,
@@ -24,6 +27,15 @@
 // row per case and a runs row. publish renders the newest runs as static pages and PUTs them to HQ
 // (HQ_URL; HQ_TOKEN or HQ_TOKEN_FILE), or writes them to a directory with --dry-run. Neither does
 // anything unless invoked.
+//
+// reconcile (DESIGN.md §19.9) reads the last day's production samples and the newest live run's
+// results (the same ClickHouse login as run) and reports where they disagree: a blind spot (production
+// mismatched on a signature the eval passed; its mismatching cases are promoted, pinned, so the next
+// run replays one), a promoted case that still passes (cannot reproduce), and a bug the eval found
+// where production matched (reverse). Its summary is a `runs` row of phase reconcile, which publish
+// shows as the prod/eval disagreement section. import-tempo writes the cases of a feed-bench Tempo
+// capture (origin tempo), stripped and signed as the capture's, at most K per signature, so a corpus
+// can start before the capture has run for days.
 package main
 
 import (
@@ -38,7 +50,9 @@ func main() {
 
 const usage = `usage: feed-eval signatures [--in <file.jsonl>] [--endpoint <name>] [--top N] [--per-signature K] [--response-bytes B] [--hosts 'green=h1,h2;blue=h3']
        feed-eval run [--help for flags]      (env: NODE_URL, GO_URL, FEED_EVAL_CLICKHOUSE_URL/_USER/_PASSWORD, FEED_EVAL_ACCOUNTS_FILE)
-       feed-eval publish [--help for flags]  (env: FEED_EVAL_CLICKHOUSE_URL/_USER/_PASSWORD, HQ_URL, HQ_TOKEN or HQ_TOKEN_FILE)`
+       feed-eval publish [--help for flags]  (env: FEED_EVAL_CLICKHOUSE_URL/_USER/_PASSWORD, HQ_URL, HQ_TOKEN or HQ_TOKEN_FILE)
+       feed-eval reconcile [--help for flags]    (env: FEED_EVAL_CLICKHOUSE_URL/_USER/_PASSWORD)
+       feed-eval import-tempo [--help for flags] (env: FEED_EVAL_CLICKHOUSE_URL/_USER/_PASSWORD, unless --dry-run)`
 
 // run is main's body: the exit code of the subcommand args name.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -62,6 +76,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "publish":
 		if err := publishCmd(args[1:], stdout); err != nil {
 			_, _ = fmt.Fprintln(stderr, "feed-eval publish:", err)
+			return 1
+		}
+		return 0
+	case "reconcile":
+		if err := reconcileCmd(args[1:], stdout, stderr); err != nil {
+			_, _ = fmt.Fprintln(stderr, "feed-eval reconcile:", err)
+			return 1
+		}
+		return 0
+	case "import-tempo":
+		if err := importTempo(args[1:], stdin, stdout); err != nil {
+			_, _ = fmt.Fprintln(stderr, "feed-eval import-tempo:", err)
 			return 1
 		}
 		return 0
