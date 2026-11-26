@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import { NsfwLevel } from '~/server/common/enums';
 import { kyselyWrite } from '~/server/db/kyselyDb';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 export const WITHHELD_LOOSENING_REFUSED = 'Not ruled on here. Ask a lead.';
 
@@ -56,4 +57,15 @@ export async function assertMayLoosenImages(
     code: 'FORBIDDEN',
     message: `${WITHHELD_LOOSENING_REFUSED} Nothing was changed: ${[...withheld].join(', ')}.`,
   });
+}
+
+/** `assertMayLoosenImages` for a moderator. Anyone else gets the refusal of a write they may not
+ *  make, which does not say why. */
+export async function assertMayLoosenImagesAs(
+  imageIds: number[],
+  { isModerator, csamReview }: { isModerator?: boolean; csamReview: boolean }
+) {
+  if (isModerator) return assertMayLoosenImages(imageIds, { csamReview });
+  if ((await withheldImageIds(imageIds, { csamReview: false })).size)
+    throw throwAuthorizationError();
 }

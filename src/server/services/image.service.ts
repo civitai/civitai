@@ -1,9 +1,9 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   assertMayLoosenImages,
+  assertMayLoosenImagesAs,
   loosensImageLevel,
   loosensImageLevelSql,
-  withheldImageIds,
 } from '~/server/services/moderator-withheld.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
@@ -6896,10 +6896,24 @@ export async function updateImageNsfwLevel({
       ...ratingRecordedUnderGrace(metadata, nsfwLevel),
     };
 
-    await dbWrite.image.update({
-      where: { id },
-      data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
-    });
+    if (activity === 'setNsfwLevelKono') {
+      // The write itself refuses a consensus that loosens a withheld image, as the webhook's does.
+      const written = await dbWrite.$executeRaw`
+        UPDATE "Image" i
+        SET "nsfwLevel" = ${nsfwLevel}, "nsfwLevelLocked" = TRUE,
+            "metadata" = ${JSON.stringify(updatedMetadata)}::jsonb, "updatedAt" = NOW()
+        WHERE i.id = ${id}
+          AND NOT (
+            ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
+            AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
+          )
+      `;
+      if (!written) return image.nsfwLevel;
+    } else
+      await dbWrite.image.update({
+        where: { id },
+        data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
+      });
     await afterImageNsfwLevelSet({
       id,
       postId: image.postId,
@@ -8149,12 +8163,7 @@ export async function updateImageAcceptableMinor({
   csamReview,
   isModerator,
 }: UpdateImageAcceptableMinorInput & { csamReview: boolean; isModerator: boolean }) {
-  if (acceptableMinor) {
-    if (isModerator) await assertMayLoosenImages([id], { csamReview });
-    // A contest manager gets the refusal of any entry they may not rule on.
-    else if ((await withheldImageIds([id], { csamReview: false })).has(id))
-      throw throwAuthorizationError();
-  }
+  if (acceptableMinor) await assertMayLoosenImagesAs([id], { isModerator, csamReview });
   // primary: whether this write changes the flag decides whether shared caches are purged.
   const before = await dbWrite.image.findUnique({
     where: { id },

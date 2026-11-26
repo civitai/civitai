@@ -521,6 +521,7 @@ export const updatePostHandler = async ({
               userId: ctx.user.id,
               tagId: collectionTagId,
               isModerator: ctx.user.isModerator,
+              csamReview: !!ctx.features?.csamReports,
               canAccessUserChallenges: ctx.features.userChallenges,
             },
             permissions,

@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import {
   CSAM_LINK_TABLES_SQL,
   WITHHELD_TABLES_SQL,
@@ -40,7 +41,8 @@ beforeAll(async () => {
       "mimeType" text, ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text,
       "blockedFor" text, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4,
       "userId" int NOT NULL, "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint,
-      "postId" int
+      "postId" int, metadata jsonb, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "updatedAt" timestamp
     );
     ${WITHHELD_TABLES_SQL}
     INSERT INTO "Image" (id, url, "needsReview", "userId") VALUES (${WITHHELD}, 'key-a', 'csam', ${OWNER});
@@ -70,7 +72,12 @@ const { rescanChallenge, playgroundReviewImage } = await import(
 );
 const { rescanArticleImage } = await import('~/server/services/article.service');
 const { addTagVotes, disableTags } = await import('~/server/services/tag.service');
-const { updateCollectionItemsStatus } = await import('~/server/services/collection.service');
+const {
+  bulkSaveItems,
+  saveItemInCollections,
+  setCollectionItemNsfwLevel,
+  updateCollectionItemsStatus,
+} = await import('~/server/services/collection.service');
 
 const forbidden = (p: Promise<unknown>) =>
   expect(p).rejects.toSatisfy((e) => e instanceof TRPCError && e.code === 'FORBIDDEN');
@@ -155,21 +162,47 @@ describe('updateImageNsfwLevel', () => {
   });
 
   // A Knights consensus is checked by its caller (new-order), not here; any other activity is.
-  it('lets a Knights consensus through, and refuses the same write as a moderator rating', async () => {
-    current(WITHHELD);
-    const as = (activity: 'setNsfwLevelKono' | 'setNsfwLevel') =>
-      updateImageNsfwLevel({
-        id: WITHHELD,
-        nsfwLevel: 1,
+  it('a Knights consensus write leaves a withheld image unlowered, and lowers a clean one', async () => {
+    const raw = pgliteRaw(holder.db);
+    dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 8 WHERE id IN (${WITHHELD}, ${CLEAN})`);
+    const consensus = (id: number, nsfwLevel: number) => {
+      current(id);
+      return updateImageNsfwLevel({
+        id,
+        nsfwLevel,
         userId: 1,
         isModerator: true,
-        csamReview: false,
-        activity,
+        activity: 'setNsfwLevelKono',
       });
-    await settle(as('setNsfwLevelKono'));
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
-    await forbidden(as('setNsfwLevel'));
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    };
+    const level = async (id: number) =>
+      (
+        await holder.db.query<{ nsfwLevel: number }>(
+          `SELECT "nsfwLevel" FROM "Image" WHERE id = ${id}`
+        )
+      ).rows[0].nsfwLevel;
+    try {
+      expect(await consensus(WITHHELD, 1)).toBe(8);
+      expect(await level(WITHHELD)).toBe(8);
+      await settle(consensus(CLEAN, 1));
+      expect(await level(CLEAN)).toBe(1);
+      await settle(consensus(WITHHELD, 16));
+      expect(await level(WITHHELD)).toBe(16);
+    } finally {
+      dbMock.dbWrite.$executeRaw.mockReset();
+      await holder.db.exec(
+        `UPDATE "Image" SET "nsfwLevel" = 4 WHERE id IN (${WITHHELD}, ${CLEAN})`
+      );
+    }
+  });
+
+  it('refuses the same lowering as a moderator rating', async () => {
+    current(WITHHELD);
+    await forbidden(
+      updateImageNsfwLevel({ id: WITHHELD, nsfwLevel: 1, userId: 1, isModerator: true })
+    );
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
   });
 
   it('raises a withheld image for any moderator', async () => {
@@ -472,7 +505,30 @@ describe('updateCollectionItemsStatus accepting contest entries', () => {
           modelId: null,
           postId: null,
         }))) as never);
+    // The gate's item -> image read; any other raw read (the judge-rating check) finds every item
+    // unscanned, which queues a rescan.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: string[], ...values: any[]) => {
+      const sql = strings.join('?');
+      if (!sql.includes('SELECT id, "imageId" FROM "CollectionItem"'))
+        return sql.includes('AS state') ? [{ imageId: CLEAN, state: 'scanning' }] : [];
+      const ids = values.find((v) => Array.isArray(v?.values))?.values as number[];
+      return Object.entries(items)
+        .filter(([, id]) => ids.includes(id))
+        .map(([imageId, id]) => ({ id, imageId: Number(imageId) }));
+    }) as never);
   });
+  const judgeRatedCollection = () =>
+    dbMock.dbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION,
+      type: 'Image',
+      mode: 'Contest',
+      name: 'Contest',
+      metadata: { judgesApplyBrowsingLevel: true },
+    } as never);
+  const ranJudgeRatingCheck = () =>
+    dbMock.dbWrite.$queryRaw.mock.calls.some((call) =>
+      (call[0] as unknown as string[]).join('?').includes('AS state')
+    );
   const accept = (
     imageIds: number[],
     who: { isModerator?: boolean; isSystem?: boolean; csamReview?: boolean }
@@ -507,6 +563,17 @@ describe('updateCollectionItemsStatus accepting contest entries', () => {
     expect(acceptedItemIds()).toEqual([items[CLEAN]]);
   });
 
+  it('refuses before the rescan an approval queues, and a clean entry gets that far', async () => {
+    judgeRatedCollection();
+    await forbidden(accept([CLEAN, WITHHELD], { isModerator: true }));
+    expect(ranJudgeRatingCheck()).toBe(false);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    vi.clearAllMocks();
+    judgeRatedCollection();
+    await settle(accept([CLEAN], { isModerator: true }));
+    expect(ranJudgeRatingCheck()).toBe(true);
+  });
+
   it('refuses a contest manager with the generic refusal', async () => {
     const refused = await settle(accept([WITHHELD], {}));
     expect(refused).toMatchObject({ code: 'UNAUTHORIZED' });
@@ -534,5 +601,132 @@ describe('addTagVotes', () => {
     await settle(vote(1, { isModerator: true }));
     await settle(vote(-1, {}));
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('a moderator adding an image to a collection as accepted', () => {
+  const COLLECTION = 901;
+  const collectionRow = {
+    id: COLLECTION,
+    userId: OWNER,
+    type: 'Image',
+    mode: null,
+    name: 'Picks',
+    metadata: {},
+    tags: [],
+    read: 'Public',
+    write: 'Private',
+  };
+  const permissions = {
+    manage: true,
+    writeReview: false,
+    write: true,
+    isOwner: false,
+    isCollaborator: false,
+  } as never;
+  beforeEach(() => {
+    dbMock.dbRead.collection.findUnique.mockResolvedValue(collectionRow as never);
+    dbMock.dbRead.collection.findMany.mockResolvedValue([collectionRow] as never);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.collectionItem.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.collectionItem.createMany.mockResolvedValue({ count: 1 } as never);
+    // The image visibility read, then the collection permission read.
+    dbMock.dbRead.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('?').includes('FROM "Image"')
+        ? [WITHHELD, CLEAN].map((id) => ({ id, userId: OWNER }))
+        : [permissionRow]) as never);
+  });
+  const permissionRow = {
+    id: COLLECTION,
+    read: 'Public',
+    write: 'Public',
+    userId: OWNER,
+    type: 'Image',
+    mode: null,
+    collaborationDisabledAt: null,
+    archivedAt: null,
+    contributorPermissions: null,
+    hasAcceptedSeat: false,
+  };
+  const bulk = (imageIds: number[], csamReview = false) =>
+    bulkSaveItems({
+      input: { collectionId: COLLECTION, imageIds, userId: 1, isModerator: true, csamReview },
+      permissions,
+    });
+
+  it('refuses a bulk add of a withheld image, and writes nothing', async () => {
+    await forbidden(bulk([CLEAN, WITHHELD]));
+    expect(dbMock.dbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+  });
+
+  it('adds it with the grant, and a clean image for any moderator', async () => {
+    expect(await settle(bulk([WITHHELD], true))).toSatisfy(
+      (e) => !(e instanceof TRPCError && e.code === 'FORBIDDEN')
+    );
+    await notForbidden(bulk([CLEAN]));
+  });
+
+  it('refuses saving a withheld image into a collection, and writes nothing', async () => {
+    const save = (imageId: number, csamReview = false) =>
+      saveItemInCollections({
+        input: {
+          type: 'Image',
+          imageId,
+          collections: [{ collectionId: COLLECTION }],
+          userId: 1,
+          isModerator: true,
+          csamReview,
+        } as never,
+      });
+    await forbidden(save(WITHHELD));
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    await notForbidden(save(WITHHELD, true));
+    await notForbidden(save(CLEAN));
+  });
+});
+
+describe('setCollectionItemNsfwLevel on an image the scan has not finished', () => {
+  beforeEach(() => {
+    dbMock.dbRead.collectionItem.findUniqueOrThrow.mockImplementation((async (args: any) => ({
+      id: args.where.id,
+      imageId: args.where.id,
+      collectionId: 902,
+      collection: { type: 'Image', metadata: { judgesApplyBrowsingLevel: true } },
+    })) as never);
+    // The image row, then the rescan's own read.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('?').includes('AS scanned')
+        ? [
+            {
+              postCollectionId: 902,
+              ingestion: 'Pending',
+              nsfwLevel: 1,
+              blockedFor: null,
+              needsReview: null,
+              scanned: false,
+            },
+          ]
+        : []) as never);
+  });
+  const rate = (imageId: number, who: { isModerator?: boolean; csamReview?: boolean }) =>
+    setCollectionItemNsfwLevel({ collectionItemId: imageId, nsfwLevel: 4, userId: 8, ...who });
+  const queuedRescan = () =>
+    dbMock.dbWrite.$queryRaw.mock.calls.some(
+      (call) => !(call[0] as unknown as string[]).join('?').includes('AS scanned')
+    );
+
+  it('refuses the rescan of a withheld image, generic for a judge and FORBIDDEN for a moderator', async () => {
+    expect(await settle(rate(WITHHELD, {}))).toMatchObject({ code: 'UNAUTHORIZED' });
+    await forbidden(rate(WITHHELD, { isModerator: true }));
+    expect(queuedRescan()).toBe(false);
+  });
+
+  it('queues it for a clean image, and for a moderator with the grant', async () => {
+    await notForbidden(rate(CLEAN, {}));
+    expect(queuedRescan()).toBe(true);
+    vi.clearAllMocks();
+    await notForbidden(rate(WITHHELD, { isModerator: true, csamReview: true }));
+    expect(queuedRescan()).toBe(true);
   });
 });
