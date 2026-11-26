@@ -84,3 +84,57 @@ describe('pollFailureSnapshot', () => {
     });
   });
 });
+
+// The retry meta of a refusal under a rate limit (`data.rateLimit` on the tRPC client error), as the
+// formatter sends it. Each field's value is distinct, so a copy that swapped or dropped one shows.
+const RATE_LIMIT = {
+  retryAfterSeconds: 41,
+  retryAt: '2026-02-03T04:05:47.000Z',
+  id: 'apps.catalog',
+  kind: 'abuse' as const,
+};
+const rateLimited = (code: string, rateLimit: unknown = RATE_LIMIT) =>
+  Object.assign(new Error('Rate limit exceeded, please retry shortly.'), {
+    data: { code, rateLimit },
+  });
+
+describe('a rate-limited refusal keeps its `rateLimit` meta', () => {
+  it('failureSnapshot carries it beside the message', () => {
+    expect(failureSnapshot(rateLimited('TOO_MANY_REQUESTS'))).toStrictEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'Rate limit exceeded, please retry shortly.',
+      rateLimit: RATE_LIMIT,
+    });
+  });
+
+  it('pollFailureSnapshot carries it on the keep-polling arm', () => {
+    expect(pollFailureSnapshot(rateLimited('TOO_MANY_REQUESTS'), 'wf_kept')).toStrictEqual({
+      workflowId: 'wf_kept',
+      status: 'processing',
+      throttled: true,
+      rateLimit: RATE_LIMIT,
+    });
+  });
+
+  it('pollFailureSnapshot carries it on the terminal arm too', () => {
+    expect(pollFailureSnapshot(rateLimited('FORBIDDEN'), 'wf_kept')).toStrictEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'Rate limit exceeded, please retry shortly.',
+      rateLimit: RATE_LIMIT,
+    });
+  });
+
+  it('a malformed meta is dropped, not forwarded', () => {
+    const snap = failureSnapshot(rateLimited('TOO_MANY_REQUESTS', { retryAfterSeconds: 'soon' }));
+    expect('rateLimit' in snap).toBe(false);
+  });
+
+  it('a failure with no meta carries no `rateLimit` key at all', () => {
+    expect('rateLimit' in failureSnapshot(withCode('TOO_MANY_REQUESTS'))).toBe(false);
+    expect('rateLimit' in pollFailureSnapshot(withCode('TOO_MANY_REQUESTS'), 'wf_kept')).toBe(
+      false
+    );
+  });
+});
