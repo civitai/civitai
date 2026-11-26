@@ -1559,12 +1559,27 @@ describe('releasePendingDeletes', () => {
     expect(rows).toEqual([{ publishedAt: null, reason: null }]);
   });
 
-  it("leaves a released post's stamp once a moderator has acted on it since", async () => {
+  it.each([
+    [
+      'a moderator has acted on it since',
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (99, 'unpublish', 'post', 60)`,
+    ],
+    [
+      'a moderator has acted on its owner since',
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (99, 'removeContent', 'user', ${OWNER})`,
+    ],
+    ['its case is open again', `UPDATE "Report" SET status = 'Pending'`],
+    ['its case found something', `UPDATE "Report" SET status = 'Actioned'`],
+    ['its owner is banned', `INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, now())`],
+    ['its owner is deleted', `INSERT INTO "User" (id, "deletedAt") VALUES (${OWNER}, now())`],
+  ])("leaves a released post's stamp once %s", async (_, change) => {
     await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (60, ${OWNER}, now());
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM'); INSERT INTO "PostReport" VALUES (60, 1);`);
     await deletePostRows(db, { ids: [60], actor: drain });
-    await pg.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
-      VALUES (99, 'unpublish', 'post', 60)`);
+    await closeCase();
+    await pg.exec(change);
 
     const lifted = await db.transaction().execute((tx) => releasePendingDeletes(tx, 'Post', [60]));
 

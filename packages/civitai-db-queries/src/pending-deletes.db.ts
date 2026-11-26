@@ -123,7 +123,7 @@ const timestampOr = (text: RawBuilder<unknown>) =>
   sql`CASE WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$'
     THEN (${text})::timestamptz END`;
 
-/** A moderator has acted on the item since `since` (text), or `since` is unreadable. */
+/** A moderator has acted on the item since `since` (text); an unreadable `since` counts any earlier activity. */
 export const moderatorActedSince = (
   entityType: 'image' | 'post' | 'user',
   id: RawBuilder<unknown>,
