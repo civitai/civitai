@@ -27,8 +27,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -283,16 +285,31 @@ type selfMatcher struct {
 	matched bool
 }
 
-// userID reports whether v (a JSON number, or a string of digits, surrounding space and a leading `+`
-// allowed: what Number() would read as the id) is the viewer's user id.
+// numberValue is v as Number() reads a JSON number or a string (surrounding space trimmed, any
+// decimal or exponent form), when that is an integer.
+func numberValue(v any) (int64, bool) {
+	var str string
+	switch t := v.(type) {
+	case json.Number:
+		str = t.String()
+	case string:
+		str = strings.TrimSpace(t)
+	default:
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(str, 64)
+	if err != nil || f != math.Trunc(f) || math.Abs(f) > 1<<53 {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+// userID reports whether v, read as Number() reads it (numberValue), is the viewer's user id.
 func (s *selfMatcher) userID(v any) bool {
 	if s.viewer.UserID == 0 {
 		return false
 	}
-	if str, isStr := v.(string); isStr {
-		v = strings.TrimPrefix(strings.TrimSpace(str), "+")
-	}
-	n, ok := intValue(v)
+	n, ok := numberValue(v)
 	if ok && n == int64(s.viewer.UserID) {
 		s.matched = true
 		return true
@@ -316,7 +333,7 @@ func (s *selfMatcher) username(v any) bool {
 
 // collection reports whether v is one of the viewer's collections.
 func (s *selfMatcher) collection(v any) bool {
-	n, ok := intValue(v)
+	n, ok := numberValue(v)
 	if !ok {
 		return false
 	}

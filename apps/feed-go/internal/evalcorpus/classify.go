@@ -437,6 +437,9 @@ func modelExtras(m map[string]any, shape map[string]any) {
 	// is what tells those paths apart.
 	if ct, _ := m["checkpointType"].(string); ct != "" {
 		list, _ := m["types"].([]any)
+		if s, ok := m["types"].(string); ok {
+			list = []any{s} // modelfeed reads a bare string as a one-member list (oneOrMany)
+		}
 		hasCheckpoint, other := false, false
 		for _, t := range list {
 			if t == "Checkpoint" {
@@ -537,8 +540,13 @@ func trpcShape(raw string, self *selfMatcher, r rules) (stored string, shape map
 	if r.extra != nil {
 		r.extra(m, shape)
 	}
-	// Always re-encoded, never the raw text: a raw input can repeat a key (JSON.parse and Go both
-	// keep the last), and an earlier copy naming the viewer would survive in the raw text.
+	if m == nil && len(rewrite) == 0 {
+		// A null or absent `json`: nothing in it to name anyone, and re-encoding would turn it into
+		// `{}`, which a schema may answer differently. Stored as sent.
+		return raw, shape
+	}
+	// Otherwise always re-encoded, never the raw text: a raw input can repeat a key (JSON.parse and
+	// Go both keep the last), and an earlier copy naming the viewer would survive in the raw text.
 	out, ok := rewriteEnvelope(env, rewrite)
 	if !ok {
 		return "", shape
