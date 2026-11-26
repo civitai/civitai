@@ -266,6 +266,27 @@ describe('grading a Knight vote when it is cast', () => {
     expect(voidedIds()).toEqual([]);
   });
 
+  // A moderator's own rating writes at once, under the moderator's own grant.
+  it.each([false, true])(
+    "forwards a moderator's grant (%s) to the rating write",
+    async (csamReview) => {
+      knightPool.exists.mockImplementation(async (id: number) => id === WITHHELD);
+      knightPool.getCount.mockResolvedValue(0);
+      const tracker = { newOrderImageRating: vi.fn().mockResolvedValue(undefined) };
+      await addImageRating({
+        playerId: PLAYER,
+        imageId: WITHHELD,
+        rating: NsfwLevel.X,
+        chTracker: tracker as any,
+        isModerator: true,
+        csamReview,
+      }).catch(() => undefined);
+      expect(mockUpdateLevel).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: WITHHELD, isModerator: true, csamReview })
+      );
+    }
+  );
+
   it('control: a vote below the limit voids nothing', async () => {
     expect(await castVote({ voteNumber: 3, rating: NsfwLevel.X, tally: NO_CONSENSUS })).toBe(
       NewOrderImageRatingStatus.Pending
