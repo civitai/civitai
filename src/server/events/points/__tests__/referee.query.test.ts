@@ -340,7 +340,8 @@ describe('referee actor shards', () => {
       0: [row(10, '2026-11-05', 6, { '4': '6' }), row(12, '2026-11-05', 1, { '9': '1' })],
       2: [
         row(10, '2026-11-04', 1, { '23': '1' }),
-        row(10, '2026-11-05', 3, { '4': '1', '6': '2' }),
+        // The query's team is any(): the first shard's is kept.
+        { ...row(10, '2026-11-05', 3, { '4': '1', '6': '2' }), team: 'Blue' },
       ],
     };
     query.mockImplementation(async (arg) => ({

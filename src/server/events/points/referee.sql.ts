@@ -32,8 +32,6 @@
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), restrictedFrom
 // (Array(Int64), epoch ms, aligned with restrictedUsers), newAccountMinId, actorShards and
 // actorShard (only actors with cityHash64(actorId) % actorShards = actorShard; see referee-shards.ts).
-//
-// Every rule above is per actor, so one actor shard's rows sum with the others' to the whole answer.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
   -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune

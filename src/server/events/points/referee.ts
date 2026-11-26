@@ -286,8 +286,7 @@ export async function queryReferee(
     sysRedis.hGetAll(eventPointKeys(event.name).weights),
     restrictedUsers(event, window, deadline),
   ]);
-  // Every run whose window starts at the season's start (the nightly run, and every run once the
-  // season has ended) reads the whole season of daily rows too.
+  // A window from the season's start reads the whole season of daily rows too.
   const shards =
     window.recomputeFrom.getTime() === window.start.getTime()
       ? REFEREE_FULL_ACTOR_SHARDS

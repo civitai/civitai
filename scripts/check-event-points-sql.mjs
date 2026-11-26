@@ -1,7 +1,6 @@
 // Checks the event points referee query (src/server/events/points/referee.sql.ts) against hand-built
-// fixtures, whole and split into actor shards merged by referee-shards.ts (as the settle job runs it),
-// and checks the split against the whole on a generated ledger. CI has no ClickHouse, so this is the query's semantic test: run it after any change to
-// the SQL. The fixtures are CTEs that shadow the real tables and the session is readonly, so it reads
+// fixtures, whole and in actor shards merged as the settle job merges them. CI has no ClickHouse, so
+// this is the query's semantic test: run it after any change to the SQL or the merge. The fixtures are CTEs that shadow the real tables and the session is readonly, so it reads
 // no real rows and writes nothing; any ClickHouse server works.
 //
 // Usage: CLICKHOUSE_HOST=... CLICKHOUSE_USERNAME=... CLICKHOUSE_PASSWORD=... \
