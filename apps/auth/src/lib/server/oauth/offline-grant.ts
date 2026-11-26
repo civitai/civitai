@@ -182,7 +182,11 @@ export async function grantOffline(opts: {
   now?: Date;
 }): Promise<void> {
   const now = opts.now ?? new Date();
-  const current = (await readConsentForOffline(opts.userId, opts.clientId))?.buzzLimit ?? null;
+  const existing = await readConsentForOffline(opts.userId, opts.clientId);
+  const current = existing?.buzzLimit ?? null;
+  // An unbroken grant keeps its start: the runner mint refuses authorizations made before it, so a
+  // re-approval must not read as a new grant. Only a decline clears it.
+  const grantedAt = existing?.offlineGrantedAt ?? now;
   const cap = offlineCapAfterApproval({
     current,
     proposed: opts.proposed,
@@ -203,7 +207,7 @@ export async function grantOffline(opts: {
     })
     .onConflict((oc) =>
       oc.columns(['userId', 'clientId']).doUpdateSet({
-        offlineGrantedAt: now,
+        offlineGrantedAt: grantedAt,
         ...capColumn,
         updatedAt: now,
         ...(opts.rememberScope && { scope: scopeToColumn(opts.scope) }),

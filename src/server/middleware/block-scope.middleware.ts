@@ -1156,8 +1156,9 @@ export async function verifyBlockToken(
       // already enforced the real lifetime in jwtVerify; this re-checks the age
       // against the type-specific cap so a signer bug emitting a too-long `exp`
       // is still caught. FAIL-SAFE TO THE SHORTER CAP: only an explicit
-      // `dev === true` (validated boolean above) gets the 4h cap; absent /
-      // false / anything-else → the 15min cap.
+      // `dev === true` (validated boolean above) gets the 4h cap and only
+      // `mintOrigin === 'runner'` the runner cap; absent / false / anything-else
+      // → the 15min cap.
       const nowSeconds = Math.floor(Date.now() / 1000);
       const ageSeconds = nowSeconds - claims.iat;
       const ageCapSeconds =

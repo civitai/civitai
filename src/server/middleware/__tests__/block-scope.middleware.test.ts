@@ -428,6 +428,7 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
 
   it('[REG] a runner token is refused once older than the runner lifetime, whatever its exp', async () => {
     const now = Math.floor(Date.now() / 1000);
+    // Either side of the 180s runner lifetime (civitai/civitai#10543).
     const old = await signRaw({ mintOrigin: 'runner', runId: 'run_x', iat: now - 240 });
     expect(await verifyBlockToken(old, { admitRunner: true })).toBeNull();
     const fresh = await signRaw({ mintOrigin: 'runner', runId: 'run_x', iat: now - 60 });

@@ -27,7 +27,6 @@ const standing: RunnerAuthorizationRow = {
   revokedAt: null,
 };
 
-/** Every read answers the passing case; a test overrides the one it is about. */
 /**
  * Every read answers the passing case only for the arguments the mint should pass, and the
  * refusing answer otherwise, so a read called with the wrong id fails the CONTROL test.

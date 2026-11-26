@@ -701,6 +701,7 @@ describe('BlockTokenService.sign — runner tokens', () => {
     const claims = claimsOf(token);
     expect(claims.mintOrigin).toBe('runner');
     expect(claims.runId).toBe('run_abc');
+    // 180s: the runner lifetime chosen in civitai/civitai#10543 (one token, one submit).
     expect((claims.exp as number) - (claims.iat as number)).toBe(180);
     expect(await verifyBlockToken(token)).toBeNull();
     expect((await verifyBlockToken(token, { admitRunner: true }))?.runId).toBe('run_abc');

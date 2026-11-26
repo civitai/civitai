@@ -1137,7 +1137,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // caller — including moderators — before the per-user gate ran (the H2
   // divergence). Removing it lets the per-user gate be authoritative: a mod
   // passes, a non-mod / anon caller is still refused (403) before any DB read.
-  // On the session path, the cheap per-IP rate limit below still runs first to throttle probing.
 
   // A recipe runner's mint takes its own path, before the per-IP limit: one runner address
   // serves many users, and it authenticates with its OAuth token, never a session.

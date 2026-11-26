@@ -322,8 +322,10 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
   });
 
   it('refuses a runner client over its shared per-client limit', async () => {
-    // Per-IP admits; the per-client counter is over 600.
-    redisMock.redis.incrBy.mockResolvedValueOnce(1).mockResolvedValueOnce(601);
+    // Only the per-client counter (`block-token-runner:<client>`) is over 600.
+    redisMock.redis.incrBy.mockImplementation(async (key: string) =>
+      /block-token-runner:[^:]+$/.test(key) ? 601 : 1
+    );
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(429);
     expect(r.body).toMatchObject({ rateLimit: { id: 'apps.block-token-runner-mint' } });

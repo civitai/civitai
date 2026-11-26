@@ -64,7 +64,6 @@ const liveDeps: RunnerMintDeps = {
   offlineGrantOn: () => isFlipt(FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT),
   reads: async () => {
     const { kyselyWrite } = await import('~/server/db/kyselyDb');
-    // primary: a revocation or attempt written moments ago must be seen.
     return runnerMintReads(kyselyWrite);
   },
   viewerLevel: forcedSfwViewerLevel,
@@ -104,8 +103,7 @@ export async function handleRunnerMint(
   const bearer = bearerTokenFromHeader(req.headers.authorization);
   if (!bearer) return refuse(401, 'no_bearer', 'Unauthorized');
 
-  // Generous: one runner address serves every user. It bounds credential probing before the
-  // bearer lookup, which reads the primary on a cache miss.
+  // Generous: one runner address serves every user.
   const perIp = await checkFixedWindow(
     `block-token-runner-ip:${getTrustedClientIp(req) ?? 'unknown'}`,
     PER_IP_LIMIT.max,

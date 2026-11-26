@@ -59,8 +59,8 @@ export interface RunnerMintReads {
 export const RUNNER_CAP_STATES = ['reserved', 'submitting', 'unknown', 'submitted', 'settled'];
 
 /**
- * The Postgres reads. `primary`: a consent change, revocation or attempt written moments ago
- * must be seen, so every read goes to the primary.
+ * The runner mint reads. Pass a primary client: a consent change, revocation or attempt written
+ * moments ago must be seen.
  */
 export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
   const one = async <T>(query: RawBuilder<T>): Promise<T | null> => {

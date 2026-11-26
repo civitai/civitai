@@ -319,13 +319,14 @@ export class BlockTokenService {
     // long-lived read scopes can request a separate token without settings
     // scopes; the issuance endpoint handles that cleanly.
     // Lifetime precedence (most-specific wins):
-    //   1. dev tokens (4h)        — explicit dev:live marker, OVERRIDES settings
-    //   2. settings-scope (5min)  — tightest replay window for installer scopes
-    //   3. default (15min)        — every other token
+    //   1. runner tokens (180s)   — one submit; never dev (refused below)
+    //   2. dev tokens (4h)        — explicit dev:live marker, OVERRIDES settings
+    //   3. settings-scope (5min)  — tightest replay window for installer scopes
+    //   4. default (15min)        — every other token
     // Dev page tokens never carry settings scopes (the mint endpoint excludes
     // block:settings:* via DEV_TOKEN_SCOPE_ALLOWLIST), so the dev/settings
-    // branches are mutually exclusive in practice; ordering dev first only makes
-    // the precedence unambiguous.
+    // branches are mutually exclusive in practice; ordering dev before settings
+    // only makes the precedence unambiguous.
     if (
       input.runner &&
       (input.userId == null ||

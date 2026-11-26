@@ -1,16 +1,11 @@
 import { createHash } from 'node:crypto';
 import { SIMPLE_BUZZ_LIMIT_PERIOD_DAYS, SIMPLE_BUZZ_LIMIT_PERIODS } from '@civitai/auth/buzz-limit';
 import type { RunnerAppBlockRow, RunnerMintReads } from '@civitai/db-queries/recipe-runner';
+import { constants } from '~/server/common/constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/**
- * Whether a recipe runner may mint a block token for one run of a user who granted it offline
- * access, and with what budget. Every check fails closed. The ledger peek here is advisory: the
- * submit path reserves against the same rows under a lock and is the authority.
- */
-
 /** `OauthClient.userId` of a Civitai-owned (system) client. */
-export const SYSTEM_CLIENT_OWNER_ID = -1;
+export const SYSTEM_CLIENT_OWNER_ID = constants.system.user.id;
 /** The exact scope a runner client's access token carries. */
 export const RUNNER_TOKEN_SCOPE = TokenScope.RunnerMint | TokenScope.UserRead;
 
@@ -78,6 +73,11 @@ export function isRunnerClient(client: Awaited<ReturnType<RunnerMintReads['clien
   );
 }
 
+/**
+ * Whether a recipe runner may mint a block token for one run of a user who granted it offline
+ * access, and with what budget. Every check fails closed. The ledger peek here is advisory and
+ * reserves nothing; the submit path has to be the authority on budget.
+ */
 export async function decideRunnerMint(
   input: {
     userId: number;

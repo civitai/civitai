@@ -72,16 +72,16 @@ export async function getBearerTokenUser(
   return user;
 }
 
-/**
- * The session a bearer credential stands for, or null. A client-credentials token is
- * single-purpose: it resolves to no session unless the caller opts in.
- */
 /** The token of an `Authorization: Bearer <token>` header, or null. */
 export function bearerTokenFromHeader(header: unknown): string | null {
   if (typeof header !== 'string') return null;
   return /^Bearer\s+(\S+)$/i.exec(header.trim())?.[1] ?? null;
 }
 
+/**
+ * The session a bearer credential stands for, or null. A client-credentials token is
+ * single-purpose: it resolves to no session unless the caller opts in.
+ */
 export async function getSessionFromBearerToken(key: string, options: BearerTokenOptions = {}) {
   // A per-provider download token (`<provider>:<secret>`) is accepted by the download route alone
   // and never stands for a session. No API key contains `:`.

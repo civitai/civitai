@@ -429,6 +429,15 @@ describe('flag on: the offline grant', () => {
     expect(res.body).not.toHaveProperty('refresh_token');
   });
 
+  it('re-approving under an unbroken grant keeps its start time', async () => {
+    const earlier = new Date(NOW.getTime() - 3 * DAY);
+    consent({ offlineGrantedAt: earlier });
+    await authorize(authorizeParams(`offline_access ${TokenScope.ModelsRead}`), {
+      offline: 'true',
+    });
+    expect(h.tables.OauthConsent[0].offlineGrantedAt).toEqual(earlier);
+  });
+
   it('re-consent keeps a custom (multi-budget) cap when the fields are left blank, and busts nothing', async () => {
     const custom = [
       { type: 'sliding', limit: 300, window: 'hour', unit: 1 },
