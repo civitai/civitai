@@ -557,6 +557,12 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
     'src/server/services/block-registry.service.ts':
       'The SQL synthesis in listForModel: `bus_pub_ || bus.id`, `bus_view_ || bus.id`, ' +
       '`pdb_ || pdb.app_block_id`. COVERED by the subscription and app-block legs.',
+    'src/server/services/blocks/runner-mint-handler.ts':
+      'The recipe-runner mint: `rbi_<runner clientId>`, a shape the parser does not ' +
+      'recognise, so NOT COVERED by the ban markers. The token lives 180s and every token ' +
+      'carrying `mintOrigin: runner` is refused everywhere but submit, which itself refuses ' +
+      'it until the attempt ledger lands; that change has to settle how a publisher ban ' +
+      'reaches a runner run before submit admits one.',
   };
 
   // 🔴 CONSTRUCTION ONLY. The earlier form also matched `PAGE_INSTANCE_PREFIX}`, which

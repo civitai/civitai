@@ -42,6 +42,7 @@ function reads(over: Partial<RunnerMintReads> = {}): RunnerMintReads {
             isConfidential: true,
             skipConsent: false,
             grants: ['authorization_code', 'refresh_token'],
+            accessMode: 'open',
           }
         : null,
     binding: async (clientId) =>
@@ -116,18 +117,21 @@ describe('decideRunnerMint', () => {
     }
   });
 
-  it('refuses a client that is not Civitai-owned, confidential, consented and device-free', async () => {
+  it('refuses a client that is not Civitai-owned, confidential, consented, device-free and open', async () => {
     const base = {
       userId: SYSTEM_CLIENT_OWNER_ID,
       isConfidential: true,
       skipConsent: false,
       grants: ['authorization_code'],
+      accessMode: 'open',
     };
     for (const client of [
       { ...base, userId: 42 },
       { ...base, isConfidential: false },
       { ...base, skipConsent: true },
       { ...base, grants: ['authorization_code', 'device_code'] },
+      { ...base, accessMode: 'disabled' },
+      { ...base, accessMode: 'testers' },
       null,
     ]) {
       expect(await refusal(reads({ client: async () => client })), JSON.stringify(client)).toBe(

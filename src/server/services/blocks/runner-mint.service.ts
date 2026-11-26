@@ -63,14 +63,18 @@ export type RunnerMintDecision =
   | { ok: true; grant: RunnerMintGrant }
   | { ok: false; refusal: RunnerMintRefusal };
 
-/** The client may hold runner tokens at all: Civitai-owned, confidential, consented, no device flow. */
+/**
+ * The client may hold runner tokens at all: Civitai-owned, confidential, consented, no device
+ * flow, and open (a disabled or testers-only client mints nothing).
+ */
 export function isRunnerClient(client: Awaited<ReturnType<RunnerMintReads['client']>>): boolean {
   return (
     client != null &&
     client.userId === SYSTEM_CLIENT_OWNER_ID &&
     client.isConfidential === true &&
     client.skipConsent === false &&
-    !client.grants.includes('device_code')
+    !client.grants.includes('device_code') &&
+    client.accessMode === 'open'
   );
 }
 

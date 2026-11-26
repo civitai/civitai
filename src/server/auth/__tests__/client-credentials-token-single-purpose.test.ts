@@ -248,6 +248,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
             isConfidential: true,
             skipConsent: false,
             grants: ['authorization_code', 'refresh_token'],
+            accessMode: 'open',
           }
         : null,
     binding: async (clientId) =>
@@ -320,6 +321,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     const r = await mint(RUNNER_TOKEN, body);
     expect(r.statusCode).toBe(429);
     expect(r.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(r.body).toMatchObject({ rateLimit: { id: 'apps.block-token-runner-mint' } });
   });
 
   it('refuses a muted user, and a system account', async () => {
@@ -356,7 +358,7 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     );
     expect([down.statusCode, down.body.reason]).toEqual([503, 'unavailable']);
     const refused = await mint(RUNNER_TOKEN, { runner: { ...body.runner, amount: 51 } });
-    expect(refused.statusCode).toBe(403);
+    expect([refused.statusCode, refused.body.reason]).toEqual([403, 'amount']);
     expect(refused.body.token).toBeUndefined();
   });
 

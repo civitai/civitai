@@ -13,8 +13,13 @@ import {
 import { decideRunnerMint, RUNNER_TOKEN_SCOPE } from '~/server/services/blocks/runner-mint.service';
 import { CONSENT_SPEND_SCOPE } from '~/server/services/blocks/scope-grant.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { resolveClientIp } from '~/server/utils/client-ip';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
+import {
+  appRateLimitMeta,
+  type AppRateLimitId,
+  sendAppRateLimited,
+} from '~/server/utils/app-rate-limit';
 
 const runnerRequestSchema = z.object({
   runner: z.object({
@@ -88,6 +93,16 @@ export async function handleRunnerMint(
     });
     res.status(status).json({ error, reason });
   };
+  const rateLimited = (id: AppRateLimitId, retryAfterSeconds: number) => {
+    logToAxiom({
+      name: 'block-token-runner-mint',
+      type: 'info',
+      payload: { outcome: 'refused', reason: 'rate_limited' },
+    });
+    sendAppRateLimited(res, appRateLimitMeta(id, retryAfterSeconds), 'Rate limit exceeded', {
+      reason: 'rate_limited',
+    });
+  };
 
   const parsed = runnerRequestSchema.safeParse(req.body);
   if (!parsed.success) return refuse(400, 'body', 'Invalid request body');
@@ -97,14 +112,13 @@ export async function handleRunnerMint(
   // Generous: one runner address serves every user. It bounds credential probing before the
   // bearer lookup, which reads the primary on a cache miss.
   const perIp = await checkFixedWindow(
-    `block-token-runner-ip:${resolveClientIp(req)}`,
+    `block-token-runner-ip:${getTrustedClientIp(req) ?? 'unknown'}`,
     PER_IP_LIMIT.max,
     PER_IP_LIMIT.windowSeconds,
     { failOpen: false }
   );
   if (!perIp.allowed) {
-    res.setHeader('Retry-After', String(perIp.retryAfterSeconds));
-    return refuse(429, 'rate_limited', 'Rate limit exceeded');
+    return rateLimited('apps.block-token-runner-mint-ip', perIp.retryAfterSeconds);
   }
 
   const session = await getSessionFromBearerToken(bearer, { allowRunnerMint: true });
@@ -136,8 +150,7 @@ export async function handleRunnerMint(
       )
     : perClient;
   if (!perUser.allowed) {
-    res.setHeader('Retry-After', String(perUser.retryAfterSeconds));
-    return refuse(429, 'rate_limited', 'Rate limit exceeded');
+    return rateLimited('apps.block-token-runner-mint', perUser.retryAfterSeconds);
   }
 
   if (isSystemAccountMeta(user.meta)) return refuse(403, 'system_account');

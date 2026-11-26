@@ -326,12 +326,6 @@ export class BlockTokenService {
     // block:settings:* via DEV_TOKEN_SCOPE_ALLOWLIST), so the dev/settings
     // branches are mutually exclusive in practice; ordering dev first only makes
     // the precedence unambiguous.
-    const lifetime =
-      input.dev === true
-        ? BLOCK_TOKEN_LIFETIMES_SECONDS.dev
-        : input.scopes.some(isSettingsScope)
-        ? BLOCK_TOKEN_LIFETIMES_SECONDS.settings
-        : BLOCK_TOKEN_LIFETIMES_SECONDS.default;
     if (
       input.runner &&
       (input.userId == null ||
@@ -343,7 +337,14 @@ export class BlockTokenService {
         'block token: a runner token needs a user subject and no dev/review/private-run claim'
       );
     }
-    const exp = iat + (input.runner ? BLOCK_TOKEN_LIFETIMES_SECONDS.runner : lifetime);
+    const lifetime = input.runner
+      ? BLOCK_TOKEN_LIFETIMES_SECONDS.runner
+      : input.dev === true
+      ? BLOCK_TOKEN_LIFETIMES_SECONDS.dev
+      : input.scopes.some(isSettingsScope)
+      ? BLOCK_TOKEN_LIFETIMES_SECONDS.settings
+      : BLOCK_TOKEN_LIFETIMES_SECONDS.default;
+    const exp = iat + lifetime;
     // Built through the shared encoder rather than open-coded. This template used to be
     // written here AND in `block-revocation.service` (whose docblock claimed to be "THE
     // ONE PLACE this format is written on the WRITE side" while this line existed), and

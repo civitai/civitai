@@ -9,6 +9,7 @@ export interface RunnerClientRow {
   isConfidential: boolean;
   skipConsent: boolean;
   grants: string[];
+  accessMode: string;
 }
 export interface RunnerBindingRow {
   appBlockId: string;
@@ -69,7 +70,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
   return {
     client: (clientId) =>
       one<RunnerClientRow>(sql`
-        SELECT "userId", "isConfidential", "skipConsent", grants
+        SELECT "userId", "isConfidential", "skipConsent", grants, "accessMode"
         FROM "OauthClient" WHERE id = ${clientId}`),
     binding: (clientId) =>
       one<RunnerBindingRow>(sql`
