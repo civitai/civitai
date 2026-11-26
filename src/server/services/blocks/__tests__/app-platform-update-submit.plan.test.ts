@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertAboveApproved,
   onBehalfVersion,
   planOnBehalfFiles,
   withManifestVersion,
@@ -78,6 +79,28 @@ describe('onBehalfVersion', () => {
 
   it('the manifest’s own version when it is above every approved one', () => {
     expect(onBehalfVersion('2.0.0', ['1.2.0', '1.10.3'])).toBe('2.0.0');
+  });
+});
+
+describe('assertAboveApproved', () => {
+  it('passes a version strictly above every approved one, and any version with none approved', () => {
+    expect(() => assertAboveApproved('1.2.1', ['1.0.0', '1.2.0', 'not-semver'])).not.toThrow();
+    expect(() => assertAboveApproved('0.0.1', [])).not.toThrow();
+  });
+
+  it('refuses a version equal to or below the highest approved one, naming both', () => {
+    expect(() => assertAboveApproved('1.3.0', ['1.2.0', '1.3.0'])).toThrow(
+      'The version 1.3.0 is not above the approved version 1.3.0; reload and retry'
+    );
+    expect(() => assertAboveApproved('1.2.9', ['1.10.0', '1.2.0'])).toThrow(
+      'The version 1.2.9 is not above the approved version 1.10.0; reload and retry'
+    );
+  });
+
+  it('refuses a version that is not a version number', () => {
+    expect(() => assertAboveApproved('latest', ['1.0.0'])).toThrow(
+      'The version latest is not a valid version number'
+    );
   });
 });
 

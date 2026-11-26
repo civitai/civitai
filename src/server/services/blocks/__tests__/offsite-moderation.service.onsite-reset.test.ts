@@ -307,6 +307,39 @@ describe('resetOnsiteListingToPending', () => {
     });
   });
 
+  it('a staff on-behalf label on the approved request does not carry onto the owner’s clone', async () => {
+    mockRead.appBlockPublishRequest.findFirst
+      .mockReset()
+      .mockResolvedValueOnce({
+        ...lastApprovedReq,
+        fileSummary: {
+          files: [{ path: 'index.html', sha: 'aa' }],
+          added: ['index.html'],
+          sdkFloor: [{ package: '@civitai/app-sdk', installed: '2.4.0', minimum: '2.0.0' }],
+          onBehalf: {
+            platformUpdateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+            staffUserId: 8001,
+            staffUsername: 'mod-ana',
+            ownerUserId: OWNER,
+            ownerUsername: 'owner-olga',
+          },
+        },
+      })
+      .mockResolvedValueOnce(null);
+    await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+    expect(reqArg.submittedByUserId).toBe(OWNER);
+    // Every other key is kept as it was.
+    expect(reqArg.fileSummary).toEqual({
+      files: [{ path: 'index.html', sha: 'aa' }],
+      added: ['index.html'],
+      sdkFloor: [{ package: '@civitai/app-sdk', installed: '2.4.0', minimum: '2.0.0' }],
+    });
+  });
+
   it('NOT_FOUND for a missing listing', async () => {
     mockRead.appListing.findUnique.mockReset().mockResolvedValue(null);
     await expect(

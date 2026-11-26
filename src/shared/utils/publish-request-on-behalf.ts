@@ -56,3 +56,18 @@ export function staffSubmissionOf(fileSummary: unknown): StaffSubmission | null 
 export function staffSubmissionLabel(s: StaffSubmission): string {
   return `Staff submission by ${s.staffUsername ?? 'Civitai staff'} (platform update)`;
 }
+
+/**
+ * `fileSummary` without its `onBehalf` record, every other key kept; anything else unchanged. For
+ * a copy of a request that is NOT a staff submit on the owner's behalf (a moderator's
+ * reset-to-pending clones the approved request as the OWNER's), so the staff label and the
+ * reject-withdraws-the-update behaviour do not carry onto it.
+ */
+export function withoutOnBehalf(fileSummary: unknown): unknown {
+  if (!fileSummary || typeof fileSummary !== 'object' || Array.isArray(fileSummary))
+    return fileSummary;
+  if (!('onBehalf' in fileSummary)) return fileSummary;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { onBehalf: _dropped, ...rest } = fileSummary as Record<string, unknown>;
+  return rest;
+}

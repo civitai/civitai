@@ -686,6 +686,61 @@ describe('submitVersion — a staff submit on the owner’s behalf (platform upd
     });
   });
 
+  describe('the owner submits while a staff submission is pending', () => {
+    // The owner may ship the app (the access read the submit gates on).
+    beforeEach(() => {
+      dbMock.dbRead.appBlock.findUnique.mockResolvedValue({
+        id: 'apb_1',
+        app: { userId: ON_BEHALF.ownerUserId },
+        appListing: null,
+      });
+    });
+    afterEach(() => {
+      dbMock.dbRead.appBlock.findUnique.mockResolvedValue(null);
+      db.pubReqFindFirst.mockReset();
+    });
+    it('is refused with a message naming the staff submission and the staff member', async () => {
+      existingApp();
+      db.pubReqFindFirst.mockImplementation(async (a: { where: { status?: string } }) =>
+        a.where.status === 'pending'
+          ? {
+              id: 'pubreq_staff',
+              submittedByUserId: 8001,
+              fileSummary: { files: [], onBehalf: { ...ON_BEHALF, staffUserId: 8001 } },
+            }
+          : null
+      );
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.3.0' }),
+          submittedByUserId: ON_BEHALF.ownerUserId,
+        })
+      ).rejects.toThrow(
+        'slug my-app has a pending Civitai staff submission of a platform update by mod-ana, ' +
+          'under review; your submit can go through once it is reviewed'
+      );
+      expect(db.createPublishRequest).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: another user’s ordinary pending request keeps the generic refusal', async () => {
+      existingApp();
+      db.pubReqFindFirst.mockImplementation(async (a: { where: { status?: string } }) =>
+        a.where.status === 'pending'
+          ? { id: 'pubreq_other', submittedByUserId: 7202, fileSummary: { files: [] } }
+          : null
+      );
+      await expect(
+        submitVersion({
+          bundleBuffer: await bundle({ ...VALID, version: '0.3.0' }),
+          submittedByUserId: ON_BEHALF.ownerUserId,
+        })
+      ).rejects.toThrow(
+        'slug my-app already has a pending submission from another user; wait for it to be ' +
+          'reviewed before submitting a different bundle'
+      );
+    });
+  });
+
   it('CONTROL: an ordinary submit records no on-behalf line', async () => {
     existingApp();
     await submitVersion({

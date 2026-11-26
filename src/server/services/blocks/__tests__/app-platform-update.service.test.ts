@@ -313,9 +313,15 @@ const blocks = [
 ];
 const listings = [{ id: 'apl_app', appBlockId: 'ab_app' }];
 const seats = [{ appListingId: 'apl_app', userId: EDITOR }];
-let approved: Record<string, { forgejoCommitSha: string; version: string }>;
+type ApprovedRow = { forgejoCommitSha: string; version: string };
+/** The latest approved version per block, as the PRIMARY has it. */
+let approved: Record<string, ApprovedRow>;
+/** The same as the REPLICA has it, when it lags the primary; `null` = caught up. */
+let replicaApproved: Record<string, ApprovedRow> | null;
 /** Pending publish requests by slug (the database allows one per app). */
 let pending: Record<string, { id: string; submittedByUserId: number; fileSummary: unknown }>;
+/** Publish requests filed by a staff on-behalf submit (`fileSummary.onBehalf`), on the primary. */
+let filed: Array<{ id: string; slug: string; status: string; fileSummary: unknown }>;
 
 function installModelReads() {
   const shape = (b: (typeof blocks)[number]) => ({
@@ -335,27 +341,59 @@ function installModelReads() {
   dbMock.dbRead.user.findUnique.mockImplementation(async (a: { where: { id: number } }) =>
     users[a.where.id] ? { ...users[a.where.id] } : null
   );
-  const approvedFor = (where: { appBlockId?: string; slug?: string }) => {
-    const id = where.appBlockId ?? blocks.find((x) => x.blockId === where.slug)?.id;
-    return id ? approved[id] : undefined;
+  type Where = {
+    appBlockId?: string;
+    slug?: string;
+    status?: string | { in: string[] };
+    fileSummary?: { path: string[]; equals: string };
   };
-  const requestFindFirst = async (a: {
-    where: { appBlockId?: string; slug?: string; status?: string };
-  }) => {
-    if (a.where.status === 'pending')
-      return a.where.slug && pending[a.where.slug] ? { ...pending[a.where.slug] } : null;
-    const hit = a.where.status === 'approved' ? approvedFor(a.where) : undefined;
-    // The approved build is read back from the build repo at its commit (no stored bundle).
-    return hit ? { ...hit, bundleKey: '', slug: a.where.slug ?? SLUG } : null;
-  };
-  dbMock.dbRead.appBlockPublishRequest.findFirst.mockImplementation(requestFindFirst);
-  dbMock.dbWrite.appBlockPublishRequest.findFirst.mockImplementation(requestFindFirst);
-  dbMock.dbRead.appBlockPublishRequest.findMany.mockImplementation(
-    async (a: { where: { slug?: string; status?: string } }) => {
+  const onBehalfIdOf = (fileSummary: unknown) =>
+    (fileSummary as { onBehalf?: { platformUpdateId?: string } } | null)?.onBehalf
+      ?.platformUpdateId;
+  const readers = (replica: boolean) => {
+    const approvedFor = (where: Where) => {
+      const id = where.appBlockId ?? blocks.find((x) => x.blockId === where.slug)?.id;
+      return id ? ((replica ? replicaApproved : null) ?? approved)[id] : undefined;
+    };
+    const findFirst = async (a: { where: Where }) => {
+      const w = a.where;
+      if (w.fileSummary) {
+        // `fileSummary->'onBehalf'->>'platformUpdateId' = …` among the listed statuses.
+        expect(w.fileSummary.path).toEqual(['onBehalf', 'platformUpdateId']);
+        const statuses = typeof w.status === 'object' ? w.status.in : [w.status];
+        const hit = [...filed]
+          .reverse()
+          .find(
+            (r) =>
+              statuses.includes(r.status) && onBehalfIdOf(r.fileSummary) === w.fileSummary!.equals
+          );
+        return hit ? { id: hit.id, status: hit.status } : null;
+      }
+      if (w.status === 'pending') {
+        if (w.slug && pending[w.slug]) return { ...pending[w.slug] };
+        const staff = filed.find((r) => r.slug === w.slug && r.status === 'pending');
+        return staff
+          ? { id: staff.id, submittedByUserId: MOD, fileSummary: staff.fileSummary }
+          : null;
+      }
+      const hit = w.status === 'approved' ? approvedFor(w) : undefined;
+      // The approved build is read back from the build repo at its commit (no stored bundle).
+      return hit ? { ...hit, bundleKey: '', slug: w.slug ?? SLUG } : null;
+    };
+    const findMany = async (a: { where: Where }) => {
       const hit = a.where.status === 'approved' ? approvedFor(a.where) : undefined;
       return hit ? [{ version: hit.version }] : [];
-    }
-  );
+    };
+    return { findFirst, findMany };
+  };
+  for (const [client, replica] of [
+    [dbMock.dbRead, true],
+    [dbMock.dbWrite, false],
+  ] as const) {
+    const r = readers(replica);
+    client.appBlockPublishRequest.findFirst.mockImplementation(r.findFirst);
+    client.appBlockPublishRequest.findMany.mockImplementation(r.findMany);
+  }
   dbMock.dbRead.appListing.findUnique.mockImplementation(
     async (a: { where: { appBlockId: string } }) =>
       listings.find((l) => l.appBlockId === a.where.appBlockId) ?? null
@@ -421,11 +459,7 @@ beforeAll(async () => {
     ]);
   for (const b of blocks)
     await pg.query(`INSERT INTO app_blocks (id, block_id) VALUES ($1, $2)`, [b.id, b.blockId]);
-  for (const dir of [
-    '20270105120000_app_source_repos',
-    '20271205140000_app_platform_updates',
-    '20271206120000_app_platform_update_submissions',
-  ])
+  for (const dir of ['20270105120000_app_source_repos', '20271205140000_app_platform_updates'])
     await pg.exec(readFileSync(path.join(MIGRATIONS, dir, 'migration.sql'), 'utf8'));
 });
 afterAll(() => pg.close());
@@ -438,7 +472,9 @@ beforeEach(async () => {
   commitSeq = 0;
   git = new FakeGit();
   approved = {};
+  replicaApproved = null;
   pending = {};
+  filed = [];
   installModelReads();
   installRaw();
   installRedis();
@@ -1213,7 +1249,15 @@ describe('submit on the owner’s behalf', () => {
     const calls: SubmitVersionParams[] = [];
     const submitVersion = async (params: SubmitVersionParams) => {
       calls.push(params);
-      return { publishRequestId: PUBREQ, version: '1.2.1' };
+      const publishRequestId = calls.length === 1 ? PUBREQ : `${PUBREQ}_${calls.length}`;
+      // The request as the primary then holds it, `fileSummary.onBehalf` and all.
+      filed.push({
+        id: publishRequestId,
+        slug: SLUG,
+        status: 'pending',
+        fileSummary: { files: [], onBehalf: { ...params.onBehalf, staffUserId: MOD } },
+      });
+      return { publishRequestId, version: '1.2.1' };
     };
     return { calls, deps: { submitVersion } };
   }
@@ -1250,7 +1294,8 @@ describe('submit on the owner’s behalf', () => {
       code: 'FORBIDDEN',
       message: 'Platform updates are not enabled',
     });
-    expect((await updateRows())[0]).toMatchObject({ submitted_publish_request_id: null });
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+    expect(filed).toEqual([]);
   });
 
   it('🔴 the owner has a pending request: refused with the exact message, and theirs is untouched', async () => {
@@ -1275,11 +1320,7 @@ describe('submit on the owner’s behalf', () => {
     for (const write of writes)
       expect(dbMock.dbWrite.appBlockPublishRequest[write]).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
-    expect((await updateRows())[0]).toMatchObject({
-      status: 'pending',
-      submitted_publish_request_id: null,
-      submitted_by_user_id: null,
-    });
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
 
     // Positive control: the same call files once the owner's request is reviewed.
     delete pending[SLUG];
@@ -1326,13 +1367,8 @@ describe('submit on the owner’s behalf', () => {
       'src/sdk-shim.ts': 'export {};\n',
     });
 
-    // Audit on the update record; the update stays pending for the owner's own checkout.
-    expect((await updateRows())[0]).toMatchObject({
-      status: 'pending',
-      submitted_publish_request_id: PUBREQ,
-      submitted_by_user_id: MOD,
-    });
-    expect((await updateRows())[0].submitted_at).toBeInstanceOf(Date);
+    // The update stays pending for the owner's own checkout.
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
 
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification.mock.calls[0][0]).toMatchObject({
@@ -1349,8 +1385,7 @@ describe('submit on the owner’s behalf', () => {
       },
     });
 
-    // A second submit while that request is pending (or once approved) is refused.
-    dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValueOnce({ status: 'pending' });
+    // A second submit while that request is pending is refused.
     await expect(
       submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
     ).rejects.toMatchObject({
@@ -1358,6 +1393,68 @@ describe('submit on the owner’s behalf', () => {
       message: `This update was already submitted (${PUBREQ}, pending)`,
     });
     expect(calls).toHaveLength(1);
+  });
+
+  it('"already submitted" is read from the publish requests: pending or approved refuses, rejected does not', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    const { calls, deps } = recordingSubmit();
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+
+    filed[0]!.status = 'approved';
+    await expect(
+      submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps)
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: `This update was already submitted (${PUBREQ}, approved)`,
+    });
+    expect(calls).toHaveLength(1);
+
+    // Another update's request never counts against this one.
+    filed[0]!.fileSummary = { onBehalf: { platformUpdateId: 'apu_someone_else' } };
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(2);
+
+    // A rejected one does not either: the update may be submitted again.
+    filed.length = 0;
+    filed.push({
+      id: PUBREQ,
+      slug: SLUG,
+      status: 'rejected',
+      fileSummary: { onBehalf: { platformUpdateId: pushed.id } },
+    });
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('🔴 builds on the approved version the PRIMARY has, when the replica still has the one before', async () => {
+    approvedBuild();
+    const pushed = await pushAsMod();
+    // The owner's 1.3.0 was approved a moment ago; the replica still says 1.2.0.
+    const before = approved.ab_app!;
+    const later = git.devPush(
+      BUILD,
+      SLUG,
+      {
+        'block.manifest.json': MANIFEST.replace('1.2.0', '1.3.0'),
+        'index.html': '<p>owner 1.3.0</p>',
+      },
+      'v1.3.0'
+    );
+    approved.ab_app = { forgejoCommitSha: later, version: '1.3.0' };
+    replicaApproved = { ab_app: before };
+    const { calls, deps } = recordingSubmit();
+
+    await submitSvc.submitPlatformUpdateOnBehalf({ staffUserId: MOD, id: pushed.id }, deps);
+    expect(calls).toHaveLength(1);
+    // The owner's 1.3.0 files, the update applied, and a version above 1.3.0: nothing rolled back.
+    expect(await bundleText(calls[0]!.bundleBuffer)).toEqual({
+      'block.manifest.json':
+        '{\n  "blockId": "pixel-garden",\n  "name": "Pixel Garden",\n  "version": "1.3.1"\n}\n',
+      'index.html': '<p>owner 1.3.0</p>',
+      'package.json': PKG_NEW,
+      'src/sdk-shim.ts': 'export {};\n',
+    });
   });
 
   it('refuses when the approved build differs from what the update was written against', async () => {

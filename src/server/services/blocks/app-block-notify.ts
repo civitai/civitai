@@ -50,7 +50,12 @@ export async function notifyAppBlockSubmitter(
     userId: number;
     /** Idempotency key — dedups repeat emissions of the same event to the same user. */
     key: string;
-    details: AppBlockModerationNotificationDetails & { updateId?: string; byUsername?: string };
+    details: AppBlockModerationNotificationDetails & {
+      updateId?: string;
+      byUsername?: string;
+      /** `app-platform-update-rejected` only: the update was withdrawn by the reject. */
+      updateWithdrawn?: boolean;
+    };
     /** Who decided; becomes the notification's "Reviewed by" line. */
     attribution: AppReviewAttribution;
   },

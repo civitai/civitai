@@ -13,12 +13,16 @@
  * that request is left exactly as it was: the update stays on its branch and reaches the app
  * through the owner's next submit. Nothing here withdraws or edits a publish request.
  *
- * AUDIT. A successful submit is recorded on the update row (`submitted_publish_request_id`,
- * `submitted_by_user_id`, `submitted_at`) and logged. The update stays `pending`: the owner's own
- * checkout still has to merge it, or their next submit would ship without it.
+ * AUDIT. The publish request itself is the record of the submit: `fileSummary.onBehalf` names the
+ * update, and `submittedByUserId` / `createdAt` say who and when. "Already submitted" is read from
+ * there ({@link activeSubmission}). Every submit is also logged.
  *
- * 🔴 Dark until migrations `20271205140000_app_platform_updates` and
- * `20271206120000_app_platform_update_submissions` are applied by hand AND the
+ * THE UPDATE'S STATUS. A submit leaves it `pending`: the owner's own checkout still has to merge
+ * it, or their next submit would ship without it. If the review REJECTS the on-behalf request,
+ * `rejectRequest` withdraws the update (`superseded`, by the rejecting moderator), so it is no
+ * longer offered to the owner's checkout. An approve leaves it as it is.
+ *
+ * 🔴 Dark until migration `20271205140000_app_platform_updates` is applied by hand AND the
  * `app-blocks-platform-updates` flag is on (checked at the router).
  */
 
@@ -26,13 +30,12 @@ import { TRPCError } from '@trpc/server';
 import JSZip from 'jszip';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { isMissingTableError } from '~/server/services/blocks/app-access.service';
-import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
   MANIFEST_PATH,
   OWNER_PENDING_REFUSAL,
   OnBehalfPlanError,
   STAFF_PENDING_REFUSAL,
+  assertAboveApproved,
   onBehalfVersion,
   planOnBehalfFiles,
   withManifestVersion,
@@ -75,6 +78,7 @@ export type SubmitOnBehalfResult = {
  * primary: the owner may have submitted a moment ago.
  */
 async function pendingRefusal(slug: string): Promise<TRPCError | null> {
+  // primary: guards the submit below; the owner may have submitted a moment ago.
   const pending = await dbWrite.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
     select: { id: true, fileSummary: true },
@@ -90,16 +94,21 @@ async function pendingRefusal(slug: string): Promise<TRPCError | null> {
   });
 }
 
-/** The publish request this update was last submitted as; `undefined` when the columns are missing. */
-async function submittedRequestId(updateId: string): Promise<string | null | undefined> {
-  try {
-    const rows = (await dbWrite.$queryRaw`SELECT "submitted_publish_request_id" AS "id"
-        FROM "app_platform_updates" WHERE "id" = ${updateId}`) as Array<{ id: string | null }>;
-    return rows[0]?.id ?? null;
-  } catch (err) {
-    if (isMissingColumnError(err) || isMissingTableError(err)) return undefined;
-    throw err;
-  }
+/**
+ * The newest on-behalf publish request filed for update `updateId` that is still pending or was
+ * approved, or `null`. A rejected or withdrawn one does not count: the update may be submitted
+ * again. Read on the primary: the last submit may have been a moment ago.
+ */
+async function activeSubmission(updateId: string): Promise<{ id: string; status: string } | null> {
+  // primary: guards the submit below; a request filed a moment ago may not be on the replica.
+  return dbWrite.appBlockPublishRequest.findFirst({
+    where: {
+      status: { in: ['pending', 'approved'] },
+      fileSummary: { path: ['onBehalf', 'platformUpdateId'], equals: updateId },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, status: true },
+  });
 }
 
 /** The bytes of `paths` in the source repo at `ref`, and the whole tree there. */
@@ -139,6 +148,7 @@ export async function submitPlatformUpdateOnBehalf(
   if (!staff?.isModerator)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Only Civitai staff can submit updates' });
 
+  // primary: guards the submit below; an update pushed a moment ago may not be on the replica.
   const rows = await readRows({ kind: 'id', id: args.id }, dbWrite);
   if (rows === null) throw unavailable();
   const update = rows[0];
@@ -146,19 +156,12 @@ export async function submitPlatformUpdateOnBehalf(
   if (update.status === 'superseded')
     throw new TRPCError({ code: 'CONFLICT', message: 'This update was withdrawn' });
 
-  const previous = await submittedRequestId(update.id);
-  if (previous === undefined) throw unavailable();
-  if (previous) {
-    const prior = await dbWrite.appBlockPublishRequest.findUnique({
-      where: { id: previous },
-      select: { status: true },
+  const prior = await activeSubmission(update.id);
+  if (prior)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `This update was already submitted (${prior.id}, ${prior.status})`,
     });
-    if (prior && (prior.status === 'pending' || prior.status === 'approved'))
-      throw new TRPCError({
-        code: 'CONFLICT',
-        message: `This update was already submitted (${previous}, ${prior.status})`,
-      });
-  }
 
   const app = await resolveApp({ appBlockId: update.appBlockId });
   if (!app || typeof app.ownerUserId !== 'number')
@@ -172,7 +175,9 @@ export async function submitPlatformUpdateOnBehalf(
   const { getPreviousApprovedFiles } = await import(
     '~/server/services/blocks/publish-request.service'
   );
-  const approvedList = await getPreviousApprovedFiles(app.slug);
+  // primary: the build this submit replaces. A version approved a moment ago may not be on the
+  // replica yet, and building on the one before it would roll the app back.
+  const approvedList = await getPreviousApprovedFiles(app.slug, undefined, dbWrite);
   if (!approvedList)
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
@@ -201,12 +206,12 @@ export async function submitPlatformUpdateOnBehalf(
     });
     const manifestFile = files.get(MANIFEST_PATH);
     if (!manifestFile) throw new OnBehalfPlanError(`The approved version has no ${MANIFEST_PATH}`);
-    const approvedVersions = (
-      await dbRead.appBlockPublishRequest.findMany({
-        where: { slug: app.slug, status: 'approved' },
-        select: { version: true },
-      })
-    ).map((r) => r.version);
+    // primary: the version must be above every approved one, even one approved a moment ago.
+    const approvedRows = await dbWrite.appBlockPublishRequest.findMany({
+      where: { slug: app.slug, status: 'approved' },
+      select: { version: true },
+    });
+    const approvedVersions = approvedRows.map((r) => r.version);
     let manifestVersion: unknown;
     try {
       manifestVersion = (JSON.parse(manifestFile.toString('utf8')) as { version?: unknown })
@@ -215,6 +220,7 @@ export async function submitPlatformUpdateOnBehalf(
       manifestVersion = null;
     }
     version = onBehalfVersion(manifestVersion, approvedVersions);
+    assertAboveApproved(version, approvedVersions);
     files.set(MANIFEST_PATH, withManifestVersion(manifestFile, version));
     bundleBuffer = await zipOf(files);
   } catch (err) {
@@ -253,21 +259,6 @@ export async function submitPlatformUpdateOnBehalf(
     });
   }
 
-  try {
-    await dbWrite.$executeRaw`UPDATE "app_platform_updates"
-        SET "submitted_publish_request_id" = ${submitted.publishRequestId},
-            "submitted_by_user_id" = ${args.staffUserId},
-            "submitted_at" = now(), "updated_at" = now()
-      WHERE "id" = ${update.id}`;
-  } catch (err) {
-    // The request is filed and names the update itself (`fileSummary.onBehalf`); only the
-    // update-side link is lost.
-    log('error', 'submit recorded on the request but not on the update', {
-      updateId: update.id,
-      publishRequestId: submitted.publishRequestId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
   log('info', 'submitted on behalf', {
     updateId: update.id,
     slug: app.slug,

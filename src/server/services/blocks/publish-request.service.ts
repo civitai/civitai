@@ -65,6 +65,7 @@ import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-noti
 import type { AppBlockModerationNotificationDetails } from '~/server/notifications/app-block.notifications';
 import type { AppReviewAttribution } from '~/server/notifications/app-review-attribution';
 import { readOnBehalf } from '~/shared/utils/publish-request-on-behalf';
+import type { dbRead as DbReadClient } from '~/server/db/client';
 import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
@@ -256,6 +257,19 @@ export type SubmitVersionParams = {
    */
   onBehalf?: OnBehalfSubmission;
 };
+
+/**
+ * The refusal of a submit while a STAFF SUBMISSION of a platform update (`fileSummary.onBehalf`)
+ * is pending for the app: the owner cannot withdraw it, so it says what it is and when their own
+ * submit can go through.
+ */
+export function staffPendingSubmitRefusal(slug: string, staffUsername: string | null): string {
+  return (
+    `slug ${slug} has a pending Civitai staff submission of a platform update by ` +
+    `${staffUsername ?? 'Civitai staff'}, under review; your submit can go through once it is ` +
+    `reviewed`
+  );
+}
 
 /** An on-behalf submit whose recorded owner is not the app's owner (or whose app is gone). */
 export const ON_BEHALF_OWNER_MISMATCH =
@@ -1321,7 +1335,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // act on it).
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
-    select: { id: true, submittedByUserId: true },
+    // fileSummary: a staff submit on the owner's behalf is named as one in the refusal.
+    select: { id: true, submittedByUserId: true, fileSummary: true },
   });
   if (conflicting) {
     if (conflicting.submittedByUserId === submittedByUserId) {
@@ -1329,6 +1344,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it first with \`civitai app withdraw ${conflicting.id}\` before resubmitting`
       );
     }
+    // The owner cannot withdraw a staff submission, so say what it is and when theirs can go in.
+    const staffPending = readOnBehalf(conflicting.fileSummary);
+    if (staffPending) throw new Error(staffPendingSubmitRefusal(slug, staffPending.staffUsername));
     throw new Error(
       `slug ${slug} already has a pending submission from another user; wait for it to be reviewed before submitting a different bundle`
     );
@@ -7497,10 +7515,16 @@ export async function getPublishRequestScreenshots(opts: {
  */
 export async function getPreviousApprovedFiles(
   slug: string,
-  excludePublishRequestId?: string
+  excludePublishRequestId?: string,
+  /**
+   * The client the approved row is read from: the replica unless given. A caller that builds on
+   * the approved version (the staff on-behalf submit) passes the primary, so a version approved a
+   * moment ago is not missed.
+   */
+  db?: Pick<typeof DbReadClient, 'appBlockPublishRequest'>
 ): Promise<Array<{ path: string; content: Buffer }> | null> {
-  const { dbRead } = await import('~/server/db/client');
-  const prior = await dbRead.appBlockPublishRequest.findFirst({
+  const client = db ?? (await import('~/server/db/client')).dbRead;
+  const prior = await client.appBlockPublishRequest.findFirst({
     where: {
       slug,
       status: 'approved',
@@ -7674,11 +7698,23 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
     row.manifest && typeof row.manifest === 'object'
       ? (row.manifest as Record<string, unknown>)
       : {};
+  // A rejected STAFF SUBMIT ON THE OWNER'S BEHALF withdraws the platform update it carried, so
+  // the owner's checkout is no longer offered it (operator decision). Before the notifications,
+  // which say whether it was withdrawn.
+  const onBehalf = readOnBehalf(row.fileSummary);
+  const updateWithdrawn = onBehalf
+    ? await withdrawRejectedPlatformUpdate({
+        platformUpdateId: onBehalf.platformUpdateId,
+        reviewerUserId: params.reviewerUserId,
+        publishRequestId: params.publishRequestId,
+      })
+    : false;
   await notifyReviewOutcome({
     outcome: 'rejected',
     publishRequestId: params.publishRequestId,
     submittedByUserId: row.submittedByUserId,
     fileSummary: row.fileSummary,
+    updateWithdrawn,
     attribution: { kind: 'moderator', userId: params.reviewerUserId },
     details: {
       slug: row.slug,
@@ -7687,6 +7723,35 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       reason,
     },
   });
+}
+
+/**
+ * Withdraw (`superseded`, by the rejecting moderator) the platform update a rejected on-behalf
+ * request carried, through the platform-update service's own supersede. POST-COMMIT and
+ * best-effort: the reject has landed, so a failure here is logged and never fails it. `true` when
+ * the update is withdrawn (now or already); `false` when it could not be (it was merged into the
+ * owner's app already, or the table is unavailable).
+ */
+async function withdrawRejectedPlatformUpdate(args: {
+  platformUpdateId: string;
+  reviewerUserId: number;
+  publishRequestId: string;
+}): Promise<boolean> {
+  try {
+    const { supersedePlatformUpdate } = await import(
+      '~/server/services/blocks/app-platform-update.service'
+    );
+    await supersedePlatformUpdate({ staffUserId: args.reviewerUserId, id: args.platformUpdateId });
+    return true;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[rejectRequest] platform update ${args.platformUpdateId} not withdrawn ` +
+        `(id=${args.publishRequestId}); reject stands: ` +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return false;
+  }
 }
 
 /**
@@ -7703,6 +7768,8 @@ async function notifyReviewOutcome(args: {
   publishRequestId: string;
   submittedByUserId: number;
   fileSummary: unknown;
+  /** A reject only: the platform update the on-behalf request carried was withdrawn. */
+  updateWithdrawn?: boolean;
   attribution: AppReviewAttribution;
   details: AppBlockModerationNotificationDetails;
 }): Promise<void> {
@@ -7745,6 +7812,7 @@ async function notifyReviewOutcome(args: {
       ...args.details,
       updateId: onBehalf.platformUpdateId,
       byUsername: onBehalf.staffUsername ?? 'Civitai staff',
+      ...(args.updateWithdrawn ? { updateWithdrawn: true } : {}),
     },
   });
 }

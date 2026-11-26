@@ -94,6 +94,21 @@ export function onBehalfVersion(manifestVersion: unknown, approvedVersions: read
 }
 
 /**
+ * Refuses unless `version` is strictly above every valid approved version. A staff submit must
+ * never file a version at or below one already approved: approving it would roll the app back.
+ * `onBehalfVersion` picks such a version by construction; this checks the version actually filed.
+ */
+export function assertAboveApproved(version: string, approvedVersions: readonly string[]): void {
+  if (!semver.valid(version))
+    throw new OnBehalfPlanError(`The version ${version} is not a valid version number`);
+  const highest = approvedVersions.filter((v) => semver.valid(v)).sort(semver.rcompare)[0];
+  if (highest && !semver.gt(version, highest))
+    throw new OnBehalfPlanError(
+      `The version ${version} is not above the approved version ${highest}; reload and retry`
+    );
+}
+
+/**
  * The bundle's manifest with `version` set, as the file the bundle holds. Unchanged bytes when
  * the version already matches, so a manifest the update did not touch is only rewritten when its
  * version has to move.

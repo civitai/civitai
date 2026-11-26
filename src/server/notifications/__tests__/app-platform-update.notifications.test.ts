@@ -95,7 +95,7 @@ describe('app-platform-update-submitted', () => {
         'review on your behalf: your approved version with their update (Bump @civitai/app-sdk ' +
         'to 2.4.0.). A moderator reviews it like any other submission. The update also stays on ' +
         'its branch and is merged into your app the next time you pull it or open it in the App ' +
-        'Assistant.',
+        'Assistant, unless this version is rejected: a rejection withdraws the update.',
       url: OWNER_SUBMISSIONS_URL,
     });
   });
@@ -108,10 +108,13 @@ describe('app-platform-update-submitted', () => {
 describe('app-platform-update-approved / -rejected (the owner’s review outcome)', () => {
   type ReviewedDef = (typeof appPlatformUpdateSubmitNotifications)['app-platform-update-approved'];
   const defs = appPlatformUpdateSubmitNotifications as Record<string, ReviewedDef>;
-  const prepare = (type: string, details: AppPlatformUpdateReviewedNotificationDetails) =>
-    defs[type]!.prepareMessage({ details } as unknown as Parameters<
+  const prepare = (type: string, details: AppPlatformUpdateReviewedNotificationDetails) => {
+    const prepared = defs[type]!.prepareMessage({ details } as unknown as Parameters<
       ReviewedDef['prepareMessage']
     >[0]);
+    if (!prepared) throw new Error(`${type} prepared no message`);
+    return prepared;
+  };
   const BASE: AppPlatformUpdateReviewedNotificationDetails = {
     slug: 'pixel-garden',
     name: 'Pixel Garden',
@@ -167,6 +170,42 @@ describe('app-platform-update-approved / -rejected (the owner’s review outcome
     expect(prepare('app-platform-update-rejected', BASE).message).toBe(
       'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
         'submitted on your behalf as a platform update, was not approved.'
+    );
+  });
+
+  it('rejected and the update withdrawn: says it will not be merged, after the reason', () => {
+    expect(
+      prepare('app-platform-update-rejected', {
+        ...BASE,
+        reason: 'Breaks the gallery layout',
+        updateWithdrawn: true,
+      })
+    ).toEqual({
+      message:
+        'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'submitted on your behalf as a platform update, was not approved: Breaks the gallery ' +
+        'layout. The update was withdrawn and will not be merged into your app.',
+      url: OWNER_SUBMISSIONS_URL,
+      byline: 'Reviewed by @reviewer_ada, Civitai App Review',
+    });
+    // A reason that ends its own sentence gets no second full stop; no reason reads cleanly too.
+    expect(
+      prepare('app-platform-update-rejected', {
+        ...BASE,
+        reason: 'Breaks the gallery layout.',
+        updateWithdrawn: true,
+      }).message
+    ).toBe(
+      'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'submitted on your behalf as a platform update, was not approved: Breaks the gallery ' +
+        'layout. The update was withdrawn and will not be merged into your app.'
+    );
+    expect(
+      prepare('app-platform-update-rejected', { ...BASE, updateWithdrawn: true }).message
+    ).toBe(
+      'Version 1.2.1 of your app "Pixel Garden", which mod-ana (verified Civitai staff) ' +
+        'submitted on your behalf as a platform update, was not approved. The update was ' +
+        'withdrawn and will not be merged into your app.'
     );
   });
 });

@@ -43,6 +43,11 @@ export type AppPlatformUpdateReviewedNotificationDetails = AppBlockModerationNot
   updateId: string;
   /** The staff member who submitted it, as recorded at submit time. */
   byUsername: string;
+  /**
+   * Rejected only: the reject withdrew the platform update (`superseded`), so it is no longer
+   * merged into the owner's app. Absent when it could not be withdrawn (already merged).
+   */
+  updateWithdrawn?: boolean;
 };
 
 /** `"Name"` when the manifest had one, else the slug in quotes. */
@@ -87,8 +92,12 @@ export const appPlatformUpdateSubmitNotifications = createNotificationProcessor(
     prepareMessage: (notification) => {
       const details = notification.details as AppPlatformUpdateReviewedNotificationDetails;
       const reason = details.reason?.trim();
+      const head = `${onBehalfHead(details)} was not approved${reason ? `: ${reason}` : '.'}`;
       return {
-        message: `${onBehalfHead(details)} was not approved${reason ? `: ${reason}` : '.'}`,
+        message: details.updateWithdrawn
+          ? `${head}${/[.!?]$/.test(head) ? '' : '.'} The update was withdrawn and will not be ` +
+            `merged into your app.`
+          : head,
         url: OWNER_SUBMISSIONS_URL,
         byline: appReviewByline(details),
       };
@@ -107,7 +116,8 @@ export const appPlatformUpdateSubmitNotifications = createNotificationProcessor(
           `of your app "${details.slug}" for review on your behalf: your approved version with ` +
           `their update (${details.reason}). A moderator reviews it like any other submission. ` +
           `The update also stays on its branch and is merged into your app the next time you ` +
-          `pull it or open it in the App Assistant.`,
+          `pull it or open it in the App Assistant, unless this version is rejected: a ` +
+          `rejection withdraws the update.`,
         url: OWNER_SUBMISSIONS_URL,
       };
     },
