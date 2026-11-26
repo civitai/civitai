@@ -1560,25 +1560,35 @@ export const ONSITE_MANIFEST_CATEGORY_MESSAGE =
  * (draft / pending / owner-unpublished) or dropped by the revision apply (approved) while
  * reporting success, so it is refused up front instead. The key being PRESENT is the trigger —
  * an explicit `null` clear is refused too. Off-site listings, whose copy and links the author
- * owns, are untouched. Each group keeps its own message, so the refusal names the manifest keys
- * the caller actually sent.
+ * owns, are untouched. One message per group the patch names, all of them in one refusal, so
+ * the caller learns every refused key at once.
+ *
+ * ONE EXCEPTION, `moderatorMaySetCategory`: the operator made category read-only for on-site
+ * OWNERS. A moderator writing the LIVE listing (`updateListing`, never a revision draft, whose
+ * on-site apply would drop it) may still set it — that is how a curated category reaches the
+ * listing before the app's next approved version, since curation writes only the app.
  */
 export function assertNoOnsiteManifestPatch(
   kind: string | null,
   patch: Pick<
     UpdateListingPatch,
     'name' | 'tagline' | 'description' | 'category' | 'sourceRepoUrl' | 'issueTrackerUrl'
-  >
+  >,
+  opts: { moderatorMaySetCategory?: boolean } = {}
 ): void {
   if (kind !== 'onsite') return;
+  const refused: string[] = [];
   if (patch.name !== undefined || patch.tagline !== undefined || patch.description !== undefined) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_COPY_MESSAGE });
+    refused.push(ONSITE_MANIFEST_COPY_MESSAGE);
   }
-  if (patch.category !== undefined) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_CATEGORY_MESSAGE });
+  if (patch.category !== undefined && !opts.moderatorMaySetCategory) {
+    refused.push(ONSITE_MANIFEST_CATEGORY_MESSAGE);
   }
   if (patch.sourceRepoUrl !== undefined || patch.issueTrackerUrl !== undefined) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_LINK_MESSAGE });
+    refused.push(ONSITE_MANIFEST_LINK_MESSAGE);
+  }
+  if (refused.length > 0) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: refused.join(' ') });
   }
 }
 
@@ -1611,7 +1621,9 @@ export async function updateListing(opts: {
     );
   }
   // Before anything is written, and before any branch can open a shadow revision.
-  assertNoOnsiteManifestPatch(listing.kind, patch);
+  assertNoOnsiteManifestPatch(listing.kind, patch, {
+    moderatorMaySetCategory: listing.callerRole === 'moderator',
+  });
   // Before any branch below can open a shadow revision, for the reason the hoists below give.
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
@@ -3212,7 +3224,8 @@ export async function updateRevisionDraft(opts: {
   if (patch.forkable !== undefined) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
   }
-  // A shadow carries its parent's kind, so an on-site revision is refused the same way.
+  // A shadow carries its parent's kind, so an on-site revision is refused the same way — with no
+  // moderator category exception: the on-site revision apply would drop it.
   assertNoOnsiteManifestPatch(shadow.kind, patch);
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,

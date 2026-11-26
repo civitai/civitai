@@ -1156,6 +1156,47 @@ describe('🔴 an ON-SITE listing refuses an edit of its category', () => {
     expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
   });
 
+  it('a MODERATOR may still set it on the listing itself (curation reaches the live row)', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { category: 'games' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'apl_parent' }, data: { category: 'games' } })
+    );
+  });
+
+  it('…but not on an on-site REVISION draft, whose assets-only apply would drop it', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: MOD,
+        isModerator: true,
+        patch: { category: 'games' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('a patch naming several refused groups names ALL of them in one refusal', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { tagline: 'x', category: 'games', sourceRepoUrl: null },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `${ONSITE_COPY_REFUSAL} ${ONSITE_CATEGORY_REFUSAL} ${ONSITE_LINK_REFUSAL}`,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
   it('CONTROL: the same category edit on an OFF-SITE draft is accepted', async () => {
     armShadowColumnPresent(approvedParent({ status: 'draft' }), null);
     await updateListing({ listingId: 'apl_parent', patch: { category: 'games' }, userId: OWNER });

@@ -9,6 +9,7 @@ import {
   isApprovedEdit,
   isUnpublishedEdit,
   listingFieldsFromManifest,
+  onsiteCategoryEditableByModerator,
   MANIFEST_COPY_FIELD_NOTE,
   MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
@@ -1039,6 +1040,32 @@ describe('on-site name / tagline / description / category come from the app', ()
       // The narrowing is surgical: the rest of the patch still goes out.
       expect(patch.contentRating).toBe('pg13');
     }
+  });
+
+  it('a MODERATOR writing the listing itself may still change an on-site category', () => {
+    expect(onsiteCategoryEditableByModerator(makeCtx({ kind: 'onsite', role: 'moderator' }))).toBe(
+      true
+    );
+    // Owners and editors may not; nor may anyone on an off-site listing (it is simply editable).
+    for (const role of ['owner', 'editor', undefined] as const) {
+      expect(
+        onsiteCategoryEditableByModerator(makeCtx({ kind: 'onsite', role })),
+        String(role)
+      ).toBe(false);
+    }
+    expect(onsiteCategoryEditableByModerator(makeCtx({ kind: 'offsite', role: 'moderator' }))).toBe(
+      false
+    );
+    // An approved listing with a revision open saves to the revision, whose on-site apply drops it.
+    expect(
+      onsiteCategoryEditableByModerator(
+        makeCtx({ kind: 'onsite', role: 'moderator', status: 'approved', shadowId: 'shadow-1' })
+      )
+    ).toBe(false);
+
+    const ctx = makeCtx({ kind: 'onsite', role: 'moderator' });
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), category: 'games' });
+    expect(patch.category).toBe('games');
   });
 
   it('CONTROL: an OFF-SITE patch still carries all four, cleared ones as null', () => {

@@ -388,6 +388,26 @@ export function listingFieldsFromManifest(ctx: Pick<ListingEditContext, 'kind'>)
   return isOnsiteEdit(ctx);
 }
 
+/**
+ * May THIS caller still change an on-site listing's category here? PURE.
+ *
+ * Only a MODERATOR, and only when the save writes the listing itself (`updateListing`): the
+ * operator's call made category read-only for on-site OWNERS and editors. A moderator's category
+ * fix on the live row is how a curated category reaches a listing before the app's next approved
+ * version (curation itself writes only the app). Not when the save goes to a revision draft (an
+ * approved listing with a shadow open): the on-site revision apply copies assets only and would
+ * drop it, so the server refuses it there.
+ */
+export function onsiteCategoryEditableByModerator(
+  ctx: Pick<ListingEditContext, 'kind' | 'role' | 'status' | 'shadowId'>
+): boolean {
+  return (
+    isOnsiteEdit(ctx) &&
+    ctx.role === 'moderator' &&
+    !(ctx.status === 'approved' && ctx.shadowId != null)
+  );
+}
+
 /** The explanation the read-only on-site link fields carry. */
 export const MANIFEST_LINK_FIELD_NOTE = {
   sourceRepoUrl:
@@ -583,7 +603,10 @@ export function buildScalarPatch(
       patch.description = description.length > 0 ? description : null;
   }
 
-  if (!fromManifest && (current.category ?? null) !== (original.category ?? null)) {
+  if (
+    (!fromManifest || onsiteCategoryEditableByModerator(ctx)) &&
+    (current.category ?? null) !== (original.category ?? null)
+  ) {
     patch.category = current.category ?? null;
   }
 

@@ -49,6 +49,7 @@ import {
   isOwnerEdit,
   listingEditHeaderCopy,
   listingFieldsFromManifest,
+  onsiteCategoryEditableByModerator,
   MANIFEST_COPY_FIELD_NOTE,
   MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
@@ -125,6 +126,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   // On-site: name, tagline, description, category and both links come from the app and
   // render read-only here.
   const fromManifest = listingFieldsFromManifest(edit);
+  // …except the category, which a moderator may still set on the listing itself.
+  const categoryReadOnly = fromManifest && !onsiteCategoryEditableByModerator(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -261,8 +264,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       delete nextErrors.name;
       delete nextErrors.tagline;
       delete nextErrors.description;
-      delete nextErrors.category;
     }
+    if (categoryReadOnly) delete nextErrors.category;
     // SENSITIVE-only justification model (parity with create): every sensitive scope
     // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
     // read-only + never required. No connect client → no scopes → nothing to check.
@@ -719,7 +722,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               )}
 
               <Group grow align="flex-start">
-                {fromManifest ? (
+                {categoryReadOnly ? (
                   // 🔴 ON-SITE: the listing takes the app's category on every approve, so it is
                   // read-only here like the name and links; the note says where it comes from.
                   <Select

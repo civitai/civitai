@@ -774,6 +774,9 @@ describe('ExternalSubmitForm (edit) — ON-SITE name, tagline and description co
     expect(page.getByTestId('apps-offsite-edit-category').elements()).toHaveLength(0);
   });
 
+  // 🟡 INVARIANT GUARD, not regression coverage: only the beta flag changes here, so this could
+  // not fail on the pre-change code either. The regression case is `offsiteEditConfig.test.ts`
+  // ("never carries … changed or cleared"), which changes all four values.
   test('a save of an on-site listing never sends name, tagline or description', async () => {
     renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
     await page.getByRole('checkbox', { name: /This app is in beta/ }).click();
