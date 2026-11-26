@@ -18,6 +18,11 @@ import {
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
+import {
+  getReportListedHiddenImageIds,
+  reportListedVisibleSql,
+} from '~/server/services/report-listed-visibility';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import {
   CSAM_HELD_REVIEW,
@@ -224,14 +229,17 @@ export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
  * The image a card shows for an article `a`: its cover, else its banner once servable. The article
  * page hides a banner that is not scanned or awaits review, so a card must not show one either.
  * Either is dropped when its model withholds it (taken down, or above a minor or SFW-only model's
- * gallery level); a withheld cover does not fall back to the banner, as on the entity cover read.
+ * gallery level), or hidden from this viewer by the report-listed rule; a withheld cover does not
+ * fall back to the banner, as on the entity cover read.
  */
-export const articleCardCoverIdSql = Prisma.sql`CASE
+export const articleCardCoverIdSql = (viewer: ReportListedViewer) => Prisma.sql`CASE
   WHEN a."coverId" IS NOT NULL THEN
-    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)} THEN a."coverId" END
+    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)}
+      AND ${reportListedVisibleSql(Prisma.sql`a."coverId"`, viewer)} THEN a."coverId" END
   ELSE (SELECT b.id FROM "Image" b
     WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL
-      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
+      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)}
+      AND ${reportListedVisibleSql(Prisma.sql`b.id`, viewer)})
 END`;
 
 /**
@@ -291,7 +299,9 @@ export const getArticles = async ({
   include,
   forceHidePrivate,
   eventDecorationViewer,
+  reportListedViewer = { seesReportListed: false },
 }: GetInfiniteArticlesSchema & {
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
@@ -553,7 +563,7 @@ export const getArticles = async ({
         a.id,
         a.cover,
         a."coverId" AS "storedCoverId",
-        ${articleCardCoverIdSql} AS "coverId",
+        ${articleCardCoverIdSql({ userId, ...reportListedViewer })} AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -756,7 +766,7 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      ${articleCardCoverIdSql} AS "coverId",
+      ${articleCardCoverIdSql({ seesReportListed: false })} AS "coverId",
       title,
       content,
       "publishedAt",
@@ -884,7 +894,12 @@ export const getArticleById = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  reportListedViewer = { seesReportListed: false },
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
+}) => {
   try {
     const db = await getDbWithoutLag('article', id);
     const article = await db.article.findFirst({
@@ -927,15 +942,18 @@ export const getArticleById = async ({
     // owner does; card and feed covers still withhold them from moderators.
     const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
-    // owner when they uploaded it. The edit form learns of one it may not see from the
-    // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
-    const withheldByModel = isModerator
-      ? new Set<number>()
-      : await getModelWithheldImageIds(
-          [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
-        );
+    // owner when they uploaded it; one listed on a CsamReport follows `reportListedViewer`. The
+    // edit form learns of one it may not see from the `...Withheld` flags, and a save that
+    // leaves it out keeps it (upsertArticle).
+    const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
+    const [withheldByModel, listedHidden] = await Promise.all([
+      isModerator ? new Set<number>() : getModelWithheldImageIds(ownImageIds),
+      getReportListedHiddenImageIds(ownImageIds, { userId, ...reportListedViewer }),
+    ]);
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
-      !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
+      !!image &&
+      (listedHidden.has(image.id) ||
+        modelHidesArticleImage(image, withheldByModel, userId, article.userId));
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
     const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
@@ -1060,10 +1078,13 @@ export const upsertArticle = async ({
   isModerator,
   scanContent,
   scheduledAt,
+  reportListedViewer = { seesReportListed: false },
   ...data
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
+  /** The editor's report-listed view, as getArticleById applied it to the edit form. */
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {
@@ -1231,26 +1252,30 @@ export const upsertArticle = async ({
       });
     }
 
-    // A save that leaves out a cover or banner its model hides from this editor keeps it: the
-    // edit form never had it to send back (getArticleById).
-    if (article && !isModerator) {
+    // A save that leaves out a cover or banner its model or the report-listed rule hides from this
+    // editor keeps it: the edit form never had it to send back (getArticleById).
+    if (article) {
       const stored = [
         coverId === null ? article.coverId : null,
         bannerId === null ? article.bannerId : null,
       ].filter(isDefined);
       if (stored.length) {
-        const withheld = await getModelWithheldImageIds(stored, dbWrite);
+        const [withheld, listedHidden] = await Promise.all([
+          isModerator ? new Set<number>() : getModelWithheldImageIds(stored, dbWrite),
+          getReportListedHiddenImageIds(stored, { userId, ...reportListedViewer }, dbWrite),
+        ]);
         const owners = withheld.size
           ? await dbWrite.image.findMany({
               where: { id: { in: [...withheld] } },
               select: { id: true, userId: true },
             })
           : [];
-        const hiddenIds = new Set(
-          owners
+        const hiddenIds = new Set([
+          ...listedHidden,
+          ...owners
             .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
-            .map((image) => image.id)
-        );
+            .map((image) => image.id),
+        ]);
         if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
           coverId = undefined;
         if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
