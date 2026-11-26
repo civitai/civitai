@@ -57,21 +57,28 @@ async function isFamilyLive(family: string): Promise<boolean> {
 }
 
 // A browser's family record is joined only with proof that the browser is signed in to it: a family already in
-// it (the browser's prior hub session). A new record also takes the proof family, so a session from before these
-// records existed is ended by a sign-out here too. A browser with an account list but no record yet gets none:
-// a sign-out from it would forget that list. 0: created; 1: joined; -1: refused.
+// it (the browser's prior hub session). The record exists only once the browser has two families to end together
+// (or an account list, which device.ts JOIN_SCRIPT records): a browser with one family has nothing more for a
+// sign-out to end, so no record is written for it. A new record holds both the new family and the proof family.
+// A browser with an account list but no record yet gets none: a sign-out from it would forget that list.
+// A join slides the TTL only while the record holds two families or the browser has an account list, so a
+// single-family record from before this rule drains (as TOUCH_SCRIPT lets single-account lists drain).
+// 0: created, or nothing to record (a single family); 1: joined; -1: refused.
 const ADD_FAMILY_SCRIPT = `
   if redis.call('EXISTS', KEYS[1]) == 0 then
     if redis.call('EXISTS', KEYS[2]) == 1 then return -1 end
-    if ARGV[2] ~= '' then redis.call('SADD', KEYS[1], ARGV[2]) end
-    redis.call('SADD', KEYS[1], ARGV[1])
-    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    if ARGV[2] ~= '' and ARGV[2] ~= ARGV[1] then
+      redis.call('SADD', KEYS[1], ARGV[2], ARGV[1])
+      redis.call('EXPIRE', KEYS[1], ARGV[3])
+    end
     return 0
   end
   if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
     or (ARGV[2] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1) then
     redis.call('SADD', KEYS[1], ARGV[1])
-    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    if redis.call('SCARD', KEYS[1]) >= 2 or redis.call('EXISTS', KEYS[2]) == 1 then
+      redis.call('EXPIRE', KEYS[1], ARGV[3])
+    end
     return 1
   end
   return -1
@@ -79,7 +86,8 @@ const ADD_FAMILY_SCRIPT = `
 
 /**
  * Remember that `family` signed in on this browser, so signing out here ends it too. `proofFamily` is the family
- * of the verified hub session the same request carries. Returns `'rotate'` when the browser has a record (or an account list) this
+ * of the verified hub session the same request carries. With no record yet, one is written only when `proofFamily`
+ * is a different family, holding both. Returns `'rotate'` when the browser has a record (or an account list) this
  * request can't show it belongs to: the caller moves the browser to a new device id. Best-effort.
  */
 export async function addDeviceFamily(
@@ -103,7 +111,8 @@ export async function addDeviceFamily(
 /**
  * Sign-out: end the caller's family. When that family belongs to this browser's device record, also end every
  * other family signed in on it and forget its account list, so nothing signed in here survives. A device id the
- * caller's family is not part of is left alone.
+ * caller's family is not part of is left alone, and so is one with no record: a browser with a single family and
+ * no account list has none.
  */
 export async function endDeviceSessions(
   caller: SessionClaims | undefined,

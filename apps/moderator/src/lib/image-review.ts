@@ -1,5 +1,8 @@
 import type { PromptHighlightCategory } from '@civitai/mod-utils/prompt-audit';
-import type { ImageReviewType as AnyImageReviewType } from '@civitai/shared/image-review-types';
+import {
+  CSAM_REVIEW_FLAG,
+  type ImageReviewType as AnyImageReviewType,
+} from '@civitai/shared/image-review-types';
 
 /** The review queues; appeals have their own. */
 export type ImageReviewType = Exclude<AnyImageReviewType, 'appeal'>;
@@ -45,9 +48,8 @@ export function reviewHighlightCategories(
   return ['minor', 'young', 'age', 'poi', 'blocked'];
 }
 
-/** The one review flag a block keeps: only its own queue, a filed report or an explicit unblock
- *  clears it. */
-export const FLAG_KEPT_THROUGH_BLOCK = 'csam' satisfies ImageReviewType;
+/** The one review flag a block keeps: only its own queue's accept or a filed report clears it. */
+export const FLAG_KEPT_THROUGH_BLOCK = CSAM_REVIEW_FLAG;
 
 /**
  * Removed, with only that flag left to rule on. Accepting would put the image back live and

@@ -7,6 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/jskeys"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -83,13 +84,29 @@ func (r *OrderedRead) Entries() map[int]OrderedEntry {
 	if len(r.cmds) == 0 {
 		return out
 	}
-	now := time.Now()
+	now := clock.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}
 	for i, cmd := range r.cmds {
 		if e, ok := decodeOrderedEntry(cmd, r.ttl, now); ok {
 			out[r.ids[i]] = e
+		}
+	}
+	return out
+}
+
+// Failed is, after the batch's Exec, each id whose GET failed for a reason other than redis.Nil (a
+// transport failure, a shard down), with that error: Entries leaves those ids out as it leaves a
+// miss out, and Failed tells the two apart. nil when no GET failed.
+func (r *OrderedRead) Failed() map[int]error {
+	var out map[int]error
+	for i, cmd := range r.cmds {
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			if out == nil {
+				out = map[int]error{}
+			}
+			out[r.ids[i]] = err
 		}
 	}
 	return out

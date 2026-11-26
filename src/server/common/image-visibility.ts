@@ -18,6 +18,7 @@ import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import {
   IMAGE_REVIEW_PRECEDENCE,
+  CSAM_REVIEW_FLAG,
   REVIEWS_KEPT_WHEN_LIFTED,
 } from '@civitai/shared/image-review-types';
 import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
@@ -27,7 +28,7 @@ import {
   minorContentRestrictedSql,
 } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
-import { hasBlockMarker } from '~/server/common/image-block-marker';
+import { OWNER_MEDIA_EXEMPT_BLOCKS, hasBlockMarker } from '~/server/common/image-block-marker';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -37,7 +38,7 @@ import {
   minusPriorKeysSql,
 } from '~/server/utils/image-removal-mode';
 
-export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
+export { CSAM_REVIEW_FLAG, KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
 
 /**
@@ -89,6 +90,35 @@ export const hasBlockMarkerSql = (alias = 'i') => {
     OR ${t}."blockedFor" IS NOT NULL
   )`;
 };
+
+/** SQL twin of `ownerMediaAllowed`, never NULL. */
+export const ownerMediaAllowedSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(CASE
+    WHEN ${t}."blockedFor" IS NOT NULL
+      THEN ${t}."blockedFor" IN (${Prisma.join(OWNER_MEDIA_EXEMPT_BLOCKS)})
+    ELSE ${t}."ingestion" <> ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+  END)`;
+};
+
+/**
+ * For a read that serves media: the viewer's own images only where `ownerMediaAllowed`. Other
+ * images are left to the caller's rules. `TRUE` with no viewer.
+ */
+export const ownerMediaSql = (ownerId?: number | null, alias = 'i') =>
+  ownerId
+    ? Prisma.sql`(${Prisma.raw(`"${alias}"`)}."userId" <> ${ownerId} OR ${ownerMediaAllowedSql(
+        alias
+      )})`
+    : Prisma.sql`TRUE`;
+
+/** `ownerMediaAllowed` as a Prisma `Image` filter. */
+export const ownerMediaAllowedWhere = (): Prisma.ImageWhereInput => ({
+  OR: [
+    { blockedFor: { in: [...OWNER_MEDIA_EXEMPT_BLOCKS] } },
+    { blockedFor: null, ingestion: { not: ImageIngestionStatus.Blocked } },
+  ],
+});
 
 /** `NOT hasBlockMarkerSql` as a Prisma `Image` filter. */
 export const noBlockMarkerWhere = (): Prisma.ImageWhereInput => ({
@@ -465,6 +495,14 @@ END)`;
 export const csamBlockedSql = (alias?: 'i') =>
   Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
 
+/** An unblock may lift the image: it has no CSAM block and no CSAM review flag. */
+export const liftableByUnblock = (image: {
+  blockedFor: string | null;
+  needsReview: string | null;
+}) => image.blockedFor !== BlockedReason.CSAM && image.needsReview !== CSAM_REVIEW_FLAG;
+/** `liftableByUnblock` as the unblock statement's own gate. */
+export const liftableByUnblockSql = Prisma.sql`("blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM} AND "needsReview" IS DISTINCT FROM ${CSAM_REVIEW_FLAG})`;
+
 /** An appeal on the image whose id is `imageId` is still Pending. */
 export const pendingImageAppealSql = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "Appeal" a
@@ -628,20 +666,38 @@ export const isImageNotFlagged = (image: {
 }) => !image.acceptableMinor && !isMinorMatureImage(image);
 
 /**
- * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
- * `"Image" i`. Empty for a moderator.
+ * An image with any `blockedFor` reason is hidden from everyone but moderators, as SQL over
+ * `"Image" i`; its owner keeps it only where `ownerMediaAllowed` does. `ownerKeepsBlockedRow` is for
+ * a read that serves the owner the row without its media (the image page). Empty for a
+ * moderator.
  */
 export function imageBlockedForConditions({
+  userId,
+  isModerator,
+  ownerKeepsBlockedRow = false,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+  ownerKeepsBlockedRow?: boolean;
+}): Prisma.Sql[] {
+  if (isModerator) return [];
+  if (!userId) return [Prisma.sql`(i."blockedFor" IS NULL)`];
+  return [
+    ownerKeepsBlockedRow
+      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+      : Prisma.sql`(i."blockedFor" IS NULL OR (i."userId" = ${userId} AND ${ownerMediaAllowedSql()}))`,
+  ];
+}
+
+/**
+ * The block terms of a list that serves media: a blocked image is moderators' alone, plus its
+ * owner's where `ownerMediaAllowed` allows. Empty for a moderator.
+ */
+export const blockedMediaListConditions = ({
   userId,
   isModerator,
 }: {
   userId?: number;
   isModerator?: boolean;
-}): Prisma.Sql[] {
-  if (isModerator) return [];
-  return [
-    userId
-      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-      : Prisma.sql`(i."blockedFor" IS NULL)`,
-  ];
-}
+}): Prisma.Sql[] =>
+  isModerator ? [] : [...imageBlockedForConditions({ userId }), ownerMediaSql(userId)];

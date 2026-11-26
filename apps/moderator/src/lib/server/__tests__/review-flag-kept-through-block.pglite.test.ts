@@ -70,8 +70,11 @@ vi.mock('../mod-activity', async (importOriginal) => ({
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const {
+  acceptCsamReviewedImage,
   acceptImage,
   blockImage,
+  CsamReviewImageError,
+  ImageNotRestoredError,
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   AppealRestoreRefusedError,
@@ -287,25 +290,33 @@ describe('blockImage and the block reason', () => {
 describe('an image removed with only the review flag left', () => {
   it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
     await expect(acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toBeInstanceOf(
-      RemovedImageNotRestorableError
+      CsamReviewImageError
     );
+    await expect(
+      acceptCsamReviewedImage({ imageId: FLAGGED_REMOVED, userId: 2 })
+    ).rejects.toBeInstanceOf(RemovedImageNotRestorableError);
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
-  // The main app's Unblock is an explicit decision to restore it, and must still work.
-  it('is restored by an explicit unblock', async () => {
-    await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
+  // Only the CSAM review clears the flag: the main app's Unblock leaves it, and the image, as they are.
+  it('is not restored by an explicit unblock', async () => {
+    await expect(
+      acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(ImageNotRestoredError);
 
-    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
-    expect(trackImageRestore).toHaveBeenCalledWith(
-      expect.objectContaining({ imageId: FLAGGED_REMOVED, actorUserId: 2 })
-    );
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(trackImageRestore).not.toHaveBeenCalled();
   });
 
-  it('is accepted like any other image while it is still live', async () => {
-    await acceptImage({ imageId: FLAGGED, userId: 2 });
+  it('is accepted while it is still live only by the CSAM review', async () => {
+    await expect(acceptImage({ imageId: FLAGGED, userId: 2 })).rejects.toBeInstanceOf(
+      CsamReviewImageError
+    );
+    expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Scanned' });
+
+    await acceptCsamReviewedImage({ imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
     expect(trackImageRestore).not.toHaveBeenCalled();
@@ -784,5 +795,72 @@ describe('an explicit unblock of an image an account deletion blocked', () => {
       OTHER_FLAG_REMOVED,
     ]);
     expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
+  });
+});
+
+describe('the CSAM review flag and every accept but the CSAM review', () => {
+  const ROWS = [
+    { id: 61, owner: 7, ingestion: 'Blocked', blockedFor: 'moderated' },
+    { id: 62, owner: 7, ingestion: 'Scanned', blockedFor: null },
+    { id: 63, owner: 11, ingestion: 'Blocked', blockedFor: 'moderated' },
+    { id: 64, owner: 11, ingestion: 'Scanned', blockedFor: null },
+  ];
+  const rows = async () =>
+    (
+      await db.query<{ id: number; needsReview: string | null; ingestion: string }>(
+        `SELECT id, "needsReview", "ingestion" FROM "Image" WHERE id = ANY($1::int[]) ORDER BY id`,
+        [ROWS.map((r) => r.id)]
+      )
+    ).rows;
+  const untouched = ROWS.map(({ id, ingestion }) => ({ id, needsReview: 'csam', ingestion }));
+
+  // What a report verdict's guard and a lift kept blocked read, beyond this file's schema.
+  beforeAll(() =>
+    db.exec(`
+      ALTER TABLE "JobQueue" ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now();
+      CREATE TABLE IF NOT EXISTS "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT);
+      CREATE TABLE IF NOT EXISTS "ModerationRuleVersion" ("ruleId" INTEGER, "action" TEXT);
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" TIMESTAMP(3);
+    `)
+  );
+
+  beforeEach(async () => {
+    await db.exec(`INSERT INTO "User" ("id", "deletedAt") VALUES (7, NULL), (11, now())`);
+    for (const r of ROWS)
+      await db.query(
+        `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+         VALUES ($1, $2, 'csam', $3, $4, 4)`,
+        [r.id, r.owner, r.blockedFor, r.ingestion]
+      );
+  });
+
+  it('an explicit unblock (the main app Unblock) leaves each one flagged and as it was', async () => {
+    for (const { id } of ROWS)
+      await expect(
+        acceptImage({ imageId: id, userId: 2, restoreRemoved: true })
+      ).rejects.toBeInstanceOf(ImageNotRestoredError);
+    expect(await rows()).toEqual(untouched);
+  });
+
+  it('a review queue or report accept leaves each one flagged and as it was', async () => {
+    for (const { id } of ROWS) {
+      await expect(acceptImage({ imageId: id, userId: 2 })).rejects.toBeInstanceOf(
+        CsamReviewImageError
+      );
+      await expect(
+        acceptImage({ imageId: id, userId: 2, keepModeratorRemoved: true })
+      ).rejects.toBeInstanceOf(CsamReviewImageError);
+    }
+    expect(await rows()).toEqual(untouched);
+  });
+
+  it('the CSAM review clears the flag on a live one, kept blocked while its owner is deleted', async () => {
+    await acceptCsamReviewedImage({ imageId: 62, userId: 2 });
+    await acceptCsamReviewedImage({ imageId: 64, userId: 2 });
+
+    expect((await rows()).filter((r) => r.id === 62 || r.id === 64)).toEqual([
+      { id: 62, needsReview: null, ingestion: 'Scanned' },
+      { id: 64, needsReview: null, ingestion: 'Blocked' },
+    ]);
   });
 });

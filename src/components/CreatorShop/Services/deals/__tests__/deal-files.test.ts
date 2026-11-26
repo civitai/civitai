@@ -85,6 +85,10 @@ describe('upload checks before sending', () => {
       uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: videoMax + 1 })
     ).toBe(SERVICE_FINAL_VIDEO_TOO_LARGE);
     expect(uploadRefusal('Final', { name: 'README', type: '', size: 10 })).toMatch(/\(none\)/);
+    // Not "use a .zip": a PDF inside one is refused too.
+    expect(
+      uploadRefusal('Final', { name: 'Brief.PDF', type: 'application/pdf', size: MB })
+    ).toMatch(/PDF files can't be delivered/);
     expect(
       uploadRefusal('Final', { name: 'big.zip', type: 'application/zip', size: 2 * 1024 * MB })
     ).toMatch(/too large/);

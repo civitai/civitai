@@ -880,10 +880,10 @@ describe('imageVisibilityConditions for image.get', () => {
 });
 
 describe('blockedFor on a single-image read', () => {
-  async function visibleTo(viewer: Viewer) {
+  async function visibleTo(viewer: Viewer, ownerKeepsBlockedRow = false) {
     const raw = pgliteRaw(db);
     const where = Prisma.join(
-      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions({ ...viewer, ownerKeepsBlockedRow })],
       ' AND '
     );
     const rows =
@@ -900,13 +900,21 @@ describe('blockedFor on a single-image read', () => {
     }
   }
 
-  it.each(['moderated', 'AiNotVerified', 'a prompt audit reason'])(
-    'shows an image blocked for %s only to its owner and moderators',
-    async (reason) => {
+  // civitai/civitai#10505: by default a read serves media, so a block refuses the owner too,
+  // except the metadata hold; a read that strips the media itself keeps the owner the row.
+  it.each([
+    ['moderated', false],
+    ['AiNotVerified', true],
+    ['a prompt audit reason', false],
+  ] as const)(
+    'shows an image blocked for %s to moderators, and to its owner where the rule allows',
+    async (reason, ownerServed) => {
       await seed({ image: { '"blockedFor"': `'${reason}'` } });
       expect(await visibleTo(ANON)).toBe(false);
       expect(await visibleTo(OTHER)).toBe(false);
-      expect(await visibleTo(SELF)).toBe(true);
+      expect(await visibleTo(SELF)).toBe(ownerServed);
+      expect(await visibleTo(SELF, true)).toBe(true);
+      expect(await visibleTo(OTHER, true)).toBe(false);
       expect(await visibleTo(MOD)).toBe(true);
     }
   );

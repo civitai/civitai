@@ -46,7 +46,8 @@ function retractedEligibleSql(image: string, cdnLeg: boolean): string {
   ))`;
 }
 
-/** A scanned row whose url the CDN refuses, with no held file and nothing but this row behind it. */
+/** A scanned row whose url the CDN refuses, with no held file and nothing but this row behind it,
+ *  on no post a case keeps for deletion. */
 function scannedRefusedSql(image: string): string {
   return `(
       ${image}.ingestion = 'Scanned'
@@ -60,6 +61,11 @@ function scannedRefusedSql(image: string): string {
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
+      AND NOT EXISTS (
+        SELECT 1 FROM "Post" kp
+        WHERE kp.id = ${image}."postId"
+          AND kp.metadata ->> 'unpublishedReason' = '${PENDING_DELETE_REASON}'
+      )
     )`;
 }
 

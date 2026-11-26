@@ -196,6 +196,13 @@ describe('a song in the post editor', () => {
     expect(screen.container.querySelector('img, [data-testid="edge-media"]')).toBeNull();
   });
 
+  test('a withheld song shows as unavailable media, with no player', async () => {
+    mocks.showPreview = true;
+    await renderWithProviders(<AddedImage image={song({ url: null })} />);
+    await expect.element(page.getByText('Media unavailable')).toBeVisible();
+    expect(page.getByRole('slider', { name: 'Song progress' }).elements()).toHaveLength(0);
+  });
+
   test('hides the sections that cannot apply to a song', async () => {
     const card = await renderCard(song());
     expect(sectionTitles(card)).not.toContain('Thumbnail');

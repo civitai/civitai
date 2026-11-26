@@ -1424,7 +1424,7 @@ describe('scan result writes', () => {
 
     describe('group 5', () => {
       const rescan = async (id: number) => {
-        await rescanImageById({ id });
+        await rescanImageById({ csamReview: true, id });
         expect(submitted()).toContain(id);
       };
 
@@ -1545,7 +1545,8 @@ describe('scan result writes', () => {
 
 describe('feed thumbnail fields', () => {
   const CREATOR = 5;
-  const marked = { url: 't', nsfwLevel: 16, blockMarked: true };
+  // Marked by a Blocked rating alone: its owner keeps it.
+  const marked = { url: 't', nsfwLevel: 16, blockMarked: true, ownerMediaAllowed: true };
   const viewers = {
     signedOut: {},
     other: { user: { id: 6 }, asOwner: true },
@@ -1583,6 +1584,17 @@ describe('feed thumbnail fields', () => {
       nsfwLevel: 16,
       thumbnailUrl: 't',
     });
+  });
+
+  it('a blocked thumbnail goes to a moderator only, its owner included', () => {
+    for (const blocked of [
+      { url: 't', nsfwLevel: 16, blockMarked: true, ownerMediaAllowed: false },
+      // Cached before the flag was read: counts as not allowed.
+      { url: 't', nsfwLevel: 16, blockMarked: true },
+    ]) {
+      expect(fields(viewers.owner, blocked).thumbnailUrl).toBeUndefined();
+      expect(fields(viewers.moderator, blocked).thumbnailUrl).toBe('t');
+    }
   });
 });
 

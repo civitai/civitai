@@ -34,7 +34,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
-  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/nsfw-rating';
+  import { nsfwLevelLabel } from '$lib/nsfw-rating';
   import StickySummary from '$lib/components/StickySummary.svelte';
   import HelpTip, { TAP_TARGET } from '$lib/components/HelpTip.svelte';
   import { blobPreview, directDatasetUrl, type ReuseItem } from '$lib/reuse';
@@ -86,6 +86,9 @@
     withFilterTags,
     asDatasetFilter,
     matchesRatingFilter,
+    matchesVerdictFilter,
+    imgRatingLabel,
+    isImgMature,
     ratingChoices,
     type BatchSource,
     type DatasetFilter,
@@ -110,6 +113,7 @@
   let {
     selection,
     prices,
+    ratingV2 = false,
     images = $bindable([]),
     trigger = $bindable(''),
     labelMode = $bindable('tag'),
@@ -126,6 +130,8 @@
     selection: Selection;
     /** Live "from" quotes per card type — keeps the running price visible during upload. */
     prices: Record<string, number>;
+    /** The server rates this dataset with the v2 rating: filter by its verdicts, not upload ratings. */
+    ratingV2?: boolean;
     images: Img[];
     trigger: string;
     /** The chosen dataset label format — owned by the flow. Fixed to the model's format for single-format
@@ -277,9 +283,12 @@
   const labeledTotal = $derived(images.filter(isLabeled).length);
   const unlabeledTotal = $derived(images.length - labeledTotal);
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
-  const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
+  const isMature = isImgMature;
   const matureTotal = $derived(images.filter(isMature).length);
-  const ratingFilters = $derived(ratingChoices(images, filter));
+  // Under the v2 rating the upload ratings are no filter: Mature / Not mature / Not rated yet are.
+  const ratingFilters = $derived(ratingV2 ? [] : ratingChoices(images, filter));
+  const notMatureTotal = $derived(images.filter((i) => matchesVerdictFilter(i, 'not-mature')).length);
+  const notRatedTotal = $derived(images.filter((i) => matchesVerdictFilter(i, 'not-rated')).length);
   // With/without tag filter (and Manage tags' "Show images"): the images that matched when the filter
   // last changed — a snapshot, so adding a missing tag to one while reviewing doesn't hide it.
   let tagFilter = $state<(TagFilter & { ids: number[] }) | null>(null);
@@ -331,7 +340,9 @@
             ? images.filter(isFailed)
             : filter.startsWith('rating:')
               ? images.filter((i) => matchesRatingFilter(i, filter))
-              : images
+              : filter === 'not-mature' || filter === 'not-rated'
+                ? images.filter((i) => matchesVerdictFilter(i, filter))
+                : images
   );
   // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
   // ×N badge only on images that repeat.
@@ -1009,7 +1020,7 @@
 </script>
 
 {#snippet ratingBadge(img: Img)}
-  {@const rating = nsfwLevelLabel(img.nsfwLevel)}
+  {@const rating = imgRatingLabel(img)}
   {#if rating}
     {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
     {#if isMature(img)}
@@ -1555,9 +1566,17 @@
                   >{unlabeledTotal}</span
                 >
               </ToggleGroupItem>
-              {#if filter === 'mature'}
+              {#if filter === 'mature' || ratingV2}
                 <ToggleGroupItem value="mature" aria-label="Show images rated mature">
                   Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+                </ToggleGroupItem>
+              {/if}
+              {#if ratingV2}
+                <ToggleGroupItem value="not-mature" aria-label="Show images rated not mature">
+                  Not mature <span class="ml-1">{notMatureTotal}</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem value="not-rated" aria-label="Show images not rated yet">
+                  Not rated yet <span class="ml-1">{notRatedTotal}</span>
                 </ToggleGroupItem>
               {/if}
               {#each ratingFilters as r (r.rating)}
@@ -1687,7 +1706,11 @@
                       ? 'No failed uploads.'
                       : filter.startsWith('rating:')
                         ? `No images rated ${nsfwLevelLabel(filter.slice('rating:'.length))}.`
-                        : 'No images.'}
+                        : filter === 'not-mature'
+                          ? 'No images rated not mature.'
+                          : filter === 'not-rated'
+                            ? 'Every image is rated.'
+                            : 'No images.'}
           </div>
         {/if}
 

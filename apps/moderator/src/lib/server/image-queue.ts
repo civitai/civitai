@@ -20,6 +20,7 @@ import {
   getReviewQueueTags,
 } from '$lib/server/image-review.service';
 import {
+  acceptCsamReviewedImage,
   acceptImage,
   blockImage,
   closedAppellants,
@@ -355,6 +356,13 @@ function shownFlags(value: FormDataEntryValue | null): Map<number, string | null
   }
 }
 
+/** The CSAM queue's own view clears the CSAM review flag for a moderator who holds that review; every
+ *  other queue, and `/reports/image` (no `slug`), leaves the flag on. */
+const acceptFrom = (params: { slug?: string } | undefined, user: App.Locals['user']) =>
+  params?.slug === FLAG_KEPT_THROUGH_BLOCK && holdsCsamReview(user)
+    ? acceptCsamReviewedImage
+    : acceptImage;
+
 /** `setRating`: the posted `imageIds` rated `nsfwLevel`, one at a time, each failure named. Also
  *  Audio review's Set rating. */
 export async function rateImages(form: FormData, locals: App.Locals) {
@@ -415,7 +423,11 @@ export async function rateImages(form: FormData, locals: App.Locals) {
 
 /** `bulkAccept`: the posted `imageIds` accepted, closing the posted `reportIds` filed on them as
  *  Unactioned. Also Audio review's Dismiss reports. */
-export async function acceptImagesWithReports(form: FormData, locals: App.Locals) {
+export async function acceptImagesWithReports(
+  form: FormData,
+  locals: App.Locals,
+  params?: { slug?: string }
+) {
   const imageIds = parseIds(form.get('imageIds'));
   const withheldBulk = await withheldRefusal(locals.user, imageIds);
   if (withheldBulk) return fail(403, { error: withheldBulk });
@@ -430,9 +442,10 @@ export async function acceptImagesWithReports(form: FormData, locals: App.Locals
   const confirmedSongs: number[] = [];
   const unpaidImages = new Set<number>();
   // Emails only the appeals this request closed, once per appellant instead of per image.
+  const accept = acceptFrom(params, locals.user);
   const closed = await Promise.all(
     imageIds.map((imageId) =>
-      acceptImage({
+      accept({
         imageId,
         removeMinorFlag,
         userId: locals.user.id,
@@ -599,7 +612,7 @@ export async function removeImagesWithReports(form: FormData, event: RequestEven
 }
 
 export const imageQueueActions = {
-  accept: async ({ request, locals }) => {
+  accept: async ({ request, locals, params }) => {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
@@ -611,7 +624,10 @@ export const imageQueueActions = {
       return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
 
     try {
-      await acceptImage({
+      await acceptFrom(
+        params,
+        locals.user
+      )({
         imageId,
         removeMinorFlag,
         userId: locals.user.id,
@@ -823,8 +839,8 @@ export const imageQueueActions = {
   },
 
   // reportIds couples the report status (accept → Unactioned, block → Actioned).
-  bulkAccept: async ({ request, locals }) =>
-    acceptImagesWithReports(await request.formData(), locals),
+  bulkAccept: async ({ request, locals, params }) =>
+    acceptImagesWithReports(await request.formData(), locals, params),
 
   bulkBlock: async (event) => removeImagesWithReports(await event.request.formData(), event),
 

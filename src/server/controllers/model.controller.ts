@@ -1,6 +1,7 @@
 import type { SessionUser } from '~/types/session';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { readCollectionForViewer } from '~/server/services/collection-viewer';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
@@ -2147,7 +2148,11 @@ export const getAssociatedResourcesCardDataHandler = async ({
 
     const { items: articles } =
       articleResources?.length > 0
-        ? await getArticles({ ...articleInput, sessionUser: user })
+        ? await getArticles({
+            ...articleInput,
+            sessionUser: user,
+            asModerator: actsAsModerator(ctx),
+          })
         : { items: [] };
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);

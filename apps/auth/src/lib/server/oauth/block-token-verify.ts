@@ -64,6 +64,7 @@ export type BlockTokenRefusal =
   | 'dev token'
   | 'review token'
   | 'private run'
+  | 'runner token'
   | 'too old';
 
 // The site's kid: sha256 of the key's modulus, first 32 hex characters (`computeKeyId`).
@@ -206,6 +207,8 @@ export async function verifyBlockTokenForExchange(
   ) {
     return { ok: false, reason: 'private run' };
   }
+  // A recipe-runner token may only submit a workflow on the site; it is never exchanged.
+  if (payload.mintOrigin !== undefined) return { ok: false, reason: 'runner token' };
   if (nowSeconds - iat > MAX_AGE_SECONDS + CLOCK_TOLERANCE_SECONDS) {
     return { ok: false, reason: 'too old' };
   }

@@ -3,7 +3,10 @@ import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
+import {
+  entryImageGone,
+  SCANNED_FILE_KINDS,
+} from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   acceptedAsVideo,
@@ -18,6 +21,8 @@ import {
   isFinalVideoName,
   readObject,
   recordFinalScanResult,
+  markCopyDeletes,
+  settleCopyDeletes,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { readVideoLengths } from '~/server/utils/video-lengths';
@@ -31,6 +36,8 @@ import {
   listZipPaths,
   MAX_ID3_TAGS,
   everyEntryHead,
+  holdsPdfHeader,
+  PDF_HEADER_WINDOW,
   isMediaName,
   sniffEntry,
   SNIFF_BYTES,
@@ -40,6 +47,7 @@ import {
 } from '~/server/utils/service-deal-zip';
 import {
   SERVICE_FINAL_OVER_LEVEL_REASON,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
   SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
@@ -350,6 +358,20 @@ async function isTorchArchive(file: ClaimedFinal) {
   });
 }
 
+/** The Final's first bytes as stored, before any tag a player would skip. */
+async function readRawPrefix(file: ClaimedFinal) {
+  if (file.size === 0) return Buffer.alloc(0);
+  const response = await getS3Client().send(
+    new GetObjectCommand({
+      Bucket: await getBucket(),
+      Key: file.s3Key,
+      Range: `bytes=0-${Math.min(PDF_HEADER_WINDOW, file.size) - 1}`,
+    })
+  );
+  if (!response.Body) throw new Error('Empty object body');
+  return Buffer.from(await response.Body.transformToByteArray());
+}
+
 /** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
 async function readHead(file: ClaimedFinal) {
   let offset = 0;
@@ -390,6 +412,7 @@ const isModelName = (name: string) =>
 async function isImageByContent(file: ClaimedFinal) {
   const head = await readHead(file);
   const kind = sniffEntry(head);
+  if (kind === 'pdf') throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
   if (kind === 'video')
     throw new ZipRejectedError(
       file.kind === 'Attachment'
@@ -416,56 +439,21 @@ async function isImageByContent(file: ClaimedFinal) {
   return kind === 'image';
 }
 
+// An inline preview of these types must strip or refuse embedded data: images.
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
-const PDF_END = Buffer.from('%%EOF');
-/** How far from the end a PDF's `%%EOF` may sit, and how much of its start is read. */
-const PDF_ENDS_BYTES = 1024;
-/** What may follow `%%EOF`: whitespace or NUL padding. */
-const PDF_PADDING = new Set([0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20]);
 
 type DocumentBytes = {
   /** Every byte, in order. */
   open: () => AsyncIterable<Buffer> | Promise<AsyncIterable<Buffer>>;
-  /** The first and last `bytes`, read without the rest when the source allows it. */
-  ends?: (bytes: number) => Promise<{ head: Buffer; tail: Buffer }>;
 };
-
-async function streamedEnds(open: DocumentBytes['open'], bytes: number) {
-  let head = Buffer.alloc(0);
-  let tail = Buffer.alloc(0);
-  for await (const chunk of await open()) {
-    if (head.length < bytes) head = Buffer.concat([head, chunk]).subarray(0, bytes);
-    tail = Buffer.concat([tail, chunk]);
-    if (tail.length > bytes) tail = tail.subarray(tail.length - bytes);
-  }
-  return { head, tail };
-}
-
-/**
- * A PDF opens with its header line (`%PDF-1.7`), followed by no other format's signature, and ends
- * with `%%EOF`.
- */
-function isPdfShaped(head: Buffer, tail: Buffer) {
-  const header = /^%PDF-\d\.\d[ \t]*[\r\n]+/.exec(head.toString('latin1'));
-  if (!header) return false;
-  if (sniffEntry(head.subarray(header[0].length), { tsAnywhere: false }) !== 'other') return false;
-  const end = tail.lastIndexOf(PDF_END);
-  return end >= 0 && tail.subarray(end + PDF_END.length).every((byte) => PDF_PADDING.has(byte));
-}
 
 /**
  * A document has no content scan, so a Final or a zip entry named as one must be what its name says,
- * all of it: a text file is valid UTF-8 with no NUL byte anywhere, and a PDF is shaped like one
- * (`isPdfShaped`). Anything else would be delivered unscanned, so it is refused.
+ * all of it: a text file is valid UTF-8 with no NUL byte anywhere. Anything else would be delivered
+ * unscanned, so it is refused.
  */
-async function isTheDocumentItsNamed(name: string, { open, ends }: DocumentBytes) {
-  const extension = fileExtension(name);
-  const text = TEXT_EXTENSIONS.has(extension);
-  if (!text && extension !== 'pdf') return true;
-  if (!text) {
-    const { head, tail } = await (ends ?? ((bytes) => streamedEnds(open, bytes)))(PDF_ENDS_BYTES);
-    return isPdfShaped(head, tail);
-  }
+async function isTheDocumentItsNamed(name: string, { open }: DocumentBytes) {
+  if (!TEXT_EXTENSIONS.has(fileExtension(name))) return true;
   const decoder = new TextDecoder('utf-8', { fatal: true });
   try {
     for await (const chunk of await open()) {
@@ -480,22 +468,9 @@ async function isTheDocumentItsNamed(name: string, { open, ends }: DocumentBytes
   return true;
 }
 
-async function readAll(stream: AsyncIterable<Buffer>) {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
-
-/** The Final's bytes, its ends read as two ranges. */
 async function finalBytes(file: ClaimedFinal): Promise<DocumentBytes> {
   const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
-  return {
-    open: () => source.readRange(0, file.size),
-    ends: async (bytes) => ({
-      head: await readAll(source.readRange(0, Math.min(bytes, file.size))),
-      tail: await readAll(source.readRange(Math.max(0, file.size - bytes), file.size)),
-    }),
-  };
+  return { open: () => source.readRange(0, file.size) };
 }
 
 /** A Final that is itself an image has a single entry: the file. */
@@ -620,6 +595,8 @@ export async function unpackFinals({
   const began = Date.now();
   try {
     const extension = fileExtension(file.fileName);
+    if (holdsPdfHeader(await readRawPrefix(file)))
+      throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     if (extension === 'zip') {
       if (!(await unpackZip(file, shouldStop))) {
         await release(file.id);
@@ -895,6 +872,29 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/** When `countDanglingScanCopies` last counted. Kept in memory: a restart only counts sooner. */
+let danglingCountedAt = 0;
+
+/**
+ * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
+ * (`imageGone`), so a growing count is a backlog; `marked` ones are our own delete, which the next
+ * copy run settles. Null when it did not count this run.
+ */
+export async function countDanglingScanCopies({ now = Date.now() } = {}) {
+  if (now - danglingCountedAt < 60 * 60_000) return null;
+  danglingCountedAt = now;
+  const [counts] = await dbWrite.$queryRaw<{ marked: number; unmarked: number }[]>`
+    SELECT count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NOT NULL)::int AS marked,
+      count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NULL)::int AS unmarked
+    FROM "ServiceDealFileEntry" e WHERE ${entryImageGone(Prisma.sql`e`)}`;
+  logUnpack(
+    'entries pointing at a gone image',
+    { count: counts.unmarked, total: counts.marked + counts.unmarked },
+    counts.unmarked ? 'warning' : 'info'
+  );
+  return counts;
+}
+
 /** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
 let copiesCursor = 0;
 
@@ -902,9 +902,9 @@ let copiesCursor = 0;
  * Step 5: the copy of an image that passed has done its job. This step KEEPS the copy of an image
  * whose scan has not finished, or that was refused, even after its file was deleted: its Image row
  * is what the moderation tooling reads, and deleting it would take the evidence with it. Only
- * purgeRemovedFiles takes one, an over-level copy, with its file. A copy whose
- * file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
- * passes. A delete that fails stays pointed at and is retried.
+ * purgeRemovedFiles deletes such a copy, and only an over-level one, together with its file. A copy
+ * whose file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once
+ * it passes. A delete that fails stays pointed at and is retried.
  */
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   // Each run starts after the last one's final row and wraps to the start, so copies kept for
@@ -919,23 +919,17 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   let deleted = 0;
   for (const row of rows) {
     try {
+      await markCopyDeletes([row.id]);
       const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
-      // A copy kept for its case stays pointed at; one an earlier run deleted is let go.
-      const went =
-        gone?.some(({ id }) => id === row.imageId) ||
-        !(
-          await dbWrite.$queryRaw<unknown[]>`SELECT 1 FROM "Image" WHERE "id" = ${row.imageId}::int`
-        ).length;
-      if (!went) continue;
-      if (row.fileId === null)
-        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
-      else
-        await dbWrite.$executeRaw`
-          UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
-      deleted++;
+      // A copy kept for its case stays pointed at, and so does one gone without our delete.
+      const settled = await settleCopyDeletes(
+        [row.id],
+        (gone ?? []).map(({ id }) => id)
+      );
+      if (settled.length) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',

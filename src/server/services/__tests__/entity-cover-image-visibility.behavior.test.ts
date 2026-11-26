@@ -364,7 +364,6 @@ const hidden: [string, string, number, number][] = [
   ["a taken-down model's image", 'Image', 1631, 1631],
   ["a post on a taken-down model's version", 'Post', 1621, 1631],
   ["an article whose cover is a taken-down model's image", 'Article', 2903, 1631],
-  ['an article whose cover is blocked', 'Article', 2904, 2914],
   ['an article whose cover violates the ToS', 'Article', 2905, 2915],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
@@ -450,6 +449,27 @@ const placeholderOwned: [string, string, number, number, number][] = [
 ];
 
 describe('getEntityCoverImage respects the parent entity visibility', () => {
+  describe('an article whose cover is blocked', () => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('has no cover for the %s', async (who) => {
+      expect(await coverOf('Article', 2904, viewers[who])).toBeNull();
+    });
+    it('keeps its cover for a moderator', async () => {
+      expect(await coverOf('Article', 2904, viewers.moderator)).toBe(2914);
+    });
+  });
+
+  describe('a blocked image as its own cover', () => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('has no cover for the %s', async (who) => {
+      expect(await coverOf('Image', 2914, viewers[who])).toBeNull();
+    });
+    it('keeps its cover for a moderator', async () => {
+      expect(await coverOf('Image', 2914, viewers.moderator)).toBe(2914);
+    });
+    it("CONTROL: an unblocked image of the owner's is its own cover for them", async () => {
+      expect(await coverOf('Image', 1135, viewers.owner)).toBe(1135);
+    });
+  });
+
   describe.each(hidden)('%s', (_, entityType, entityId, imageId) => {
     it.each(['anonymous', 'stranger'] as const)('has no cover for a %s viewer', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBeNull();
@@ -728,33 +748,43 @@ describe('a minor-flagged cover rated R or above', () => {
 describe('a blocked or ToS-violating bounty image', () => {
   beforeAll(async () => {
     // Bounty 3001 leads with a blocked image, then a clean one; bounty 3002's only image violates
-    // the ToS. Entry 3003, on public bounty 2, leads with a blocked image, then a clean one.
+    // the ToS. Entry 3003, on public bounty 2, leads with a blocked image, then a clean one. Bounty
+    // 3004 leads with an image held for its metadata, then a clean one.
     await db.exec(`
       INSERT INTO "Image" (id, "blockedFor", "tosViolation") VALUES
         (3011, 'tos', false), (3012, NULL, false), (3013, NULL, true),
-        (3014, 'tos', false), (3015, NULL, false);
-      INSERT INTO "Bounty" VALUES (3001, ${OWNER}, 'Public'), (3002, ${OWNER}, 'Public');
+        (3014, 'tos', false), (3015, NULL, false), (3016, 'AiNotVerified', false),
+        (3017, NULL, false);
+      INSERT INTO "Bounty" VALUES (3001, ${OWNER}, 'Public'), (3002, ${OWNER}, 'Public'),
+        (3004, ${OWNER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (3003, 2, ${OWNER});
       INSERT INTO "ImageConnection" VALUES
         (3011, 3001, 'Bounty'), (3012, 3001, 'Bounty'), (3013, 3002, 'Bounty'),
-        (3014, 3003, 'BountyEntry'), (3015, 3003, 'BountyEntry');
+        (3014, 3003, 'BountyEntry'), (3015, 3003, 'BountyEntry'), (3016, 3004, 'Bounty'),
+        (3017, 3004, 'Bounty');
     `);
   });
 
-  // [label, entityType, entityId, cover for anonymous/stranger, cover for owner/moderator]
-  const cases: [string, string, number, number | null, number][] = [
-    ["a bounty's first connected image, blocked", 'Bounty', 3001, 3012, 3011],
-    ["a bounty's only image, violating the ToS", 'Bounty', 3002, null, 3013],
-    ["an entry's first connected image, blocked", 'BountyEntry', 3003, 3015, 3014],
+  // [label, entityType, entityId, cover for anonymous/stranger, for the owner, for a moderator]
+  // The owner column split from the moderator one in civitai/civitai#10505: a block refuses the owner too.
+  const cases: [string, string, number, number | null, number, number][] = [
+    ["a bounty's first connected image, blocked", 'Bounty', 3001, 3012, 3012, 3011],
+    ["a bounty's only image, violating the ToS", 'Bounty', 3002, null, 3013, 3013],
+    ["an entry's first connected image, blocked", 'BountyEntry', 3003, 3015, 3015, 3014],
+    ["a bounty's first connected image, held for its metadata", 'Bounty', 3004, 3017, 3016, 3016],
   ];
 
-  describe.each(cases)('as %s', (_, entityType, entityId, othersSee, ownerSees) => {
+  describe.each(cases)('as %s', (_, entityType, entityId, othersSee, ownerSees, modSees) => {
     it.each(['anonymous', 'stranger'] as const)('is passed over for a %s viewer', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(othersSee);
     });
 
-    it.each(['owner', 'moderator'] as const)('is kept for the %s', async (who) => {
-      expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerSees);
+    it('is kept for the owner only where the block leaves them the media', async () => {
+      expect(await coverOf(entityType, entityId, viewers.owner)).toBe(ownerSees);
+    });
+
+    it('is kept for a moderator', async () => {
+      expect(await coverOf(entityType, entityId, viewers.moderator)).toBe(modSees);
     });
   });
 });
@@ -774,21 +804,30 @@ describe('a cover at the Blocked level with no block recorded', () => {
 
 describe("a bounty's image listed on a report", () => {
   // Bounty 3101's images: 3111 listed (as an object entry) and owned by OWNER, 3112 unlisted.
-  // Entry 3102's only image 3113 is listed too; entries are out of this rule's scope.
+  // Entry 3102's images: 3113 listed (as a string entry) and owned by OWNER, 3114 unlisted.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "Bounty" VALUES (3101, ${OWNER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (3102, 3101, 50);
-      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113);
+      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113), (3114);
       INSERT INTO "ImageConnection" VALUES
-        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'), (3113, 3102, 'BountyEntry');
+        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'),
+        (3113, 3102, 'BountyEntry'), (3114, 3102, 'BountyEntry');
       INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3111}, "3113"]');
     `);
   });
 
-  const coverFor = async (viewer: Viewer, seesReportListed?: boolean) => {
+  const coverFor = async (
+    viewer: Viewer,
+    seesReportListed?: boolean,
+    entity: { entityType: 'Bounty' | 'BountyEntry'; entityId: number } = {
+      entityType: 'Bounty',
+      entityId: 3101,
+    }
+  ) => {
     const covers = await getEntityCoverImage({
-      entities: [{ entityType: 'Bounty', entityId: 3101 }],
+      // BountyEntry is outside the request schema's entity types; the query serves it all the same.
+      entities: [entity] as Parameters<typeof getEntityCoverImage>[0]['entities'],
       viewer,
       seesReportListed,
     });
@@ -811,7 +850,58 @@ describe("a bounty's image listed on a report", () => {
     expect(await coverFor(viewers.moderator, true)).toBe(3111);
   });
 
-  it("still serves an entry's listed image", async () => {
-    expect(await coverOf('BountyEntry', 3102, viewers.anonymous)).toBe(3113);
+  // Entries follow their bounty's rule (#10483), so an entry's listed image is passed over too.
+  const entry = { entityType: 'BountyEntry', entityId: 3102 } as const;
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    "passes over an entry's listed image for the %s",
+    async (who) => {
+      expect(await coverFor(viewers[who], undefined, entry)).toBe(3114);
+    }
+  );
+
+  it("keeps an entry's listed image for its uploader", async () => {
+    expect(await coverFor(viewers.owner, undefined, entry)).toBe(3113);
+  });
+
+  it("keeps an entry's listed image for a viewer who sees report-listed images", async () => {
+    expect(await coverFor(viewers.moderator, true, entry)).toBe(3113);
+  });
+});
+
+describe("an article's cover listed on a report", () => {
+  // Article 3201's cover 3211 is listed and owned by OWNER; 3212, a content image, is not.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id) VALUES (3211), (3212);
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3201, 3211, 'Published', now());
+      INSERT INTO "ImageConnection" VALUES (3212, 3201, 'Article');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3211}]');
+    `);
+  });
+
+  const articleCover = async (viewer: Viewer, seesReportListed?: boolean) => {
+    const covers = await getEntityCoverImage({
+      entities: [{ entityType: 'Article', entityId: 3201 }],
+      viewer,
+      seesReportListed,
+    });
+    return covers[0]?.id ?? null;
+  };
+
+  // Articles follow the bounty rule (#10485): the next image stands in for the listed cover.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'is passed over for the %s',
+    async (who) => {
+      expect(await articleCover(viewers[who])).toBe(3212);
+    }
+  );
+
+  it('is kept for its uploader', async () => {
+    expect(await articleCover(viewers.owner)).toBe(3211);
+  });
+
+  it('is kept for a viewer who sees report-listed images', async () => {
+    expect(await articleCover(viewers.moderator, true)).toBe(3211);
   });
 });

@@ -10,6 +10,8 @@ import {
   bootCheckFailureError,
   bootCheckUnavailable,
   reviewBootCheckSummary,
+  bootCheckAuthorView,
+  redactDeployDetailForAuthor,
 } from '~/shared/utils/review-boot-check';
 import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import { BLOCK_READY_TIMEOUT_MS as PAGE_HOST_READY_TIMEOUT_MS } from '~/components/AppBlocks/pageBlockHostLogic';
@@ -104,5 +106,116 @@ describe('BLOCK_READY_TIMEOUT_MS: one window', () => {
   it('is 10 s, and the page host re-exports the same binding', () => {
     expect(BLOCK_READY_TIMEOUT_MS).toBe(10000);
     expect(PAGE_HOST_READY_TIMEOUT_MS).toBe(BLOCK_READY_TIMEOUT_MS);
+  });
+});
+
+describe('the author view of a boot check', () => {
+  const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+  const rec = (result: string, firstError: string | null, mode = 'enforce') => ({
+    result,
+    ms: 1234,
+    messagesSeen: [`${MARKER}-msg`],
+    firstError,
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    mode,
+  });
+
+  it.each([
+    ['passed', null, 'passed'],
+    ['failed', null, 'no-ready-signal'],
+    ['failed', '', 'no-ready-signal'],
+    ['failed', `${MARKER}-err`, 'page-error'],
+    ['unavailable', null, 'unavailable'],
+  ])('%s with firstError %j → %s', (result, firstError, reason) => {
+    expect(bootCheckAuthorView(rec(result, firstError))).toEqual({
+      result,
+      mode: 'enforce',
+      reason,
+    });
+  });
+
+  it.each([
+    ['an unknown result', { ...rec('failed', null), result: 'maybe' }],
+    ['an unknown mode', { ...rec('failed', null), mode: 'off' }],
+    ['a non-object', 'oops'],
+  ])('%s → null', (_label, raw) => {
+    expect(bootCheckAuthorView(raw)).toBeNull();
+  });
+
+  it('carries no timing: ms and checkedAt are not in the view', () => {
+    const view = bootCheckAuthorView(rec('passed', null));
+    expect(view).not.toHaveProperty('ms');
+    expect(view).not.toHaveProperty('checkedAt');
+  });
+
+  it('redacts the record and the boot-check error, keeps the rest of the detail', () => {
+    const raw = JSON.stringify({
+      sha: 'c'.repeat(40),
+      bootCheck: rec('failed', `${MARKER}-err`),
+      error: bootCheckFailureError(`${MARKER}-err`),
+    });
+    const out = redactDeployDetailForAuthor(raw) as string;
+    expect(out).not.toContain(MARKER);
+    expect(JSON.parse(out)).toEqual({
+      sha: 'c'.repeat(40),
+      bootCheck: {
+        result: 'failed',
+        mode: 'enforce',
+        reason: 'page-error',
+      },
+      error:
+        'Boot check: the app loaded but never sent BLOCK_READY within 10s. An error was reported while it loaded (a console error, or a script served with a non-JavaScript type): open the app and check the browser console. Fix and resubmit.',
+    });
+  });
+
+  it('a malformed record is dropped', () => {
+    const out = redactDeployDetailForAuthor(
+      JSON.stringify({ sha: 'a', bootCheck: { result: 'maybe', firstError: MARKER } })
+    ) as string;
+    expect(JSON.parse(out)).toEqual({ sha: 'a' });
+  });
+
+  // Writers carry the previous detail forward, so a failed check's error can outlive it.
+  it.each([
+    ['a later passed record', rec('passed', null)],
+    ['a later unavailable record', rec('unavailable', null)],
+    ['no record at all', undefined],
+  ])('a carried-forward boot-check error beside %s is replaced', (_label, bootCheck) => {
+    const out = redactDeployDetailForAuthor(
+      JSON.stringify({ sha: 'a', bootCheck, error: bootCheckFailureError(`${MARKER}-err`) })
+    ) as string;
+    expect(out).not.toContain(MARKER);
+    expect(JSON.parse(out).error).toBe(
+      'Boot check: the app loaded but never sent BLOCK_READY within 10s. An error was reported while it loaded (a console error, or a script served with a non-JavaScript type): open the app and check the browser console. Fix and resubmit.'
+    );
+  });
+
+  it('the no-error boot-check text maps to the no-ready-signal text', () => {
+    const out = redactDeployDetailForAuthor(
+      JSON.stringify({ bootCheck: rec('passed', null), error: bootCheckFailureError(null) })
+    ) as string;
+    expect(JSON.parse(out).error).toBe(
+      'Boot check: the app loaded but never sent BLOCK_READY within 10s. No console error was reported: check that the app completes the SDK handshake when it loads. Fix and resubmit.'
+    );
+  });
+
+  it('a build failure error beside an old failed record is not relabelled as boot-check text', () => {
+    const out = redactDeployDetailForAuthor(
+      JSON.stringify({ bootCheck: rec('failed', `${MARKER}-err`), error: 'review deploy failed' })
+    ) as string;
+    expect(out).not.toContain(MARKER);
+    expect(JSON.parse(out).error).toBe('review deploy failed');
+  });
+
+  it.each([
+    ['null', null],
+    ['a plain-text build failure', 'Build Failed\n\nnpm ERR! x'],
+    [
+      'a preview detail with no boot check',
+      JSON.stringify({ sha: 'a', error: 'review deploy failed' }),
+    ],
+    ['a JSON array', '["x"]'],
+  ])('%s passes through unchanged', (_label, d) => {
+    expect(redactDeployDetailForAuthor(d)).toBe(d);
   });
 });

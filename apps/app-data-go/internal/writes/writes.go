@@ -85,9 +85,6 @@ var (
 	ifVersionRE = regexp.MustCompile(`^[0-9]{1,15}$`)
 	// majorRE is a schema major: no sign, no leading zero, at most six digits.
 	majorRE = regexp.MustCompile(`^[1-9][0-9]{0,5}$`)
-	// regionValueRE is one region header's value, as the edge sets them (a country, a region code,
-	// a flag).
-	regionValueRE = regexp.MustCompile(`^[A-Za-z0-9-]{1,16}$`)
 )
 
 // The site's refusals of the forward itself (WRITES-DESIGN.md, "The internal route"), raised before
@@ -124,7 +121,15 @@ type Forwarder struct {
 	// Acked receives each acknowledged create, put and delete, with the token that wrote it and the
 	// schema of the stream it belongs to (session.Manager.Ack). Nil is none: the registry path is off.
 	Acked func(token, schema string, a session.Ack)
+
+	// implied is the major a request that names none uses (UseImpliedMajor); nil is 1.
+	implied func(slug, collection string) int
 }
+
+// UseImpliedMajor sets the rule for the major a write that names none is acknowledged at: the
+// major a read that names none opens (api/major.go), so the write's overlay is held on the stream
+// the read-back reads. The api server sets it from its own rule; nil is major 1.
+func (f *Forwarder) UseImpliedMajor(rule func(slug, collection string) int) { f.implied = rule }
 
 // route is one write route's fixed facts.
 type route struct {
@@ -213,7 +218,7 @@ type outbound struct {
 	// sign.RegionHeaders ("" when absent): copied onto the forward and signed.
 	region [3]string
 	// What an acknowledgement is applied to: the bearer token, and the path's app, collection, key
-	// and schema major (the one named, else 1, as a read's).
+	// and schema major (the one named, else the one a read naming none opens: UseImpliedMajor).
 	token, slug, collection, key string
 	// mine is an `@me` route's: its key is the one the site answers, never the path's.
 	mine  bool
@@ -282,19 +287,16 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		// Sent as given: the grammar admits no leading zero, so it is already canonical.
 		ob.query += "&major=" + raw[0]
 		ob.major, _ = strconv.Atoi(raw[0])
+	} else if f.implied != nil {
+		ob.major = f.implied(slug, collection)
 	}
 	// The edge's region headers, copied onto the forward and signed, so the site's region rules see
 	// what the edge set. Each is one well-formed value, or absent.
-	for i, name := range sign.RegionHeaders {
-		vals := r.Header.Values(name)
-		switch {
-		case len(vals) == 0:
-		case len(vals) > 1 || !regionValueRE.MatchString(vals[0]):
-			return ob, refused(http.StatusBadRequest, "invalid_region", "invalid "+name+" header")
-		default:
-			ob.region[i] = vals[0]
-		}
+	region, bad := sign.ReadRegion(r.Header)
+	if bad != "" {
+		return ob, refused(http.StatusBadRequest, "invalid_region", "invalid "+bad+" header")
 	}
+	ob.region = region
 	ob.path = InternalPath
 	if rt.coll {
 		ob.path += "/" + collection

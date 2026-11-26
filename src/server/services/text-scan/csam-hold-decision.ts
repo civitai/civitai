@@ -35,9 +35,14 @@ import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHa
 import type { EntityType } from '~/shared/utils/prisma/enums';
 import {
   ArticleStatus,
+  ReportStatus,
   ServiceOfferingIngestionStatus,
   StrikeReason,
 } from '~/shared/utils/prisma/enums';
+
+const EVERY_UNACTIONED_STATUS = Object.values(ReportStatus).filter(
+  (status) => status !== ReportStatus.Actioned
+);
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -144,7 +149,12 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
   const { entityType, entityId } = hold;
   switch (entityType) {
     case 'CommentV3':
-      await bulkSetCommentV3TosViolation({ ids: [entityId], actor });
+      // Dismissed reports included on purpose; the default would skip them.
+      await bulkSetCommentV3TosViolation({
+        ids: [entityId],
+        actor,
+        fromStatuses: EVERY_UNACTIONED_STATUS,
+      });
       return;
     case 'UserProfile':
       await clearUserProfileFields({

@@ -124,7 +124,9 @@ export const POST: RequestHandler = async ({ request }) => {
     .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
-  // A client-credentials token is single-purpose, so it reads as inactive like an unknown one.
+  // A client-credentials token is single-purpose, so it reads as inactive like an unknown one. A
+  // runner token reads as active: the orchestrator grants spend only on the AIServices scope names,
+  // which its scope never carries.
   if (
     !row ||
     isMemorializedFlags(row.flags) ||

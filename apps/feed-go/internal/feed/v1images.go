@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -350,7 +351,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	if len(rows) > hq.Limit {
 		rows = rows[:hq.Limit]
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}
@@ -464,7 +465,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 			res.next = int64(look.CursorID)
 		}
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}

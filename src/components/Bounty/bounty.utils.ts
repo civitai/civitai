@@ -20,6 +20,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { BountySort, BountyStatus } from '~/server/common/enums';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -161,6 +162,7 @@ export const useSemanticBountyFeed = (
     ...rest,
     bounties,
     isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
     correctedQuery: data?.pages[0]?.correctedQuery,
     // Identifies the search, so the feed can scroll to the top when it changes.
     searchKey: query ? JSON.stringify(input) : undefined,

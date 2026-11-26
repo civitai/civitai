@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { csamHoldLockKey } from '@civitai/shared/held-url';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
@@ -55,9 +56,6 @@ export class CsamHoldBusyError extends Error {
     this.name = 'CsamHoldBusyError';
   }
 }
-
-/** The first key of `lockCsamHold`, for a writer on another client to take the same lock. */
-export const csamHoldLockKey = (entityType: string) => `csam-hold:${entityType}`;
 
 /** Advisory lock shared with a decision's final update, so a decision cannot land between the ruled-text check and the write. */
 export const lockCsamHold = (

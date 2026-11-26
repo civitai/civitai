@@ -282,7 +282,8 @@ describe("the browser's family record", () => {
 
     expect(jar.device()).not.toBe(device);
     expect(h.sys.lua.set(families(device))).toEqual(['old-fam']);
-    expect(h.sys.lua.set(families(jar.device()!))).toHaveLength(1);
+    // One family on the new device id, so no record there (lazy family records).
+    expect(h.sys.lua.set(families(jar.device()!))).toBeUndefined();
   });
 
   it('an account in the list signing in again joins the family record', async () => {

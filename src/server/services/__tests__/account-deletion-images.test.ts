@@ -281,8 +281,18 @@ function matchesQueueDelete(sql: string, values: unknown[], row: QueueRow) {
       const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
       if (/^\s*type = \?/.test(clause)) return row.type === args[0];
       if (/^\s*"entityType" = \?/.test(clause)) return row.entityType === args[0];
-      if (/^\s*"entityId" IN \(SELECT i\.id FROM "Image" i WHERE i\."userId" = \?\)/.test(clause))
+      if (
+        /^\s*"entityId" IN \(\s*SELECT i\.id FROM "Image" i\s+WHERE i\."userId" = \?\s*$/.test(
+          clause
+        )
+      )
         return images.some((image) => image.userId === args[0] && image.id === row.entityId);
+      // `->`, so a JSON-null breadcrumb counts as present.
+      if (/^\s*\(i\."metadata" -> \?::text\) IS NOT NULL\s*\)\s*$/.test(clause))
+        return images.some(
+          (image) =>
+            image.id === row.entityId && !!image.metadata && (args[0] as string) in image.metadata
+        );
       throw new Error(`unrecognized JobQueue delete predicate: ${clause.trim()}`);
     });
 }
@@ -668,6 +678,44 @@ describe('recordPendingImageRestore', () => {
 });
 
 describe('disarmAccountDeletionImagePurge', () => {
+  it('keeps the purge of a block written during the grace period, in Postgres', async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, metadata jsonb);
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        UNIQUE ("entityType", "entityId", type)
+      );
+      -- 1: still grace-blocked. 2: a JSON-null breadcrumb, still grace-blocked. 3: a block written
+      -- during the grace period, which strips the breadcrumb. 4: no metadata. 5: another account.
+      INSERT INTO "Image" VALUES
+        (1, 7, '{"${PRIOR_INGESTION_KEY}": "Scanned", "keepMe": 1}'),
+        (2, 7, '{"${PRIOR_INGESTION_KEY}": null}'),
+        (3, 7, '{"keepMe": 3}'),
+        (4, 7, NULL),
+        (5, 8, '{"${PRIOR_INGESTION_KEY}": "Scanned"}');
+      INSERT INTO "JobQueue" SELECT id, 'Image', 'BlockedImageDelete' FROM "Image";
+    `);
+    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+    }) as never);
+
+    await disarmAccountDeletionImagePurge(7);
+
+    const { rows } = await db.query<{ entityId: number }>(
+      `SELECT "entityId" FROM "JobQueue" ORDER BY "entityId"`
+    );
+    // Only the grace rows lose their purge; the block that outlives the restore keeps its own.
+    expect(rows.map((r) => r.entityId)).toEqual([3, 4, 5]);
+    await db.close();
+  });
+
   it('drops the delete-queue rows for this account images only', async () => {
     images = [hidden(1, 'Scanned'), { ...hidden(2, 'Scanned'), userId: 8 }];
     queue = [
@@ -707,7 +755,7 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
-      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
       CREATE TABLE "JobQueue" (
         "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
         data jsonb, UNIQUE ("entityType", "entityId", type)
@@ -722,12 +770,12 @@ describe('releaseAccountDeletionPendingDeletes', () => {
         (10, 'Post', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}');
     `);
     await db.exec(imageUseTablesSql);
-    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+    mockDbWrite.$queryRaw.mockImplementationOnce((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
-      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
     }) as never);
 
     await releaseAccountDeletionPendingDeletes(7);
@@ -749,7 +797,7 @@ describe('releaseAccountDeletionPendingDeletes', () => {
     await db.exec(`
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
-      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
       CREATE TABLE "JobQueue" (
         "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
         data jsonb, UNIQUE ("entityType", "entityId", type)
@@ -764,12 +812,12 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       INSERT INTO "JobQueue" SELECT e.id, e.t::"EntityType", 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'
         FROM (VALUES (1, 'Image'), (2, 'Image'), (10, 'Post'), (11, 'Post')) e(id, t);
     `);
-    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+    mockDbWrite.$queryRaw.mockImplementationOnce((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
-      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+      return (await db.query(sql.text, sql.values as unknown[])).rows;
     }) as never);
 
     await releaseAccountDeletionPendingDeletes(7);
@@ -778,10 +826,13 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       `SELECT "entityType"::text AS "entityType", "entityId", data ? 'releasedOnRestore' AS released
        FROM "JobQueue" ORDER BY 1, 2`
     );
-    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes.
+    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes;
+    // the account's others wait with it, to be released together.
     expect(rows).toEqual([
       { entityType: 'Image', entityId: 1, released: true },
+      { entityType: 'Image', entityId: 2, released: true },
       { entityType: 'Post', entityId: 10, released: true },
+      { entityType: 'Post', entityId: 11, released: true },
     ]);
     await db.close();
   });

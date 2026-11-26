@@ -1,4 +1,5 @@
 import { decode } from 'he';
+import { WITHHELD_HREF_ATTRIBUTE } from '~/shared/constants/withheld-media.constants';
 import type { Transformer } from 'sanitize-html';
 import sanitize from 'sanitize-html';
 import { removeTags } from '~/utils/string-helpers';
@@ -70,7 +71,15 @@ const TEXT_ALIGN_STYLES = Object.fromEntries(
 );
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
-  a: ['rel', 'href', 'target', 'data-entity', 'data-id', 'data-version-id'],
+  a: [
+    'rel',
+    'href',
+    'target',
+    'data-entity',
+    'data-id',
+    'data-version-id',
+    WITHHELD_HREF_ATTRIBUTE,
+  ],
   img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE, IMAGE_ALIGN_ATTRIBUTE],
   iframe: [
     'src',
@@ -321,6 +330,9 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       (exclusiveFilter?.(frame) ?? false),
     transformTags: {
       a: function (tagName, { href, ...attr }) {
+        // The edit form's stand-in for an href it may not show; the article save restores it.
+        if (!href && /^\d+$/.test(attr[WITHHELD_HREF_ATTRIBUTE] ?? ''))
+          return { tagName: 'a', attribs: { ...attr, rel: 'ugc' } };
         if (!href) return { tagName: 'span', attribs: {} };
         const updatedHref = href.startsWith('http') ? href : `http://${href}`;
         const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;

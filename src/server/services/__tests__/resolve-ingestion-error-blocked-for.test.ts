@@ -7,7 +7,8 @@ const IMAGE_ID = 4242;
 // Not a bare-uuid key, so the missing-media probe is skipped and never reaches storage.
 const UNPROBEABLE_URL = 'https://example.com/legacy.jpeg';
 
-const resolve = () => resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 1, userId: 7 });
+const resolve = () =>
+  resolveIngestionError({ csamReview: true, id: IMAGE_ID, nsfwLevel: 1, userId: 7 });
 
 function armImage(columns: {
   blockedFor?: string | null;

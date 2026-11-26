@@ -136,6 +136,14 @@ const OPENROUTER_MODELS_BODY = {
       pricing: { prompt: '0.0000001', completion: '0.0000002' },
       supported_parameters: ['temperature'],
     },
+    {
+      // Tool-capable, but its $15/M input price is above the agent-review ceiling.
+      id: 'acme/premium-model',
+      name: 'Acme: Premium',
+      context_length: 200_000,
+      pricing: { prompt: '0.000015', completion: '0.000075' },
+      supported_parameters: ['tools'],
+    },
   ],
 };
 
@@ -866,7 +874,7 @@ describe('startAgentReview — chosen model', () => {
     }
   );
 
-  it('a section re-run of a run whose model can no longer be used is refused, pointing to Re-run all', async () => {
+  it('a section re-run of a run whose model is no longer listed says so, pointing to Re-run all', async () => {
     // e.g. the model was retired: OpenRouter no longer lists it as tool-capable.
     mockFindUnique.mockResolvedValue(pendingRequest());
     mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/acme/retired-model' });
@@ -880,7 +888,59 @@ describe('startAgentReview — chosen model', () => {
       })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: expect.stringContaining('Re-run all analyses'),
+      message:
+        'This analysis can only be re-run on the model that wrote the rest of the report (acme/retired-model), and that model is no longer a tool-capable model on OpenRouter. Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a section re-run of a run whose model is over the input-price ceiling names the price and the limit', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/acme/premium-model' });
+
+    await expect(
+      startAgentReview({
+        publishRequestId: PUBREQ,
+        modUserId: 7,
+        sections: ['codeReview'],
+        model: 'acme/premium-model',
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This analysis can only be re-run on the model that wrote the rest of the report (acme/premium-model), and that model costs $15 per million input tokens, above the $5 limit for agent reviews. Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.',
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it('a section re-run when the model list cannot be loaded says so, pointing to Re-run all', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      id: 'arar_PREV',
+      model: 'openrouter/anthropic/claude-haiku-4.5',
+    });
+    const k8sFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) =>
+        String(url).startsWith(OPENROUTER_MODELS_URL)
+          ? ({ ok: false, status: 503, json: async () => ({}) } as unknown as Response)
+          : k8sFetch(url, init)
+      )
+    );
+
+    await expect(
+      startAgentReview({
+        publishRequestId: PUBREQ,
+        modUserId: 7,
+        sections: ['codeReview'],
+        model: 'anthropic/claude-haiku-4.5',
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This analysis can only be re-run on the model that wrote the rest of the report (anthropic/claude-haiku-4.5), and OpenRouter\'s model list could not be loaded to price that model (try again shortly). Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.',
     });
     expect(mockCreate).not.toHaveBeenCalled();
   });

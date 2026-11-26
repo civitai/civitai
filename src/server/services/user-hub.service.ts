@@ -25,6 +25,7 @@ import {
   hubLimits,
   hubSourceKey,
   hubSourceScopeSchema,
+  type SourceModelState,
   hubTagGroupKey,
 } from '~/server/schema/user-hub.schema';
 import {
@@ -323,7 +324,49 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
     select: hubSelect,
   });
   if (!hub) throw throwNotFoundError('Hub not found');
-  return toHubDetail(hub, userId);
+  const detail = toHubDetail(hub, userId);
+  const states = detail.isOwner
+    ? await getSourceModelStates(detail.sources, hub.userId)
+    : new Map<string, SourceModelState>();
+  return {
+    ...detail,
+    sources: detail.sources.map((source) => ({
+      ...source,
+      modelState: states.get(hubSourceKey(source)),
+    })),
+  };
+}
+
+/** Of a hub's Model and ModelVersion sources: the owner's own deleted models, and other users' unpublished ones. */
+async function getSourceModelStates(
+  sources: { type: UserHubSourceType; targetId: number }[],
+  hubOwnerId: number
+) {
+  const states = new Map<string, SourceModelState>();
+  const ids = (type: UserHubSourceType) =>
+    sources.filter((source) => source.type === type).map((source) => source.targetId);
+  const modelIds = ids(UserHubSourceType.Model);
+  // Loaded on demand: the model service imports the image service, which imports this one.
+  const { getModelIdsOfVersions } = await import('~/server/services/model.service');
+  const modelOfVersion = await getModelIdsOfVersions(ids(UserHubSourceType.ModelVersion));
+  const allModelIds = [...new Set([...modelIds, ...modelOfVersion.values()])];
+  if (!allModelIds.length) return states;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: allModelIds }, status: { not: ModelStatus.Published } },
+    select: { id: true, userId: true, status: true },
+  });
+  const stateOf = new Map<number, SourceModelState>();
+  for (const model of models) {
+    if (model.userId !== hubOwnerId) stateOf.set(model.id, 'unavailable');
+    else if (model.status === ModelStatus.Deleted) stateOf.set(model.id, 'deleted');
+  }
+  const set = (type: UserHubSourceType, targetId: number, modelId: number) => {
+    const state = stateOf.get(modelId);
+    if (state) states.set(hubSourceKey({ type, targetId }), state);
+  };
+  for (const id of modelIds) set(UserHubSourceType.Model, id, id);
+  for (const [id, modelId] of modelOfVersion) set(UserHubSourceType.ModelVersion, id, modelId);
+  return states;
 }
 
 /**
@@ -1468,24 +1511,27 @@ export async function resolveHubSources({
   const cappedVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
   if (allVersionIds.length > cappedVersionIds.length) truncated = true;
   // Loaded on demand: the model service imports the image service, which imports this one.
-  const { getHeldGalleryLevel, getWithheldVersionIds } = await import(
+  const { getDeletedModelVersionIds, getHeldGalleryLevel, getWithheldVersionIds } = await import(
     '~/server/services/model.service'
   );
+  // Dropped before the hold is read: a deleted model must not hold the hub.
+  const deletedVersionIds = await getDeletedModelVersionIds(cappedVersionIds, modelOfVersion);
+  const liveVersionIds = cappedVersionIds.filter((id) => !deletedVersionIds.has(id));
   // Moderators are neither held nor withheld, when the caller says so: they must see what they may
   // need to remove. A taken-down model's versions leave the hub, except for its owner. The hold is
   // read over the versions before that, so the two run together; a withheld model can only narrow
   // it. Versions expanded from a Model source already carry their model; only the rest are looked up.
   const [withheldVersionIds, heldBrowsingLevel] =
-    cappedVersionIds.length && !holdExempt
+    liveVersionIds.length && !holdExempt
       ? await Promise.all([
-          getWithheldVersionIds(cappedVersionIds, galleryOwnerId),
+          getWithheldVersionIds(liveVersionIds, galleryOwnerId),
           getHeldGalleryLevel({
-            modelIds: [...new Set(cappedVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
-            modelVersionIds: cappedVersionIds.filter((id) => !modelOfVersion.has(id)),
+            modelIds: [...new Set(liveVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
+            modelVersionIds: liveVersionIds.filter((id) => !modelOfVersion.has(id)),
           }),
         ])
       : [new Set<number>(), undefined];
-  const modelVersionIds = cappedVersionIds.filter((id) => !withheldVersionIds.has(id));
+  const modelVersionIds = liveVersionIds.filter((id) => !withheldVersionIds.has(id));
 
   return {
     userIds: byType(UserHubSourceType.User),

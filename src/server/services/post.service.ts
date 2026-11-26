@@ -76,6 +76,8 @@ import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { ownerBlockedNotice } from '~/server/utils/image-media-visibility';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -112,6 +114,7 @@ import {
   deleteImages,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
+  feedThumbnailFields,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
@@ -881,6 +884,8 @@ type PostEditInput = GetByIdInput & {
   servableLevels: number;
   /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
   ownerSeesHeld?: boolean;
+  /** `actsAsModerator(ctx)`: a moderator on a scoped key gets the owner's view of blocked media. */
+  asModerator?: boolean;
 };
 
 export const getPostEditDetail = async ({
@@ -888,11 +893,12 @@ export const getPostEditDetail = async ({
   user,
   servableLevels,
   ownerSeesHeld,
+  asModerator,
 }: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld, asModerator }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -1142,6 +1148,7 @@ export async function getSongCoversForPlayer({
 async function combinePostEditImageData(
   images: PostImageEditSelect[],
   user: SessionUser,
+  asModerator: boolean,
   db: typeof dbRead | typeof dbWrite = dbRead
 ) {
   const imageIds = images.map((x) => x.id);
@@ -1163,23 +1170,31 @@ async function combinePostEditImageData(
   );
 
   return _images
-    .map((image) => ({
-      ...image,
-      /** A song's genre (`Track.genre`); null until one is picked, and for any other media. */
-      genre: toSongGenre(tracks.get(image.id)?.genre) ?? null,
-      metadata: image.metadata as PreprocessFileReturnType['metadata'],
-      tags: tags.filter((x) => x.imageId === image.id),
-      tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
-      techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
-      thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
-      lyrics: lyrics.get(image.id) ?? null,
-      cover: covers.get(image.id) ?? null,
-      /** A song's own tags, its genre's tag left out. */
-      songTags: withoutGenreTag(
-        songTags.get(image.id) ?? [],
-        toSongGenre(tracks.get(image.id)?.genre)
-      ),
-    }))
+    .map((image) => {
+      const row = {
+        ...image,
+        /** A song's genre (`Track.genre`); null until one is picked, and for any other media. */
+        genre: toSongGenre(tracks.get(image.id)?.genre) ?? null,
+        metadata: image.metadata as PreprocessFileReturnType['metadata'],
+        tags: tags.filter((x) => x.imageId === image.id),
+        tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+        techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
+        // The editor's viewer is the post's owner or a moderator; a blocked thumbnail follows the feed's rule.
+        thumbnailUrl: (feedThumbnailFields(thumbnails[image.id], image.nsfwLevel, user.id, {
+          ownerId: user.id,
+          isModerator: asModerator,
+        }).thumbnailUrl ?? null) as string | null,
+        lyrics: lyrics.get(image.id) ?? null,
+        cover: covers.get(image.id) ?? null,
+        /** A song's own tags, its genre's tag left out. */
+        songTags: withoutGenreTag(
+          songTags.get(image.id) ?? [],
+          toSongGenre(tracks.get(image.id)?.genre)
+        ),
+      };
+      if (asModerator || ownerMediaAllowed(image)) return row;
+      return { ...ownerBlockedNotice(row), thumbnailUrl: null };
+    })
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
 
@@ -1202,19 +1217,20 @@ export const getPostEditImages = async ({
   user,
   servableLevels,
   ownerSeesHeld = false,
+  asModerator = false,
 }: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
+        asModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
     select: editPostImageSelect,
   });
-  return combinePostEditImageData(images, user, db);
+  return combinePostEditImageData(images, user, asModerator, db);
 };
 
 export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
@@ -1923,6 +1939,7 @@ export const addPostImage = async ({
   externalDetailsUrl,
   assertPostOwnedBy,
   serverMintedUrl,
+  asModerator = false,
   ...props
 }: ImageSchema & {
   user: SessionUser;
@@ -1932,6 +1949,8 @@ export const addPostImage = async ({
   assertPostOwnedBy?: AssertPostOwnedBy;
   /** `url` is a key the server minted and stored itself, not one from the client. */
   serverMintedUrl?: boolean;
+  /** `actsAsModerator(ctx)`, as on `getPostEditImages`. */
+  asModerator?: boolean;
 }) => {
   // Songs are mod-only for now. Checked first: nothing below may run for a user who can't post one.
   let allowAudio = false;
@@ -2014,7 +2033,12 @@ export const addPostImage = async ({
         select: editPostImageSelect,
       });
       if (existingResult) {
-        const [existingImage] = await combinePostEditImageData([existingResult], user, dbWrite);
+        const [existingImage] = await combinePostEditImageData(
+          [existingResult],
+          user,
+          asModerator,
+          dbWrite
+        );
         return existingImage;
       }
     }
@@ -2093,7 +2117,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!result) throw throwDbError(`Image not found`);
-  const [image] = await combinePostEditImageData([result], user, dbWrite);
+  const [image] = await combinePostEditImageData([result], user, asModerator, dbWrite);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting — parallelize independent operations
@@ -2257,7 +2281,11 @@ function writeSongAllowRemix(imageId: number, allowRemix: boolean) {
       `;
 }
 
-export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePostImageInput) => {
+/** `asModerator`: `actsAsModerator(ctx)`. */
+export const updatePostImage = async (
+  { title, allowRemix, ...image }: UpdatePostImageInput,
+  { asModerator = false }: { asModerator?: boolean } = {}
+) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
     select: {
@@ -2284,6 +2312,10 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
   // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
   // caller never touched, so the write below is skipped entirely unless the key was sent.
   const metaProvided = image.meta !== undefined;
+  // The editor gives its owner this image's meta without media references (`ownerBlockedNotice`),
+  // so a save from it would overwrite the stored record moderation reviews.
+  if (metaProvided && !asModerator && !ownerMediaAllowed(currentImage))
+    throw throwBadRequestError("You can't edit this image's details while it is under moderation.");
 
   // This edit replaces meta wholesale from client input, so provenance has to be
   // re-derived from the row rather than accepted: otherwise editing an image you

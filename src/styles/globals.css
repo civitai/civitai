@@ -1131,7 +1131,6 @@ div[data-youtube-video] > iframe {
 
 .scroll-area {
   overflow-x: hidden;
-  will-change: transform;
   position: relative;
   scrollbar-width: thin;
   display: flex;

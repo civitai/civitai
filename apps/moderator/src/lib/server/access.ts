@@ -452,7 +452,7 @@ export function grantsSnapshot(): Record<string, Role[]> {
   return Object.fromEntries(grants.map((g) => [g.path, [...g.roles]]));
 }
 
-type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
+export type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
 /** The admin check: holds `moderator:admin`, which reaches everything and grants everything. */
 export const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);

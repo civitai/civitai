@@ -8,6 +8,8 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
+import type { ArticleReader } from '~/server/services/article-read';
+import { articleReadSelect, canReadArticle } from '~/server/services/article-read';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -6262,10 +6264,10 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
-export const getAssociatedResourcesSimple = async ({
-  fromId,
-  type,
-}: GetAssociatedResourcesInput) => {
+export const getAssociatedResourcesSimple = async (
+  { fromId, type }: GetAssociatedResourcesInput,
+  viewer?: ArticleReader
+) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
@@ -6275,19 +6277,24 @@ export const getAssociatedResourcesSimple = async ({
         select: associatedResourceSelect,
       },
       toArticle: {
-        select: { id: true, title: true, nsfwLevel: true, user: { select: simpleUserSelect } },
+        select: {
+          id: true,
+          title: true,
+          nsfwLevel: true,
+          user: { select: simpleUserSelect },
+          ...articleReadSelect,
+        },
       },
     },
   });
 
   const items = associations
-    .map(({ id, toModel, toArticle }) =>
-      toModel
-        ? { id, item: toModel, resourceType: 'model' as const }
-        : toArticle
-        ? { id, item: toArticle, resourceType: 'article' as const }
-        : null
-    )
+    .map(({ id, toModel, toArticle }) => {
+      if (toModel) return { id, item: toModel, resourceType: 'model' as const };
+      if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
+      const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
+      return { id, item, resourceType: 'article' as const };
+    })
     .filter(isDefined);
 
   return items;
@@ -6303,7 +6310,7 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true, toModelId: true },
+        select: { id: true, toModelId: true, toArticle: { select: articleReadSelect } },
         orderBy: { index: 'asc' },
       },
     },
@@ -6313,7 +6320,11 @@ export const setAssociatedResources = async (
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
-  const existingAssociations = fromModel.associations.map((x) => x.id);
+  // The editor never lists an article the caller cannot read, so its absence from the payload
+  // is not a removal.
+  const existingAssociations = fromModel.associations
+    .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
+    .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)
   );
@@ -6665,6 +6676,53 @@ export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?
   for (const id of modelVersionIds)
     if (versions[id] && withheldModelIds.has(versions[id].modelId)) withheld.add(id);
   return withheld;
+}
+
+/**
+ * The model of each named version. `modelOf` maps versions whose model the caller already has; the
+ * rest are looked up. A version not found is absent.
+ */
+export async function getModelIdsOfVersions(
+  modelVersionIds: number[],
+  modelOf: ReadonlyMap<number, number> = new Map()
+) {
+  const models = new Map<number, number>();
+  const unknown: number[] = [];
+  for (const id of uniq(modelVersionIds)) {
+    const modelId = modelOf.get(id);
+    if (modelId === undefined) unknown.push(id);
+    else models.set(id, modelId);
+  }
+  if (unknown.length) {
+    const versions = await versionModelCache().fetch(unknown);
+    for (const version of Object.values(versions)) models.set(version.id, version.modelId);
+  }
+  return models;
+}
+
+/**
+ * Of the named versions, those whose model is deleted. `modelOf` maps versions whose model the caller
+ * already has; the rest are looked up. A version not found is not returned.
+ */
+export async function getDeletedModelVersionIds(
+  modelVersionIds: number[],
+  modelOf: ReadonlyMap<number, number> = new Map()
+) {
+  const deleted = new Set<number>();
+  if (!modelVersionIds.length) return deleted;
+  const models = await getModelIdsOfVersions(modelVersionIds, modelOf);
+  const modelIds = uniq([...models.values()]);
+  if (!modelIds.length) return deleted;
+  const deletedModels = await dbRead.model.findMany({
+    where: { id: { in: modelIds }, status: ModelStatus.Deleted },
+    select: { id: true },
+  });
+  const deletedModelIds = new Set(deletedModels.map((model) => model.id));
+  for (const id of modelVersionIds) {
+    const modelId = models.get(id);
+    if (modelId !== undefined && deletedModelIds.has(modelId)) deleted.add(id);
+  }
+  return deleted;
 }
 
 /**

@@ -153,6 +153,7 @@ const MIGRATIONS = [
   '20271120100100_service_deal_reviews',
   '20271125130000_service_deal_buyer_disclosure',
   '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -406,6 +407,16 @@ describe('requesting an upload', () => {
     expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
     for (const name of ['A.ZIP', 'model.safetensors', 'notes.md'])
       await expect(upload(dealId, { fileName: name })).resolves.toBeTruthy();
+  });
+
+  it('refuses a PDF Final, whatever the case of its extension', async () => {
+    const dealId = await accepted();
+    for (const name of ['brief.pdf', 'Brief.PDF'])
+      await expect(upload(dealId, { fileName: name })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/PDF files can't be delivered/),
+      });
+    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
   });
 
   it('holds a preview to image types and size, and not to a service that takes none', async () => {

@@ -1,4 +1,4 @@
-import { Anchor, Text } from '@mantine/core';
+import { OffDomainNotice } from '~/components/OffDomain/OffDomainNotice';
 
 /** A training dataset this domain refuses for its rating: say so, and link to it on civitai.red. */
 export function OffDomainTrainingDataNotice({
@@ -9,12 +9,5 @@ export function OffDomainTrainingDataNotice({
   href: string;
 }) {
   if (!stub) return null;
-  return (
-    <Text size="xs" c="dimmed" data-testid="off-domain-training-data">
-      This training data isn&apos;t available on civitai.com.{' '}
-      <Anchor href={href} inherit>
-        See it on civitai.red
-      </Anchor>
-    </Text>
-  );
+  return <OffDomainNotice noun="training data" href={href} testId="off-domain-training-data" />;
 }

@@ -1250,11 +1250,11 @@ describe('announcement cover fields and scan state', () => {
     expect(covers((await getFollowedAnnouncements({ userId: STRANGER })).items)).toEqual(expected);
   });
 
-  it('is kept for its uploader, without the fields only the check reads', async () => {
+  it('is kept for its uploader at a Blocked rating, not under a block, without the fields only the check reads', async () => {
     const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR });
 
-    expect(covers(rows).map((r) => r.cover)).toEqual(['cover-1', 'cover-2', 'cover-3', 'cover-4']);
-    for (const { cover } of rows) {
+    expect(covers(rows).map((r) => r.cover)).toEqual(['cover-1', 'cover-2', null, null]);
+    for (const { cover } of rows.filter((r) => r.cover)) {
       expect(cover).not.toHaveProperty('ingestion');
       expect(cover).not.toHaveProperty('blockedFor');
     }

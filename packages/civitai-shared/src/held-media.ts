@@ -51,11 +51,39 @@ export function heldItemImageSql(image: string): string {
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const owner = `${image}."userId"`;
+  // Keep in step with the main app's OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts): an image
+  // blocked for a reason added there and not here is still held here whenever its owner is held.
   return `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
     OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
       AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
+  )`;
+}
+
+/**
+ * Whether another image on the same stored url as the "Image" row aliased `image` is held by its
+ * own state: a live row in the CSAM queue, blocked as CSAM (`heldItemImageSql`) or listed on any
+ * CsamReport, or a moderator-deleted one that was in CSAM review or is listed. The same file must
+ * not be served through a second row. Item-level only, never the owner's, which is why it is not
+ * `heldUrlSql` (held-url.ts), whose legs also read the owner, post and model. Never NULL.
+ */
+export function sharedFileHeldImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'sf_i' || image === 'sf_d')
+    throw new Error(`Bad table alias: ${image}`);
+  return `(
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = ${image}.url AND sf_i.id <> ${image}.id
+        AND (${heldItemImageSql(
+          'sf_i'
+        )} OR (sf_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = ${image}.url AND sf_d."imageId" <> ${image}.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+    )
   )`;
 }
 

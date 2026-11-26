@@ -138,16 +138,16 @@ describe("a moderator's minor flag write", () => {
   });
 
   it('queues the models and articles of a toggled image', async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ minor: false } as never);
-    await toggleImageFlag({ id: IMAGE_ID, flag: 'minor' });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ minor: false } as never);
+    await toggleImageFlag({ csamReview: true, id: IMAGE_ID, flag: 'minor' });
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledTimes(1);
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [IMAGE_ID] });
   });
 
   it('queues nothing for a poi flag write (control)', async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ poi: false } as never);
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ poi: false } as never);
     await updateImagesFlag({ ids: [IMAGE_ID], flag: 'poi', value: true });
-    await toggleImageFlag({ id: IMAGE_ID, flag: 'poi' });
+    await toggleImageFlag({ csamReview: true, id: IMAGE_ID, flag: 'poi' });
     expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
     expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
   });

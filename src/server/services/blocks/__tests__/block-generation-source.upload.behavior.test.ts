@@ -46,6 +46,8 @@ vi.mock('~/server/flipt/client', () => ({
     flag === 'app-block-source-scanned-rows' && holder.scannedRows && entityId === 'apb_alpha',
   isFliptSync: (flag: string, entityId?: string) =>
     flag === 'app-block-source-scanned-rows' && holder.scannedRows && entityId === 'apb_alpha',
+  readFliptBoolean: async (flag: string, entityId?: string) =>
+    flag === 'app-block-source-scanned-rows' && holder.scannedRows && entityId === 'apb_alpha',
   ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));

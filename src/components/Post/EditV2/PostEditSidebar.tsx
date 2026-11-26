@@ -146,7 +146,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     collectionId,
     publishedAt: post.publishedAt,
     unpublishedByParent: publishBlocked,
-    addedImages,
+    // A blocked image has no media to decorate.
+    addedImages: addedImages.filter((image) => image.url !== null),
     ownModelId: post.ownModelId,
   });
   // Build a link to the parent model edit page so the user can see why the

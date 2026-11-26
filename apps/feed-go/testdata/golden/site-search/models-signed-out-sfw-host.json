@@ -1,0 +1,42 @@
+{
+  "name": "models-signed-out-sfw-host",
+  "description": "Signed out on the SFW host: PG cap, the civitai.com face, images and highlight copies capped, an avatar rated outside the cap removed.",
+  "request": {
+    "path": "/api/search/indexes/models_v9/search",
+    "body": "{\"q\":\"\",\"limit\":2,\"attributesToRetrieve\":[\"id\",\"name\",\"images\",\"user\"],\"attributesToHighlight\":[\"name\"]}",
+    "host": "green.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[{\"id\":111,\"name\":\"Red title\",\"images\":[{\"id\":1101,\"nsfwLevel\":1},{\"id\":1102,\"nsfwLevel\":2}],\"user\":{\"id\":211,\"username\":\"maker\",\"image\":\"i\",\"profilePicture\":{\"id\":311,\"nsfwLevel\":2}},\"sfwName\":\"Safe title\",\"_formatted\":{\"id\":\"111\",\"name\":\"Red title\",\"images\":[{\"id\":\"1101\",\"nsfwLevel\":\"1\"},{\"id\":\"1102\",\"nsfwLevel\":\"2\"}],\"user\":{\"id\":\"211\",\"username\":\"maker\",\"image\":\"i\",\"profilePicture\":{\"id\":\"311\",\"nsfwLevel\":\"2\"}},\"sfwName\":\"Safe title\"}}],\"query\":\"\",\"processingTimeMs\":0,\"limit\":2,\"offset\":0,\"estimatedTotalHits\":1}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/models_v9/search",
+      "body": {
+        "q": "",
+        "limit": 2,
+        "attributesToRetrieve": [
+          "id",
+          "name",
+          "images",
+          "user",
+          "sfwName"
+        ],
+        "attributesToHighlight": [
+          "name"
+        ],
+        "filter": [
+          "poi != true",
+          "availability != Private",
+          "nsfwLevel=1"
+        ]
+      }
+    },
+    "body": "{\"hits\":[{\"id\":111,\"name\":\"Safe title\",\"images\":[{\"id\":1101,\"nsfwLevel\":1}],\"user\":{\"id\":211,\"username\":\"maker\",\"image\":null,\"profilePicture\":null},\"_formatted\":{\"id\":\"111\",\"name\":\"Safe title\",\"images\":[{\"id\":\"1101\",\"nsfwLevel\":\"1\"}],\"user\":{\"id\":\"211\",\"username\":\"maker\",\"image\":null,\"profilePicture\":null}}}],\"query\":\"\",\"processingTimeMs\":0,\"limit\":2,\"offset\":0,\"estimatedTotalHits\":1}"
+  }
+}

@@ -39,17 +39,17 @@ const DAILY_LIMITS: Record<DailyKind, number> = {
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING;
 const DAILY_KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
-const SENT_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_SENT;
+const SENT_KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING_SENT;
 /**
  * Until this date a rating the cache cluster does not hold is also read from system Redis, where
- * ratings were written before they moved. Without it, an image rated before the move whose sent
- * marker (SENT_TTL_SECONDS, still in system Redis) is live would read as unrated and not be sent
- * again until that marker lapses. Past it, delete the fallback (`sysCacheKey`, the branch in
+ * ratings were written before they moved. Without it, an image rated before the move would read as
+ * unrated and be sent to the rater again. Past it, delete the fallback (`sysCacheKey`, the branch in
  * readRatings) and REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING with it.
  */
 export const DATASET_RATING_SYS_FALLBACK_UNTIL = new Date('2027-01-15T00:00:00Z');
 const SYS_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING;
-/** How long a blob sent to the rater is not sent again, whatever came back. */
+/** How long a blob sent to the rater is not sent again, whatever came back. The marker is on the cache
+ *  cluster: one evicted early sends that blob once more, within the daily allowance. */
 const SENT_TTL_SECONDS = 7 * 24 * 60 * 60;
 // By rater and mature level: a verdict at one level is not a verdict at another. Blob ids are
 // case-insensitive.
@@ -227,7 +227,7 @@ export async function rateImage(
  *  answered, is not sent again by every view, poll and pod. A Redis failure claims nothing. */
 async function claimSend(level: number, blobKey: string): Promise<boolean> {
   try {
-    const set = await getSysRedis().set(sentKey(level, blobKey), '1', {
+    const set = await getCacheRedis().set(sentKey(level, blobKey), '1', {
       NX: true,
       EX: SENT_TTL_SECONDS,
     });
@@ -241,7 +241,7 @@ async function claimSend(level: number, blobKey: string): Promise<boolean> {
 async function unsentKeys(level: number, blobKeys: string[]): Promise<string[]> {
   if (blobKeys.length === 0) return [];
   try {
-    const sent = await getSysRedis().mGet(blobKeys.map((k) => sentKey(level, k)));
+    const sent = await getCacheRedis().mGet(blobKeys.map((k) => sentKey(level, k)));
     return blobKeys.filter((_, i) => sent[i] == null);
   } catch {
     return [];
@@ -250,7 +250,7 @@ async function unsentKeys(level: number, blobKeys: string[]): Promise<string[]> 
 
 async function releaseSend(level: number, blobKey: string): Promise<void> {
   try {
-    await getSysRedis().del(sentKey(level, blobKey));
+    await getCacheRedis().del(sentKey(level, blobKey));
   } catch {
     // best-effort: the blob waits out the marker on its upload rating
   }
@@ -332,10 +332,22 @@ export async function runRatingJob(
   };
 }
 
-const activeJobs = new Map<number, Promise<void>>();
+interface WarmRequest {
+  token: string;
+  matureLevel: number;
+  blobKeys: string[];
+  cookie: string;
+  deadlineMs: number;
+}
 
-/** Start rating a dataset's unrated images in the background, one job per user per pod at a time (a
- *  second call while one runs starts nothing; Review asks again). Never throws. */
+/** Per user per pod: the running job, whether it is the one rerun, and the latest request that came in
+ *  while it ran. */
+const activeJobs = new Map<number, { rerun: boolean; next?: WarmRequest }>();
+
+/** Start rating a dataset's unrated images in the background, one job per user per pod at a time. A
+ *  call while a job runs is kept (only the latest) and rated by ONE more job when it ends, so images
+ *  uploaded mid-job are not skipped; a call during that rerun starts nothing, and the next look asks
+ *  again. The allowances and limits apply to every job. Never throws. */
 export function warmDatasetRating(
   token: string,
   userId: number,
@@ -344,10 +356,23 @@ export function warmDatasetRating(
   cookie: string | null,
   deadlineMs: number = DATASET_RATING_DEADLINE_MS
 ): void {
-  const images = blobKeys.filter(isRateableKey);
   // No session to call the main app with (the dev-login preview): nothing is rated.
-  if (cookie === null || images.length === 0 || activeJobs.has(userId)) return;
-  const job = unsentKeys(matureLevel, images)
+  if (cookie === null || !blobKeys.some(isRateableKey)) return;
+  const request = { token, matureLevel, blobKeys, cookie, deadlineMs };
+  const active = activeJobs.get(userId);
+  if (active) {
+    if (!active.rerun) active.next = request;
+    return;
+  }
+  startJob(userId, request, false);
+}
+
+function startJob(userId: number, request: WarmRequest, rerun: boolean): void {
+  const { token, matureLevel, blobKeys, cookie, deadlineMs } = request;
+  const images = blobKeys.filter(isRateableKey);
+  const entry: { rerun: boolean; next?: WarmRequest } = { rerun };
+  activeJobs.set(userId, entry);
+  void unsentKeys(matureLevel, images)
     .then(async (unsent) => {
       // Allowance only for images that will be sent: one already sent never takes a slot.
       const { granted, key } = await claimAllowance('calls', userId, unsent.length);
@@ -359,7 +384,7 @@ export function warmDatasetRating(
       );
       // Images the job didn't reach go back to today's allowance, for the next look.
       await returnDaily(key, granted - summary.calls);
-      // alreadySent is not an Axiom field on this dataset, so it rides in payload.
+      // alreadySent and rerun are not Axiom fields on this dataset, so they ride in payload.
       const { alreadySent, ...counts } = summary;
       void logToAxiom({
         name: 'training-studio-dataset-rating',
@@ -370,7 +395,7 @@ export function warmDatasetRating(
         images: blobKeys.length,
         skipped: blobKeys.length - images.length,
         overDailyCap: unsent.length - granted,
-        payload: { alreadySent: alreadySent + images.length - unsent.length },
+        payload: { alreadySent: alreadySent + images.length - unsent.length, rerun },
       });
     })
     .catch((err) => {
@@ -382,6 +407,8 @@ export function warmDatasetRating(
         error: safeError(err),
       });
     })
-    .finally(() => activeJobs.delete(userId));
-  activeJobs.set(userId, job);
+    .finally(() => {
+      activeJobs.delete(userId);
+      if (entry.next) startJob(userId, entry.next, true);
+    });
 }

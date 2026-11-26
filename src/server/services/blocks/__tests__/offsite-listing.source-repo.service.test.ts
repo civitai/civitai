@@ -72,6 +72,8 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
   newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
+  // A seatless moderator's edit writes an audit row (`recordModeratorListingEdit`).
+  newAppListingModerationEventId: () => `alme_new_${++seq.n}`,
   newUlid: () => `ULID${++seq.n}`,
 }));
 
@@ -1011,6 +1013,318 @@ describe('🔴 updateRevisionDraft and the unapplied migration', () => {
     expect(mockWrite.appListing.update).toHaveBeenCalledWith({
       where: { id: 'apl_shadow' },
       data: { name: 'Renamed on the revision', tagline: 'a quick copy edit' },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. ON-SITE links are manifest-governed — an author edit of either is REFUSED
+//
+// An on-site listing's links are minted from the manifest's `repository` / `bugs` at submit
+// and re-synced from them on every approve, and an on-site revision apply copies assets only.
+// So an edit here would be overwritten (draft) or dropped (approved) while reporting success.
+// ---------------------------------------------------------------------------
+
+/** Written out, not imported, for the reason `REFUSAL_MESSAGE` gives. */
+const ONSITE_LINK_REFUSAL =
+  "An on-site app's source repository and issue tracker links come from the `repository` and " +
+  '`bugs` keys in block.manifest.json. Set them there and submit a new version; the listing ' +
+  'takes them when that version is approved.';
+
+describe('🔴 an ON-SITE listing refuses an author edit of its manifest-governed links', () => {
+  const onsiteDraft = () => approvedParent({ kind: 'onsite', status: 'draft', externalUrl: null });
+
+  it.each([
+    ['a source repository value', { sourceRepoUrl: 'https://gitlab.com/someone/other-app' }],
+    ['a source repository clear', { sourceRepoUrl: null }],
+    ['an issue tracker value', { issueTrackerUrl: 'https://example.com/support' }],
+    ['an issue tracker clear', { issueTrackerUrl: null }],
+  ])('updateListing: %s → BAD_REQUEST, and nothing is written', async (_label, patch) => {
+    // The column is PRESENT, so the unapplied-migration gate cannot be what refuses.
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    let thrown: TRPCError | undefined;
+    try {
+      await updateListing({ listingId: 'apl_parent', patch, userId: OWNER });
+    } catch (e) {
+      thrown = e as TRPCError;
+    }
+    expect(thrown?.message).toBe(ONSITE_LINK_REFUSAL);
+    expect(thrown?.code).toBe('BAD_REQUEST');
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('an APPROVED on-site listing: refused before any shadow revision is minted', async () => {
+    armShadowColumnPresent(approvedParent({ kind: 'onsite', externalUrl: null }), LIVE_REPO);
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { sourceRepoUrl: 'https://gitlab.com/someone/other-app' },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_LINK_REFUSAL });
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('updateRevisionDraft on an ON-SITE shadow: refused, nothing written', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: OWNER,
+        patch: { issueTrackerUrl: 'https://example.com/support' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_LINK_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: an on-site edit that names no manifest-governed field still applies in place', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { contentRating: 'pg13' },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(false);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { contentRating: 'pg13' },
+    });
+  });
+
+  it('CONTROL: the same source repository edit on an OFF-SITE draft is accepted', async () => {
+    armShadowColumnPresent(approvedParent({ status: 'draft' }), null);
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { sourceRepoUrl: LIVE_REPO },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { sourceRepoUrl: LIVE_REPO },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. ON-SITE name / tagline / description are manifest-governed — an author edit is REFUSED
+//
+// Minted from the manifest's `name` / `tagline` / `description` at submit and re-synced from
+// them on every block-version approve (`buildListingScalarSync`); an on-site revision apply
+// copies assets only. So an edit here would be overwritten (draft) or dropped (approved).
+// ---------------------------------------------------------------------------
+
+/** Written out, not imported, for the reason `REFUSAL_MESSAGE` gives. */
+const ONSITE_COPY_REFUSAL =
+  "An on-site app's name, tagline and description come from the `name`, `tagline` and " +
+  '`description` keys in block.manifest.json. Set them there and submit a new version; the ' +
+  'listing takes them when that version is approved.';
+
+/**
+ * A seatless moderator's save also runs the moderator-edit checks and writes an audit row
+ * (`assertModeratorMayUseShadow` / `recordModeratorListingEdit`), which read the listing on the
+ * PRIMARY. Answer those two reads with a plain, non-shadow row; every other primary read keeps
+ * whatever the test armed before.
+ */
+function armModeratorAuditRead() {
+  const prior = mockWrite.appListing.findUnique.getMockImplementation();
+  mockWrite.appListing.findUnique.mockImplementation(
+    async (args: { where: { id: string }; select?: Record<string, unknown> }) => {
+      const select = args?.select ?? {};
+      if (
+        'revisionOf' in select ||
+        ('revisionOfId' in select && Object.keys(select).length === 1)
+      ) {
+        return { id: args.where.id, slug: 'cool-app', revisionOf: null, revisionOfId: null };
+      }
+      return prior ? prior(args) : null;
+    }
+  );
+}
+
+/** Written out, not imported, for the reason `REFUSAL_MESSAGE` gives. */
+const ONSITE_CATEGORY_REFUSAL =
+  "An on-site app's category comes from the `category` key in block.manifest.json while the " +
+  'app has no category yet; once one is set, a moderator changes it. The listing takes it when ' +
+  'a version is approved.';
+
+describe('🔴 an ON-SITE listing refuses an edit of its category', () => {
+  const onsiteDraft = () => approvedParent({ kind: 'onsite', status: 'draft', externalUrl: null });
+
+  it.each([
+    ['a category value', { category: 'games' as const }],
+    ['a category clear', { category: null }],
+  ])('updateListing: %s → BAD_REQUEST, and nothing is written', async (_label, patch) => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('an APPROVED on-site listing: refused before any write (category was a live in-place edit)', async () => {
+    armShadowColumnPresent(approvedParent({ kind: 'onsite', externalUrl: null }), LIVE_REPO);
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch: { category: 'games' }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('updateRevisionDraft on an ON-SITE shadow: refused, nothing written', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({ shadowId: 'apl_shadow', userId: OWNER, patch: { category: 'games' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('a MODERATOR may still set it on the listing itself (curation reaches the live row)', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    armModeratorAuditRead();
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { category: 'games' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'apl_parent' }, data: { category: 'games' } })
+    );
+  });
+
+  it('🔴 a MODERATOR category + MATERIAL change on an APPROVED listing: category lands on the LIVE row, never the shadow', async () => {
+    // The material half routes to a fresh shadow; the on-site revision apply copies assets only,
+    // so a category staged there would be dropped while the save reported success.
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ kind: 'onsite', externalUrl: null })
+    );
+    armShadowOpen();
+    armModeratorAuditRead();
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { category: 'games', contentRating: 'pg13' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res.requiresReview).toBe(true);
+    const writes = mockWrite.appListing.update.mock.calls.map(
+      (c) => c[0] as { where: { id: string }; data: Record<string, unknown> }
+    );
+    expect(writes.filter((w) => w.where.id === 'apl_parent')).toEqual([
+      { where: { id: 'apl_parent' }, data: { category: 'games' } },
+    ]);
+    const shadowWrites = writes.filter((w) => w.where.id !== 'apl_parent');
+    expect(shadowWrites.some((w) => w.data.contentRating === 'pg13')).toBe(true);
+    expect(shadowWrites.some((w) => 'category' in w.data)).toBe(false);
+  });
+
+  it('…but not on an on-site REVISION draft, whose assets-only apply would drop it', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: MOD,
+        isModerator: true,
+        patch: { category: 'games' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_CATEGORY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('a patch naming several refused groups names ALL of them in one refusal', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { tagline: 'x', category: 'games', sourceRepoUrl: null },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `${ONSITE_COPY_REFUSAL} ${ONSITE_CATEGORY_REFUSAL} ${ONSITE_LINK_REFUSAL}`,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: the same category edit on an OFF-SITE draft is accepted', async () => {
+    armShadowColumnPresent(approvedParent({ status: 'draft' }), null);
+    await updateListing({ listingId: 'apl_parent', patch: { category: 'games' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { category: 'games' },
+    });
+  });
+});
+
+describe('🔴 an ON-SITE listing refuses an author edit of its manifest-governed copy', () => {
+  const onsiteDraft = () => approvedParent({ kind: 'onsite', status: 'draft', externalUrl: null });
+
+  it.each([
+    ['a name', { name: 'Renamed by hand' }],
+    ['a tagline value', { tagline: 'a hand-written tagline' }],
+    ['a tagline clear', { tagline: null }],
+    ['a description value', { description: 'a hand-written description' }],
+    ['a description clear', { description: null }],
+  ])('updateListing: %s → BAD_REQUEST, and nothing is written', async (_label, patch) => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    let thrown: TRPCError | undefined;
+    try {
+      await updateListing({ listingId: 'apl_parent', patch, userId: OWNER });
+    } catch (e) {
+      thrown = e as TRPCError;
+    }
+    expect(thrown?.message).toBe(ONSITE_COPY_REFUSAL);
+    expect(thrown?.code).toBe('BAD_REQUEST');
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('a moderator is refused the same way (the manifest still overwrites their edit)', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { tagline: 'a moderator tagline' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_COPY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('an APPROVED on-site listing: a name edit is refused before any shadow revision is minted', async () => {
+    armShadowColumnPresent(approvedParent({ kind: 'onsite', externalUrl: null }), LIVE_REPO);
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch: { name: 'Renamed by hand' }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_COPY_REFUSAL });
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('updateRevisionDraft on an ON-SITE shadow: refused, nothing written', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: OWNER,
+        patch: { description: 'a hand-written description' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_COPY_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: the same tagline edit on an OFF-SITE draft is accepted', async () => {
+    armShadowColumnPresent(approvedParent({ status: 'draft' }), null);
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { tagline: 'a hand-written tagline' },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { tagline: 'a hand-written tagline' },
     });
   });
 });

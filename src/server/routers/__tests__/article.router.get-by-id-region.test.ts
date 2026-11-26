@@ -188,3 +188,31 @@ describe('article.getById by region', () => {
     }
   });
 });
+
+describe('article.getById report-listed viewer', () => {
+  beforeEach(() => {
+    mockGetArticleById.mockReset();
+    mockGetArticleById.mockResolvedValue(article(PG));
+    mockIsRegionRestricted.mockReturnValue(false);
+  });
+
+  async function reportListedViewerFor(credential: Record<string, unknown>) {
+    const ctx = { ...fakeCtx(moderator, credential), features: { csamReports: true } as never };
+    await articleRouter.createCaller(ctx as never).getById({ id: 7 });
+    return mockGetArticleById.mock.calls.at(-1)![0].reportListedViewer;
+  }
+
+  it('a grant-holding moderator on a session sees report-listed images', async () => {
+    expect(await reportListedViewerFor(session)).toEqual({
+      seesReportListed: true,
+      ownerSeesReportListed: true,
+    });
+  });
+
+  it('the same moderator on a scoped key sees neither', async () => {
+    expect(await reportListedViewerFor(scopedKey)).toEqual({
+      seesReportListed: false,
+      ownerSeesReportListed: false,
+    });
+  });
+});

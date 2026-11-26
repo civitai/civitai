@@ -78,6 +78,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
+import { loosensImageLevel, withheldImageIds } from '~/server/services/moderator-withheld.service';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
@@ -409,7 +410,13 @@ export async function addImageRating({
   damnedReason,
   chTracker,
   isModerator,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  csamReview = false,
+}: AddImageRatingInput & {
+  playerId: number;
+  chTracker?: Tracker;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   // Warm the rated set outside the per-image lock: a cold rebuild reads ClickHouse and must not
@@ -439,6 +446,7 @@ export async function addImageRating({
           damnedReason,
           chTracker,
           isModerator,
+          csamReview,
         });
       }
     )
@@ -459,7 +467,13 @@ async function processImageRating({
   damnedReason,
   chTracker,
   isModerator,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  csamReview = false,
+}: AddImageRatingInput & {
+  playerId: number;
+  chTracker?: Tracker;
+  isModerator?: boolean;
+  csamReview?: boolean;
+}) {
   // Validate player and image existence before consuming rate limit budget
   const player = await getPlayerById({ playerId });
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
@@ -558,6 +572,7 @@ async function processImageRating({
       nsfwLevel: rating,
       userId: playerId,
       isModerator,
+      csamReview,
       status: 'Actioned',
     });
     await updatePendingImageRatings({ imageId, rating });
@@ -626,8 +641,15 @@ async function processImageRating({
       // escalate to Inquisitor (mod) queue if the distance is greater
       const isExcessiveDownRating =
         consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+      // A vote holds no grant, so it does not loosen what is withheld from a moderator without one:
+      // the image keeps its level and goes to a moderator like an excessive down-rating.
+      const isWithheldDownRating =
+        !isExcessiveDownRating &&
+        !!consensus &&
+        loosensImageLevel(image.nsfwLevel, consensus) &&
+        (await withheldImageIds([imageId], { csamReview: false })).has(imageId);
 
-      if (isExcessiveDownRating) {
+      if (isExcessiveDownRating || isWithheldDownRating) {
         // No decision made yet — keep all votes (including this one) Pending until mod acts
         currentNsfwLevel = undefined;
 

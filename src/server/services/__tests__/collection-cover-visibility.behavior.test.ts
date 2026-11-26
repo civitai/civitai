@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -126,6 +127,11 @@ beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
+    CREATE TABLE "User" (id int PRIMARY KEY, username text);
+    CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
     CREATE TABLE "Image" (
       type text NOT NULL DEFAULT 'image',
       minor boolean DEFAULT false,
@@ -265,9 +271,10 @@ describe('which covers a stranger is shown', () => {
     expect(await servable(imageId)).toBe(false);
   });
 
-  it("shows the image's owner their own removed image, and nobody else", async () => {
-    expect(await servable(VIEWER_REMOVED, { id: VIEWER })).toBe(true);
+  it('shows nobody but staff a removed image, its owner included', async () => {
+    expect(await servable(VIEWER_REMOVED, { id: VIEWER })).toBe(false);
     expect(await servable(VIEWER_REMOVED, { id: STRANGER })).toBe(false);
+    expect(await servable(VIEWER_REMOVED, { id: STRANGER, isModerator: true })).toBe(true);
   });
 
   it("shows the image's owner their own unrated image, and nobody else", async () => {
@@ -377,8 +384,9 @@ describe('getCollectionById', () => {
     expect(await coverOf(imageId)).toBeNull();
   });
 
-  it("returns the viewer's own image to them", async () => {
-    expect(await coverOf(VIEWER_REMOVED, { id: VIEWER })).toBe(VIEWER_REMOVED);
+  it("returns the viewer's own image to them, but not one a block refuses them", async () => {
+    expect(await coverOf(VIEWER_UNRATED, { id: VIEWER })).toBe(VIEWER_UNRATED);
+    expect(await coverOf(VIEWER_REMOVED, { id: VIEWER })).toBeNull();
   });
 
   it('returns a PG cover on a restricted base model (control)', async () => {
@@ -423,33 +431,74 @@ describe('getUserCollectionsWithPermissions', () => {
     });
   });
 
-  it("keeps the user's own hidden image as their cover", async () => {
-    userCollections.splice(0, userCollections.length, {
-      id: 64,
-      userId: OWNER,
-      imageId: VIEWER_REMOVED,
-    });
-    vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async (args: {
-      where: { id: { in: number[] } };
-    }) => args.where.id.in.map((id) => ({ id }))) as never);
-    vi.mocked(dbMock.dbRead.tagsOnCollection.findMany).mockResolvedValue([]);
-    vi.mocked(dbMock.dbRead.user.findMany).mockResolvedValue([]);
+  it.each([
+    ['keeps', VIEWER_UNRATED, VIEWER_UNRATED],
+    ['drops', VIEWER_REMOVED, null],
+  ])(
+    "%s the user's own hidden image as their cover (unrated, then blocked)",
+    async (_, imageId, shown) => {
+      userCollections.splice(0, userCollections.length, {
+        id: 64,
+        userId: OWNER,
+        imageId,
+      });
+      vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) => args.where.id.in.map((id) => ({ id }))) as never);
+      vi.mocked(dbMock.dbRead.tagsOnCollection.findMany).mockResolvedValue([]);
+      vi.mocked(dbMock.dbRead.user.findMany).mockResolvedValue([]);
 
-    const rows = await getUserCollectionsWithPermissions({ input: { userId: VIEWER } as never });
-    expect(rows.map((r) => r.image?.id ?? null)).toEqual([VIEWER_REMOVED]);
-  });
+      const rows = await getUserCollectionsWithPermissions({ input: { userId: VIEWER } as never });
+      expect(rows.map((r) => r.image?.id ?? null)).toEqual([shown]);
+    }
+  );
 });
+
+/** The cover writes' own Image row reads, answered from the fixture. */
+const imageRowsFromFixture = () =>
+  vi
+    .mocked(dbMock.dbWrite.image.findUnique)
+    .mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (
+          await holder.db.query(
+            `SELECT id, "userId", ingestion, "blockedFor" FROM "Image" WHERE id = $1`,
+            [args.where.id]
+          )
+        ).rows[0] ?? null) as never
+    );
 
 describe('updateCollectionCoverImage', () => {
   beforeEach(() => {
     vi.mocked(dbMock.dbWrite.collection.update).mockReset();
     vi.mocked(dbMock.dbWrite.collection.update).mockResolvedValue({ id: COLLECTION } as never);
+    imageRowsFromFixture();
+  });
+  afterEach(() => vi.mocked(dbMock.dbWrite.image.findUnique).mockReset());
+
+  const setCover = (
+    imageId: number,
+    isModerator = false,
+    userId = OWNER,
+    asModerator = isModerator
+  ) =>
+    updateCollectionCoverImage({
+      input: { id: COLLECTION, imageId, userId, isModerator, asModerator },
+    });
+
+  it("refuses the owner's own blocked image, which a moderator may set", async () => {
+    await expect(setCover(OWNER_REMOVED)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+    await setCover(OWNER_REMOVED, true);
+    expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
   });
 
-  const setCover = (imageId: number, isModerator = false) =>
-    updateCollectionCoverImage({
-      input: { id: COLLECTION, imageId, userId: OWNER, isModerator },
+  it('refuses it to a moderator on a scoped key', async () => {
+    await expect(setCover(OWNER_REMOVED, true, OWNER, false)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
     });
+    expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+  });
 
   it('sets a cover the owner could see (control)', async () => {
     await setCover(PUBLISHED);
@@ -472,20 +521,76 @@ describe('updateCollectionCoverImage', () => {
     await setCover(REMOVED, true);
     expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
   });
+
+  describe('an image a deal file points at', () => {
+    beforeEach(() =>
+      holder.db.exec(
+        `INSERT INTO "ServiceDealFile" ("imageId") VALUES (${PUBLISHED}), (${REMOVED})`
+      )
+    );
+    afterEach(() => holder.db.exec(`TRUNCATE "ServiceDealFile"`));
+
+    it('is refused as a cover the owner could otherwise see', async () => {
+      await expect(setCover(PUBLISHED)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a cover', () => setCover(REMOVED)],
+      [
+        'a collection item',
+        () =>
+          assertCollectionItemsVisibleToViewer({
+            itemKey: 'imageId',
+            ids: [REMOVED],
+            userId: OWNER,
+          }),
+      ],
+    ])(
+      'answers as %s the viewer cannot see, never saying it is a delivery file',
+      async (_, use) => {
+        await expect(use()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      }
+    );
+
+    it('is refused as a collection item to staff too', async () => {
+      await expect(
+        assertCollectionItemsVisibleToViewer({
+          itemKey: 'imageId',
+          ids: [REMOVED],
+          userId: OWNER,
+          isModerator: true,
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+
+    it('is refused as a collection item the viewer could otherwise see', async () => {
+      await expect(
+        assertCollectionItemsVisibleToViewer({
+          itemKey: 'imageId',
+          ids: [PUBLISHED],
+          userId: OWNER,
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+  });
 });
 
 describe('upsertCollection with no cover sent', () => {
   beforeEach(() => {
     replica.stale = true;
+    imageRowsFromFixture();
   });
   afterEach(() => {
     replica.stale = false;
+    vi.mocked(dbMock.dbWrite.image.findUnique).mockReset();
   });
 
   const edit = async (
     storedCover: number,
     isModerator = false,
-    coverViewer?: { id?: number; isModerator?: boolean }
+    coverViewer?: { id?: number; isModerator?: boolean },
+    imageId?: number
   ) => {
     vi.mocked(dbMock.dbWrite.collection.findUnique).mockResolvedValue({
       id: COLLECTION,
@@ -506,11 +611,13 @@ describe('upsertCollection with no cover sent', () => {
         id: COLLECTION,
         name: 'renamed',
         image: null,
+        ...(imageId != null && { imageId }),
         type: 'Image',
         read: 'Public',
         write: 'Private',
         userId: OWNER,
         isModerator,
+        asModerator: isModerator,
         isMember: true,
       } as never,
       coverViewer,
@@ -527,8 +634,24 @@ describe('upsertCollection with no cover sent', () => {
     expect(await edit(PUBLISHED)).toEqual({ disconnect: true });
   });
 
-  it("removes the editor's own hidden image when they clear it", async () => {
-    expect(await edit(OWNER_REMOVED)).toEqual({ disconnect: true });
+  it("keeps the editor's own blocked image, which their form never had", async () => {
+    expect(await edit(OWNER_REMOVED)).toBeUndefined();
+  });
+
+  it('lets the editor replace their own blocked cover with a new one', async () => {
+    expect(await edit(OWNER_REMOVED, false, undefined, OWNER_UPLOAD)).toEqual({
+      connect: { id: OWNER_UPLOAD },
+    });
+  });
+
+  it('refuses their own blocked image as the new cover, which a moderator may set', async () => {
+    await expect(edit(PUBLISHED, false, undefined, OWNER_REMOVED)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+    expect(await edit(PUBLISHED, true, undefined, OWNER_REMOVED)).toEqual({
+      connect: { id: OWNER_REMOVED },
+    });
   });
 
   it("keeps the editor's own hidden image when they read it without the owner's view", async () => {

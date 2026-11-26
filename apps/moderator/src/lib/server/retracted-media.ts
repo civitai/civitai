@@ -10,6 +10,7 @@ import {
   retractedImageWhereSql,
 } from '@civitai/shared/retracted-media-tier';
 import { dbRead, dbWrite } from './db';
+import type { RoleUser } from './access';
 import { holdsCsamReview } from './held-media';
 import { WITHHELD_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
@@ -348,7 +349,7 @@ export async function withheldImageIds(user: App.Locals['user'] | undefined, ima
 /** The refusal for a batch with an image withheld from `user`, which acts on none of it; `null`
  *  when nothing in it is withheld. An id the primary lacks is left to the write, which reports it
  *  not found. */
-export async function withheldRefusal(user: App.Locals['user'] | undefined, imageIds: number[]) {
+export async function withheldRefusal(user: RoleUser, imageIds: number[]) {
   const { kept, missing } = await restrictedImageAccess(imageIds, {
     csamReview: holdsCsamReview(user),
   });

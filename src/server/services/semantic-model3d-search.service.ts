@@ -69,7 +69,12 @@ export async function searchSemanticModels3D({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  const none = { items: [] as HydratedModel3D[], nextCursor: undefined, correctedQuery: undefined };
+  const none = {
+    items: [] as HydratedModel3D[],
+    nextCursor: undefined,
+    correctedQuery: undefined,
+    refused: false as boolean,
+  };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,

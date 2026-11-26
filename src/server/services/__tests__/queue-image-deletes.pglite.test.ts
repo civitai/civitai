@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import {
   deleteImageRows,
   IMAGE_USES,
+  IMAGE_USES_WITHOUT_RELATION,
   imageNotUsed,
   queueImageDeletes,
   queueImageStorageDelete,
@@ -52,7 +53,11 @@ beforeEach(async () => {
     'CosmeticShopItem',
     'ItemDefinition',
     'ImageCdnShopTakedown',
-    ...new Set(Object.values(IMAGE_USES).map(([table]) => table)),
+    ...new Set(
+      [...Object.values(IMAGE_USES), ...Object.values(IMAGE_USES_WITHOUT_RELATION)].map(
+        ([table]) => table
+      )
+    ),
   ];
   await pg.exec(`TRUNCATE ${tables.map((t) => `"${t}"`).join(', ')}`);
 });
@@ -117,7 +122,7 @@ describe('queueImageDeletes', () => {
     ]);
   });
 
-  it.each(Object.entries(IMAGE_USES))(
+  it.each(Object.entries({ ...IMAGE_USES, ...IMAGE_USES_WITHOUT_RELATION }))(
     'skips an image still used by %s',
     async (_, [table, column]) => {
       await addImage(1);

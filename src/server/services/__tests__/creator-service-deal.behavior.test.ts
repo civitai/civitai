@@ -12,6 +12,7 @@ import {
   BUYER_DISCLOSURE_VERSION,
   SERVICES_TERMS_VERSION,
 } from '~/shared/constants/creator-service-terms.constants';
+import { SCAN_COPY_SETTLE_WINDOW_MINUTES } from '~/server/services/creator-service-deal-file-sql';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as AccessLog from '~/server/services/creator-service-deal-file-access';
@@ -192,6 +193,7 @@ const LATER_MIGRATIONS = [
   '20271120230000_service_deal_review_report',
   '20271125130000_service_deal_buyer_disclosure',
   '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -2194,6 +2196,63 @@ describe('the finals gate and dispute resolution', () => {
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     expect((await deal(id)).status).toBe('Disputed');
     expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
+  it.each([
+    ['pays a release whose final still has its scanned image', false],
+    ['holds a release whose final lost its scanned image, and pays nothing', true],
+  ])('%s', async (_n, imageGone) => {
+    const id = await completed();
+    await windowClosed(id);
+    const [{ id: imageId }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url) VALUES ('scan') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         SELECT f.id, f."dealId", 0, 'a.png', 1, $2, 'Passed' FROM "ServiceDealFile" f
+         WHERE f."dealId" = $1 AND f.kind = 'Final'`,
+      [id, imageId]
+    );
+    if (imageGone) await q(`DELETE FROM "Image" WHERE id = $1`, [imageId]);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({
+      considered: 1,
+      released: imageGone ? 0 : 1,
+    });
+    if (!imageGone) return;
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
+  describe('a release while our own scan-copy delete is settling', () => {
+    /** A completed deal whose Final's one entry our copy delete marked `minutesAgo` and whose image is gone. */
+    const settling = async (minutesAgo: number) => {
+      const id = await completed();
+      await windowClosed(id);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus", "copyDeleteStartedAt")
+           SELECT f.id, f."dealId", 0, 'a.png', 1, 990000987, 'Passed', now() - $2::int * interval '1 minute'
+           FROM "ServiceDealFile" f WHERE f."dealId" = $1 AND f.kind = 'Final'`,
+        [id, minutesAgo]
+      );
+      return id;
+    };
+
+    it('waits, neither paid nor held, and pays on the next run once the entry settles', async () => {
+      const id = await settling(1);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+      expect((await deal(id)).status).toBe('Completed');
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      await q(`UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "copyDeleteStartedAt" = NULL`);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+    });
+
+    it('holds as before once the settle window has passed', async () => {
+      const id = await settling(SCAN_COPY_SETTLE_WINDOW_MINUTES + 1);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+      expect((await deal(id)).status).toBe('Disputed');
+      expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+    });
   });
 
   it('sends a delivered deal to the moderators, but never one whose payout is claimed', async () => {

@@ -4,7 +4,7 @@ name: feed-go
 # shadow only of `image.getInfinite`, `model.getAll` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
-# tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
+# tests and a build of the image's two binaries, feed-go and feed-eval (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
 # tidiness and module checksums (`mod`); a run of every fuzz target for a fixed number of
 # executions (`fuzz`); and an allocs/op regression gate on the benchmarks against the merge-base
 # (`bench`). The gate scripts live in apps/feed-go/ci.
@@ -251,8 +251,14 @@ jobs:
           [ "$feed" -ge 12 ]
           [ "$models" -ge 5 ]
 
+      # Both binaries the image ships (apps/feed-go/Dockerfile), built as it builds them. The help
+      # path's exit code is cmd/feed-eval's own unit test; this does not see the image's layout.
       - name: go build
-        run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-go ./cmd/feed-go
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /tmp/feed-eval ./cmd/feed-eval
+          ls -l /tmp/feed-go /tmp/feed-eval
 
       - name: Redis Cluster logs
         if: failure()
@@ -512,6 +518,7 @@ jobs:
         internal/auth:FuzzVerify:95000
         internal/devalue:FuzzRoundTrip:200000
         internal/devalue:FuzzString:600000
+        internal/evalcorpus:FuzzStrip:100000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000

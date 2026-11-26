@@ -77,6 +77,16 @@
 // `meta` a subscription names, and View answers the stream's latest `meta` beside its records. An
 // `end` naming a reason is an EndedError, and a key cooling down after one answers that reason too.
 //
+// REGION. With Options.Region on, a stream is keyed by the viewer's region too (the edge's region
+// headers the reading request carried, WithRegion), and its subscription carries those headers, so
+// the adapter judges the viewer's region rather than this relay's (WRITES-DESIGN.md, "Region"). A
+// viewer whose region changes opens a new stream. Off (the level streams, read as a service), no
+// stream carries a region, whatever the read's context holds.
+//
+// EXCHANGE FAILURES. Options.ClassifyExchange may name an exchange error (an ExchangeFailure): the
+// stream closes with its reason, the read answers it, and so does every read of its key while it
+// cools down, so a refusal that is not a network blip stays distinguishable from one.
+//
 // A HEAD THAT WENT BACK means the namespace's seqs restarted: the adapter ends the stream
 // `cursor_expired`, and a head below the one held is treated the same. Neither is a failure: the
 // stream closes with no cooldown, its overlays (numbered in the old order) are dropped, and the read
@@ -99,7 +109,55 @@ import (
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
+	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 )
+
+// Region is the edge's region header values a viewer's request carried, indexed as
+// sign.RegionHeaders, each "" when absent (REGION).
+type Region [3]string
+
+type regionKey struct{}
+
+// WithRegion is ctx carrying r, the reading viewer's region.
+func WithRegion(ctx context.Context, r Region) context.Context {
+	if r == (Region{}) {
+		return ctx
+	}
+	return context.WithValue(ctx, regionKey{}, r)
+}
+
+// RegionOf is the region ctx carries, or the zero Region.
+func RegionOf(ctx context.Context) Region {
+	r, _ := ctx.Value(regionKey{}).(Region)
+	return r
+}
+
+// headers are r's values by header name, the absent ones left out; nil when all are.
+func (r Region) headers() map[string]string {
+	var h map[string]string
+	for i, name := range sign.RegionHeaders {
+		if r[i] == "" {
+			continue
+		}
+		if h == nil {
+			h = map[string]string{}
+		}
+		h[name] = r[i]
+	}
+	return h
+}
+
+// ExchangeFailure is an Exchange error Options.ClassifyExchange named (EXCHANGE FAILURES): its stream
+// closes with Reason, and its reads answer it, while its key cools down too (with ErrCoolingDown).
+type ExchangeFailure struct {
+	Reason string
+	Err    error
+}
+
+func (e *ExchangeFailure) Error() string { return e.Err.Error() }
+
+// Unwrap makes an ExchangeFailure its Err.
+func (e *ExchangeFailure) Unwrap() error { return e.Err }
 
 // PrivateCursorPrefix starts every cursor the adapter's private feed issues
 // (src/server/registry-adapter/private-feed.ts: `p1.<digest>`, or `p1.empty` for a stream that holds
@@ -143,9 +201,10 @@ func (c ClientSubscriber) Subscribe(ctx context.Context, schema, token string) (
 	return c.SubscribeMeta(ctx, schema, token, nil)
 }
 
-// SubscribeMeta implements MetaSubscriber.
+// SubscribeMeta implements MetaSubscriber. The region ctx carries (a stream's, REGION) goes as the
+// subscription's region headers.
 func (c ClientSubscriber) SubscribeMeta(ctx context.Context, schema, token string, meta json.RawMessage) (Stream, error) {
-	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token, Meta: meta})
+	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token, Meta: meta, Headers: RegionOf(ctx).headers()})
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +243,39 @@ type Snapshot struct {
 	// Head is the latest head the stream named, when HasHead (only with OverlayTTL set).
 	Head    int64
 	HasHead bool
+	// Lease is the stream this read OPENED, for it to release once it is done with it (Lease.Release);
+	// the zero Lease when the read took a stream already open.
+	Lease Lease
+}
+
+// Lease is one read's claim on the stream it opened. Release closes that stream only while it is
+// still the one open for its key and no read but the opener's has taken it: a stream another read
+// opened, or took, or is taking, is never closed by it.
+type Lease struct {
+	m *Manager
+	s *session
+}
+
+// Release closes the leased stream if no other read has taken it (see Lease), at once, as an idle
+// close would later: its slots go back, and its key does not cool down. The zero Lease does nothing.
+func (l Lease) Release() {
+	if l.s == nil {
+		return
+	}
+	m, s := l.m, l.s
+	m.mu.Lock()
+	s.mu.Lock()
+	mine := m.sessions[s.k] == s && s.reads == 1
+	s.mu.Unlock()
+	if !mine {
+		m.mu.Unlock()
+		return
+	}
+	st, ok := m.endLocked(s, CloseReleased, ErrClosed)
+	m.mu.Unlock()
+	if ok {
+		m.finish(s, st, CloseReleased)
+	}
 }
 
 // Why a read was not answered from a stream. Each is a reason to read REST instead.
@@ -232,6 +324,9 @@ const (
 	// Neither cools its key down.
 	CloseCursorExpired = "cursor_expired"
 	CloseFloorReopen   = "floor_reopen"
+	// CloseReleased is a stream the read that opened it released (Lease.Release), no other read having
+	// taken it: it does not cool its key down.
+	CloseReleased = "released"
 )
 
 // The `outcome` of a read whose floor its stream had not met (metrics.FloorOutcomes): its reopen met
@@ -258,8 +353,9 @@ type Ack struct {
 	// URN is "" when the answer named no recordId.
 	URN  string
 	Body json.RawMessage
-	// Version, CreatedAt and UpdatedAt are a shared document's, as the write answered them (read by
-	// package shared's overlays; a private stream's entities carry none).
+	// Version is the document's store version as the write answered it: a private overlay carries it
+	// (Entity.Version, so a read-back answers the version the next write's ifVersion must name), and
+	// package shared's overlays read it. CreatedAt and UpdatedAt are a shared document's only.
 	Version              int64
 	CreatedAt, UpdatedAt string
 }
@@ -316,6 +412,12 @@ type Options struct {
 	// InvalidToken, when set, is called each time the registry refuses the token a stream was
 	// opened with (ErrInvalidToken): the level manager's token is this service's own, re-minted then.
 	InvalidToken func()
+	// Region keys each stream by the reading request's region and sends it on the subscription
+	// (REGION). Off, no stream carries one.
+	Region bool
+	// ClassifyExchange, when set, names an Exchange error the manager does not know (EXCHANGE
+	// FAILURES); nil from it, or no ClassifyExchange, leaves it ErrFailed.
+	ClassifyExchange func(err error) *ExchangeFailure
 }
 
 // Budget caps what several managers hold together: the streams (one adapter subscription each) and
@@ -363,6 +465,8 @@ type tokenID [sha256.Size]byte
 type key struct {
 	token  tokenID
 	schema string
+	// region is the viewer's (REGION); zero with Options.Region off.
+	region Region
 }
 
 // Manager holds the streams.
@@ -379,7 +483,8 @@ type Manager struct {
 	sessions map[key]*session
 	perToken map[tokenID]int
 	cooling  map[key]time.Time
-	// coolCause is why a cooling key's stream ended, when its end named a reason (an EndedError).
+	// coolCause is why a cooling key's stream ended, when its end named a reason (an EndedError) or
+	// its exchange failed one ClassifyExchange named (an ExchangeFailure).
 	coolCause map[key]error
 	// reopened is when each key last reopened for a floor (ReopenEvery).
 	reopened map[key]time.Time
@@ -413,6 +518,9 @@ type session struct {
 	ended    bool
 	err      error
 	lastRead time.Time
+	// reads counts the reads (View calls) that took this stream, counted as each takes it (under the
+	// manager's lock, in session): a Lease releases its stream only while this is its own one read.
+	reads    int
 	checked  time.Time // the last exchange of the user's token, refused or not
 	checking bool      // a read is re-checking the user's token now
 	records  map[string]registry.Entity
@@ -434,6 +542,7 @@ type overlay struct {
 	urn     string // the record's URN; "" when unknown
 	deleted bool
 	body    json.RawMessage
+	version int64     // the document's store version, as the write answered it; 0 when unknown
 	until   time.Time // dropped at this time, whether or not the stream caught up
 }
 
@@ -450,10 +559,13 @@ func (m *Manager) ReadAt(ctx context.Context, token, schema string, minSeq int64
 // View is ReadAt, answering the stream's latest `meta` and head beside its records.
 func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) (Snapshot, error) {
 	k := key{token: sha256.Sum256([]byte(token)), schema: schema}
+	if m.opts.Region {
+		k.region = RegionOf(ctx)
+	}
 	// The viewer's address (exchange.ClientIP) goes with a stream this read opens, to its exchange.
 	ip := exchange.ClientIP(ctx)
 	for retried := false; ; retried = true {
-		s, err := m.session(k, token, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+		s, opened, err := m.session(k, token, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -470,32 +582,43 @@ func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) 
 				return Snapshot{}, err
 			}
 		}
+		var lease Lease
+		if opened != nil && opened == s {
+			lease = Lease{m: m, s: s}
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return Snapshot{Entities: ents, Meta: s.meta, Head: s.head, HasHead: s.hasHead}, nil
+		return Snapshot{Entities: ents, Meta: s.meta, Head: s.head, HasHead: s.hasHead, Lease: lease}, nil
 	}
 }
 
-func (m *Manager) session(k key, token, ip string) (*session, error) {
+// session takes k's stream for one read and counts the read on it, both under m.mu (so a Lease,
+// deciding under m.mu, sees every read that has taken the stream), opening it when none is open;
+// opened is the stream when this call opened it, else nil.
+func (m *Manager) session(k key, token, ip string) (s *session, opened *session, err error) {
 	now := m.opts.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, ErrClosed
+		return nil, nil, ErrClosed
 	}
-	if s := m.sessions[k]; s != nil {
-		return s, nil
-	}
-	if until, ok := m.cooling[k]; ok && now.Before(until) {
-		if cause := m.coolCause[k]; cause != nil {
-			return nil, errors.Join(ErrCoolingDown, cause)
+	if s = m.sessions[k]; s == nil {
+		if until, ok := m.cooling[k]; ok && now.Before(until) {
+			if cause := m.coolCause[k]; cause != nil {
+				return nil, nil, errors.Join(ErrCoolingDown, cause)
+			}
+			return nil, nil, ErrCoolingDown
 		}
-		return nil, ErrCoolingDown
+		if err := m.room(k); err != nil {
+			return nil, nil, err
+		}
+		s = m.open(k, token, now, nil, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+		opened = s
 	}
-	if err := m.room(k); err != nil {
-		return nil, err
-	}
-	return m.open(k, token, now, nil, ip), nil //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+	s.mu.Lock()
+	s.reads++
+	s.mu.Unlock()
+	return s, opened, nil
 }
 
 // room checks the caps for opening k and, when they admit it, takes its share of the Budget: open
@@ -609,18 +732,28 @@ func (m *Manager) Ack(token, schema string, a Ack) {
 	if m.opts.OverlayTTL <= 0 || a.Seq <= 0 || a.Key == "" {
 		return
 	}
+	id := sha256.Sum256([]byte(token))
+	// Every region's stream of the token (REGION): usually one.
+	var open []*session
 	m.mu.Lock()
-	s := m.sessions[key{token: sha256.Sum256([]byte(token)), schema: schema}]
-	m.mu.Unlock()
-	if s == nil {
-		return
+	if m.opts.Region {
+		for k, s := range m.sessions {
+			if k.token == id && k.schema == schema {
+				open = append(open, s)
+			}
+		}
+	} else if s := m.sessions[key{token: id, schema: schema}]; s != nil {
+		open = append(open, s)
 	}
+	m.mu.Unlock()
 	maxOverlay := m.opts.MaxOverlayBytes
 	if maxOverlay <= 0 {
 		maxOverlay = m.opts.MaxBytes
 	}
-	if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, maxOverlay); ok && m.opts.Overlaid != nil {
-		m.opts.Overlaid(kind)
+	for _, s := range open {
+		if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, maxOverlay); ok && m.opts.Overlaid != nil {
+			m.opts.Overlaid(kind)
+		}
 	}
 }
 
@@ -645,7 +778,7 @@ func (s *session) ack(a Ack, until time.Time, maxRecords, maxBytes int) (string,
 	kind := OverlayRecord
 	switch {
 	case !a.Deleted:
-		ov.urn, ov.body = a.URN, a.Body
+		ov.urn, ov.body, ov.version = a.URN, a.Body, a.Version
 	case had:
 		ov.urn, kind = prev.urn, OverlayDeleteMarker
 	case hasBase:
@@ -692,7 +825,7 @@ func (s *session) dropOverlay(k string) {
 func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay, ip string) *session {
 	delete(m.cooling, k)
 	delete(m.coolCause, k)
-	ctx, cancel := context.WithCancel(exchange.WithClientIP(m.base, ip))
+	ctx, cancel := context.WithCancel(WithRegion(exchange.WithClientIP(m.base, ip), k.region))
 	s := &session{
 		k: k, opened: now, lastRead: now, cancel: cancel,
 		live: make(chan struct{}), done: make(chan struct{}), records: map[string]registry.Entity{},
@@ -784,7 +917,7 @@ func (s *session) view(now time.Time) []registry.Entity {
 	for k, ov := range s.overlays {
 		if !ov.deleted {
 			// Opaque, and new at every write.
-			out = append(out, registry.Entity{URN: ov.urn, Key: k, Rev: "seq." + strconv.FormatInt(ov.seq, 10), Body: ov.body, Seq: ov.seq})
+			out = append(out, registry.Entity{URN: ov.urn, Key: k, Rev: "seq." + strconv.FormatInt(ov.seq, 10), Body: ov.body, Seq: ov.seq, Version: ov.version})
 		}
 	}
 	slices.SortFunc(out, func(a, b registry.Entity) int {
@@ -815,6 +948,11 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 			return CloseBlockSpent, ErrBlockSpent
 		case errors.Is(err, exchange.ErrBlockCacheFull):
 			return CloseBlockFull, ErrBlockFull
+		}
+		if m.opts.ClassifyExchange != nil {
+			if f := m.opts.ClassifyExchange(err); f != nil {
+				return f.Reason, f
+			}
 		}
 		return CloseError, ErrFailed
 	}
@@ -1015,11 +1153,20 @@ func (s *session) markLive() {
 // dropped, and its stream is cancelled. A failure puts its key in cooldown.
 func (m *Manager) end(s *session, reason string, err error) {
 	m.mu.Lock()
+	st, ok := m.endLocked(s, reason, err)
+	m.mu.Unlock()
+	if ok {
+		m.finish(s, st, reason)
+	}
+}
+
+// endLocked is end's part under m.mu: false when s had already ended. finish must follow, without
+// m.mu, with the stream it answers.
+func (m *Manager) endLocked(s *session, reason string, err error) (Stream, bool) {
 	s.mu.Lock()
 	if s.ended {
 		s.mu.Unlock()
-		m.mu.Unlock()
-		return
+		return nil, false
 	}
 	s.ended, s.err, s.records, s.bytes = true, err, nil, 0
 	s.overlays, s.overlayBytes = nil, 0
@@ -1038,17 +1185,22 @@ func (m *Manager) end(s *session, reason string, err error) {
 		m.opts.InvalidToken()
 	}
 	switch reason {
-	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen:
+	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen, CloseReleased:
 	case CloseNotPrivate:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.NotPrivateCooldown)
 	default:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.Cooldown)
 		var ended *EndedError
-		if errors.As(err, &ended) {
+		var failure *ExchangeFailure
+		if errors.As(err, &ended) || errors.As(err, &failure) {
 			m.coolCause[s.k] = err
 		}
 	}
-	m.mu.Unlock()
+	return st, true
+}
+
+// finish is end's part without m.mu: the stream cancelled and closed, the close counted, done closed.
+func (m *Manager) finish(s *session, st Stream, reason string) {
 	s.cancel()
 	if st != nil {
 		_ = st.Close()

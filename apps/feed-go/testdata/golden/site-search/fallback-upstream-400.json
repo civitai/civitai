@@ -1,0 +1,21 @@
+{
+  "name": "fallback-upstream-400",
+  "description": "The backend refuses the query (a bad filter): Node answers its 400 as it came.",
+  "request": {
+    "path": "/api/search/indexes/tools_v2/search",
+    "body": "{\"q\":\"x\",\"filter\":\"bad =\"}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 400,
+    "body": "{\"message\":\"Invalid filter\",\"code\":\"invalid_search_filter\",\"type\":\"invalid_request\",\"link\":\"https://docs.example.test\"}"
+  },
+  "expect": {
+    "fallback": "search-upstream-status",
+    "nodeStatus": 400
+  }
+}

@@ -114,6 +114,8 @@ vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => h.clientIp }));
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { POST } from '../+server';
+import { RUNNER_TOKEN_SCOPE } from '$lib/server/oauth/runner-client';
+import { scopeNames } from '$lib/server/oauth/token-exchange';
 
 const LINK_SCOPE =
   TokenScope.UserRead | TokenScope.VaultRead | TokenScope.VaultWrite | TokenScope.LinkConnect;
@@ -211,6 +213,16 @@ beforeEach(() => {
       clientId: 'civitai-link-desktop',
       expiresAt: EXPIRES_AT,
     },
+    // A recipe-runner token: the runner bit lives only in the wide column.
+    {
+      key: generateSecretHash('civitai_runner'),
+      type: 'Access',
+      userId: 77,
+      tokenScope: TokenScope.UserRead,
+      tokenScopeWide: TokenScope.UserRead | TokenScope.RunnerMint,
+      clientId: 'recipe-runner',
+      expiresAt: EXPIRES_AT,
+    },
     // A client-credentials catalog token: single-purpose, so it reads as inactive here.
     {
       key: generateSecretHash('civitai_catalog'),
@@ -305,6 +317,27 @@ describe('introspect — active tokens', () => {
     );
     expect(res.status).toBe(200);
     expect(((await res.json()) as { active: boolean }).active).toBe(true);
+  });
+});
+
+// Deliberate (civitai/civitai#10562): a runner token reads active:true, on the condition that its
+// scope names neither AIServicesRead nor AIServicesWrite, the only names the orchestrator grants
+// AI spend on.
+describe('introspect — a recipe-runner token', () => {
+  it('reads as active, with a scope that names no AIServices permission', async () => {
+    const res = await post({
+      token: 'civitai_runner',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    const body = (await res.json()) as { active: boolean; scope: string };
+    expect(body).toMatchObject({ active: true, sub: '77', client_id: 'recipe-runner' });
+    expect(body.scope).toBe(String(RUNNER_TOKEN_SCOPE));
+    expect(scopeNames(BigInt(body.scope))).not.toMatch(/AIServices/);
+  });
+
+  it('control: an AIServices token names it, so the check above can fail', () => {
+    expect(scopeNames(TokenScope.UserRead | TokenScope.AIServicesWrite)).toMatch(/AIServicesWrite/);
   });
 });
 

@@ -35,6 +35,7 @@
 
 import { env } from '~/env/server';
 import { registerInstrumentationMetric, instrumentationRegistry } from '~/server/prom/client';
+import { probeAuthorization } from '~/server/utils/probe-token';
 import client from 'prom-client';
 
 // Observable warm state — exposed both via Prometheus (civitai_app_warmup_state)
@@ -129,11 +130,11 @@ function setWarmState(state: WarmState) {
 // runWarmup() resolves still reports a value (not absent).
 warmStateGauge.set(WARM_STATE_CODE[warm.state]);
 
-// WebhookEndpoint/-style routes are token-gated; /api/live + /api/health use
-// env.WEBHOOK_TOKEN. Use the validated env accessor (same one health.ts /
-// ready.ts use) rather than a hardcoded literal fallback, so a rotated token
-// can't silently break the warmer's /api/live readiness poll.
-const WEBHOOK_TOKEN = env.WEBHOOK_TOKEN;
+// /api/live is token-gated. The user agent names this caller in civitai_webhook_token_match_total.
+const LIVE_PROBE_HEADERS: Record<string, string> = {
+  authorization: probeAuthorization(),
+  'user-agent': 'civitai-warmup',
+};
 
 // The app warming itself from its own canonical origin is a legitimate
 // first-party request, so send the headers that satisfy the tRPC origin gate.
@@ -253,10 +254,13 @@ const warmAbortSignal = (): AbortSignal | undefined =>
 // race the server coming up. Bounded — never block boot forever.
 async function waitForListener(baseUrl: string): Promise<boolean> {
   const deadline = Date.now() + LISTENER_WAIT_MS;
-  const url = `${baseUrl}/api/live?token=${encodeURIComponent(WEBHOOK_TOKEN)}`;
+  const url = `${baseUrl}/api/live`;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { method: 'GET', headers: WARM_HEADERS });
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { ...WARM_HEADERS, ...LIVE_PROBE_HEADERS },
+      });
       if (res.ok) {
         // Drain the body so the connection can be reused/closed cleanly.
         await res.text().catch(() => undefined);

@@ -84,7 +84,7 @@ async function applyCommentV3TextScan(args: ApplyArgs) {
       const { hideFlaggedFpComment } = await import(
         '~/server/services/commentv3/moderation.service'
       );
-      await hideFlaggedFpComment(args.entityId);
+      await hideFlaggedFpComment(args.entityId, { textHash: args.textHash });
     });
   const failed = (await Promise.allSettled(steps.map((step) => step()))).find(
     (r): r is PromiseRejectedResult => r.status === 'rejected'

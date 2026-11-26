@@ -64,6 +64,12 @@ type V1Models struct {
 	// whenever FEED_GO_COMPUTE_MISSES is on, this switch or not. Needs FEED_GO_COMPUTE_MISSES
 	// (ValidateMisses).
 	ServeDataMiss bool
+	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public
+	// `GET /api/v1/models/{id}` request for a model the model statement returns no row for, with the
+	// model's lag flag read clean, is answered here with Node's 404 (outcome `not_found`) instead of
+	// falling back (`v1-models-not-found`; DESIGN.md §16.8). A not-found answer Go cannot decide that
+	// way still falls back. It changes nothing while Serve is off.
+	AnswerNotFound bool
 }
 
 // LoadV1Models reads the V1Models settings from the environment.
@@ -81,6 +87,7 @@ func LoadV1Models() V1Models {
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
 		SearchTimeout:     2500 * time.Millisecond,
 		ServeDataMiss:     boolEnv("FEED_GO_V1_MODELS_SERVE_DATA_MISS", false),
+		AnswerNotFound:    boolEnv("FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", false),
 	}
 	if ms, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MEILI_CALL_TIMEOUT_MS"))); err == nil && ms > 0 {
 		c.SearchTimeout = time.Duration(ms) * time.Millisecond

@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 )
 
 // SessionCookieBase is SESSION_COOKIE_BASE in packages/civitai-auth/src/constants.ts.
@@ -226,11 +228,22 @@ func jitter(d time.Duration) time.Duration {
 // ErrInvalid is returned for any token that is not a valid session.
 var ErrInvalid = errors.New("invalid session token")
 
+// now is the key set's clock (refetch pacing, staleness): the wall clock unless a test sets Now. It
+// paces this process, so eval mode's frozen clock never reaches it (a frozen pace would never refetch).
 func (v *Verifier) now() time.Time {
 	if v.Now != nil {
 		return v.Now()
 	}
 	return time.Now()
+}
+
+// tokenNow is the instant a token's times (exp, nbf, signedAt, iat0) are read at: clock.Now (eval
+// mode's FEED_GO_EVAL_NOW, else the wall clock) unless a test sets Now.
+func (v *Verifier) tokenNow() time.Time {
+	if v.Now != nil {
+		return v.Now()
+	}
+	return clock.Now()
 }
 
 // Verify checks signature, issuer, expiry, purpose and lineage. It does NOT check revocation.
@@ -280,7 +293,7 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 }
 
 func (v *Verifier) checkClaims(c *Claims) error {
-	now := v.now()
+	now := v.tokenNow()
 	nowSec := float64(now.UnixMilli()) / 1000
 	if v.Issuer != "" && c.Iss != v.Issuer {
 		return ErrInvalid

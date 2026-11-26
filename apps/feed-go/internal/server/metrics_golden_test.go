@@ -189,7 +189,7 @@ func TestProbeComputedMetricsMiss(t *testing.T) {
 					}
 					checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 					rec := &hydrate.PresenceProbe{Checker: checker}
-					err := probes[gc.procedure].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+					_, err := probes[gc.procedure].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
 					result, missed := classifyProbe(err, rec.Misses(), rec.Raced(), checker.MissReason)
 					if !slices.Contains(missed, hydrate.CacheMetrics) {
 						t.Fatalf("reader %v: missed %v, want metrics reported", withReader, missed)

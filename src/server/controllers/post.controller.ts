@@ -1,4 +1,5 @@
 import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { assertPostVisibleToViewer } from '~/server/services/post-viewer-visibility.service';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { TRPCError } from '@trpc/server';
@@ -762,12 +763,13 @@ export const deletePostHandler = async ({
 // #region [post images]
 export const updatePostImageHandler = async ({
   input,
+  ctx,
 }: {
   input: UpdatePostImageInput;
   ctx: ProtectedContext;
 }) => {
   try {
-    return await updatePostImage({ ...input });
+    return await updatePostImage({ ...input }, { asModerator: actsAsModerator(ctx) });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

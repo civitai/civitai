@@ -26,6 +26,7 @@ import { readSong } from '~/server/services/song-read.service';
 import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { constants } from '~/server/common/constants';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   MINOR_VIOLATION,
@@ -222,6 +223,7 @@ export const findReportToFoldInto = ({
   reason,
   details,
   pendingOnly,
+  filedBySystem,
   tx,
 }: {
   reportType: ReportEntity;
@@ -230,6 +232,8 @@ export const findReportToFoldInto = ({
   details?: MixedObject;
   /** Fold only into a report still waiting for a moderator. */
   pendingOnly?: boolean;
+  /** Fold only into a report the system filed (true) or one a person filed (false). */
+  filedBySystem?: boolean;
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
@@ -257,6 +261,9 @@ export const findReportToFoldInto = ({
       reason,
       [reportType]: { [entityIdField]: entityReportId },
       ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
+      ...(filedBySystem === undefined
+        ? {}
+        : { userId: filedBySystem ? constants.system.user.id : { not: constants.system.user.id } }),
       ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
@@ -271,6 +278,7 @@ const validateReportCreation = async ({
   details,
   pendingOnly,
   whilePending,
+  filedBySystem,
   tx,
 }: {
   userId: number;
@@ -281,6 +289,7 @@ const validateReportCreation = async ({
   pendingOnly?: boolean;
   /** Fold only if the report is still Pending when written, else return null so a new one is filed. */
   whilePending?: boolean;
+  filedBySystem?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -290,6 +299,7 @@ const validateReportCreation = async ({
     reason,
     details,
     pendingOnly,
+    filedBySystem,
     tx,
   });
 
@@ -630,6 +640,11 @@ export const createReport = async ({
             reportsFeaturePageComment ||
             foldIntoPendingOnly,
           whilePending: reportsFeaturePageComment,
+          // The scan's report on a Feature Pages comment is what a moderator's dismissal lifts its
+          // hide by, and a person's report holds that lift: neither is folded into the other.
+          filedBySystem: reportsFeaturePageComment
+            ? userId === constants.system.user.id
+            : undefined,
           tx: callerTx,
         })
       : null;
@@ -861,6 +876,17 @@ export async function bulkSetReportStatus({
       ? await removedReporterIds(ids)
       : new Set<number>();
 
+  // Only a set holding a report on a Feature Pages comment reads the mirror table, so every other
+  // set runs as before, whatever this environment has of that table.
+  const touchesFeaturePages =
+    status === ReportStatus.Unactioned &&
+    (
+      await dbWrite.$queryRaw<{ found: number }[]>`
+        SELECT 1 AS found FROM "CommentV3Report" cr JOIN "CommentV3" c ON c.id = cr."commentId"
+        WHERE cr."reportId" = ANY(${ids}::int[]) AND c."entityType"::text = 'featurePage'
+        LIMIT 1`
+    ).length > 0;
+
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
   // its reporters are not paid a second time. Who is paid comes from the rows this changed.
@@ -879,6 +905,13 @@ export async function bulkSetReportStatus({
       }
     WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
       ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
+      ${
+        // A batch lifts no scan hide: the scan's report on its hide waits for its own dismissal.
+        touchesFeaturePages
+          ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "FeaturePageCommentMirror" m
+              WHERE m."scanHideReportId" = "Report".id)`
+          : Prisma.empty
+      }
     RETURNING id, "userId", "alsoReportedBy", details
   `;
 
@@ -1067,7 +1100,8 @@ export async function getAppealDetails({
     case EntityType.Image:
       entityDetails = await dbRead.image.findUnique({
         where: { id: appeal.entityId },
-        select: { id: true, url: true, userId: true },
+        // An appealed image is a removed or blocked one: its media goes to moderators only.
+        select: { id: true, url: !!isModerator, userId: true },
       });
       break;
     case EntityType.Model:

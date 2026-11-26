@@ -98,6 +98,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
 import { dbRead } from '../db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
@@ -450,6 +451,7 @@ export const upsertCollectionHandler = async ({
         ...input,
         userId: user.id,
         isModerator: user.isModerator,
+        asModerator: actsAsModerator(ctx),
         isMember: !!user.tier && user.tier !== 'free',
         canUseMusic: ctx.features?.music,
       },
@@ -502,6 +504,7 @@ export const updateCollectionCoverImageHandler = async ({
         ...input,
         userId: user.id,
         isModerator: user.isModerator,
+        asModerator: actsAsModerator(ctx),
         canUseMusic: ctx.features?.music,
       },
     });

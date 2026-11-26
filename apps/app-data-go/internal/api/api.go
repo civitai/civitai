@@ -3,13 +3,22 @@
 //	GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 //	    Authorization: Bearer <the app's hub access token for the signed-in user>
 //
+// `major` names the collection schema major read; a read that names none reads the collection's
+// current major when the adapter's streams name it (major.go, THE CURRENT MAJOR), and otherwise the
+// major it opened at (1 unless a stream named another).
+//
 // Every private record of one collection of the app `slug` names that the token's user may read
 // through the token's app: the app's own collection when slug is the app itself, or another app's
 // collection the user granted this app. Which of the two is never the client's to say: both paths
 // name the source by slug and leave the basis to the server (the adapter on the registry path, the
 // site on REST). The answer is
 //
-//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
+//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}]}
+//
+// `version` is the document's store version, the number a write's `ifVersion` is compared against;
+// `rev` is kept beside it, opaque. A registry item carries `version` when the adapter's private feed
+// sent it (format k3 on); an item without one omits the field (the SDK then reads version 0, which
+// no stored document has, so a write built from it is refused `version_conflict`, never applied).
 //
 // `keyPrefix` keeps only the records whose storage key starts with it, on both paths (the
 // document store's own `keyPrefix` on REST). A registry item carries its key beside its URN, as the
@@ -33,7 +42,7 @@
 // unfloored). Also the keyed get,
 //
 //	GET /v1/apps/{slug}/collections/{collection}/records/{key}[?major=N][&minSeq=S]
-//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"data":{…}}}
+//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}}
 //
 // answered from the stream (base plus overlay) only: a key the stream does not hold, or a stream
 // that holds nothing, is `404 not_found`, and a stream that cannot answer is `401` or `503` with
@@ -71,6 +80,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
@@ -82,9 +92,11 @@ import (
 // allow it.
 const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
-// Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0.
+// Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0,
+// with the stream's latest meta (which names the collection's current major: major.go) and a Lease
+// on a stream the read opened.
 type Streams interface {
-	ReadAt(ctx context.Context, token, schema string, minSeq int64) ([]registry.Entity, error)
+	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
 }
 
 // Lister is the REST fallback (rest.Client).
@@ -123,6 +135,7 @@ type Server struct {
 	Anonymous func(ctx context.Context, token string) (exchange.AnonymousClaims, error)
 
 	shared sharedSchemas
+	majors majorHints
 }
 
 // Routes registers a set of routes on the API's mux.
@@ -148,6 +161,11 @@ func (s *Server) Handler() http.Handler {
 			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me", s.mine)
 			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me/{parent}", s.mine)
 		}
+		// One rule for the major a request that names none uses, reads and writes alike (major.go): a
+		// write's acknowledgement is held at the major the next no-major read of it opens.
+		if w, ok := s.Writes.(impliedMajorUser); ok {
+			w.UseImpliedMajor(s.majors.guess)
+		}
 		s.Writes.Register(mux)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -159,18 +177,27 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
-	return withClientIP(mux)
+	return withEdge(mux)
 }
 
-// withClientIP puts the viewer's address, as the edge named it (exchange.ClientIPHeader), in each
-// request's context: the user exchange charges a token it has not seen exchanged to it
-// (exchange.Guard) and forwards it to the hub. A request without the header carries none.
-func withClientIP(h http.Handler) http.Handler {
+// withEdge puts what the edge named about the viewer in each request's context:
+//   - their address (exchange.ClientIPHeader): the user exchange charges a token it has not seen
+//     exchanged to it (exchange.Guard) and forwards it to the hub. A request without the header
+//     carries none;
+//   - their region (sign.ReadRegion): a stream a read opens for them carries it to the adapter
+//     (session.WithRegion) when its manager forwards regions (session.Options.Region, on with
+//     APP_DATA_FORWARD_REGION); otherwise it is read and never sent. A request with none, or with a
+//     malformed one, carries none, and the adapter holds it to SFW, as before.
+func withEdge(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		if ip := exchange.ClientIPFrom(r.Header); ip != "" {
-			r = r.WithContext(exchange.WithClientIP(r.Context(), ip))
+			ctx = exchange.WithClientIP(ctx, ip)
 		}
-		h.ServeHTTP(w, r)
+		if region, bad := sign.ReadRegion(r.Header); bad == "" {
+			ctx = session.WithRegion(ctx, region)
+		}
+		h.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -191,10 +218,17 @@ func preflight(w http.ResponseWriter, _ *http.Request) {
 }
 
 type item struct {
-	URN  string          `json:"urn,omitempty"`
-	Key  string          `json:"key,omitempty"`
-	Rev  string          `json:"rev"`
-	Data json.RawMessage `json:"data"`
+	URN string `json:"urn,omitempty"`
+	Key string `json:"key,omitempty"`
+	Rev string `json:"rev"`
+	// Version is the document's store version (see the package comment); omitted when unknown (0).
+	Version int64           `json:"version,omitempty"`
+	Data    json.RawMessage `json:"data"`
+}
+
+// entityItem is a private stream record as a read answers it.
+func entityItem(e registry.Entity) item {
+	return item{URN: e.URN, Key: e.Key, Rev: e.Rev, Version: e.Version, Data: e.Body}
 }
 
 type answer struct {
@@ -216,8 +250,11 @@ type readParams struct {
 	schema           string
 	slug, collection string
 	major            int
-	minSeq           int64
-	token            string
+	// implied: the read named no major, so it reads the collection's current one (major.go), and
+	// major is the guess it opens first.
+	implied bool
+	minSeq  int64
+	token   string
 }
 
 // params reads the schema, the floor (writes on only) and the token, or answers the refusal and
@@ -225,14 +262,15 @@ type readParams struct {
 func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time) (readParams, bool) {
 	var p readParams
 	q := r.URL.Query()
-	major := 1
+	// No major: the current one (major.go), opened at the last one the streams named.
+	major, implied := s.majors.guess(r.PathValue("slug"), r.PathValue("collection")), true
 	if raw := q.Get("major"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
 			s.refuse(w, start, http.StatusBadRequest, "bad_request", "major must be an integer", "bad_request")
 			return p, false
 		}
-		major = n
+		major, implied = n, false
 	}
 	if raw, given := q["minSeq"]; given && s.Writes != nil {
 		if len(raw) != 1 || !minSeqRE.MatchString(raw[0]) {
@@ -246,7 +284,7 @@ func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time)
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
 		return p, false
 	}
-	p.schema, p.slug, p.collection, p.major = schema, r.PathValue("slug"), r.PathValue("collection"), major
+	p.schema, p.slug, p.collection, p.major, p.implied = schema, r.PathValue("slug"), r.PathValue("collection"), major, implied
 	token, ok := bearer(r)
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
@@ -285,7 +323,7 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.LiveWait)
 	defer cancel()
-	ents, err := s.Streams.ReadAt(ctx, p.token, p.schema, p.minSeq)
+	ents, err := s.view(ctx, &p)
 	switch {
 	case errors.Is(err, session.ErrNotPrivate) && s.Shared != nil:
 		s.shared.mark(p.schema, time.Now())
@@ -314,7 +352,7 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 		s.write(w, start, http.StatusNotFound, errBody("not_found", "document not found"), "registry", "not_found")
 		return
 	}
-	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: item{URN: found.URN, Key: found.Key, Rev: found.Rev, Data: found.Body}}, "registry", "ok")
+	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: entityItem(*found)}, "registry", "ok")
 }
 
 // refusedReasons are the stream reasons the keyed get answers 401 (WRITES-DESIGN.md, the
@@ -383,7 +421,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		reason = "token_not_exchangeable"
 	default:
 		lctx, lcancel := context.WithTimeout(ctx, s.LiveWait)
-		ents, err := s.Streams.ReadAt(lctx, token, p.schema, p.minSeq)
+		ents, err := s.view(lctx, &p)
 		lcancel()
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
@@ -443,7 +481,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	}
 	out := answer{Source: "rest", Items: make([]item, 0, len(docs))}
 	for _, d := range docs {
-		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
+		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Version: d.Version, Data: d.Data})
 	}
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
 }
@@ -453,7 +491,7 @@ func registryAnswer(ents []registry.Entity, keyPrefix string) answer {
 	out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
 	for _, e := range ents {
 		if strings.HasPrefix(e.Key, keyPrefix) {
-			out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
+			out.Items = append(out.Items, entityItem(e))
 		}
 	}
 	return out

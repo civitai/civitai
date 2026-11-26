@@ -494,6 +494,71 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
   });
 
+  // A blocked blob never counts as rated, whatever level it carries (as for an extraction entry).
+  it.each([
+    [
+      'says it is withheld',
+      () => {
+        const res = blobResponse('png-bytes', 'image/png', 'pg');
+        res.headers.set('x-blocked-reason', 'Withheld');
+        return res;
+      },
+    ],
+    [
+      'resolved to the blocked placeholder',
+      () => {
+        const res = blobResponse('png-bytes', 'image/png', 'pg');
+        Object.defineProperty(res, 'url', {
+          value: 'https://orch.example/v2/consumer/blobs/blocked/token',
+        });
+        return res;
+      },
+    ],
+  ])(
+    'an item whose blob %s is left out of the zip, unrated, and keeps it Private',
+    async (_, blocked) => {
+      lockedRow(shared);
+      fetchMock.mockImplementation(async (url: string) =>
+        url.includes('/BBB') ? blocked() : blobResponse('png-bytes', 'image/png', 'pg')
+      );
+      expect(await archive()).toBe('Private');
+      expect(swaps()[0].data.metadata).toMatchObject({
+        nsfwLevel: 1,
+        fullyRated: false,
+        numImages: 1,
+        numCaptions: 1,
+        datasetArchive: { items: 1, skipped: 1, blocked: 1, complete: false },
+      });
+      // Neither the placeholder bytes nor the blocked item's caption reach the zip.
+      const zip = await JSZip.loadAsync(uploads.stored[0]);
+      expect(Object.keys(zip.files).sort()).toEqual(['01.png', '01.txt']);
+    }
+  );
+
+  it('reads a /blocked/ path on another host as content, not the placeholder', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => {
+      const res = blobResponse('png-bytes', 'image/png', 'pg');
+      Object.defineProperty(res, 'url', {
+        value: 'https://cdn.example/v2/consumer/blobs/blocked/token',
+      });
+      return res;
+    });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: true, numImages: 2 });
+  });
+
+  it("reads the orchestrator's 'none' block header as not blocked", async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => {
+      const res = blobResponse('png-bytes', 'image/png', 'pg');
+      res.headers.set('x-blocked-reason', 'none');
+      return res;
+    });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: true, numImages: 2 });
+  });
+
   it('a zip with no rated item stays Private and records no rating', async () => {
     lockedRow(shared);
     fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png', null));
@@ -506,5 +571,62 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     answerQueries([]);
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
     expect(swaps()).toHaveLength(0);
+  });
+});
+
+// The rating probe as a fixture (synthetic, no user content): a blob named like a caption, a
+// real caption, and a blob the orchestrator could not rate.
+describe('archiveStudioDataset types and rates every entry', () => {
+  const PNG = '\x89PNG\r\n\x1a\nfixture';
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
+    lockedRow({ ownRights: true, shareDataset: true });
+  });
+
+  const zipNames = async () => Object.keys((await JSZip.loadAsync(uploads.stored[0])).files).sort();
+
+  it('writes an image named like a caption as media, never as a .txt the caption reader skips', async () => {
+    getWorkflow.mockResolvedValue(
+      workflowWith([
+        { air: 'urn:air:other:blob@04.txt', caption: 'a red fox' },
+        { air: 'urn:air:other:blob@05.txt', caption: '' },
+      ])
+    );
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/04.txt')
+        ? blobResponse(PNG, 'image/png', 'pg')
+        : blobResponse(PNG, 'application/octet-stream', 'pg')
+    );
+    await archiveStudioDataset(7);
+
+    const zip = await JSZip.loadAsync(uploads.stored[0]);
+    // (a) the image is media with a level; (b) the only .txt is the real caption.
+    expect(await zipNames()).toEqual(['01.png', '01.txt', '02.bin']);
+    expect(await zip.file('01.png')!.async('string')).toBe(PNG);
+    expect(await zip.file('01.txt')!.async('string')).toBe('a red fox');
+    expect(swaps()[0].data.metadata).toMatchObject({
+      numImages: 2,
+      numCaptions: 1,
+      nsfwLevel: 1,
+      fullyRated: true,
+    });
+  });
+
+  it('counts an entry the orchestrator could not rate as unrated, so the zip is not fully rated', async () => {
+    getWorkflow.mockResolvedValue(
+      workflowWith([
+        { air: 'AAA.png', caption: 'a' },
+        { air: 'BBB.png', caption: 'b' },
+      ])
+    );
+    fetchMock.mockImplementation(async (url: string) =>
+      blobResponse(PNG, 'image/png', url.includes('/BBB') ? null : 'pg')
+    );
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
+    // (c) every entry is in the zip and either carries a level or leaves the zip unrated.
+    expect(await zipNames()).toEqual(['01.png', '01.txt', '02.png', '02.txt']);
+    expect(swaps()[0].data.metadata).toMatchObject({ numImages: 2, fullyRated: false });
+    expect(swaps()[0].data.visibility).toBe('Private');
   });
 });

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   clearFpRestricted,
+  unactionReportLiftingScanHide,
   leaseFpMirrorRows,
   markFpMirrorDue,
   markFpReconciled,
@@ -32,6 +33,8 @@ import {
 } from '~/server/services/commentv3/write.service';
 import { COMMENT_V3_MIGRATIONS, SETUP } from '~/server/services/feature-pages/__tests__/fp-harness';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { scamSubject, scamTextFromHtml } from '~/server/services/text-scan/profiles/scam-text';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
 /**
  * Feature Pages comment writers racing on real Postgres: two connections, each in its own
@@ -118,6 +121,7 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
     const [value, rest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
     await c0.query(value);
     await c0.query(`-- 2.${rest}`);
+    await c0.query(migration('20271129120000_feature_page_mirror_lift'));
     // Every column the report path's Prisma queries read or write.
     await c0.query(
       `ALTER TABLE "Report" ADD COLUMN "userId" int NOT NULL DEFAULT 1,
@@ -1033,6 +1037,161 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
       ]);
       expect(a.filter((id) => b.includes(id))).toEqual([]);
       expect(a.length + b.length).toBe(6);
+    });
+  });
+
+  // Who may lift what: civitai/civitai#10409.
+  describe("a moderator's lift of the scan's hide", () => {
+    /** textScanTextHash of the comment's text now, as the CommentV3 scan profile builds it. */
+    const textHashOf = async (id: number) => {
+      const { rows } = await c0.query<{ userId: number; content: string }>(
+        `SELECT "userId", content FROM "CommentV3" WHERE id = $1`,
+        [id]
+      );
+      return textScanTextHash(
+        scamSubject(rows[0].userId, [
+          { heading: 'Comment', text: scamTextFromHtml(rows[0].content) },
+        ])
+      );
+    };
+    /** The scan's hide through hideFlaggedFpComment, its report filed by createReport. */
+    const scanHide = async (id: number) =>
+      hideFlaggedFpComment(id, {
+        textHash: await textHashOf(id),
+        currentTextHash: textHashOf,
+        db: {
+          $queryRawUnsafe: txOf(c0).$queryRawUnsafe,
+          $transaction: async (fn: (tx: never) => Promise<unknown>) => {
+            await c2.query('BEGIN');
+            try {
+              const value = await fn(txOf(c2) as never);
+              await c2.query('COMMIT');
+              return value;
+            } catch (e) {
+              await c2.query('ROLLBACK');
+              throw e;
+            }
+          },
+        } as never,
+        createReport: async (input) =>
+          prisma.$transaction((tx) =>
+            createReport({ ...(input as Parameters<typeof createReport>[0]), tx })
+          ),
+      });
+    /** A person's report on it, as the report path files one. */
+    const personReport = (id: number) =>
+      prisma.$transaction((tx) =>
+        createReport({
+          userId: 3,
+          isModerator: false,
+          id,
+          type: ReportEntity.CommentV3,
+          reason: ReportReason.AdminAttention,
+          details: { reason: 'Other', comment: 'please look' },
+          tx,
+        } as Parameters<typeof createReport>[0])
+      );
+    const reportsOn = async (id: number) =>
+      (
+        await c0.query(
+          `SELECT r.id, r."userId", r.status, r."alsoReportedBy" FROM "Report" r
+           JOIN "CommentV3Report" cr ON cr."reportId" = r.id WHERE cr."commentId" = $1 ORDER BY r.id`,
+          [id]
+        )
+      ).rows as { id: number; userId: number; status: string; alsoReportedBy: number[] }[];
+    const unaction = (reportId: number) =>
+      unactionReportLiftingScanHide(kysely, { reportId, actorId: 1, systemUserId: -1 });
+    const modActivity = () =>
+      c0.query(
+        `CREATE TABLE IF NOT EXISTS "ModActivity"(id serial PRIMARY KEY, "userId" int,
+           activity text NOT NULL, "entityType" text, "entityId" int)`
+      );
+
+    it("a person's report filed before the scan's: kept apart, it holds the lift until it is ruled", async () => {
+      currentId = await seed();
+      await modActivity();
+      await personReport(currentId);
+      await scanHide(currentId);
+      const [person, scan] = await reportsOn(currentId);
+      expect(person).toMatchObject({ userId: 3, alsoReportedBy: [] });
+      expect(scan).toMatchObject({ userId: -1, status: 'Pending' });
+      expect(
+        (
+          await c0.query(
+            `SELECT "scanHideReportId" FROM "FeaturePageCommentMirror" WHERE "commentId" = $1`,
+            [currentId]
+          )
+        ).rows[0]
+      ).toEqual({ scanHideReportId: scan.id });
+      expect(await unaction(scan.id)).toMatchObject({ changed: false, held: 'reported' });
+      await c0.query(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [person.id]);
+      expect((await unaction(scan.id)).lifted).toMatchObject({ commentId: currentId });
+      expect((await state(currentId)).hidden).toBe(false);
+    });
+
+    it("a person's report filed after the scan's: kept apart, the dismissal is held", async () => {
+      currentId = await seed();
+      await modActivity();
+      await scanHide(currentId);
+      await personReport(currentId);
+      const [scan, person] = await reportsOn(currentId);
+      expect(scan).toMatchObject({ userId: -1, alsoReportedBy: [] });
+      expect(person).toMatchObject({ userId: 3 });
+      expect(await unaction(scan.id)).toMatchObject({ changed: false, held: 'reported' });
+      expect((await state(currentId)).hidden).toBe(true);
+    });
+
+    it('waits on a csam hold decision in flight, then sees the hold and lifts nothing', async () => {
+      currentId = await seed();
+      await c0.query(
+        `CREATE TABLE IF NOT EXISTS "ModActivity"(id serial PRIMARY KEY, "userId" int,
+           activity text NOT NULL, "entityType" text, "entityId" int)`
+      );
+      await c0.query(`UPDATE "CommentV3" SET hidden = true, "hiddenAt" = now() WHERE id = $1;`, [
+        currentId,
+      ]);
+      await c0.query(
+        `UPDATE "FeaturePageCommentMirror" m SET "scanHiddenAt" = c."hiddenAt", "scanHiddenVersion" = 1
+         FROM "CommentV3" c WHERE c.id = m."commentId" AND m."commentId" = $1`,
+        [currentId]
+      );
+      const [{ id: reportId }] = (
+        await c0.query(
+          `INSERT INTO "Report"(status, reason, "userId", details)
+           VALUES ('Pending', 'AdminAttention', -1, '{"comment":"auto-hidden by scan"}')
+           RETURNING id`
+        )
+      ).rows;
+      await c0.query(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+        currentId,
+        reportId,
+      ]);
+      await c0.query(
+        `UPDATE "FeaturePageCommentMirror" SET "scanHideReportId" = $2 WHERE "commentId" = $1`,
+        [currentId, reportId]
+      );
+
+      await c1.query('BEGIN');
+      await hold(txOf(c1), c1);
+      const settled = { done: false };
+      const lifted = unactionReportLiftingScanHide(kysely, {
+        reportId,
+        actorId: 1,
+        systemUserId: -1,
+      }).then((r) => r.lifted);
+      void lifted.finally(() => (settled.done = true));
+      let waited = false;
+      for (let i = 0; i < 200 && !settled.done && !waited; i++) {
+        const { rows } = await c0.query(
+          `SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'`
+        );
+        waited = rows.length > 0;
+        if (!waited) await new Promise((r) => setTimeout(r, 10));
+      }
+      await c1.query('COMMIT');
+      expect(waited).toBe(true);
+      expect(await lifted).toBeNull();
+      expect((await state(currentId)).hidden).toBe(true);
     });
   });
 });

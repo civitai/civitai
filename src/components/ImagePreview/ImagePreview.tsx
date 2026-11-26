@@ -5,6 +5,10 @@ import type { EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import type { ImageGetInfinite } from '~/types/router';
 import clsx from 'clsx';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
@@ -13,7 +17,11 @@ type ImagePreviewProps = {
   image: Pick<
     ImageGetInfinite[number],
     'id' | 'url' | 'name' | 'width' | 'height' | 'hash' | 'type'
-  > & { metadata?: MixedObject | null };
+  > & {
+    metadata?: MixedObject | null;
+    /** With it, a moderator's tile the CDN refuses is loaded from `/api/mod/retracted-media`. */
+    ingestion?: ImageGetInfinite[number]['ingestion'] | null;
+  };
   edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
@@ -24,7 +32,7 @@ type ImagePreviewProps = {
 };
 
 export function ImagePreview({
-  image: { id, url, name, type, width, height, hash, metadata },
+  image,
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -35,6 +43,14 @@ export function ImagePreview({
   radius,
   ...props
 }: ImagePreviewProps) {
+  const { id, url, name, type, width, height, hash, metadata } = image;
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const {
+    src: retractedSrc,
+    onCdnError,
+    mediaRef,
+  } = useRetractedMedia(image, features.modRetractedMedia ? currentUser : null);
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
   edgeImageProps.width ??= width ?? undefined;
 
@@ -61,6 +77,13 @@ export function ImagePreview({
     >
       {nsfw ? (
         <MediaHash hash={hash} width={width} height={height} />
+      ) : retractedSrc ? (
+        <RetractedMedia
+          src={retractedSrc}
+          type={type}
+          alt={name ?? undefined}
+          className="size-full object-cover"
+        />
       ) : (
         <EdgeMedia2
           src={url}
@@ -72,6 +95,9 @@ export function ImagePreview({
           onClick={onClick}
           metadata={metadata}
           style={edgeImageStyle}
+          onError={onCdnError}
+          mediaRef={mediaRef}
+          videoProps={onCdnError ? { onError: onCdnError } : undefined}
         />
       )}
     </div>

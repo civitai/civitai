@@ -113,6 +113,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
@@ -162,6 +163,7 @@ import {
   canSeeSongs,
   songsHiddenSql,
 } from '~/server/services/image-visibility.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
@@ -1605,6 +1607,8 @@ export const upsertCollection = async ({
     isModerator?: boolean;
     isMember?: boolean;
     canUseMusic?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
   };
   /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
   coverViewer?: { id?: number; isModerator?: boolean };
@@ -1612,6 +1616,7 @@ export const upsertCollection = async ({
   const {
     userId,
     isModerator,
+    asModerator = false,
     isMember,
     canUseMusic,
     id,
@@ -1756,6 +1761,8 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
+      if (existingCover && existingCover.id !== currentCollection.image?.id)
+        await assertCoverMediaAllowed(existingCover.id, asModerator, tx);
       if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
         if (image.url !== newCoverUrl)
@@ -2121,6 +2128,27 @@ export const upsertCollection = async ({
   return collection;
 };
 
+/**
+ * Refuses an image as a collection cover when its block refuses its owner the media
+ * (`ownerMediaAllowed`), since the cover serves it; a moderator view (`actsAsModerator`) may set it.
+ * The visibility checks keep an owner's blocked row, so without this an owner could set their own
+ * blocked image as a cover and have it served.
+ */
+async function assertCoverMediaAllowed(
+  imageId: number,
+  asModerator: boolean,
+  db: Pick<Prisma.TransactionClient, 'image'> = dbWrite
+) {
+  if (asModerator) return;
+  // primary: a block from moments ago must refuse it.
+  const image = await db.image.findUnique({
+    where: { id: imageId },
+    select: { ingestion: true, blockedFor: true },
+  });
+  if (image && !ownerMediaAllowed(image))
+    throw throwBadRequestError('This image is blocked and cannot be used here.');
+}
+
 export const updateCollectionCoverImage = async ({
   input,
 }: {
@@ -2128,9 +2156,11 @@ export const updateCollectionCoverImage = async ({
     userId: number;
     isModerator?: boolean;
     canUseMusic?: boolean;
+    /** A moderator on a session or a full-access key (`actsAsModerator`). */
+    asModerator?: boolean;
   };
 }) => {
-  const { id, imageId, userId, isModerator, canUseMusic } = input;
+  const { id, imageId, userId, isModerator, canUseMusic, asModerator = false } = input;
   const permission = await getUserCollectionPermissionsById({
     id,
     userId,
@@ -2157,6 +2187,8 @@ export const updateCollectionCoverImage = async ({
     music: !!canUseMusic || !!isModerator,
     confirmBlockOnPrimary: true,
   });
+  await assertCoverMediaAllowed(imageId, asModerator);
+  await assertNotDealFileImages([imageId], 'used here');
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },

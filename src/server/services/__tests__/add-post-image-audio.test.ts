@@ -113,6 +113,7 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForPosts: vi.fn(),
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
+  feedThumbnailFields: vi.fn(() => ({})),
   invalidateManyImageExistence: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),

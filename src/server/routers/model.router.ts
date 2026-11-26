@@ -473,7 +473,7 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
     .use(associationSourceVisible)
-    .query(({ input }) => getAssociatedResourcesSimple(input)),
+    .query(({ input, ctx }) => getAssociatedResourcesSimple(input, ctx.user)),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)

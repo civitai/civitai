@@ -12,6 +12,7 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import {
   CLIENT_CREDENTIALS_ONLY_SCOPES,
   readApiKeyScope,
+  RUNNER_ONLY_SCOPES,
   TokenScopePresets,
 } from '~/shared/constants/token-scope.constants';
 import {
@@ -25,6 +26,8 @@ import {
 export type BearerTokenOptions = {
   /** Accept a client-credentials token; only the catalog endpoints pass this. */
   allowClientCredentialsOnly?: boolean;
+  /** Accept a recipe-runner token. Only the runner mint passes this (guard `no-runner-mint-bearer-outside-mint`). */
+  allowRunnerMint?: boolean;
 };
 
 /**
@@ -67,6 +70,12 @@ export async function getBearerTokenUser(
       return null;
   }
   return user;
+}
+
+/** The token of an `Authorization: Bearer <token>` header, or null. */
+export function bearerTokenFromHeader(header: unknown): string | null {
+  if (typeof header !== 'string') return null;
+  return /^Bearer\s+(\S+)$/i.exec(header.trim())?.[1] ?? null;
 }
 
 /**
@@ -122,6 +131,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   if (!options.allowClientCredentialsOnly && (tokenScope & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n) {
     return null;
   }
+  if (!options.allowRunnerMint && (tokenScope & RUNNER_ONLY_SCOPES) !== 0n) return null;
 
   // Update lastUsedAt (debounced — at most once per hour per key, fire-and-forget)
   if (await claimLastUsedWrite(apiKey, now)) {

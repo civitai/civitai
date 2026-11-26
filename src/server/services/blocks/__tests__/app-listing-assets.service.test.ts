@@ -388,6 +388,23 @@ describe('screenshot CRUD', () => {
     expect(arg.order).toBe(3);
   });
 
+  it("addScreenshot refuses the owner's image when it is a deal file's scan copy", async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
+    mockDb.image.findUnique.mockResolvedValue(validScreenshotImage);
+    const prior = mockDb.$queryRaw.getMockImplementation();
+    mockDb.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      [...strings].join('').includes('ServiceDealFile') ? [{ dealFileImage: true }] : []) as never);
+    try {
+      const { addListingScreenshot } = await import('../app-listing-assets.service');
+      await expect(
+        addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
+    } finally {
+      if (prior) mockDb.$queryRaw.mockImplementation(prior);
+    }
+  });
+
   it('addScreenshot rejects a non-owner non-mod', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     const { addListingScreenshot } = await import('../app-listing-assets.service');

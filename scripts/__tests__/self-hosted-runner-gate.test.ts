@@ -27,7 +27,13 @@ const gate = (fallback: string, override = false) =>
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
-type Job = { 'runs-on'?: unknown; permissions?: unknown };
+type Job = {
+  if?: string;
+  'runs-on'?: unknown;
+  permissions?: unknown;
+  services?: Record<string, Service>;
+  env?: Record<string, string>;
+};
 type Workflow = {
   on?:
     | string
@@ -81,18 +87,88 @@ function evaluate(
       .endsWith(suffix.toLowerCase());
   const body = expr
     .replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+    .replace(/\b(github(?:\.[\w-]+)+)\.\*\.([\w-]+)/g, "names($1, '$2')")
     .replace(/!=/g, '!==')
     .replace(/(?<![!=])==(?!=)/g, '===')
     .replace(
       /\b(github|vars|inputs)((?:\.[\w-]+)+)/g,
       (_, root: string, rest: string) => `(${root}${rest.replace(/\./g, '?.')} ?? null)`
     );
-  return new Function('github', 'vars', 'inputs', 'endsWith', `return (${body});`)(
+  const format = (template: string, ...args: unknown[]) =>
+    template.replace(/\{\{|\}\}|\{(\d+)\}/g, (m, i?: string) =>
+      i === undefined ? m[0] : String(args[Number(i)])
+    );
+  const names = (list: unknown, key: string) =>
+    Array.isArray(list) ? list.map((x: Record<string, unknown>) => x[key]) : [];
+  const contains = (haystack: unknown, needle: string) =>
+    Array.isArray(haystack) ? haystack.includes(needle) : String(haystack ?? '').includes(needle);
+  const startsWith = (s: unknown, prefix: string) => String(s ?? '').startsWith(prefix);
+  return new Function(
+    'github',
+    'vars',
+    'inputs',
+    'endsWith',
+    'fromJSON',
+    'format',
+    'names',
+    'contains',
+    'startsWith',
+    `return (${body});`
+  )(
     ctx.github,
     ctx.vars,
     ctx.inputs ?? {},
-    endsWith
+    endsWith,
+    JSON.parse,
+    format,
+    names,
+    contains,
+    startsWith
   ) as string;
+}
+
+type Service = { image?: unknown; credentials?: unknown };
+
+// The condition part of a gate: what decides civitai-dc, without the two runner labels.
+const conditionOf = (runsOn: string) =>
+  runsOn.replace(/^\$\{\{ /, '').replace(/ && 'civitai-dc' \|\| '[^']+' \}\}$/, '');
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// The one shape a civitai-dc service may log in with: the whole credentials mapping switches on the
+// runs-on condition, to the job's own github.token on civitai-dc and to an empty mapping (no login)
+// elsewhere. Not a username and password each switching to '': the workflow schema types both as
+// non-empty strings and fails the job at setup when one evaluates empty.
+const credentialsOn = (cond: string) =>
+  `\${{ ${cond} && fromJSON(format('{{"username":"{0}","password":"{1}"}}', github.actor, github.token)) || fromJSON('{}') }}`;
+
+// What a civitai-dc job may not carry. Its one allowed token is its own read-only github.token,
+// in a service's credentials for the private ghcr mirror, on exactly the condition that sends the
+// job to civitai-dc: a hosted run (a fork PR, a bot) gets no credentials and Docker Hub's copy of
+// the same digest, so a fork's token never meets the private package.
+function tokenViolations(job: Job, runsOn: string): string[] {
+  const cond = conditionOf(runsOn);
+  const found: string[] = [];
+  if (JSON.stringify(job.permissions ?? {}).includes('write')) found.push('write permission');
+  const scrubbed = structuredClone(job);
+  for (const [name, svc] of Object.entries(scrubbed.services ?? {})) {
+    if (svc.credentials === undefined) continue;
+    if ((job.permissions as Record<string, string> | undefined)?.packages !== 'read')
+      found.push(`${name}: credentials without packages: read`);
+    if (svc.credentials !== credentialsOn(cond)) {
+      found.push(`${name}: credentials do not switch as a whole on the runs-on condition`);
+      continue;
+    }
+    const image = new RegExp(
+      `^\\$\\{\\{ ${escapeRegExp(
+        cond
+      )} && 'ghcr\\.io/civitai/[\\w.-]+:[\\w.-]+@(sha256:[0-9a-f]{64})' \\|\\| '(?!ghcr\\.io/)[\\w./-]+:[\\w.-]+@(sha256:[0-9a-f]{64})' \\}\\}$`
+    ).exec(String(svc.image));
+    if (!image || image[1] !== image[2])
+      found.push(`${name}: image not ghcr on the runs-on condition, else Docker Hub, same digest`);
+    delete svc.credentials;
+  }
+  if (/secrets\.|github\.token/.test(JSON.stringify(scrubbed))) found.push('token or secret');
+  return found;
 }
 
 const repo = 'civitai/civitai';
@@ -155,13 +231,144 @@ describe('self-hosted runner gate', () => {
   // A runner whose lifetime is not ours to guarantee must not hold a write token or a secret.
   it.each(selfHostedJobs)(
     '$file → $name holds no write permission and no secret',
-    ({ job, workflowPermissions }) => {
+    ({ job, runsOn, workflowPermissions }) => {
       expect(workflowPermissions).toBeDefined();
       expect(JSON.stringify(workflowPermissions)).not.toMatch(/write/);
-      expect(JSON.stringify(job.permissions ?? {})).not.toMatch(/write/);
-      expect(JSON.stringify(job)).not.toMatch(/secrets\.|github\.token/);
+      expect(tokenViolations(job, runsOn as string)).toEqual([]);
     }
   );
+
+  it('logs in to a registry only from a civitai-dc job', () => {
+    const civitaiDc = new Set(selfHostedJobs.map((j) => `${j.file} → ${j.name}`));
+    const loggingIn = workflows.flatMap(({ file, doc }) =>
+      Object.entries(doc.jobs ?? {})
+        .filter(([, job]) => Object.values(job.services ?? {}).some((s) => s.credentials))
+        .map(([name]) => `${file} → ${name}`)
+    );
+    expect(loggingIn).toContain('lint.yml → unit');
+    expect(loggingIn.filter((job) => !civitaiDc.has(job))).toEqual([]);
+  });
+
+  const unit = selfHostedJobs.find((j) => j.file === 'lint.yml' && j.name === 'unit');
+  const unitJob = unit?.job as Job;
+  const unitRunsOn = unit?.runsOn as string;
+
+  // The runner logs in to ghcr.io with the job's token by itself for any ghcr.io service or
+  // container image that has no credentials, so a hosted job must not name one at all.
+  it('pulls a ghcr.io image only from a civitai-dc job', () => {
+    const civitaiDc = new Set(selfHostedJobs.map((j) => `${j.file} → ${j.name}`));
+    const hostedGhcr = workflows.flatMap(({ file, doc }) =>
+      Object.entries(doc.jobs ?? {})
+        .filter(([name]) => !civitaiDc.has(`${file} → ${name}`))
+        .filter(([, job]) =>
+          JSON.stringify([(job as { container?: unknown }).container, job.services]).includes(
+            'ghcr.io'
+          )
+        )
+        .map(([name]) => `${file} → ${name}`)
+    );
+    expect(hostedGhcr).toEqual([]);
+  });
+
+  it('names no ghcr.io image on the hosted branch of a civitai-dc job', () => {
+    const hostedBranch = (image: unknown) =>
+      /\|\| '([^']+)' \}\}$/.exec(String(image))?.[1] ?? String(image);
+    const ghcrOnHosted = selfHostedJobs.flatMap(({ file, name, job }) =>
+      Object.entries((job as Job).services ?? {})
+        .filter(([, s]) => hostedBranch(s.image).startsWith('ghcr.io/'))
+        .map(([svc]) => `${file} → ${name} → ${svc}`)
+    );
+    expect(ghcrOnHosted).toEqual([]);
+  });
+
+  it('lint.yml unit pulls both services from the ghcr mirror on civitai-dc', () => {
+    expect(Object.values(unitJob.services ?? {}).filter((s) => s.credentials)).toHaveLength(2);
+  });
+
+  it('unit-verify re-runs on the images unit pulls on hosted runners', () => {
+    const verify = workflows.find((w) => w.file === 'lint.yml')?.doc.jobs?.['unit-verify'] as Job;
+    const fallbacks = Object.fromEntries(
+      Object.entries(unitJob.services ?? {}).map(([name, s]) => [
+        name,
+        /\|\| '([^']+)' \}\}$/.exec(String(s.image))?.[1],
+      ])
+    );
+    expect(
+      Object.fromEntries(Object.entries(verify.services ?? {}).map(([n, s]) => [n, s.image]))
+    ).toEqual(fallbacks);
+  });
+
+  const redis = (j: Job) => j.services!.redis;
+  const dcCond = () => conditionOf(unitRunsOn);
+  // Each mutant is one way a future edit could hand the token to a hosted run or a broader one, or
+  // fail every hosted run at setup.
+  const mutants: Array<[string, (job: Job) => void]> = [
+    [
+      'unconditional credentials',
+      (j) =>
+        (redis(
+          j
+        ).credentials = `\${{ fromJSON(format('{{"username":"{0}","password":"{1}"}}', github.actor, github.token)) }}`),
+    ],
+    [
+      'credentials whose condition drops the kill switch',
+      (j) =>
+        (redis(j).credentials = credentialsOn(
+          dcCond().replace(/vars\.CIVITAI_DC_OFF != 'true' \|\| /, '')
+        )),
+    ],
+    [
+      'secrets.GITHUB_TOKEN in place of github.token',
+      (j) =>
+        (redis(j).credentials = credentialsOn(dcCond()).replace(
+          'github.token',
+          'secrets.GITHUB_TOKEN'
+        )),
+    ],
+    [
+      'a username and password that evaluate to empty strings on hosted runs',
+      (j) =>
+        (redis(j).credentials = {
+          username: `\${{ ${dcCond()} && github.actor || '' }}`,
+          password: `\${{ ${dcCond()} && github.token || '' }}`,
+        }),
+    ],
+    ['the token in the job env', (j) => (j.env = { ...j.env, GH_TOKEN: '${{ github.token }}' })],
+    ['packages: write', (j) => (j.permissions = { contents: 'read', packages: 'write' })],
+    ['no packages: read', (j) => (j.permissions = { contents: 'read' })],
+    [
+      'an unconditional ghcr image',
+      (j) => (redis(j).image = String(redis(j).image).replace(/^.* && '(ghcr[^']+)'.*$/, '$1')),
+    ],
+    [
+      'a ghcr image pinned by tag only',
+      (j) =>
+        (redis(j).image = String(redis(j).image).replace(/@sha256:[0-9a-f]{64}(?=' \|\|)/, '')),
+    ],
+    [
+      'a ghcr.io fallback at the same digest',
+      (j) =>
+        (redis(j).image = String(redis(j).image).replace(
+          /\|\| '[^']+@(sha256:[0-9a-f]{64})' \}\}$/,
+          (_m, digest: string) => `|| 'ghcr.io/civitai/redis:7@${digest}' }}`
+        )),
+    ],
+    [
+      'a Docker Hub fallback on another digest',
+      (j) =>
+        (redis(j).image = String(redis(j).image).replace(
+          /[0-9a-f]{64}(?=' \}\}$)/,
+          '0'.repeat(64)
+        )),
+    ],
+  ];
+
+  it.each(mutants)('rejects %s', (_label, mutate) => {
+    const job = structuredClone(unitJob);
+    mutate(job);
+    expect(JSON.stringify(job)).not.toBe(JSON.stringify(unitJob));
+    expect(tokenViolations(job, unitRunsOn)).not.toEqual([]);
+  });
 
   const cases: Array<[string, unknown, Record<string, string>, string]> = [
     ['fork pull_request', pr('someone/civitai'), {}, 'ubuntu-latest'],
@@ -229,6 +436,21 @@ describe('self-hosted runner gate', () => {
     ).toBe(expected);
   });
 
+  const labelled = (headRepo: string | null) => {
+    const github = pr(headRepo);
+    return {
+      ...github,
+      event: { pull_request: { ...github.event.pull_request, labels: [{ name: 'full-ci' }] } },
+    };
+  };
+  it.each([
+    ['a same-repo', repo, true],
+    ['a fork', 'someone/civitai', false],
+    ['a deleted fork', null, false],
+  ] as const)('unit runs on %s pull_request labelled full-ci: %s', (_label, headRepo, expected) => {
+    expect(evaluate(String(unitJob.if), { github: labelled(headRepo), vars: {} })).toBe(expected);
+  });
+
   const off = { CIVITAI_DC_OFF: 'true' };
   const dispatch = (actor = 'someone', repository = repo) => ({
     repository,
@@ -275,4 +497,36 @@ describe('self-hosted runner gate', () => {
       expected
     );
   });
+
+  // The runner, the registry and the credentials are decided together for every case above, and
+  // no credential field ever evaluates empty (the workflow schema fails the job at setup if one does).
+  it.each([
+    ...cases.map((c) => [...c, {}] as const),
+    ...overrideCases.map((c) => [...c, { runner: 'dc' }] as const),
+  ])(
+    'unit: %s pulls from the registry its runner can reach',
+    (_label, github, vars, expected, inputs) => {
+      const ctx = {
+        github: { actor: 'someone', ...(github as object), token: 'TOKEN' },
+        vars,
+        inputs,
+      };
+      const onDc = evaluate(unitRunsOn, ctx) === SELF_HOSTED;
+      expect(onDc).toBe(expected === SELF_HOSTED);
+      for (const svc of Object.values(unitJob.services ?? {})) {
+        expect(String(evaluate(String(svc.image), ctx)).startsWith('ghcr.io/civitai/')).toBe(onDc);
+        const credentials =
+          typeof svc.credentials === 'string'
+            ? (evaluate(svc.credentials, ctx) as unknown as Record<string, unknown>)
+            : Object.fromEntries(
+                Object.entries(svc.credentials as Record<string, string>).map(([k, v]) => [
+                  k,
+                  evaluate(v, ctx),
+                ])
+              );
+        for (const value of Object.values(credentials)) expect(value).toMatch(/./);
+        expect(credentials).toEqual(onDc ? { username: ctx.github.actor, password: 'TOKEN' } : {});
+      }
+    }
+  );
 });

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { PoolClient } from 'pg';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import {
   STAFF_NAME_RE,
   STAFF_PLACEHOLDER,
@@ -11,6 +12,7 @@ import {
 } from '../column-policy';
 import { csvFile, type ExportWriter, type ManifestFile } from '../output';
 import { REGISTRY, type RegistryEntry } from '../registry';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
 
 /** Rows fetched per round trip from a table's cursor. */
 export const PG_FETCH_SIZE = 500;
@@ -92,13 +94,19 @@ function subjectWhere(model: DmmfModel, subject: readonly string[], userId: numb
   return parts.length > 1 ? `(${parts.join(' OR ')})` : parts[0];
 }
 
+/** `OWNER_HIDDEN_REVIEWS` as a SQL list. The values are fixed identifiers, so they are inlined. */
+const OWNER_HIDDEN_SQL_LIST = OWNER_HIDDEN_REVIEWS.map((review) => {
+  if (!/^[a-z]+$/.test(review)) throw new Error(`unexpected review type ${review}`);
+  return `'${review}'`;
+}).join(', ');
+
 /**
  * Images the content-safety rules leave out of an export, rows and URLs both; kept at least as wide
  * as `excludedImageRow`. Over "Image" unaliased.
  */
 export const IMAGE_SAFETY_CONDITION = `(
   COALESCE("Image"."blockedFor", '') = 'CSAM'
-  OR COALESCE("Image"."needsReview", '') IN ('csam', 'minor')
+  OR COALESCE("Image"."needsReview", '') IN (${OWNER_HIDDEN_SQL_LIST})
   OR ("Image"."minor" AND ("Image"."ingestion" = 'Blocked' OR "Image"."blockedFor" IS NOT NULL))
   OR "Image"."userId" IN (SELECT c."userId" FROM "CsamReport" c WHERE c."userId" IS NOT NULL)
   OR "Image".id IN (
@@ -269,6 +277,9 @@ export function transformRow(
   }
   if (plan.rule === 'restriction-triggers' && 'triggers' in out)
     out.triggers = reduceTriggers(row.triggers);
+  // The one author-facing redaction of `deploy_detail`, the same the author's other reads use.
+  if (plan.rule === 'publish-deploy-detail' && typeof out.deployDetail === 'string')
+    out.deployDetail = redactDeployDetailForAuthor(out.deployDetail);
   const notes: { column: string; text: string }[] = [];
   for (const c of plan.noteColumns) {
     const v = row[c.field];

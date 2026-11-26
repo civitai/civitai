@@ -28,6 +28,7 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Published',
       "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode "ModelModifier",
@@ -45,6 +46,7 @@ beforeAll(async () => {
       availability text NOT NULL DEFAULT 'Public'
     );
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Image" (
       type text NOT NULL DEFAULT 'image',
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,

@@ -14,6 +14,7 @@ import {
   continueTrainingWhatIf,
   countDatasetMature,
   KOHYA_UNAVAILABLE,
+  DatasetUnreadableError,
   MatureRepriceError,
   submitTraining,
   submitTrainingBatch,
@@ -1006,6 +1007,84 @@ describe('mature charge: Blue first, never Green', () => {
       expect(headBlob).toHaveBeenCalledTimes(2);
       for (const [args] of headBlob.mock.calls) expect(args.query?.workflowId).toBeUndefined();
     });
+
+    // An unreadable image on a Green charge is refused, not priced (civitai/civitai#10541).
+    const unreadableSpicy = (args: { path: { blobId: string } }) =>
+      args.path.blobId === 'spicy-2'
+        ? Promise.resolve({ response: new Response(null, { status: 503 }) })
+        : Promise.resolve(nsfwHead('PG'));
+    const twoItems = [
+      { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+      { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
+    ];
+
+    it('refuses a Green run priced as not mature when an image cannot be read, charging nothing', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      const refused = submitTrainingBatch(
+        client,
+        [{ ...baseRun(), items: twoItems, currencies: ['blue', 'green'] }],
+        { checkText }
+      );
+      await expect(refused).rejects.toBeInstanceOf(DatasetUnreadableError);
+      await expect(refused).rejects.toMatchObject({ unreadable: 1 });
+      await expect(refused).rejects.not.toThrow(/mature/i);
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('refuses the whole batch when one run of it has an unreadable image: no run is submitted', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      await expect(
+        submitTrainingBatch(
+          client,
+          [
+            {
+              ...baseRun(),
+              items: [{ air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' }],
+              currencies: ['blue', 'green'],
+            },
+            { ...baseRun(), items: twoItems, currencies: ['blue', 'green'] },
+          ],
+          { checkText }
+        )
+      ).rejects.toBeInstanceOf(DatasetUnreadableError);
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('an unreadable image on a charge with no Green submits on the currencies picked', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ny' } });
+      const { workflowIds } = await submitTrainingBatch(
+        client,
+        [{ ...baseRun(), items: twoItems, currencies: ['blue', 'yellow'] }],
+        { checkText }
+      );
+      expect(workflowIds).toEqual(['wf-ny']);
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('an unreadable image on a run priced as mature submits out of Green', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-pm' } });
+      await submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            items: twoItems,
+            currencies: ['blue', 'green'],
+            meta: { name: 'm', matureCount: 1 },
+          },
+        ],
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
   });
 
   describe('train further', () => {
@@ -1118,6 +1197,48 @@ describe('mature charge: Blue first, never Green', () => {
       const probed = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-m0' });
       expect(probed.matureCount).toBe(1);
       expect(headBlob).toHaveBeenCalledTimes(2);
+    });
+
+    const unreadableSource = (args: { path: { blobId: string } }) =>
+      args.path.blobId === 'spicy-2'
+        ? Promise.resolve({ response: new Response(null, { status: 503 }) })
+        : Promise.resolve(nsfwHead('PG'));
+
+    it('refuses a Green continuation quoted as not mature when a source image cannot be read', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-u1'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSource);
+      const before = submitWorkflow.mock.calls.length;
+      const refused = continueTraining(client, { ...opts, workflowId: 'wf-u1' }, { checkText });
+      await expect(refused).rejects.toBeInstanceOf(DatasetUnreadableError);
+      await expect(refused).rejects.toMatchObject({ unreadable: 1 });
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('a continuation quoted as mature with an unreadable source image submits out of Green', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-u2'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSource);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-u2', quotedMatureCount: 1 },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('a continuation with no Green and an unreadable source image submits', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-u3'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(unreadableSource);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-u3', currencies: ['blue', 'yellow'] },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
     });
   });
 
@@ -1597,7 +1718,8 @@ describe('Kohya training', () => {
     { resolution: 1000 },
     { kohya: { numRepeats: 0 } },
     { kohya: { seed: -1 } },
-    { kohya: { clipSkip: 1 } },
+    { kohya: { clipSkip: 0 } },
+    { kohya: { clipSkip: 5 } },
     { minSnrGamma: 2.5 },
     { optimizer: 'Automagic' },
     { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
@@ -1610,7 +1732,7 @@ describe('Kohya training', () => {
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 
-  it('accepts clip skip 1 for SD1 but not for SDXL, whose trainer would raise it to 2', () => {
+  it('sends a picked clip skip of 1 for SD1 and SDXL', () => {
     const data: Parameters<typeof buildKohyaInput>[1] = { type: 'blobs', items: [] };
     const sd1 = {
       ...run(),
@@ -1619,9 +1741,78 @@ describe('Kohya training', () => {
       kohya: { clipSkip: 1 },
     };
     expect(buildKohyaInput(sd1, data, 'none')).toMatchObject({ clipSkip: 1 });
-    expect(() => buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toThrow(
-      /clipSkip must be an integer between 2 and 4/
+    expect(buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toMatchObject({
+      clipSkip: 1,
+    });
+  });
+
+  describe('clip skip copied by train further', () => {
+    const sourceInput = (model: string, clipSkip: number) => ({
+      ...buildKohyaInput(run(), { type: 'blobs', items: [] }, 'none'),
+      model,
+      clipSkip,
+    });
+    const continued = async (input: Record<string, unknown>, metadata: object) => {
+      getWorkflow.mockResolvedValue({
+        data: {
+          metadata,
+          steps: [
+            {
+              $type: 'training',
+              input,
+              output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+            },
+          ],
+        },
+      });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-further' } });
+      const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+      await continueTraining(client, opts, { checkText, kohyaAllowed: true });
+      return submitWorkflow.mock.calls.at(-1)![0].body as {
+        metadata: Record<string, unknown>;
+        steps: { input: Record<string, unknown> }[];
+      };
+    };
+    const SDXL = 'urn:air:sdxl:checkpoint:civitai:1@2';
+
+    // On a run from before 1 was selectable for SDXL, a stored 1 stands for 2: copied as stored, a
+    // continuation would train on the last layer.
+    it.each(['sdxl', 'pony', 'illustrious', 'noobai'])(
+      'copies an unstamped %s clip skip of 1 as 2',
+      async (family) => {
+        const model = `urn:air:${family}:checkpoint:civitai:1@2`;
+        const body = await continued(sourceInput(model, 1), { trigger: 'ohwx' });
+        expect(body.steps[0]!.input.clipSkip).toBe(2);
+      }
     );
+
+    it.each([
+      ['a 1 picked on a stamped SDXL run', SDXL, 1, { clipSkipAsSent: true }, 1],
+      ['an unstamped SDXL 3', SDXL, 3, {}, 3],
+      ['an unstamped SD1 1', 'urn:air:sd1:checkpoint:civitai:1@2', 1, {}, 1],
+    ])('keeps %s', async (_label, model, clipSkip, metadata, expected) => {
+      const body = await continued(sourceInput(model, clipSkip), metadata);
+      expect(body.steps[0]!.input.clipSkip).toBe(expected);
+    });
+
+    it('keeps a flow run at 1', async () => {
+      const model = 'urn:air:flux1:checkpoint:civitai:1@2';
+      const input = buildKohyaInput(
+        { ...run(), ecosystem: 'flux1', customModel: model },
+        { type: 'blobs', items: [] },
+        'none'
+      );
+      const body = await continued(input, {});
+      expect(body.steps[0]!.input.clipSkip).toBe(1);
+    });
+
+    it('stamps the continuation and a fresh submit', async () => {
+      const body = await continued(sourceInput(SDXL, 2), {});
+      expect(body.metadata.clipSkipAsSent).toBe(true);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya' } });
+      await submitTraining(client, run());
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.metadata.clipSkipAsSent).toBe(true);
+    });
   });
 
   it('leaves SDXL prediction mode to checkpoint metadata by default', () => {
@@ -1770,13 +1961,14 @@ describe('dataset maturity under the v2 rating', () => {
     });
   });
 
-  it("never uses a stored rating for a blob this caller's HEAD could not read", async () => {
+  it("refuses a blob this caller's HEAD could not read rather than use its stored rating", async () => {
     uploadRatings({ 'theirs-1': null });
     const read = vi.fn(async () => new Map([['theirs-1', { mature: true }]]));
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-theirs' } });
-    // Counted as the upload path counts a failed HEAD (not mature), not by the shared cache's entry.
-    await submitWith(ratingAt(1, {}, read), { items: items('theirs-1') });
-    expect(lastBody().currencies).toEqual(['blue', 'green']);
+    const before = submitWorkflow.mock.calls.length;
+    await expect(
+      submitWith(ratingAt(1, {}, read), { items: items('theirs-1') })
+    ).rejects.toBeInstanceOf(DatasetUnreadableError);
+    expect(submitWorkflow.mock.calls.length).toBe(before);
   });
 
   it('keep training counts an unstamped source under the v2 rating', async () => {
@@ -1828,6 +2020,48 @@ describe('dataset maturity under the v2 rating', () => {
       expect(count.unratedKeys).toEqual([key]);
     }
   );
+
+  it("hands back a stored verdict only for a blob this caller's HEAD could read", async () => {
+    headBlob.mockReset();
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, { status: path.blobId === 'theirs.png' ? 403 : 204 }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['mine.png', 'theirs.png'],
+      ratingAt(1, { 'mine.png': { mature: false }, 'theirs.png': { mature: true } })
+    );
+    expect(count.verdicts).toEqual({ 'mine.png': false });
+  });
+
+  it('counts where the v2 verdict and the upload rating disagree, each way', async () => {
+    headBlob.mockReset();
+    const upload: Record<string, string> = {
+      'a.png': 'R',
+      'b.png': 'PG',
+      'c.png': 'R',
+      'd.png': 'PG',
+    };
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, {
+        status: 204,
+        headers: { 'x-nsfw-level': upload[path.blobId]! },
+      }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['a.png', 'b.png', 'c.png', 'd.png'],
+      ratingAt(1, {
+        'a.png': { mature: false },
+        'b.png': { mature: true },
+        'c.png': { mature: true },
+      })
+    );
+    expect(count.v2NotMatureUploadMature).toBe(1);
+    expect(count.v2MatureUploadNotMature).toBe(1);
+    expect(count.verdicts).toEqual({ 'a.png': false, 'b.png': true, 'c.png': true });
+    expect(count.mature).toBe(2);
+  });
 
   const pricedMature = { meta: { name: 'test', matureCount: 1 } };
 

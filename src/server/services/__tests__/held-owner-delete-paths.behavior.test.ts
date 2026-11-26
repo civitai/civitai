@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
@@ -38,11 +39,16 @@ vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-import { deleteImages, imagesPendingDeletion } from '~/server/services/image.service';
+import {
+  deleteImages,
+  imagesPendingDeletion,
+  writeModeratorBlock,
+} from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { pendingDeletes } from '~/server/jobs/pending-deletes';
 import {
   ACCOUNT_DELETION_DRAIN,
+  lockAccountDeletionPendingDeletes,
   releaseAccountDeletionPendingDeletes,
 } from '~/server/services/account-deletion-images';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
@@ -69,7 +75,7 @@ const urlOf = (uid: number) => `key-${uid}`;
 const OWNERS = [...Object.values(HOLDS), PLAIN];
 
 const BASE_SCHEMA = `
-  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
+  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
   CREATE TABLE "Image" (
     id int PRIMARY KEY,
@@ -126,18 +132,25 @@ const BASE_SCHEMA = `
     data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
     UNIQUE ("entityType", "entityId", type)
   );
+  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
 `;
 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(BASE_SCHEMA);
   await holder.db.exec(imageUseTablesSql);
+  await holder.db.exec(
+    readFileSync(
+      `${__dirname}/../../../../packages/civitai-db-schema/prisma/migrations/20271203120000_image_kept_hide_marker_drop/migration.sql`,
+      'utf8'
+    )
+  );
 });
 
 const reset = () =>
   holder.db.exec(`
     SET session_replication_role = replica;
-    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue";
+    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "ServiceDealFileEntry", "ServiceDealFile";
     SET session_replication_role = DEFAULT;
   `);
 
@@ -146,12 +159,15 @@ const failingDeletes = new Set<number>();
 const heldTextPosts = new Set<number>();
 // Runs once, before the next image DELETE: what changes while a job run is under way.
 let beforeNextImageDelete: (() => Promise<unknown>) | undefined;
+/** Runs every statement on the database, for a caller whose writes the filter above would drop. */
+let passAllSql = false;
 
 beforeEach(async () => {
   vi.clearAllMocks();
   failingDeletes.clear();
   heldTextPosts.clear();
   beforeNextImageDelete = undefined;
+  passAllSql = false;
   vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
   // Only the statements that read or write the rows under test reach Postgres; the rest
@@ -163,7 +179,8 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
-      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
+      !passAllSql &&
+      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"|FROM "ServiceDealFileEntry"/.test(
         sql.text
       )
     )
@@ -382,6 +399,63 @@ describe('an owner deleting their post keeps shop artwork only for a plain image
 });
 
 // The member limit lives in the shared delete; these pin that each service hands it the actor.
+describe('an image a deal file entry points at', () => {
+  beforeEach(() =>
+    holder.db.query(`INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES ($1)`, [imageOf(PLAIN)])
+  );
+
+  it('is refused to its owner, and the row and the file stay', async () => {
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await queuedFiles()).toEqual([]);
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it.each<[string, Parameters<typeof deleteImages>[1]['actor']]>([
+    ['a moderator', { id: MODERATOR, isModerator: true }],
+    ["the deal pipeline's own cleanup", { system: 'creator-service-deal-unpack' }],
+    ["an account deletion's drain", { system: ACCOUNT_DELETION_DRAIN }],
+  ])('is deleted by %s', async (_, actor) => {
+    await deleteImages([imageOf(PLAIN)], { actor });
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+
+  it("answers a stranger's delete as it answers any other image of someone else's", async () => {
+    await deleteImages([imageOf(PLAIN)], { actor: { id: 4242, isModerator: false } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it('is left by any other system delete, which deletes the rest of its batch', async () => {
+    const other = 3001;
+    await holder.db.query(`INSERT INTO "Image" (id, "userId", url) VALUES ($1, $2, 'key-other')`, [
+      other,
+      PLAIN,
+    ]);
+    await deleteImages([imageOf(PLAIN), other], { actor: { system: 'some-other-job' } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+    expect(await imageRow(other)).toBeUndefined();
+  });
+
+  it("is refused to its owner as a preview's copy, and the cleanup keeps it", async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await holder.db.query(`INSERT INTO "ServiceDealFile" ("imageId") VALUES ($1)`, [
+      imageOf(PLAIN),
+    ]);
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await deleteImages([imageOf(PLAIN)], { actor: { system: 'some-other-job' } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it('control: the owner still deletes an image no entry points at', async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } });
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+});
+
 describe("a member deleting another member's content", () => {
   const STRANGER = { id: 4242, isModerator: false };
 
@@ -402,7 +476,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
     (
       await holder.db.query<{ entityId: number; entityType: string; data: unknown }>(
         `SELECT "entityId", "entityType"::text AS "entityType",
-           CASE WHEN "createdAt" > now() THEN data || '{"waiting": true}' ELSE data END AS data
+           CASE WHEN "createdAt" > now() THEN data || '{"waiting": true}' ELSE data END - 'prior' AS data
          FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityType", "entityId"`
       )
     ).rows;
@@ -518,7 +592,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
   // A restore releases it only once the case finds nothing (Legal, #10235); any finding deletes it.
   const dismissed = `UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`;
   it.each([
-    ['releases, not deletes,', true, 'dismissed', dismissed, true],
+    ['releases, not deletes, and unhides', true, 'dismissed', dismissed, true],
     ['deletes', true, 'actioned', `UPDATE "Report" SET status = 'Actioned' WHERE id = 1`, false],
     [
       'deletes',
@@ -579,8 +653,13 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       expect(await pending()).toEqual([]);
       const after = await imageRow(imageOf(PLAIN));
-      if (kept) expect(after).toEqual(hidden);
-      else expect(after).not.toEqual(closed);
+      // Released, it is back as it was before the drain hid it, and back in search.
+      if (kept) {
+        expect(after).toEqual(before);
+        expect(imagesMetricsSearchIndex.queueUpdate).toHaveBeenLastCalledWith([
+          { id: imageOf(PLAIN), action: SearchIndexUpdateQueueAction.Update },
+        ]);
+      } else expect(after).not.toEqual(closed);
     }
   );
 
@@ -630,6 +709,218 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await queuedFiles()).toEqual([
       { entityId: imageOf(PLAIN), data: { url: urlOf(PLAIN) } },
     ]);
+  });
+
+  // The owner asked while the case kept the image, and the case found nothing: theirs is a plain owner
+  // delete, read as the image was before it hid it.
+  it.each([
+    ['keeps the object shop artwork uses for an owner delete whose case found nothing', '', true],
+    [
+      'control: purges it once a moderator has acted on the image since',
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (${MODERATOR}, 'review', 'image', ${imageOf(PLAIN)})`,
+      false,
+    ],
+  ])('%s', async (_, meanwhile, keeps) => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+    `);
+    await deleteImages([imageOf(PLAIN)], { actor: owner });
+    expect(await imageRow(imageOf(PLAIN))).toMatchObject({ ingestion: 'Blocked' });
+    if (meanwhile) await holder.db.exec(meanwhile);
+
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+    await runJob();
+
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+    expect(await queuedFiles()).toEqual([
+      {
+        entityId: imageOf(PLAIN),
+        data: { url: urlOf(PLAIN), ...(keeps && { keepShopArtwork: true }) },
+      },
+    ]);
+  });
+
+  it("control: purges it for the owner's delete of an image only someone else's queued ask hid", async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+    `);
+    await deleteImages([imageOf(PLAIN)], {
+      actor: { system: ACCOUNT_DELETION_DRAIN },
+      onlyWhere: Prisma.sql`true`,
+    });
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+
+    await deleteImages([imageOf(PLAIN)], { actor: owner });
+
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+    expect(await queuedFiles()).toEqual([
+      { entityId: imageOf(PLAIN), data: { url: urlOf(PLAIN) } },
+    ]);
+  });
+
+  // The hide and the drop of its purge row are two statements: a failure of the second takes back
+  // the first, since a delete that hides what no moderator decided on runs them in a transaction.
+  it.each([
+    ['takes back the hide when its second statement fails', true],
+    ['control: keeps the hide when both statements succeed', false],
+  ])('%s', async (_, fails) => {
+    vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: unknown) => {
+      await holder.db.exec('BEGIN');
+      try {
+        const result = await (fn as (tx: unknown) => unknown)(dbMock.dbWrite);
+        await holder.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        await holder.db.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+    `);
+    if (fails)
+      await holder.db.exec(`CREATE FUNCTION fail_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'statement failed'; END $$;
+        CREATE TRIGGER fail_delete BEFORE DELETE ON "JobQueue" FOR EACH STATEMENT EXECUTE FUNCTION fail_delete()`);
+    try {
+      await deleteImages([imageOf(PLAIN)], {
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        onlyWhere: Prisma.sql`true`,
+      }).catch(() => undefined);
+    } finally {
+      if (fails)
+        await holder.db.exec(`DROP TRIGGER fail_delete ON "JobQueue"; DROP FUNCTION fail_delete()`);
+    }
+
+    expect(await imageRow(imageOf(PLAIN))).toMatchObject({
+      ingestion: fails ? 'Scanned' : 'Blocked',
+    });
+    expect(await pending()).toHaveLength(fails ? 0 : 1);
+  });
+
+  // A restored account's drain-kept content comes back together, once none of it is in an open case.
+  it("releases a restored account's drain deletes together once its last open case closes", async () => {
+    const OTHER = 4013;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", url, "nsfwLevel") VALUES (${OTHER}, ${PLAIN}, 'key-other', 2);
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM'), (2, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1), (${OTHER}, 2);
+    `);
+    const before = [await imageRow(imageOf(PLAIN)), await imageRow(OTHER)];
+    await deleteImages([imageOf(PLAIN), OTHER], {
+      actor: { system: ACCOUNT_DELETION_DRAIN },
+      onlyWhere: Prisma.sql`true`,
+    });
+    const hidden = [await imageRow(imageOf(PLAIN)), await imageRow(OTHER)];
+    expect(hidden.map((row) => row.ingestion)).toEqual(['Blocked', 'Blocked']);
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+    const rows = async () => [await imageRow(imageOf(PLAIN)), await imageRow(OTHER)];
+
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    expect(await rows()).toEqual(hidden);
+    await runJob();
+    expect(await rows()).toEqual(hidden);
+    expect(await pending()).toHaveLength(2);
+
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 2`);
+    await runJob();
+
+    expect(await rows()).toEqual(before);
+    expect(await pending()).toEqual([]);
+  });
+
+  // The remove-images webhook without a moderator id, and the account-wide block, write no
+  // ModActivity: only the block's own write can tell the lift it is not the hide's.
+  it.each([
+    ['the remove-images webhook', { violationType: 'tos' }],
+    ['the account-wide block', undefined],
+  ])(
+    'keeps the takedown %s writes, with no moderator id, on a kept image once its case closes',
+    async (_, deferFor) => {
+      await holder.db.exec(`
+        ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "pHash" bigint;
+        CREATE TABLE IF NOT EXISTS "ImageDeferredBlockEffect" (
+          "imageId" int PRIMARY KEY, "violationType" text, "notifyOwner" boolean,
+          "reportReason" text, "blockedBy" int);
+        INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+        INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+      `);
+      const before = await imageRow(imageOf(PLAIN));
+      await deleteImages([imageOf(PLAIN)], {
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        onlyWhere: Prisma.sql`true`,
+      });
+      const hidden = await imageRow(imageOf(PLAIN));
+      // Reads as removed already (image-removal-confirmation), so the takedown goes through.
+      expect(hidden).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+      const marker = async () =>
+        (
+          await holder.db.query<{ marker: string | null }>(
+            `SELECT metadata->>'keptHide' AS marker FROM "Image" WHERE id = ${imageOf(PLAIN)}`
+          )
+        ).rows[0].marker;
+      expect(await marker()).not.toBeNull();
+      passAllSql = true;
+      await writeModeratorBlock([imageOf(PLAIN)], deferFor);
+      passAllSql = false;
+      expect(await marker()).toBeNull();
+      // The account is restored, so a no-finding close lets the drain's delete go.
+      expect(await lockAccountDeletionPendingDeletes(PLAIN)).toEqual([{ locked: 1 }]);
+      await releaseAccountDeletionPendingDeletes(PLAIN);
+      await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+      await runJob();
+
+      // The takedown stands, and the restored account's delete is let go.
+      expect(await imageRow(imageOf(PLAIN))).toEqual(hidden);
+      expect(hidden).not.toEqual(before);
+      expect(await pending()).toEqual([]);
+    }
+  );
+
+  it('takes the stamp off a drained post a restore releases, which stays unpublished', async () => {
+    await holder.db.exec(`
+      UPDATE "Post" SET "publishedAt" = now() WHERE id = ${postOf(PLAIN)};
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "PostReport" VALUES (${postOf(PLAIN)}, 1);
+    `);
+    await deletePost({ id: postOf(PLAIN), actor: { system: ACCOUNT_DELETION_DRAIN } });
+    const stamp = `SELECT "publishedAt" IS NULL AS unpublished, metadata->>'unpublishedReason' AS reason
+      FROM "Post" WHERE id = ${postOf(PLAIN)}`;
+    expect((await holder.db.query(stamp)).rows).toEqual([
+      { unpublished: true, reason: 'pending-delete' },
+    ]);
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+
+    expect((await holder.db.query(stamp)).rows).toEqual([{ unpublished: true, reason: null }]);
+  });
+
+  // The drain's hide is no moderation of its own: a cleanup that replaces its restore-marked ask is
+  // carried out once the case closes, not rescheduled behind that hide.
+  it('carries out a cleanup that replaced a restore-marked ask once the case closes', async () => {
+    const LOOSE = 4012;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", url) VALUES (${LOOSE}, ${PLAIN}, 'key-loose2');
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${LOOSE}, 1);
+    `);
+    await deleteImages([LOOSE], {
+      actor: { system: ACCOUNT_DELETION_DRAIN },
+      onlyWhere: Prisma.sql`true`,
+    });
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    await queueImageDeletes(kyselyOver(dbMock.dbWrite as never), [LOOSE], { ownerId: PLAIN });
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+
+    await runJob();
+
+    expect(await imageRow(LOOSE)).toBeUndefined();
+    expect(await pending()).toEqual([]);
   });
 
   it('carries out a kept post once its report is ruled on', async () => {
@@ -752,6 +1043,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
       INSERT INTO "ImageReport" VALUES (${LOOSE}, 1);
     `);
+    const original = await imageRow(LOOSE);
     await deleteImages([LOOSE], {
       actor: { system: ACCOUNT_DELETION_DRAIN },
       onlyWhere: Prisma.sql`true`,
@@ -769,11 +1061,10 @@ describe('an owner deleting their own content in a child-safety case', () => {
     `);
     await runJob();
 
-    // Still a cleanup, waiting on the image's block; not carried out as an outright delete.
-    expect(await imageRow(LOOSE)).toBeDefined();
-    expect((await pending()).find(({ entityId }) => entityId === LOOSE)?.data).toMatchObject({
-      cleanup: true,
-    });
+    // A cleanup that no longer applies, not carried out as an outright delete: the image stays, as it
+    // was before the drain hid it.
+    expect(await pending()).toEqual([]);
+    expect(await imageRow(LOOSE)).toEqual(original);
   });
 
   // A case closed before the restore: the restore releases it only if it found nothing (Legal, #10235).
@@ -787,14 +1078,17 @@ describe('an owner deleting their own content in a child-safety case', () => {
         INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
         INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
       `);
+      const before = await imageRow(imageOf(PLAIN));
       await deleteImages([imageOf(PLAIN)], {
         actor: { system: ACCOUNT_DELETION_DRAIN },
         onlyWhere: Prisma.sql`true`,
       });
-      const hidden = await imageRow(imageOf(PLAIN));
+      expect(await imageRow(imageOf(PLAIN))).toMatchObject({ ingestion: 'Blocked' });
       await holder.db.exec(`UPDATE "Report" SET status = '${status}' WHERE id = 1`);
 
       await releaseAccountDeletionPendingDeletes(PLAIN);
+      // Released by the restore itself, it is back as it was before the drain hid it.
+      if (kept) expect(await imageRow(imageOf(PLAIN))).toEqual(before);
       expect(await pending()).toEqual(
         kept
           ? []
@@ -809,7 +1103,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       await runJob();
       expect(await pending()).toEqual([]);
-      if (kept) expect(await imageRow(imageOf(PLAIN))).toEqual(hidden);
+      if (kept) expect(await imageRow(imageOf(PLAIN))).toEqual(before);
       else expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
     }
   );
@@ -1130,6 +1424,20 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       expect(await imageRow(ORPHAN)).toBeUndefined();
       expect(await cleanup()).toBeUndefined();
+    });
+
+    it('stays, with its entry pointing at it, when a deal file entry points at it', async () => {
+      await holder.db.exec(`
+        UPDATE "Report" SET status = 'Actioned' WHERE id = 1;
+        INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES (${ORPHAN});
+      `);
+      await runJob();
+
+      expect(await imageRow(ORPHAN)).toBeDefined();
+      expect(
+        (await holder.db.query(`SELECT 1 FROM "ServiceDealFileEntry" WHERE "imageId" = ${ORPHAN}`))
+          .rows
+      ).toHaveLength(1);
     });
 
     it('stays, and its cleanup goes, when something uses it again', async () => {

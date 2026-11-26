@@ -32,6 +32,10 @@ import { imageNotRestrictedSql, imageRestrictedSql } from '~/server/common/image
 import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import {
+  collectionItemExtraFields,
+  type CollectionItemExtraFields,
+} from '~/server/services/blocks/block-collection-item-fields';
 
 /**
  * Resolve the FULL server-side SessionUser for a verified block-token subject
@@ -458,21 +462,28 @@ export type BlockCollectionMediaItem = {
   height: number | null;
   creator: { userId: number; username: string | null } | null;
   nsfwLevel: number;
-};
+} & CollectionItemExtraFields;
 
 /**
  * Map an IMAGE-type expanded collection item (`getCollectionItemsByCollectionId`
- * → `{ type: 'image', data: ImagesInfiniteModel }`) to the block media contract.
+ * → `{ type: 'image', createdAt, data: ImagesInfiniteModel }`) to the block media
+ * contract. `collectionItem` is the expanded item itself: its `createdAt` is the
+ * time the image was added to the collection, which `data.createdAt` (the image's
+ * own) is not.
  */
-export function mapImageItemToMedia(data: {
-  id: number;
-  url?: string | null;
-  type?: string | null;
-  width?: number | null;
-  height?: number | null;
-  nsfwLevel?: number | null;
-  user?: { id: number; username?: string | null } | null;
-}): BlockCollectionMediaItem {
+export function mapImageItemToMedia(
+  data: {
+    id: number;
+    url?: string | null;
+    type?: string | null;
+    width?: number | null;
+    height?: number | null;
+    nsfwLevel?: number | null;
+    metadata?: unknown;
+    user?: { id: number; username?: string | null } | null;
+  },
+  collectionItem: { createdAt?: Date | string | null }
+): BlockCollectionMediaItem {
   const mediaType: 'image' | 'video' = data.type === 'video' ? 'video' : 'image';
   return {
     mediaId: data.id,
@@ -482,5 +493,10 @@ export function mapImageItemToMedia(data: {
     height: data.height ?? null,
     creator: data.user ? { userId: data.user.id, username: data.user.username ?? null } : null,
     nsfwLevel: data.nsfwLevel ?? 0,
+    ...collectionItemExtraFields({
+      mediaType,
+      metadata: data.metadata,
+      addedAt: collectionItem.createdAt,
+    }),
   };
 }

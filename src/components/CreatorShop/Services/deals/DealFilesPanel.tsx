@@ -14,6 +14,7 @@ import {
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { useRedHref } from '~/hooks/useRedHref';
+import { OffDomainNotice } from '~/components/OffDomain/OffDomainNotice';
 import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -327,15 +328,7 @@ function PartyFiles({
 
 /** Where this domain may not show a preview, says so and links to the same page on civitai.red. */
 function PreviewOffDomain() {
-  const redHref = useRedHref();
-  return (
-    <Text size="xs" c="dimmed">
-      This preview isn&apos;t available on civitai.com.{' '}
-      <Anchor href={redHref()} inherit>
-        See it on civitai.red
-      </Anchor>
-    </Text>
-  );
+  return <OffDomainNotice noun="preview" href={useRedHref()()} />;
 }
 
 function DownloadOffDomain() {

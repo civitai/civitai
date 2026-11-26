@@ -1,7 +1,11 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import {
+  composeAdapter,
+  docStreamResolvers,
+  resolveFromCatalog,
+} from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { Adapter } from '~/server/registry-adapter/protocol';
@@ -104,6 +108,8 @@ describe('resolveFromCatalog', () => {
       collection: 'notes',
       contentRating: 'pg',
       family: [V('notes', 1), V('notes', 2)],
+      // The major a write is stamped with now (`currentCollectionMajors`): the newest.
+      currentMajor: 2,
     });
   });
 
@@ -218,10 +224,46 @@ describe('🔴 registry export needs content levels (app-blocks-shared-doc-level
     });
   });
 
-  it('the registry process requires it', () => {
-    const main = readFileSync(path.resolve(__dirname, '../main.ts'), 'utf8');
+  it('the registry process requires it (docStreamResolvers, which main.ts wires)', async () => {
+    const wired = (on: boolean) =>
+      docStreamResolvers({
+        readCatalogApps: async () => [app(OPTED_IN)],
+        readDocStreamApps: async () => [],
+        docLevelsOn: async () => on,
+        features: SWITCH_ON,
+      }).exported(V('notes', 1));
+    expect(await wired(false)).toBeNull();
+    // Positive control: the same app exports once its levels flag is on.
+    expect(await wired(true)).toMatchObject({ appId: 'ab_orbit_31', docLevels: true });
+  });
+});
+
+/**
+ * The seam `docStreamResolvers` cannot see: which reads `main.ts` hands it, and that every document
+ * feed takes its resolver from it. The `resolve:` sites are a ledger: one added or removed fails.
+ */
+describe('main.ts wires the document-stream resolvers', () => {
+  const main = readFileSync(path.resolve(__dirname, '../main.ts'), 'utf8');
+
+  it('🔴 every feed resolves through docStreamResolvers, one resolver each', () => {
+    expect([...main.matchAll(/\bresolve: ([\w.]+)/g)].map((m) => m[1]).sort()).toEqual([
+      'resolvers.exported',
+      'resolvers.level',
+      'resolvers.private',
+      'resolvers.viewer',
+    ]);
+  });
+
+  it('🔴 the export reads the public catalog; the other streams read the document-stream read', () => {
     expect(main).toMatch(
-      /resolveFromCatalog\(readApps, undefined, \{\s*docLevelsOn: isSharedDocLevelsOn,\s*requireDocLevels: true,?\s*\}\)/
+      /const readApps = sharedRead\(\(\) => readCatalog\(deps, \{ listings, onError \}\), pollMs \/ 2\);/
+    );
+    expect(main).toMatch(
+      /const readDocApps = sharedRead\(\(\) => readDocStreamApps\(docStreamDeps\), pollMs \/ 2\);/
+    );
+    expect(main).toMatch(/const docStreamDeps = liveDocStreamReadDeps\(\);/);
+    expect(main).toMatch(
+      /docStreamResolvers\(\{\s*readCatalogApps: readApps,\s*readDocStreamApps: readDocApps,\s*docLevelsOn: isSharedDocLevelsOn,?\s*\}\)/
     );
   });
 });

@@ -5,8 +5,13 @@ import { NsfwLevel } from '~/server/common/enums';
 import {
   imageNotRestrictedSql,
   minorMatureImageVisibleSql,
+  ownerMediaAllowedSql,
 } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
+import {
+  reportListedImageSql,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -167,6 +172,7 @@ export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLev
       WHERE i.id = COALESCE(a."coverId", a."bannerId")
         AND ${servableImageSql}
         AND ${withinItsModelSql}
+        AND ${reportListedImageSql(SIGNED_OUT_REPORT_LISTED)}
         AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
         AND (i."nsfwLevel" & ~${imageLevels}::int) = 0
     )
@@ -270,6 +276,7 @@ export function collectionItemCoversSql({
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
           AND ${withinItsModelSql}
+          AND ${reportListedImageSql(SIGNED_OUT_REPORT_LISTED)}
           AND ${publishedArticleSql}
           ${songs}
     ), articleItemSrc AS MATERIALIZED (
@@ -341,11 +348,11 @@ type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
 
 /**
  * The collection ids whose cover may be shown to `viewer`. Moderators see any cover except a
- * restricted image someone else uploaded; the image's owner sees their own past every rule except
- * the gallery level of a minor or SFW-only model they don't own; everyone else gets
- * `servableCollectionCoverSql`. Decided on the image id the caller read,
- * so a cover changed since then can't be judged on the old one. Pass the client the cover was read
- * from, so the image is judged as of that read.
+ * restricted image someone else uploaded. The image's owner sees their own past the other rules,
+ * with two exceptions: a block that refuses them the media (`ownerMediaAllowed`), and the gallery
+ * level of a minor or SFW-only model they don't own. Everyone else gets `servableCollectionCoverSql`.
+ * Decided on the image id the caller read, so a cover changed since then can't be judged on the
+ * old one. Pass the client the cover was read from, so the image is judged as of that read.
  */
 export async function getServableCoverCollectionIds(
   candidates: CoverCandidate[],
@@ -354,9 +361,9 @@ export async function getServableCoverCollectionIds(
 ): Promise<Set<number>> {
   if (candidates.length === 0) return new Set();
 
-  const ownImage = viewer?.id ? Prisma.sql`i."userId" = ${viewer.id} OR ` : Prisma.empty;
-  // The image's owner sees their own past the rules above, but not past the gallery level of a
-  // model they don't own: that is the model owner's alone.
+  const ownImage = viewer?.id
+    ? Prisma.sql`(i."userId" = ${viewer.id} AND ${ownerMediaAllowedSql('i')}) OR `
+    : Prisma.empty;
   const modelOwnerSql = viewer?.id ? Prisma.sql`hm."userId" = ${viewer.id}` : Prisma.sql`FALSE`;
   const servable = viewer?.isModerator
     ? Prisma.sql`TRUE`

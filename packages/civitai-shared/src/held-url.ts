@@ -7,6 +7,12 @@ import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, sqlRef } from './held-media';
  * parameters in the caller's statement.
  */
 
+/**
+ * The first key of the CSAM hold decision's advisory lock (`pg_advisory_xact_lock(hashtext(key),
+ * entityId)`), for every writer that must not land between a decision's check and its write.
+ */
+export const csamHoldLockKey = (entityType: string) => `csam-hold:${entityType}`;
+
 /** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
 export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
 /**

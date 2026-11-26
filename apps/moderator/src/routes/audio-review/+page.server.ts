@@ -373,7 +373,10 @@ async function approveHeld(event: RequestEvent, kind: 'cover' | 'song') {
       imageIds: target,
       needsReviewByImage: JSON.stringify({ [target]: needsReview }),
     }),
-    event.locals
+    event.locals,
+    // The Held tab decides the flag the page showed, so a csam hold clears like the CSAM queue's
+    // own view: only for a moderator who holds that review.
+    { slug: needsReview }
   );
   if (!('status' in result))
     await recordHeldDecision({

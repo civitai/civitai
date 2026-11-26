@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
   sys: undefined as unknown as SysRedisFake,
   minted: [] as { payload: Record<string, unknown>; jti?: string; expiresIn?: number }[],
   verified: new Map<string, Record<string, unknown>>(),
+  // Undefined (host-only, as on localhost) unless a test signs in toward a spoke on another domain.
+  cookieDomain: undefined as string | undefined,
 }));
 
 // No user rows: the account checks at each mint pass, as for an ordinary account.
@@ -47,9 +49,12 @@ vi.mock('../verifier', () => ({
   },
 }));
 vi.mock('../cookie', () => ({
-  cookieDomain: () => undefined,
+  cookieDomain: () => h.cookieDomain,
   clearOtherCookieNames: () => undefined,
 }));
+// A hand-off stores a pending authorization and checks the spoke registry (a database table).
+vi.mock('../pending-authz', () => ({ issuePendingAuthz: async () => true }));
+vi.mock('../../oauth/first-party', () => ({ isFirstPartyOrigin: async () => true }));
 
 import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionUser } from '@civitai/auth';
@@ -57,6 +62,7 @@ import type { Cookies } from '@sveltejs/kit';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { establishSession, sessionExpiresIn } from '../session';
 import { addDeviceFamily, endDeviceSessions, markFamilyLive } from '../lineage';
+import { canSwitch, linkAccount } from '../device';
 import { sessions } from '../registry';
 
 const user = (id: number) => ({ id, username: `u${id}` } as unknown as SessionUser);
@@ -75,6 +81,10 @@ function makeCookies(initial: Record<string, string>): Cookies {
 const deviceFamilies = (deviceId: string) =>
   `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${deviceId}`;
 const deviceAccounts = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}`;
+const recorded = (deviceId: string) => {
+  const members = h.sys.sets.get(deviceFamilies(deviceId));
+  return members && [...members].sort();
+};
 const revoked = (claims: { jti: string; sid?: string }) =>
   sessions.isRevoked({ ...claims, signedAt: Date.now() });
 
@@ -83,7 +93,17 @@ beforeEach(() => {
   h.sys.reset();
   h.minted = [];
   h.verified.clear();
+  h.cookieDomain = undefined;
 });
+
+/** A sign-in on the hub bound for a spoke on another registrable domain: a hand-off, which mints nothing. */
+async function handOff(jar: Cookies, userId: number) {
+  h.cookieDomain = '.civitai.com';
+  await establishSession(jar, user(userId), {
+    returnUrl: 'https://civitai.red/api/auth/authorize?returnUrl=%2F',
+  });
+  expect(h.minted).toHaveLength(0);
+}
 
 describe('session families', () => {
   it('an account added on a signed-in browser joins its family, and one sign-out there ends both', async () => {
@@ -115,12 +135,23 @@ describe('session families', () => {
     expect(await revoked({ jti: 'family-a' })).toBe(true);
   });
 
-  it('a first sign-in on a browser starts its own family', async () => {
+  // Regression: an interactive sign-in on a single-account browser writes no family record.
+  it('a first sign-in on a browser starts its own family, and a single-account browser gets no record', async () => {
     await establishSession(makeCookies({ 'civ-device': 'device-1' }), user(200));
 
     const { payload, jti } = h.minted[0];
     expect(payload.sid).toBeUndefined();
-    expect([...h.sys.sets.get(deviceFamilies('device-1'))!]).toEqual([jti]);
+    expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
+
+    // Signing in again as the same account joins the same family: still one family, still no record.
+    h.verified.set('prior-token', { signedAt: Date.now(), sub: '200', jti: jti! });
+    await establishSession(
+      makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' }),
+      user(200)
+    );
+    expect(h.minted[1].payload.sid).toBe(jti);
+    expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
   });
 
   it('signing out ends every family signed in on the browser and forgets its account list', async () => {
@@ -157,7 +188,8 @@ describe("a browser's family record", () => {
     const { jti } = h.minted[0];
     expect(fresh).not.toBe('device-1');
     expect([...h.sys.sets.get(deviceFamilies('device-1'))!]).toEqual(['someone-else']);
-    expect([...h.sys.sets.get(deviceFamilies(fresh))!]).toEqual([jti]);
+    // One family on the new device id: nothing more for a sign-out there to end, so no record.
+    expect(h.sys.sets.has(deviceFamilies(fresh))).toBe(false);
 
     // Signing out presenting the old id ends only the caller's own family.
     await endDeviceSessions({ jti: jti! }, 'device-1');
@@ -248,6 +280,228 @@ describe("a browser's family record", () => {
     expect(await revoked({ jti: 'x', sid: 'c' })).toBe(true);
     expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
     expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+  });
+
+  // Invariant guard: a spoke session in a new family is recorded with the hub session's family, so either
+  // one's sign-out ends the other.
+  it('signing out on a browser with two families ends both, from either one', async () => {
+    for (const [device, signsOut] of [
+      ['device-1', 'hub'],
+      ['device-2', 'spoke'],
+    ] as const) {
+      await establishSession(makeCookies({ 'civ-device': device }), user(100));
+      const hub = h.minted[h.minted.length - 1].jti!;
+
+      expect(await addDeviceFamily(device, `spoke-${device}`, { proofFamily: hub })).toBe('added');
+      expect(recorded(device)).toEqual([hub, `spoke-${device}`].sort());
+      expect(h.sys.ttls.get(deviceFamilies(device))).toBe(91 * 24 * 60 * 60);
+
+      const [caller, other] =
+        signsOut === 'hub' ? [hub, `spoke-${device}`] : [`spoke-${device}`, hub];
+      await endDeviceSessions({ jti: 'j', sid: caller }, device);
+      expect(await revoked({ jti: 'x', sid: other })).toBe(true);
+      expect(h.sys.sets.has(deviceFamilies(device))).toBe(false);
+    }
+  });
+
+  // Invariant guard: an added account joins the prior session's family, so the browser has two accounts and
+  // one family. Its record must still exist, or a sign-out leaves the account list behind.
+  it('signing out on a browser with two accounts in one family forgets the account list', async () => {
+    await establishSession(makeCookies({ 'civ-device': 'device-1' }), user(100));
+    const fam = h.minted[0].jti!;
+    h.verified.set('prior-token', { signedAt: Date.now(), sub: '100', jti: fam });
+
+    await establishSession(
+      makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' }),
+      user(200)
+    );
+
+    expect(h.minted[1].payload.sid).toBe(fam);
+    expect([...(h.sys.hashes.get(deviceAccounts('device-1'))?.keys() ?? [])].sort()).toEqual([
+      '100',
+      '200',
+    ]);
+    expect(recorded('device-1')).toEqual([fam]);
+
+    await endDeviceSessions({ jti: h.minted[1].jti!, sid: fam }, 'device-1');
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+    expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
+  });
+
+  // Regression: a hand-off (an account switch bound for a spoke on another domain) mints no family, so the list
+  // it starts must take its record from the prior session's family; a sign-out then forgets the list.
+  it('a hand-off that starts an account list records the prior family, and a sign-out then forgets the list', async () => {
+    expect(await linkAccount('device-1', 200, 100, { proofFamily: 'fam-a' })).toBe('created');
+    expect(recorded('device-1')).toEqual(['fam-a']);
+    expect(h.sys.ttls.get(deviceFamilies('device-1'))).toBe(91 * 24 * 60 * 60);
+
+    // The spoke session the hand-off leads to, on the hub session's proof.
+    expect(await addDeviceFamily('device-1', 'spoke-b', { proofFamily: 'fam-a' })).toBe('added');
+
+    await endDeviceSessions({ jti: 'j', sid: 'fam-a' }, 'device-1');
+    expect(await revoked({ jti: 'x', sid: 'spoke-b' })).toBe(true);
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+  });
+
+  // Regression: JOIN_SCRIPT records both the new family and the prior one when it creates a record, as
+  // ADD_FAMILY_SCRIPT does.
+  it('a sign-in that creates a record records both its family and the prior one', async () => {
+    expect(await linkAccount('device-1', 200, 100, { family: 'fam-b', proofFamily: 'fam-a' })).toBe(
+      'created'
+    );
+    expect(recorded('device-1')).toEqual(['fam-a', 'fam-b']);
+
+    // No account list, but two different families: a record of both.
+    expect(await linkAccount('device-2', 100, 100, { family: 'fam-d', proofFamily: 'fam-c' })).toBe(
+      'none'
+    );
+    expect(recorded('device-2')).toEqual(['fam-c', 'fam-d']);
+  });
+
+  // Invariant guard (first part): a sign-in with no proof against an existing record is refused. Regression
+  // (second part): a hand-off is held to the same proof.
+  it('an existing record refuses a sign-in or a hand-off it holds no proof for', async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['theirs']);
+
+    expect(await linkAccount('device-1', 200, 100, { family: 'fam-a', proofFamily: 'fam-a' })).toBe(
+      'rotate'
+    );
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+    expect(recorded('device-1')).toEqual(['theirs']);
+
+    // A hand-off brings no new family, so it needs the prior family in the record, as a sign-in does.
+    expect(await linkAccount('device-1', 200, 100, { proofFamily: 'fam-a' })).toBe('rotate');
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+    expect(recorded('device-1')).toEqual(['theirs']);
+
+    expect(await addDeviceFamily('device-1', 'spoke-b', { proofFamily: 'fam-a' })).toBe('rotate');
+    expect(await addDeviceFamily('device-1', 'spoke-c')).toBe('rotate');
+    expect(recorded('device-1')).toEqual(['theirs']);
+  });
+
+  // Invariant guard (positive control for the refusal above): a hand-off whose prior family is in the record
+  // starts the list on the same device id.
+  it('a hand-off whose prior family is in the record keeps the device id and starts the list', async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['fam-a', 'spoke-x']);
+
+    expect(await linkAccount('device-1', 200, 100, { proofFamily: 'fam-a' })).toBe('created');
+    expect([...(h.sys.hashes.get(deviceAccounts('device-1'))?.keys() ?? [])].sort()).toEqual([
+      '100',
+      '200',
+    ]);
+    expect(recorded('device-1')).toEqual(['fam-a', 'spoke-x']);
+  });
+
+  // Regression: a hand-off on a device id whose record lacks the hub session's family moves to a new device id,
+  // and a sign-out afterwards ends everything signed in there.
+  it('a hand-off on a device id whose record lacks the hub family moves to a new id, and a sign-out ends it all', async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['fam-x', 'fam-y']);
+    h.verified.set('prior-token', { signedAt: Date.now(), sub: '100', jti: 'fam-a' });
+    const jar = makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' });
+
+    await handOff(jar, 200);
+
+    const moved = jar.get('civ-device')!;
+    expect(moved).not.toBe('device-1');
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+    expect(recorded('device-1')).toEqual(['fam-x', 'fam-y']);
+    expect([...(h.sys.hashes.get(deviceAccounts(moved))?.keys() ?? [])].sort()).toEqual([
+      '100',
+      '200',
+    ]);
+    expect(recorded(moved)).toEqual(['fam-a']);
+
+    // The spoke session the hand-off leads to joins the record on the hub session's proof.
+    expect(await addDeviceFamily(moved, 'spoke-b', { proofFamily: 'fam-a' })).toBe('added');
+    expect(await canSwitch(moved, 200, 100)).toBe(true);
+
+    await endDeviceSessions({ jti: 'j', sid: 'fam-a' }, moved);
+    expect(await revoked({ jti: 'x', sid: 'spoke-b' })).toBe(true);
+    expect(h.sys.hashes.has(deviceAccounts(moved))).toBe(false);
+    expect(await canSwitch(moved, 200, 100)).toBe(false);
+    expect(await canSwitch('device-1', 200, 100)).toBe(false);
+  });
+
+  // Regression: a hand-off refused by the browser's account list retries on a new device id with the hub
+  // session's family, so the new list has a record the spoke session can join.
+  it('a hand-off refused by the account list records the hub family on the new device id', async () => {
+    const now = String(Date.now());
+    await h.sys.hSet(deviceAccounts('device-1'), '300', now);
+    await h.sys.hSet(deviceAccounts('device-1'), '301', now);
+    h.verified.set('prior-token', { signedAt: Date.now(), sub: '100', jti: 'fam-a' });
+    const jar = makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' });
+
+    await handOff(jar, 200);
+
+    const moved = jar.get('civ-device')!;
+    expect(moved).not.toBe('device-1');
+    expect(Object.keys(Object.fromEntries(h.sys.hashes.get(deviceAccounts('device-1'))!))).toEqual([
+      '300',
+      '301',
+    ]);
+    expect(recorded(moved)).toEqual(['fam-a']);
+    expect(await addDeviceFamily(moved, 'spoke-b', { proofFamily: 'fam-a' })).toBe('added');
+    expect(recorded(moved)).toEqual(['fam-a', 'spoke-b']);
+  });
+
+  // Regression: both recorded one family with no record yet. The spoke exchange passes no proof when the hub
+  // had no confirmed session; a family that is its own proof is still one family.
+  it('a spoke session with no hub session, or a family that is its own proof, on a browser with no record writes none', async () => {
+    expect(await addDeviceFamily('device-1', 'spoke-b')).toBe('added');
+    expect(await addDeviceFamily('device-1', 'fam-a', { proofFamily: 'fam-a' })).toBe('added');
+    expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
+  });
+
+  // Regression: a join does not slide the TTL of a single-family record with no account list, so such records
+  // run out while their browser stays active.
+  it('a join leaves the TTL of a single-family record with no account list to run out', async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['fam-a']);
+    await h.sys.sAdd(deviceFamilies('device-2'), ['fam-b']);
+    h.verified.set('prior-token', { signedAt: Date.now(), sub: '100', jti: 'fam-a' });
+
+    // A spoke join in the same family, and a re-sign-in of the same account on the hub.
+    expect(await addDeviceFamily('device-1', 'fam-a', { proofFamily: 'fam-a' })).toBe('added');
+    await establishSession(
+      makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' }),
+      user(100)
+    );
+    expect(await linkAccount('device-2', 100, 100, { family: 'fam-b', proofFamily: 'fam-b' })).toBe(
+      'none'
+    );
+
+    expect(h.minted[0].payload.sid).toBe('fam-a');
+    expect(recorded('device-1')).toEqual(['fam-a']);
+    expect(recorded('device-2')).toEqual(['fam-b']);
+    expect(h.sys.ttls.has(deviceFamilies('device-1'))).toBe(false);
+    expect(h.sys.ttls.has(deviceFamilies('device-2'))).toBe(false);
+  });
+
+  // Invariant guard: a record that holds two families, or belongs to a browser with an account list, still has
+  // its TTL slid by a join, so it outlives every family and list it covers.
+  it('a join slides the TTL of a record with two families or an account list', async () => {
+    const ttl = 91 * 24 * 60 * 60;
+    // Becomes two families with this join (a spoke session).
+    await h.sys.sAdd(deviceFamilies('device-1'), ['fam-a']);
+    expect(await addDeviceFamily('device-1', 'spoke-b', { proofFamily: 'fam-a' })).toBe('added');
+    expect(h.sys.ttls.get(deviceFamilies('device-1'))).toBe(ttl);
+
+    // Already two families (a re-sign-in in one of them).
+    await h.sys.sAdd(deviceFamilies('device-2'), ['fam-c', 'spoke-d']);
+    expect(await linkAccount('device-2', 100, 100, { family: 'fam-c', proofFamily: 'fam-c' })).toBe(
+      'none'
+    );
+    expect(h.sys.ttls.get(deviceFamilies('device-2'))).toBe(ttl);
+
+    // One family, but the browser has an account list (a sign-in of an account in it, and a spoke join).
+    const now = String(Date.now());
+    await h.sys.sAdd(deviceFamilies('device-3'), ['fam-e']);
+    await h.sys.hSet(deviceAccounts('device-3'), '100', now);
+    await h.sys.hSet(deviceAccounts('device-3'), '200', now);
+    expect(await linkAccount('device-3', 100, undefined, { family: 'fam-e' })).toBe('joined');
+    expect(h.sys.ttls.get(deviceFamilies('device-3'))).toBe(ttl);
+    h.sys.ttls.delete(deviceFamilies('device-3'));
+    expect(await addDeviceFamily('device-3', 'fam-e', { proofFamily: 'fam-e' })).toBe('added');
+    expect(h.sys.ttls.get(deviceFamilies('device-3'))).toBe(ttl);
   });
 
   it('a used family is remembered for 30 days', async () => {

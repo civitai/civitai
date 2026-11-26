@@ -1,3 +1,4 @@
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
 import { randomBytes } from 'crypto';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import type * as z from 'zod';
@@ -78,10 +79,7 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
-import {
-  entityImageVisibilityConditions,
-  notReportListedSql,
-} from '~/server/services/image-visibility.service';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -1234,8 +1232,7 @@ export const deleteBountyById = async ({
 
 /**
  * The ids of the bounties' images the viewer may see, by the entity image rules and the bounty
- * search index's exclusions. `seesReportListed` is the held-media viewer: a moderator holding the
- * csamReports grant.
+ * search index's exclusions.
  */
 async function getVisibleBountyImageIds({
   bountyIds,
@@ -1245,8 +1242,12 @@ async function getVisibleBountyImageIds({
   ownerSeesReportListed,
 }: BountyImageViewer & { bountyIds: number[] }) {
   if (bountyIds.length === 0) return [];
-  const AND = entityImageVisibilityConditions({ userId, isModerator });
-  if (!seesReportListed) AND.push(notReportListedSql(ownerSeesReportListed ? userId : undefined));
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed: !!seesReportListed,
+    ownerSeesReportListed,
+  });
   const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
     SELECT ic."imageId"
     FROM "ImageConnection" ic
@@ -1258,13 +1259,9 @@ async function getVisibleBountyImageIds({
   return rows.map(({ imageId }) => imageId);
 }
 
-type BountyImageViewer = {
-  userId?: number;
-  isModerator?: boolean;
-  seesReportListed?: boolean;
-  // The uploader keeps their own report-listed images only on a session or a full-access key.
-  ownerSeesReportListed?: boolean;
-};
+type BountyImageViewer = { userId?: number; isModerator?: boolean } & Partial<
+  Omit<ReportListedViewer, 'userId'>
+>;
 
 /** Generation data its uploader hid goes only to the uploader and moderators. */
 const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(

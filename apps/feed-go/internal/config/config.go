@@ -56,6 +56,20 @@ type Config struct {
 	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
 	// [0, 1] or junk reads as 0.
 	ServeParityRate float64
+	// EvalCapture is FEED_GO_EVAL_CAPTURE (default off): the eval capture taps (server.EvalCapture,
+	// DESIGN.md §19.6) write sampled requests to the eval store. On, the store's three variables are
+	// required (Load refuses to start without them): FEED_GO_EVAL_CLICKHOUSE_URL (an http(s) URL whose
+	// path names the database), FEED_GO_EVAL_CLICKHOUSE_USER and FEED_GO_EVAL_CLICKHOUSE_PASSWORD, an
+	// INSERT-only login. Read only with EvalCapture on.
+	EvalCapture                                                   bool
+	EvalClickHouseURL, EvalClickHouseUser, EvalClickHousePassword string
+	// EvalCaptureServeRate is FEED_GO_EVAL_CAPTURE_SERVE_RATE (default 0 = off): the fraction of public
+	// first-wave requests captured (tap T3). EvalCaptureShadowRate is FEED_GO_EVAL_CAPTURE_SHADOW_RATE
+	// (default 0 = unknown): the Node shadow sampler's rate, a shadow capture's weight while the samples
+	// do not carry their own. Both [0, 1]; junk reads as 0.
+	EvalCaptureServeRate, EvalCaptureShadowRate float64
+	// Eval is eval mode (FEED_GO_EVAL_MODE, FEED_GO_EVAL_NOW; LoadEval, DESIGN.md §19.7). Off by default.
+	Eval Eval
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -176,6 +190,13 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// ShutdownDelay is FEED_GO_SHUTDOWN_DELAY_MS (default 10 s; 0 = none, negative or junk = default):
+	// how long, after SIGTERM, /readyz answers 503 while every listener keeps serving, before the
+	// listeners close and drain. The 503 removes the pod from rotation early only when the readiness
+	// probe reads /readyz with period × failure threshold inside this delay; otherwise the delay alone
+	// keeps the pod answering. The pod's termination grace must exceed any pre-stop hook + this + 15 s
+	// (DESIGN.md §6.1 Shutdown).
+	ShutdownDelay time.Duration
 	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
 	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
 	// explicitly (unset, zero, negative or junk): the cap is then the replica pool's connection ceiling
@@ -277,6 +298,9 @@ type Config struct {
 	ErrorLogPerMinute int
 }
 
+// DefaultShutdownDelay is ShutdownDelay when FEED_GO_SHUTDOWN_DELAY_MS is unset.
+const DefaultShutdownDelay = 10 * time.Second
+
 // Load reads the environment.
 func Load() (*Config, error) {
 	c := &Config{
@@ -302,6 +326,10 @@ func Load() (*Config, error) {
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
 		ServeParityRate: rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
+
+		EvalCapture:           boolEnv("FEED_GO_EVAL_CAPTURE", false),
+		EvalCaptureServeRate:  rateEnv("FEED_GO_EVAL_CAPTURE_SERVE_RATE"),
+		EvalCaptureShadowRate: rateEnv("FEED_GO_EVAL_CAPTURE_SHADOW_RATE"),
 
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
@@ -360,6 +388,10 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.ShutdownDelay = DefaultShutdownDelay
+	if n := intEnv("FEED_GO_SHUTDOWN_DELAY_MS", -1); n >= 0 {
+		c.ShutdownDelay = time.Duration(n) * time.Millisecond
+	}
 	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", 0)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
@@ -401,6 +433,11 @@ func Load() (*Config, error) {
 	c.Tracing = tracing.FromEnv(os.Getenv)
 	c.FallbackLogPerMinute = max(intEnv("FEED_GO_FALLBACK_LOG_PER_MIN", 0), 0)
 	c.ErrorLogPerMinute = positiveIntEnv("FEED_GO_ERROR_LOG_PER_MIN", 60)
+	eval, err := LoadEval(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	c.Eval = eval
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
 		return nil, err
@@ -411,6 +448,14 @@ func Load() (*Config, error) {
 	}
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
+	}
+	if c.EvalCapture {
+		c.EvalClickHouseURL = os.Getenv("FEED_GO_EVAL_CLICKHOUSE_URL")
+		c.EvalClickHouseUser = os.Getenv("FEED_GO_EVAL_CLICKHOUSE_USER")
+		c.EvalClickHousePassword = os.Getenv("FEED_GO_EVAL_CLICKHOUSE_PASSWORD")
+		if c.EvalClickHouseURL == "" || c.EvalClickHouseUser == "" || c.EvalClickHousePassword == "" {
+			return nil, errors.New("FEED_GO_EVAL_CAPTURE needs FEED_GO_EVAL_CLICKHOUSE_URL, FEED_GO_EVAL_CLICKHOUSE_USER and FEED_GO_EVAL_CLICKHOUSE_PASSWORD")
+		}
 	}
 	if c.CacheWriteBack.NeedsPrimary() && c.PrimaryDatabaseURL == "" {
 		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL for " + strings.Join(primaryWrites(c.CacheWriteBack), ",") +

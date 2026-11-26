@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
@@ -77,7 +79,7 @@ const SCHEMA = `
     "modelRestricted" boolean NOT NULL DEFAULT false, "pHash" bigint, "scannedAt" timestamp,
     "updatedAt" timestamp(3), name text, url text, width int, height int, hash text, meta jsonb,
     "hideMeta" boolean NOT NULL DEFAULT false, "createdAt" timestamp NOT NULL DEFAULT now(),
-    "mimeType" text, index int
+    "mimeType" text, index int, "firstVisibleAt" timestamp(3)
   );
   CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
   CREATE TABLE "TextScanHold" (
@@ -138,6 +140,14 @@ let h: Awaited<ReturnType<typeof startPglitePrisma>>;
 
 beforeAll(async () => {
   h = await startPglitePrisma(SCHEMA);
+  const triggers = readFileSync(
+    path.resolve(
+      __dirname,
+      '../../../../packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+    ),
+    'utf8'
+  );
+  await h.pg.exec(triggers.match(/CREATE OR REPLACE FUNCTION image_sort_at\([\s\S]*?\$\$;/)![0]);
   const { prisma } = h;
   const w = dbMock.dbWrite;
   const r = dbMock.dbRead;
@@ -537,19 +547,7 @@ describe('a lyrics hold decision', () => {
   it('flags the song again on a confirmation, after its flag was cleared while the hold was pending', async () => {
     await scanLyrics();
     const [hold] = await holds();
-    dbMock.dbRead.image.findMany.mockResolvedValueOnce([
-      {
-        id: SONG,
-        userId: OWNER,
-        pHash: null,
-        postId: null,
-        nsfwLevel: 1,
-        blockedFor: null,
-        needsReview: 'csam',
-      },
-    ] as never);
-    await handleUnblockImages({ ids: [SONG], moderatorId: MOD } as never);
-    expect((await song()).needsReview).toBeNull();
+    await h.pg.query(`UPDATE "Image" SET "needsReview" = NULL WHERE id = $1`, [SONG]);
 
     await decide('remove');
 
@@ -570,7 +568,8 @@ describe('a lyrics hold decision', () => {
   });
 });
 
-describe("the main app's unblock of a cover", () => {
+// Only the CSAM review clears a csam flag; the main app's unblock leaves the row and its song held.
+describe("the main app's unblock", () => {
   const unblock = (id: number, replicaNeedsReview: string | null = 'csam') => {
     dbMock.dbRead.image.findMany.mockResolvedValueOnce([
       {
@@ -586,126 +585,32 @@ describe("the main app's unblock of a cover", () => {
     return handleUnblockImages({ ids: [id], moderatorId: MOD } as never);
   };
 
-  it('releases the song the cover held, and only that cover', async () => {
-    await reportCsamImages({ imageIds: [COVER], user: moderator });
+  it.each([['csam'], [null]])(
+    'leaves a csam-flagged cover and the song it holds flagged (replica read %s)',
+    async (replicaNeedsReview) => {
+      await reportCsamImages({ imageIds: [COVER], user: moderator });
+      const held = await song();
 
-    await unblock(COVER);
+      const { restored } = await unblock(COVER, replicaNeedsReview);
 
-    expect((await song(COVER)).needsReview).toBeNull();
-    expect(await song()).toEqual({ needsReview: null, marker: null });
-  });
-
-  it('releases the song when the replica has not yet seen the cover flagged', async () => {
-    await reportCsamImages({ imageIds: [COVER], user: moderator });
-
-    await unblock(COVER, null);
-
-    expect(await song()).toEqual({ needsReview: null, marker: null });
-  });
-
-  it('keeps the song held while its lyrics hold is pending, dropping only the cover', async () => {
-    await scanLyrics();
-    const [hold] = await holds();
-    await reportCsamImages({ imageIds: [COVER], user: moderator });
-
-    await unblock(COVER);
-
-    expect(await song()).toEqual({ needsReview: 'csam', marker: { lyrics: hold.id } });
-  });
-
-  it('keeps the song held after a confirmed lyrics hold, through a later cover clear', async () => {
-    await scanLyrics();
-    await decide('remove');
-    await reportCsamImages({ imageIds: [COVER], user: moderator });
-
-    await unblock(COVER);
-
-    expect((await song()).needsReview).toBe('csam');
-  });
-});
-
-describe("the main app's unblock of the song itself", () => {
-  const unblockSong = (replicaNeedsReview: string | null = 'csam') => {
-    dbMock.dbRead.image.findMany.mockResolvedValueOnce([
-      {
-        id: SONG,
-        userId: OWNER,
-        pHash: null,
-        postId: null,
-        nsfwLevel: 1,
-        blockedFor: null,
-        needsReview: replicaNeedsReview,
-      },
-    ] as never);
-    return handleUnblockImages({ ids: [SONG], moderatorId: MOD } as never);
-  };
-
-  it('refuses a song whose lyrics hold was confirmed, as a video removed for CSAM', async () => {
-    await scanLyrics();
-    await decide('remove');
-
-    const { restored, kept } = await unblockSong();
-
-    expect([restored, kept]).toEqual([[], []]);
-    expect((await song()).needsReview).toBe('csam');
-  });
-
-  it('refuses it whatever review the replica read', async () => {
-    await scanLyrics();
-    await decide('remove');
-
-    const { restored, kept } = await unblockSong(null);
-
-    expect([restored, kept]).toEqual([[], []]);
-    expect((await song()).needsReview).toBe('csam');
-  });
-
-  it('locks the song in a statement of its own, in the same transaction, before the lift', async () => {
-    await scanLyrics();
-    await decide('remove');
-    // PGlite is one connection, so the race the lock closes cannot run here: this pins the order.
-    const statements: { transaction: number; text: string }[] = [];
-    let transactions = 0;
-    dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
-      h.prisma.$transaction((tx) => {
-        const transaction = ++transactions;
-        const recorded = new Proxy(tx, {
-          get(target, key) {
-            const value = Reflect.get(target, key);
-            if (key !== '$queryRaw' && key !== '$executeRaw') return value;
-            return (strings: TemplateStringsArray, ...values: unknown[]) => {
-              statements.push({ transaction, text: strings.join('?') });
-              return (value as (...a: unknown[]) => unknown).call(target, strings, ...values);
-            };
-          },
-        });
-        return fn(recorded) as never;
-      })) as never);
-    try {
-      await unblockSong();
-    } finally {
-      dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
-        h.prisma.$transaction(fn as never)) as never);
+      expect(restored).toEqual([]);
+      expect((await song(COVER)).needsReview).toBe('csam');
+      expect(await song()).toEqual(held);
     }
+  );
 
-    const lift = statements.findIndex(({ text }) =>
-      /UPDATE "Image" SET\s+"needsReview"/.test(text)
-    );
-    expect(lift).toBeGreaterThan(0);
-    const lock = statements[lift - 1];
-    expect(lock.transaction).toBe(statements[lift].transaction);
-    expect(lock.text).toMatch(
-      /^\s*SELECT id FROM "Image" WHERE id IN \(.*\) ORDER BY id FOR UPDATE\s*$/
-    );
-    expect((await song()).needsReview).toBe('csam');
-  });
-
-  it('lifts a song whose lyrics hold is still pending: the moderator decides', async () => {
+  it.each([
+    ['pending', false],
+    ['confirmed', true],
+  ])('leaves a song flagged by a %s lyrics hold', async (_, confirm) => {
     await scanLyrics();
+    if (confirm) await decide('remove');
+    const held = await song();
 
-    const { restored } = await unblockSong();
+    const { restored } = await unblock(SONG);
 
-    expect(restored.map((x) => x.id)).toEqual([SONG]);
-    expect((await song()).needsReview).toBeNull();
+    expect(restored).toEqual([]);
+    expect(await song()).toEqual(held);
+    expect(await visibleTo(STRANGER)).toEqual([]);
   });
 });

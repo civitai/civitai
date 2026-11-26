@@ -39,7 +39,11 @@
 //
 // THE SERVICE TOKEN. A level stream refused `invalid_token` is this service's own token refused, never
 // the viewer's: the read is ErrServiceToken (a 503, not a 401), and the level manager re-mints the
-// token (session.Options.InvalidToken).
+// token (session.Options.InvalidToken). The token is minted as this service's own service client;
+// with none configured every read is ErrNoServiceClient before any stream opens. A hub that refuses
+// to mint it (a client that is not a service client, a revoked secret) is ErrServiceTokenRefused, and
+// one that cannot be reached or fails is ErrServiceTokenUnavailable, never the stream's generic
+// failure: each answers its own 503 reason (ClassifyServiceToken).
 //
 // READ-YOUR-WRITES. Each write the store acknowledged for a token (Ack) is an overlay over that
 // token's union, by key, at the write's seq: a record, or a delete marker. An overlay is applied only
@@ -73,7 +77,8 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
 
-// Views answers a stream's records and meta (session.Manager.View).
+// Views answers a stream's records and meta (session.Manager.View), with a Lease on a stream the
+// read opened.
 type Views interface {
 	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
 }
@@ -99,6 +104,12 @@ var (
 	ErrSignInRequired = errors.New("shared: sign in required")
 	// ErrServiceToken: the registry refused this service's own token on a level stream.
 	ErrServiceToken = errors.New("shared: the registry refused the service token")
+	// ErrNoServiceClient: no service client is configured, so no level stream can be opened.
+	ErrNoServiceClient = errors.New("shared: no service client is configured for the level streams")
+	// ErrServiceTokenRefused: the hub refused to mint this service's own token.
+	ErrServiceTokenRefused = errors.New("shared: the hub refused to mint the service token")
+	// ErrServiceTokenUnavailable: the hub could not be asked for this service's own token, or failed.
+	ErrServiceTokenUnavailable = errors.New("shared: the service token could not be minted")
 	// ErrSignedOutBusy: the slug already has ProbesPerApp signed-out probes running.
 	ErrSignedOutBusy = errors.New("shared: too many signed-out reads of unknown collections at once")
 )
@@ -186,6 +197,13 @@ type Board struct {
 	// KeyedBy is the collection's `keyedBy` as the per-viewer stream names it ("" for none, and for a
 	// signed-out read).
 	KeyedBy string
+	// Leases are the streams this read opened (session.Snapshot.Lease), for it to release when it is
+	// done with this major (a read that moved to another): each closes only a stream no other read
+	// has taken.
+	Leases []session.Lease
+	// Current is the collection's current major as every level stream read names it (level-feed.ts
+	// levelMeta `currentMajor`); 0 when one names none or two name different majors.
+	Current int
 }
 
 // Viewer is who reads.
@@ -218,6 +236,8 @@ type Reader struct {
 	ProbesPerApp int
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// NoServiceClient refuses every read ErrNoServiceClient (THE SERVICE TOKEN).
+	NoServiceClient bool
 
 	mu     sync.Mutex
 	off    map[string]time.Time // schemas known in levels-off mode, until
@@ -234,6 +254,10 @@ func (r *Reader) now() time.Time {
 
 // Read answers the board of one shared collection major for v. minSeq > 0 is the read's floor.
 func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, major int, minSeq int64) (Board, error) {
+	if r.NoServiceClient {
+		// Before the per-viewer stream: nothing the read could open would answer it.
+		return Board{}, ErrNoServiceClient
+	}
 	schema, err := urn.CollectionSchema(slug, collection, major)
 	if err != nil {
 		return Board{}, err
@@ -296,7 +320,12 @@ func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, ma
 		}
 		return nil
 	}
-	board := Board{KeyedBy: meta.KeyedBy}
+	board := Board{KeyedBy: meta.KeyedBy, Current: agreedCurrent(views)}
+	for _, sn := range append(slices.Clone(views), own) {
+		if sn.Lease != (session.Lease{}) {
+			board.Leases = append(board.Leases, sn.Lease)
+		}
+	}
 	// low is the lowest head among the streams read; known only when every one of them named one.
 	low, read, headless := int64(0), 0, false
 	head := func(s session.Snapshot) {
@@ -535,6 +564,9 @@ func readViewerMeta(raw json.RawMessage) viewerMeta {
 type levelMeta struct {
 	Block     string
 	Truncated bool
+	// CurrentMajor is the collection's current major; 0 when the meta names none (or one no schema
+	// URN can carry).
+	CurrentMajor int
 }
 
 func readLevelMeta(raw json.RawMessage) levelMeta {
@@ -545,7 +577,38 @@ func readLevelMeta(raw json.RawMessage) levelMeta {
 	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil {
 		return levelMeta{}
 	}
-	return levelMeta{Block: m.Block, Truncated: m.Truncated}
+	return levelMeta{Block: m.Block, Truncated: m.Truncated, CurrentMajor: CurrentMajor(raw)}
+}
+
+// CurrentMajor is the `currentMajor` a stream's meta names (the adapter's doc-streams.ts
+// collectionFamily), or 0 when it names none, or anything but a major a schema URN can carry. Read on
+// its own, so a malformed one never hides the rest of the meta.
+func CurrentMajor(raw json.RawMessage) int {
+	var m struct {
+		CurrentMajor json.RawMessage `json:"currentMajor"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil || len(m.CurrentMajor) == 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(string(m.CurrentMajor))
+	if err != nil || n < 1 || n > urn.MaxMajor {
+		return 0
+	}
+	return n
+}
+
+// agreedCurrent is the current major every level stream read names; 0 when none was read, one names
+// none, or two name different majors.
+func agreedCurrent(views []session.Snapshot) int {
+	current := 0
+	for i, lv := range views {
+		c := readLevelMeta(lv.Meta).CurrentMajor
+		if c == 0 || (i > 0 && c != current) {
+			return 0
+		}
+		current = c
+	}
+	return current
 }
 
 // Overlays holds each token's acknowledged writes to shared collections, by (token, schema) and key.

@@ -226,6 +226,8 @@ func TestAForgedExpiredOrMalformedBlockTokenNeverReachesTheHub(t *testing.T) {
 		"dev":                {func() string { return siteToken(t, map[string]any{"dev": true}) }, "dev token"},
 		"review":             {func() string { return siteToken(t, map[string]any{"reviewRunForReal": true}) }, "review token"},
 		"private run":        {func() string { return siteToken(t, map[string]any{"privateRunAudience": "x"}) }, "private run"},
+		"runner":             {func() string { return siteToken(t, map[string]any{"mintOrigin": "runner"}) }, "runner token"},
+		"other mintOrigin":   {func() string { return siteToken(t, map[string]any{"mintOrigin": "live"}) }, "runner token"},
 		"older than 15 min":  {func() string { return siteToken(t, map[string]any{"iat": verifyNow.Unix() - 931}) }, "too old"},
 		"typ not JWT": {func() string {
 			return sign(t, siteKey, header(map[string]any{"typ": "at+jwt"}), claimsAt(verifyNow))

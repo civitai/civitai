@@ -1,4 +1,10 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import {
+  sql,
+  type ExpressionBuilder,
+  type Kysely,
+  type QueryCreator,
+  type Transaction,
+} from 'kysely';
 import { ESCALATED_FROM_LEVEL_META_KEY, readWithoutJit } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -235,15 +241,10 @@ export type ReviewOffer = {
 
 const SERVE_BATCH_PER_QUEUE = 20;
 
-/**
- * Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them, and on an
- * image that passes the safety exclusions now (so held reviews never fill a batch). Exported for the waiting count.
- */
-export const servableReviews = (db: Kysely<DB>, moderatorId: number, now: Date) =>
+/** The review half of `servableReviews`: open, not claimed by another, not voted on by this moderator. */
+const openReviewsFor = (db: QueryCreator<DB>, moderatorId: number, now: Date) =>
   db
     .selectFrom('KnightsInquisitorReview as r')
-    .innerJoin('Image as img', 'img.id', 'r.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
     .where('r.status', '=', 'open')
     .where((eb) =>
       eb.or([
@@ -252,7 +253,6 @@ export const servableReviews = (db: Kysely<DB>, moderatorId: number, now: Date) 
         eb('r.claimExpiresAt', '<=', utc(now)),
       ])
     )
-    .where('img.userId', 'is distinct from', moderatorId)
     .where((eb) =>
       eb.not(
         eb.exists(
@@ -263,8 +263,53 @@ export const servableReviews = (db: Kysely<DB>, moderatorId: number, now: Date) 
             .where('mine.moderatorId', '=', moderatorId)
         )
       )
+    );
+
+type ImageBuilder = ExpressionBuilder<DB & { img: DB['Image']; p: DB['Post'] }, 'img' | 'p'>;
+
+/** The image half of `servableReviews`: not this moderator's own, and passing the safety exclusions now. */
+const servableReviewImage = (eb: ImageBuilder, moderatorId: number) =>
+  eb.and([eb('img.userId', 'is distinct from', moderatorId), skillCheckEligible(eb)]);
+
+/**
+ * Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them, and on an
+ * image that passes the safety exclusions now (so held reviews never fill a batch).
+ */
+export const servableReviews = (db: Kysely<DB>, moderatorId: number, now: Date) =>
+  openReviewsFor(db, moderatorId, now)
+    .innerJoin('Image as img', 'img.id', 'r.imageId')
+    .innerJoin('Post as p', 'p.id', 'img.postId')
+    .where((eb) => servableReviewImage(eb, moderatorId));
+
+/**
+ * `servableReviews` counted up to `cap`. The open reviews are read first and each image checked on its own: as a plain
+ * join, a large limit tips the planner into evaluating the image gate over every image on the site.
+ */
+export const countServableReviews = (db: Kysely<DB>, moderatorId: number, now: Date, cap: number) =>
+  db
+    .with(
+      (wb) => wb('candidate').materialized(),
+      (q) => openReviewsFor(q, moderatorId, now).select(['r.id', 'r.imageId'])
     )
-    .where((eb) => skillCheckEligible(eb));
+    .selectFrom((q) =>
+      q
+        .selectFrom('candidate as c')
+        .crossJoinLateral((eb) =>
+          eb
+            .selectFrom('Image as img')
+            .innerJoin('Post as p', 'p.id', 'img.postId')
+            .select(sql<number>`1`.as('one'))
+            .whereRef('img.id', '=', 'c.imageId')
+            .where((w) => servableReviewImage(w, moderatorId))
+            .limit(1)
+            .as('ok')
+        )
+        .select('c.id')
+        .limit(cap)
+        .as('w')
+    )
+    .select(sql<number>`count(*)::int`.as('n'))
+    .executeTakeFirstOrThrow();
 
 const hasVote = (exists: boolean) => (qb: ReturnType<typeof servableReviews>) =>
   qb.where((eb) => {
