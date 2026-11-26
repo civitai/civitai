@@ -140,8 +140,8 @@ import {
   type ContentLinkHold,
   getContentLinkHold,
   nextContentLinkHold,
+  probeContentUploads,
   sameContentLinkHold,
-  urlsWithAbsentUploads,
   writeContentLinkHold,
 } from '~/server/services/article-content-link-hold';
 import {
@@ -2442,23 +2442,32 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
-      // Probed first: an absent upload is only deferred, never refused for having been held.
+      // Probed first, and a url this hold deferred is classified only once its upload is proved
+      // present: classified while held, an unrecorded key is refused, and a url deferred for a
+      // missing upload must not be refused because the store did not answer this time.
       const wasRefused = new Set(previousHold?.refused ?? []);
-      const absent = new Set(
-        await urlsWithAbsentUploads(
-          unlinked.filter((url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url))
-        )
+      const wasDeferred = new Set(previousHold?.deferred ?? []);
+      const probeable = unlinked.filter(
+        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url)
       );
+      const { absent, present } = await probeContentUploads([
+        ...probeable.filter((url) => wasDeferred.has(url)),
+        ...probeable.filter((url) => !wasDeferred.has(url)),
+      ]);
+      const stillDeferred = probeable.filter(
+        (url) => absent.has(url) || (wasDeferred.has(url) && !present.has(url))
+      );
+      const unsettled = new Set(stillDeferred);
       const classified = await classifyUnlinkedContentUrls({
-        urls: unlinked.filter((url) => !absent.has(url)),
+        urls: unlinked.filter((url) => !unsettled.has(url)),
         ownerId,
         editorId: userId,
-        wasHeld: new Set([...(previousHold?.deferred ?? []), ...wasRefused]),
+        wasHeld: new Set([...wasDeferred, ...wasRefused]),
         now,
       });
       hold = nextContentLinkHold(
         previousHold,
-        { ...classified, deferred: [...classified.deferred, ...absent], editorId: userId },
+        { ...classified, deferred: [...classified.deferred, ...stillDeferred], editorId: userId },
         now
       );
     }

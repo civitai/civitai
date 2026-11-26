@@ -812,8 +812,20 @@ describe('a url whose upload is not in the image store', () => {
     s3Send.mockClear();
     await link({ content });
     // One round of the 4 concurrent probes, not all 12.
+    expect(s3Send.mock.calls.length).toBeGreaterThan(0);
     expect(s3Send.mock.calls.length).toBeLessThanOrEqual(4);
     expect(await rows()).toHaveLength(keys.length);
+  });
+
+  it('stays deferred, not refused, when a later settle gets no answer from the store', async () => {
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+    store.down = true;
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await hold()).toMatchObject({ deferred: [KEY2], refused: [] });
+    expect(await ingestion()).toBe('Pending');
   });
 
   it('control: links as before when the store cannot be read', async () => {

@@ -15,10 +15,7 @@ import {
   checkSavedArticleContentUrls,
   recomputeArticleIngestion,
 } from '~/server/services/article.service';
-import {
-  deferContentUrls,
-  urlsWithAbsentUploads,
-} from '~/server/services/article-content-link-hold';
+import { deferContentUrls, probeContentUploads } from '~/server/services/article-content-link-hold';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -331,12 +328,10 @@ async function processBatch(
       })
     ).map((img) => img.url)
   );
-  const absent = new Set(
-    // A one-off pass, not re-run every settle, so every new url is probed.
-    await urlsWithAbsentUploads(
-      [...allUrls].filter((url) => !existingUrls.has(url)),
-      { max: Infinity }
-    )
+  // A one-off pass, not re-run every settle, so every new url is probed.
+  const { absent } = await probeContentUploads(
+    [...allUrls].filter((url) => !existingUrls.has(url)),
+    { max: Infinity }
   );
   for (const url of absent) allUrls.delete(url);
   stats.uploadsAbsent += absent.size;

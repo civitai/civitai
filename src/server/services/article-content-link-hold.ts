@@ -118,26 +118,29 @@ const UPLOAD_PROBE_CONCURRENCY = 4;
 export const MAX_UPLOAD_PROBES = 32;
 
 /**
- * The urls whose upload the image store says does not exist. A row for one 404s at the scanner,
- * so it is deferred instead. An unreadable store proves nothing: those urls link as before, and
- * the first such answer stops the probing, so a degraded store costs a save one probe deadline.
+ * What the image store says of each url's upload: `absent` (a row for it would 404 at the scanner,
+ * so it is deferred instead) or `present`. A url in neither got no answer: an unreadable store
+ * proves nothing, and the first such answer stops the probing, so a degraded store costs a save
+ * one probe deadline.
  */
-export async function urlsWithAbsentUploads(
+export async function probeContentUploads(
   urls: string[],
   { max = MAX_UPLOAD_PROBES }: { max?: number } = {}
 ) {
-  const absent: string[] = [];
+  const absent = new Set<string>();
+  const present = new Set<string>();
   let unreadable = false;
   await limitConcurrency(
     urls.slice(0, max).map((url) => async () => {
       if (unreadable) return;
       const verdict = await probeCreatedImageMedia(url);
-      if (verdict === 'absent') absent.push(url);
+      if (verdict === 'absent') absent.add(url);
       else if (verdict === 'unknown') unreadable = true;
+      else present.add(url);
     }),
     UPLOAD_PROBE_CONCURRENCY
   );
-  return absent;
+  return { absent, present };
 }
 
 /** The hold to store after linking found `refused` and `deferred`, carrying over what still applies. */
