@@ -86,11 +86,14 @@ export interface RunnerMintReads {
   consent(userId: number, clientId: string): Promise<RunnerConsentRow | null>;
   authorization(id: string): Promise<RunnerAuthorizationRow | null>;
   hasLiveAttempt(runId: string): Promise<boolean>;
-  /** Whether an attempt of the run failed after being charged: the run is over. */
+  /**
+   * Whether an attempt of the run reached a workflow that ended without success: charged, or
+   * refunded after running. The run is over, since a retry reuses its externalId and so the workflow.
+   */
   hasSpentAttempt(runId: string): Promise<boolean>;
   /** Spend counted against the offline cap since `since`, for (user, client). */
   capUsed(userId: number, clientId: string, since: Date): Promise<number>;
-  /** Runs of `authorizationId` that hold or held a live attempt, or spent one, since `since`. */
+  /** Runs of `authorizationId` that hold or held a live or spent attempt since `since`. */
   runsSince(authorizationId: string, since: Date): Promise<number>;
 }
 
@@ -101,6 +104,10 @@ export const RUNNER_CAP_STATES = ['reserved', 'submitting', 'unknown', 'submitte
  * The runner mint reads. Pass a primary client: a consent change, revocation or attempt written
  * moments ago must be seen.
  */
+/** An attempt whose workflow ended without success: a failure that was charged, or a refund of one that ran. */
+const spentAttempt = sql`((state = 'failed' AND charged_amount > 0)
+  OR (state = 'refunded' AND workflow_id IS NOT NULL))`;
+
 export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
   const one = async <T>(query: RawBuilder<T>): Promise<T | null> => {
     const { rows } = await query.execute(db);
@@ -142,7 +149,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
         await one<{ spent: boolean }>(sql`
         SELECT EXISTS (
           SELECT 1 FROM runner_run_attempts
-          WHERE run_id = ${runId} AND state = 'failed' AND charged_amount > 0
+          WHERE run_id = ${runId} AND ${spentAttempt}
         ) AS spent`)
       )?.spent !== false,
     capUsed: async (userId, clientId, since) => {
@@ -163,7 +170,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
         SELECT COUNT(DISTINCT run_id) AS runs
         FROM runner_run_attempts
         WHERE authorization_id = ${authorizationId} AND created_at > ${since}
-          AND (state = ANY(${RUNNER_CAP_STATES}) OR (state = 'failed' AND charged_amount > 0))`);
+          AND (state = ANY(${RUNNER_CAP_STATES}) OR ${spentAttempt})`);
       return row ? Number(row.runs) : Number.POSITIVE_INFINITY;
     },
   };

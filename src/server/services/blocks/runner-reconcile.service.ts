@@ -30,6 +30,8 @@ const BATCH = 200;
 const CANCEL_MARKER_TTL_SECONDS = 60 * 60;
 /** A held row is GET again after this: each GET wakes the workflow's grain and its recovery paths. */
 const HELD_BACKOFF_SECONDS = 15 * 60;
+/** A running row waits this long before its next GET, so rows past a full batch rotate in. */
+const RUNNING_BACKOFF_SECONDS = 60;
 
 export interface RunnerReconcileDeps {
   /** The workflow, or null when the orchestrator has none by that id. */
@@ -91,13 +93,10 @@ type ReconcileOutcome = 'settled' | 'running' | 'held' | 'lost';
 export async function reconcileRunnerAttempts(
   db: Kysely<DB>,
   deps: RunnerReconcileDeps = liveDeps,
-  now = new Date()
+  now = new Date(),
+  limit = BATCH
 ) {
-  const rows = await listRunnerAttempts(db, {
-    state: 'submitted',
-    updatedBefore: now,
-    limit: BATCH,
-  });
+  const rows = await listRunnerAttempts(db, { state: 'submitted', updatedBefore: now, limit });
   const counts: Record<ReconcileOutcome | 'errors', number> = {
     settled: 0,
     running: 0,
@@ -153,6 +152,7 @@ async function reconcileAttempt(
   ) {
     const observed = Math.max(actual, liveCustomComfyCost(workflow));
     if (observed > row.reservedAmount) await cancelOverCeiling(deps, row, observed);
+    await touchRunnerAttempt(db, row.attemptId, 'submitted', RUNNING_BACKOFF_SECONDS);
     return 'running';
   }
 

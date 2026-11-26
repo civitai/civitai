@@ -49,8 +49,8 @@ export interface RunnerSubmitDeps {
   offlineGrantOn(): Promise<boolean>;
   appBlock(appBlockId: string): Promise<RunnerAppBlockState | null>;
   authorization: ReturnType<typeof runnerMintReads>['authorization'];
-  /** Whether the user disconnected the runner client within a token's life. Throws when unread. */
-  revoked(userId: number, clientId: string): Promise<boolean>;
+  /** When (epoch seconds) the user last disconnected the runner client, within a token's life. Throws when unread. */
+  revokedAt(userId: number, clientId: string): Promise<number | null>;
 }
 
 async function readRunnerAppBlock(appBlockId: string): Promise<RunnerAppBlockState | null> {
@@ -84,11 +84,11 @@ const runnerRevokedKey = (userId: number, clientId: string) =>
   `${REDIS_KEYS.BLOCKS.RUNNER_REVOKED}:${userId}:${clientId}` as const;
 
 /**
- * Refuse every runner submit for (user, client), reconnected or not, for longer than a token
- * minted before the disconnect lives. The live consent read at submit is the primary control.
+ * Refuse runner submits for (user, client) with a token minted at or before now, for longer than
+ * such a token lives. The live consent read at submit is the primary control.
  */
 export async function markRunnerClientRevoked(userId: number, clientId: string): Promise<void> {
-  await redis.set(runnerRevokedKey(userId, clientId), '1', {
+  await redis.set(runnerRevokedKey(userId, clientId), String(Math.floor(Date.now() / 1000)), {
     EX: RUNNER_TOKEN_LIFETIME_SECONDS + 60,
   });
 }
@@ -100,8 +100,13 @@ const liveDeps: RunnerSubmitDeps = {
     const { kyselyWrite } = await import('~/server/db/kyselyDb');
     return runnerMintReads(kyselyWrite).authorization(id);
   },
-  revoked: async (userId, clientId) =>
-    (await redis.get(runnerRevokedKey(userId, clientId))) != null,
+  revokedAt: async (userId, clientId) => {
+    const value = await redis.get(runnerRevokedKey(userId, clientId));
+    if (value == null) return null;
+    // An unreadable value refuses: as old as nothing, so every token is at or before it.
+    const at = Number(value);
+    return Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
+  },
 };
 
 /** Refuse a runner submit: FORBIDDEN, logged with the run and a reason code. */
@@ -147,7 +152,9 @@ export async function prepareRunnerSubmit(
   if (!(await deps.offlineGrantOn())) refuse('offline_flag');
   const userId = parseSubjectUserId(claims.sub);
   // Fails closed: a marker that cannot be read refuses the submit (the throw).
-  if (userId === null || (await deps.revoked(userId, clientId))) refuse('revoked');
+  if (userId === null) refuse('revoked');
+  const revokedAt = await deps.revokedAt(userId!, clientId);
+  if (revokedAt !== null && !(claims.iat > revokedAt)) refuse('revoked');
 
   const appBlock = await deps.appBlock(claims.appBlockId);
   if (!appBlock || appBlock.status !== 'approved') refuse('app_block');

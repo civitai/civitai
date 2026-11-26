@@ -6861,6 +6861,19 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(second).not.toBe(first);
     });
 
+    it('admits a token minted after the disconnect, once the user reconnected', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims({ iat: 2000 }));
+      mockRedis.get.mockImplementation((async (key: string) =>
+        key === `blocks:runner-revoked:42:${RUNNER_CLIENT}` ? '1999' : null) as never);
+      happyCcResources();
+      happySubmit();
+      try {
+        expect(await submit()).toMatchObject({ runner: { state: 'submitted' } });
+      } finally {
+        mockRedis.get.mockImplementation((async () => null) as never);
+      }
+    });
+
     it('fails closed when the revocation marker cannot be read', async () => {
       mockVerifyBlockToken.mockResolvedValue(runnerClaims());
       mockRedis.get.mockImplementation((async (key: string) => {

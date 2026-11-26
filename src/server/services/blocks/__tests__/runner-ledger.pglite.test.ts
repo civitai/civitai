@@ -150,6 +150,19 @@ describe('reserveRunnerAttempt', () => {
     expect(await attempts()).toHaveLength(1);
   });
 
+  it('refuses a new attempt of a run whose workflow ran and was refunded', async () => {
+    const first = await reserve();
+    if (!first.ok) throw new Error('first reserve refused');
+    await transitionRunnerAttempt(db, first.attemptId, 'reserved', 'submitting');
+    await transitionRunnerAttempt(db, first.attemptId, 'submitting', 'submitted', {
+      workflowId: 'wf_1',
+    });
+    await transitionRunnerAttempt(db, first.attemptId, 'submitted', 'refunded', {
+      chargedAmount: 0,
+    });
+    expect(await reserve()).toEqual({ ok: false, refusal: 'run_spent' });
+  });
+
   it('counts the offline cap from the ledger: a reserve past it is refused', async () => {
     const { standingRunId } = await import('~/server/services/blocks/runner-mint.service');
     const run = (key: string) => standingRunId('rra_standing', key);

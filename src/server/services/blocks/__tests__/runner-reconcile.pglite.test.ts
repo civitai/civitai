@@ -78,6 +78,9 @@ function orchestrator(workflow: Record<string, unknown> | null) {
   return deps as typeof deps & RunnerReconcileDeps;
 }
 
+/** A pass after the 60s running backoff. */
+const later = () => new Date(Date.now() + 120_000);
+
 const done = (total: number, status = 'succeeded') => ({
   status,
   tags: ['app-block:app_r'],
@@ -198,7 +201,7 @@ describe('reconcileRunnerAttempts', () => {
       })
     );
     expect(redisMock.redis.del).toHaveBeenCalledWith('blocks:runner-over-ceiling-cancel:rat_cf');
-    await reconcileRunnerAttempts(db, deps, NOW);
+    await reconcileRunnerAttempts(db, deps, later());
     expect(deps.cancelWorkflow).toHaveBeenCalledTimes(2);
   });
 
@@ -226,10 +229,29 @@ describe('reconcileRunnerAttempts', () => {
     await reconcileRunnerAttempts(db, orch, NOW);
     expect(orch.cancelWorkflow).toHaveBeenCalledWith(`${USER}-wf-rat_c`);
     redisMock.redis.set.mockImplementation((async () => null) as never); // the marker is held
-    await reconcileRunnerAttempts(db, orch, NOW);
+    expect(await reconcileRunnerAttempts(db, orch, later())).toMatchObject({ running: 1 });
     expect(orch.cancelWorkflow).toHaveBeenCalledTimes(1);
     expect((await row('rat_c')).state).toBe('submitted');
     expect(redisMock.sysRedis.decrBy).not.toHaveBeenCalled();
+  });
+
+  it('rotates running rows, so a finished one past a full batch settles by the next pass', async () => {
+    const t0 = new Date(Date.now() - 10 * 60_000);
+    await insertAttempt({ id: 'rat_run1', state: 'submitted', updatedAt: t0 });
+    await insertAttempt({ id: 'rat_run2', state: 'submitted', updatedAt: t0 });
+    await insertAttempt({
+      id: 'rat_done',
+      state: 'submitted',
+      updatedAt: new Date(t0.getTime() + 1000),
+    });
+    const deps = orchestrator(null);
+    deps.getWorkflow.mockImplementation((async (id: string) => ({
+      id,
+      ...(id.endsWith('rat_done') ? done(30) : done(10, 'processing')),
+    })) as never);
+    expect(await reconcileRunnerAttempts(db, deps, new Date(), 2)).toMatchObject({ running: 2 });
+    expect(await reconcileRunnerAttempts(db, deps, new Date(), 2)).toMatchObject({ settled: 1 });
+    expect((await row('rat_done')).state).toBe('settled');
   });
 
   it('leaves a running workflow within its ceiling alone', async () => {

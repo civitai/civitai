@@ -118,8 +118,8 @@ export const oauthConsentRouter = router({
         clientId: input.clientId,
         reason: 'disconnected',
       });
-      // Refuses runner submits with a token minted before now. Best-effort: the consent row deleted
-      // below is what a submit reads first.
+      // Refuses runner submits with a token minted at or before now. Best-effort: a submit checks the
+      // authorizations revoked above first.
       await markRunnerClientRevoked(ctx.user.id, input.clientId).catch((error) =>
         logToAxiom({ name: 'runner-revoke-marker', type: 'error', error: safeError(error) })
       );
