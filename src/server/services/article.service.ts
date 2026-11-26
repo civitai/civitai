@@ -2443,8 +2443,8 @@ export async function linkArticleContentImages({
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
       // Probed first, and a url this hold deferred is classified only once its upload is proved
-      // present: classified while held, an unrecorded key is refused, and a url deferred for a
-      // missing upload must not be refused because the store did not answer this time.
+      // present: from UNRECORDED_KEYS_ACCEPTED_UNTIL a held unrecorded key is refused, and a url
+      // deferred for a missing upload must not be refused because the store did not answer.
       const wasRefused = new Set(previousHold?.refused ?? []);
       const wasDeferred = new Set(previousHold?.deferred ?? []);
       const probeable = unlinked.filter(

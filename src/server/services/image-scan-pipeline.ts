@@ -355,12 +355,22 @@ export async function markImageScanError({
   };
 }
 
-/** Fails open: a read that fails leaves the failure classed by its reason. */
+/** Per process: failures arrive in bursts, and one past this skips the check rather than wait. */
+export const SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX = 8;
+const scanUploadChecks = { inFlight: 0 };
+
+/** Fails open: a read that fails, or a check skipped at the cap, leaves the failure classed by its reason. */
 async function scanUploadAbsent(imageId: number) {
-  const image = await dbRead.image
-    .findUnique({ where: { id: imageId }, select: { url: true } })
-    .catch(() => null);
-  return !!image && (await probeCreatedImageMedia(image.url)) === 'absent';
+  if (scanUploadChecks.inFlight >= SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX) return false;
+  scanUploadChecks.inFlight++;
+  try {
+    const image = await dbRead.image
+      .findUnique({ where: { id: imageId }, select: { url: true } })
+      .catch(() => null);
+    return !!image && (await probeCreatedImageMedia(image.url)) === 'absent';
+  } finally {
+    scanUploadChecks.inFlight--;
+  }
 }
 
 // Image loading

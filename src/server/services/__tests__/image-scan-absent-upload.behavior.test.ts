@@ -30,7 +30,9 @@ const s3Send = vi.spyOn(S3Client.prototype, 'send').mockImplementation((async (
 }) as never);
 afterAll(() => s3Send.mockRestore());
 
-const { markImageScanError } = await import('~/server/services/image-scan-pipeline');
+const { markImageScanError, SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX } = await import(
+  '~/server/services/image-scan-pipeline'
+);
 
 const KEY = '0a0b0c0d-0000-4000-8000-0000000000dd';
 const IMAGE_ID = 31;
@@ -107,5 +109,28 @@ describe('a scan failure on an image whose upload is not in the store', () => {
     store.absent.add(KEY);
     store.down = true;
     expect((await fail()).failureClass).toBe('transient');
+  });
+
+  it('skips the check, and stays transient, past the in-flight cap', async () => {
+    store.absent.add(KEY);
+    const gate = Promise.withResolvers<void>();
+    const release = gate.resolve;
+    const answer = s3Send.getMockImplementation();
+    s3Send.mockImplementation((async (...args: Parameters<NonNullable<typeof answer>>) => {
+      await gate.promise;
+      return answer?.(...args);
+    }) as never);
+    s3Send.mockClear();
+    try {
+      const held = Array.from({ length: SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX }, () => fail());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect((await fail()).failureClass).toBe('transient');
+      expect(s3Send).toHaveBeenCalledTimes(SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX);
+      release();
+      for (const { failureClass } of await Promise.all(held))
+        expect(failureClass).toBe('permanent');
+    } finally {
+      s3Send.mockImplementation(answer as never);
+    }
   });
 });

@@ -34,6 +34,8 @@ type MigrationStats = {
   articlesWithUnrecordedKeys: number;
   /** Content urls with no upload in the image store: no row created, deferred on their article (dry run counts them only). */
   uploadsAbsent: number;
+  /** New content urls the image store gave no answer for: linked unchecked, as before. */
+  uploadsUnchecked: number;
   errors: number;
 };
 
@@ -328,17 +330,22 @@ async function processBatch(
       })
     ).map((img) => img.url)
   );
-  // A one-off pass, not re-run every settle, so every new url is probed.
-  const { absent } = await probeContentUploads(
-    [...allUrls].filter((url) => !existingUrls.has(url)),
-    { max: Infinity }
-  );
+  // A one-off pass, not re-run every settle, so neither the count cap nor the time budget applies.
+  // An unreadable store still stops it: the urls it never answered for are counted, and linked.
+  const newUrls = [...allUrls].filter((url) => !existingUrls.has(url));
+  const { absent, present } = await probeContentUploads(newUrls, {
+    max: Infinity,
+    budgetMs: Infinity,
+  });
   for (const url of absent) allUrls.delete(url);
   stats.uploadsAbsent += absent.size;
+  const unchecked = newUrls.length - absent.size - present.size;
+  stats.uploadsUnchecked += unchecked;
+  if (unchecked) log(`  ⚠️  ${unchecked} new urls unchecked: the image store did not answer`);
 
   if (dryRun) {
     log(
-      `[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs, ${absent.size} absent`
+      `[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs, ${absent.size} absent, ${unchecked} unchecked`
     );
     stats.articlesProcessed += articles.length;
     stats.imagesCreated += allUrls.size;
@@ -511,6 +518,7 @@ async function runMigration(
     articlesSkipped: 0,
     articlesWithUnrecordedKeys: 0,
     uploadsAbsent: 0,
+    uploadsUnchecked: 0,
     errors: 0,
   };
   let lastProcessedEnd = params.start;
