@@ -1571,12 +1571,46 @@ describe('review images', () => {
   ])('neither offers nor copies a Final whose scan image is %s', async (_n, flag) => {
     const { dealId, finalId } = await reviewed();
     const imageId = await withScanImage(dealId, finalId);
-    // The same Final with a clean scan image is offered, so what follows is the flag's doing.
     expect(await picker(dealId)).toEqual([finalId]);
     await flag(imageId);
     expect(await picker(dealId)).toEqual([]);
     await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
     expect(images.createImage).not.toHaveBeenCalledWith(expect.objectContaining({ userId: BUYER }));
+    expect(await linked()).toEqual([]);
+  });
+
+  it('hides an attached copy once its source Final is held, and only then', async () => {
+    const { dealId, finalId } = await reviewed();
+    const scanImage = await withScanImage(dealId, finalId);
+    const { imageId } = await attachFinal(dealId, finalId);
+    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = $1`, [imageId]);
+    const [{ id: reviewId }] = await q<{ id: number }>(
+      `SELECT id FROM "ServiceDealReview" WHERE "dealId" = $1`,
+      [dealId]
+    );
+    const shown = async () =>
+      (await reviewImages.getReviewImages({ reviewId, levels: 31 })).map((i) => i.id);
+    expect(await shown()).toEqual([imageId]);
+    // A hold on an image of another deal's Final leaves this copy shown.
+    const other = await reviewed();
+    await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [
+      await withScanImage(other.dealId, other.finalId),
+    ]);
+    expect(await shown()).toEqual([imageId]);
+    await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [scanImage]);
+    expect(await shown()).toEqual([]);
+  });
+
+  it('deletes a copy whose source Final was held while it was made', async () => {
+    const { dealId, finalId } = await reviewed();
+    const scanImage = await withScanImage(dealId, finalId);
+    preview.entryCopy.mockImplementationOnce(async () => {
+      await q(`UPDATE "Image" SET minor = true WHERE id = $1`, [scanImage]);
+      return { data: SCAN_COPY(3), mimeType: 'image/webp', width: 10, height: 10, frames: 1 };
+    });
+    await expect(attachFinal(dealId, finalId)).rejects.toEqual(refused);
+    const made = (await images.createImage.mock.results.at(-1)!.value) as { id: number };
+    expect(images.deleteImages).toHaveBeenCalledWith([made.id], expect.anything());
     expect(await linked()).toEqual([]);
   });
 

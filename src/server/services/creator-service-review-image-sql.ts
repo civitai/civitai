@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { finalCsamHeldSql } from '~/server/services/creator-service-deal-file-held-sql';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
 import { viewableServiceOfferingSql } from '~/server/services/creator-service-offering-viewable-sql';
 
@@ -10,7 +11,8 @@ export const reviewImageLevelSql = Prisma.sql`GREATEST(i."nsfwLevel", d."maxNsfw
 
 /**
  * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
- * what the domain serves), with `i` the image, `r` its review and `d` the deal.
+ * what the domain serves), with `i` the image, `ri` its review link, `r` the review and `d` the deal.
+ * A Final held since the copy was made hides the copy too.
  */
 export const reviewImageVisibleSql = (
   levels: number,
@@ -21,6 +23,7 @@ export const reviewImageVisibleSql = (
   AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"
   AND (${reviewImageLevelSql} & ${levels}::int) <> 0
   AND EXISTS (SELECT 1 FROM "ServiceOffering" o WHERE o."id" = d."offeringId" AND o."allowReviewWork")
+  AND NOT ${finalCsamHeldSql(Prisma.sql`ri."sourceFileId"`)}
 )`;
 
 /**

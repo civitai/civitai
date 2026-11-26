@@ -34,6 +34,7 @@ import {
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -60,8 +61,10 @@ beforeAll(async () => {
       id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, username text, image text,
       "profilePictureId" int, muted boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}'
     );
-    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "fileId" int, "imageId" int);
     CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]',
+      details jsonb NOT NULL DEFAULT '{}', "reportSentAt" timestamp, "archivedAt" timestamp);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
@@ -110,8 +113,10 @@ beforeAll(async () => {
       id int PRIMARY KEY, "dealId" int NOT NULL, "buyerId" int NOT NULL, "sellerId" int NOT NULL,
       "publishedAt" timestamp, "hiddenAt" timestamp
     );
-    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE);
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE, "sourceFileId" int);
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status text NOT NULL DEFAULT 'Pending');
   `);
+  await db.exec(childSafetyCaseTablesSql);
   const triggers = readFileSync(
     path.resolve(
       __dirname,
