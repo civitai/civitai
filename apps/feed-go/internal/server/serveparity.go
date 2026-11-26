@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/evalcorpus"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
@@ -141,12 +142,17 @@ type parityReplay struct {
 	value   any
 	ttl     *trpc.CacheTTL
 	trivial bool
+	// viewer is the served request's viewer, for the eval capture (viewerKnown false: none observed,
+	// or the capture is off).
+	viewer      evalcorpus.Viewer
+	viewerKnown bool
 }
 
 // sampleParity decides, for an answer serve has just written, whether it is replayed, and takes the
-// replay's copy of the request and the answer. Call it before c is released. Returns nil when not
-// sampled (every skip after the sample decision is counted).
-func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed) *parityReplay {
+// replay's copy of the request and the answer (and of the viewer the compute resolved, observed by
+// viewer: nil with the eval capture off). Call it before c is released. Returns nil when not sampled
+// (every skip after the sample decision is counted).
+func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed, viewer *viewerObs) *parityReplay {
 	p := s.Parity
 	if !p.on() || !isParityEndpoint(endpoint) {
 		return nil
@@ -182,6 +188,9 @@ func (s *Server) sampleParity(r *http.Request, endpoint string, c *computed) *pa
 	if r.URL.User != nil {
 		u := *r.URL.User
 		rep.url.User = &u
+	}
+	if u, seen, err := viewer.get(); seen {
+		rep.viewer, rep.viewerKnown = evalViewer(u, false), err == nil
 	}
 	if c.devalue {
 		rep.value = c.value
@@ -297,7 +306,9 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	}
 	c := &computed{payload: goBody, ttl: rep.ttl, trivial: rep.trivial}
 	sink := compareSink{source: SourceServeParity, results: s.Metrics.ParityResults, diffs: s.Metrics.ParityDiffs, response: s.Metrics.ParityResponse}
-	s.compareAnswer(ctx, rep.endpoint, sink, c, env.Result.Data, pickResponseHeaders(rec.header), "", shadow.Compare, trpcClassify(rep.endpoint), nil)
+	nodeHeaders := pickResponseHeaders(rec.header)
+	out := s.compareAnswer(ctx, rep.endpoint, sink, c, env.Result.Data, nodeHeaders, "", shadow.Compare, trpcClassify(rep.endpoint), nil)
+	s.captureParity(rep, env.Result.Data, nodeHeaders, out)
 	return ParityCompared
 }
 

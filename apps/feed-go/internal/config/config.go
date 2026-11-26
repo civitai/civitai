@@ -56,6 +56,18 @@ type Config struct {
 	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
 	// [0, 1] or junk reads as 0.
 	ServeParityRate float64
+	// EvalCapture is FEED_GO_EVAL_CAPTURE (default off): the eval capture taps (server.EvalCapture,
+	// DESIGN.md §19.6) write sampled requests to the eval store. On, the store's three variables are
+	// required (Load refuses to start without them): FEED_GO_EVAL_CLICKHOUSE_URL (an http(s) URL whose
+	// path names the database), FEED_GO_EVAL_CLICKHOUSE_USER and FEED_GO_EVAL_CLICKHOUSE_PASSWORD, an
+	// INSERT-only login. Read only with EvalCapture on.
+	EvalCapture                                                   bool
+	EvalClickHouseURL, EvalClickHouseUser, EvalClickHousePassword string
+	// EvalCaptureServeRate is FEED_GO_EVAL_CAPTURE_SERVE_RATE (default 0 = off): the fraction of public
+	// first-wave requests captured (tap T3). EvalCaptureShadowRate is FEED_GO_EVAL_CAPTURE_SHADOW_RATE
+	// (default 0 = unknown): the Node shadow sampler's rate, a shadow capture's weight while the samples
+	// do not carry their own. Both [0, 1]; junk reads as 0.
+	EvalCaptureServeRate, EvalCaptureShadowRate float64
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -313,6 +325,10 @@ func Load() (*Config, error) {
 
 		ServeParityRate: rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
 
+		EvalCapture:           boolEnv("FEED_GO_EVAL_CAPTURE", false),
+		EvalCaptureServeRate:  rateEnv("FEED_GO_EVAL_CAPTURE_SERVE_RATE"),
+		EvalCaptureShadowRate: rateEnv("FEED_GO_EVAL_CAPTURE_SHADOW_RATE"),
+
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
 		BaseModelFeedMetrics:             boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
@@ -425,6 +441,14 @@ func Load() (*Config, error) {
 	}
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
+	}
+	if c.EvalCapture {
+		c.EvalClickHouseURL = os.Getenv("FEED_GO_EVAL_CLICKHOUSE_URL")
+		c.EvalClickHouseUser = os.Getenv("FEED_GO_EVAL_CLICKHOUSE_USER")
+		c.EvalClickHousePassword = os.Getenv("FEED_GO_EVAL_CLICKHOUSE_PASSWORD")
+		if c.EvalClickHouseURL == "" || c.EvalClickHouseUser == "" || c.EvalClickHousePassword == "" {
+			return nil, errors.New("FEED_GO_EVAL_CAPTURE needs FEED_GO_EVAL_CLICKHOUSE_URL, FEED_GO_EVAL_CLICKHOUSE_USER and FEED_GO_EVAL_CLICKHOUSE_PASSWORD")
+		}
 	}
 	if c.CacheWriteBack.NeedsPrimary() && c.PrimaryDatabaseURL == "" {
 		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL for " + strings.Join(primaryWrites(c.CacheWriteBack), ",") +

@@ -148,6 +148,9 @@ type Server struct {
 	// Parity is the serve-side parity sampler (serveparity.go): a sampled served answer is replayed to
 	// the Node app after it is written, and compared. nil (or a zero Rate) = off.
 	Parity *ServeParity
+	// EvalCapture is the eval capture (evalcapture.go, FEED_GO_EVAL_CAPTURE): nil = off, and then no
+	// tap does anything.
+	EvalCapture *EvalCapture
 	// AllowedOrigins is the app's origin allow-list (config.AllowedOriginHosts). A public request whose
 	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
 	// answers it (401 in production), and this service never serves one the app would refuse.
@@ -991,6 +994,13 @@ func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint,
 		// runWithResponseWriteFormat: the answer may be devalue (encode decides, after the cache policy).
 		r = r.WithContext(trpc.WithDevalueWrite(r.Context()))
 	}
+	// The eval capture reads the viewer the compute resolves (nil with the capture off: r unchanged).
+	var viewer *viewerObs
+	if s.EvalCapture.on() {
+		var vctx context.Context
+		vctx, viewer = s.observeViewer(r.Context())
+		r = r.WithContext(vctx)
+	}
 	var (
 		c   *computed
 		err error
@@ -1024,12 +1034,13 @@ func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint,
 		s.noteWriteFormat(ctx, endpoint, c)
 		// The serve-side parity sample (off by default) copies what it compares before the release;
 		// its replay starts only after the answer is written and never touches w.
-		replay := s.sampleParity(r, endpoint, c)
+		replay := s.sampleParity(r, endpoint, c, viewer)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
-		s.startParity(replay) //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
+		s.startParity(replay)                          //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
+		s.sampleServeCapture(r, endpoint, viewer, nil) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
 		return
 	}
 	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
@@ -1051,6 +1062,7 @@ func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint,
 	w.Header().Set(ServedByHeader, ServedByNode)
 	// The original request (and its context): the budget bounded only this service's own compute.
 	s.proxy(w, r, endpoint)
+	s.sampleServeCapture(r, endpoint, viewer, err) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
 }
 
 // serveFallback records a public request that was not answered here (err, a fallback or an error)
@@ -1095,6 +1107,9 @@ type ShadowRequest struct {
 	// Upstream is a site-search sample's search-backend response, as Node received it (its 200 body):
 	// the shadow reshapes it rather than asking the backend again (DESIGN.md §18.4).
 	Upstream json.RawMessage `json:"upstream,omitempty"`
+	// SampleRate is the rate the Node sampler took this sample at, after its own limits (0: not sent;
+	// no sampler sends it yet). Read only for the eval capture's weight (EvalCapture.ShadowRate).
+	SampleRate float64 `json:"sampleRate,omitempty"`
 }
 
 // ResponseHeaderSetREST marks a sample whose ResponseHeaders are shadow.RESTComparedHeaders.
@@ -1317,6 +1332,8 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
 	// the marker off this context (auth.WithRedactedCredentials).
 	ctx = auth.WithRedactedCredentials(ctx)
+	// The eval capture reads the viewer the compute resolves (nil observer with the capture off).
+	ctx, viewer := s.observeViewer(ctx)
 	r, err := build(ctx, req)
 	if err != nil {
 		setOutcome(span, "bad_request")
@@ -1344,6 +1361,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			}
 			s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 			tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback"), time.Since(start).Seconds())
+			s.captureShadow(ctx, endpoint, req, r, viewer, compareOutcome{result: result, reason: reason})
 			return
 		}
 		s.endPhase(ctx, phase, endpoint, "compute", "error")
@@ -1351,6 +1369,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "error").Inc()
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "go_error").Inc()
 		s.noteError(ctx, slog.LevelWarn, "shadow compute failed", "shadow", endpoint, err)
+		s.captureShadow(ctx, endpoint, req, r, viewer, compareOutcome{result: "go_error"})
 		return
 	}
 	// Released once the comparison and its classification (the last readers of payload) are done.
@@ -1370,7 +1389,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	sink := compareSink{source: SourceShadow, results: s.Metrics.ShadowResults, diffs: s.Metrics.ShadowDiffs, response: s.Metrics.ShadowResponse}
 	// The phase ends once compared, before the result is counted (a reader of the result then sees
 	// the phase).
-	s.compareAnswer(ctx, endpoint, sink, c, req.Node, req.ResponseHeaders, req.ResponseHeaderSet, compareFn, classify,
+	out := s.compareAnswer(ctx, endpoint, sink, c, req.Node, req.ResponseHeaders, req.ResponseHeaderSet, compareFn, classify,
 		func(ok bool) {
 			outcome := "ok"
 			if !ok {
@@ -1378,6 +1397,16 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			}
 			s.endPhase(ctx, phase, endpoint, "compare", outcome)
 		})
+	s.captureShadow(ctx, endpoint, req, r, viewer, out)
+}
+
+// compareOutcome is what one comparison found, for the eval capture: the body's result (a
+// feed_go_shadow_compare_total result), the headers' (match | mismatch | uncompared), and the
+// categories of every differing path (body and headers; no values). reason is a fallback's reason when
+// there was no comparison.
+type compareOutcome struct {
+	result, header, reason string
+	categories             []string
 }
 
 // compareSink is where one comparison is counted: the comparison families curried with its source
@@ -1398,12 +1427,12 @@ func trpcClassify(endpoint string) func(*shadow.Report, []byte, []byte) string {
 }
 
 // compareAnswer compares Go's answer c with Node's (node; nodeHeaders, nil = not sent) and counts the
-// result, the differing categories and the header comparison into sink. It is the one comparison
-// both the shadow sample and the serve-side parity replay run. The two bodies that cannot be
-// compared are result bad_request. compared (nil = none) runs once the comparison is done (ok false:
-// bad_request), before the result is counted.
+// result, the differing categories and the header comparison into sink, and returns them. It is the
+// one comparison both the shadow sample and the serve-side parity replay run. The two bodies that
+// cannot be compared are result bad_request. compared (nil = none) runs once the comparison is done
+// (ok false: bad_request), before the result is counted.
 func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compareSink, c *computed, node []byte, nodeHeaders map[string]string, headerSet string,
-	compareFn func([]byte, []byte) (*shadow.Report, error), classify func(*shadow.Report, []byte, []byte) string, compared func(ok bool)) {
+	compareFn func([]byte, []byte) (*shadow.Report, error), classify func(*shadow.Report, []byte, []byte) string, compared func(ok bool)) compareOutcome {
 	span := trace.SpanFromContext(ctx)
 	report, err := compareFn(c.payload, node)
 	if err != nil {
@@ -1411,7 +1440,7 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 			compared(false)
 		}
 		sink.results.WithLabelValues(endpoint, "bad_request").Inc()
-		return
+		return compareOutcome{result: "bad_request"}
 	}
 	result := classify(report, c.payload, node)
 	if c.trivial && result == "match" {
@@ -1424,6 +1453,7 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 	// The compared headers, a separate result from the body's: the body's match rate keeps its
 	// meaning, and the response's is its own figure. The status is not compared (DESIGN.md §7).
 	var respDiffs []shadow.Diff
+	respResult := "uncompared"
 	switch {
 	case nodeHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
 		// A sampler that predates the field sends none; a model list sample with an `etag` query has
@@ -1443,7 +1473,7 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 			}
 		}
 		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, names)
-		respResult := "match"
+		respResult = "match"
 		if len(respDiffs) > 0 {
 			respResult = "mismatch"
 		}
@@ -1467,8 +1497,10 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
 	diffs = append(diffs, report.Diffs...)
 	diffs = append(diffs, respDiffs...)
+	categories := make([]string, 0, len(diffs))
 	for _, d := range diffs {
 		sink.diffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
+		categories = append(categories, d.Category)
 	}
 	unexpected := 0
 	for _, d := range respDiffs {
@@ -1491,6 +1523,7 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 		s.Log.Log(ctx, level, "shadow diff", traceAttrs(ctx, []any{"endpoint", endpoint, "source", sink.source, "result", result, "paths", paths,
 			"truncated", report.Truncated})...)
 	}
+	return compareOutcome{result: result, header: respResult, categories: categories}
 }
 
 // isRESTEndpoint: the REST ports (v1-images, v1-models, v1-models-id, site-search).

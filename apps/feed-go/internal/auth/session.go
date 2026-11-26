@@ -94,6 +94,15 @@ func IsModerationAccount(id int, username string, configuredID int) bool {
 // account, the request is signed out; the other slot's cookie is not tried, as getHubSession does not
 // try it.
 func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser, error) {
+	u, err := r.resolve(ctx, req)
+	if f, ok := ctx.Value(observerKey{}).(func(*SessionUser, error)); ok {
+		f(u, err)
+	}
+	return u, err
+}
+
+// resolve is Resolve without the observer (WithResolveObserver).
+func (r *Resolver) resolve(ctx context.Context, req *http.Request) (*SessionUser, error) {
 	if m, ok := ctx.Value(resolvedKey{}).(*resolved); ok {
 		return m.user, m.err
 	}

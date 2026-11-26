@@ -59,6 +59,13 @@ func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, e
 	if s.Tracer != nil {
 		r = r.WithContext(ctx)
 	}
+	// The eval capture reads the viewer the compute resolves (nil with the capture off: r unchanged).
+	var viewer *viewerObs
+	if s.EvalCapture.on() {
+		var vctx context.Context
+		vctx, viewer = s.observeViewer(r.Context())
+		r = r.WithContext(vctx)
+	}
 	var (
 		c   *computed
 		err error
@@ -83,6 +90,7 @@ func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, e
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		s.sampleServeCapture(r, endpoint, viewer, nil) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
 		return
 	}
 	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
@@ -93,6 +101,7 @@ func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, e
 	}
 	w.Header().Set(ServedByHeader, ServedByNode)
 	s.proxyVia(s.V1Fallback, w, r, endpoint)
+	s.sampleServeCapture(r, endpoint, viewer, err) //nolint:contextcheck // the capture finishes after the answer, on the server's background context
 }
 
 // writeV1Models writes a computed answer as Node's res.json does: c.headers (v1models.ResponseHeaders),

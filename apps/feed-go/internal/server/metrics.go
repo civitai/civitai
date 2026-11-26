@@ -81,7 +81,7 @@ type Metrics struct {
 	// Seconds from the Node request's start to the probe's first cache read.
 	GoFirstCheckLag *prometheus.HistogramVec // endpoint
 
-	// Panics counts recovered panics by where (serve | shadow | probe | serve-parity). Not per endpoint.
+	// Panics counts recovered panics by where (serve | shadow | probe | serve-parity | eval-capture). Not per endpoint.
 	Panics *prometheus.CounterVec
 	// RevocationDegraded counts session revocation reads that failed, by the verdict then given from the
 	// markers already read (verdict: deny_cached | allow_unknown).
@@ -120,6 +120,10 @@ type Metrics struct {
 	// (feed_go_search_rejected_total: why = open | busy; v1models.MeiliClient.OnReject). Each is a
 	// `v1-models-query` fallback too, which alone would not tell it from the switch being off.
 	SearchRejected *prometheus.CounterVec
+	// EvalCapture counts the eval capture's taps by outcome (feed_go_eval_capture_total: endpoint,
+	// source: evalcapture.Sources, outcome: evalcapture.Outcomes; evalcapture.go). Seeded per source
+	// for the endpoints it captures.
+	EvalCapture *prometheus.CounterVec
 	// FeedUnavailable counts the image.getInfinite 503s written here for a failed feed-service call
 	// (outcome feed_unavailable), by why the call failed (feed_go_feed_unavailable_total: endpoint,
 	// reason, detail; feedUnavailableCause). Not seeded: the series appear with the first failure.
@@ -177,6 +181,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_compare_viewer_total",
 			Help: "Shadow comparison results by the sample's viewer class (anon, user, owner, moderator), for the endpoints whose answer reports one.",
 		}, []string{EndpointLabel, "viewer", "result"}),
+		EvalCapture: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_eval_capture_total",
+			Help: "Eval capture taps (DESIGN.md §19.6) by source (shadow | serve-parity | serve) and outcome: written (admitted: sample and case rows queued), deduped (sample row queued, not admitted), dropped (a row not queued, or nothing capturable).",
+		}, []string{EndpointLabel, "source", "outcome"}),
 		ServeParity: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_serve_parity_total",
 			Help: "Serve-side parity replays (a served answer re-asked of the Node app after the response), by outcome: compared, dropped_queue, skipped_bulkhead, skipped_credential, skipped_closing, upstream_error, upstream_status, timeout, bad_body.",
@@ -316,6 +324,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m.ParityResponse = shadowResponse.MustCurryWith(prometheus.Labels{SourceLabel: SourceServeParity})
 	m.seedOutcomes()
 	m.seedServeParity()
+	m.seedEvalCapture()
 	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		for _, r := range []string{DevalueWriteDevalue, DevalueWriteFallback, DevalueWriteSuperjson} {
 			m.DevalueWrites.WithLabelValues(e, r)
@@ -340,7 +349,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.GoFirstPages.WithLabelValues(e)
 		m.GoFirstDropped.WithLabelValues(e)
 	}
-	for _, w := range []string{"serve", "shadow", "probe", "serve-parity"} {
+	for _, w := range []string{"serve", "shadow", "probe", "serve-parity", "eval-capture"} {
 		m.Panics.WithLabelValues(w)
 	}
 	for _, r := range []string{"ok", "error"} {
@@ -369,7 +378,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}
 	}
 	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
-	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity,
+	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity, m.EvalCapture,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,

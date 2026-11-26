@@ -3706,11 +3706,12 @@ Node); the Go implementation is expected to differ exactly where it hands a requ
 Node endpoint is deleted, the frozen corpus with Node's recorded answers is what tells a later change
 to the Go endpoint whether it broke a caller.
 
-This section is the request side: what a case is, how cases are grouped, and what is never stored.
-Code: `internal/evalcorpus` (pure, no I/O) and the offline estimator `cmd/feed-eval`. The capture
-(an extension of the shadow sampler) and the replay harness are later changes; nothing is wired
-yet. The corpus itself lives in private storage, never in this repository: this repository holds
-the code and synthetic tests only.
+This section is the request side: what a case is, how cases are grouped, and what is never stored,
+and the capture that writes them (§19.6). Code: `internal/evalcorpus` (pure, no I/O), the offline
+estimator `cmd/feed-eval`, and the capture `internal/evalcapture` with its taps in `internal/server`
+(behind `FEED_GO_EVAL_CAPTURE`, default off). The replay harness is a later change. The corpus itself
+lives in private storage, never in this repository: this repository holds the code and synthetic
+tests only.
 
 First wave, the endpoints closest to having their Node implementation deleted: `as-posts`,
 `infinite`, `model-getall` and `v1-models-id` (`evalcorpus.Endpoints`).
@@ -3804,3 +3805,66 @@ capture writes (`scripts/feed-bench/README.md`; optional `endpoint`, `path`, `qu
 other endpoints) and prints per endpoint the rows, the distinct signatures, the share of traffic the
 top N hold, and the bytes a corpus keeping K cases per signature would take. It makes no network
 call; a capture row says only whether the client was signed in, so the viewer is `user` or `anon`.
+
+### 19.6 Capture (`FEED_GO_EVAL_CAPTURE`, default off)
+
+Off, no tap does anything (no writer is started, no context value is added). On, three taps hand
+each request they see to one entry point, `evalcapture.Recorder.Record`, which strips it
+(`evalcorpus.Capture`, §19.3), signs it, applies the admission limits below, and queues a `samples`
+row and, when admitted, a `cases` row to two `internal/chwrite` writers (one per table; the database
+is the path of `FEED_GO_EVAL_CLICKHOUSE_URL`, the login `FEED_GO_EVAL_CLICKHOUSE_USER` /
+`_PASSWORD`, INSERT-only; on without all three, the service refuses to start). Only the first-wave
+endpoints are captured (`evalcapture.Supported`); every other endpoint is skipped before any work.
+
+| tap | source | where | Node's answer | weight |
+|---|---|---|---|---|
+| T1 | `shadow` | `compare`: the hand-back branch (result `unsupported` / `deadline`, its reason), the compute-error branch (`go_error`), and after the comparison (its result, header result, diff categories) | the sample's `node` and `responseHeaders` | 1 / the sample's `sampleRate`, else 1 / `FEED_GO_EVAL_CAPTURE_SHADOW_RATE` (the Node sampler's configured rate; 0 when unset: unknown). No sampler sends `sampleRate` yet (TODO: C4) |
+| T2 | `serve-parity` | `replay`, after a compared replay | the replay's `result.data` and picked headers | 1 / `FEED_GO_SERVE_PARITY_SAMPLE_RATE` |
+| T3 | `serve` | the public routes (`serve`, `serveV1Models`), after the answer is written or the request handed back, at `FEED_GO_EVAL_CAPTURE_SERVE_RATE` (default 0: off) | none; the result is `served`, `handback` (with the fallback reason) or `error` | 1 / that rate |
+
+- **Viewer.** The one the computation resolved, read through `auth.WithResolveObserver` (no extra
+  store read). A request handed back before anything resolved a viewer is resolved by the tap (T1 on
+  the sample's goroutine; T3 on one of `DefaultEvalCaptureWorkers` = 2 capture workers, after the
+  answer, a full pool or shutdown dropping it), with credentials redacted, so an API key is never
+  looked up here: such a request is dropped (an API-key tap is a later change). The hidden
+  preferences and the viewer's collections cost a read and are not known here: `hiddenPrefs` is
+  always false and a `collectionId` input is stored as sent.
+- **Node's answer** (`node_body`, `node_headers`) is stored only for a request with no session user
+  (anon, or a verified crawler) and no credential of any kind; for every other request a case stores
+  the request and the production verdict, a sample the diff categories (paths' categories, no values).
+- **Admission** (per pod, per UTC day, reset at midnight): K = 3 cases per (endpoint, signature,
+  outcome class: match / mismatch / served / handback / error); a mismatch also needs one of its diff
+  categories (`none` when it has none) under 20 cases per (endpoint, category); at most 20 000 cases
+  per endpoint; an identical case (same id) once. Every capture writes its sample row (case_id 0 when
+  not admitted), so the samples weigh the traffic and the cases stay a few per shape.
+- **Outcomes.** `feed_go_eval_capture_total{feed_endpoint,source,outcome}`: `written` (admitted:
+  both rows queued), `deduped` (sample row queued, not admitted), `dropped` (a row refused by a full or
+  closed writer queue, a T3 capture with every worker busy, a viewer that could not be resolved, or a
+  request that built no case). Seeded at 0 for the endpoints each source captures (shadow and serve:
+  the four first-wave endpoints; serve-parity: the three tRPC ones). A batch the writer later fails
+  to insert is not in this count: it is logged (`eval capture insert failed`).
+- **Never blocks.** T1 and T2 run on their sample's or replay's goroutine; T3 copies what it needs
+  and returns; `Record` only queues (`chwrite.Writer.Add` never waits; a full queue drops the row).
+  At shutdown the writers flush after the taps have stopped.
+- **Timestamps** are RFC 3339 UTC with milliseconds; the writers send `date_time_input_format=
+  best_effort`, so they are read with their zone whatever the server's.
+
+**Insert once (the `cases` pin contract).** `cases` is a ReplacingMergeTree versioned by
+`last_seen`: of the rows of one `(endpoint, case_id)`, the newest `last_seen` wins. The harness pins
+or bumps a case by re-inserting it with a later `last_seen`; the writer login cannot SELECT, so
+feed-go cannot read a pin. Instead, no row feed-go writes can ever outrank a harness row:
+
+1. `case_id` is xxhash64 of the capture's UTC day, the endpoint, the signature and the stored
+   request (`evalcapture.CaseID`; never 0). The same request on another day is another case.
+2. Every row feed-go writes for a case carries `first_seen = last_seen =` 00:00:00.000 UTC of that
+   day, and `pinned = 0`: every copy, from any pod, at any time (a retried batch, another pod's
+   admission of the same request), has the same version.
+3. **Harness rule:** every row the harness writes for a case carries a `last_seen` strictly later
+   than the start of the case's day (its own clock, or the row's `last_seen` + 1 ms if that is
+   later), and carries the case's current `pinned` and `first_seen`.
+
+So a feed-go copy that lands after a pin is older than it and loses at merge, and a pin is never
+undone by feed-go. Within a pod a case id is admitted at most once per day; across pods the same
+request on the same day may be inserted twice, with the same version and the same request (only
+`node_body` can differ: either is a recorded Node answer), and ReplacingMergeTree keeps one. The
+90-day TTL then counts from the start of the capture day unless the harness bumps the case.
