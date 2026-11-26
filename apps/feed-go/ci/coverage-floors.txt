@@ -21,7 +21,9 @@ internal/dbpool 95
 internal/devalue 91
 internal/evalcapture 91
 internal/evalcorpus 90
-internal/evalharness 91
+# evalharness measured 91.02% and 90.93% on two CI runs of one tree (one timing-dependent statement
+# of ~1100): 90 so the floor does not flake.
+internal/evalharness 90
 internal/feed 76
 internal/fallback 91
 internal/flipt 88
