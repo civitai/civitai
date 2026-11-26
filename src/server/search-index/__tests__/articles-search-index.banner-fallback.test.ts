@@ -257,7 +257,10 @@ describe('the images the articles index withholds', () => {
     } as never);
 
   it('🔴 withholds a cover listed on a report, and does not fall back to the banner', async () => {
-    const withheldImageIds = await getIndexWithheldImageIds([10, 11], dbAnswering({ listed: [10] }));
+    const withheldImageIds = await getIndexWithheldImageIds(
+      [10, 11],
+      dbAnswering({ listed: [10] })
+    );
     const [record] = await recordsOf({
       articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],
       cosmetics: {},

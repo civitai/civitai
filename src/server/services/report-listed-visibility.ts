@@ -2,15 +2,6 @@ import { Prisma } from '@prisma/client';
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { dbRead } from '~/server/db/client';
 
-/**
- * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
- * viewer without the held-media grant. Its uploader still sees it.
- */
-export const notReportListedSql = (userId?: number) =>
-  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
-    userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
-  })`;
-
 /** Who may see images listed on a CsamReport: `seesReportListed(ctx)`, and the uploader on a
  *  session or a full-access key. */
 export type ReportListedViewer = {
@@ -19,8 +10,11 @@ export type ReportListedViewer = {
   ownerSeesReportListed?: boolean;
 };
 
+/** Not listed on a CsamReport, as SQL over `"Image" i`, or the viewer's own upload. */
 const notListedFor = ({ userId, ownerSeesReportListed }: ReportListedViewer) =>
-  notReportListedSql(ownerSeesReportListed ? userId : undefined);
+  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
+    ownerSeesReportListed && userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
+  })`;
 
 /** A read with no viewer: the search indexes, og images, shared documents. */
 export const SIGNED_OUT_REPORT_LISTED: ReportListedViewer = { seesReportListed: false };

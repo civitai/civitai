@@ -845,7 +845,9 @@ describe('getArticleByShareToken: images listed on a report', () => {
   const CLEAN_BODY = 502;
   const bodyUrl = (id: number) => `${id}${id}${id}aaaa-bbbb-4ccc-8ddd-${String(id).repeat(4)}`;
   const content = [LISTED_BODY, CLEAN_BODY]
-    .map((id) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${bodyUrl(id)}/x.jpeg">`)
+    .map(
+      (id) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${bodyUrl(id)}/x.jpeg">`
+    )
     .join('');
   const image = (id: number) => ({
     id,
@@ -898,7 +900,8 @@ describe('getArticleByShareToken: images listed on a report', () => {
   const readAs = (
     viewerId: number | undefined,
     reportListedViewer?: { seesReportListed: boolean; ownerSeesReportListed?: boolean }
-  ) => getArticleByShareToken({ articleId: ARTICLE, shareToken: TOKEN, viewerId, reportListedViewer });
+  ) =>
+    getArticleByShareToken({ articleId: ARTICLE, shareToken: TOKEN, viewerId, reportListedViewer });
 
   const seen = async (...args: Parameters<typeof readAs>) => {
     const result = await readAs(...args);
@@ -915,7 +918,11 @@ describe('getArticleByShareToken: images listed on a report', () => {
   it.each<[string, number | undefined, Parameters<typeof readAs>[1]]>([
     ['a signed-out link holder', undefined, undefined],
     ['a signed-in link holder', STRANGER, { seesReportListed: false, ownerSeesReportListed: true }],
-    ['the uploader on a scoped key', AUTHOR, { seesReportListed: false, ownerSeesReportListed: false }],
+    [
+      'the uploader on a scoped key',
+      AUTHOR,
+      { seesReportListed: false, ownerSeesReportListed: false },
+    ],
   ])('🔴 withholds the listed cover and body image from %s', async (_, viewerId, viewer) => {
     expect(await seen(viewerId, viewer)).toEqual({
       cover: undefined,

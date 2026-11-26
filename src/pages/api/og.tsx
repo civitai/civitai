@@ -430,9 +430,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     title: article.title,
     description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(
-      getSafeImage(shown(article.coverImage) ?? shown(article.bannerImage))
-    ),
+    ...buildEntityImage(getSafeImage(shown(article.coverImage) ?? shown(article.bannerImage))),
     stats,
   };
 }

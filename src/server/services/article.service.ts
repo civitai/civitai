@@ -942,9 +942,9 @@ export const getArticleById = async ({
     // owner does; card and feed covers still withhold them from moderators.
     const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
-    // owner when they uploaded it; one listed on a CsamReport follows `reportListedViewer`. The
-    // edit form learns of one it may not see from the `...Withheld` flags, and a save that
-    // leaves it out keeps it (upsertArticle).
+    // owner when they uploaded it. Any image listed on a CsamReport follows `reportListedViewer`.
+    // The edit form learns of a cover or banner it may not see from the `...Withheld` flags, and a
+    // save that leaves it out keeps it (upsertArticle).
     const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
     const bodyImages = imageConnections.map((conn) => conn.image);
     const [withheldByModel, listedHidden] = await Promise.all([
@@ -1087,7 +1087,6 @@ export const upsertArticle = async ({
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
-  /** The editor's report-listed view, as getArticleById applied it to the edit form. */
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   metadata?: ArticleMetadata;
   scanContent?: boolean;

@@ -451,7 +451,11 @@ describe('the article page body under the report-listed rule', () => {
     width: 10,
     height: 10,
   });
-  const images = [body(OWN_BODY, OWNER), body(OTHERS_BODY, OTHER_IMAGE_OWNER), body(CLEAN_BODY, OWNER)];
+  const images = [
+    body(OWN_BODY, OWNER),
+    body(OTHERS_BODY, OTHER_IMAGE_OWNER),
+    body(CLEAN_BODY, OWNER),
+  ];
 
   let pg: PGlite;
   beforeAll(async () => {
@@ -533,14 +537,22 @@ describe('the article page body under the report-listed rule', () => {
 
   it('keeps every body image for a held-media viewer (control)', async () => {
     expect(
-      await shownTo({ id: MOD, isModerator: true }, { seesReportListed: true, ownerSeesReportListed: true })
+      await shownTo(
+        { id: MOD, isModerator: true },
+        { seesReportListed: true, ownerSeesReportListed: true }
+      )
     ).toEqual([OWN_BODY, OTHERS_BODY, CLEAN_BODY]);
   });
 
   it.each<[string, Viewer, typeof SESSION, boolean]>([
     ['its uploader', { id: OWNER }, SESSION, true],
     ['a stranger', { id: STRANGER }, SESSION, false],
-    ['its uploader on a scoped key', { id: OWNER }, { ...SESSION, ownerSeesReportListed: false }, false],
+    [
+      'its uploader on a scoped key',
+      { id: OWNER },
+      { ...SESSION, ownerSeesReportListed: false },
+      false,
+    ],
   ])('a listed cover and %s', async (_, viewer, reportListedViewer, shown) => {
     dbMock.dbRead.article.findFirst.mockResolvedValue({
       id: 1,
