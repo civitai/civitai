@@ -3,9 +3,8 @@ import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-bod
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
-import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import { getArticleImageHolds } from '~/server/services/article-image-holds';
 import {
-  getReportListedHiddenImageIds,
   SIGNED_OUT_REPORT_LISTED,
   type ReportListedViewer,
 } from '~/server/services/report-listed-visibility';
@@ -266,14 +265,12 @@ export async function getArticleByShareToken({
     select: { image: { select: { ...articleContentImageSelect, minor: true } } },
   });
   const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
-  const [withheldByModel, listedHidden] = await Promise.all([
-    getModelWithheldImageIds(ownImageIds, dbWrite),
-    getReportListedHiddenImageIds(
-      [...ownImageIds, ...connections.map((c) => c.image.id)],
-      { userId: viewerId, ...reportListedViewer },
-      dbWrite
-    ),
-  ]);
+  const { withheldByModel, listedHidden } = await getArticleImageHolds({
+    coverIds: ownImageIds,
+    bodyIds: connections.map((c) => c.image.id),
+    viewer: { userId: viewerId, ...reportListedViewer },
+    db: dbWrite,
+  });
   return {
     status: 'ok',
     article: toSharedArticle(

@@ -236,7 +236,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     if (!article || article.status === ArticleStatus.Published) return;
 
     upsertArticleMutation.mutate(
-      { ...article, status: ArticleStatus.Published },
+      // No body: the page's read may withhold images the save must keep.
+      { ...article, content: undefined, status: ArticleStatus.Published },
       {
         async onSuccess() {
           await queryUtils.article.getById.invalidate({ id });

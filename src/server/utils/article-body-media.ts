@@ -45,6 +45,18 @@ export function servableBodyImageUrls(images: ArticleBodyImageState[], browsingL
 }
 
 /**
+ * Whether a source or link names one of `uuids` (lower-case image urls). `keysIn` reads the uuid
+ * however the url spells it, as the browser would resolve it.
+ */
+export function namesBodyMedia(value: string | undefined, uuids: readonly string[]) {
+  if (!value || !uuids.length) return false;
+  const lower = value.toLowerCase();
+  if (uuids.some((uuid) => lower.includes(uuid))) return true;
+  const keys = new Set(uuids);
+  return keysIn(value).some((key) => keys.has(key));
+}
+
+/**
  * Drops every `img` and `edge-media` whose source names a `withheld` uuid and, given `keep`, every
  * one whose uuid is not in it, including one with no uuid. `keepEdgeMedia` does the same for
  * `edge-media` alone, which only ever holds site media; one with no uuid is always dropped. A link
@@ -65,13 +77,7 @@ export function removeBodyMedia(
   const held = withheld.filter(Boolean).map((uuid) => uuid.toLowerCase());
   if (!html || !/<(img|edge-media|a)\b/i.test(html)) return html;
   if (!keep && !held.length && edgeMediaAllKept(html, keepEdgeMedia)) return html;
-  const heldKeys = new Set(held);
-  // keysIn reads the uuid however the url spells it, as the browser would resolve it.
-  const namesWithheld = (value: string | undefined) => {
-    if (!value) return false;
-    const lower = value.toLowerCase();
-    return held.some((uuid) => lower.includes(uuid)) || keysIn(value).some((k) => heldKeys.has(k));
-  };
+  const namesWithheld = (value: string | undefined) => namesBodyMedia(value, held);
   const kept = (uuid: string | null | undefined, set = keep) => !set || set.has(uuid ?? '');
   return sanitize(html, {
     allowedTags: false,

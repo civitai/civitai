@@ -17,6 +17,7 @@ const baseSchema = upsertArticleInput
     userNsfwLevel: z.string().optional(),
     moderatorNsfwLevel: z.string().optional(),
     lockedProperties: z.string().array().optional(),
+    content: z.string().refine((data) => data.length > 0 && data !== '<p></p>', 'Cannot be empty'),
   });
 
 /**

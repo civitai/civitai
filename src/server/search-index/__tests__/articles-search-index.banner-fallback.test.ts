@@ -13,10 +13,10 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
 
 import {
   articleSelect,
-  getIndexWithheldImageIds,
   pushData,
   transformData,
 } from '~/server/search-index/articles.search-index';
+import { getPublicWithheldImageIds } from '~/server/services/article-image-holds';
 
 type Input = Parameters<typeof transformData>[0];
 const recordsOf = async (input: Input) => (await transformData(input)).records;
@@ -257,7 +257,7 @@ describe('the images the articles index withholds', () => {
     } as never);
 
   it('🔴 withholds a cover listed on a report, and does not fall back to the banner', async () => {
-    const withheldImageIds = await getIndexWithheldImageIds(
+    const withheldImageIds = await getPublicWithheldImageIds(
       [10, 11],
       dbAnswering({ listed: [10] })
     );
@@ -270,7 +270,7 @@ describe('the images the articles index withholds', () => {
   });
 
   it('🔴 leaves out a banner-only article whose banner is listed on a report', async () => {
-    const withheldImageIds = await getIndexWithheldImageIds([11], dbAnswering({ listed: [11] }));
+    const withheldImageIds = await getPublicWithheldImageIds([11], dbAnswering({ listed: [11] }));
     const records = await recordsOf({
       articles: [article({ coverImage: null, bannerImage: image(11, 1) })],
       cosmetics: {},
@@ -280,7 +280,7 @@ describe('the images the articles index withholds', () => {
   });
 
   it('withholds what its model withholds too, and nothing else (control)', async () => {
-    const ids = await getIndexWithheldImageIds([10, 11, 12], dbAnswering({ byModel: [12] }));
+    const ids = await getPublicWithheldImageIds([10, 11, 12], dbAnswering({ byModel: [12] }));
     expect([...ids]).toEqual([12]);
   });
 });

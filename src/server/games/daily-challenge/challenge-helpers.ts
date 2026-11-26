@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { challengeCoverSql, imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  reportListedImageSql,
+  getReportListedHiddenImageIds,
   SIGNED_OUT_REPORT_LISTED,
 } from '~/server/services/report-listed-visibility';
 import { logToAxiom } from '~/server/logging/client';
@@ -156,9 +156,7 @@ type ChallengeDbRow = Omit<
   judgeId: number | null;
 };
 
-const challengeCoverImageSql = Prisma.sql`${imageNotRestrictedSql()} AND ${challengeCoverSql()} AND ${reportListedImageSql(
-  SIGNED_OUT_REPORT_LISTED
-)}`;
+const challengeCoverImageSql = Prisma.sql`${imageNotRestrictedSql()} AND ${challengeCoverSql()}`;
 
 // Shared column list for both the single-row and batched challenge lookups — keeps the two
 // queries (and their cover-image subquery hydration) from drifting apart.
@@ -247,7 +245,24 @@ export async function getChallengesByIds(challengeIds: number[]): Promise<Challe
     WHERE c.id = ANY(${challengeIds}::int[])
   `;
 
-  return rows.map(hydrateChallengeRow);
+  // A cover listed on a report is left out, as from every other challenge cover read.
+  const listed = await getReportListedHiddenImageIds(
+    rows.map((row) => row.coverImageId).filter((id): id is number => id != null),
+    SIGNED_OUT_REPORT_LISTED
+  );
+  return rows.map((row) =>
+    hydrateChallengeRow(
+      row.coverImageId != null && listed.has(row.coverImageId)
+        ? {
+            ...row,
+            coverUrl: null,
+            coverImageHash: null,
+            coverImageWidth: null,
+            coverImageHeight: null,
+          }
+        : row
+    )
+  );
 }
 
 export async function getChallengeById(challengeId: number): Promise<ChallengeDetails | null> {

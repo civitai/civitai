@@ -1,7 +1,3 @@
-import {
-  getReportListedHiddenImageIds,
-  SIGNED_OUT_REPORT_LISTED,
-} from '~/server/services/report-listed-visibility';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   hasBlockMarker,
@@ -12,7 +8,7 @@ import { articleSemanticEligibleWhere } from '~/server/search-index/articles.sea
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
 import { readerArticleBody } from '~/server/utils/article-body-media';
-import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import { getArticleImageHolds } from '~/server/services/article-image-holds';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
@@ -66,14 +62,11 @@ export const articleWebhooks = createWebhookProcessor({
           },
         },
       });
-      const [withheld, listed] = await Promise.all([
-        getModelWithheldImageIds(coverIds, prisma),
-        getReportListedHiddenImageIds(
-          [...coverIds, ...bodyImages.map((connection) => connection.image.id)],
-          SIGNED_OUT_REPORT_LISTED,
-          prisma
-        ),
-      ]);
+      const { withheldByModel: withheld, listedHidden: listed } = await getArticleImageHolds({
+        coverIds,
+        bodyIds: bodyImages.map((connection) => connection.image.id),
+        db: prisma,
+      });
       // The body as a signed-out reader is served it.
       const publicBody = (articleId: number, content: string | null) =>
         content &&

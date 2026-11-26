@@ -1,4 +1,5 @@
 import { Parser } from 'htmlparser2';
+import { namesBodyMedia } from '~/server/utils/article-body-media';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { WITHHELD_MEDIA_TYPE } from '~/shared/constants/withheld-media.constants';
 
@@ -22,7 +23,7 @@ function mediaSlices(html: string): MediaSlice[] {
       onopentag(name, attribs) {
         if (name !== 'img' && name !== 'edge-media') return;
         const src = (name === 'img' ? attribs.src : attribs.url) ?? '';
-        open.push({ tag: name, start: parser.startIndex, src: src.toLowerCase() });
+        open.push({ tag: name, start: parser.startIndex, src });
       },
       onclosetag(name) {
         if (name !== 'img' && name !== 'edge-media') return;
@@ -61,9 +62,6 @@ function placeholderSlices(html: string): (Slice & { ref: string | undefined })[
   return slices.sort((a, b) => a.start - b.start);
 }
 
-/** Whether a medium's source names one of `keys` (image urls, which are uuids), however spelled. */
-const namesAny = (src: string, keys: string[]) => keys.some((key) => src.includes(key));
-
 function replaceSlices(html: string, replacements: (Slice & { text: string })[]) {
   let out = '';
   let at = 0;
@@ -82,7 +80,7 @@ export function withheldMediaPlaceholders(html: string, hiddenKeys: ReadonlySet<
     html,
     mediaSlices(html)
       .map((slice, ref) => ({ ...slice, text: placeholder(ref) }))
-      .filter((slice) => namesAny(slice.src, keys))
+      .filter((slice) => namesBodyMedia(slice.src, keys))
   );
 }
 
@@ -105,10 +103,27 @@ export function restoreWithheldMedia(
     placeholders.map(({ start, end, ref }) => {
       const index = ref !== undefined && /^\d+$/.test(ref) ? Number(ref) : -1;
       const medium = stored[index];
-      if (!medium || used.has(index) || !namesAny(medium.src, keys))
+      if (!medium || used.has(index) || !namesBodyMedia(medium.src, keys))
         throw throwBadRequestError('This article body names an image it does not hold');
       used.add(index);
       return { start, end, text: storedHtml!.slice(medium.start, medium.end) };
     })
   );
+}
+
+/**
+ * The saved body, with each stored medium in `hiddenKeys` that it no longer names put back at the
+ * end: a save from anywhere but the edit form cannot remove an image its saver may not see.
+ */
+export function keepWithheldMedia(
+  html: string,
+  storedHtml: string | null | undefined,
+  hiddenKeys: ReadonlySet<string>
+) {
+  const keys = [...hiddenKeys].filter(Boolean).map((key) => key.toLowerCase());
+  if (!storedHtml || !keys.length) return html;
+  const saved = mediaSlices(html);
+  const gone = keys.filter((key) => !saved.some((medium) => namesBodyMedia(medium.src, [key])));
+  const missing = mediaSlices(storedHtml).filter((medium) => namesBodyMedia(medium.src, gone));
+  return html + missing.map((medium) => storedHtml.slice(medium.start, medium.end)).join('');
 }

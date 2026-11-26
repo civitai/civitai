@@ -1007,14 +1007,12 @@ async function buildChallengeDetail(
   const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
-  const coverListed =
-    !seesReportListed &&
-    !!challenge.coverImageId &&
-    (await getReportListedHiddenImageIds([challenge.coverImageId], SIGNED_OUT_REPORT_LISTED)).size >
-      0;
-  const fetchedCover =
-    challenge.coverImageId && (forEdit || !coverListed)
-      ? await dbRead.image.findFirst({
+  const [listedCover, readCover] = await Promise.all([
+    !seesReportListed && challenge.coverImageId
+      ? getReportListedHiddenImageIds([challenge.coverImageId], SIGNED_OUT_REPORT_LISTED)
+      : new Set<number>(),
+    challenge.coverImageId
+      ? dbRead.image.findFirst({
           where: {
             id: challenge.coverImageId,
             // The edit form must round-trip the cover it keeps, or a save would drop it.
@@ -1029,7 +1027,10 @@ async function buildChallengeDetail(
           },
           select: imageSelect,
         })
-      : null;
+      : null,
+  ]);
+  const coverListed = listedCover.size > 0;
+  const fetchedCover = forEdit || !coverListed ? readCover : null;
   const shownCover = coverWithinSite(fetchedCover, {
     isGreen: green?.isGreen ?? false,
     viewerId: green?.viewerId,

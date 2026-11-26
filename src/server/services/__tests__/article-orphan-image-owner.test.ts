@@ -90,8 +90,12 @@ const storedArticle = {
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+  // Each row answers both reads: the orphan check's imageId and the save's connected image.
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
-    UNLINKED.map((imageId) => ({ imageId })) as never
+    UNLINKED.map((imageId) => ({
+      imageId,
+      image: { id: imageId, url: `uuid-${imageId}` },
+    })) as never
   );
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.article.findUnique.mockResolvedValue(storedArticle as never);
@@ -439,7 +443,7 @@ describe('a save from the edit form with a body image listed on a report', () =>
         : []) as never);
   });
 
-  const upsert = (content: string) =>
+  const upsert = (content: string | undefined, extra: Record<string, unknown> = {}) =>
     upsertArticle({
       id: ARTICLE_ID,
       userId: AUTHOR,
@@ -447,7 +451,10 @@ describe('a save from the edit form with a body image listed on a report', () =>
       title: 'A title',
       content,
       status: 'Draft',
+      ...extra,
     } as never);
+  // The body as the article page's plain read gives it to an editor who may not see the image.
+  const stripped = `<p>a</p>${img(SHOWN.url)}<p>b </p>`;
   const savedContent = () =>
     (dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: { content?: string } }])[0].data
       .content;
@@ -471,6 +478,22 @@ describe('a save from the edit form with a body image listed on a report', () =>
     const forged = `<p>a</p><span data-type="withheldMedia" data-id="0"></span>`;
     await expect(upsert(forged)).rejects.toThrow();
     expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 keeps the stored body when a moderator without the grant publishes with no body', async () => {
+    await upsert(undefined, { userId: MODERATOR, isModerator: true, status: 'Published' });
+    expect(savedContent()).toBe(body);
+  });
+
+  it('🔴 keeps the listed image when a save from outside the edit form leaves it out', async () => {
+    const saved = (await upsert(stripped)) as { content?: string };
+    expect(savedContent()).toContain(img(LISTED.url));
+    expect(saved.content).toBe(stripped);
+  });
+
+  it('removes it when an edit-form save deletes its placeholder (control)', async () => {
+    await upsert(stripped, { editForm: true });
+    expect(savedContent()).toBe(stripped);
   });
 
   describe('when its placeholder is deleted', () => {

@@ -71,9 +71,15 @@ export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  // Omitted on an update keeps the stored body (the article page's Publish sends none).
+  content: getSanitizedStringSchema({ allowBlurbs: true })
+    .refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty')
+    .optional(),
+  // The save comes from the edit form, whose placeholders are the only way to remove a body
+  // image the saver may not see.
+  editForm: z.boolean().optional(),
   coverImage: imageReferenceInputSchema.nullish(),
   // Omitted leaves the banner as it is; null removes it.
   bannerImage: imageReferenceInputSchema.nullish(),

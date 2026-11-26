@@ -1,6 +1,7 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import {
+  keepWithheldMedia,
   restoreWithheldMedia,
   withheldMediaPlaceholders,
 } from '~/server/utils/article-withheld-media';
@@ -103,10 +104,8 @@ import {
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
-import {
-  getModelWithheldImageIds,
-  imageAllowedByItsModelSql,
-} from '~/server/services/collection-cover-visibility';
+import { getArticleImageHolds } from '~/server/services/article-image-holds';
+import { imageAllowedByItsModelSql } from '~/server/services/collection-cover-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -956,13 +955,12 @@ export const getArticleById = async ({
     // save that leaves it out keeps it (upsertArticle).
     const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
     const bodyImages = imageConnections.map((conn) => conn.image);
-    const [withheldByModel, listedHidden] = await Promise.all([
-      isModerator ? new Set<number>() : getModelWithheldImageIds(ownImageIds),
-      getReportListedHiddenImageIds([...ownImageIds, ...bodyImages.map((image) => image.id)], {
-        userId,
-        ...reportListedViewer,
-      }),
-    ]);
+    const { withheldByModel, listedHidden } = await getArticleImageHolds({
+      coverIds: ownImageIds,
+      bodyIds: bodyImages.map((image) => image.id),
+      viewer: { userId, ...reportListedViewer },
+      skipModel: isModerator,
+    });
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
       !!image &&
       (listedHidden.has(image.id) ||
@@ -990,8 +988,8 @@ export const getArticleById = async ({
         (isModerator ||
           (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
     );
-    // In the edit form a listed image stays in place as a placeholder, so a save keeps it. It
-    // stays withheld too: the strip below catches every other spelling of it.
+    // A listed body image is placeholdered, not dropped, so a save keeps it; it stays withheld so
+    // the strip below catches any other spelling of it.
     const listedUrls = bodyImages
       .filter((image) => listedHidden.has(image.id))
       .map((image) => image.url);
@@ -1102,6 +1100,7 @@ export const upsertArticle = async ({
   scanContent,
   scheduledAt,
   reportListedViewer = { seesReportListed: false },
+  editForm = false,
   ...data
 }: UpsertArticleInput & {
   userId: number;
@@ -1166,22 +1165,31 @@ export const upsertArticle = async ({
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
     }
 
-    // The edit form holds a placeholder for each body image this editor may not see. The save
-    // answers with the body as the form sent it, so the restored image never reaches the editor.
+    // A save that sends no body (the article page's Publish) keeps the stored one.
+    if (data.content === undefined) {
+      if (!article?.content) throw throwBadRequestError('An article needs a body');
+      data.content = article.content;
+    }
+    // A listed body image the saver may not see goes back in: in place for an edit-form
+    // placeholder, which only the edit form may delete, else at the end of the body. The answer
+    // carries the body as sent, so a restored image never reaches the saver.
     let editorContent: string | undefined;
-    if (data.content?.includes(WITHHELD_MEDIA_TYPE)) {
+    const sent = data.content;
+    if (sent.includes(WITHHELD_MEDIA_TYPE) || (article?.content && sent !== article.content)) {
       const connected = article ? await connectedArticleImages(article.id) : [];
       const hidden = await getReportListedHiddenImageIds(
         connected.map((c) => c.image.id),
         { userId, ...reportListedViewer },
         dbWrite
       );
-      editorContent = data.content;
-      data.content = restoreWithheldMedia(
-        data.content,
-        article?.content,
-        new Set(connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url))
+      const hiddenUrls = new Set(
+        connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url)
       );
+      const restored = restoreWithheldMedia(sent, article?.content, hiddenUrls);
+      data.content = editForm
+        ? restored
+        : keepWithheldMedia(restored, article?.content, hiddenUrls);
+      if (data.content !== sent) editorContent = sent;
     }
 
     if (data.content) {
@@ -1300,10 +1308,12 @@ export const upsertArticle = async ({
         bannerId === null ? article.bannerId : null,
       ].filter(isDefined);
       if (stored.length) {
-        const [withheld, listedHidden] = await Promise.all([
-          isModerator ? new Set<number>() : getModelWithheldImageIds(stored, dbWrite),
-          getReportListedHiddenImageIds(stored, { userId, ...reportListedViewer }, dbWrite),
-        ]);
+        const { withheldByModel: withheld, listedHidden } = await getArticleImageHolds({
+          coverIds: stored,
+          viewer: { userId, ...reportListedViewer },
+          skipModel: isModerator,
+          db: dbWrite,
+        });
         const owners = withheld.size
           ? await dbWrite.image.findMany({
               where: { id: { in: [...withheld] } },
@@ -2429,9 +2439,8 @@ async function assertNoShopArtworkInContent(
   if (shopUrls.size) throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
 }
 
-/** The article's connected images. */
 function connectedArticleImages(articleId: number) {
-  // primary: judged against the same body the save is about to overwrite.
+  // primary: a replica read can lag the body this save overwrites.
   return dbWrite.imageConnection.findMany({
     where: {
       entityId: articleId,
