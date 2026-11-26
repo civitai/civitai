@@ -173,7 +173,6 @@ describe('getTimed: a song’s timed comments for the player', () => {
 
   it('reads the image’s section with the section’s gate and exclusions', async () => {
     await timed();
-    // A read: the owner's view of their own held song rides along.
     expect(gate).toHaveBeenCalledWith(
       { entityType: 'image', entityId: 20 },
       expect.anything(),
