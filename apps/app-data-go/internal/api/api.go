@@ -4,8 +4,8 @@
 //	    Authorization: Bearer <the app's hub access token for the signed-in user>
 //
 // `major` names the collection schema major read; a read that names none reads the collection's
-// current major, as the adapter's streams name it (major.go, THE CURRENT MAJOR), or answers
-// `major_unknown` when they name none. Never major 1 by default.
+// current major when the adapter's streams name it (major.go, THE CURRENT MAJOR), and otherwise the
+// major it opened at (1 unless a stream named another), as before.
 //
 // Every private record of one collection of the app `slug` names that the token's user may read
 // through the token's app: the app's own collection when slug is the app itself, or another app's
@@ -543,8 +543,6 @@ func fallbackReason(err error) string {
 		return "block_cache_full"
 	case errors.Is(err, session.ErrCursorExpired):
 		return "cursor_expired"
-	case errors.Is(err, errMajorUnknown):
-		return "major_unknown"
 	default:
 		return "failed"
 	}

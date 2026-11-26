@@ -63,7 +63,7 @@
  * and mid-stream, as the public feed's is.
  *
  * THE CURRENT MAJOR. Beside the head, a served stream's `meta` names the collection's current
- * major, `currentMajor` ({@link currentMajorOf}): on `live`, as the first poll resolved it, then in
+ * major, `currentMajor` (`CollectionStream.currentMajor`): on `live`, as the first poll resolved it, then in
  * a `progress` whenever a poll resolves another (a major approved since). A stream that holds
  * nothing names none. app-data-go reads it to answer a read that names no major at the current one
  * (`apps/app-data-go/internal/api/major.go`).
@@ -74,12 +74,7 @@ import { parseClientIdList } from '~/server/registry-adapter/auth';
 import { hasScope } from '~/server/registry-adapter/auth.jwt';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
-import {
-  createClaimer,
-  currentMajorOf,
-  docRev,
-  familyDigest,
-} from '~/server/registry-adapter/doc-feed';
+import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
 import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { compareCodeUnits, sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
@@ -150,7 +145,7 @@ export type PrivateDocSource = {
 /** A private collection major that resolves now: its app (by the catalog) and its family. */
 export type PrivateCollectionStream = Pick<
   CollectionStream,
-  'appId' | 'slug' | 'collection' | 'family'
+  'appId' | 'slug' | 'collection' | 'family' | 'currentMajor'
 >;
 
 /**
@@ -223,7 +218,7 @@ export const privateRev = (
 export const headMeta = (seq: number): EventMeta => ({ head: { seq } });
 /**
  * A private stream's `meta`: its head ({@link headMeta}) and, beside it, the collection's current
- * major (`currentMajor`, {@link currentMajorOf}) when the stream is served. Undefined when it names
+ * major (`currentMajor`, `CollectionStream.currentMajor`) when the stream is served. Undefined when it names
  * neither.
  */
 export const privateMeta = (
@@ -354,7 +349,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     next: PrivateState;
     entities: Map<string, Entity>;
     head: number | null;
-    /** The collection's current major ({@link currentMajorOf}); undefined when nothing is served. */
+    /** The collection's current major (`CollectionStream.currentMajor`); undefined when nothing is served. */
     current?: number;
   }> {
     const nothing = () => ({
@@ -398,7 +393,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     }
 
     const digest = familyDigest(family);
-    const current = currentMajorOf(family);
+    const current = stream.currentMajor;
     // Before the keyset, never after (see the file comment).
     const head = await opts.source.head(appId);
     // A head below the one this state was read at: the namespace was wiped and written again

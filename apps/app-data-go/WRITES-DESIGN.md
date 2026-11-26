@@ -206,12 +206,13 @@ parameter (shape-checked only) and relays the answer, and the site validates it 
 collection's current major (`resolveSchemaMajor`, `doc-store-schema-major.ts`) and answers
 `409 stale_major`, the same major it stamps on every write (`withSchemaMajor`,
 `doc-store-api.ts:825-833`). No copy of the current major is kept here for a write, so none can be
-stale. A READ that names no major is likewise of the current major, as the adapter derives it from
-the same approved manifest history: every private and level stream names it (`currentMajor` in its
-`live` and `progress` meta, `doc-feed.ts` `currentMajorOf`), and app-data-go answers only from a
-stream that names the major it was opened at; the major it remembers per collection is only where it
-opens first (`internal/api/major.go`). Streams that hold records and name no current major are
-`503 major_unknown` with `Retry-After` (REST, with the writes off), never a read at major 1.
+stale. A READ that names no major is likewise of the current major when the adapter names it: every
+private and level stream names `currentMajor` in its `live` and `progress` meta, by the store's own
+rule (`currentCollectionMajors` over `manifestHistory`, in `doc-streams.ts` `collectionFamily`, never
+a second copy), and app-data-go follows a stream that names another major than the one it opened
+(once), remembering it per collection only as where the next read opens (`internal/api/major.go`).
+A stream that names none is read as before, at the major it opened (1 unless a stream named
+another), never refused: app-data-go and the registry adapter ship, and roll back, independently.
 **Imports are not v1** (below).
 
 **The internal route.** The public route's path under an `internal` prefix, on the site, running
@@ -758,7 +759,6 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
      | `too_large`, private stream | `503 too_large` for every read of that collection on that token. A private stream over its bound is closed (`DESIGN.md:336-337`), and a private collection is the user's own, so it is never served in part |
      | `too_large`, level stream | the window: list answers are unchanged for the app ("The bound is at least the app's own read"); a keyed `get` or `update` outside it is `503 too_large` |
      | `unkeyed` | `503`: an adapter without keys cannot serve a cut-over app, so the adapter release is a prerequisite |
-     | `major_unknown` | `503` with `Retry-After`: a read naming no major whose stream holds records but names no current major (an adapter that does not send `currentMajor`), so that adapter release is a prerequisite too |
 
    - **the site's counter**, which does not exist on `main`: `app_storage_requests_total{app, op, via,
      viewer, token_kind}`, `via` in `direct|service`, counted on both routes for every op. A series that

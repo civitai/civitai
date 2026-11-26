@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -21,9 +20,10 @@ import (
 // THE CURRENT MAJOR through the handler (major.go): the real handler, the real private-stream
 // manager and the real shared reader, over a stub adapter whose streams name `currentMajor` as the
 // adapter's private and level feeds do, and whose records sit on ONE major's streams only, as the
-// adapter claims a body only for the majors whose schema it satisfies. Only API that existed before
-// the fix is used, so this file compiles on the commit before it: there a read that names no major
-// subscribes at @v1 whatever the collection's current major, and answers v1's (empty) streams.
+// adapter claims a body only for the majors whose schema it satisfies. The tests through
+// TestAnExplicitMajorOneStillReadsV1 use only API that existed before the fix, so they compile on the
+// commit before it: there a read that names no major subscribes at @v1 whatever the collection's
+// current major, and answers v1's (empty) streams.
 
 const (
 	notesV1 = "urn:schema:apps.civitai.com:todo-app/notes@v1"
@@ -304,24 +304,28 @@ func TestAnExplicitMajorOneStillReadsV1(t *testing.T) {
 	}
 }
 
-// 🔴 Streams that hold records and name no current major (an adapter that does not send it): a read
-// with no major is `503 major_unknown`, never an answer at major 1, and never REST. The control: an
-// empty stream that names none (a viewer the adapter refused) still answers empty.
-func TestANoMajorReadWhoseStreamsNameNoCurrentMajorIsRefused(t *testing.T) {
+// 🔴 THE COMPATIBILITY GUARANTEE. Against an adapter that names no current major (one released
+// before `currentMajor`, or rolled back to it), a read with no major is answered exactly as before
+// the fix: at major 1, the stream's records, 200, no refusal and no REST read. So app-data-go can
+// ship, or roll back, without the adapter. An explicit `?major=1` beside it reads the same.
+func TestANoMajorReadAgainstAnAdapterNamingNoMajorReadsAsBefore(t *testing.T) {
 	for _, private := range []bool{true, false} {
 		t.Run(fmt.Sprintf("private=%v", private), func(t *testing.T) {
-			a := &majorAdapter{private: private, current: 0, recordsAt: notesV1, record: majorRecord(notesV1, "old-2", "V1-UNKNOWN-CANARY")}
+			a := &majorAdapter{private: private, current: 0, recordsAt: notesV1, record: majorRecord(notesV1, "old-2", "V1-COMPAT-CANARY")}
 			s := majorStack(t, a)
-			g := s.majorRead(t, notesPath)
-			if g.status != http.StatusServiceUnavailable || g.err != "major_unknown" || g.retry != "1" || strings.Contains(g.body, "CANARY") {
-				t.Fatalf("no current named: %d %q %s; want 503 major_unknown", g.status, g.retry, g.body)
+			for _, path := range []string{notesPath, notesPath + "?major=1"} {
+				g := s.majorRead(t, path)
+				if g.status != http.StatusOK || g.keys != "old-2" || g.data != `{"title":"V1-COMPAT-CANARY"}` {
+					t.Fatalf("%s, no current named: %d %q %s; want 200 old-2 as before", path, g.status, g.retry, g.body)
+				}
 			}
 			if n := s.store.calls.Load(); n != 0 {
 				t.Fatalf("🔴 REST was read %d times", n)
 			}
-			// An explicit major is still read: the refusal is the missing current major's, not the stream's.
-			if g := s.majorRead(t, notesPath+"?major=1"); g.status != http.StatusOK || g.keys != "old-2" {
-				t.Fatalf("?major=1 beside it: %d %s", g.status, g.body)
+			for _, q := range a.subscribed() {
+				if !strings.HasSuffix(q, "@v1") {
+					t.Fatalf("subscribed %s (all: %v); want @v1 only", q, a.subscribed())
+				}
 			}
 		})
 	}
@@ -334,35 +338,35 @@ func TestANoMajorReadWhoseStreamsNameNoCurrentMajorIsRefused(t *testing.T) {
 	})
 }
 
-// With the writes off (REST still the fallback), a stream that holds records and names no current
-// major is not answered at major 1 either: the read goes to REST, counted as `major_unknown`. A read
-// that names its major is answered from the same stream. (Uses the fake adapter's `noCurrent`, which
-// exists only with the fix.)
-func TestANoMajorReadWithNoCurrentFallsBackToRESTWithTheWritesOff(t *testing.T) {
+// The same with the writes off (REST still the fallback): a stream that holds records and names no
+// current major is answered from the stream, as before, never sent to REST. (Uses the fake adapter's
+// `noCurrent`, which exists only with the fix.)
+func TestANoMajorReadWithNoCurrentReadsTheStreamWithTheWritesOff(t *testing.T) {
 	s := newStack(t, true, session.Options{})
 	s.reg.records["civitai_erin"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-e", "E-STREAM")}
 	s.reg.noCurrent["civitai_erin"] = true
 	s.store.by["civitai_erin"] = restAnswer{200, `{"items":[{"key":"k-e","data":{"text":"E-REST"},"version":2}],"nextCursor":null}`}
 	g := s.get(t, notesPath, "civitai_erin")
-	if g.status != http.StatusOK || g.ans.Source != "rest" || !strings.Contains(g.body, "E-REST") || fallbacks(s, "major_unknown") != 1 {
-		t.Fatalf("no current named, writes off: %d %s (major_unknown fallbacks %v); want the REST read", g.status, g.body, fallbacks(s, "major_unknown"))
-	}
-	if g := s.get(t, notesPath+"?major=1", "civitai_erin"); g.ans.Source != "registry" || !strings.Contains(g.body, "E-STREAM") {
-		t.Fatalf("?major=1: %d %s; want the stream's record", g.status, g.body)
+	if g.status != http.StatusOK || g.ans.Source != "registry" || !strings.Contains(g.body, "E-STREAM") || s.store.calls.Load() != 0 {
+		t.Fatalf("no current named, writes off: %d %s (REST reads %d); want the stream's record", g.status, g.body, s.store.calls.Load())
 	}
 }
 
-// A stream read again at the major the first one named, which names yet another major: the read is
-// `503 major_unknown`, never a third stream (the correction is made once).
-func TestACurrentMajorThatMovesAgainIsMajorUnknown(t *testing.T) {
+// A stream read again at the major the first one named, which names yet another major (approved
+// between the two reads): the read is answered at the second stream, never a third stream and never
+// a refusal, and the hint moves to the newest major named, for the next read.
+func TestACurrentMajorThatMovesAgainIsReadOnceAndRemembered(t *testing.T) {
 	a := &majorAdapter{private: true, current: 2, flap: true, recordsAt: notesV2, record: majorRecord(notesV2, "mine-6", "FLAP-CANARY")}
 	s := majorStack(t, a)
 	g := s.majorRead(t, notesPath)
-	if g.status != http.StatusServiceUnavailable || g.err != "major_unknown" || strings.Contains(g.body, "CANARY") {
-		t.Fatalf("a major that moved again: %d %s; want 503 major_unknown", g.status, g.body)
+	if g.status != http.StatusOK || g.keys != "mine-6" || g.data != `{"title":"FLAP-CANARY"}` {
+		t.Fatalf("a major that moved again: %d %s; want 200 at @v2", g.status, g.body)
 	}
 	if got := a.subscribed(); strings.Join(got, " ") != "private:"+notesV1+" private:"+notesV2 {
 		t.Fatalf("subscribed %v; want @v1 then @v2 only", got)
+	}
+	if n := s.srv.majors.guess("todo-app", "notes"); n != 3 {
+		t.Fatalf("the hint after @v2 named 3: %d; want 3", n)
 	}
 }
 
@@ -402,11 +406,12 @@ func TestTheMajorHintsAreBounded(t *testing.T) {
 	}
 }
 
-// A named major no schema URN can carry for p's app is major_unknown, not a read.
-func TestANamedMajorNoURNCanCarryIsMajorUnknown(t *testing.T) {
+// A named major no schema URN can carry for p's collection is not followed: the read is answered at
+// the major it opened at.
+func TestANamedMajorNoURNCanCarryIsNotFollowed(t *testing.T) {
 	var s Server
 	p := readParams{slug: "Not A Slug", collection: "notes", major: 1, implied: true}
-	if done, err := s.settle(&p, 2, 0, false); done || !errors.Is(err, errMajorUnknown) {
-		t.Fatalf("settle: %v %v; want errMajorUnknown", done, err)
+	if done := s.settle(&p, 2, false); !done || p.major != 1 {
+		t.Fatalf("settle: done %v at %d; want answered at 1", done, p.major)
 	}
 }

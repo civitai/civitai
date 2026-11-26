@@ -11,36 +11,32 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
 
-// THE CURRENT MAJOR. A read that names no `major` reads the collection's CURRENT major, as a write
-// that names none is stamped with the current one (WRITES-DESIGN.md, "Schema versioning"). This
-// service holds no catalog, so the streams say it: the adapter's private and level streams name
-// `currentMajor` in the `meta` of their `live` and `progress` (src/server/registry-adapter/doc-feed.ts
-// currentMajorOf), the newest major it derived for the collection from the app's approved manifest
-// history, the history the site's resolveSchemaMajor derives a write's major from.
+// THE CURRENT MAJOR. A read that names no `major` reads the collection's CURRENT major when the
+// adapter names it, as a write that names none is stamped with the current one (WRITES-DESIGN.md,
+// "Schema versioning"). This service holds no catalog, so the streams say it: the adapter's private
+// and level streams name `currentMajor` in the `meta` of their `live` and `progress`
+// (src/server/registry-adapter/doc-streams.ts collectionFamily), the major the document store stamps
+// a write with, by its own rule (`currentCollectionMajors` over the approved manifest history).
 //
 // A read with no major opens its stream at a GUESS, the major the streams last named for the
 // collection on this replica (majorHints), else 1, and reads it unfloored:
 //
 //   - the stream names the guess: the read is answered at it (under its floor, when it has one);
-//   - it names another major: the hint becomes that major and the read is made once more there. That
-//     stream must name its own major; one that names yet another is `major_unknown`;
-//   - it names none and holds records (an adapter from before `currentMajor`, or two level streams
-//     naming different majors): `major_unknown` (errMajorUnknown), a 503 with Retry-After, or REST
-//     where REST is still the fallback. Never an answer at a major nothing showed is current;
-//   - it names none and holds nothing (the adapter refused the viewer: a refused private stream is
-//     empty and carries no meta): answered as before, since an empty answer is the same at every
-//     major.
+//   - it names another major: the hint becomes that major and the read is made once more there,
+//     and answered there whatever that stream names (a major approved between the two reads moves
+//     the hint again, for the next read). Never a third stream;
+//   - it names none (an adapter from before `currentMajor`, a refused viewer, or two level streams
+//     naming different majors): the read is answered at the guess, exactly as a read with no major
+//     was before the adapter named it. Never a refusal: either service can ship, or roll back,
+//     without the other.
 //
-// The hint is never trusted, only tried: every answer is checked against the meta of the stream it
-// came from. A newly approved major therefore corrects it at the next read of the collection: the
+// The hint is never trusted, only tried: a stream that names another major moves the read and the
+// hint. A newly approved major therefore corrects it at the next read of the collection: the
 // adapter re-reads every stream of a collection whose schema family changed and names the new major
 // in a `progress`. A hinted major the adapter no longer resolves (`not_resolved`) drops the hint.
 // The hints are bounded (majorHintsMax; past it they are all dropped and relearned).
 //
 // An explicit `?major=N` is read exactly as before: at N, with no meta check.
-
-// errMajorUnknown is a read with no major whose streams did not name the collection's current one.
-var errMajorUnknown = errors.New("api: the streams named no current major for the collection")
 
 // majorHintsMax bounds the collections whose current major is remembered.
 const majorHintsMax = 10_000
@@ -93,25 +89,18 @@ func (p *readParams) at(major int) error {
 }
 
 // settle decides a read with no major after one unfloored read at p.major whose streams named
-// current and held n records (THE CURRENT MAJOR): done reports the read is answered at p.major; not
-// done, p was moved to the named major and the read is made again there.
-func (s *Server) settle(p *readParams, current, n int, corrected bool) (done bool, err error) {
-	switch {
-	case current == 0 && n > 0:
-		return false, errMajorUnknown
-	case current == 0:
-		return true, nil
-	case current == p.major:
-		s.majors.set(p.slug, p.collection, current)
-		return true, nil
-	case corrected:
-		return false, errMajorUnknown
+// current (0: none), corrected when it was already moved once (THE CURRENT MAJOR): true when the
+// read is answered at p.major; false when p was moved to the named major, to be read there.
+func (s *Server) settle(p *readParams, current int, corrected bool) bool {
+	if current == 0 {
+		return true
 	}
 	s.majors.set(p.slug, p.collection, current)
-	if err := p.at(current); err != nil {
-		return false, errMajorUnknown
+	if current == p.major || corrected {
+		return true
 	}
-	return false, nil
+	// A major no schema URN of p's collection can carry is not followed: answered at the guess.
+	return p.at(current) != nil
 }
 
 // view reads p's private stream: at p.major as named, or, for a read with no major, at the current
@@ -123,14 +112,10 @@ func (s *Server) view(ctx context.Context, p *readParams) ([]registry.Entity, er
 	}
 	for corrected := false; ; corrected = true {
 		snap, err := s.Streams.View(ctx, p.token, p.schema, 0)
-		if err != nil {
-			return nil, err
-		}
-		done, err := s.settle(p, shared.CurrentMajor(snap.Meta), len(snap.Entities), corrected)
 		switch {
 		case err != nil:
 			return nil, err
-		case !done:
+		case !s.settle(p, shared.CurrentMajor(snap.Meta), corrected):
 			continue
 		case p.minSeq == 0:
 			return snap.Entities, nil
@@ -155,11 +140,8 @@ func (s *Server) sharedRead(ctx context.Context, v shared.Viewer, p *readParams)
 			}
 			return shared.Board{}, err
 		}
-		done, err := s.settle(p, b.Current, len(b.Docs), corrected)
 		switch {
-		case err != nil:
-			return shared.Board{}, err
-		case !done:
+		case !s.settle(p, b.Current, corrected):
 			continue
 		case p.minSeq == 0:
 			return b, nil

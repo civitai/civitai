@@ -570,8 +570,8 @@ func readLevelMeta(raw json.RawMessage) levelMeta {
 	return levelMeta{Block: m.Block, Truncated: m.Truncated, CurrentMajor: CurrentMajor(raw)}
 }
 
-// CurrentMajor is the `currentMajor` a stream's meta names (the adapter's doc-feed.ts
-// currentMajorOf), or 0 when it names none, or anything but a major a schema URN can carry. Read on
+// CurrentMajor is the `currentMajor` a stream's meta names (the adapter's doc-streams.ts
+// collectionFamily), or 0 when it names none, or anything but a major a schema URN can carry. Read on
 // its own, so a malformed one never hides the rest of the meta.
 func CurrentMajor(raw json.RawMessage) int {
 	var m struct {

@@ -164,6 +164,7 @@ describe('the level streams over the store (rls on)', () => {
           collection: coll.name,
           contentRating: 'pg13',
           family: [{ urn: schemaOf(coll), body: { type: 'object' } }],
+          currentMajor: 1,
           appBlockId: app,
           levelsOn: true,
         },

@@ -862,7 +862,6 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		session.ErrBlockSpent:    "block_spent",
 		session.ErrBlockFull:     "block_cache_full",
 		session.ErrCursorExpired: "cursor_expired",
-		errMajorUnknown:          "major_unknown",
 	} {
 		got := fallbackReason(err)
 		if got != want {

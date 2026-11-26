@@ -33,12 +33,7 @@ import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audie
 import { parseClientIdList } from '~/server/registry-adapter/auth';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
-import {
-  createClaimer,
-  currentMajorOf,
-  docRev,
-  familyDigest,
-} from '~/server/registry-adapter/doc-feed';
+import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
 import { headMeta } from '~/server/registry-adapter/private-feed';
 import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, StreamEnd, cursorExpired } from '~/server/registry-adapter/protocol';
@@ -140,7 +135,7 @@ export function parseLevelStreamConfig(env: {
 /** A shared collection major that resolves now, with what a level stream needs of it. */
 export type SharedLevelCollection = Pick<
   CollectionStream,
-  'appId' | 'slug' | 'collection' | 'contentRating' | 'family'
+  'appId' | 'slug' | 'collection' | 'contentRating' | 'family' | 'currentMajor'
 > & {
   /**
    * The slug's approved production block id (the app's store id), which `live` and `progress`
@@ -302,7 +297,7 @@ export const levelRev = (d: LevelStreamDocument, schemas: readonly string[]) =>
  * consumer can tell a key below the window's floor, which may exist, from a key that does not.
  * The mode is fixed by the level for the stream's whole life (`none` is served only while levels
  * are off, a bit only while they are on; any change ends the stream), so it is derived, never
- * stored. Beside them the collection's current major, `currentMajor` ({@link currentMajorOf}), as
+ * stored. Beside them the collection's current major, `currentMajor` (`CollectionStream.currentMajor`), as
  * the latest poll resolved it: app-data-go reads a shared collection that a read names no major of
  * at it (`apps/app-data-go/internal/api/major.go`). Not stored either: a property of the collection
  * now, so a state saved before it was named still names it on its next `live`.
@@ -442,7 +437,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
   ): Promise<{
     next: LevelState;
     entities: Map<string, Entity>;
-    /** The collection's current major ({@link currentMajorOf}). */
+    /** The collection's current major (`CollectionStream.currentMajor`). */
     current: number | undefined;
   }> {
     const s = await opts.resolve(schema);
@@ -466,7 +461,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     }
 
     const digest = familyDigest(s.family);
-    const current = currentMajorOf(s.family);
+    const current = s.currentMajor;
     // A full read: a new stream, other schemas, or another bound.
     const full = !prev || prev.family !== digest || prev.bound !== bound;
     const base = {

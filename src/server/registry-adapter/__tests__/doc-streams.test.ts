@@ -108,6 +108,8 @@ describe('resolveFromCatalog', () => {
       collection: 'notes',
       contentRating: 'pg',
       family: [V('notes', 1), V('notes', 2)],
+      // The major a write is stamped with now (`currentCollectionMajors`): the newest.
+      currentMajor: 2,
     });
   });
 
