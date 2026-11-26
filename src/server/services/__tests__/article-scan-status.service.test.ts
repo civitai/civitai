@@ -149,12 +149,16 @@ describe('getArticleScanStatus image urls', () => {
       { image: image(3, ImageIngestionStatus.Blocked, 'AiNotVerified') },
       { image: image(4, ImageIngestionStatus.Error, 'moderated') },
       { image: image(5, ImageIngestionStatus.Error, null) },
+      // A moderator-blocked image being rescanned keeps its block.
+      { image: image(6, ImageIngestionStatus.Rescan, 'moderated') },
+      { image: image(7, ImageIngestionStatus.Pending, null) },
     ] as never);
   });
 
   const urls = (status: Awaited<ReturnType<typeof getArticleScanStatus>>) => ({
     blocked: status.images.blocked.map((i) => [i.id, i.url, i.blockedFor]),
     error: status.images.error.map((i) => [i.id, i.url]),
+    pending: status.images.pending.map((i) => [i.id, i.url]),
   });
 
   it("withholds a blocked image's url from the author, keeping its reason", async () => {
@@ -167,6 +171,10 @@ describe('getArticleScanStatus image urls', () => {
       error: [
         [4, null],
         [5, 'key-5'],
+      ],
+      pending: [
+        [6, null],
+        [7, 'key-7'],
       ],
     });
   });
@@ -181,6 +189,10 @@ describe('getArticleScanStatus image urls', () => {
       error: [
         [4, 'key-4'],
         [5, 'key-5'],
+      ],
+      pending: [
+        [6, 'key-6'],
+        [7, 'key-7'],
       ],
     });
   });

@@ -999,16 +999,18 @@ export const getArticleById = async ({
       (image) =>
         !listedHidden.has(image.id) &&
         (isModerator ||
-          (userId === article.userId
-            ? !isCsamHeldBodyImage(image) && ownerMediaAllowed(image)
-            : isServableBodyImage(image)))
+          (userId === article.userId ? !withheldFromAuthor(image) : isServableBodyImage(image)))
     );
-    // On the edit form a listed body image is placeholdered, not dropped, so a save keeps it; it
-    // stays withheld so the strip below catches any other spelling of it.
-    const listedUrls = bodyImages
-      .filter((image) => listedHidden.has(image.id))
+    // On the edit form a listed body image, and one withheld from its author, is placeholdered, not
+    // dropped, so a save keeps it; it stays withheld so the strip below catches any other spelling
+    // of it.
+    const placeholderedUrls = bodyImages
+      .filter(
+        (image) =>
+          listedHidden.has(image.id) || (isOwner && !isModerator && withheldFromAuthor(image))
+      )
       .map((image) => image.url);
-    const placeholdered = edit && (isOwner || !!isModerator) ? listedUrls : [];
+    const placeholdered = edit && (isOwner || !!isModerator) ? placeholderedUrls : [];
     const withheld = bodyImages
       .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
@@ -1199,8 +1201,9 @@ export const upsertArticle = async ({
       if (!article?.content) throw throwBadRequestError('An article needs a body');
       data.content = article.content;
     }
-    // A listed body image the saver may not see goes back in: in place for an edit-form
-    // placeholder, which only the edit form may delete, else at the end of the body.
+    // A listed body image the saver may not see, and one withheld from the author saving their own
+    // article (`withheldFromAuthor`), goes back in: in place for an edit-form placeholder, which only
+    // the edit form may delete, else at the end of the body.
     const sent = data.content;
     if (
       sent.includes(WITHHELD_MEDIA_TYPE) ||
@@ -1213,8 +1216,11 @@ export const upsertArticle = async ({
         { userId, ...reportListedViewer },
         dbWrite
       );
+      const authorSaves = !isModerator && article?.userId === userId;
       const hiddenUrls = new Set(
-        connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url)
+        connected
+          .filter((c) => hidden.has(c.image.id) || (authorSaves && withheldFromAuthor(c.image)))
+          .map((c) => c.image.url)
       );
       const restored = restoreWithheldMedia(sent, article?.content, hiddenUrls);
       const kept = editForm ? restored : keepWithheldMedia(restored, article?.content, hiddenUrls);
@@ -2489,8 +2495,23 @@ function connectedArticleImages(articleId: number) {
       entityType: ImageConnectionType.Article,
       ...connectionImageExists,
     },
-    select: { image: { select: { id: true, url: true } } },
+    select: {
+      image: {
+        select: { id: true, url: true, needsReview: true, ingestion: true, blockedFor: true },
+      },
+    },
   });
+}
+
+/**
+ * A body image withheld from the article's own author beyond the report-listed rule: held for csam
+ * review, or under a block that refuses its owner the media (`ownerMediaAllowed`). getArticleById
+ * strips it (a placeholder on the edit form) and upsertArticle puts it back.
+ */
+function withheldFromAuthor(
+  image: { needsReview: string | null } & Parameters<typeof ownerMediaAllowed>[0]
+) {
+  return isCsamHeldBodyImage(image) || !ownerMediaAllowed(image);
 }
 
 /** `queueImageDeletes`, except that an image listed on a report is never queued for cleanup. */
@@ -2794,7 +2815,7 @@ export async function getArticleScanStatus({
       failureClass: string | null;
       reason: string | null;
     }>;
-    pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+    pending: Array<{ id: number; url: string | null; ingestion: ImageIngestionStatus }>;
   };
   textModeration: ArticleTextModerationStatus;
   /** Why the scan could not finish, in the owner's words; null when nothing failed. */
@@ -2918,7 +2939,7 @@ export async function getArticleScanStatus({
       }),
       pending: pendingImages.map((i) => ({
         id: i.id,
-        url: i.url,
+        url: mediaUrl(i),
         ingestion: i.ingestion,
       })),
     },

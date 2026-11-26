@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { WITHHELD_MEDIA_TYPE } from '~/shared/constants/withheld-media.constants';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserService from '~/server/services/user.service';
@@ -64,7 +65,7 @@ const image = (id: number, blockedFor: string | null) => ({
 
 const read = async (
   blockedFor: string | null,
-  viewer: { userId: number; isModerator?: boolean }
+  viewer: { userId: number; isModerator?: boolean; edit?: boolean }
 ) => {
   const cover = image(10, blockedFor);
   const banner = image(11, blockedFor);
@@ -117,6 +118,18 @@ describe.each(['tos', 'moderated'])(
       expect(article.coverImage).toMatchObject({ url: 'key-10', hash: 'blur-hash' });
       expect(article.bannerImage).toMatchObject({ url: 'key-11' });
       expect(article.contentImages.map((i) => i.id)).toEqual([12, 13]);
+    });
+  }
+);
+
+describe.each(['tos', 'moderated'])(
+  "the author's edit form for a %s-blocked body image",
+  (blockedFor) => {
+    it('holds a placeholder in its place, naming no key, so a save keeps it', async () => {
+      const article = await read(blockedFor, { userId: OWNER, edit: true });
+      expect(article.content).not.toContain('key-12');
+      expect(article.content).toContain(WITHHELD_MEDIA_TYPE);
+      expect(article.content).toContain('key-13');
     });
   }
 );
