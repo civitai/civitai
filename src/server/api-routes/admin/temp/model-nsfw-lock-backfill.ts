@@ -174,10 +174,15 @@ export const exclusions = {
  * were not logged in ModActivity before 2026-10-20 and `profanityMatches` is recorded even where the
  * filter did not lock, so an unmarked lock is taken only on this record.
  */
-export type Attribution = { attributed: number[]; superseded: number[] };
+export type Attribution = {
+  attributed: number[];
+  superseded: number[];
+  /** Models the log records a moderator changing the lock or the rating on, ever. */
+  moderatorLogged: number[];
+};
 
 /** No record read: every unmarked lock counts as unattributed and stays locked. */
-export const NO_ATTRIBUTION: Attribution = { attributed: [], superseded: [] };
+export const NO_ATTRIBUTION: Attribution = { attributed: [], superseded: [], moderatorLogged: [] };
 
 /**
  * The attribution query. No values are interpolated: `$query` inlines them unescaped, so any added
@@ -203,11 +208,29 @@ export const PROFANITY_ATTRIBUTION_QUERY = `
     SELECT entityId AS id, entityId IN (SELECT entityId FROM later) AS superseded FROM filter
 `;
 
+/**
+ * Every model the log records a moderator changing the nsfw lock or the rating on, at any time. The
+ * log has covered moderator saves since before ModActivity did, so this is a moderator trace the
+ * unattributed selection must skip. Interpolates nothing, as above.
+ */
+export const PROFANITY_MODERATOR_LOG_QUERY = `
+    SELECT DISTINCT entityId AS id
+    FROM entityChangeEvents
+    WHERE entityType = 'Model' AND field IN ('lockedProperties', 'nsfw')
+      AND actorRole = 'moderator'
+`;
+
+const positiveIds = (rows: { id: number | string }[]) =>
+  rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+
 /** Reads the attribution from ClickHouse; throws, so nothing is written, when it cannot. */
 export async function readProfanityAttribution(): Promise<Attribution> {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const rows = await clickhouse.$query<{ id: number | string; superseded: number | boolean }>(
     PROFANITY_ATTRIBUTION_QUERY
+  );
+  const moderatorRows = await clickhouse.$query<{ id: number | string }>(
+    PROFANITY_MODERATOR_LOG_QUERY
   );
   const attributed: number[] = [];
   const superseded: number[] = [];
@@ -216,7 +239,7 @@ export async function readProfanityAttribution(): Promise<Attribution> {
     if (!Number.isInteger(id) || id <= 0) continue;
     (Number(row.superseded) ? superseded : attributed).push(id);
   }
-  return { attributed, superseded };
+  return { attributed, superseded, moderatorLogged: positiveIds(moderatorRows) };
 }
 
 /**
@@ -267,13 +290,16 @@ function exclusionsOf(
   const { moderatorRuled: _anchoredOnTheMarker, ...shared } = exclusions;
   const { unattributed, ...legs } = profanityExclusionsOf(attribution);
   if (selector === 'attributed') return { ...shared, unattributed, ...legs };
-  // The unattributed set is what the log does NOT record, so it is only knowable from a real read:
-  // without one, every attributed or superseded lock would look unattributed.
-  if (attribution === NO_ATTRIBUTION)
-    throw new Error('The unattributed selection needs the attribution read');
+  // The unattributed set is what the log does NOT record, so it is only knowable from a read that
+  // found the records: with none (no read, or a read of the wrong or an empty table), every
+  // attributed or superseded lock would look unattributed.
+  if (!attribution.attributed.length && !attribution.superseded.length)
+    throw new Error('The unattributed selection needs an attribution read that found records');
   return {
     ...shared,
     attributed: Prisma.sql`(${unmarkedProfanitySql} AND m.id = ANY(${attribution.attributed}::int[]))`,
+    moderatorLogged: Prisma.sql`(${unmarkedProfanitySql}
+      AND m.id = ANY(${attribution.moderatorLogged}::int[]))`,
     ...legs,
   };
 }
@@ -436,10 +462,10 @@ const unlockedStateSql = (bucket: Bucket) =>
  * no longer as the unlock left it (`unlockedStateSql`). A model now minor, poi or SFW-only is left too,
  * in both buckets: a lock put back on it would hold a rating it may not carry.
  */
-// A record from before the selector existed was the attributed set.
 const revertableSql = (bucket: Bucket, selector?: Selector) => Prisma.sql`
   jsonb_typeof(m.meta) = 'object'
   AND (${selector ?? null}::text IS NULL
+    -- A record from before the selector existed was the attributed set.
     OR COALESCE(m.meta->'nsfwLockBackfill'->>'selector', 'attributed') = ${selector ?? null}::text)
   AND NOT (m.minor OR m.poi OR m."sfwOnly")
   AND m.meta->'nsfwLockBackfill'->>'bucket' = ${bucket}
@@ -656,8 +682,8 @@ export async function runBackfill(
   const { bucket, action, dryRun, afterId } = input;
   const profanity = bucket === 'profanity-locks';
   const limit = profanity ? Math.min(input.limit, PROFANITY_BATCH_LIMIT) : input.limit;
-  // An unlock takes the attributed set unless told otherwise; a revert with no selector takes both.
-  // Checked again here, past the schema, so no caller reverts every unlock by leaving it out.
+  // An unlock defaults to the attributed set; a profanity revert must name its scope, so only the
+  // scan bucket has no selector here. Checked again past the schema, for a caller that skips it.
   if (profanity && action === 'revert' && !input.selector)
     throw new Error(
       'a profanity-locks revert must name its scope: attributed, unattributed or all'
@@ -702,7 +728,7 @@ export async function runBackfill(
       bucket,
       action,
       dryRun: true as const,
-      ...(profanity ? { selector: selector ?? 'all' } : {}),
+      selector: profanity ? selector ?? 'all' : undefined,
       limit,
       counts,
       skippedRatingChanged,
@@ -738,6 +764,7 @@ export async function runBackfill(
     bucket,
     action,
     dryRun: false as const,
+    selector: profanity ? selector ?? 'all' : undefined,
     limit,
     ids,
     changed,
@@ -751,14 +778,14 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
   summary:
     'One-off: lift the nsfw lock the text scan or the profanity filter set on models, keeping the rating; or revert it.',
   returns:
-    '{ bucket, action, dryRun, limit, counts?, ids, changed?, scans?, skippedRatingChanged?, nextAfterId }',
+    '{ bucket, action, dryRun, selector?, limit, counts?, ids, changed?, scans?, skippedRatingChanged?, nextAfterId }',
   notes: [
     'dryRun defaults to true: the next batch of ids (and, for unlock, the counts), no writes.',
     'A write run re-checks every id in the UPDATE, so a row that changed since the dry run is skipped.',
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
     'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again at its prior rating (scans.relocked; scans.ratingRestored where an owner change was undone). Benign skips (not-public, too-short) relock on every pass.',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
-    'profanity-locks selector: "attributed" (the default for an unlock) or "unattributed" (unmarked locks the entity-change log does not record, with every other exclusion still applied; counts.attributed is the set it leaves to the other selector). The record names its selector; a revert must name its scope (attributed, unattributed or all) and is refused without one. The response echoes the selector.',
+    'profanity-locks selector: "attributed" (the default for an unlock) or "unattributed" (unmarked locks the entity-change log does not record, with every other exclusion still applied; counts.attributed is the set it leaves to the other selector). The record names its selector; a revert must name its scope (attributed, unattributed or all) and is refused without one. The response echoes the selector ("all" for a revert of both); an unattributed run also skips any model the log records a moderator changing the lock or rating on (counts.moderatorLogged).',
     'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); an unmarked lock is taken only where the entity-change log records the filter setting it and nothing changing the lock or rating since (counts.unattributed, counts.attributionSuperseded, counts.attributionRecords), and skips one a moderator marked (counts.moderatorSignal: an actioned report, a decline or review flag, an unpublish by someone else); counts.eligibleByProfanityMatches is what is left of them; it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable). If ClickHouse cannot be read, the call fails and writes nothing.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },

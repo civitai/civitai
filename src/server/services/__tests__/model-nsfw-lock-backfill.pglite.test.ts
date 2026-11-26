@@ -36,6 +36,7 @@ const {
   NO_ATTRIBUTION,
   readProfanityAttribution: readAttributionFromClickhouse,
   PROFANITY_ATTRIBUTION_QUERY,
+  PROFANITY_MODERATOR_LOG_QUERY,
   nextRevertBatch,
   nextUnlockBatch,
   ratingChangedSinceUnlock,
@@ -462,6 +463,7 @@ const ATTR: Attribution = {
     UNACTIONED_REPORT,
   ],
   superseded: [SUPERSEDED],
+  moderatorLogged: [80],
 };
 
 /** Legacy profanity locks the selector takes: [reason, id, model fields]. */
@@ -1014,11 +1016,21 @@ describe('model nsfw lock backfill: profanity locks', () => {
         { id: 'x', superseded: 0 },
         { id: 2.5, superseded: 0 },
       ]);
+      clickhouseQuery.mockResolvedValueOnce([{ id: '9' }, { id: 10 }, { id: 0 }, { id: 'y' }]);
       expect(await readAttributionFromClickhouse()).toEqual({
         attributed: [6, 7],
         superseded: [5, 8],
+        moderatorLogged: [9, 10],
       });
       expect(clickhouseQuery).toHaveBeenCalledWith(PROFANITY_ATTRIBUTION_QUERY);
+      expect(clickhouseQuery).toHaveBeenCalledWith(PROFANITY_MODERATOR_LOG_QUERY);
+    });
+    it('reads every logged moderator change to the lock or rating, and interpolates nothing', () => {
+      const query = PROFANITY_MODERATOR_LOG_QUERY.replace(/\s+/g, ' ').trim();
+      expect(query).toBe(
+        "SELECT DISTINCT entityId AS id FROM entityChangeEvents WHERE entityType = 'Model' AND field IN ('lockedProperties', 'nsfw') AND actorRole = 'moderator'"
+      );
+      expect(PROFANITY_MODERATOR_LOG_QUERY).not.toContain('${');
     });
     it('throws when ClickHouse fails, so the call writes nothing', async () => {
       clickhouseQuery.mockRejectedValueOnce(new Error('timeout'));
@@ -1026,11 +1038,14 @@ describe('model nsfw lock backfill: profanity locks', () => {
     });
   });
 
-  describe('the unattributed selector (Justin chose to unlock them, moderator traces skipped)', () => {
+  // The policy for this run is recorded on civitai/civitai#10532.
+  describe('the unattributed selector (moderator traces skipped)', () => {
     const UNATTRIBUTED_SIGNAL = 77; // unattributed, with a moderator's review flag
     const UNATTRIBUTED_OTHER_LOCK = 78; // unattributed, with a lock beside nsfw
     const UNATTRIBUTED_MOD_ACTED = 79; // unattributed, with moderator activity on the model
+    const UNATTRIBUTED_MOD_LOGGED = 80; // unattributed; the log records a moderator changing its lock
     beforeEach(async () => {
+      await model(UNATTRIBUTED_MOD_LOGGED, { locks: ['nsfw'], meta: legacyMatches });
       await model(UNATTRIBUTED_SIGNAL, {
         locks: ['nsfw'],
         meta: { ...legacyMatches, needsReview: true },
@@ -1057,6 +1072,11 @@ describe('model nsfw lock backfill: profanity locks', () => {
       ['a moderator signal', UNATTRIBUTED_SIGNAL, 'moderatorSignal'],
       ['another lock', UNATTRIBUTED_OTHER_LOCK, 'otherLocks'],
       ['moderator activity', UNATTRIBUTED_MOD_ACTED, 'moderatorActed'],
+      [
+        'a logged moderator change to its lock or rating',
+        UNATTRIBUTED_MOD_LOGGED,
+        'moderatorLogged',
+      ],
       ['an attribution record (the other set)', UNMARKED, 'attributed'],
       ['a superseded record', SUPERSEDED, 'attributionSuperseded'],
     ])('keeps an unmarked lock with %s, by that exclusion alone', async (_r, id, leg) => {
@@ -1077,6 +1097,22 @@ describe('model nsfw lock backfill: profanity locks', () => {
       await expect(nextUnlockBatch(PROFANITY, 0, 100, undefined, 'unattributed')).rejects.toThrow(
         'attribution read'
       );
+      // A read that succeeds but finds nothing (the wrong or an empty table) is refused too.
+      const empty = { attributed: [], superseded: [], moderatorLogged: [] };
+      await expect(nextUnlockBatch(PROFANITY, 0, 100, empty, 'unattributed')).rejects.toThrow(
+        'attribution read'
+      );
+      readProfanityAttribution.mockResolvedValue(empty);
+      const before = await row(UNATTRIBUTED);
+      await expect(
+        runBackfill(
+          backfillSchema.parse({ bucket: PROFANITY, selector: 'unattributed', dryRun: false }),
+          effects
+        )
+      ).rejects.toThrow('attribution read');
+      expect(await row(UNATTRIBUTED)).toEqual(before);
+      // The attributed run on the same empty read fails closed the other way: no unmarked lock.
+      expect(await nextUnlockBatch(PROFANITY, 0, 100, empty)).not.toContain(UNATTRIBUTED);
       await expect(
         unlockLocks(PROFANITY, [UNATTRIBUTED], NO_ATTRIBUTION, 'unattributed')
       ).rejects.toThrow('attribution read');
@@ -1142,6 +1178,22 @@ describe('model nsfw lock backfill: profanity locks', () => {
         runBackfill({ ...bare, limit: 200, afterId: 0 } as never, effects)
       ).rejects.toThrow('must name its scope');
       expect(await row(UNATTRIBUTED)).toEqual(before);
+      // An unlock of "all" past the schema is refused by runBackfill too, and writes nothing.
+      const locked = await row(UNMARKED);
+      await expect(
+        runBackfill(
+          {
+            bucket: PROFANITY,
+            action: 'unlock',
+            selector: 'all',
+            dryRun: false,
+            limit: 200,
+            afterId: 0,
+          } as never,
+          effects
+        )
+      ).rejects.toThrow('takes one set');
+      expect(await row(UNMARKED)).toEqual(locked);
       // The scan bucket has no sets, and needs none.
       expect(backfillSchema.safeParse({ bucket: SCAN, action: 'revert' }).success).toBe(true);
     });
@@ -1281,6 +1333,7 @@ describe('model nsfw lock backfill: profanity locks', () => {
       readProfanityAttribution.mockResolvedValue({
         attributed: ATTR.attributed.filter((id) => id !== UNMARKED),
         superseded: [...ATTR.superseded, UNMARKED],
+        moderatorLogged: ATTR.moderatorLogged,
       });
       const before = await row(UNMARKED);
       expect(await unlockLocks(PROFANITY, [UNMARKED], await readProfanityAttribution())).toEqual(
