@@ -5,11 +5,13 @@ import { ImagesFeed } from '@/common/feeds/images.feed';
 
 type FeedArgs = ConstructorParameters<typeof ImagesFeed>;
 
-const SQL_ROOT = path.resolve(__dirname, '../../../..');
-const TRIGGERS = 'packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql';
-const FEED_GO_SCHEMA = 'apps/feed-go/testdata/integration/schema.sql';
+const TRIGGERS = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+);
+const FEED_GO_SCHEMA = path.resolve(__dirname, '../../../feed-go/testdata/integration/schema.sql');
 const imageSortAtSql = (file: string) => {
-  const match = readFileSync(path.join(SQL_ROOT, file), 'utf8').match(
+  const match = readFileSync(file, 'utf8').match(
     /CREATE (?:OR REPLACE )?FUNCTION image_sort_at\([\s\S]*?\$\$;/
   );
   if (!match) throw new Error(`image_sort_at not found in ${file}`);
