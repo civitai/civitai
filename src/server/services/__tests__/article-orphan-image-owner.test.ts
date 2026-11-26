@@ -486,6 +486,32 @@ describe('a save from the edit form with a body image listed on a report', () =>
     expect(savedContent()).toBe(body);
   });
 
+  describe('answering a save that sent no body', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.article.update.mockImplementation((async ({ data }: any) => ({
+        ...storedArticle,
+        ...data,
+      })) as never);
+    });
+
+    it.each([
+      [
+        'a moderator without the grant',
+        { userId: MODERATOR, isModerator: true, reportListedViewer: { seesReportListed: false } },
+      ],
+      [
+        "the owner, for someone else's listed upload",
+        { reportListedViewer: { seesReportListed: false, ownerSeesReportListed: true } },
+      ],
+      ['the owner on a scoped key', { reportListedViewer: { seesReportListed: false } }],
+    ])('🔴 gives %s no body back', async (_, extra) => {
+      const saved = (await upsert(undefined, { ...extra, status: 'Published' })) as object;
+      expect(savedContent()).toBe(body);
+      expect(saved).not.toHaveProperty('content');
+      expect(JSON.stringify(saved)).not.toContain(LISTED.url);
+    });
+  });
+
   it('🔴 keeps the listed image when a save from outside the edit form leaves it out', async () => {
     const saved = (await upsert(stripped)) as { content?: string };
     expect(savedContent()).toContain(img(LISTED.url));

@@ -245,7 +245,7 @@ export async function getChallengesByIds(challengeIds: number[]): Promise<Challe
     WHERE c.id = ANY(${challengeIds}::int[])
   `;
 
-  // A cover listed on a report is left out, as from every other challenge cover read.
+  // Signed-out view: a report-listed cover is dropped.
   const listed = await getReportListedHiddenImageIds(
     rows.map((row) => row.coverImageId).filter((id): id is number => id != null),
     SIGNED_OUT_REPORT_LISTED

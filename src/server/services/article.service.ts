@@ -988,8 +988,8 @@ export const getArticleById = async ({
         (isModerator ||
           (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
     );
-    // A listed body image is placeholdered, not dropped, so a save keeps it; it stays withheld so
-    // the strip below catches any other spelling of it.
+    // On the edit form a listed body image is placeholdered, not dropped, so a save keeps it; it
+    // stays withheld so the strip below catches any other spelling of it.
     const listedUrls = bodyImages
       .filter((image) => listedHidden.has(image.id))
       .map((image) => image.url);
@@ -1089,6 +1089,18 @@ function viewableArticleImage(
 const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
   'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
 
+/**
+ * A save answers with the body only as the caller sent it, and with none when it sent none: the
+ * stored body can hold images the saver may not see.
+ */
+function articleSaveAnswer<T extends { content: string | null }>(
+  saved: T,
+  sentContent: string | undefined
+): Omit<T, 'content'> & { content?: string } {
+  const { content: _stored, ...rest } = saved;
+  return sentContent === undefined ? rest : { ...rest, content: sentContent };
+}
+
 export const upsertArticle = async ({
   id,
   userId,
@@ -1165,15 +1177,13 @@ export const upsertArticle = async ({
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
     }
 
-    // A save that sends no body (the article page's Publish) keeps the stored one.
+    const sentContent = data.content;
     if (data.content === undefined) {
       if (!article?.content) throw throwBadRequestError('An article needs a body');
       data.content = article.content;
     }
     // A listed body image the saver may not see goes back in: in place for an edit-form
-    // placeholder, which only the edit form may delete, else at the end of the body. The answer
-    // carries the body as sent, so a restored image never reaches the saver.
-    let editorContent: string | undefined;
+    // placeholder, which only the edit form may delete, else at the end of the body.
     const sent = data.content;
     if (sent.includes(WITHHELD_MEDIA_TYPE) || (article?.content && sent !== article.content)) {
       const connected = article ? await connectedArticleImages(article.id) : [];
@@ -1189,7 +1199,6 @@ export const upsertArticle = async ({
       data.content = editForm
         ? restored
         : keepWithheldMedia(restored, article?.content, hiddenUrls);
-      if (data.content !== sent) editorContent = sent;
     }
 
     if (data.content) {
@@ -1245,7 +1254,6 @@ export const upsertArticle = async ({
       restrictToBlurbIds,
     });
     data.content = expansion.html;
-    // What is checked below, written and scanned.
     const body = expansion.html;
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
@@ -1471,7 +1479,7 @@ export const upsertArticle = async ({
         });
       }
 
-      return result;
+      return articleSaveAnswer(result, sentContent);
     }
 
     // article is guaranteed non-null here since the `if (id)` block above fetches it
@@ -1776,11 +1784,7 @@ export const upsertArticle = async ({
     const hasModeratorOverride =
       !isModerator && article != null && article.moderatorNsfwLevel != null;
 
-    return {
-      ...result,
-      ...(editorContent !== undefined && { content: editorContent }),
-      hasModeratorOverride,
-    };
+    return { ...articleSaveAnswer(result, sentContent), hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     if (

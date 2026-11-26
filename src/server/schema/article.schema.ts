@@ -80,7 +80,7 @@ export const upsertArticleInput = z.object({
   // Omitted on an update keeps the stored body (the article page's Publish sends none).
   content: articleContentSchema.optional(),
   // The save comes from the edit form, whose placeholders are the only way to remove a body
-  // image the saver may not see.
+  // image the saver may not see. It guards against losing one by accident, not as authorization.
   editForm: z.boolean().optional(),
   coverImage: imageReferenceInputSchema.nullish(),
   // Omitted leaves the banner as it is; null removes it.

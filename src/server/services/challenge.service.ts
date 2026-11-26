@@ -383,7 +383,6 @@ const challengeCardQuery = Prisma.sql`
 // Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
 // ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
 // of the two is shown as the author is a client concern (see getChallengeDisplayUser).
-// The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
 /** The challenge covers a card or list may show, as the challenge's own cover read does. */
 async function getChallengeCoverImages(coverImageIds: number[], viewerId: number | undefined) {
   if (!coverImageIds.length) return [];
@@ -407,6 +406,7 @@ const withoutCoverSource = <T extends { url: string; hash: string | null }>(imag
   hash: null,
 });
 
+// The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
 // A cover the site's rating ceiling allows for this viewer, else null. A blocked cover is withheld
@@ -1035,7 +1035,7 @@ async function buildChallengeDetail(
     isGreen: green?.isGreen ?? false,
     viewerId: green?.viewerId,
   });
-  // The edit form keeps a listed cover's id, so a save keeps the cover, but never its source.
+  // A listed cover keeps its id for the edit form but loses its source.
   const coverImage = shownCover && coverListed ? withoutCoverSource(shownCover) : shownCover;
 
   // Get winners if challenge is completed
