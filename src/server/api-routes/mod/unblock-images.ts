@@ -13,8 +13,8 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
  * GET endpoint to batch update Image.blockedFor to null for images with blockedFor = 'moderated',
- * nsfwLevel not in (0, 32) and ingestion not Blocked. A Blocked ingestion is a ToS removal: clearing
- * its blockedFor would leave it Blocked with no reason.
+ * nsfwLevel not in (0, 32) and ingestion not Blocked, since clearing blockedFor on a Blocked row
+ * would leave it Blocked with no reason.
  * Secured for moderators only.
  */
 
@@ -73,8 +73,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
     );
 
-    // No row cleared here is at ingestion='Blocked', so trg_blocked_image_delete_queue arms none;
-    // the drop is kept as a backstop.
+    // Backstop: the filter above already excludes Blocked rows.
     await dropBlockedImageDeleteQueue(unblockedIds);
 
     // Update search index for the unblocked images

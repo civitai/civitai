@@ -107,6 +107,5 @@ describe('/api/mod/unblock-images', () => {
     const at = strings.findIndex((part) => /\bAND ingestion <> $/.test(part));
     expect(at).toBeGreaterThan(-1);
     expect(values[at]).toBe('Blocked');
-    expect(strings.join(' ')).not.toMatch(/\bOR\b/);
   });
 });

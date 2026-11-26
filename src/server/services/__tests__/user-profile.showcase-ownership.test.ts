@@ -225,7 +225,7 @@ describe('assertShowcaseItemsOwned', () => {
   it.each([
     { ingestion: 'Blocked', blockedFor: 'tos' },
     { ingestion: 'Blocked', blockedFor: null },
-  ])("refuses the owner's own blocked image (%o)", async (block) => {
+  ])("refuses the owner's own image that ownerMediaAllowed withholds (%o)", async (block) => {
     db.image.findMany.mockResolvedValueOnce([{ id: OWN_IMAGE, ...block }] as never);
     await expect(
       assertShowcaseItemsOwned({

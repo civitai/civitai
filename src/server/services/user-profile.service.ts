@@ -369,7 +369,6 @@ export const assertShowcaseItemsOwned = async ({
     ownedArticles.length !== articleIds.length
   )
     throw throwAuthorizationError('You can only add your own content to your showcase');
-  // The same rule as the owner's media reads: a showcased image they could not be served.
   if (ownedImages.some((image) => !ownerMediaAllowed(image)))
     throw throwBadRequestError('A blocked image cannot be added to your showcase');
   await assertNotDealFileImages(imageIds, 'used here');
