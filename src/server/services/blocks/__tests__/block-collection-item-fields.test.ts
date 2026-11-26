@@ -25,9 +25,21 @@ describe('collectionItemExtraFields: addedAt', () => {
     ).toBe('2025-12-31T23:59:59.000Z');
   });
 
+  it('accepts an ISO string (a serialised date) and normalises it', () => {
+    expect(
+      collectionItemExtraFields({
+        mediaType: 'image',
+        metadata: null,
+        addedAt: '2024-02-03T04:05:06Z',
+      }).addedAt
+    ).toBe('2024-02-03T04:05:06.000Z');
+  });
+
   it.each([
     ['null', null],
     ['undefined', undefined],
+    ['an unparseable string', 'not a date'],
+    ['an invalid Date', new Date('nope')],
   ])('is null, and the key still present, when createdAt is %s', (_label, addedAt) => {
     const fields = collectionItemExtraFields({ mediaType: 'image', metadata: null, addedAt });
     expect(fields).toHaveProperty('addedAt', null);
