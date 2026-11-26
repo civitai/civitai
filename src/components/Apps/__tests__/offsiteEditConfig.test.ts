@@ -8,6 +8,8 @@ import {
   hasScalarChanges,
   isApprovedEdit,
   isUnpublishedEdit,
+  listingLinksFromManifest,
+  MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
   scopesDriftedForEdit,
@@ -914,5 +916,69 @@ describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', (
     const current = { ...editContextToForm(ON_LISTING), betaMessage: 'y' };
     const patch = buildScalarPatch(ON_LISTING, current);
     expect(patch.betaMessage).toBe('y');
+  });
+});
+
+/**
+ * 🔴 ON-SITE LINKS ARE MANIFEST-GOVERNED. The listing is minted with `repository` / `bugs` at
+ * submit and re-synced from them on every approve, so the edit form shows both read-only and
+ * never sends them (the server refuses the keys on an on-site listing).
+ */
+describe('on-site source repository / issue tracker come from the manifest', () => {
+  const withLinks = (kind?: 'onsite' | 'offsite') =>
+    makeCtx({
+      ...(kind ? { kind } : {}),
+      scalars: {
+        ...makeCtx().scalars,
+        sourceRepoUrl: 'https://github.com/civitai/vitrine',
+        issueTrackerUrl: 'https://github.com/civitai/vitrine/issues',
+      },
+    });
+
+  it('only an explicit on-site kind is manifest-owned; offsite and ABSENT are author-owned', () => {
+    expect(listingLinksFromManifest(withLinks('onsite'))).toBe(true);
+    expect(listingLinksFromManifest(withLinks('offsite'))).toBe(false);
+    expect(listingLinksFromManifest(withLinks())).toBe(false);
+  });
+
+  it('🔴 an ON-SITE patch never carries either link — changed or cleared', () => {
+    const ctx = withLinks('onsite');
+    for (const [sourceRepoUrl, issueTrackerUrl] of [
+      ['https://gitlab.com/other/app', 'https://example.com/help'],
+      ['', ''],
+    ]) {
+      const patch = buildScalarPatch(ctx, {
+        ...editContextToForm(ctx),
+        sourceRepoUrl,
+        issueTrackerUrl,
+        tagline: 'still saved',
+      });
+      expect('sourceRepoUrl' in patch).toBe(false);
+      expect('issueTrackerUrl' in patch).toBe(false);
+      // The narrowing is surgical: the rest of the patch still goes out.
+      expect(patch.tagline).toBe('still saved');
+    }
+  });
+
+  it('CONTROL: an OFF-SITE patch still carries both changed links', () => {
+    const ctx = withLinks('offsite');
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      sourceRepoUrl: 'https://gitlab.com/other/app',
+      issueTrackerUrl: '',
+    });
+    expect(patch.sourceRepoUrl).toBe('https://gitlab.com/other/app');
+    expect(patch.issueTrackerUrl).toBeNull();
+  });
+
+  it('the read-only notes name the manifest key each link comes from', () => {
+    expect(MANIFEST_LINK_FIELD_NOTE).toEqual({
+      sourceRepoUrl:
+        'Comes from "repository" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      issueTrackerUrl:
+        'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+    });
   });
 });

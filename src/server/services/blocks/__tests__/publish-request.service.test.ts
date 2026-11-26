@@ -50,6 +50,11 @@ const dbMocks = vi.hoisted(() => ({
   // listing review is open for the slug. Null = no listing review, the shape every
   // test in this file assumes.
   listingReqFindFirst: vi.fn(async () => null),
+  // The draft's manual-apply link columns: the source-repo probe (`findUnique` selecting only
+  // `sourceRepoUrl`), the issue-tracker probe (`$queryRaw`) and its raw write (`$executeRaw`).
+  appListingWriteFindUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+  writeQueryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+  writeExecuteRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 1),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -66,7 +71,12 @@ vi.mock('~/server/db/client', () => ({
       // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY): none.
       findMany: async () => [],
     },
-    appListing: { create: dbMocks.appListingCreate },
+    appListing: {
+      create: dbMocks.appListingCreate,
+      findUnique: dbMocks.appListingWriteFindUnique,
+    },
+    $queryRaw: dbMocks.writeQueryRaw,
+    $executeRaw: dbMocks.writeExecuteRaw,
     // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
     appBlock: { findFirst: async () => null },
   },
@@ -751,5 +761,171 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
     });
     expect(result.slug).toBe('dev-legacy');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Draft-at-submit carries the manifest's `repository` / `bugs` links, as approve's re-sync does.
+ * Both columns are manual-apply: `source_repo_url` rides the Prisma create (key omitted when the
+ * column is absent); `issue_tracker_url` is a no-type column written by raw SQL after it.
+ */
+describe('submitVersion — draft links from the manifest', () => {
+  // Pairwise-distinct, and the raw spellings differ from the stored (normalised) ones, so a
+  // mutant that copies the raw manifest string is visible.
+  const RAW_REPO = 'https://GITHUB.com/civitai/my-app.git/';
+  const STORED_REPO = 'https://github.com/civitai/my-app';
+  const BUGS = 'https://tracker.example.com/my-app/issues';
+
+  const BASE = { blockId: 'my-app', version: '0.1.0', name: 'My App', scopes: [] };
+
+  async function bundle(manifest: Record<string, unknown>): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify(manifest));
+    zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const missingColumn = (code: string) =>
+    Object.assign(new Error('column does not exist'), { code });
+
+  /** The SQL text of a tagged-template raw call. */
+  const sqlOf = (call: unknown[]) => (call[0] as readonly string[]).join('?');
+
+  /** Is this `findUnique` the source-repo column read (select is exactly `{ sourceRepoUrl }`)? */
+  function isSourceRepoRead(args: { select?: Record<string, unknown> }): boolean {
+    const select = args?.select ?? {};
+    return select.sourceRepoUrl === true && Object.keys(select).length === 1;
+  }
+
+  type Columns = {
+    sourceRepo: 'present' | 'missing' | 'broken';
+    issueTracker: 'present' | 'missing' | 'broken';
+  };
+
+  function armColumns({ sourceRepo, issueTracker }: Columns) {
+    dbMocks.appListingWriteFindUnique.mockImplementation(async (...a: unknown[]) => {
+      if (isSourceRepoRead(a[0] as { select?: Record<string, unknown> })) {
+        if (sourceRepo === 'missing') throw missingColumn('P2022');
+        if (sourceRepo === 'broken') throw new Error('connection reset');
+      }
+      return null;
+    });
+    dbMocks.writeQueryRaw.mockImplementation(async (...call: unknown[]) => {
+      if (sqlOf(call).includes('issue_tracker_url')) {
+        if (issueTracker === 'missing') throw missingColumn('42703');
+        if (issueTracker === 'broken') throw new Error('connection reset');
+      }
+      return [];
+    });
+  }
+
+  function createdDraft(): Record<string, unknown> {
+    expect(dbMocks.appListingCreate).toHaveBeenCalledTimes(1);
+    return (dbMocks.appListingCreate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+  }
+
+  /** The raw `UPDATE … issue_tracker_url` writes, as [value, listingId]. */
+  function issueTrackerWrites(): unknown[][] {
+    return dbMocks.writeExecuteRaw.mock.calls
+      .filter((c: unknown[]) => sqlOf(c).includes('issue_tracker_url'))
+      .map((c: unknown[]) => c.slice(1));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.pubReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
+    dbMocks.userFindUnique.mockResolvedValue({ username: 'dev' });
+    dbMocks.createPublishRequest.mockResolvedValue({});
+    dbMocks.appListingFindFirst.mockResolvedValue(null);
+    dbMocks.appListingCreate.mockImplementation(
+      async (a: unknown) => (a as { data: unknown }).data
+    );
+    dbMocks.writeExecuteRaw.mockResolvedValue(1);
+  });
+
+  describe('submitVersion — a NEW draft carries the manifest links', () => {
+    it('🔴 copies `repository` (normalised) and `bugs` onto the draft it mints', async () => {
+      armColumns({ sourceRepo: 'present', issueTracker: 'present' });
+      await submitVersion({
+        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect(draft).toMatchObject({ kind: 'onsite', status: 'draft', slug: 'my-app' });
+      expect(draft.sourceRepoUrl).toBe(STORED_REPO);
+      // The issue tracker is written onto THE DRAFT JUST CREATED, not some other row.
+      expect(issueTrackerWrites()).toEqual([[BUGS, draft.id]]);
+    });
+
+    it('a manifest with neither key: the source link is stored as null and no tracker write runs', async () => {
+      armColumns({ sourceRepo: 'present', issueTracker: 'present' });
+      await submitVersion({
+        bundleBuffer: await bundle(BASE),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect('sourceRepoUrl' in draft).toBe(true);
+      expect(draft.sourceRepoUrl).toBeNull();
+      expect(issueTrackerWrites()).toEqual([]);
+    });
+
+    it('columns MISSING (migration not applied): the draft is still minted, naming neither column', async () => {
+      armColumns({ sourceRepo: 'missing', issueTracker: 'missing' });
+      await submitVersion({
+        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect('sourceRepoUrl' in draft).toBe(false);
+      expect(issueTrackerWrites()).toEqual([]);
+    });
+
+    it('a probe that THROWS (not a missing column) costs only that link, never the draft', async () => {
+      armColumns({ sourceRepo: 'broken', issueTracker: 'present' });
+      await submitVersion({
+        bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      });
+
+      const draft = createdDraft();
+      expect('sourceRepoUrl' in draft).toBe(false);
+      // The independent column still gets its link.
+      expect(issueTrackerWrites()).toEqual([[BUGS, draft.id]]);
+    });
+
+    it('a failed tracker WRITE is absorbed by its own best-effort wrapper', async () => {
+      // The whole draft block is already log-and-continue, so "the submit still succeeds" cannot
+      // see the wrapper. What can: the failure is logged as the tracker write's own skip, and
+      // NOT as the draft block's catch-all "draft create failed".
+      armColumns({ sourceRepo: 'present', issueTracker: 'present' });
+      dbMocks.writeExecuteRaw.mockRejectedValue(new Error('db blip'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const res = await submitVersion({
+          bundleBuffer: await bundle({ ...BASE, repository: RAW_REPO, bugs: BUGS }),
+          submittedByUserId: 1,
+          submitterIsModerator: false,
+        });
+        expect(res.slug).toBe('my-app');
+        expect(createdDraft().sourceRepoUrl).toBe(STORED_REPO);
+        const lines = warn.mock.calls.map((c) => String(c[0]));
+        expect(
+          lines.filter((l) => l.startsWith('[issue-tracker] submit draft my-app:'))
+        ).toHaveLength(1);
+        expect(
+          lines.filter((l) => l.includes('pre-approval draft AppListing create failed'))
+        ).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

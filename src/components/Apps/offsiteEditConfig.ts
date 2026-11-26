@@ -355,6 +355,31 @@ export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
 }
 
 /**
+ * Do this listing's source-repository and issue-tracker links come from `block.manifest.json`
+ * rather than from this form? PURE.
+ *
+ * True for an ON-SITE listing: its links are minted from the manifest's `repository` / `bugs`
+ * at submit and re-synced from them on every approve, so an edit here would be overwritten (or,
+ * on a live listing, dropped by the assets-only revision apply). The form then shows both
+ * read-only, `buildScalarPatch` never emits them, and the server refuses them
+ * (`assertNoOnsiteManifestLinkPatch`). Off-site listings own their links, so they stay editable.
+ * Inherits `isOnsiteEdit`'s fail-safe default: an absent kind reads as off-site.
+ */
+export function listingLinksFromManifest(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+  return isOnsiteEdit(ctx);
+}
+
+/** The explanation the read-only on-site link fields carry. */
+export const MANIFEST_LINK_FIELD_NOTE = {
+  sourceRepoUrl:
+    'Comes from "repository" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+  issueTrackerUrl:
+    'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
+    'version; the listing takes it when that version is approved.',
+} as const;
+
+/**
  * The edit form's HEADER copy, by kind. PURE.
  *
  * 🔴 THIS FINISHES A PATTERN THAT WAS ALREADY HERE, it does not start one. The wizard
@@ -450,17 +475,22 @@ export function buildScalarPatch(
   // compares normalised forms. So re-saving `.../a/b` as `.../a/b/` does send a patch,
   // and the server correctly classifies it as no material change — an in-place no-op
   // write rather than a needless mod re-review.
-  const sourceRepoUrl = current.sourceRepoUrl.trim();
-  const originalSourceRepoUrl = original.sourceRepoUrl.trim();
-  if (sourceRepoUrl !== originalSourceRepoUrl) {
-    patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
-  }
+  //
+  // 🔴 NEVER on an ON-SITE listing, for either link: the manifest owns both
+  // (`listingLinksFromManifest`), and the server refuses the key outright.
+  if (!listingLinksFromManifest(ctx)) {
+    const sourceRepoUrl = current.sourceRepoUrl.trim();
+    const originalSourceRepoUrl = original.sourceRepoUrl.trim();
+    if (sourceRepoUrl !== originalSourceRepoUrl) {
+      patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+    }
 
-  // Issue tracker / support link — the same rule as the source link: only when retyped, cleared
-  // with `null`, and the canonical comparison is the server's.
-  const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
-  if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
-    patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
+    // Issue tracker / support link — the same rule as the source link: only when retyped,
+    // cleared with `null`, and the canonical comparison is the server's.
+    const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+    if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
+      patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
+    }
   }
 
   // Beta status + note. Emitted ONLY when the author actually changed them, which is what

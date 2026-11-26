@@ -1529,6 +1529,30 @@ async function loadOwnedEditableListing(
   };
 }
 
+/** The refusal for an edit of an on-site listing's manifest-governed links. */
+export const ONSITE_MANIFEST_LINK_MESSAGE =
+  "An on-site app's source repository and issue tracker links come from the `repository` and " +
+  '`bugs` keys in block.manifest.json. Set them there and submit a new version; the listing ' +
+  'takes them when that version is approved.';
+
+/**
+ * 🔴 An ON-SITE listing's `sourceRepoUrl` / `issueTrackerUrl` are MANIFEST-GOVERNED: the draft is
+ * minted with them at submit and every approve re-syncs both from `repository` / `bugs`
+ * (`publish-request.service`), and an on-site revision apply copies assets only. A listing write
+ * of either would therefore be overwritten at the next approve (draft / pending) or dropped by
+ * the revision apply (approved) while reporting success, so it is refused up front instead. The
+ * key being PRESENT is the trigger — an explicit `null` clear is refused too. Off-site listings,
+ * whose links the author owns, are untouched.
+ */
+export function assertNoOnsiteManifestLinkPatch(
+  kind: string | null,
+  patch: Pick<UpdateListingPatch, 'sourceRepoUrl' | 'issueTrackerUrl'>
+): void {
+  if (kind !== 'onsite') return;
+  if (patch.sourceRepoUrl === undefined && patch.issueTrackerUrl === undefined) return;
+  throw new TRPCError({ code: 'BAD_REQUEST', message: ONSITE_MANIFEST_LINK_MESSAGE });
+}
+
 /**
  * AUTHOR: edit an off-site listing without withdrawing it. State-aware (see the
  * section header). Owner-bound (non-owner → NOT_OWNED/FORBIDDEN). Returns the
@@ -1557,6 +1581,8 @@ export async function updateListing(opts: {
       'this listing is an internal revision draft and cannot be edited directly'
     );
   }
+  // Before anything is written, and before any branch can open a shadow revision.
+  assertNoOnsiteManifestLinkPatch(listing.kind, patch);
   // Before any branch below can open a shadow revision, for the reason the hoists below give.
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
@@ -3151,6 +3177,8 @@ export async function updateRevisionDraft(opts: {
   if (patch.forkable !== undefined) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
   }
+  // A shadow carries its parent's kind, so an on-site revision is refused the same way.
+  assertNoOnsiteManifestLinkPatch(shadow.kind, patch);
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,
     surface: 'offsite-listing',

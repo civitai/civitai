@@ -48,6 +48,8 @@ import {
   isApprovedEdit,
   isOwnerEdit,
   listingEditHeaderCopy,
+  listingLinksFromManifest,
+  MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
   type ListingEditContext,
@@ -119,6 +121,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const materialBlockedReason = materialEditBlockedReason(edit);
   const materialBlocked = materialBlockedReason != null;
   const scopeLocked = scopeDisclosureLockedForEdit(edit);
+  // On-site: both links come from block.manifest.json and render read-only here.
+  const linksFromManifest = listingLinksFromManifest(edit);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -247,6 +251,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     // Client mirror of the server validation (URL/name/slug/bounds) before the
     // round-trip; the server stays the source of truth.
     const nextErrors = validateOffsiteSubmitForm(values);
+    // A read-only link is never sent, so a stored value the current rules reject must not
+    // block saving the fields the author CAN change.
+    if (linksFromManifest) {
+      delete nextErrors.sourceRepoUrl;
+      delete nextErrors.issueTrackerUrl;
+    }
     // SENSITIVE-only justification model (parity with create): every sensitive scope
     // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
     // read-only + never required. No connect client → no scopes → nothing to check.
@@ -543,40 +553,75 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
               />
 
-              {/* Public source repository. The copy states the re-review consequence
-                up front: this is a MATERIAL field, so on an approved listing changing
-                it stages a shadow revision and the change does not go live until a
-                moderator approves it. An author who is not told that reads the
-                unchanged live page afterwards as a bug. */}
-              <TextInput
-                label="Source repository"
-                description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
-                placeholder="https://github.com/your-org/your-app"
-                value={values.sourceRepoUrl}
-                onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
-                error={errors.sourceRepoUrl}
-                maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
-                data-testid="apps-offsite-edit-source-repo"
-                // 🔴 MATERIAL — a public outbound link a moderator approved. See
-                // `materialBlockedReason`.
-                data-material-field="sourceRepoUrl"
-                disabled={materialBlocked}
-              />
+              {linksFromManifest ? (
+                <>
+                  {/* 🔴 ON-SITE: both links are MANIFEST-GOVERNED (minted at submit, re-synced
+                    on every approve from `repository` / `bugs`), so they are shown read-only
+                    with where they come from — the same answer the CLI gives — rather than
+                    offered as an edit the next approve would overwrite. The server refuses the
+                    keys too. `data-material-field` stays so the repair-state ledger still
+                    sees every material field as disabled. */}
+                  <TextInput
+                    label="Source repository"
+                    description={MANIFEST_LINK_FIELD_NOTE.sourceRepoUrl}
+                    value={values.sourceRepoUrl}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-source-repo-manifest"
+                    data-material-field="sourceRepoUrl"
+                  />
+                  <TextInput
+                    label="Issue tracker"
+                    description={MANIFEST_LINK_FIELD_NOTE.issueTrackerUrl}
+                    value={values.issueTrackerUrl}
+                    placeholder="Not set"
+                    readOnly
+                    disabled
+                    rightSection={<IconLock size={14} />}
+                    data-testid="apps-offsite-edit-issue-tracker-manifest"
+                    data-material-field="issueTrackerUrl"
+                  />
+                </>
+              ) : (
+                <>
+                  {/* Public source repository. The copy states the re-review consequence
+                    up front: this is a MATERIAL field, so on an approved listing changing
+                    it stages a shadow revision and the change does not go live until a
+                    moderator approves it. An author who is not told that reads the
+                    unchanged live page afterwards as a bug. */}
+                  <TextInput
+                    label="Source repository"
+                    description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
+                    placeholder="https://github.com/your-org/your-app"
+                    value={values.sourceRepoUrl}
+                    onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
+                    error={errors.sourceRepoUrl}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
+                    data-testid="apps-offsite-edit-source-repo"
+                    // 🔴 MATERIAL — a public outbound link a moderator approved. See
+                    // `materialBlockedReason`.
+                    data-material-field="sourceRepoUrl"
+                    disabled={materialBlocked}
+                  />
 
-              {/* Public issue-tracker / support link. MATERIAL like the source link, and the
-                copy says so for the same reason. */}
-              <TextInput
-                label="Issue tracker"
-                description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link. Changing this needs moderator re-review before it goes live."
-                placeholder="https://github.com/your-org/your-app/issues"
-                value={values.issueTrackerUrl}
-                onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
-                error={errors.issueTrackerUrl}
-                maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
-                data-testid="apps-offsite-edit-issue-tracker"
-                data-material-field="issueTrackerUrl"
-                disabled={materialBlocked}
-              />
+                  {/* Public issue-tracker / support link. MATERIAL like the source link, and the
+                    copy says so for the same reason. */}
+                  <TextInput
+                    label="Issue tracker"
+                    description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link. Changing this needs moderator re-review before it goes live."
+                    placeholder="https://github.com/your-org/your-app/issues"
+                    value={values.issueTrackerUrl}
+                    onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                    error={errors.issueTrackerUrl}
+                    maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                    data-testid="apps-offsite-edit-issue-tracker"
+                    data-material-field="issueTrackerUrl"
+                    disabled={materialBlocked}
+                  />
+                </>
+              )}
 
               {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
                 🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.

@@ -1014,3 +1014,92 @@ describe('🔴 updateRevisionDraft and the unapplied migration', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. ON-SITE links are manifest-governed — an author edit of either is REFUSED
+//
+// An on-site listing's links are minted from the manifest's `repository` / `bugs` at submit
+// and re-synced from them on every approve, and an on-site revision apply copies assets only.
+// So an edit here would be overwritten (draft) or dropped (approved) while reporting success.
+// ---------------------------------------------------------------------------
+
+/** Written out, not imported, for the reason `REFUSAL_MESSAGE` gives. */
+const ONSITE_LINK_REFUSAL =
+  "An on-site app's source repository and issue tracker links come from the `repository` and " +
+  '`bugs` keys in block.manifest.json. Set them there and submit a new version; the listing ' +
+  'takes them when that version is approved.';
+
+describe('🔴 an ON-SITE listing refuses an author edit of its manifest-governed links', () => {
+  const onsiteDraft = () => approvedParent({ kind: 'onsite', status: 'draft', externalUrl: null });
+
+  it.each([
+    ['a source repository value', { sourceRepoUrl: 'https://gitlab.com/someone/other-app' }],
+    ['a source repository clear', { sourceRepoUrl: null }],
+    ['an issue tracker value', { issueTrackerUrl: 'https://example.com/support' }],
+    ['an issue tracker clear', { issueTrackerUrl: null }],
+  ])('updateListing: %s → BAD_REQUEST, and nothing is written', async (_label, patch) => {
+    // The column is PRESENT, so the unapplied-migration gate cannot be what refuses.
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    let thrown: TRPCError | undefined;
+    try {
+      await updateListing({ listingId: 'apl_parent', patch, userId: OWNER });
+    } catch (e) {
+      thrown = e as TRPCError;
+    }
+    expect(thrown?.message).toBe(ONSITE_LINK_REFUSAL);
+    expect(thrown?.code).toBe('BAD_REQUEST');
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('an APPROVED on-site listing: refused before any shadow revision is minted', async () => {
+    armShadowColumnPresent(approvedParent({ kind: 'onsite', externalUrl: null }), LIVE_REPO);
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { sourceRepoUrl: 'https://gitlab.com/someone/other-app' },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_LINK_REFUSAL });
+    expect(mockWrite.appListing.create).toHaveBeenCalledTimes(0);
+  });
+
+  it('updateRevisionDraft on an ON-SITE shadow: refused, nothing written', async () => {
+    armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: OWNER,
+        patch: { issueTrackerUrl: 'https://example.com/support' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: ONSITE_LINK_REFUSAL });
+    expect(mockWrite.appListing.update).toHaveBeenCalledTimes(0);
+  });
+
+  it('CONTROL: an on-site edit that names neither link still applies in place', async () => {
+    armShadowColumnPresent(onsiteDraft(), LIVE_REPO);
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { tagline: 'a quick copy edit' },
+      userId: OWNER,
+    });
+    expect(res.requiresReview).toBe(false);
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { tagline: 'a quick copy edit' },
+    });
+  });
+
+  it('CONTROL: the same source repository edit on an OFF-SITE draft is accepted', async () => {
+    armShadowColumnPresent(approvedParent({ status: 'draft' }), null);
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { sourceRepoUrl: LIVE_REPO },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { sourceRepoUrl: LIVE_REPO },
+    });
+  });
+});

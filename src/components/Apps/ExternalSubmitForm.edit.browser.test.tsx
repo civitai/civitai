@@ -673,3 +673,51 @@ describe('ExternalSubmitForm (edit) — source repository', () => {
       .toBeInTheDocument();
   });
 });
+
+describe('ExternalSubmitForm (edit) — ON-SITE links come from block.manifest.json', () => {
+  const REPO = 'https://github.com/civitai/vitrine';
+  const ISSUES = 'https://github.com/civitai/vitrine/issues';
+  const onsiteCtx = () =>
+    makeCtx({
+      kind: 'onsite',
+      scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO, issueTrackerUrl: ISSUES },
+    });
+
+  test('🔴 both links render READ-ONLY with their manifest key, not as editable inputs', async () => {
+    // On-site opens straight on Details (no URL step).
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    const repo = page.getByTestId('apps-offsite-edit-source-repo-manifest');
+    const issues = page.getByTestId('apps-offsite-edit-issue-tracker-manifest');
+    await expect.element(repo).toHaveValue(REPO);
+    await expect.element(issues).toHaveValue(ISSUES);
+    await expect.element(repo).toBeDisabled();
+    await expect.element(issues).toBeDisabled();
+    await expect
+      .element(page.getByText(/Comes from "repository" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Comes from "bugs" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    // The editable off-site inputs are not rendered at all.
+    expect(page.getByTestId('apps-offsite-edit-source-repo').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-edit-issue-tracker').elements()).toHaveLength(0);
+  });
+
+  test('a save of an on-site listing never sends either link', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    await page.getByTestId('apps-offsite-edit-name').fill('Renamed');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    const arg = mocks.updateListing.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.name).toBe('Renamed');
+    expect('sourceRepoUrl' in arg.patch).toBe(false);
+    expect('issueTrackerUrl' in arg.patch).toBe(false);
+  });
+
+  test('CONTROL: an off-site listing keeps the editable inputs and no manifest note', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'offsite' })} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByTestId('apps-offsite-edit-source-repo')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-source-repo-manifest').elements()).toHaveLength(0);
+  });
+});
