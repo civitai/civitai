@@ -13,5 +13,6 @@ linkText: Open Settings  # required with link
 One or two plain sentences: what changed and where to find it. No HTML or Markdown formatting.
 ```
 
-Write an entry in the PR that ships a change players will notice, once it is on for them. `whats-new.test.ts` checks
+Write an entry in the PR that ships a change players will notice, once it is on for them. A `minRank` entry is not marked
+new for a player who reaches that rank later (the marker is one newest id), though it is in their list from then on. `whats-new.test.ts` checks
 every file.
