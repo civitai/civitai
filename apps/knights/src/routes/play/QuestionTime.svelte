@@ -180,7 +180,7 @@
   /* The card is a click-to-start target, so the link gets room around it. */
   .hint a {
     display: inline-block;
-    padding: 6px 2px;
+    padding: 6px 0;
     color: var(--io-gold);
     text-decoration: underline;
     text-underline-offset: 2px;
