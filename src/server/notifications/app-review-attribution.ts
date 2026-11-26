@@ -95,3 +95,16 @@ export function decisionReviewer(
   if (!reviewedBy || reviewedBy.deletedAt || !reviewedBy.username) return { account: null };
   return { account: { username: reviewedBy.username, image: reviewedBy.image } };
 }
+
+/**
+ * What the developer-facing byline renders for `reviewer`: the named reviewer, the team (an
+ * account that is gone), or nothing (an undecided entry, or a projection without a reviewer).
+ */
+export function decisionReviewerByline(
+  reviewer: DecisionReviewer | null | undefined
+): { kind: 'named'; username: string; image: string | null } | { kind: 'team' } | null {
+  if (!reviewer) return null;
+  const username = reviewer.account?.username?.trim();
+  if (!username) return { kind: 'team' };
+  return { kind: 'named', username, image: reviewer.account?.image ?? null };
+}

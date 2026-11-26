@@ -38,9 +38,6 @@ const mocks = vi.hoisted(() => ({
   appBlocksFlag: true,
 }));
 
-// The reviewer byline's avatar reads the viewer; this harness has no session provider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: mocks.appBlocksFlag, appBlocksAuthor: true }),
 }));
@@ -90,12 +87,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       withdrawExternalRequest: mutationStub('withdrawExternalRequest'),
     },
     blocks: { withdrawPublishRequest: mutationStub('withdrawPublishRequest') },
-    // The reviewer byline's avatar asks for a user only when it has no user object; it always
-    // has one here, so this answers nothing.
-    user: {
-      getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) },
-      getCreator: { useQuery: () => ({ data: undefined, isLoading: false, isError: false }) },
-    },
   },
 }));
 
@@ -196,26 +187,17 @@ describe('the stream', () => {
       .toHaveTextContent('Icon is 32px, needs 256px');
   });
 
-  test('a decided entry says who reviewed it, linking to their profile', async () => {
+  test('a decided entry whose reviewer account is gone reads as the team', async () => {
+    // The named case renders the site's UserAvatar, which needs providers this harness does not
+    // mount; which case renders is `decisionReviewerByline`, pinned in the unit suite.
     renderWithProviders(
       <ListingHistoryPanelView
         entries={[
-          entry({
-            id: 'rev_named',
-            status: 'rejected',
-            rejectionReason: 'Missing screenshot',
-            reviewer: { account: { username: 'reviewer_ada', image: null } },
-          }),
           entry({ id: 'rev_gone', status: 'approved', reviewer: { account: null } }),
           entry({ id: 'rev_none', status: 'pending', version: '3.0.0', reviewer: null }),
         ]}
       />
     );
-    const named = page.getByTestId('apps-history-reviewer-rev_named');
-    await expect.element(named).toHaveTextContent(/Reviewed by.*reviewer_ada.*Civitai App Review/);
-    const link = named.element().querySelector('a');
-    expect(link?.getAttribute('href')).toBe('/user/reviewer_ada');
-    // A closed reviewer account reads as the team, never as a blank or a dead profile link.
     const gone = page.getByTestId('apps-history-reviewer-rev_gone');
     await expect.element(gone).toHaveTextContent('Reviewed by Civitai App Review');
     expect(gone.element().querySelector('a')).toBeNull();

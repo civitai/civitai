@@ -5,8 +5,13 @@ import type { DetailFetcherContext } from '~/server/notifications/detail-fetcher
 setEnv({ NEXTAUTH_URL: 'https://civitai.com' });
 
 const { getNotificationMessage } = await import('~/server/notifications/utils.notifications');
-const { appReviewByline, decisionReviewer, withApprovalNote, appReviewAttributionDetails } =
-  await import('~/server/notifications/app-review-attribution');
+const {
+  appReviewByline,
+  decisionReviewer,
+  decisionReviewerByline,
+  withApprovalNote,
+  appReviewAttributionDetails,
+} = await import('~/server/notifications/app-review-attribution');
 const { appReviewDetailFetcher } = await import(
   '~/server/notifications/detail-fetchers/app-review.detail-fetcher'
 );
@@ -183,5 +188,27 @@ describe('decisionReviewer (the developer-facing history projection)', () => {
   it('is null for a request nobody decided', () => {
     expect(decisionReviewer('pending', ada)).toBeNull();
     expect(decisionReviewer('withdrawn', ada)).toBeNull();
+  });
+});
+
+describe('decisionReviewerByline (which byline the history row renders)', () => {
+  it('names a reviewer with an account, avatar included', () => {
+    expect(
+      decisionReviewerByline({
+        account: { username: 'reviewer_ada', image: 'https://i.example/a' },
+      })
+    ).toEqual({ kind: 'named', username: 'reviewer_ada', image: 'https://i.example/a' });
+  });
+
+  it('reads as the team for a gone account or a blank name', () => {
+    expect(decisionReviewerByline({ account: null })).toEqual({ kind: 'team' });
+    expect(decisionReviewerByline({ account: { username: '  ', image: null } })).toEqual({
+      kind: 'team',
+    });
+  });
+
+  it('renders nothing for an undecided entry or a projection without a reviewer', () => {
+    expect(decisionReviewerByline(null)).toBeNull();
+    expect(decisionReviewerByline(undefined)).toBeNull();
   });
 });

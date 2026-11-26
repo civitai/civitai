@@ -2,6 +2,7 @@ import { Group, Text } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   APP_REVIEW_TEAM_NAME,
+  decisionReviewerByline,
   type DecisionReviewer,
 } from '~/server/notifications/app-review-attribution';
 
@@ -20,9 +21,9 @@ export function ReviewerByline({
   reviewer: DecisionReviewerView | null | undefined;
   testId?: string;
 }) {
-  if (!reviewer) return null;
-  const account = reviewer.account?.username ? reviewer.account : null;
-  if (!account) {
+  const byline = decisionReviewerByline(reviewer);
+  if (!byline) return null;
+  if (byline.kind === 'team') {
     return (
       <Text size="xs" c="dimmed" data-testid={testId}>
         Reviewed by {APP_REVIEW_TEAM_NAME}
@@ -36,7 +37,7 @@ export function ReviewerByline({
       </Text>
       <Group gap={0} wrap="nowrap">
         <UserAvatar
-          user={{ username: account.username, image: account.image }}
+          user={{ username: byline.username, image: byline.image }}
           size="xs"
           withUsername
           linkToProfile
