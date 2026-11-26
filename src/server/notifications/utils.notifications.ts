@@ -12,6 +12,7 @@ import { appCollaboratorNotifications } from '~/server/notifications/app-collabo
 import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
 import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
+import { appReviewThreadNotifications } from '~/server/notifications/app-review-thread.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import {
@@ -79,6 +80,7 @@ export const notificationProcessors = {
   ...appCollaboratorNotifications,
   ...appFeedbackNotifications,
   ...appModeratorMessageNotifications,
+  ...appReviewThreadNotifications,
   ...articleRatingReviewNotifications,
   ...ratingReviewNotifications,
   ...reportNotifications,

@@ -39,7 +39,10 @@ const buttonIn = (html: string) => {
   return m ? { to: leadsTo(m[1]!), label: m[2] } : null;
 };
 
-/** The app-review outcomes an app developer is emailed about the moment they happen. */
+/**
+ * The app-review outcomes an app developer is emailed about the moment they happen, and the
+ * review-thread replies (to the reviewer or to the developer).
+ */
 const APP_REVIEW_TYPES = [
   'app-block-approved',
   'app-block-rejected',
@@ -47,6 +50,8 @@ const APP_REVIEW_TYPES = [
   'app-listing-reset-to-pending',
   'app-access-request-approved',
   'app-access-request-declined',
+  'app-review-reply-to-moderator',
+  'app-review-reply-to-developer',
 ];
 
 // Who gets mailed is decided in SQL (the opt-out NOT EXISTS), so the opt-out case runs against an
