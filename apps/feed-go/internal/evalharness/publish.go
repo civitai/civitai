@@ -27,11 +27,12 @@ import (
 // verdicts, reasons, categories, paths, ids and counts (never `cases.request`, `cases.node_body`, a
 // sample's input or an account), and its pages are rendered from the Report types below, which have
 // no field a request input or a response value could be put in. Every string that reaches a page is
-// safeToken'd (a reason, a category, a path, the run id), an account role ([a-z][a-z0-9-]*) or a
-// fixed state, or formatted here (numbers, times, hex ids). A token-shaped reason, category or path
-// IS shown, by design: a reason is a fallback reason (Go's hand-back header, shape-checked by Score)
-// or the harness's own, and a category or path is an answer's key path (opaque subtrees truncated),
-// never a request input.
+// safeToken'd (a reason, a category, a path, the run id), an account role ([a-z][a-z0-9-]*), an
+// account token's host (hostRE: the operator's accounts file, never a request) or a fixed state, or
+// formatted here (numbers, times, hex ids). A token-shaped reason, category or path IS shown, by
+// design: a reason is a fallback reason (Go's hand-back header, shape-checked by Score) or the
+// harness's own, and a category or path is an answer's key path (opaque subtrees truncated), never a
+// request input.
 
 // RunFacts is what publish reads of one run.
 type RunFacts struct {
@@ -40,7 +41,7 @@ type RunFacts struct {
 	CorpusFrom time.Time
 	CorpusTo   time.Time
 	EndReason  string
-	// Accounts are its settings' account notes (role, exp, state; never a token).
+	// Accounts are its settings' account notes (role, host, exp, state; never a token).
 	Accounts []AccountNote
 }
 
@@ -105,9 +106,11 @@ type ReasonRow struct {
 	TrafficPct float64
 }
 
-// AccountRow is one account needing attention: its role, its token's exp, and the state.
+// AccountRow is one account token needing attention: its role, the host the token is for ("-": the
+// default token), its exp, and the state.
 type AccountRow struct {
 	Role    string
+	Host    string
 	Expires string
 	State   string
 }
@@ -205,9 +208,14 @@ func Aggregate(f Facts, endpoints []string, prefix string) (Report, error) {
 	idx := IndexPage{ID: prefix, RunID: safeToken(latest.RunID), Started: fmtTime(latest.Started),
 		EndReason: safeToken(latest.EndReason), Verdicts: Verdicts}
 	for _, n := range latest.Accounts {
-		row := AccountRow{Role: Redacted, Expires: "-", State: Redacted}
+		row := AccountRow{Role: Redacted, Host: "-", Expires: "-", State: Redacted}
 		if roleRE.MatchString(n.Role) {
 			row.Role = n.Role
+		}
+		if hostRE.MatchString(n.Host) {
+			row.Host = n.Host
+		} else if n.Host != "" {
+			row.Host = Redacted
 		}
 		switch n.State {
 		case AccountExpiring, AccountExpired, AccountNoExp:
@@ -496,8 +504,8 @@ var indexTmpl = template.Must(template.New("index").Funcs(pageFuncs).Parse(`<!do
 <table><tr><th>blind spots</th><th>cases promoted</th><th>cannot reproduce</th><th>reverse</th></tr>
 <tr><td class="n">{{.BlindSpots}}</td><td class="n">{{.Promoted}}</td><td class="n">{{.CannotReproduce}}</td><td class="n">{{.Reverse}}</td></tr></table>{{else}}<p class="muted">no reconcile yet</p>{{end}}
 <h2>Eval accounts needing attention</h2>
-{{if .Accounts}}<table><tr><th>role</th><th>session expires</th><th>state</th></tr>
-{{range .Accounts}}<tr><td>{{.Role}}</td><td>{{.Expires}}</td><td>{{.State}}</td></tr>
+{{if .Accounts}}<table><tr><th>role</th><th>site</th><th>session expires</th><th>state</th></tr>
+{{range .Accounts}}<tr><td>{{.Role}}</td><td>{{.Host}}</td><td>{{.Expires}}</td><td>{{.State}}</td></tr>
 {{end}}</table>{{else}}<p class="muted">none</p>{{end}}
 </body></html>
 `))

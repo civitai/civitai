@@ -4047,11 +4047,16 @@ live Node app does.
   member-owner, else hidden preferences member-filtered, else mature (`showNsfw`, or a level past
   `browsing.SFWLevels`) member-mature, else member-default. `results.viewer_used` records it.
 - **Accounts.** Member accounts (the mapping asks for the four roles above; the file may name more)
-  and one API key owned by one of them, secrets in mounted files the accounts file names, never logged. Each session token's `exp` is read unverified: within 5 days, a warning; past,
-  that account's cases are `not_replayable` (`account-expired:<role>`); no usable member account at
-  all, the run is refused (a signed-out-only run would read as coverage it is not). Expiring,
-  expired and exp-less accounts are also recorded in `runs.settings` (`accounts`: role, exp, state)
-  and listed on the index page; never a token.
+  and one API key owned by one of them, secrets in mounted files the accounts file names, never logged.
+  A session is minted per site, so an account may name one token per host (`sessionTokenFiles`:
+  hostname -> file) beside its default `sessionTokenFile`: a case is replayed with the token of the
+  longest host its stored Host equals or is a subdomain of, else the default, else it is
+  `not_replayable` (`no-session:<role>`). Each session token's `exp` is read unverified: within 5
+  days, a warning; past, the cases that token would replay are `not_replayable`
+  (`account-expired:<role>`); no usable member account at all, the run is refused (a
+  signed-out-only run would read as coverage it is not). Expiring, expired and exp-less tokens are
+  also recorded in `runs.settings` (`accounts`: role, host, exp, state) and listed on the index
+  page; never a token.
 - **Placeholders**, replaced in the stored text before anything decodes it: `$self` is the
   account's username under `username`/`user`, else its user id, a JSON number, or a decimal string
   where the path is annotated `bigint`; `$self-collection` its collection; `$search` its search

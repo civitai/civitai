@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -45,8 +46,14 @@ type AccountsFile struct {
 // AccountSpec is one eval account.
 type AccountSpec struct {
 	Role string `json:"role"`
-	// SessionTokenFile is the path of a file holding the account's session token (a JWS).
-	SessionTokenFile string `json:"sessionTokenFile"`
+	// SessionTokenFile is the path of a file holding the account's session token (a JWS): the one a
+	// case is replayed with when no SessionTokenFiles host matches its Host ("": none).
+	SessionTokenFile string `json:"sessionTokenFile,omitempty"`
+	// SessionTokenFiles maps a host (a lower-case hostname, e.g. "civitai.red") to the file of the
+	// account's session token on that site: a session is minted per site, so a case is replayed with
+	// the token of the longest key its Host header equals or is a subdomain of. At least one of the
+	// two fields is required.
+	SessionTokenFiles map[string]string `json:"sessionTokenFiles,omitempty"`
 	// UserID, Username and CollectionID are what `$self` and `$self-collection` become.
 	UserID       int    `json:"userId"`
 	Username     string `json:"username"`
@@ -60,18 +67,62 @@ type APIKeySpec struct {
 	Role    string `json:"role"`
 }
 
-// Account is one loaded account. The token is unexported and never printed.
+// Account is one loaded account. Its tokens are unexported and never printed.
 type Account struct {
 	Role         string
 	UserID       int
 	Username     string
 	CollectionID int
 	SearchText   string
-	// Expires is the token's `exp` (zero: it has none); Expired whether it had passed at load.
+	// Expires is the earliest `exp` of its session tokens (zero: none has one); Expired whether
+	// every one of them had passed at load.
 	Expires time.Time
 	Expired bool
-	token   string
+	// sessions are its session tokens, the SessionTokenFile one with host "".
+	sessions []session
 }
+
+// session is one session token of an account: the host it is for ("": the default) and its exp.
+type session struct {
+	host    string
+	token   string
+	expires time.Time
+	expired bool
+}
+
+// session is the token a case to host is replayed with: the longest SessionTokenFiles key host
+// equals or is a subdomain of, else the default one (nil: none). host is a Host header: its port and
+// a trailing dot are dropped and it is compared lower-cased.
+func (acc *Account) session(host string) *session {
+	h := strings.ToLower(strings.TrimSuffix(stripPort(host), "."))
+	var best, def *session
+	for i := range acc.sessions {
+		s := &acc.sessions[i]
+		switch {
+		case s.host == "":
+			def = s
+		case h == s.host || strings.HasSuffix(h, "."+s.host):
+			if best == nil || len(s.host) > len(best.host) {
+				best = s
+			}
+		}
+	}
+	if best != nil {
+		return best
+	}
+	return def
+}
+
+// stripPort drops a Host header's `:port` (an IPv6 literal keeps its brackets).
+func stripPort(host string) string {
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
+		return host[:i]
+	}
+	return host
+}
+
+// hostRE is a SessionTokenFiles key: a lower-case hostname with at least two labels.
+var hostRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
 // Account note states (AccountNote.State).
 const (
@@ -80,10 +131,12 @@ const (
 	AccountNoExp    = "no-exp"
 )
 
-// AccountNote is one account whose session token needs attention: its role, its exp (RFC 3339, ""
-// when none) and why. Recorded in runs.settings and shown on the index page; never a token.
+// AccountNote is one account session token that needs attention: its role, the SessionTokenFiles
+// host it is for ("": the default token), its exp (RFC 3339, "" when none) and why. Recorded in
+// runs.settings and shown on the index page; never a token.
 type AccountNote struct {
 	Role    string `json:"role"`
+	Host    string `json:"host,omitempty"`
 	Expires string `json:"expires"`
 	State   string `json:"state"`
 }
@@ -102,8 +155,9 @@ var roleRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 
 // LoadAccounts reads the accounts file at path and every secret file it names, checks each session
 // token's `exp` (read, not verified: the token is the app's to verify) against now, and warns on warn
-// about each token within ExpiryWarning of expiring or already expired (role and date only). An
-// expired account stays loaded with Expired set: its cases are not_replayable. It refuses a file in
+// about each token within ExpiryWarning of expiring or already expired (role, host and date only). An
+// expired token stays loaded: the cases it would replay are not_replayable (an account whose every
+// token expired has Expired set). It refuses a file in
 // which no member role (MemberRoles) has a usable account: a run would then replay signed-out cases
 // only, which reads as coverage it is not.
 func LoadAccounts(path string, now time.Time, warn io.Writer) (*Accounts, error) {
@@ -131,32 +185,60 @@ func LoadAccounts(path string, now time.Time, warn io.Writer) (*Accounts, error)
 		if spec.UserID <= 0 || spec.Username == "" {
 			return nil, fmt.Errorf("accounts file: role %s: userId and username are required", spec.Role)
 		}
-		tok, err := readSecret(spec.SessionTokenFile)
-		if err != nil {
-			return nil, fmt.Errorf("accounts file: role %s: session token: %w", spec.Role, err)
-		}
-		exp, err := TokenExpiry(tok)
-		if err != nil {
-			return nil, fmt.Errorf("accounts file: role %s: session token: %w", spec.Role, err)
+		if spec.SessionTokenFile == "" && len(spec.SessionTokenFiles) == 0 {
+			return nil, fmt.Errorf("accounts file: role %s: session token: no file named (sessionTokenFile or sessionTokenFiles)", spec.Role)
 		}
 		acc := &Account{Role: spec.Role, UserID: spec.UserID, Username: spec.Username, CollectionID: spec.CollectionID,
-			SearchText: spec.SearchText, Expires: exp, token: tok}
+			SearchText: spec.SearchText, Expired: true}
 		if acc.SearchText == "" {
 			acc.SearchText = f.SearchText
 		}
-		switch {
-		case exp.IsZero():
-			a.notes = append(a.notes, AccountNote{Role: spec.Role, State: AccountNoExp})
-			_, _ = fmt.Fprintf(warn, "feed-eval: account %s: session token has no exp\n", spec.Role)
-		case !now.Before(exp):
-			acc.Expired = true
-			a.notes = append(a.notes, AccountNote{Role: spec.Role, Expires: exp.UTC().Format(time.RFC3339), State: AccountExpired})
-			_, _ = fmt.Fprintf(warn, "feed-eval: account %s: session token EXPIRED at %s; its cases are not replayable\n",
-				spec.Role, exp.UTC().Format(time.RFC3339))
-		case exp.Sub(now) <= ExpiryWarning:
-			a.notes = append(a.notes, AccountNote{Role: spec.Role, Expires: exp.UTC().Format(time.RFC3339), State: AccountExpiring})
-			_, _ = fmt.Fprintf(warn, "feed-eval: account %s: session token expires %s (in %.1f days)\n",
-				spec.Role, exp.UTC().Format(time.RFC3339), exp.Sub(now).Hours()/24)
+		hosts := make([]string, 0, len(spec.SessionTokenFiles)+1)
+		if spec.SessionTokenFile != "" {
+			hosts = append(hosts, "")
+		}
+		named := make([]string, 0, len(spec.SessionTokenFiles))
+		for h := range spec.SessionTokenFiles {
+			if !hostRE.MatchString(h) {
+				return nil, fmt.Errorf("accounts file: role %s: sessionTokenFiles host %q: want a lower-case hostname", spec.Role, h)
+			}
+			named = append(named, h)
+		}
+		slices.Sort(named)
+		for _, h := range append(hosts, named...) {
+			file, label := spec.SessionTokenFile, spec.Role
+			if h != "" {
+				file, label = spec.SessionTokenFiles[h], spec.Role+" ("+h+")"
+			}
+			tok, err := readSecret(file)
+			if err != nil {
+				return nil, fmt.Errorf("accounts file: role %s: session token: %w", label, err)
+			}
+			exp, err := TokenExpiry(tok)
+			if err != nil {
+				return nil, fmt.Errorf("accounts file: role %s: session token: %w", label, err)
+			}
+			s := session{host: h, token: tok, expires: exp}
+			stamp := exp.UTC().Format(time.RFC3339)
+			switch {
+			case exp.IsZero():
+				a.notes = append(a.notes, AccountNote{Role: spec.Role, Host: h, State: AccountNoExp})
+				_, _ = fmt.Fprintf(warn, "feed-eval: account %s: session token has no exp\n", label)
+			case !now.Before(exp):
+				s.expired = true
+				a.notes = append(a.notes, AccountNote{Role: spec.Role, Host: h, Expires: stamp, State: AccountExpired})
+				_, _ = fmt.Fprintf(warn, "feed-eval: account %s: session token EXPIRED at %s; its cases are not replayable\n",
+					label, stamp)
+			case exp.Sub(now) <= ExpiryWarning:
+				a.notes = append(a.notes, AccountNote{Role: spec.Role, Host: h, Expires: stamp, State: AccountExpiring})
+				_, _ = fmt.Fprintf(warn, "feed-eval: account %s: session token expires %s (in %.1f days)\n",
+					label, stamp, exp.Sub(now).Hours()/24)
+			}
+			if !exp.IsZero() && (acc.Expires.IsZero() || exp.Before(acc.Expires)) {
+				acc.Expires = exp
+			}
+			acc.Expired = acc.Expired && s.expired
+			acc.sessions = append(acc.sessions, s)
 		}
 		a.byRole[spec.Role] = acc
 	}

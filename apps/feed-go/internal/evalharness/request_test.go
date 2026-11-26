@@ -39,7 +39,7 @@ func TestPrepareAPIKeyCredentials(t *testing.T) {
 		if c.credential == "session" {
 			cs.Request.Viewer.HiddenPrefs = true // member-filtered, the key's own account: the same username
 		}
-		creds, why := a.Resolve(MapViewer(cs.Request.Viewer, cs.Request.Credential))
+		creds, why := a.Resolve(MapViewer(cs.Request.Viewer, cs.Request.Credential), caseHost(cs.Request))
 		if why != "" {
 			t.Fatalf("%s: %s", c.credential, why)
 		}
@@ -63,7 +63,7 @@ func TestPrepareAPIKeyCredentials(t *testing.T) {
 	// A query credential with no stored query: the pair alone.
 	cs := restCase("query")
 	cs.Request.Query = ""
-	creds, _ := a.Resolve(MapViewer(cs.Request.Viewer, "query"))
+	creds, _ := a.Resolve(MapViewer(cs.Request.Viewer, "query"), caseHost(cs.Request))
 	if p, _ := Prepare(cs, creds); p.RawQuery != "token=apikey%2Bsec%2F9931%3D" { // gitleaks:allow synthetic test key
 		t.Errorf("bare token pair %q", p.RawQuery)
 	}
