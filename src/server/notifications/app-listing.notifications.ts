@@ -1,6 +1,7 @@
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { NotificationCategory } from '~/server/common/enums';
 import {
+  APP_REVIEW_TEAM_NAME,
   appReviewByline,
   withApprovalNote,
   type AppReviewAttributionDetails,
@@ -91,6 +92,11 @@ function appLabel(details: AppListingModerationNotificationDetails): string {
   return details.name ? `"${details.name}"` : 'Your app';
 }
 
+/** A takedown's byline: the team, on a notification that carries attribution; else none. */
+function hiddenByline(details: AppListingModerationNotificationDetails): string | undefined {
+  return details.reviewedByTeam === true ? `Reviewed by ${APP_REVIEW_TEAM_NAME}` : undefined;
+}
+
 /** Append ": <reason>" only when a non-empty reason is present. */
 function withReason(base: string, reason?: string | null): string {
   const trimmed = reason?.trim();
@@ -140,7 +146,10 @@ export const appListingNotifications = createNotificationProcessor({
           details.reason
         ),
         url: OWNER_SUBMISSIONS_URL,
-        byline: appReviewByline(details),
+        // 🔴 A takedown names the team, never the moderator: the owner of a hidden listing is not
+        // told who acted (the rule `ownerModerationEventSelect` follows). Not `appReviewByline`,
+        // so no stored id or resolved actor can ever surface here.
+        byline: hiddenByline(details),
       };
     },
   },

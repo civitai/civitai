@@ -1,13 +1,13 @@
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
-/** The app-review types whose copy names the reviewer (`appReviewByline`). */
+/** The app-review types whose copy names the individual reviewer (`appReviewByline`). */
 export const APP_REVIEW_ATTRIBUTED_TYPES = [
   'app-block-approved',
   'app-block-rejected',
   'app-listing-approved',
   'app-listing-rejected',
-  'app-listing-hidden',
+  // NOT `app-listing-hidden`: a takedown names the team only, so its reviewer is never resolved.
 ] as const;
 
 /**

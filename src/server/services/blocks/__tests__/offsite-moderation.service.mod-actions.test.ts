@@ -930,7 +930,8 @@ describe('delistListing', () => {
       expect.objectContaining({
         type: 'app-listing-hidden',
         userId: OWNER,
-        attribution: { kind: 'moderator', userId: REVIEWER },
+        // A takedown names the team, never the moderator.
+        attribution: { kind: 'team' },
         details: expect.objectContaining({ slug: SLUG, reason: GOOD_REASON }),
       })
     );

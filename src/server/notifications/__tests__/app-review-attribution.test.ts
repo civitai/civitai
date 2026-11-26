@@ -23,13 +23,14 @@ const { notificationEmail } = await import('~/server/email/templates/notificatio
  * gets a fake client through its context argument.
  */
 
-const ATTRIBUTED_TYPES = [
+/** The decisions that name the individual reviewer. A takedown (`app-listing-hidden`) never does. */
+const NAMED_TYPES = [
   'app-block-approved',
   'app-block-rejected',
   'app-listing-approved',
   'app-listing-rejected',
-  'app-listing-hidden',
 ] as const;
+const ALL_DECISION_TYPES = [...NAMED_TYPES, 'app-listing-hidden'] as const;
 
 const BASE = { slug: 'pixel-pal', name: 'Pixel Pal', reason: 'Broken build' };
 const named = { reviewerUserId: 31, actor: { username: 'reviewer_ada', deletedAt: null } };
@@ -45,6 +46,12 @@ describe('appReviewByline', () => {
     expect(
       appReviewByline({ reviewerUserId: 31, actor: { username: 'gone', deletedAt: new Date() } })
     ).toBe('Reviewed by Civitai App Review');
+  });
+
+  it('names only the team for a team attribution', () => {
+    expect(appReviewByline({ reviewedByTeam: true, ...named })).toBe(
+      'Reviewed by Civitai App Review'
+    );
   });
 
   it('says an automated decision was automated, even if an actor is present', () => {
@@ -64,19 +71,49 @@ describe('appReviewByline', () => {
     expect(appReviewAttributionDetails({ kind: 'automated' })).toEqual({
       reviewedAutomatically: true,
     });
+    expect(appReviewAttributionDetails({ kind: 'team' })).toEqual({ reviewedByTeam: true });
     expect(appReviewAttributionDetails(undefined)).toEqual({});
   });
 });
 
 describe('the attributed notification types', () => {
-  it.each(ATTRIBUTED_TYPES)('%s carries the byline', (type) => {
+  it.each(NAMED_TYPES)('%s carries the named byline', (type) => {
     const prepared = getNotificationMessage({ type, details: { ...BASE, ...named } });
     expect(prepared?.byline).toBe('Reviewed by @reviewer_ada, Civitai App Review');
   });
 
-  it.each(ATTRIBUTED_TYPES)('%s renders an old notification exactly as before', (type) => {
+  it.each(ALL_DECISION_TYPES)('%s renders an old notification exactly as before', (type) => {
     const prepared = getNotificationMessage({ type, details: { ...BASE } });
     expect(prepared?.byline).toBeUndefined();
+  });
+
+  it('🔴 a takedown names the team, never the moderator, whatever the details carry', () => {
+    const team = getNotificationMessage({
+      type: 'app-listing-hidden',
+      details: { ...BASE, reviewedByTeam: true },
+    });
+    expect(team?.byline).toBe('Reviewed by Civitai App Review');
+    // A stored id and a resolved actor (say, sent through another path) still name nobody.
+    const leaked = getNotificationMessage({
+      type: 'app-listing-hidden',
+      details: { ...BASE, ...named, reviewedByTeam: true },
+    });
+    expect(leaked?.byline).toBe('Reviewed by Civitai App Review');
+    const noTeam = getNotificationMessage({
+      type: 'app-listing-hidden',
+      details: { ...BASE, ...named },
+    });
+    expect(noTeam?.byline).toBeUndefined();
+    // Positive control: the same details on a named type do name the reviewer.
+    expect(
+      getNotificationMessage({ type: 'app-listing-rejected', details: { ...BASE, ...named } })
+        ?.byline
+    ).toBe('Reviewed by @reviewer_ada, Civitai App Review');
+  });
+
+  it('never resolves a reviewer for a takedown', () => {
+    expect(appReviewDetailFetcher.types).not.toContain('app-listing-hidden');
+    expect(appReviewDetailFetcher.types).toEqual([...NAMED_TYPES]);
   });
 
   it('pins the approved copy with and without an approval note', () => {
@@ -149,7 +186,7 @@ describe('appReviewDetailFetcher', () => {
   it('resolves the stored reviewer into the actor, excluding deleted accounts', async () => {
     const { findMany, ctx: c } = ctx([{ id: 31, username: 'reviewer_ada' }]);
     const live = { id: 1, type: 'app-block-approved', details: { ...BASE, reviewerUserId: 31 } };
-    const gone = { id: 2, type: 'app-listing-hidden', details: { ...BASE, reviewerUserId: 44 } };
+    const gone = { id: 2, type: 'app-listing-rejected', details: { ...BASE, reviewerUserId: 44 } };
     await appReviewDetailFetcher.fetcher([live, gone], c);
 
     const where = (findMany.mock.calls[0]![0] as { where: unknown }).where;

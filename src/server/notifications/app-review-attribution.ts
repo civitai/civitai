@@ -1,10 +1,11 @@
 /**
  * Who reviewed an app — the byline the app-review notifications (`app-block-approved` /
- * `-rejected`, `app-listing-approved` / `-rejected` / `-hidden`) carry, so a decision reads as
- * coming from a person rather than from the platform.
+ * `-rejected`, `app-listing-approved` / `-rejected`) carry, so a decision reads as coming from a
+ * person rather than from the platform. `app-listing-hidden` (a takedown) carries the team only.
  *
  * What is STORED on the notification is the fact the emitter knew: the deciding moderator's
- * `reviewerUserId`, or `reviewedAutomatically: true` for a decision no person made. The
+ * `reviewerUserId`, `reviewedAutomatically: true` for a decision no person made, or
+ * `reviewedByTeam: true` for a decision attributed to the team and never to a person. The
  * reviewer's name and avatar are NOT stored: `appReviewDetailFetcher` resolves them into
  * `actor` when the notification is read or emailed, so a renamed reviewer shows the current
  * name and a deleted one shows none.
@@ -14,8 +15,17 @@
 
 export const APP_REVIEW_TEAM_NAME = 'Civitai App Review';
 
-/** How an emitter states who decided. A decision path must name one; nothing is inferred. */
-export type AppReviewAttribution = { kind: 'moderator'; userId: number } | { kind: 'automated' };
+/**
+ * How an emitter states who decided. A decision path must name one; nothing is inferred.
+ *
+ * `team` names no individual and stores no moderator id. It is what a TAKEDOWN uses
+ * (`app-listing-hidden`): the owner of a taken-down listing is never told which moderator acted,
+ * the same rule the owner's moderation history follows (`ownerModerationEventSelect`).
+ */
+export type AppReviewAttribution =
+  | { kind: 'moderator'; userId: number }
+  | { kind: 'automated' }
+  | { kind: 'team' };
 
 /** The reviewer as `appReviewDetailFetcher` resolves it (a live account only). */
 export type AppReviewActor = {
@@ -28,6 +38,8 @@ export type AppReviewAttributionDetails = {
   reviewerUserId?: number | null;
   /** The decision was made by an automated review, not a person. */
   reviewedAutomatically?: boolean;
+  /** The decision is attributed to the team, naming no individual (a takedown). */
+  reviewedByTeam?: boolean;
   /** Filled at read time by `appReviewDetailFetcher`; never stored. */
   actor?: AppReviewActor | null;
 };
@@ -35,22 +47,27 @@ export type AppReviewAttributionDetails = {
 /** The details fields an emitter stores for `attribution`. */
 export function appReviewAttributionDetails(
   attribution: AppReviewAttribution | undefined
-): Pick<AppReviewAttributionDetails, 'reviewerUserId' | 'reviewedAutomatically'> {
+): Pick<
+  AppReviewAttributionDetails,
+  'reviewerUserId' | 'reviewedAutomatically' | 'reviewedByTeam'
+> {
   if (!attribution) return {};
-  return attribution.kind === 'automated'
-    ? { reviewedAutomatically: true }
-    : { reviewerUserId: attribution.userId };
+  if (attribution.kind === 'automated') return { reviewedAutomatically: true };
+  if (attribution.kind === 'team') return { reviewedByTeam: true };
+  return { reviewerUserId: attribution.userId };
 }
 
 /**
- * "Reviewed by @name, Civitai App Review", "Reviewed automatically by Civitai App Review", or,
- * when the reviewer's account is gone, "Reviewed by Civitai App Review". `undefined` for a
+ * "Reviewed by @name, Civitai App Review", "Reviewed automatically by Civitai App Review", or
+ * "Reviewed by Civitai App Review" — for a team attribution, and when the reviewer's account is
+ * gone. `undefined` for a
  * notification that predates attribution, which then renders exactly as it did.
  */
 export function appReviewByline(details: AppReviewAttributionDetails): string | undefined {
   if (details.reviewedAutomatically === true) {
     return `Reviewed automatically by ${APP_REVIEW_TEAM_NAME}`;
   }
+  if (details.reviewedByTeam === true) return `Reviewed by ${APP_REVIEW_TEAM_NAME}`;
   const actor = details.actor;
   const username = typeof actor?.username === 'string' ? actor.username.trim() : '';
   if (username && !actor?.deletedAt) return `Reviewed by @${username}, ${APP_REVIEW_TEAM_NAME}`;
