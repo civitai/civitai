@@ -72,6 +72,8 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
   newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
+  // A seatless moderator's edit writes an audit row (`recordModeratorListingEdit`).
+  newAppListingModerationEventId: () => `alme_new_${++seq.n}`,
   newUlid: () => `ULID${++seq.n}`,
 }));
 
