@@ -1701,6 +1701,16 @@ export async function updateListing(opts: {
   // is a SHADOW rather than the live listing); every other branch writes to the parent
   // anyway, so it applies the whole patch in one update exactly as before.
   const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
+  // 🔴 ON-SITE CATEGORY RIDES WITH THE BETA HALF, onto the LIVE listing. The only on-site category
+  // write `assertNoOnsiteManifestPatch` lets through is a moderator's, and it is allowed because it
+  // lands on the live row. Staged on a shadow it would be dropped by the on-site revision apply
+  // (assets only) while the save reported success, so the material branch below must never stage
+  // it. Category is trivial, so applying it in place matches every other branch.
+  const liveParentPatch: UpdateListingPatch = { ...betaPatch };
+  if (listing.kind === 'onsite' && restPatch.category !== undefined) {
+    liveParentPatch.category = restPatch.category;
+    delete restPatch.category;
+  }
 
   const audit = {
     moderator: listing.callerRole === 'moderator',
@@ -1902,8 +1912,8 @@ export async function updateListing(opts: {
       // invalid URL as material precisely so it routes here, so that path was reachable
       // through the ordinary edit form. Build both payloads, mint the shadow, THEN write.
       const shadowData = buildListingPatchData(restPatch, patchOpts);
-      const betaData = patchHasAnyField(betaPatch)
-        ? buildListingPatchData(betaPatch, patchOpts)
+      const betaData = patchHasAnyField(liveParentPatch)
+        ? buildListingPatchData(liveParentPatch, patchOpts)
         : null;
       const { shadowId } = await beginListingRevision({
         listingId,
@@ -1930,6 +1940,7 @@ export async function updateListing(opts: {
         if (issueTrackerWrite.write) {
           await writeListingIssueTrackerUrl(tx, shadowId, issueTrackerWrite.value);
         }
+        // The beta half — plus an on-site moderator's category — goes to the LIVE parent.
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
         if (audit.moderator) {
           await recordModeratorListingEdit({ ...audit, db: tx, appListingId: shadowId });

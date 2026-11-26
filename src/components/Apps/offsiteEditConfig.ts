@@ -230,10 +230,12 @@ export function materialEditBlockedReason(
     );
   }
 
-  // 🔴 ON-SITE: the only material field this form can still change is the content rating. The
-  // name, tagline, description, category and both links come from the app
-  // (`listingFieldsFromManifest`) and are never editable here, in any status, so they are
-  // neither "locked until republish" nor "editable now".
+  // 🔴 ON-SITE: the content rating is the only MATERIAL field this form can still change. The
+  // name, tagline, description and both links come from the app (`listingFieldsFromManifest`)
+  // and are never editable here, in any status, so they are neither "locked until republish" nor
+  // "editable now". The category comes from the app too: owners and editors (who read this notice)
+  // cannot change it here, and only a moderator may set it, on the live listing
+  // (`onsiteCategoryEditableByModerator`).
   if (isOnsiteEdit(ctx)) {
     const onsiteWayOut = isOwnerEdit(ctx)
       ? `Republish the app from the Publishing tab first, then edit it — the edit is staged ` +

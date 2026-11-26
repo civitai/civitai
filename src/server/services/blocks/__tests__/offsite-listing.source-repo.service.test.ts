@@ -1169,6 +1169,31 @@ describe('🔴 an ON-SITE listing refuses an edit of its category', () => {
     );
   });
 
+  it('🔴 a MODERATOR category + MATERIAL change on an APPROVED listing: category lands on the LIVE row, never the shadow', async () => {
+    // The material half routes to a fresh shadow; the on-site revision apply copies assets only,
+    // so a category staged there would be dropped while the save reported success.
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ kind: 'onsite', externalUrl: null })
+    );
+    armShadowOpen();
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { category: 'games', contentRating: 'pg13' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res.requiresReview).toBe(true);
+    const writes = mockWrite.appListing.update.mock.calls.map(
+      (c) => c[0] as { where: { id: string }; data: Record<string, unknown> }
+    );
+    expect(writes.filter((w) => w.where.id === 'apl_parent')).toEqual([
+      { where: { id: 'apl_parent' }, data: { category: 'games' } },
+    ]);
+    const shadowWrites = writes.filter((w) => w.where.id !== 'apl_parent');
+    expect(shadowWrites.some((w) => w.data.contentRating === 'pg13')).toBe(true);
+    expect(shadowWrites.some((w) => 'category' in w.data)).toBe(false);
+  });
+
   it('…but not on an on-site REVISION draft, whose assets-only apply would drop it', async () => {
     armShadowColumnPresent(draftShadow({ kind: 'onsite', externalUrl: null }), null);
     await expect(
