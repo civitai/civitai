@@ -18,6 +18,8 @@ let updateResult:
   | { userId: number; alsoReportedBy: number[] | null; details?: unknown }
   | undefined;
 let affectedRows: number;
+/** The report's status as stored; an UPDATE's `status in (...)` where matches against it. */
+let storedStatus: ReportStatus;
 
 type Call = [string, unknown[]];
 
@@ -79,8 +81,13 @@ vi.mock('../db', () => ({
             wheres(calls).map(([column]) => column),
             'an UPDATE here must be scoped to a single report'
           ).toContain('id');
+          const statusExcluded = wheres(calls).some(
+            ([column, op, value]) =>
+              column === 'status' && op === 'in' && !(value as unknown[]).includes(storedStatus)
+          );
           const returning = calls.some(([m]) => m === 'returning');
-          if (!returning) return { numUpdatedRows: BigInt(affectedRows) };
+          if (!returning) return { numUpdatedRows: BigInt(statusExcluded ? 0 : affectedRows) };
+          if (statusExcluded) return undefined;
           // Only the columns the UPDATE asked for, so a payout that reads one it never returned sees nothing.
           const columns = calls.find(([m]) => m === 'returning')![1][0] as string[];
           return (
@@ -115,6 +122,7 @@ beforeEach(() => {
   existingReportId = 1;
   updateResult = { userId: 10, alsoReportedBy: null };
   affectedRows = 1;
+  storedStatus = ReportStatus.Pending;
 });
 
 /** The `where` arguments the UPDATE was built with, as `[column, op, value]` triples. */
@@ -191,7 +199,7 @@ describe('setReportStatus', () => {
   });
 
   it('rewards nobody when that guard matched nothing (a report reviewed meanwhile)', async () => {
-    updateResult = undefined;
+    storedStatus = ReportStatus.Unactioned;
 
     const result = await setReportStatus({
       id: 1,

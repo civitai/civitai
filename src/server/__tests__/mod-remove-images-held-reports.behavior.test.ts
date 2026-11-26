@@ -178,8 +178,6 @@ describe('open image reports', () => {
   });
 });
 
-// A direct (not held) removal actions the image's reports through this write; what it returns is
-// whom setTosViolation rewards.
 describe('a direct removal of an image', () => {
   it('actions only its open TOS reports, and returns only those to reward', async () => {
     const moved = await updateImageReportStatusByReason({

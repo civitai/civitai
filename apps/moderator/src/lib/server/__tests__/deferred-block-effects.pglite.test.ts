@@ -24,7 +24,12 @@ const { dbHandle, createNotification, setReportStatus, logToAxiom } = vi.hoisted
     async (_n: { userId: number; details: { url: string; reason?: string } }) => undefined
   ),
   setReportStatus: vi.fn(
-    async (_a: { id: number; status: string; noRewardFor?: readonly number[] }) => ({
+    async (_a: {
+      id: number;
+      status: string;
+      noRewardFor?: readonly number[];
+      fromStatuses?: readonly string[];
+    }) => ({
       ok: true as const,
       changed: true,
     })
@@ -298,6 +303,26 @@ describe('dismissing it from the review queue', () => {
     await dismiss(FLAGGED);
 
     expect(actioned().map((a) => a.id)).toEqual([report(FLAGGED)]);
+  });
+
+  it('leaves a report alone that a moderator closed between its read and its write', async () => {
+    await block(FLAGGED);
+    // As the real write does it: `fromStatuses` bounds the UPDATE itself.
+    setReportStatus.mockImplementationOnce(async (a) => {
+      await db.query(`UPDATE "Report" SET "status" = 'Unactioned' WHERE "id" = $1`, [a.id]);
+      await db.query(
+        `UPDATE "Report" SET "status" = $1 WHERE "id" = $2
+           AND ($3::text[] IS NULL OR "status" = ANY($3::text[]))`,
+        [a.status, a.id, a.fromStatuses ? [...a.fromStatuses] : null]
+      );
+      return { ok: true as const, changed: true };
+    });
+    await dismiss(FLAGGED);
+
+    const { rows } = await db.query(`SELECT "status" FROM "Report" WHERE "id" = $1`, [
+      report(FLAGGED),
+    ]);
+    expect(rows).toEqual([{ status: 'Unactioned' }]);
   });
 
   it('for a row with a report reason, actions the open reports of that reason, including one filed after the block', async () => {

@@ -219,6 +219,7 @@ export async function fireDeferredBlockEffects(
         status: ReportStatus.Actioned,
         userId: moderatorId,
         noRewardFor: owner == null ? [] : [owner],
+        fromStatuses: OPEN_REPORT_STATUSES,
       });
     } catch {
       await log({ type: 'error', name: DEFERRED_NOTICE_LOG.effectFailed, imageId, reportId: id });
