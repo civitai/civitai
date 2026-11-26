@@ -21,6 +21,7 @@ const {
   mockCacheRefresh,
   mockSettingsBust,
   mockSendModerationEmail,
+  mockRefreshSession,
 } = vi.hoisted(() => ({
   mockQueueUpdate: vi.fn(async () => undefined),
   mockRemoveContent: vi.fn(async () => undefined),
@@ -28,6 +29,7 @@ const {
   mockCacheRefresh: vi.fn(async () => undefined),
   mockSettingsBust: vi.fn(async () => undefined),
   mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
+  mockRefreshSession: vi.fn(async (..._a: unknown[]) => undefined),
 }));
 const v3Tos = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
 vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
@@ -50,7 +52,7 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => {
 });
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
-  refreshSession: vi.fn(async () => undefined),
+  refreshSession: mockRefreshSession,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -835,7 +837,8 @@ describe('toggleBan with an explicit setTo', () => {
     ['setTo true on a banned account', true, ALREADY_BANNED_AT],
     ['setTo false on an unbanned account', false, null],
   ] as const)('%s writes nothing and runs no ban side effect', async (_, setTo, bannedAt) => {
-    userFindUnique.mockResolvedValue(row(bannedAt));
+    // With an address, so a ban or unban that ran would send its email.
+    userFindUnique.mockResolvedValue({ ...row(bannedAt), email: 'someone@example.com' });
 
     const result = await banTo(setTo);
 
@@ -844,6 +847,7 @@ describe('toggleBan with an explicit setTo', () => {
     expect(mockRemoveContent).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
     expect(mockInvalidateSession).not.toHaveBeenCalled();
+    expect(mockSendModerationEmail).not.toHaveBeenCalled();
   });
 });
 
@@ -890,6 +894,7 @@ describe('toggleContestBan with an explicit setTo', () => {
 
     expect(result).toMatchObject({ changed: false });
     expect(userUpdate).not.toHaveBeenCalled();
+    expect(mockRefreshSession).not.toHaveBeenCalled();
   });
 });
 
@@ -918,6 +923,17 @@ describe('toggleBanHandler audit', () => {
 
     expect(userActivity).toHaveBeenCalledTimes(1);
     expect(userActivity).toHaveBeenCalledWith({ type: 'Banned', targetUserId: USER_ID });
+  });
+
+  it('records one Unbanned activity for an unban that lands', async () => {
+    userFindUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+    userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null, bannedAt: null });
+
+    const { run, userActivity } = handle({ setTo: false });
+    await run;
+
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith({ type: 'Unbanned', targetUserId: USER_ID });
   });
 
   it.each([
