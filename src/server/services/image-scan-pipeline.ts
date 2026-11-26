@@ -787,7 +787,7 @@ export async function resolveScanOutcome({
   }
 
   // A block on a banned owner's image is that decision, not a stale automated one, so a scan never
-  // lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
+  // lifts it. Uses `current`: the ban can block the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     if (current && hasBlockMarker(current) && (await isBlockKeptByBan(image.id))) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;

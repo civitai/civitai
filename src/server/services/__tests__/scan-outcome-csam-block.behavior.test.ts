@@ -417,7 +417,10 @@ describe('the rating block', () => {
   it('🔴 keeps the loaded CSAM reason when the read of the row fails', async () => {
     await blockImageFromRating({ imageId: CSAM, blockedReason: 'tos' });
     const image = await loaded(CSAM);
-    const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => Promise<unknown>;
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]

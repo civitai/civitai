@@ -692,8 +692,8 @@ describe('the review a scan verdict leaves', () => {
     }
   );
 
-  // Decision: the appeal branch keeps the block the row holds NOW, never the loaded copy's. A
-  // moderator's lift while the scan ran must stand; the old code wrote the loaded CSAM block back.
+  // Decision (civitai/civitai#10577): the appeal branch keeps the block the row holds NOW, never the
+  // loaded copy's. A moderator's lift while the scan ran must stand.
   it('🔴 a CSAM block lifted while the scan ran stays lifted under an appeal', async () => {
     const row = await rescan('clean', {
       needsReview: 'appeal',
