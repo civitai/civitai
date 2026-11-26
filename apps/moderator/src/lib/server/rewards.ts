@@ -148,13 +148,27 @@ async function getBaseRewardsMultipliers(
 ): Promise<{ tiers: Map<number, number>; error?: unknown }> {
   const tiers = new Map<number, number>();
   const unresolved: number[] = [];
+  const failedReads: CacheReadFailure[] = [];
   await Promise.all(
     userIds.map(async (userId) => {
-      const tier = await readCachedRewardsMultiplier(userId);
+      const tier = await readCachedRewardsMultiplier(userId, failedReads);
       if (tier === undefined) unresolved.push(userId);
       else tiers.set(userId, tier);
     })
   );
+  if (failedReads.length) {
+    // One line per report, not per reporter: a cache outage would otherwise log a line for every
+    // reporter on every accept. The key's cluster hash slot identifies the shard.
+    logToAxiom({
+      name: 'buzz-rewards',
+      type: 'error',
+      message: 'Rewards multiplier cache read failed; read it from Postgres instead',
+      failedReads: failedReads.length,
+      errorClasses: [...new Set(failedReads.map((f) => f.errorClass))],
+      error: failedReads[0].error,
+      slots: [...new Set(failedReads.map((f) => f.slot))],
+    });
+  }
   if (!unresolved.length) return { tiers };
   try {
     const fromDb = await getRewardsMultipliersFromDb(unresolved);
@@ -166,7 +180,12 @@ async function getBaseRewardsMultipliers(
   }
 }
 
-async function readCachedRewardsMultiplier(userId: number): Promise<number | undefined> {
+type CacheReadFailure = { errorClass: string; error: string; slot: number };
+
+async function readCachedRewardsMultiplier(
+  userId: number,
+  failedReads: CacheReadFailure[]
+): Promise<number | undefined> {
   const key = `${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}` as RedisKeyTemplateCache;
   try {
     const cached = await getRedis().packed.get<{ rewardsMultiplier?: number; notFound?: boolean }>(
@@ -186,13 +205,9 @@ async function readCachedRewardsMultiplier(userId: number): Promise<number | und
       });
     }
   } catch (err) {
-    logToAxiom({
-      name: 'buzz-rewards',
-      type: 'error',
-      message: 'Rewards multiplier cache read failed; read it from Postgres instead',
+    failedReads.push({
       errorClass: err instanceof Error ? err.constructor.name : typeof err,
       error: err instanceof Error ? err.message : String(err),
-      // The key's cluster hash slot identifies the shard without naming the user.
       slot: keyHashSlot(key),
     });
   }

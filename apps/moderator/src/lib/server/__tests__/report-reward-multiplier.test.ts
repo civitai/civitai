@@ -302,18 +302,36 @@ describe('rewardReportReporters multiplier', () => {
     expect(row.multiplier).toBe(4);
   });
 
-  it('logs a failed cache read with its class and shard, and no user id', async () => {
-    await rowFor({ tier: new TypeError('socket closed'), storedBonus: 10, sub: GOLD });
+  it('logs failed cache reads once per report, with their class and shard, and no user id', async () => {
+    await rowsFor({
+      tiers: [
+        [42, new TypeError('socket closed')],
+        [43, new TypeError('socket closed')],
+      ],
+      storedBonus: 10,
+      subs: [
+        [42, GOLD],
+        [43, GOLD],
+      ],
+    });
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
     expect(payload).toMatchObject({
       type: 'error',
-      errorClass: 'TypeError',
+      failedReads: 2,
+      errorClasses: ['TypeError'],
       error: 'socket closed',
-      slot: keyHashSlot(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:42`),
     });
+    expect([...(payload.slots as number[])].sort()).toEqual(
+      [
+        ...new Set(
+          [42, 43].map((id) => keyHashSlot(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${id}`))
+        ),
+      ].sort()
+    );
     expect(payload.userId).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain(':42');
+    expect(JSON.stringify(payload)).not.toContain(':43');
   });
 
   it('reads the tier from Postgres for a notFound entry, ignoring any tier on it', async () => {
