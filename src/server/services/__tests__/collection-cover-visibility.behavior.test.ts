@@ -499,6 +499,17 @@ describe('updateCollectionCoverImage', () => {
       }
     );
 
+    it('is refused as a collection item to staff too', async () => {
+      await expect(
+        assertCollectionItemsVisibleToViewer({
+          itemKey: 'imageId',
+          ids: [REMOVED],
+          userId: OWNER,
+          isModerator: true,
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+
     it('is refused as a collection item the viewer could otherwise see', async () => {
       await expect(
         assertCollectionItemsVisibleToViewer({

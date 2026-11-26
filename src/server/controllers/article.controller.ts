@@ -7,6 +7,7 @@ import type {
   ArticleMetadata,
 } from '~/server/schema/article.schema';
 import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
+import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
@@ -63,6 +64,7 @@ export const upsertArticleHandler = async ({
       bannerImage: banner,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      reportListedViewer: reportListedViewerOf(ctx),
       scanContent,
     });
 

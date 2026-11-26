@@ -31,12 +31,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     count.unratedKeys,
     textCheckCookie(locals, request)
   );
-  // A blob this request could not read would count as not mature here, though Review's own upload count
-  // knows its rating, so Review keeps that count.
-  if (count.failed > 0) return json({ enabled: false } satisfies DatasetRatingCount);
   return json({
     enabled: true,
-    matureCount: count.mature,
+    // A blob this request could not read would count as not mature here, though Review's own upload
+    // count knows its rating, so Review keeps that count.
+    matureCount: count.failed > 0 ? null : count.mature,
     unrated: count.images - count.rated,
+    verdicts: count.verdicts,
   } satisfies DatasetRatingCount);
 };

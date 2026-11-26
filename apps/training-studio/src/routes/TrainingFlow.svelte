@@ -21,7 +21,9 @@
     stampMature,
     defaultRunParams,
     isLabeled,
+    isImgMature,
     isTrainable,
+    applyRatingAnswer,
     expandedCount,
     repeatsOf,
     selectionTakesRepeats,
@@ -273,11 +275,12 @@
       ? readyPairs.filter(
           (p) => isMatureNsfwLevel(p.before.nsfwLevel) || isMatureNsfwLevel(p.after?.nsfwLevel)
         ).length
-      : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+      : images.filter(isImgMature).length
   );
-  // A pair counts once whatever its two sides were rated, so pairs get no breakdown.
+  // A pair counts once whatever its two sides were rated, and a dataset with v2 verdicts counts mature by
+  // verdict, not upload rating, so neither gets a breakdown.
   const matureRatings = $derived(
-    trainsPairs
+    trainsPairs || images.some((i) => i.v2Mature !== undefined)
       ? []
       : ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel)).filter((r) => r.mature)
   );
@@ -292,29 +295,40 @@
   // The server's count under the v2 rating, for the dataset it was made for. Until it answers, or when
   // the rating is off for this user, Review counts from the upload rating as before.
   let ratedMature = $state<{ key: string; count: number } | null>(null);
+  // Whether the server answered with the v2 rating on, so the Data step offers its filters.
+  let ratingV2 = $state(false);
   const RATING_POLLS = 6;
   const RATING_POLL_MS = 5000;
+  // On the Data step, after uploads stop landing, so new images are rated before Review.
+  const RATING_SETTLE_MS = 3000;
   $effect(() => {
-    // After the readiness wait, so Review never reads every file for both at once.
-    if (step !== 3 || !readinessSettled) return;
+    const onData = step === 2 && !trainsPairs;
+    // On Review, after the readiness wait, so Review never reads every file for both at once.
+    if (!onData && (step !== 3 || !readinessSettled)) return;
     const be = backend();
     if (!be.datasetRating) return;
-    const ids = datasetBlobIds;
+    // Keyed on the dataset: setting verdicts re-derives the array, and must not ask again.
     const key = datasetKey;
+    const ids = untrack(() => datasetBlobIds);
+    if (ids.length === 0) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ask = async (poll: number) => {
       try {
         const res = await be.datasetRating!(ids);
         if (stopped || !res.enabled) return;
-        ratedMature = { key, count: res.matureCount };
+        ratingV2 = true;
+        // The letter chips go away under the v2 rating: a letter filter left on would hide images.
+        if (untrack(() => dataFilter).startsWith('rating:')) dataFilter = 'all';
+        const count = applyRatingAnswer(untrack(() => images), res);
+        if (count !== undefined) ratedMature = { key, count };
         if (res.unrated > 0 && poll < RATING_POLLS)
           timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
       } catch {
         // the upload rating's count stands
       }
     };
-    void ask(1);
+    timer = setTimeout(() => void ask(1), onData ? RATING_SETTLE_MS : 0);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -628,6 +642,7 @@
     <Data
       {selection}
       {prices}
+      {ratingV2}
       findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}
       {reuseItems}
       bind:images
