@@ -132,7 +132,7 @@ export const moderatorActedSince = (
   sql<boolean>`EXISTS (SELECT 1 FROM "ModActivity" ma WHERE ma."entityType" = ${entityType}
     AND ma."entityId" = ${id} AND ma."createdAt" >= COALESCE(${timestampOr(since)}, '-infinity'))`;
 
-/** Neither a moderator's ask nor flagged as one: a moderator's delete is lifted only by an unblock. */
+/** The queued delete is not a moderator's: a moderator's delete is never lifted by a release. */
 export const notModeratorAsk = (data: RawBuilder<unknown>) =>
   sql<boolean>`(NOT ${data} ? 'moderatorDelete'
     AND COALESCE(${data}->>'deletedBy', '') NOT LIKE 'moderator:%')`;
@@ -143,11 +143,9 @@ export const ownerInGoodStanding = (userId: RawBuilder<unknown>) =>
     AND (kh_u."bannedAt" IS NOT NULL OR kh_u."deletedAt" IS NOT NULL))`;
 
 /**
- * The image (`image`, an alias) is still as the kept-delete hide recorded in `data` left it: it carries
- * the hide's marker (no block column written since, while `KEPT_HIDE_TRIGGER` is on) and the hide's
- * block, no CSAM block or review now or recorded, a readable record, no moderator activity on it or
- * its owner and no scan since the hide, its case closed with nothing found, and its owner in good
- * standing. Never NULL.
+ * The image (`image`, an alias) is still as the kept-delete hide in `data` left it, so a release may
+ * lift it. Relies on `KEPT_HIDE_TRIGGER` dropping the marker on any later block write; false (never
+ * NULL) when any check is unreadable.
  */
 export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
   const col = (name: string) => sql.ref(`${image}.${name}`);

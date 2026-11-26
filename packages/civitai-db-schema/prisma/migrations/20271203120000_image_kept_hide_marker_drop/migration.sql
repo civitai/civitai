@@ -12,6 +12,9 @@
 -- writes its marker only while this trigger exists and is enabled, and the lift checks it too, so a
 -- row hidden without it is never lifted.
 --
+-- Never disable this trigger. Dropping or disabling it stops all lifts; re-enabling it after blocks
+-- were written while it was off can undo them, since those blocks kept the marker.
+--
 -- Additive and idempotent: no data changes. Hand-applied. CREATE TRIGGER takes a brief SHARE ROW
 -- EXCLUSIVE lock on "Image": apply off-peak, and retry if the lock timeout is hit.
 --
