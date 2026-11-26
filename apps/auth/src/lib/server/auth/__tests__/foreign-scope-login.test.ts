@@ -114,8 +114,8 @@ describe('a login bound for a spoke OUTSIDE the hub cookie scope', () => {
       returnUrl: RED,
     });
 
-    // No family is minted, but the prior session's family seeds the list's record: without it, a sign-out
-    // would leave the list behind (origin/main passed no families here).
+    // No family is minted, but the prior session's family seeds the list's record, so a sign-out forgets
+    // the list.
     expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, {
       family: undefined,
       proofFamily: 'j',

@@ -111,7 +111,8 @@ function carryDeviceId(cookies: Cookies): string {
   return id;
 }
 
-// The copy keeps the session's family and 90-day clock, so the browser's family record has nothing new to hold.
+// The copy keeps the session's family, so no family record is written. carryDeviceId is called for the host-slot
+// device cookie it sets (the account list is keyed by it); its return value is not needed here.
 async function recordFamily(cookies: Cookies, family: string | undefined): Promise<void> {
   await markFamilyLive(family);
   carryDeviceId(cookies);

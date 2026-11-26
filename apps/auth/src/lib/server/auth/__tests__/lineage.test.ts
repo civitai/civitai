@@ -135,7 +135,7 @@ describe('session families', () => {
     expect(await revoked({ jti: 'family-a' })).toBe(true);
   });
 
-  // Regression (lazy family records): origin/main wrote a one-family record on every interactive sign-in.
+  // Regression: an interactive sign-in on a single-account browser writes no family record.
   it('a first sign-in on a browser starts its own family, and a single-account browser gets no record', async () => {
     await establishSession(makeCookies({ 'civ-device': 'device-1' }), user(200));
 
@@ -328,9 +328,8 @@ describe("a browser's family record", () => {
     expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
   });
 
-  // Regression: a hand-off (an account switch bound for a spoke on another domain) mints no family. origin/main
-  // then wrote no record, relying on the one the prior sign-in had left; with lazy records there is none, so
-  // the list stood without one, the spoke family was refused, and a sign-out left the list behind.
+  // Regression: a hand-off (an account switch bound for a spoke on another domain) mints no family, so the list
+  // it starts must take its record from the prior session's family; a sign-out then forgets the list.
   it('a hand-off that starts an account list records the prior family, and a sign-out then forgets the list', async () => {
     expect(await linkAccount('device-1', 200, 100, { proofFamily: 'fam-a' })).toBe('created');
     expect(recorded('device-1')).toEqual(['fam-a']);
@@ -344,8 +343,8 @@ describe("a browser's family record", () => {
     expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
   });
 
-  // Regression: origin/main's JOIN_SCRIPT recorded only the new family when it created a record, dropping the
-  // prior family it had just been shown, unlike ADD_FAMILY_SCRIPT.
+  // Regression: JOIN_SCRIPT records both the new family and the prior one when it creates a record, as
+  // ADD_FAMILY_SCRIPT does.
   it('a sign-in that creates a record records both its family and the prior one', async () => {
     expect(await linkAccount('device-1', 200, 100, { family: 'fam-b', proofFamily: 'fam-a' })).toBe(
       'created'
@@ -359,8 +358,8 @@ describe("a browser's family record", () => {
     expect(recorded('device-2')).toEqual(['fam-c', 'fam-d']);
   });
 
-  // Invariant guard: a sign-in's refusal against an existing record is unchanged. Regression (second part): at
-  // 438b898611 a hand-off was not checked against an existing record at all.
+  // Invariant guard (first part): a sign-in with no proof against an existing record is refused. Regression
+  // (second part): a hand-off is held to the same proof.
   it('an existing record refuses a sign-in or a hand-off it holds no proof for', async () => {
     await h.sys.sAdd(deviceFamilies('device-1'), ['theirs']);
 
@@ -393,9 +392,8 @@ describe("a browser's family record", () => {
     expect(recorded('device-1')).toEqual(['fam-a', 'spoke-x']);
   });
 
-  // Regression: at 438b898611 a hand-off on a device id whose record lacked the hub session's family started
-  // the list there anyway; the spoke session was then refused by the record, the hub sign-out did not match
-  // it, and the list (and a switch into the signed-out account) outlived the sign-out.
+  // Regression: a hand-off on a device id whose record lacks the hub session's family moves to a new device id,
+  // and a sign-out afterwards ends everything signed in there.
   it('a hand-off on a device id whose record lacks the hub family moves to a new id, and a sign-out ends it all', async () => {
     await h.sys.sAdd(deviceFamilies('device-1'), ['fam-x', 'fam-y']);
     h.verified.set('prior-token', { signedAt: Date.now(), sub: '100', jti: 'fam-a' });
@@ -424,8 +422,8 @@ describe("a browser's family record", () => {
     expect(await canSwitch('device-1', 200, 100)).toBe(false);
   });
 
-  // Regression vs origin/main (green at 438b898611): a hand-off refused by the browser's account list retries on
-  // a new device id with the hub session's family, so the new list has a record the spoke session can join.
+  // Regression: a hand-off refused by the browser's account list retries on a new device id with the hub
+  // session's family, so the new list has a record the spoke session can join.
   it('a hand-off refused by the account list records the hub family on the new device id', async () => {
     const now = String(Date.now());
     await h.sys.hSet(deviceAccounts('device-1'), '300', now);
@@ -454,8 +452,8 @@ describe("a browser's family record", () => {
     expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
   });
 
-  // Regression: origin/main and 438b898611 slid the TTL of a single-family record on every join, so records
-  // written before records became lazy never drained while their browser stayed active.
+  // Regression: a join does not slide the TTL of a single-family record with no account list, so such records
+  // run out while their browser stays active.
   it('a join leaves the TTL of a single-family record with no account list to run out', async () => {
     await h.sys.sAdd(deviceFamilies('device-1'), ['fam-a']);
     await h.sys.sAdd(deviceFamilies('device-2'), ['fam-b']);

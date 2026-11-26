@@ -337,8 +337,7 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     );
   });
 
-  // Regression (lazy family records): origin/main wrote a one-family record for every browser it moved, and
-  // joined (sliding the TTL of) a record already there. The copy keeps its family, so neither is written now.
+  // Regression: moving a browser writes no family record and leaves an existing one untouched, TTL included.
   it('the move writes no family record, and leaves one already there as it is', async () => {
     sharedSession();
     const moved = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
