@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { SIMPLE_BUZZ_LIMIT_PERIOD_DAYS, SIMPLE_BUZZ_LIMIT_PERIODS } from '@civitai/auth/buzz-limit';
 import type { RunnerAppBlockRow, RunnerMintReads } from '@civitai/db-queries/recipe-runner';
 import { constants } from '~/server/common/constants';
+import { DEVICE_CODE_GRANT } from '~/server/services/blocks/connect-agent-review.logic';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** `OauthClient.userId` of a Civitai-owned (system) client. */
@@ -68,7 +69,7 @@ export function isRunnerClient(client: Awaited<ReturnType<RunnerMintReads['clien
     client.userId === SYSTEM_CLIENT_OWNER_ID &&
     client.isConfidential === true &&
     client.skipConsent === false &&
-    !client.grants.includes('device_code') &&
+    !client.grants.includes(DEVICE_CODE_GRANT) &&
     client.accessMode === 'open'
   );
 }

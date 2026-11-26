@@ -92,6 +92,7 @@ const refusal = async (r: RunnerMintReads, over?: Parameters<typeof decide>[1]) 
   return d.ok ? 'minted' : d.refusal;
 };
 
+// The cap, per-run and period rules pinned here are the runner mint policy of civitai/civitai#10543.
 describe('decideRunnerMint', () => {
   it('CONTROL: mints for a bound runner client, a capped consent and a live authorization', async () => {
     const d = await decide(reads());
@@ -128,7 +129,8 @@ describe('decideRunnerMint', () => {
       { ...base, userId: 42 },
       { ...base, isConfidential: false },
       { ...base, skipConsent: true },
-      { ...base, grants: ['authorization_code', 'device_code'] },
+      // As stored: the full grant-type URN.
+      { ...base, grants: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code'] },
       { ...base, accessMode: 'disabled' },
       { ...base, accessMode: 'testers' },
       null,

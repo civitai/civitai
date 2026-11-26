@@ -9,7 +9,6 @@
 --     -v authorization_id=... -v recipe_version_hash=... -v params_hash=... \
 --     -v max_amount_per_run=... -v max_runs_per_period=... -v period=day|week|month \
 --     -v expires_at=2026-12-24T00:00:00Z \
---     -v offline_buzz_limit=... -v offline_buzz_period=day|week|month \
 --     -f scripts/recipe-runner/v0-standing-authorization.sql
 --
 -- Dry run first: the same command with -v dry_run=1 rolls everything back at the end.
@@ -19,10 +18,9 @@
 --   - the client is already bound to another app block, or its binding is suspended;
 --   - expires_at is more than 30 days out;
 --   - the app block is not approved;
---   - the user has no offline grant for the client;
+--   - the user has no offline grant for the client, or has set no offline Buzz cap for it (the
+--     user sets it in the consent flow; this script never writes it);
 --   - max_amount_per_run x max_runs_per_period exceeds the offline cap, or the periods differ.
---   - the consent already holds a cap other than the one passed.
--- The cap columns are set only while they are still empty, so a cap already there is never replaced.
 
 \set ON_ERROR_STOP 1
 \if :{?dry_run}
@@ -42,9 +40,7 @@ SELECT set_config('runner.client_id', :'runner_client_id', true),
        set_config('runner.max_amount_per_run', :'max_amount_per_run', true),
        set_config('runner.max_runs_per_period', :'max_runs_per_period', true),
        set_config('runner.period', :'period', true),
-       set_config('runner.expires_at', :'expires_at', true),
-       set_config('runner.cap_limit', :'offline_buzz_limit', true),
-       set_config('runner.cap_period', :'offline_buzz_period', true);
+       set_config('runner.expires_at', :'expires_at', true);
 
 DO $$
 DECLARE
@@ -54,15 +50,13 @@ DECLARE
   v_per_run int := current_setting('runner.max_amount_per_run')::int;
   v_runs int := current_setting('runner.max_runs_per_period')::int;
   v_period text := current_setting('runner.period');
-  v_cap_limit int := current_setting('runner.cap_limit')::int;
-  v_cap_period text := current_setting('runner.cap_period');
   v_limit int;
   v_limit_period text;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM "OauthClient"
     WHERE id = v_client AND "userId" = -1 AND "isConfidential" AND NOT "skipConsent"
-      AND NOT ('device_code' = ANY(grants)) AND "accessMode" = 'open'
+      AND NOT ('urn:ietf:params:oauth:grant-type:device_code' = ANY(grants)) AND "accessMode" = 'open'
   ) THEN
     RAISE EXCEPTION 'client % is not a runner client', v_client;
   END IF;
@@ -83,22 +77,12 @@ BEGIN
     RAISE EXCEPTION 'client % is bound elsewhere or suspended', v_client;
   END IF;
 
-  -- Set the cap only while it is empty; a different cap already there is refused below, never replaced.
-  UPDATE "OauthConsent"
-  SET "offlineBuzzLimit" = v_cap_limit, "offlineBuzzPeriod" = v_cap_period
-  WHERE "userId" = v_user AND "clientId" = v_client
-    AND "offlineGrantedAt" IS NOT NULL AND "offlineBuzzLimit" IS NULL;
-
   SELECT "offlineBuzzLimit", "offlineBuzzPeriod" INTO v_limit, v_limit_period
   FROM "OauthConsent"
   WHERE "userId" = v_user AND "clientId" = v_client AND "offlineGrantedAt" IS NOT NULL
   FOR UPDATE;
   IF v_limit IS NULL THEN
-    RAISE EXCEPTION 'user % has no offline grant (or cap) for client %', v_user, v_client;
-  END IF;
-  IF v_limit <> v_cap_limit OR v_limit_period <> v_cap_period THEN
-    RAISE EXCEPTION 'offline cap is already % per %, not the % per % passed; clear it deliberately first',
-      v_limit, v_limit_period, v_cap_limit, v_cap_period;
+    RAISE EXCEPTION 'user % has no offline grant, or no offline Buzz cap, for client %', v_user, v_client;
   END IF;
   IF v_period <> v_limit_period THEN
     RAISE EXCEPTION 'authorization period % differs from the offline cap period %', v_period, v_limit_period;
