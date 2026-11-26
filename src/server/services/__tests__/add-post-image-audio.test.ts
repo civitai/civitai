@@ -368,6 +368,11 @@ describe('addPostImage — audio', () => {
     createThenStop();
     mocks.getWorkflow.mockResolvedValue({ steps: [{ $type: 'yuE2', input: { lyrics: 'sun' } }] });
     dbMock.dbWrite.trackLyrics.upsert.mockRejectedValueOnce(new Error('db down'));
+    // An older row for the song would still be alignable: only the failed save may stop the call.
+    dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({
+      text: 'sun',
+      lines: [{ t: null, text: 'sun' }],
+    } as never);
 
     // Past the failed save: the read after the create is where the test stops.
     await expect(addSong({ generationWorkflowId: 'wf-1' })).rejects.toThrow('An unexpected error');
@@ -375,6 +380,8 @@ describe('addPostImage — audio', () => {
     expect(dbMock.dbWrite.trackLyrics.upsert).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
     expect(mocks.submitTrackLyricsScan).not.toHaveBeenCalled();
+    // The alignment is not awaited by the post: give a stray call time to land.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(mocks.alignLyrics).not.toHaveBeenCalled();
   });
 
