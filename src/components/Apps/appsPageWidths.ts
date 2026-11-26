@@ -388,6 +388,8 @@ export const APPS_PAGE_MEASURES = {
   '/apps/listing/[appListingId]/edit': APPS_READABLE_MEASURE,
   /** Per-app revenue detail. */
   '/apps/[appBlockId]/revenue': APPS_READABLE_MEASURE,
+  /** The conversation on one review decision — a header card and a message thread. */
+  '/apps/submissions/[subjectId]': APPS_READABLE_MEASURE,
 } as const satisfies Record<string, AppsMeasure>;
 
 export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;

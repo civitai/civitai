@@ -4,6 +4,7 @@ import {
   IconFileCode,
   IconKey,
   IconLayoutDashboard,
+  IconMessageReply,
   IconMessages,
   IconRobot,
   IconTerminal2,
@@ -32,15 +33,17 @@ import {
 import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
 import { ReviewListingMediaLive } from '~/components/Apps/ReviewListingMediaLive';
 import { ReviewOverviewPanel } from '~/components/Apps/ReviewOverviewPanel';
+import { ReviewThread } from '~/components/Apps/ReviewThread';
 import {
   isReviewDetailTab,
   resolveReviewDetailTab,
   REVIEW_DETAIL_TAB_LABELS,
   REVIEW_DETAIL_TAB_QUERY_KEY,
-  REVIEW_DETAIL_TAB_VALUES,
   reviewDetailTabQuery,
+  reviewDetailTabsFor,
   type ReviewDetailTab,
 } from '~/components/Apps/reviewDetailTabs';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 
 /**
@@ -95,6 +98,7 @@ export const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
   preview: IconWindow,
   console: IconTerminal2,
   sessions: IconMessages,
+  conversation: IconMessageReply,
 };
 
 /**
@@ -125,7 +129,11 @@ function ReviewDetailTabsViewInner({
   selection: NonNullable<OnsiteReviewSelection>;
 }) {
   const router = useRouter();
+  const features = useFeatureFlags();
   const { request } = selection;
+  // The Conversation tab exists only while the reply thread is on.
+  const replies = !!features?.appReviewReplies;
+  const tabs = useMemo(() => reviewDetailTabsFor({ replies }), [replies]);
   const manifest = request.manifest as Record<string, unknown>;
 
   /**
@@ -144,11 +152,14 @@ function ReviewDetailTabsViewInner({
   }, []);
 
   const rawTab = router.query[REVIEW_DETAIL_TAB_QUERY_KEY];
-  const activeTab = useMemo(() => resolveReviewDetailTab(rawTab, { hash }), [rawTab, hash]);
+  const activeTab = useMemo(
+    () => resolveReviewDetailTab(rawTab, { hash, tabs }),
+    [rawTab, hash, tabs]
+  );
   const visited = useVisitedTabs(activeTab);
 
   const selectTab = (value: string | null) => {
-    if (!isReviewDetailTab(value)) return;
+    if (!isReviewDetailTab(value, tabs)) return;
     /*
       🔴 `replace` + `shallow`, like `/apps/activity`: no re-run of `getServerSideProps`
       and no history entry per click (which would turn Back into a tab-by-tab rewind out
@@ -189,7 +200,7 @@ function ReviewDetailTabsViewInner({
     >
       {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
       <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
-        {REVIEW_DETAIL_TAB_VALUES.map((tab) => {
+        {tabs.map((tab) => {
           const Icon = TAB_ICONS[tab];
           return (
             <Tabs.Tab
@@ -350,6 +361,16 @@ function ReviewDetailTabsViewInner({
       <Tabs.Panel value="sessions" pt="md">
         {visited.has('sessions') && <ReviewAssistantSessionsPanel publishRequestId={request.id} />}
       </Tabs.Panel>
+
+      {/*
+        CONVERSATION — the reply thread with the submission's developer. Only while
+        `appReviewReplies` is on (the tab is not in `tabs` otherwise); `visited`-gated.
+      */}
+      {replies && (
+        <Tabs.Panel value="conversation" pt="md">
+          {visited.has('conversation') && <ReviewThread subjectId={request.id} />}
+        </Tabs.Panel>
+      )}
     </Tabs>
   );
 }
