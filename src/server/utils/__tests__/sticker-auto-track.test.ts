@@ -25,7 +25,11 @@ const BLOB_URL = 'https://orchestration.example/v2/consumer/blobs/track.json?sig
 const finished = (blobs: unknown[], userId = PLACER) => ({
   status: 'succeeded',
   metadata: { stickerAutoTrack: { userId, imageId: IMAGE, startMs: START } },
-  steps: [{ output: { blobs } }],
+  // The install step comes first and carries no file.
+  steps: [
+    { name: 'install', output: { results: [{ layerAir: 'urn:air:comfy:nodepacklayer:x' }] } },
+    { name: 'track', output: { blobs } },
+  ],
 });
 
 /** A real tracker result (the comic clip, character leaves after a cut), trimmed. */
@@ -352,9 +356,14 @@ describe('startAutoTrack', () => {
       });
       await startAutoTrack(d, input());
       const [job] = submit.mock.calls[0] as unknown as [
-        { step: { input: { workflow: Record<string, { inputs: Record<string, unknown> }> } } }
+        {
+          steps: {
+            name: string;
+            input: { workflow: Record<string, { inputs: Record<string, unknown> }> };
+          }[];
+        }
       ];
-      return job.step.input.workflow;
+      return job.steps.find((s) => s.name === 'track')!.input.workflow;
     };
     // A 1920x1080 video loads at 1024x576; the sticker sits at its middle.
     const sized = await submitted({ width: 1920, height: 1080 });
@@ -558,9 +567,10 @@ describe('buildStickerAutoTrackWorkflow', () => {
         maxMs: 1000,
         frame,
       }) as unknown as {
+        name: string;
         input: { workflow: Record<string, { inputs: Record<string, unknown> }> };
-      }
-    ).input.workflow;
+      }[]
+    ).find((s) => s.name === 'track')!.input.workflow;
 
   it('also segments whatever is under the sticker, in pixels of the loaded frame', () => {
     // A 1920x1080 video loads at 1024x576.
