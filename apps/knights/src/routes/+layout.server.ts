@@ -3,7 +3,7 @@ import { civitaiSiteUrl } from '$lib/server/site-url';
 import { imageUrl } from '$lib/server/image-url';
 import { CONVERSION } from '$lib/server/conversion/config';
 import { shopEnabled } from '$lib/server/conversion/runtime';
-import { getDailyStatus, getRecapState } from '$lib/server/daily/daily.service';
+import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { feedbackEnabled } from '$lib/server/feedback/enabled';
 import { ladderRows } from '$lib/server/ladder';
@@ -13,20 +13,26 @@ import { requestPlayerStatus, requestStanding } from '$lib/server/request-reads'
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
 import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
+import { readUpdatesSeen } from '$lib/server/seen';
+import { seenStore } from '$lib/server/seen-runtime';
+import { unseenCount, updatesFor } from '$lib/server/whats-new/entries';
+import type { UpdateEntry } from '$lib/whats-new';
 import type { LayoutServerLoad } from './$types';
 
-// The header's recap dot: a recap exists and has not been seen today, on the home card or in the header dialog (either one
-// stores today's dismissal). The old popup opt-out no longer matters. The recap itself is read when the button is clicked, so a
-// failure here only costs the dot.
-async function recapUnseen(playerId: number | undefined): Promise<boolean> {
-  if (playerId === undefined) return false;
-  try {
-    const state = await getRecapState(db, { playerId, now: queueDeps.now() });
-    return state.hasHistory && !state.dismissedToday;
-  } catch (error) {
-    console.error('knights: could not read the recap state', { error });
-    return false;
-  }
+/** The most entries the dialog lists; older ones stay in the folder. */
+const UPDATES_SHOWN = 6;
+
+// The header's "What's new": the entries this player's rank can use, and how many they have not seen. Until the launch dialog
+// is closed it shows instead, so nothing counts as unseen. A failed read only costs the dot.
+function headerUpdates(
+  rank: string,
+  seen: Awaited<ReturnType<typeof readUpdatesSeen>>
+): { entries: UpdateEntry[]; unseen: number } | null {
+  const entries = updatesFor(rank)
+    .slice(0, UPDATES_SHOWN)
+    .map(({ id, title, body, link }) => ({ id, title, body, link }));
+  if (entries.length === 0) return null;
+  return { entries, unseen: seen?.launchSeen ? unseenCount(entries, seen.updatesSeen) : 0 };
 }
 
 // The header's gold and rank pills and the streak chip, for every page. A page that loads its own `status`/`daily` overrides
@@ -65,11 +71,10 @@ async function feedbackOpen(
 }
 
 // Not tied to the URL, so a client navigation keeps this data. It re-runs when something invalidates 'knights:header'
-// (leaving /play, whose votes move the stats) or 'app:recap', and after every form action and restart (`invalidateAll`).
+// (leaving /play, whose votes move the stats; closing "What's new") and after every form action and restart (`invalidateAll`).
 const NO_BADGES: Awaited<ReturnType<typeof rankBadgeUrls>> = { small: {}, large: {} };
 
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
-  depends('app:recap');
   depends('knights:header');
   const civitaiUrl = civitaiSiteUrl();
   const user = locals.user;
@@ -81,14 +86,15 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
         .where('userId', '=', user.id)
         .executeTakeFirst()
     : Promise.resolve(undefined);
-  const [player, shopOpen, feedback, badges, recap, header] = await Promise.all([
+  const [player, shopOpen, feedback, badges, header, seen] = await Promise.all([
     playerRow,
     shopEnabled(),
     user ? feedbackOpen(user, locals) : false,
     user ? rankBadgeUrls(db) : NO_BADGES,
-    inquisitor ? false : recapUnseen(user?.id),
     user && !inquisitor ? playerRow.then((row) => (row ? headerStats(locals) : null)) : null,
+    user && !inquisitor ? readUpdatesSeen(seenStore, user.id) : null,
   ]);
+  const rank = header?.status?.rank;
   return {
     civitaiUrl,
     // Keys the player's own sound setting in the browser; never shown.
@@ -104,7 +110,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     fervorWindowDays: PROGRESSION.fervorWindowDays,
     badges,
     inquisitor,
-    recapUnseen: recap,
+    updates: rank ? headerUpdates(rank, seen) : null,
     headerStats: header,
   };
 };

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LATEST_UPDATE_ID } from '$lib/server/whats-new/entries';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getApprentice = vi.hoisted(() => vi.fn());
@@ -783,6 +784,7 @@ describe("play load: what's new", () => {
       level: 4,
       guide: false,
       whatsNew: true,
+      updatesSeen: LATEST_UPDATE_ID,
     });
   });
 
@@ -810,6 +812,7 @@ describe('play progress actions', () => {
       guide: true,
       whatsNew: true,
       consent: true,
+      updatesSeen: null,
     });
   });
 

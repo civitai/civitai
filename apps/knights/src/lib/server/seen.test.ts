@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   dismissGuide,
   dismissProgress,
+  dismissUpdates,
   dismissWhatsNew,
   memorySeenStore,
   readNotices,
+  readUpdatesSeen,
   redisSeenStore,
 } from './seen';
+import { LATEST_UPDATE_ID } from './whats-new/entries';
 
 const at = (rank: string, level: number) => ({ rank, level });
 
@@ -18,12 +21,14 @@ describe('readNotices', () => {
       guide: false,
       progress: null,
     });
+    // A newcomer starts with every "What's new" entry so far counted as seen.
     expect(await store.get(1)).toEqual({
       rank: 'Knight',
       level: 4,
       guide: false,
       whatsNew: false,
       consent: false,
+      updatesSeen: LATEST_UPDATE_ID,
     });
   });
 
@@ -55,12 +60,14 @@ describe('readNotices', () => {
       progress: null,
     });
     await dismissWhatsNew(store, 1, at('Templar', 50));
+    // Closing the launch dialog covers the entries written so far.
     expect(await store.get(1)).toEqual({
       rank: 'Knight',
       level: 9,
       guide: true,
       whatsNew: true,
       consent: true,
+      updatesSeen: LATEST_UPDATE_ID,
     });
     // The rank-up held back while what's new was open is announced after it.
     expect((await readNotices(store, 1, at('Templar', 50))).progress).toMatchObject({
@@ -150,6 +157,7 @@ describe('dismissals', () => {
       guide: true,
       whatsNew: true,
       consent: false,
+      updatesSeen: LATEST_UPDATE_ID,
     });
   });
 });
@@ -170,7 +178,10 @@ describe('redisSeenStore', () => {
       guide: true,
       whatsNew: true,
       consent: true,
+      updatesSeen: null,
     });
+    await store.set(7, { ...(await store.get(7))!, updatesSeen: '2030-01-01-a' });
+    expect((await store.get(7))?.updatesSeen).toBe('2030-01-01-a');
     data.set('knights:seen:7', '{"rank":3}');
     expect(await store.get(7)).toBeNull();
   });
@@ -187,10 +198,11 @@ describe('redisSeenStore', () => {
       guide: true,
       whatsNew: false,
       consent: false,
+      updatesSeen: null,
     });
   });
 
-  it('stores only the rank, level and the two flags when handed a wider standing', async () => {
+  it('stores only its own fields when handed a wider standing', async () => {
     const data = new Map<string, string>();
     const client = {
       get: async (key: string) => data.get(key) ?? null,
@@ -212,6 +224,43 @@ describe('redisSeenStore', () => {
       guide: false,
       whatsNew: true,
       consent: true,
+      updatesSeen: null,
     });
+  });
+});
+
+describe('"What\'s new" entries seen', () => {
+  const record = { rank: 'Knight', level: 4, guide: true, whatsNew: true, consent: true };
+
+  it('reads a record from before entries existed as having seen none, so its player gets every entry', async () => {
+    const store = memorySeenStore();
+    await store.set(1, record);
+    expect(await readUpdatesSeen(store, 1)).toEqual({ launchSeen: true, updatesSeen: null });
+  });
+
+  it('records every entry so far as seen, and keeps the rest of the record', async () => {
+    const store = memorySeenStore();
+    await store.set(1, record);
+    expect(await dismissUpdates(store, 1)).toBe(true);
+    expect(await store.get(1)).toEqual({ ...record, updatesSeen: LATEST_UPDATE_ID });
+  });
+
+  it('has nothing to read or record for a player with no record yet', async () => {
+    const store = memorySeenStore();
+    expect(await readUpdatesSeen(store, 1)).toBeNull();
+    expect(await dismissUpdates(store, 1)).toBe(true);
+    expect(await store.get(1)).toBeNull();
+  });
+
+  it('reports a store that is down', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const down = {
+      get: async () => {
+        throw new Error('down');
+      },
+      set: async () => undefined,
+    };
+    expect(await readUpdatesSeen(down, 1)).toBeNull();
+    expect(await dismissUpdates(down, 1)).toBe(false);
   });
 });
