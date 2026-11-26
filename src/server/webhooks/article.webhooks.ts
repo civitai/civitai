@@ -1,3 +1,7 @@
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   hasBlockMarker,
@@ -36,12 +40,19 @@ export const articleWebhooks = createWebhookProcessor({
       if (!articles.length) return [];
 
       // The cover goes out only as a signed-out viewer would see it.
-      const withheld = await getModelWithheldImageIds(
-        articles.map((article) => article.coverImage?.id).filter((id): id is number => !!id),
-        prisma
-      );
+      const coverIds = articles
+        .map((article) => article.coverImage?.id)
+        .filter((id): id is number => !!id);
+      const [withheld, listed] = await Promise.all([
+        getModelWithheldImageIds(coverIds, prisma),
+        getReportListedHiddenImageIds(coverIds, SIGNED_OUT_REPORT_LISTED, prisma),
+      ]);
       const publicCover = (image: (typeof articles)[number]['coverImage']) =>
-        image && !hasBlockMarker(image) && !withheld.has(image.id) && !isMinorMatureImage(image)
+        image &&
+        !hasBlockMarker(image) &&
+        !withheld.has(image.id) &&
+        !listed.has(image.id) &&
+        !isMinorMatureImage(image)
           ? servableArticleImage(image)
           : null;
 

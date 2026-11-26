@@ -11,6 +11,7 @@ import {
 } from '~/server/trpc';
 import type { UpsertArticleInput } from '~/server/schema/article.schema';
 import {
+  getArticleByIdSchema,
   getInfiniteArticlesSchema,
   upsertArticleInput,
   articleRateLimits,
@@ -119,7 +120,7 @@ export const articleRouter = router({
     .query(() => getOfficialArticleTag()),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
-    .input(getByIdSchema)
+    .input(getArticleByIdSchema)
     .query(async ({ input, ctx }) => {
       const [article, eventDecorations] = await Promise.all([
         getArticleById({

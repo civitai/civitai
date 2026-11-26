@@ -1,4 +1,5 @@
 import type * as ContentDeletion from '@civitai/db-queries/content-deletion';
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -401,6 +402,85 @@ describe('the article cover and banner on save', () => {
 
     it('clears a banner that is not listed', async () => {
       expect(await saveWithoutBanner(false)).toBeNull();
+    });
+  });
+});
+
+describe('a save from the edit form with a body image listed on a report', () => {
+  const LISTED = { id: 40, url: '44444444-aaaa-4bbb-8ccc-444444444444' };
+  const SHOWN = { id: 41, url: '55555555-aaaa-4bbb-8ccc-555555555555' };
+  const img = (url: string) =>
+    `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${url}/w">`;
+  const body = `<p>a</p>${img(SHOWN.url)}<p>b ${img(LISTED.url)}</p>`;
+  // As the edit form read sends it to an editor who may not see the listed image.
+  const editForm = `<p>a</p>${img(
+    SHOWN.url
+  )}<p>b <span data-type="withheldMedia" data-id="1"></span></p>`;
+
+  beforeEach(() => {
+    queueImageDeletes.mockResolvedValue(undefined);
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...storedArticle,
+      content: body,
+    } as never);
+    dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) =>
+      args.select?.image
+        ? [{ image: LISTED }, { image: SHOWN }]
+        : [LISTED, SHOWN]
+            .filter((image) => !args.where.imageId?.notIn?.includes(image.id))
+            .map((image) => ({ imageId: image.id }))) as never);
+    // The report-listed lookup names the listed image; every other raw read finds nothing.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: LISTED.id }]
+        : []) as never);
+  });
+
+  const upsert = (content: string) =>
+    upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      reportListedViewer: { seesReportListed: false, ownerSeesReportListed: true },
+      title: 'A title',
+      content,
+      status: 'Draft',
+    } as never);
+  const savedContent = () =>
+    (dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: { content?: string } }])[0].data
+      .content;
+
+  it('🔴 saves the stored body back unchanged when nothing was edited', async () => {
+    await upsert(editForm);
+    expect(savedContent()).toBe(body);
+  });
+
+  it('🔴 refuses a placeholder that names an image the editor may see', async () => {
+    const forged = `<p>a</p><span data-type="withheldMedia" data-id="0"></span>`;
+    await expect(upsert(forged)).rejects.toThrow();
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  describe('when its placeholder is deleted', () => {
+    const unlink = () =>
+      linkArticleContentImages({
+        articleId: ARTICLE_ID,
+        content: '',
+        userId: AUTHOR,
+        ownerId: AUTHOR,
+        cleanupOnly: true,
+      });
+    const deletedConnections = () =>
+      dbMock.dbWrite.imageConnection.deleteMany.mock.calls.flatMap(
+        ([args]: any) => args.where.imageId.in
+      );
+
+    it('🔴 unlinks the listed image but never queues it for cleanup', async () => {
+      await unlink();
+      expect(deletedConnections()).toEqual([LISTED.id, SHOWN.id]);
+      expect(queuedIds()).toEqual([SHOWN.id]);
     });
   });
 });

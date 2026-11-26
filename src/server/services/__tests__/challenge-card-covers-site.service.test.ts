@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -109,10 +110,34 @@ function images(nsfwLevel: number, image: Record<string, unknown> = {}) {
 
 type Site = { isGreen: boolean; viewerId?: number };
 
+// The cover ids a CsamReport lists, as the report-listed lookup answers them.
+let listedIds: number[] = [];
+const listedLookup = (strings: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
+  (Array.isArray(strings)
+    ? Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).sql
+    : (strings as Prisma.Sql).sql
+  ).includes('"CsamReport"')
+    ? listedIds.map((id) => ({ id }))
+    : undefined;
+
+/** Each raw read answers the next of `results` (the last one repeats). */
+function raw(...results: unknown[][]) {
+  let call = 0;
+  dbMock.dbRead.$queryRaw.mockImplementation(
+    (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+      listedLookup(strings, values) ?? results[Math.min(call++, results.length - 1)]) as never
+  );
+}
+
 // The event paths also run the feed's visibility SQL (tested against Postgres in
 // challenge-event-visibility.sql.behavior.test.ts); here every challenge passes it.
 function eventQueries() {
-  dbMock.dbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+  dbMock.dbRead.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const listed = listedLookup(strings, values);
+    if (listed) return listed;
     const sql = strings.join('');
     if (sql.includes('COUNT(*) AS count FROM "Challenge" c')) return [{ count: BigInt(1) }];
     if (sql.includes('FROM "Challenge" c')) return [{ id: cardRow.id }];
@@ -123,11 +148,11 @@ function eventQueries() {
 // Each list, as served to `site`, reduced to the one cover it returns.
 const paths: Record<string, (site: Site) => Promise<{ url: string } | null | undefined>> = {
   'daily challenges': async (site) => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([cardRow] as never);
+    raw([cardRow]);
     return (await getDailyChallenges(site))[0].coverImage;
   },
   'challenge feed': async (site) => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([cardRow] as never);
+    raw([cardRow]);
     const { items } = await getInfiniteChallenges({
       limit: 20,
       includeEnded: false,
@@ -139,7 +164,7 @@ const paths: Record<string, (site: Site) => Promise<{ url: string } | null | und
     return items[0].coverImage;
   },
   'my challenges': async (site) => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([cardRow] as never);
+    raw([cardRow]);
     const items = await getMyChallenges({
       userId: site.viewerId!,
       limit: 20,
@@ -148,8 +173,7 @@ const paths: Record<string, (site: Site) => Promise<{ url: string } | null | und
     return items[0].coverImage;
   },
   'previous winners': async (site) => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ ...cardRow, status: 'Completed' }] as never);
+    raw([{ ...cardRow, status: 'Completed' }], []);
     const { items } = await getCompletedChallengesWithWinners({
       limit: 20,
       currentUserId: site.viewerId,
@@ -181,6 +205,7 @@ const paths: Record<string, (site: Site) => Promise<{ url: string } | null | und
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listedIds = [];
 });
 
 // Signed-in only: the procedure requires a user.
@@ -215,6 +240,11 @@ describe.each(Object.keys(paths))('%s', (path) => {
 
   it('keeps an X cover on the mature site', async () => {
     expect((await cover(NsfwLevel.X, { isGreen: false, viewerId: VIEWER }))?.url).toBe(COVER_URL);
+  });
+
+  it('🔴 withholds a cover listed on a report', async () => {
+    listedIds = [CHALLENGE_COVER, EVENT_COVER];
+    expect(await cover(NsfwLevel.PG, { isGreen: false, viewerId: VIEWER })).toBeNull();
   });
 
   it.each([

@@ -159,3 +159,6 @@ export const getSharedArticleSchema = z.object({ articleId: z.number().int().pos
 export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
 // Each create submits the draft text for a scan, so this bounds scan load.
 export const articleShareCreateRateLimits: RateLimit[] = [{ limit: 10, period: CacheTTL.hour }];
+
+/** `edit`: the read the edit form opens, where a body image the editor may not see is a placeholder. */
+export const getArticleByIdSchema = z.object({ id: z.number(), edit: z.boolean().optional() });

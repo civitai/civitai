@@ -34,8 +34,10 @@ const article = (coverImage: unknown, cover: string | null = 'cover-key') => ({
   tags: [],
 });
 
-async function send(articles: unknown[], ids: number[] = []) {
+async function send(articles: unknown[], ids: number[] = [], listedIds: number[] = []) {
   withheld.ids = new Set(ids);
+  // The report-listed lookup: the only raw read here.
+  const $queryRaw = vi.fn(async () => listedIds.map((id) => ({ id })));
   // A cover read without `minor` comes back without it, so a select that drops the flag fails here.
   const findMany = vi.fn(
     async (args: { select?: { coverImage?: { select?: { minor?: boolean } } } }) =>
@@ -48,7 +50,7 @@ async function send(articles: unknown[], ids: number[] = []) {
   );
   const payload = await articleWebhooks['new-article'].getData({
     lastSent: new Date(0),
-    prisma: { article: { findMany } },
+    prisma: { article: { findMany }, $queryRaw },
   } as never);
   return { payload, findMany };
 }
@@ -82,6 +84,12 @@ describe('new-article webhook payload', () => {
     ['is a restricted minor image', image(10, { minor: true, nsfwLevel: 4 }), []],
   ])('🔴 sends no cover, as image or URL, that %s', async (_, cover, ids) => {
     const { payload } = await send([article(cover)], ids);
+    expect(payload[0].coverImage).toBeNull();
+    expect(payload[0].cover).toBeNull();
+  });
+
+  it('🔴 sends no cover, as image or URL, that is listed on a report', async () => {
+    const { payload } = await send([article(image(10))], [], [10]);
     expect(payload[0].coverImage).toBeNull();
     expect(payload[0].cover).toBeNull();
   });

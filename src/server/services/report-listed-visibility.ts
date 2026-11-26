@@ -10,7 +10,10 @@ export type ReportListedViewer = {
   ownerSeesReportListed?: boolean;
 };
 
-/** Not listed on a CsamReport, as SQL over `"Image" i`, or the viewer's own upload. */
+/**
+ * Not listed on a CsamReport, as SQL over `"Image" i`; with `ownerSeesReportListed`, or `userId`'s
+ * own upload.
+ */
 const notListedFor = ({ userId, ownerSeesReportListed }: ReportListedViewer) =>
   Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
     ownerSeesReportListed && userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty

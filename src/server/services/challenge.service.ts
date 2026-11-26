@@ -7,6 +7,10 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -380,6 +384,22 @@ const challengeCardQuery = Prisma.sql`
 // ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
 // of the two is shown as the author is a client concern (see getChallengeDisplayUser).
 // The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
+/** The challenge covers a card or list may show, as the challenge's own cover read does. */
+async function getChallengeCoverImages(coverImageIds: number[], viewerId: number | undefined) {
+  if (!coverImageIds.length) return [];
+  const [images, listed] = await Promise.all([
+    dbRead.image.findMany({
+      where: {
+        id: { in: coverImageIds },
+        AND: [imageNotRestrictedWhere({ viewerId }), challengeCoverWhere()],
+      },
+      select: imageSelect,
+    }),
+    getReportListedHiddenImageIds(coverImageIds, SIGNED_OUT_REPORT_LISTED),
+  ]);
+  return images.filter((image) => !listed.has(image.id));
+}
+
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
 // A cover the site's rating ceiling allows for this viewer, else null. A blocked cover is withheld
@@ -410,13 +430,7 @@ async function mapChallengeRowsToCards(
   ]);
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages = await dbRead.image.findMany({
-    where: {
-      id: { in: coverImageIds },
-      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
-    },
-    select: imageSelect,
-  });
+  const coverImages = await getChallengeCoverImages(coverImageIds, site.viewerId);
 
   return items.map((item) => {
     const coverImage = coverWithinSite(
@@ -983,23 +997,29 @@ async function buildChallengeDetail(
   const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
-  const fetchedCover = challenge.coverImageId
-    ? await dbRead.image.findFirst({
-        where: {
-          id: challenge.coverImageId,
-          // The edit form must round-trip the cover it keeps, or a save would drop it.
-          ...(forEdit
-            ? {}
-            : {
-                AND: [
-                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
-                  challengeCoverWhere(),
-                ],
-              }),
-        },
-        select: imageSelect,
-      })
-    : null;
+  const coverListed =
+    !forEdit &&
+    !!challenge.coverImageId &&
+    (await getReportListedHiddenImageIds([challenge.coverImageId], SIGNED_OUT_REPORT_LISTED)).size >
+      0;
+  const fetchedCover =
+    challenge.coverImageId && !coverListed
+      ? await dbRead.image.findFirst({
+          where: {
+            id: challenge.coverImageId,
+            // The edit form must round-trip the cover it keeps, or a save would drop it.
+            ...(forEdit
+              ? {}
+              : {
+                  AND: [
+                    imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                    challengeCoverWhere(),
+                  ],
+                }),
+          },
+          select: imageSelect,
+        })
+      : null;
   const coverImage = coverWithinSite(fetchedCover, {
     isGreen: green?.isGreen ?? false,
     viewerId: green?.viewerId,
@@ -3268,15 +3288,9 @@ async function getEventCoverImages(
 ) {
   const ids = coverImageIds.filter(isDefined);
   if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
-  const images = await dbRead.image.findMany({
-    where: {
-      id: { in: ids },
-      ...(forEdit
-        ? {}
-        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
-    },
-    select: imageSelect,
-  });
+  const images = forEdit
+    ? await dbRead.image.findMany({ where: { id: { in: ids } }, select: imageSelect })
+    : await getChallengeCoverImages(ids, site.viewerId);
   const map = new Map<number, ChallengeCoverImage>();
   for (const img of images) {
     if (!coverWithinSite(img, site)) continue;
@@ -3418,18 +3432,9 @@ export async function getActiveEvents(
   ]);
 
   const coverImageIds = allChallenges.map((c) => c.coverImageId).filter(isDefined);
-  const coverImages =
-    coverImageIds.length > 0
-      ? await dbRead.image
-          .findMany({
-            where: {
-              id: { in: coverImageIds },
-              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
-            },
-            select: imageSelect,
-          })
-          .then((imgs) => new Map(imgs.map((img) => [img.id, img])))
-      : new Map();
+  const coverImages = new Map(
+    (await getChallengeCoverImages(coverImageIds, site.viewerId)).map((img) => [img.id, img])
+  );
 
   // Get entry counts for all challenges
   const collectionIds = allChallenges.map((c) => c.collectionId).filter(isDefined);
@@ -4334,16 +4339,7 @@ export async function getCompletedChallengesWithWinners(
 
   // Fetch cover images
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
-  const coverImages =
-    coverImageIds.length > 0
-      ? await dbRead.image.findMany({
-          where: {
-            id: { in: coverImageIds },
-            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
-          },
-          select: imageSelect,
-        })
-      : [];
+  const coverImages = await getChallengeCoverImages(coverImageIds, currentUserId);
 
   // Transform results
   const coverImageMap = new Map(coverImages.map((img) => [img.id, img]));

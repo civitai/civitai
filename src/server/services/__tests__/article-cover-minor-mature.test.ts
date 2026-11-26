@@ -576,4 +576,57 @@ describe('the article page body under the report-listed rule', () => {
     });
     expect(article.coverImage?.id).toBe(shown ? COVER : undefined);
   });
+
+  describe('the edit form read', () => {
+    const editRead = async (
+      viewer: Viewer,
+      reportListedViewer: { seesReportListed: boolean; ownerSeesReportListed?: boolean },
+      edit = true
+    ) =>
+      (
+        await getArticleById({
+          id: 1,
+          userId: viewer?.id,
+          isModerator: viewer?.isModerator,
+          reportListedViewer,
+          edit,
+        })
+      ).content ?? '';
+    const placeholders = (content: string) =>
+      [...content.matchAll(/data-type="withheldMedia" data-id="(\d+)"/g)].map((m) => Number(m[1]));
+
+    it("🔴 keeps the place of a listed image the owner didn't upload, without its source", async () => {
+      const content = await editRead({ id: OWNER }, SESSION);
+      expect(placeholders(content)).toEqual([1]);
+      expect(content).not.toContain(uuid(OTHERS_BODY));
+      expect(content).toContain(uuid(OWN_BODY));
+    });
+
+    it('🔴 keeps the place of every listed image for a moderator without the grant', async () => {
+      const content = await editRead({ id: MOD, isModerator: true }, SESSION);
+      expect(placeholders(content)).toEqual([0, 1]);
+      expect(content).not.toContain(uuid(OWN_BODY));
+      expect(content).not.toContain(uuid(OTHERS_BODY));
+    });
+
+    it('gives no placeholder to a reader who cannot edit', async () => {
+      const content = await editRead({ id: STRANGER }, SESSION);
+      expect(placeholders(content)).toEqual([]);
+      expect(content).not.toContain(uuid(OWN_BODY));
+    });
+
+    it.each<[string, Viewer, typeof SESSION]>([
+      [
+        'a held-media viewer',
+        { id: MOD, isModerator: true },
+        { ...SESSION, seesReportListed: true },
+      ],
+      ['the owner reading the page', { id: OWNER }, SESSION],
+    ])('is the page read for %s (control)', async (_, viewer, reportListedViewer) => {
+      const page = await editRead(viewer, reportListedViewer, false);
+      if (reportListedViewer.seesReportListed)
+        expect(await editRead(viewer, reportListedViewer)).toBe(page);
+      expect(placeholders(page)).toEqual([]);
+    });
+  });
 });

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -201,10 +202,18 @@ describe('getChallengeDetail — cover image', () => {
     viewerId: number | undefined,
     isGreen: boolean,
     challenge: Record<string, unknown> = completedSystemChallenge,
-    image: Record<string, unknown> = {}
+    image: Record<string, unknown> = {},
+    listed = false
   ) {
     mockGetChallengeById.mockResolvedValue({ ...challenge, coverImageId: 80 });
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    // The report-listed lookup names the cover when `listed`; every other raw read finds nothing.
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      listed && Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? [{ id: 80 }]
+        : []) as never);
     dbMock.dbRead.image.findFirst.mockResolvedValue({
       id: 80,
       url: 'cover-image-url',
@@ -231,6 +240,10 @@ describe('getChallengeDetail — cover image', () => {
 
   it('withholds a PG-13 cover on the green site from a signed-out viewer', async () => {
     expect(await cover(NsfwLevel.PG13, undefined, true)).toBeNull();
+  });
+
+  it('🔴 withholds a cover listed on a report', async () => {
+    expect(await cover(NsfwLevel.PG, VIEWER, false, completedSystemChallenge, {}, true)).toBeNull();
   });
 
   it('keeps an SFW cover on the green site', async () => {

@@ -1,5 +1,10 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
+import {
+  restoreWithheldMedia,
+  withheldMediaPlaceholders,
+} from '~/server/utils/article-withheld-media';
+import { WITHHELD_MEDIA_TYPE } from '~/shared/constants/withheld-media.constants';
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
@@ -22,6 +27,7 @@ import type { ReportListedViewer } from '~/server/services/report-listed-visibil
 import {
   getReportListedHiddenImageIds,
   reportListedVisibleSql,
+  SIGNED_OUT_REPORT_LISTED,
 } from '~/server/services/report-listed-visibility';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import {
@@ -895,7 +901,9 @@ export const getArticleById = async ({
   userId,
   isModerator,
   reportListedViewer = { seesReportListed: false },
+  edit = false,
 }: GetByIdInput & {
+  edit?: boolean;
   userId?: number;
   isModerator?: boolean;
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
@@ -981,15 +989,24 @@ export const getArticleById = async ({
         (isModerator ||
           (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
     );
+    // In the edit form a listed image stays in place as a placeholder, so a save keeps it.
+    const listedUrls = bodyImages
+      .filter((image) => listedHidden.has(image.id))
+      .map((image) => image.url);
+    const placeholdered = edit && (isOwner || !!isModerator) ? listedUrls : [];
     const withheld = bodyImages
-      .filter((image) => !keptImages.includes(image))
+      .filter((image) => !keptImages.includes(image) && !placeholdered.includes(image.url))
       .map((image) => image.url);
     const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;
+    const body =
+      placeholdered.length && article.content
+        ? withheldMediaPlaceholders(article.content, new Set(placeholdered))
+        : article.content;
     const content =
-      (isModerator && !withheld.length) || !article.content
-        ? article.content
-        : removeBodyMedia(article.content, {
+      (isModerator && !withheld.length) || !body
+        ? body
+        : removeBodyMedia(body, {
             withheld,
             keepEdgeMedia: nonOwner ? new Set(contentImages.map((image) => image.url)) : undefined,
           });
@@ -1145,6 +1162,21 @@ export const upsertArticle = async ({
       if (!article) throw throwNotFoundError();
       const isOwner = article.userId === userId || isModerator;
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    }
+
+    // The edit form holds a placeholder for each body image this editor may not see.
+    if (data.content?.includes(WITHHELD_MEDIA_TYPE)) {
+      const connected = article ? await connectedArticleImages(article.id) : [];
+      const hidden = await getReportListedHiddenImageIds(
+        connected.map((c) => c.image.id),
+        { userId, ...reportListedViewer },
+        dbWrite
+      );
+      data.content = restoreWithheldMedia(
+        data.content,
+        article?.content,
+        new Set(connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url))
+      );
     }
 
     if (data.content) {
@@ -1688,7 +1720,7 @@ export const upsertArticle = async ({
         coverId !== undefined && article.coverId !== coverId ? article.coverId : null,
         bannerId !== undefined && article.bannerId !== bannerId ? article.bannerId : null,
       ].filter(isDefined);
-      await queueImageDeletes(kyselyOver(dbWrite), replaced, { ownerId: result.userId });
+      await queueArticleImageDeletes(dbWrite, replaced, { ownerId: result.userId });
     } catch (error) {
       handleLogError(error as Error, 'article-replaced-image-cleanup', { articleId: id });
     }
@@ -2092,7 +2124,7 @@ export const deleteArticleById = async ({
       });
 
       // A cover or banner saved since the read is checked too, though it was not locked.
-      await queueImageDeletes(kyselyOver(tx), [...imageIds, ...articleOwnImageIds(deleted)], {
+      await queueArticleImageDeletes(tx, [...imageIds, ...articleOwnImageIds(deleted)], {
         ownerId: article.userId,
         // A moderator deleting their own article deletes it as its owner.
         moderatorDelete: !!isModerator && article.userId !== userId,
@@ -2388,6 +2420,33 @@ async function assertNoShopArtworkInContent(
   if (shopUrls.size) throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
 }
 
+/** The article's connected images. */
+function connectedArticleImages(articleId: number) {
+  // primary: judged against the same body the save is about to overwrite.
+  return dbWrite.imageConnection.findMany({
+    where: {
+      entityId: articleId,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
+    select: { image: { select: { id: true, url: true } } },
+  });
+}
+
+/** `queueImageDeletes`, except that an image listed on a report is never queued for cleanup. */
+async function queueArticleImageDeletes(
+  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  imageIds: number[],
+  options: Parameters<typeof queueImageDeletes>[2]
+) {
+  const listed = await getReportListedHiddenImageIds(imageIds, SIGNED_OUT_REPORT_LISTED, db);
+  await queueImageDeletes(
+    kyselyOver(db),
+    imageIds.filter((imageId) => !listed.has(imageId)),
+    options
+  );
+}
+
 /**
  * Link article content images to article entity
  * Creates Image entities and ImageConnections for all embedded images
@@ -2560,7 +2619,7 @@ export async function linkArticleContentImages({
       });
     }
 
-    await queueImageDeletes(kyselyOver(tx), orphanedIds, { ownerId });
+    await queueArticleImageDeletes(tx, orphanedIds, { ownerId });
 
     // In the same transaction as the rows, so a failed write leaves held urls without rows.
     const holdWritten =
