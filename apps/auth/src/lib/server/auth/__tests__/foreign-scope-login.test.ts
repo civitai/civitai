@@ -114,7 +114,12 @@ describe('a login bound for a spoke OUTSIDE the hub cookie scope', () => {
       returnUrl: RED,
     });
 
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, undefined);
+    // No family is minted, but the prior session's family seeds the list's record: without it, a sign-out
+    // would leave the list behind (origin/main passed no families here).
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, {
+      family: undefined,
+      proofFamily: 'j',
+    });
   });
 
   it('falls back to the session cookie when the hand-off could not be stored', async () => {
