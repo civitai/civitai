@@ -5,12 +5,18 @@ import {
   IMAGE_REVIEW_PRECEDENCE,
   REVIEWS_KEPT_WHEN_LIFTED,
 } from '@civitai/shared/image-review-types';
-import { childSafetyImageCase, childSafetyPostCase } from './child-safety-case.db';
+import {
+  childSafetyImageCase,
+  childSafetyPostCase,
+  childSafetyPostFinding,
+} from './child-safety-case.db';
 import {
   KEPT_HIDE_PRIOR,
   keptHidePrior,
   keptHideStands,
   moderatorActedSince,
+  notModeratorAsk,
+  ownerInGoodStanding,
   NSFW_LEVEL_BLOCKED,
   PENDING_DELETE_UPSERT,
   PENDING_DELETES_ACTOR,
@@ -128,7 +134,7 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
         skipBlocked ? sql`ingestion IS DISTINCT FROM 'Blocked'` : sql`true`
       } THEN jsonb_build_object(${KEPT_HIDE_PRIOR}::text, jsonb_build_object(
           'ingestion', ingestion, 'nsfwLevel', "nsfwLevel", 'blockedFor', "blockedFor",
-          'needsReview', "needsReview", 'at', now()::timestamp(3)))
+          'needsReview', "needsReview", 'at', now()))
         ELSE '{}'::jsonb END`
     : sql`pending`;
   // The job's own delete leaves a row already in the queue as it is (the upsert would add a system ask
@@ -229,19 +235,30 @@ export function liftKeptHides(released: string) {
             AND ${rank(sql`'appeal'`)} < ${rank(keptReview)} THEN 'appeal' ELSE ${keptReview} END,
         "updatedAt" = now()
       FROM ${r} r
-      -- A moderator's delete is their decision: only it lifts its hide (an unblock).
-      WHERE r."entityType" = 'Image' AND i.id = r."entityId" AND NOT r.data ? 'moderatorDelete'
+      WHERE r."entityType" = 'Image' AND i.id = r."entityId" AND ${notModeratorAsk(
+        sql.ref('r.data')
+      )}
         AND ${keptHideStands('i', sql.ref('r.data'))}
       RETURNING i.id, i."userId", i."postId"
     ),
     lifted_posts AS (
       UPDATE "Post" p SET metadata = p.metadata - 'unpublishedAt' - 'unpublishedBy' - 'unpublishedReason'
       FROM ${r} r
-      WHERE r."entityType" = 'Post' AND p.id = r."entityId" AND NOT r.data ? 'moderatorDelete'
+      WHERE r."entityType" = 'Post' AND p.id = r."entityId" AND ${notModeratorAsk(
+        sql.ref('r.data')
+      )}
         AND p."publishedAt" IS NULL
         AND p.metadata->>'unpublishedReason' = ${POST_PENDING_DELETE_REASON}
         AND p.metadata->>'unpublishedAt' IS NOT NULL
         AND NOT ${moderatorActedSince('post', sql.ref('p.id'), sql`p.metadata->>'unpublishedAt'`)}
+        AND NOT ${moderatorActedSince(
+          'user',
+          sql.ref('p.userId'),
+          sql`p.metadata->>'unpublishedAt'`
+        )}
+        AND NOT ${childSafetyPostCase('p')}
+        AND (${childSafetyPostFinding('p')}) IS FALSE
+        AND ${ownerInGoodStanding(sql.ref('p.userId'))}
       RETURNING p.id
     )`;
 }
@@ -356,7 +373,7 @@ export async function deleteImageRows(
     ${withCtes(ctes, true)}
     gone AS (
       ${remove}
-      RETURNING id, url, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "blockedFor",
+      RETURNING id, url, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "blockedFor", "scannedAt",
         CASE WHEN metadata->>'parentId' ~ '^[0-9]{1,10}$' THEN
           CASE WHEN (metadata->>'parentId')::bigint <= 2147483647 THEN (metadata->>'parentId')::int END
         END AS "parentId"

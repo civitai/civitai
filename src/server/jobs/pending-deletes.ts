@@ -9,6 +9,7 @@ import {
   pendingKindOf,
   PENDING_DELETES_ACTOR,
   postDeleteBlocked,
+  restoreCaseOpen,
   readDueDeletes,
   settleDeletes,
   type PendingDelete,
@@ -116,21 +117,24 @@ async function standing(kind: Kind, ids: number[]) {
 
 /**
  * Of `ids`, those whose closed case found nothing and whose owner is not deleted again: only these
- * may be kept rather than deleted.
+ * may be kept rather than deleted. `waits`: those of them whose account still has a restore-marked
+ * row in an open case, released with it later (`restoreCaseOpen`).
  */
 async function clearedByCase(kind: Kind, ids: number[]) {
-  if (!ids.length) return new Set<number>();
+  if (!ids.length) return { cleared: new Set<number>(), waits: new Set<number>() };
   const finding = kind === 'Image' ? childSafetyImageFinding(kind) : childSafetyPostFinding(kind);
-  const { rows } = await sql<{ cleared: number }>`
-    SELECT ${sql.table(kind)}.id AS cleared FROM ${sql.table(kind)}
+  const owner = sql.ref(`${kind}.userId`);
+  const { rows } = await sql<{ cleared: number; waits: boolean }>`
+    SELECT ${sql.table(kind)}.id AS cleared, ${restoreCaseOpen(owner)} AS waits FROM ${sql.table(
+    kind
+  )}
     WHERE ${sql.table(kind)}.id = ANY(${ids}::int[]) AND (${finding}) IS FALSE
-      AND NOT EXISTS (
-        SELECT 1 FROM "User" u WHERE u.id = ${sql.ref(
-          `${kind}.userId`
-        )} AND u."deletedAt" IS NOT NULL
-      )
+      AND NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${owner} AND u."deletedAt" IS NOT NULL)
   `.execute(db());
-  return new Set(rows.map(({ cleared }) => cleared));
+  return {
+    cleared: new Set(rows.filter((row) => !row.waits).map((row) => row.cleared)),
+    waits: new Set(rows.filter((row) => row.waits).map((row) => row.cleared)),
+  };
 }
 
 /** Of `ids`, the images whose case has a finding, or an outcome not read as none. */
@@ -218,21 +222,23 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
     const due = rows.filter(
       (row) => before.get(row.id)?.present && !before.get(row.id)?.blocked && !textHeld.has(row.id)
     );
-    const dueIds = new Set(due.map((row) => row.id));
-    // A restore-marked row is released (dropped, the item kept) only on a no-finding close.
+    // A restore-marked row is released (dropped, the item kept) only on a no-finding close, and
+    // only with the rest of its account's: one that waits for them is not due yet.
     const marked = due
       .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
       .map((row) => row.id);
-    const releasedIds = await clearedByCase(kind, marked);
+    const { cleared: releasedIds, waits } = await clearedByCase(kind, marked);
+    const ready = due.filter((row) => !waits.has(row.id));
+    const dueIds = new Set(ready.map((row) => row.id));
     if (kind === 'Image') {
-      const carried = due.map((row) => row.id).filter((id) => !releasedIds.has(id));
+      const carried = ready.map((row) => row.id).filter((id) => !releasedIds.has(id));
       const found = new Set(await imagesWithFinding(carried));
       await unmarkPostsOf(carried.filter((id) => found.has(id) || marked.includes(id)));
     }
     const threw = new Set(
       await carryOut(
         kind,
-        due.filter((row) => !releasedIds.has(row.id))
+        ready.filter((row) => !releasedIds.has(row.id))
       )
     );
 
@@ -252,8 +258,21 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
     // Done but still here (released, in use again, given away): the queue row goes, and the item gets
     // back what the kept delete's hide took.
     const kept = done.filter((id) => after.get(id)?.present);
-    await refreshLiftedKeptHides(await releasePendingDeletes(db(), kind, kept));
-    await settleDeletes(db(), kind, { done, waiting, failed });
+    await settleDeletes(db(), kind, {
+      done: done.filter((id) => !kept.includes(id)),
+      waiting,
+      failed,
+    });
+    // Its own statement, so a failure leaves only these rows for the next run.
+    await releasePendingDeletes(db(), kind, kept).then(refreshLiftedKeptHides, (error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'pending-deletes',
+        message: 'release failed; the rows stay queued',
+        ids: kept,
+        error: (error as Error).message,
+      })
+    );
 
     result[kind] = {
       queued: ids.length,

@@ -69,7 +69,7 @@ const urlOf = (uid: number) => `key-${uid}`;
 const OWNERS = [...Object.values(HOLDS), PLAIN];
 
 const BASE_SCHEMA = `
-  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
+  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
   CREATE TABLE "Image" (
     id int PRIMARY KEY,
@@ -637,9 +637,13 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       expect(await pending()).toEqual([]);
       const after = await imageRow(imageOf(PLAIN));
-      // Released, it is back as it was before the drain hid it.
-      if (kept) expect(after).toEqual(before);
-      else expect(after).not.toEqual(closed);
+      // Released, it is back as it was before the drain hid it, and back in search.
+      if (kept) {
+        expect(after).toEqual(before);
+        expect(imagesMetricsSearchIndex.queueUpdate).toHaveBeenLastCalledWith([
+          { id: imageOf(PLAIN), action: SearchIndexUpdateQueueAction.Update },
+        ]);
+      } else expect(after).not.toEqual(closed);
     }
   );
 
@@ -720,6 +724,97 @@ describe('an owner deleting their own content in a child-safety case', () => {
         data: { url: urlOf(PLAIN), ...(keeps && { keepShopArtwork: true }) },
       },
     ]);
+  });
+
+  it("control: purges it for the owner's delete of an image only someone else's queued ask hid", async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+    `);
+    await deleteImages([imageOf(PLAIN)], {
+      actor: { system: ACCOUNT_DELETION_DRAIN },
+      onlyWhere: Prisma.sql`true`,
+    });
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+
+    await deleteImages([imageOf(PLAIN)], { actor: owner });
+
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+    expect(await queuedFiles()).toEqual([
+      { entityId: imageOf(PLAIN), data: { url: urlOf(PLAIN) } },
+    ]);
+  });
+
+  // The hide and the drop of its purge row are two statements: a failure of the second takes back
+  // the first, since a delete that hides what no moderator decided on runs them in a transaction.
+  it.each([
+    ['takes back the hide when its second statement fails', true],
+    ['control: keeps the hide when both statements succeed', false],
+  ])('%s', async (_, fails) => {
+    vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: unknown) => {
+      await holder.db.exec('BEGIN');
+      try {
+        const result = await (fn as (tx: unknown) => unknown)(dbMock.dbWrite);
+        await holder.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        await holder.db.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+    `);
+    if (fails)
+      await holder.db.exec(`CREATE FUNCTION fail_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'statement failed'; END $$;
+        CREATE TRIGGER fail_delete BEFORE DELETE ON "JobQueue" FOR EACH STATEMENT EXECUTE FUNCTION fail_delete()`);
+    try {
+      await deleteImages([imageOf(PLAIN)], {
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        onlyWhere: Prisma.sql`true`,
+      }).catch(() => undefined);
+    } finally {
+      if (fails)
+        await holder.db.exec(`DROP TRIGGER fail_delete ON "JobQueue"; DROP FUNCTION fail_delete()`);
+    }
+
+    expect(await imageRow(imageOf(PLAIN))).toMatchObject({
+      ingestion: fails ? 'Scanned' : 'Blocked',
+    });
+    expect(await pending()).toHaveLength(fails ? 0 : 1);
+  });
+
+  // A restored account's drain-kept content comes back together, once none of it is in an open case.
+  it("releases a restored account's drain deletes together once its last open case closes", async () => {
+    const OTHER = 4013;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", url, "nsfwLevel") VALUES (${OTHER}, ${PLAIN}, 'key-other', 2);
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM'), (2, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1), (${OTHER}, 2);
+    `);
+    const before = [await imageRow(imageOf(PLAIN)), await imageRow(OTHER)];
+    await deleteImages([imageOf(PLAIN), OTHER], {
+      actor: { system: ACCOUNT_DELETION_DRAIN },
+      onlyWhere: Prisma.sql`true`,
+    });
+    const hidden = [await imageRow(imageOf(PLAIN)), await imageRow(OTHER)];
+    expect(hidden.map((row) => row.ingestion)).toEqual(['Blocked', 'Blocked']);
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+    const rows = async () => [await imageRow(imageOf(PLAIN)), await imageRow(OTHER)];
+
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    expect(await rows()).toEqual(hidden);
+    await runJob();
+    expect(await rows()).toEqual(hidden);
+    expect(await pending()).toHaveLength(2);
+
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 2`);
+    await runJob();
+
+    expect(await rows()).toEqual(before);
+    expect(await pending()).toEqual([]);
   });
 
   it('takes the stamp off a drained post a restore releases, which stays unpublished', async () => {

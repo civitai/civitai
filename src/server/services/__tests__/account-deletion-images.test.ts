@@ -826,10 +826,13 @@ describe('releaseAccountDeletionPendingDeletes', () => {
       `SELECT "entityType"::text AS "entityType", "entityId", data ? 'releasedOnRestore' AS released
        FROM "JobQueue" ORDER BY 1, 2`
     );
-    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes.
+    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes;
+    // the account's others wait with it, to be released together.
     expect(rows).toEqual([
       { entityType: 'Image', entityId: 1, released: true },
+      { entityType: 'Image', entityId: 2, released: true },
       { entityType: 'Post', entityId: 10, released: true },
+      { entityType: 'Post', entityId: 11, released: true },
     ]);
     await db.close();
   });

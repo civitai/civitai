@@ -61,7 +61,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
-  await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport", "ModActivity",
+  await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport", "ModActivity", "User",
     "CsamReport", "CsamQueueSetAside", "ImageConnection", "ServiceDealReviewImage",
     "ServiceDealReviewReport", "Appeal"`);
   await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${PLAIN}, ${OWNER})`);
@@ -572,8 +572,11 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect(kept).toEqual([IMAGE]);
     expect(hidden).toEqual(hiddenRows);
     const { rows } = await pg.query(columns);
-    if (queueKept === false) expect(rows).toEqual(before);
-    else expect(rows).not.toEqual(before);
+    expect(rows).toEqual(
+      queueKept === false
+        ? before
+        : [{ ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated', needsReview: null }]
+    );
   });
 
   it('keeps without queueing for a caller that retries from its own queue', async () => {
@@ -1266,9 +1269,12 @@ describe('releasePendingDeletes', () => {
     const { hidden } = await deleteImageRows(db, { ids: [IMAGE], actor, replay });
     expect(hidden.map(({ id }) => id)).toEqual([IMAGE]);
     expect(await imageState()).not.toEqual(before);
+    await closeCase();
     return before;
   };
   const release = () => releasePendingDeletes(db, 'Image', [IMAGE]);
+  /** Its case closed with nothing found, as when a queued delete is let go. */
+  const closeCase = () => pg.exec(`UPDATE "Report" SET status = 'Unactioned'`);
 
   it('puts back what the hide recorded, and drops the queued delete', async () => {
     const before = await hideFor();
@@ -1280,9 +1286,30 @@ describe('releasePendingDeletes', () => {
     expect(await pending()).toEqual([]);
   });
 
+  it.each([
+    ['a recorded review', 'minor', null, 'minor'],
+    ['the appeal flag the hide kept', 'tag', 'appeal', 'appeal'],
+    ['a recorded review that outranks the kept appeal', 'minor', 'appeal', 'minor'],
+    ['no appeal once the appeal was decided', 'appeal', null, null],
+  ])('puts back %s', async (_, recorded, afterHide, expected) => {
+    await addImage({ ingestion: 'Pending', nsfwLevel: 4, needsReview: recorded });
+    await report(1);
+    await pg.exec(`INSERT INTO "ImageReport" VALUES (${IMAGE}, 1)`);
+    await deleteImageRows(db, { ids: [IMAGE], actor: drain });
+    await closeCase();
+    await pg.exec(`UPDATE "Image" SET "needsReview" = ${afterHide ? `'${afterHide}'` : 'NULL'}
+      WHERE id = ${IMAGE}`);
+
+    await release();
+
+    expect(await imageState()).toMatchObject({ ingestion: 'Pending', needsReview: expected });
+  });
+
   it('keeps the record of the first hide when a later ask finds the image already hidden', async () => {
     const before = await hideFor();
+    await pg.exec(`UPDATE "Report" SET status = 'Pending'`);
     await deleteImageRows(db, { ids: [IMAGE], actor: owner });
+    await closeCase();
 
     await release();
 
@@ -1309,6 +1336,36 @@ describe('releasePendingDeletes', () => {
     await release();
 
     expect(await imageState()).toEqual(before);
+  });
+
+  it.each([
+    ['whose case is open again', `UPDATE "Report" SET status = 'Pending'`],
+    ['whose case found something', `UPDATE "Report" SET status = 'Actioned'`],
+    ['of a banned owner', `INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, now())`],
+    ['of a deleted owner', `INSERT INTO "User" (id, "deletedAt") VALUES (${OWNER}, now())`],
+    [
+      'whose owner a moderator acted on since',
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (99, 'removeContent', 'user', ${OWNER})`,
+    ],
+    [
+      'scanned again since the hide',
+      `UPDATE "Image" SET "scannedAt" = now() + interval '1 second' WHERE id = ${IMAGE}`,
+    ],
+    [
+      "a moderator's ask replaced",
+      `UPDATE "JobQueue" SET data = jsonb_set(data, '{deletedBy}', '"moderator:99"')
+        WHERE "entityId" = ${IMAGE}`,
+    ],
+  ])('leaves hidden an image %s', async (_, change) => {
+    await hideFor();
+    await pg.exec(change);
+    const hidden = await imageState();
+
+    const lifted = await release();
+
+    expect(lifted.images).toEqual([]);
+    expect(await imageState()).toEqual(hidden);
   });
 
   it.each([
@@ -1364,6 +1421,7 @@ describe('releasePendingDeletes', () => {
     await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (60, ${OWNER}, now());
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM'); INSERT INTO "PostReport" VALUES (60, 1)`);
     await deletePostRows(db, { ids: [60], actor: drain });
+    await closeCase();
 
     const lifted = await releasePendingDeletes(db, 'Post', [60]);
 
@@ -1388,34 +1446,5 @@ describe('releasePendingDeletes', () => {
       `SELECT metadata->>'unpublishedReason' AS reason FROM "Post" WHERE id = 60`
     );
     expect(rows).toEqual([{ reason: 'pending-delete' }]);
-  });
-});
-
-// The delete's two statements (the hide and its purge-row drop) run in one transaction when it hides
-// what no moderator decided on (`withDeleteTransaction`): a failed second statement takes back the hide.
-describe('a hiding delete whose second statement fails', () => {
-  it.each([
-    ['rolls back the hide and the queued delete', true],
-    ['control: keeps both when it succeeds', false],
-  ])('%s', async (_, fails) => {
-    await addImage({ needsReview: 'csam' });
-    if (fails)
-      await pg.exec(`CREATE FUNCTION fail_delete() RETURNS trigger LANGUAGE plpgsql AS $$
-          BEGIN RAISE EXCEPTION 'statement failed'; END $$;
-        CREATE TRIGGER fail_delete BEFORE DELETE ON "JobQueue" FOR EACH STATEMENT EXECUTE FUNCTION fail_delete()`);
-    await pg.exec('BEGIN');
-    try {
-      await deleteImageRows(db, { ids: [IMAGE], actor: { system: 'remove-deleted-user-images' } });
-      await pg.exec('COMMIT');
-    } catch {
-      await pg.exec('ROLLBACK');
-    } finally {
-      if (fails)
-        await pg.exec(`DROP TRIGGER fail_delete ON "JobQueue"; DROP FUNCTION fail_delete()`);
-    }
-
-    const { rows } = await pg.query(`SELECT ingestion FROM "Image" WHERE id = ${IMAGE}`);
-    expect(rows).toEqual([{ ingestion: fails ? 'Scanned' : 'Blocked' }]);
-    expect((await pending()).length).toBe(fails ? 0 : 1);
   });
 });

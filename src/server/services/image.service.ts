@@ -385,6 +385,7 @@ import {
   imagesPendingDeletion as readImagesPendingDeletion,
   keptHidePrior,
   keptHideStands,
+  notModeratorAsk,
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
 import { childSafetyImageFinding } from '@civitai/db-queries/child-safety-case';
@@ -1076,6 +1077,7 @@ const plainOwnerDeleteSql = (deletedById: number, reported: number[]) => {
       SELECT 1 FROM "JobQueue" own_q
       WHERE own_q.type = 'PendingDelete' AND own_q."entityType" = 'Image' AND own_q."entityId" = gone.id
         AND own_q.data->'ownerId' = to_jsonb(${deletedById}::int)
+        AND ${notModeratorAsk(sql.ref('own_q.data'))}
         AND ${keptHideStands('gone', sql.ref('own_q.data'))}
         AND ${plain(sql.ref('own_q.data'))}
         AND (${childSafetyImageFinding('gone')}) IS FALSE

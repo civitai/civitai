@@ -57,7 +57,8 @@ that the post isn't available, with no publish controls; once that row is gone w
 reads as a plain unpublished post, and a publish goes through and drops the stamp. An account restore
 (`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
 still open, marked `releasedOnRestore`, so it cannot make that content publishable: the content stays
-hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content) only if the case found nothing and the account has
+hidden until the case closes. While any of the account's drain deletes is in an open case, all of
+them are marked and wait (`restoreCaseOpen`), so they are released together. Then `pending-deletes` releases it (drops the row and keeps the content) only if the case found nothing and the account has
 not been deleted again; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
 child-safety report on the image, its post or its review) it carries out the delete as queued, and
 an image carried out on a finding takes the mark off its post's delete, so the post goes too. Another
@@ -69,9 +70,9 @@ A row dropped without carrying out its delete (`releasePendingDeletes`, and the 
 undoes the block that delete wrote (`liftKeptHides`): an image gets back its recorded columns, and a
 post loses its `pending-delete` stamp and stays unpublished, for its owner or a moderator to publish.
 The job does this for every row it is done with whose item is still there (released, in use again,
-given away). Only while the item is as the block left it, with no `ModActivity` on it since, and
-never for a moderator's delete: a later decision stands. `refreshLiftedKeptHides` busts what the
-lift made stale.
+given away). Only while the item is as the block left it, its case is closed with nothing found,
+no later moderation decision or scan has touched it, and its owner is in good standing; never for a
+moderator's delete. `refreshLiftedKeptHides` busts what the lift made stale.
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
 `deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
 post can't be published right now.

@@ -3,6 +3,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { ImageIngestionStatus } from '@civitai/db-schema/enums';
 import {
   childSafetyImageCase,
+  childSafetyImageFinding,
   childSafetyPostCase,
   childSafetyVisibleCase,
 } from './child-safety-case.db';
@@ -100,21 +101,33 @@ export const keptHidePrior = (data: RawBuilder<unknown>, key: keyof KeptHidePrio
 
 /** A cast that reads a malformed value as NULL instead of failing the statement. */
 const timestampOr = (text: RawBuilder<unknown>) =>
-  sql`CASE WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+Z?$' THEN (${text})::timestamptz END`;
+  sql`CASE WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+(Z|[+-][0-9]{2}(:?[0-9]{2})?)?$'
+    THEN (${text})::timestamptz END`;
 
 /** A moderator has acted on the item since `since` (text), or `since` is unreadable. */
 export const moderatorActedSince = (
-  entityType: 'image' | 'post',
+  entityType: 'image' | 'post' | 'user',
   id: RawBuilder<unknown>,
   since: RawBuilder<unknown>
 ) =>
   sql<boolean>`EXISTS (SELECT 1 FROM "ModActivity" ma WHERE ma."entityType" = ${entityType}
     AND ma."entityId" = ${id} AND ma."createdAt" >= COALESCE(${timestampOr(since)}, '-infinity'))`;
 
+/** Neither a moderator's ask nor flagged as one: a moderator's delete is lifted only by an unblock. */
+export const notModeratorAsk = (data: RawBuilder<unknown>) =>
+  sql<boolean>`(NOT ${data} ? 'moderatorDelete'
+    AND COALESCE(${data}->>'deletedBy', '') NOT LIKE 'moderator:%')`;
+
+/** The owner `userId` is neither banned nor deleted. */
+export const ownerInGoodStanding = (userId: RawBuilder<unknown>) =>
+  sql<boolean>`NOT EXISTS (SELECT 1 FROM "User" kh_u WHERE kh_u.id = ${userId}
+    AND (kh_u."bannedAt" IS NOT NULL OR kh_u."deletedAt" IS NOT NULL))`;
+
 /**
  * The image (`image`, an alias) is still as the kept-delete hide recorded in `data` left it: blocked
- * by it and nothing since, no CSAM block or review now or recorded, a readable record, and no
- * moderator activity on it since the hide.
+ * by it and nothing since, no CSAM block or review now or recorded, a readable record, no moderator
+ * activity on it or its owner and no scan since the hide, its case closed with nothing found, and its
+ * owner in good standing.
  */
 export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
   const col = (name: string) => sql.ref(`${image}.${name}`);
@@ -129,8 +142,30 @@ export const keptHideStands = (image: string, data: RawBuilder<unknown>) => {
     AND ${prior('needsReview')} IS DISTINCT FROM 'csam'
     AND ${prior('at')} IS NOT NULL
     AND NOT ${moderatorActedSince('image', col('id'), prior('at'))}
+    AND NOT ${moderatorActedSince('user', col('userId'), prior('at'))}
+    -- A scan verdict on a blocked row can drop its review, so one after the hide leaves it blocked.
+    AND (${col('scannedAt')} IS NULL OR ${col('scannedAt')} < ${timestampOr(prior('at'))})
+    AND NOT ${childSafetyImageCase(image)}
+    AND (${childSafetyImageFinding(image)}) IS FALSE
+    AND ${ownerInGoodStanding(col('userId'))}
   )`;
 };
+
+/**
+ * An account restore left a drain's delete of `ownerId`'s content (marked `releasedOnRestore`) whose
+ * case is still open. Its other marked rows wait for it, so they are all released together.
+ */
+export const restoreCaseOpen = (ownerId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "JobQueue" rc_q
+  WHERE rc_q.type = 'PendingDelete' AND rc_q.data ? 'releasedOnRestore' AND (
+    (rc_q."entityType" = 'Image' AND EXISTS (
+      SELECT 1 FROM "Image" rc_i WHERE rc_i.id = rc_q."entityId" AND rc_i."userId" = ${ownerId}
+        AND ${childSafetyImageCase('rc_i')}))
+    OR (rc_q."entityType" = 'Post' AND EXISTS (
+      SELECT 1 FROM "Post" rc_p WHERE rc_p.id = rc_q."entityId" AND rc_p."userId" = ${ownerId}
+        AND ${childSafetyPostCase('rc_p')}))
+  )
+)`;
 
 /**
  * Moderation was open on the image before a kept delete hid it, by its record: a review other than

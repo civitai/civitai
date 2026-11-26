@@ -21,6 +21,7 @@ export const imageUseTablesSql = [
   `ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS flags int NOT NULL DEFAULT 0`,
   `ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "updatedAt" timestamp(3)`,
   `ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`,
+  `ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scannedAt" timestamp(3)`,
   `CREATE TABLE IF NOT EXISTS "ImageReport" ("imageId" int NOT NULL)`,
   `ALTER TABLE "ImageReport" ADD COLUMN IF NOT EXISTS "reportId" int`,
   `CREATE TABLE IF NOT EXISTS "Report" (id int PRIMARY KEY)`,
@@ -61,4 +62,9 @@ export const imageUseTablesSql = [
   `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
   `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,
   `ALTER TABLE "ServiceDealReviewReport" ADD COLUMN IF NOT EXISTS "serviceDealReviewId" int`,
+  // The kept-delete lift reads the owner's standing.
+  `CREATE TABLE IF NOT EXISTS "User" (id int PRIMARY KEY)`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS id int`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "deletedAt" timestamp(3)`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" timestamp(3)`,
 ].join(';\n');
