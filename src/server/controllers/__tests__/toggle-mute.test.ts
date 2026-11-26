@@ -117,3 +117,60 @@ describe('toggleMute when the replica lags the primary', () => {
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('toggleMute with an explicit setTo', () => {
+  const muteWrites = () =>
+    dbMock.dbWrite.user.update.mock.calls.filter(
+      ([args]) => (args as { data?: { muted?: boolean } }).data?.muted === true
+    );
+  const unmuteRan = () => dbMock.dbWrite.$transaction.mock.calls.length > 0;
+  const primary = (muted: boolean) =>
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      muted,
+      mutedAt: muted ? new Date(0) : null,
+    } as never);
+
+  it.each([
+    ['no setTo, unmuted', undefined, false, 'mute'],
+    ['no setTo, muted', undefined, true, 'unmute'],
+    ['setTo true, unmuted', true, false, 'mute'],
+    ['setTo false, muted', false, true, 'unmute'],
+  ] as const)('%s: %ss', async (_, setTo, muted, direction) => {
+    primary(muted);
+
+    // The unmute runs in a transaction this mock does not model; only its direction is asserted.
+    await toggleMuteHandler({ input: { id: USER, setTo }, ctx: ctx() }).catch(() => undefined);
+
+    expect(muteWrites()).toHaveLength(direction === 'mute' ? 1 : 0);
+    expect(unmuteRan()).toBe(direction === 'unmute');
+  });
+
+  it.each([
+    ['setTo true on a muted account', true, true],
+    ['setTo false on an unmuted account', false, false],
+  ] as const)('%s writes nothing and audits nothing', async (_, setTo, muted) => {
+    primary(muted);
+    const context = ctx() as { track: { userActivity: ReturnType<typeof vi.fn> } };
+
+    const result = await toggleMuteHandler({ input: { id: USER, setTo }, ctx: context as never });
+
+    expect(result).toMatchObject({ changed: false, muted });
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(unmuteRan()).toBe(false);
+    expect(m.trackModActivity).not.toHaveBeenCalled();
+    expect(context.track.userActivity).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller who is not a moderator', async () => {
+    primary(false);
+    const notModerator = {
+      user: { id: 7, isModerator: false },
+      track: { userActivity: vi.fn(async () => undefined) },
+    } as never;
+
+    await expect(
+      toggleMuteHandler({ input: { id: USER, setTo: true }, ctx: notModerator })
+    ).rejects.toThrow();
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+  });
+});

@@ -7,7 +7,10 @@ import type { DB } from '@civitai/db-schema/kysely';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModerationService from '~/server/services/commentv3/moderation.service';
 import type * as MirrorService from '~/server/services/feature-pages/mirror.service';
-import { unactionReportLiftingScanHide } from '@civitai/db-queries/feature-page-comments';
+import {
+  readFpMirrorFacts,
+  unactionReportLiftingScanHide,
+} from '@civitai/db-queries/feature-page-comments';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -279,6 +282,39 @@ describe("a moderator's dismissal of the scan's report", () => {
     await heldOpen(changed.id, changed.reportId, 'version');
   });
 
+  it('3c. the mirror and the dismissal agree on author standing: banned, muted, deleted, missing', async () => {
+    const standing = async (id: number) =>
+      (await readFpMirrorFacts(kysely(), [id]))[0].authorInStanding;
+    // No such user: the foreign key forbids it, so it is set aside to reach the LEFT JOIN's case.
+    const authorOf = async (id: number, userId: number) => {
+      await q(`SET session_replication_role = replica`);
+      await q(`UPDATE "CommentV3" SET "userId" = $2 WHERE id = $1`, [id, userId]);
+      await q(`SET session_replication_role = origin`);
+      await q(`UPDATE "FeaturePageCommentMirror" SET "userId" = $2 WHERE "commentId" = $1`, [
+        id,
+        userId,
+      ]);
+    };
+    const cases: [string, (id: number) => Promise<unknown>][] = [
+      ['banned', () => q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR])],
+      ['muted', () => q(`UPDATE "User" SET muted = true WHERE id = $1`, [AUTHOR])],
+      ['deleted', () => q(`UPDATE "User" SET "deletedAt" = now() WHERE id = $1`, [AUTHOR])],
+      ['missing', (id) => authorOf(id, 999)],
+    ];
+    for (const [why, apply] of cases) {
+      const { id, reportId } = await hiddenByScan(`${why} author`);
+      expect(await standing(id)).toBe(true);
+      await apply(id);
+      expect({ why, standing: await standing(id) }).toEqual({ why, standing: false });
+      await heldOpen(id, reportId, 'author');
+      await q(
+        `UPDATE "User" SET "bannedAt" = NULL, muted = false, "deletedAt" = NULL WHERE id = $1`,
+        [AUTHOR]
+      );
+      await authorOf(id, AUTHOR);
+    }
+  });
+
   it("4. lifts nothing for the system user, a replayed or re-ruled report, a person's report, or the main app's bulk path", async () => {
     const { id, reportId } = await hiddenByScan();
     expect(await dismiss(reportId, SYSTEM)).toBeNull();
@@ -443,6 +479,37 @@ describe("a moderator's dismissal of the scan's report", () => {
 
     platform.readback = (items) => asOurs(items);
     expect(await reconcile()).toMatchObject({ moderatorLifts: 1 });
+  });
+
+  it("5h. a pipeline or site hide made before this mirror's is not another's: the dismissal lifts the scan's", async () => {
+    const hides = {
+      pipeline: (id: number) => pipelineVerdict(id, 'hidden'),
+      site: (id: number) => verdictAt('site', id, 'hidden', new Date()),
+    };
+    for (const [by, hideThere] of Object.entries(hides)) {
+      const id = (await seedFpComment(mirror, `hidden there first by the ${by}`)).comment.sourceId;
+      hideThere(id);
+      expect(decided(id)).toBe('hidden');
+      const { reportId } = await scanHides(id);
+      await runMirror(mirror);
+      expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: 'scan' });
+      expect(await dismiss(reportId)).toEqual({ commentId: id, version: 1 });
+      expect(await settle()).toMatchObject({ moderatorLifts: 1 });
+    }
+  });
+
+  it("5i. a failed read of who hid it there sends no hide and is retried, never taken as another's", async () => {
+    const id = (await seedFpComment(mirror, 'hidden there first')).comment.sourceId;
+    pipelineVerdict(id, 'hidden');
+    await scanHides(id);
+    platform.readback = (items, url) => (singleRead(url) ? [] : items);
+    await runMirror(mirror);
+    expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: null, pushAttempts: 1 });
+    expect(platform.verdicts.filter((v) => v.path === '/internal/verdict/mod')).toHaveLength(0);
+
+    platform.readback = null;
+    await runMirror(mirror);
+    expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: 'scan', pushAttempts: 0 });
   });
 
   it("5. never lifts a platform moderator's hide made after this mirror's", async () => {
@@ -619,6 +686,59 @@ describe("a moderator's dismissal of the scan's report", () => {
     await rescanHides(id, older);
     expect((await commentOf(id)).hidden).toBe(true);
     expect(await mirrorRow(id)).toMatchObject({ liftGrantedVersion: 2, scanHiddenVersion: null });
+  });
+
+  /** A flagged rescan whose text read fails; `beforeReport` runs as its report is filed. */
+  const unreadRescan = async (id: number, beforeReport?: () => Promise<unknown>) => {
+    await flagScan(id);
+    const createReport = vi.fn(async () => {
+      await beforeReport?.();
+      const [report] = await q<{ id: number }>(
+        `INSERT INTO "Report"(status, reason, "userId", details)
+         VALUES ('Pending', 'AdminAttention', $1, '{"comment":"auto-hidden by scan"}') RETURNING id`,
+        [SYSTEM]
+      );
+      await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+        id,
+        report.id,
+      ]);
+      return report;
+    });
+    const hiding = moderation.hideFlaggedFpComment(id, {
+      textHash: await judgedText(id),
+      currentTextHash: async () => {
+        throw new Error('config read failed');
+      },
+      createReport: createReport as never,
+    });
+    await expect(hiding).rejects.toThrow('config read failed');
+    return createReport;
+  };
+
+  it('7i. a rescan whose text read fails after a lift of the current version: shown, no report, retried', async () => {
+    const { id, reportId } = await hiddenByScan();
+    expect(await dismiss(reportId)).toEqual({ commentId: id, version: 1 });
+    expect(await unreadRescan(id)).not.toHaveBeenCalled();
+    expect((await commentOf(id)).hidden).toBe(false);
+    // The retry reads the text: the lifted version, so nothing changes.
+    expect(await rescanHides(id, await judgedText(id))).toBe(0);
+    expect((await commentOf(id)).hidden).toBe(false);
+  });
+
+  it('7j. a rescan whose text read fails after a lift, then an edit: hidden, bound to no version', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await dismiss(reportId);
+    await edit(id);
+    expect(await unreadRescan(id)).toHaveBeenCalledTimes(1);
+    expect((await commentOf(id)).hidden).toBe(true);
+    expect(await mirrorRow(id)).toMatchObject({ version: 2, scanHiddenVersion: null });
+  });
+
+  it('7k. a lift committed after the failed read, before the lock: not hidden again', async () => {
+    const { id, reportId } = await hiddenByScan();
+    expect(await unreadRescan(id, () => dismiss(reportId))).toHaveBeenCalledTimes(1);
+    expect((await commentOf(id)).hidden).toBe(false);
+    expect(await mirrorRow(id)).toMatchObject({ liftGrantedVersion: 1 });
   });
 
   it('7b. a lift of one version never shows a newer version the scan has not cleared', async () => {

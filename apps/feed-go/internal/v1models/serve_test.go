@@ -74,6 +74,9 @@ type testWorld struct {
 	tagIDs       map[string]int // the replica's Tag rows by name (the `tag` filter's lookup)
 	tagNames     []string       // each name the `tag` lookup bound
 	db           *testkit.DB
+	// failKey, when set, is the one cache key whose commands fail with a transport error (one shard
+	// down, testkit.Redis.KeyErr), the rest of every pipeline answering.
+	failKey string
 }
 
 func newTestWorld() *testWorld {
@@ -122,6 +125,14 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 	}
 	for k, v := range w.raw {
 		w.cache.SetString(k, []byte(v))
+	}
+	if key := w.failKey; key != "" {
+		w.cache.KeyErr = func(k string) error {
+			if k == key {
+				return testkit.ErrDown
+			}
+			return nil
+		}
 	}
 	rows := testkit.NewRows
 	db := &testkit.DB{Routes: []testkit.Route{

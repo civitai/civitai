@@ -11,7 +11,8 @@ import { applyGrants } from '$lib/server/access';
 /**
  * What each Trials tab sends for an image the media access rule withholds from this moderator: the
  * item with no key or name, and the control image beside it as it is. The withheld image carries no
- * mark of its own; a copy on its url is blocked as CSAM.
+ * mark of its own; a copy on its url is blocked as CSAM. Each action that would grade Acolytes
+ * against such an image is refused. Policy: civitai/civitai#10428, #10504.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -175,7 +176,6 @@ describe.each(tabs)('Trials $tab tab', ({ tab, items }) => {
   });
 });
 
-// The spot-check carries no image id (it is blind), so its items are told apart by key.
 describe('Trials spot-check tab', () => {
   it('sends a withheld image with no key to a moderator without the grant, and the control as it is', async () => {
     const data = await load('spot-check', WITHOUT_GRANT);
@@ -191,4 +191,201 @@ describe('Trials spot-check tab', () => {
     const data = await load('spot-check', WITH_GRANT);
     expect(data.spotCheck.map((i) => i.imageKey).sort()).toEqual([CONTROL_KEY, KEY].sort());
   });
+});
+
+const AXIS_2 = 'knights.yesno.weapons';
+
+const act = async (name: string, fields: Record<string, string>, user: User) => {
+  const data = new FormData();
+  for (const [k, v] of Object.entries(fields)) data.set(k, v);
+  const route = await import('../+page.server');
+  return (await route.actions[name]({
+    request: { formData: async () => data },
+    url: new URL('http://moderator.test/knights-of-new-order/trials'),
+    params: {},
+    locals: { user, grants: {} },
+  } as never)) as { status?: number; data?: { error: string }; success?: boolean };
+};
+
+const referenceId = async (imageId: number, source: string, status: string) => {
+  const { rows } = await db.query<{ id: number }>(
+    `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status")
+     VALUES ($1, 'trials', '1', $2, $3) RETURNING id`,
+    [imageId, source, status]
+  );
+  return rows[0].id;
+};
+
+const questionId = async (imageId: number) => {
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT id FROM "KnightsQueueItem" WHERE "imageId" = $1`,
+    [imageId]
+  );
+  return rows[0].id;
+};
+
+const pairId = async (imageId: number) => {
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT id FROM "KnightsYesNoReference" WHERE "imageId" = $1`,
+    [imageId]
+  );
+  return rows[0].id;
+};
+
+const rowsFor = async (imageId: number) =>
+  JSON.stringify(
+    (
+      await db.query(
+        `SELECT 'ref' AS t, id, answer, source, status, explanation FROM "KnightsReferenceImage" WHERE "imageId" = $1
+         UNION ALL
+         SELECT 'pair', id, answer::text, "questionKey", active::text, explanation FROM "KnightsYesNoReference" WHERE "imageId" = $1
+         UNION ALL
+         SELECT 'question', id, prompt, "questionKey", status, reason FROM "KnightsQueueItem" WHERE "imageId" = $1
+         ORDER BY 1, 2`,
+        [imageId]
+      )
+    ).rows
+  );
+
+/**
+ * Each action that grades Acolytes against an image: the form it posts for that image. `servesImage`: the action
+ * also runs the Knights servability check, which refuses any image whose file has a CSAM-held copy, so even a
+ * moderator with the grant is refused there (409), after the withheld check (403) lets them through.
+ */
+const gradingActions: {
+  action: string;
+  fields: (imageId: number) => Promise<Record<string, string>>;
+  servesImage?: true;
+}[] = [
+  {
+    action: 'add',
+    fields: async (image) => ({ image: String(image), level: '2', explanation: 'why' }),
+    servesImage: true,
+  },
+  {
+    action: 'update',
+    fields: async (image) => ({
+      id: String(await referenceId(image, 'core', 'active')),
+      level: '2',
+      explanation: 'why',
+    }),
+  },
+  {
+    action: 'promote',
+    fields: async (image) => ({ id: String(await referenceId(image, 'harvested', 'active')) }),
+  },
+  {
+    action: 'spotCheck',
+    fields: async (image) => ({
+      id: String(await referenceId(image, 'harvested', 'pending')),
+      level: '1',
+    }),
+  },
+  {
+    action: 'addYesNo',
+    fields: async (image) => ({
+      image: String(image),
+      questionKey: AXIS_2,
+      prompt: 'Weapons?',
+      answer: 'no',
+    }),
+    servesImage: true,
+  },
+  {
+    action: 'updateYesNo',
+    fields: async (image) => ({ id: String(await pairId(image)), prompt: 'Gore?', answer: 'no' }),
+  },
+  {
+    action: 'toggleYesNo',
+    fields: async (image) => {
+      const id = await pairId(image);
+      await db.query(`UPDATE "KnightsYesNoReference" SET active = false WHERE id = $1`, [id]);
+      return { id: String(id), active: 'true' };
+    },
+    servesImage: true,
+  },
+  {
+    action: 'rewordQuestion',
+    fields: async (image) => ({
+      id: String(await questionId(image)),
+      prompt: 'Is there a weapon?',
+      note: 'clearer',
+    }),
+    servesImage: true,
+  },
+  {
+    action: 'unretireQuestion',
+    fields: async (image) => {
+      const id = await questionId(image);
+      await db.query(
+        `UPDATE "KnightsQueueItem" SET status = 'Closed', reason = 'moderator-retired', "resolvedAt" = now() WHERE id = $1`,
+        [id]
+      );
+      return { id: String(id) };
+    },
+    servesImage: true,
+  },
+];
+
+describe.each(gradingActions)('Trials $action action', ({ action, fields, servesImage }) => {
+  beforeEach(async () => {
+    await db.exec(
+      `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('${AXIS_2}','bool','Weapons?','[]')
+       ON CONFLICT DO NOTHING;`
+    );
+  });
+
+  it('refuses a withheld image to a moderator without the grant, and writes nothing', async () => {
+    const form = await fields(WITHHELD);
+    const before = await rowsFor(WITHHELD);
+    const result = await act(action, form, WITHOUT_GRANT);
+    expect(result).toMatchObject({ status: 403 });
+    expect(result.data?.error).toContain(String(WITHHELD));
+    expect(await rowsFor(WITHHELD)).toBe(before);
+  });
+
+  it('acts on the control image for the same moderator', async () => {
+    const form = await fields(CONTROL);
+    const before = await rowsFor(CONTROL);
+    expect(await act(action, form, WITHOUT_GRANT)).toMatchObject({ success: true });
+    expect(await rowsFor(CONTROL)).not.toBe(before);
+  });
+
+  it.skipIf(servesImage)('acts on the withheld image for a moderator with the grant', async () => {
+    const form = await fields(WITHHELD);
+    const before = await rowsFor(WITHHELD);
+    expect(await act(action, form, WITH_GRANT)).toMatchObject({ success: true });
+    expect(await rowsFor(WITHHELD)).not.toBe(before);
+  });
+
+  it.runIf(servesImage)(
+    'passes a moderator with the grant to the Knights check, which refuses the image',
+    async () => {
+      const form = await fields(WITHHELD);
+      const before = await rowsFor(WITHHELD);
+      const result = await act(action, form, WITH_GRANT);
+      expect(result).toMatchObject({ status: 409 });
+      expect(result.data?.error).toContain('cannot be shown to Acolytes');
+      expect(await rowsFor(WITHHELD)).toBe(before);
+    }
+  );
+});
+
+describe('Trials actions that take an item out of grading', () => {
+  it('lets a moderator without the grant deactivate and retire a withheld item', async () => {
+    const pair = await pairId(WITHHELD);
+    expect(
+      await act('toggleYesNo', { id: String(pair), active: 'false' }, WITHOUT_GRANT)
+    ).toMatchObject({ success: true });
+    const ref = await referenceId(WITHHELD, 'core', 'active');
+    expect(await act('retire', { id: String(ref) }, WITHOUT_GRANT)).toMatchObject({
+      success: true,
+    });
+  });
+});
+
+it('reports an image id that does not exist as not found, not as withheld', async () => {
+  const result = await act('add', { image: '9999', level: '2', explanation: 'why' }, WITHOUT_GRANT);
+  expect(result).toMatchObject({ status: 409 });
+  expect(result.data?.error).toContain('not found');
 });
