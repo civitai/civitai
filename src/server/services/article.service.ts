@@ -147,6 +147,7 @@ import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
+import { RELEASED_ABSENT_SCAN_JOBS } from '~/server/services/image-scan-failure';
 import {
   assertContentLinkHoldWritable,
   classifyUnlinkedContentUrls,
@@ -2524,6 +2525,8 @@ export async function linkArticleContentImages({
   // A url whose key's issuer is unknown or someone else gets no row; the article is held instead.
   let hold: ContentLinkHold | null = null;
   let previousHold: ContentLinkHold | null = null;
+  // Urls released past the backstop: their rows are marked, so their scans stay retryable.
+  let released = new Set<string>();
   if (!cleanupOnly) {
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
@@ -2543,9 +2546,7 @@ export async function linkArticleContentImages({
       const pastBackstop =
         !!previousHold?.deferredSince &&
         now.getTime() - previousHold.deferredSince.getTime() >= CONTENT_LINK_DEFERRAL_BACKSTOP_MS;
-      const released = new Set(
-        pastBackstop ? [...absent].filter((url) => wasDeferred.has(url)) : []
-      );
+      released = new Set(pastBackstop ? [...absent].filter((url) => wasDeferred.has(url)) : []);
       const stillDeferred = probeable.filter(
         (url) =>
           !released.has(url) && (absent.has(url) || (wasDeferred.has(url) && !present.has(url)))
@@ -2602,6 +2603,7 @@ export async function linkArticleContentImages({
             name: media.alt,
             ingestion: ImageIngestionStatus.Pending,
             scanRequestedAt: new Date(),
+            scanJobs: released.has(media.url) ? RELEASED_ABSENT_SCAN_JOBS : undefined,
           })),
           select: { id: true, url: true },
           skipDuplicates: true,

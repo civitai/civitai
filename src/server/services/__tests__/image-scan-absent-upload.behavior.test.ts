@@ -52,7 +52,7 @@ beforeAll(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbRead.image.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) =>
-      (await pg.query(`SELECT url FROM "Image" WHERE id = $1`, [where.id])).rows[0] ??
+      (await pg.query(`SELECT url, "scanJobs" FROM "Image" WHERE id = $1`, [where.id])).rows[0] ??
       null) as never
   );
 });
@@ -92,6 +92,15 @@ describe('a scan failure on an image whose upload is not in the store', () => {
     const { failureClass } = await fail();
     expect(failureClass).toBe('permanent');
     expect(await storedClass()).toBe('permanent');
+  });
+
+  it('stays transient on a row released from an article hold, so its bytes can still be scanned', async () => {
+    store.absent.add(KEY);
+    await pg.query(`UPDATE "Image" SET "scanJobs" = '{"releasedAbsent": true}' WHERE id = $1`, [
+      IMAGE_ID,
+    ]);
+    expect((await fail()).failureClass).toBe('transient');
+    expect(await storedClass()).toBe('transient');
   });
 
   it('control: stays transient while the upload exists', async () => {

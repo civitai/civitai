@@ -152,13 +152,17 @@ const tx = {
         ? q(`SELECT id, url, ingestion FROM "Image" WHERE url = ANY($1)`, [where.url.in])
         : [],
     findUnique: async () => null,
-    createManyAndReturn: async ({ data }: { data: { url: string; userId: number }[] }) => {
+    createManyAndReturn: async ({
+      data,
+    }: {
+      data: { url: string; userId: number; scanJobs?: object }[];
+    }) => {
       const rows: { id: number; url: string }[] = [];
       for (const row of data)
         rows.push(
           ...(await q<{ id: number; url: string }>(
-            `INSERT INTO "Image" (url, "userId") VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id, url`,
-            [row.url, row.userId]
+            `INSERT INTO "Image" (url, "userId", "scanJobs") VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id, url`,
+            [row.url, row.userId, row.scanJobs ?? null]
           ))
         );
       return rows;
@@ -213,7 +217,7 @@ beforeAll(async () => {
       ingestion "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned', "contentScannedAt" timestamp(3),
       "moderatorNsfwLevel" int);
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text NOT NULL UNIQUE, "userId" int NOT NULL,
-      ingestion text NOT NULL DEFAULT 'Pending');
+      ingestion text NOT NULL DEFAULT 'Pending', "scanJobs" jsonb);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, PRIMARY KEY ("imageId", "entityId"));
   `);
   await db.exec(MIGRATION);
@@ -899,6 +903,11 @@ describe('a url still absent past the deferral backstop', () => {
   it('leaves the hold and links as before, filing no report', async () => {
     await settleContentLinkHolds(at(PAST));
     expect(await rows()).toEqual([KEY2]);
+    // Marked, so its scan failure stays retryable for bytes that land later.
+    const [row] = await q<{ scanJobs: { releasedAbsent?: boolean } | null }>(
+      `SELECT "scanJobs" FROM "Image"`
+    );
+    expect(row.scanJobs?.releasedAbsent).toBe(true);
     expect(await hold()).toBeNull();
     expect(createReport).not.toHaveBeenCalled();
   });

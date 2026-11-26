@@ -51,6 +51,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { queueScanSampleForKnights } from '~/server/services/knights/sources';
 import {
   classifyImageScanFailure,
+  hasReleasedAbsentMarker,
   ImageScanFailureClass,
 } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
@@ -359,15 +360,19 @@ export async function markImageScanError({
 export const SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX = 8;
 const scanUploadChecks = { inFlight: 0 };
 
-/** Fails open: a read that fails, or a check skipped at the cap, leaves the failure classed by its reason. */
+/**
+ * Fails open: a read that fails, a check skipped at the cap, or a row released from an article hold
+ * leaves the failure classed by its reason.
+ */
 async function scanUploadAbsent(imageId: number) {
   if (scanUploadChecks.inFlight >= SCAN_UPLOAD_CHECKS_IN_FLIGHT_MAX) return false;
   scanUploadChecks.inFlight++;
   try {
     const image = await dbRead.image
-      .findUnique({ where: { id: imageId }, select: { url: true } })
+      .findUnique({ where: { id: imageId }, select: { url: true, scanJobs: true } })
       .catch(() => null);
-    return !!image && (await probeCreatedImageMedia(image.url)) === 'absent';
+    if (!image || hasReleasedAbsentMarker(image.scanJobs)) return false;
+    return (await probeCreatedImageMedia(image.url)) === 'absent';
   } finally {
     scanUploadChecks.inFlight--;
   }
