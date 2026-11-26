@@ -30,6 +30,7 @@ const {
   countLocks,
   exclusionsFor,
   NO_ATTRIBUTION,
+  PROFANITY_ATTRIBUTION_QUERY,
   nextRevertBatch,
   nextUnlockBatch,
   ratingChangedSinceUnlock,
@@ -81,6 +82,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status text NOT NULL);
+    CREATE TABLE "ModelReport" ("modelId" int NOT NULL, "reportId" int NOT NULL);
   `);
   const raw = pgliteRaw(db);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
@@ -252,7 +255,7 @@ const outside: [string, number, ModelFields][] = [
 
 beforeEach(async () => {
   await db.exec(
-    'DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash"; DELETE FROM "ModelOwnership"; DELETE FROM "ModActivity"; DELETE FROM "Appeal"; DELETE FROM "CsamReport"; DELETE FROM "User"; DELETE FROM "Image";'
+    'DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash"; DELETE FROM "ModelOwnership"; DELETE FROM "ModActivity"; DELETE FROM "Appeal"; DELETE FROM "CsamReport"; DELETE FROM "User"; DELETE FROM "Image"; DELETE FROM "Report"; DELETE FROM "ModelReport";'
   );
   await db.query(`INSERT INTO "User" (id, meta) VALUES ($1, '{}')`, [NEW_OWNER]);
   await model(ELIGIBLE);
@@ -432,15 +435,46 @@ const UNMARKED_SYSTEM_ACTED = 61; // the same, with only the system user's activ
 const UNATTRIBUTED = 67; // unmarked, matches, but no filter record in the entity-change log
 const MODERATOR_LOCK_OLD_MATCHES = 68; // a moderator's unlogged lock on a model with old matches
 const SUPERSEDED = 69; // the filter's record, then a later change by someone else
+const OWNER_UNPUBLISHED = 75; // attributed; its owner unpublished it (control for moderatorSignal)
+const UNACTIONED_REPORT = 76; // attributed; a report a moderator did not action (control)
 
 /** The log as the tests read it: every unmarked fixture attributed but the three above. */
 const ATTR: Attribution = {
-  attributed: [UNMARKED, UNMARKED_SYSTEM_ACTED, 62, 63, 64, 65, 66],
+  attributed: [
+    UNMARKED,
+    UNMARKED_SYSTEM_ACTED,
+    62,
+    63,
+    64,
+    65,
+    66,
+    70,
+    71,
+    72,
+    73,
+    74,
+    OWNER_UNPUBLISHED,
+    UNACTIONED_REPORT,
+  ],
   superseded: [SUPERSEDED],
 };
 
 /** Legacy profanity locks the selector takes: [reason, id, model fields]. */
 const unmarked: [string, number, ModelFields][] = [
+  [
+    'an attributed lock its owner unpublished',
+    OWNER_UNPUBLISHED,
+    { meta: { ...legacyMatches, unpublishedBy: OWNER_UNPUBLISHED } },
+  ],
+  [
+    'an attributed lock with a report no moderator actioned',
+    UNACTIONED_REPORT,
+    {
+      meta: legacyMatches,
+      sql: `INSERT INTO "Report" (id, status) VALUES ($ID, 'Unactioned');
+        INSERT INTO "ModelReport" VALUES ($ID, $ID);`,
+    },
+  ],
   ['an unmarked legacy profanity lock', UNMARKED, { meta: legacyMatches }],
   [
     'an unmarked lock with only system activity',
@@ -494,6 +528,41 @@ const unmarkedExcluded: [string, number, ModelFields, string][] = [
     { meta: legacyMatches },
     'attributionSuperseded',
   ],
+  // Attributed, but a moderator's mark on the model: what a dropped log event would hide.
+  [
+    'the attributed model has an actioned report',
+    70,
+    {
+      meta: legacyMatches,
+      sql: `INSERT INTO "Report" (id, status) VALUES ($ID, 'Actioned');
+        INSERT INTO "ModelReport" VALUES ($ID, $ID);`,
+    },
+    'moderatorSignal',
+  ],
+  [
+    'the attributed model was declined',
+    71,
+    { meta: { ...legacyMatches, declinedAt: 'x' } },
+    'moderatorSignal',
+  ],
+  [
+    'the attributed model needs review',
+    72,
+    { meta: { ...legacyMatches, needsReview: true } },
+    'moderatorSignal',
+  ],
+  [
+    'someone other than the owner unpublished the attributed model',
+    73,
+    { meta: { ...legacyMatches, unpublishedBy: 7 } },
+    'moderatorSignal',
+  ],
+  [
+    'the attributed model has an unreadable unpublisher',
+    74,
+    { meta: { ...legacyMatches, unpublishedBy: 'mod' } },
+    'moderatorSignal',
+  ],
 ];
 
 /** Models a legacy-lock reading must not take: [reason, id, model fields]. */
@@ -534,6 +603,8 @@ const PROFANITY_ELIGIBLE = [
   ELIGIBLE_TRANSFERRED,
   UNMARKED,
   UNMARKED_SYSTEM_ACTED,
+  OWNER_UNPUBLISHED,
+  UNACTIONED_REPORT,
 ];
 
 /** The row's meta without the unlock's record: what a relock or revert must give back exactly. */
@@ -632,6 +703,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
       markerUnreadable: 1,
       unattributed: 2,
       attributionSuperseded: 1,
+      moderatorSignal: 5,
+      eligibleByProfanityMatches: unmarked.length,
       pendingDetection: 4,
       ownerCsamReport: 4,
       byMarker: ALL_ELIGIBLE.length + excluded.length,
@@ -891,6 +964,27 @@ describe('model nsfw lock backfill: profanity locks', () => {
       ).toBe(500);
     });
   });
+  describe('the attribution query (ClickHouse, never run here, so pinned)', () => {
+    const query = PROFANITY_ATTRIBUTION_QUERY.replace(/\s+/g, ' ').trim();
+    it('is the reviewed text, byte for byte up to whitespace', () => {
+      expect(query).toBe(
+        "WITH filter AS ( SELECT entityId, max(createdAt) AS at FROM entityChangeEvents WHERE entityType = 'Model' AND field = 'lockedProperties' AND actorRole = 'system' AND reason = 'profanity-filter' AND has(JSONExtract(newValue, 'Array(String)'), 'nsfw') AND NOT has(JSONExtract(oldValue, 'Array(String)'), 'nsfw') GROUP BY entityId ), later AS ( SELECT DISTINCT e.entityId FROM entityChangeEvents e INNER JOIN filter f ON f.entityId = e.entityId WHERE e.entityType = 'Model' AND e.field IN ('lockedProperties', 'nsfw') AND e.createdAt >= f.at AND NOT (e.actorRole = 'system' AND e.reason = 'profanity-filter') ) SELECT entityId AS id, entityId IN (SELECT entityId FROM later) AS superseded FROM filter"
+      );
+    });
+    it('supersedes on a change at or after the record, never before it', () => {
+      expect(query).toContain('e.createdAt >= f.at');
+      expect(query).not.toMatch(/e\.createdAt\s*(<|<=|>(?!=))\s*f\.at/);
+    });
+    it('attributes only a record that added nsfw, by the filter', () => {
+      expect(query).toContain("has(JSONExtract(newValue, 'Array(String)'), 'nsfw')");
+      expect(query).toContain("AND NOT has(JSONExtract(oldValue, 'Array(String)'), 'nsfw')");
+      expect(query).toContain("actorRole = 'system' AND reason = 'profanity-filter'");
+    });
+    it('interpolates nothing', () => {
+      expect(PROFANITY_ATTRIBUTION_QUERY).not.toContain('${');
+    });
+  });
+
   describe('unmarked legacy locks (lock + profanityMatches, no marker)', () => {
     it('lifts the lock, keeps the rating and the matches, and records that there was no marker', async () => {
       const before = await row(UNMARKED);
@@ -992,7 +1086,9 @@ describe('model nsfw lock backfill: profanity locks', () => {
     it('re-checks the attribution in the UPDATE: one the dry run saw but the write call does not is kept', async () => {
       const dry = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
       expect(dry.ids).toContain(UNMARKED);
-      expect(dry.counts).toMatchObject({ attributionRecords: { attributed: 7, superseded: 1 } });
+      expect(dry.counts).toMatchObject({
+        attributionRecords: { attributed: ATTR.attributed.length, superseded: 1 },
+      });
       readProfanityAttribution.mockResolvedValue({
         attributed: ATTR.attributed.filter((id) => id !== UNMARKED),
         superseded: [...ATTR.superseded, UNMARKED],

@@ -32,8 +32,8 @@
  * reverted, and any model whose owner, now or before, has a CSAM report, an evidence hold, an account
  * hold or a SexualMinor ban. For a profanity lock, a moderator's activity on the model of any kind,
  * ever, replaces the ruled-since-the-lock rule (an unmarked lock has no time to read "since" from); a
- * lock beside nsfw, a marker whose time cannot be read, and an unmarked lock the log does not
- * attribute to the filter also keep it.
+ * lock beside nsfw, a marker whose time cannot be read, an unmarked lock the log does not
+ * attribute to the filter, and an unmarked lock with a moderator's mark on the model also keep it.
  */
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
@@ -153,10 +153,12 @@ export type Attribution = { attributed: number[]; superseded: number[] };
 /** No record read: every unmarked lock counts as unattributed and stays locked. */
 export const NO_ATTRIBUTION: Attribution = { attributed: [], superseded: [] };
 
-/** Reads the attribution from ClickHouse; throws, so nothing is written, when it cannot. */
-export async function readProfanityAttribution(): Promise<Attribution> {
-  if (!clickhouse) throw new Error('ClickHouse is not configured');
-  const rows = await clickhouse.$query<{ id: number | string; superseded: number | boolean }>`
+/**
+ * The attribution query. No values are interpolated: `$query` inlines them unescaped, so any added
+ * later must be a validated number or Date. Pinned by the tests, since no test runs ClickHouse: the
+ * filter's record must ADD nsfw, and a change by anyone else AT OR AFTER it supersedes it.
+ */
+export const PROFANITY_ATTRIBUTION_QUERY = `
     WITH filter AS (
       SELECT entityId, max(createdAt) AS at
       FROM entityChangeEvents
@@ -173,7 +175,14 @@ export async function readProfanityAttribution(): Promise<Attribution> {
         AND NOT (e.actorRole = 'system' AND e.reason = 'profanity-filter')
     )
     SELECT entityId AS id, entityId IN (SELECT entityId FROM later) AS superseded FROM filter
-  `;
+`;
+
+/** Reads the attribution from ClickHouse; throws, so nothing is written, when it cannot. */
+export async function readProfanityAttribution(): Promise<Attribution> {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const rows = await clickhouse.$query<{ id: number | string; superseded: number | boolean }>(
+    PROFANITY_ATTRIBUTION_QUERY
+  );
   const attributed: number[] = [];
   const superseded: number[] = [];
   for (const row of rows) {
@@ -195,6 +204,21 @@ const profanityExclusionsOf = ({ attributed, superseded }: Attribution) => ({
   unattributed: Prisma.sql`(${unmarkedProfanitySql}
     AND NOT (m.id = ANY(${[...attributed, ...superseded]}::int[])))`,
   attributionSuperseded: Prisma.sql`(${unmarkedProfanitySql} AND m.id = ANY(${superseded}::int[]))`,
+  // The entity-change log is written fire-and-forget, so a dropped moderator event could leave the
+  // filter's record looking like the last word. A moderator's mark on the model keeps it locked:
+  // an actioned report, a decline or review flag, or an unpublish by anyone but the owner (an
+  // unreadable unpublisher counts as not the owner).
+  moderatorSignal: Prisma.sql`(${unmarkedProfanitySql} AND (
+    EXISTS (
+      SELECT 1 FROM "ModelReport" mr JOIN "Report" r ON r.id = mr."reportId"
+      WHERE mr."modelId" = m.id AND r.status = 'Actioned'
+    )
+    OR m.meta ?| ARRAY['declinedReason', 'declinedAt', 'needsReview']
+    OR (m.meta ? 'unpublishedBy' AND CASE
+      WHEN (m.meta->>'unpublishedBy') ~ '^[0-9]{1,9}$'
+        THEN (m.meta->>'unpublishedBy')::int IS DISTINCT FROM m."userId"
+      ELSE true END)
+  ))`,
   moderatorActed: Prisma.sql`EXISTS (
     SELECT 1 FROM "ModActivity" ma
     WHERE ma."entityType" = 'model' AND ma."entityId" = m.id
@@ -250,7 +274,11 @@ export function lockCountSql(bucket: Bucket, attribution?: Attribution) {
   const byLeg =
     bucket === 'profanity-locks'
       ? Prisma.sql`count(*) FILTER (WHERE ${markerSql(bucket)})::int AS "byMarker",
-        count(*) FILTER (WHERE ${unmarkedProfanitySql})::int AS "byProfanityMatches",`
+        count(*) FILTER (WHERE ${unmarkedProfanitySql})::int AS "byProfanityMatches",
+        count(*) FILTER (WHERE ${unmarkedProfanitySql} AND NOT (${Prisma.join(
+          Object.values(legs),
+          ' OR '
+        )}))::int AS "eligibleByProfanityMatches",`
       : Prisma.empty;
   return Prisma.sql`
     SELECT count(*)::int AS ${Prisma.raw(`"${BUCKET_LOCKS[bucket].counted}"`)}, ${byLeg}
@@ -662,7 +690,7 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
     'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again at its prior rating (scans.relocked; scans.ratingRestored where an owner change was undone). Benign skips (not-public, too-short) relock on every pass.',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
-    'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); an unmarked lock is taken only where the entity-change log records the filter setting it and nothing changing the lock or rating since (counts.unattributed, counts.attributionSuperseded, counts.attributionRecords); it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable). If ClickHouse cannot be read, the call fails and writes nothing.',
+    'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); an unmarked lock is taken only where the entity-change log records the filter setting it and nothing changing the lock or rating since (counts.unattributed, counts.attributionSuperseded, counts.attributionRecords), and skips one a moderator marked (counts.moderatorSignal: an actioned report, a decline or review flag, an unpublish by someone else); counts.eligibleByProfanityMatches is what is left of them; it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable). If ClickHouse cannot be read, the call fails and writes nothing.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
   input: backfillSchema,
