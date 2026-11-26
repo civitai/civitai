@@ -457,6 +457,16 @@ describe('a save from the edit form with a body image listed on a report', () =>
     expect(savedContent()).toBe(body);
   });
 
+  it('🔴 answers the save with the body as the form sent it, without the hidden image', async () => {
+    dbMock.dbWrite.article.update.mockImplementation((async ({ data }: any) => ({
+      ...storedArticle,
+      ...data,
+    })) as never);
+    const saved = (await upsert(editForm)) as { content?: string };
+    expect(saved.content).toBe(editForm);
+    expect(JSON.stringify(saved)).not.toContain(LISTED.url);
+  });
+
   it('🔴 refuses a placeholder that names an image the editor may see', async () => {
     const forged = `<p>a</p><span data-type="withheldMedia" data-id="0"></span>`;
     await expect(upsert(forged)).rejects.toThrow();

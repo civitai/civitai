@@ -44,17 +44,23 @@ describe('the edit form body', () => {
     ['no stored image', 9],
   ])('🔴 refuses a placeholder that names %s', (_, ref) => {
     const forged = `<p>x</p><span data-type="withheldMedia" data-id="${ref}"></span>`;
-    expect(() => restoreWithheldMedia(forged, stored, hidden)).toThrow();
+    expect(() => restoreWithheldMedia(forged, stored, hidden)).toThrow(
+      'This article body names an image it does not hold'
+    );
   });
 
   it('🔴 refuses one placeholder named twice', () => {
     const twice = `<span data-type="withheldMedia" data-id="1"></span>`.repeat(2);
-    expect(() => restoreWithheldMedia(twice, stored, hidden)).toThrow();
+    expect(() => restoreWithheldMedia(twice, stored, hidden)).toThrow(
+      'This article body names an image it does not hold'
+    );
   });
 
   it('🔴 refuses any placeholder on a body with nothing stored', () => {
     const forged = `<span data-type="withheldMedia" data-id="0"></span>`;
-    expect(() => restoreWithheldMedia(forged, null, hidden)).toThrow();
+    expect(() => restoreWithheldMedia(forged, null, hidden)).toThrow(
+      'This article body names an image it does not hold'
+    );
   });
 
   it('leaves a body without placeholders untouched (control)', () => {

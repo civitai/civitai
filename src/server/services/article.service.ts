@@ -1166,7 +1166,9 @@ export const upsertArticle = async ({
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
     }
 
-    // The edit form holds a placeholder for each body image this editor may not see.
+    // The edit form holds a placeholder for each body image this editor may not see. The save
+    // answers with the body as the form sent it, so the restored image never reaches the editor.
+    let editorContent: string | undefined;
     if (data.content?.includes(WITHHELD_MEDIA_TYPE)) {
       const connected = article ? await connectedArticleImages(article.id) : [];
       const hidden = await getReportListedHiddenImageIds(
@@ -1174,6 +1176,7 @@ export const upsertArticle = async ({
         { userId, ...reportListedViewer },
         dbWrite
       );
+      editorContent = data.content;
       data.content = restoreWithheldMedia(
         data.content,
         article?.content,
@@ -1760,7 +1763,11 @@ export const upsertArticle = async ({
     const hasModeratorOverride =
       !isModerator && article != null && article.moderatorNsfwLevel != null;
 
-    return { ...result, hasModeratorOverride };
+    return {
+      ...result,
+      ...(editorContent !== undefined && { content: editorContent }),
+      hasModeratorOverride,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     if (
