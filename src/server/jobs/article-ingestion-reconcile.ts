@@ -19,6 +19,7 @@ import {
 import {
   ingestionErrorStep,
   readIngestionErrorState,
+  silentIngestionErrorState,
   textCheckSpentRetries,
   type ArticleIngestionErrorState,
 } from '~/server/services/article-ingestion.helpers';
@@ -43,9 +44,8 @@ const FORCED_RESUBMITS_TTL_SECONDS = 7 * 24 * 60 * 60;
 const FETCH_LIMIT = 500;
 const RECONCILE_CONCURRENCY = 5;
 
-// Error articles are few, and most ticks act on none of them; the caps keep a mass failure (919
-// images in five minutes on 2026-10-29) from coming back to the scanner in one tick.
-const ERROR_FETCH_LIMIT = 2000;
+// Caps per tick, so a mass failure is not sent back to the scanner all at once.
+const ERROR_FETCH_LIMIT = 500;
 const ERROR_ARTICLES_PER_TICK = 25;
 const ERROR_IMAGES_PER_TICK = 200;
 
@@ -66,7 +66,8 @@ async function recordForcedResubmit(articleId: number, textHash: string) {
 
 /**
  * Find articles whose ingestion pipeline has stalled and re-run the state
- * machine for them. Two classes of drift this catches:
+ * machine for them. Two classes of drift this catches (and, after them, the
+ * Error retries in `retryErrorArticles`):
  *   1. `status IN (Published, Processing) AND ingestion IN (Pending, Rescan)` —
  *      scan webhooks completed but the final recompute never fired (lost
  *      webhook, process crash between `recordEntityModerationSuccess` and
@@ -111,16 +112,8 @@ export const articleIngestionReconcile = createJob(
       LIMIT ${FETCH_LIMIT}
     `;
 
-    const errorRetries = await retryErrorArticles(now).catch((e) => {
-      logToAxiom({
-        name: 'article-ingestion-reconcile',
-        type: 'error',
-        message: `error retries failed: ${(e as Error).message}`,
-      });
-      return null;
-    });
-
     if (!candidates.length) {
+      const errorRetries = await runErrorRetries(now);
       return { candidates: 0, advanced: 0, resubmitted: 0, stillStuck: 0, errors: 0, errorRetries };
     }
 
@@ -274,6 +267,7 @@ export const articleIngestionReconcile = createJob(
     });
 
     await limitConcurrency(tasks, RECONCILE_CONCURRENCY);
+    const errorRetries = await runErrorRetries(now);
 
     return {
       candidates: candidates.length,
@@ -287,7 +281,10 @@ export const articleIngestionReconcile = createJob(
   }
 );
 
-/** Writes the episode only while it is still the one that was read: a recompute may have ended it. */
+/**
+ * Writes the episode only if it is unchanged since it was read (`expected` is its `enteredAt`, or
+ * null for none yet): a recompute may have ended it.
+ */
 async function writeErrorState(
   id: number,
   state: ArticleIngestionErrorState,
@@ -310,27 +307,39 @@ async function writeErrorState(
     .execute();
 }
 
+async function runErrorRetries(now: Date) {
+  return retryErrorArticles(now).catch((e) => {
+    logToAxiom({
+      name: 'article-ingestion-reconcile',
+      type: 'error',
+      message: `error retries failed: ${(e as Error).message}`,
+    });
+    return null;
+  });
+}
+
 /**
- * Published and Processing articles at ingestion Error: nothing else ever takes them out of it.
- * Each episode gets a few retry rounds, spread over days (`INGESTION_ERROR_ROUND_DAYS`), then one
- * `article-ingestion-error-exhausted` log for the moderators' monitor.
+ * Published and Processing articles at ingestion Error, which the stuck-article query above does
+ * not select. Each episode gets retry rounds on `INGESTION_ERROR_ROUND_DAYS`, then one
+ * `article-ingestion-error-exhausted` warning log, and a daily recompute while it stays at Error.
  */
 async function retryErrorArticles(now: Date) {
-  const rows = await dbRead.article.findMany({
-    where: {
-      status: { in: [ArticleStatus.Published, ArticleStatus.Processing] },
-      ingestion: ArticleIngestionStatus.Error,
-    },
-    select: { id: true, metadata: true },
-    orderBy: { id: 'asc' },
-    take: ERROR_FETCH_LIMIT,
-  });
+  // Least recently checked first, so a backlog of exhausted episodes cannot starve newer ones.
+  // Beside the stuck-article query above, in the same form, which this job's tests already serve.
+  const rows = await dbRead.$queryRaw<{ id: number; ingestionError: unknown }[]>`
+    SELECT a.id, a.metadata->'ingestionError' AS "ingestionError"
+    FROM "Article" a
+    WHERE a.status IN (${ArticleStatus.Published}::"ArticleStatus", ${ArticleStatus.Processing}::"ArticleStatus")
+      AND a.ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
+    ORDER BY COALESCE((a.metadata->'ingestionError'->>'checkedAt')::bigint, 0), a.id
+    LIMIT ${ERROR_FETCH_LIMIT}
+  `;
   const due = rows
-    .map(({ id, metadata }) => {
-      const state = readIngestionErrorState(metadata);
+    .map(({ id, ingestionError }) => {
+      const state = readIngestionErrorState({ ingestionError });
       return { id, state, step: ingestionErrorStep(state, now.getTime()) };
     })
-    .filter(({ step }) => step !== 'wait' && step !== 'done')
+    .filter(({ step }) => step !== 'wait')
     .slice(0, ERROR_ARTICLES_PER_TICK);
 
   const counts = {
@@ -344,21 +353,11 @@ async function retryErrorArticles(now: Date) {
     errors: 0,
   };
   let imageBudget = ERROR_IMAGES_PER_TICK;
+  const checkedAt = now.getTime();
 
   for (const { id, state, step } of due) {
     try {
-      if (step === 'exhaust' && state) {
-        await writeErrorState(id, { ...state, exhaustedAt: now.getTime() }, state.enteredAt);
-        counts.exhausted++;
-        logToAxiom({
-          name: 'article-ingestion-error-exhausted',
-          type: 'warning',
-          articleId: id,
-        });
-        continue;
-      }
-
-      // An input that recovered on its own (or a recompute that never ran) needs no retry.
+      // An input that recovered, or a hold a moderator lifted, needs no retry.
       await updateArticleImageScanStatus([id]);
       // primary: read-after-write of the recompute above.
       const article = await dbWrite.article.findUnique({
@@ -377,11 +376,20 @@ async function retryErrorArticles(now: Date) {
         continue;
       }
 
-      if (step === 'start') {
-        await writeErrorState(id, { enteredAt: now.getTime(), rounds: 0 }, null);
+      if (!state) {
+        await writeErrorState(id, { ...silentIngestionErrorState(checkedAt), checkedAt }, null);
         continue;
       }
-      if (!state || imageBudget <= 0) continue;
+      if (step === 'exhaust') {
+        await writeErrorState(id, { ...state, exhaustedAt: checkedAt, checkedAt }, state.enteredAt);
+        counts.exhausted++;
+        logToAxiom({ name: 'article-ingestion-error-exhausted', type: 'warning', articleId: id });
+        continue;
+      }
+      if (step === 'check' || imageBudget <= 0) {
+        await writeErrorState(id, { ...state, checkedAt }, state.enteredAt);
+        continue;
+      }
 
       const images = await retryArticleErrorImages({
         article: {
@@ -408,7 +416,8 @@ async function retryErrorArticles(now: Date) {
             select: { status: true, retryCount: true },
           })
         : null;
-      if (textCheckSpentRetries(moderation)) {
+      const resendText = textCheckSpentRetries(moderation);
+      if (resendText) {
         await submitTextModerationOrScan({
           entityType: 'Article',
           entityId: id,
@@ -429,7 +438,7 @@ async function retryErrorArticles(now: Date) {
 
       await writeErrorState(
         id,
-        { ...state, rounds: state.rounds + 1, lastRoundAt: now.getTime() },
+        { ...state, rounds: state.rounds + 1, lastRoundAt: checkedAt, checkedAt },
         state.enteredAt
       );
       counts.rounds++;
@@ -439,7 +448,7 @@ async function retryErrorArticles(now: Date) {
         articleId: id,
         action: 'error-retry-round',
         message: `round ${state.rounds + 1}: ${images.sent} image(s)${
-          textCheckSpentRetries(moderation) ? ', text check' : ''
+          resendText ? ', text check' : ''
         } sent again`,
       });
     } catch (e) {

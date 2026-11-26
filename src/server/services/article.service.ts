@@ -8,7 +8,10 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { omit, truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
-import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
+import {
+  TEXT_MODERATION_RETRY_LIMIT,
+  TEXT_MODERATION_RETRY_STATUSES,
+} from '~/server/jobs/text-moderation-retry.constants';
 import {
   hasBlockMarker,
   minorMatureHidden,
@@ -65,6 +68,8 @@ import {
   articleModerationText,
   articleTextScanFields,
   readIngestionErrorState,
+  savedIngestionErrorState,
+  silentIngestionErrorState,
   type ArticleIngestionErrorState,
 } from '~/server/services/article-ingestion.helpers';
 import { articleIngestionErrorReason } from '~/shared/utils/article-ingestion-error';
@@ -1565,8 +1570,12 @@ export const upsertArticle = async ({
       await lockAccessTokens(tx, id as number);
       const stored = await tx.article.findUnique({
         where: { id: id as number },
-        select: { title: true, content: true, metadata: true },
+        select: { title: true, content: true, metadata: true, ingestion: true },
       });
+      const storedMetadata = (stored?.metadata as ArticleMetadata | null) ?? prevMetadata;
+      const errorEpisode = stored
+        ? savedIngestionErrorState(storedMetadata, stored.ingestion, Date.now())
+        : undefined;
       const textChanged =
         (data.title !== undefined && data.title !== stored?.title) ||
         (data.content !== undefined && data.content !== stored?.content);
@@ -1594,14 +1603,10 @@ export const upsertArticle = async ({
           ...(sharedSave || publicSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
-          // An author's save starts the Error retries over.
-          metadata: omit(
-            {
-              ...((stored?.metadata as ArticleMetadata | null) ?? prevMetadata),
-              ...data.metadata,
-            },
-            ['ingestionError']
-          ),
+          metadata: {
+            ...omit({ ...storedMetadata, ...data.metadata }, ['ingestionError']),
+            ...(errorEpisode ? { ingestionError: errorEpisode } : {}),
+          },
           publishedAt,
           scheduledAt: scheduledAtWrite,
           coverId,
@@ -3007,6 +3012,9 @@ export function articleTextVerdictMatch(
  * - ingestion -> Blocked/Error (all images terminal) while status == Processing:
  *   sends the "images blocked/failed" notification so the author can fix and
  *   resubmit. Status is left at Processing so the author can edit.
+ * - ingestion -> Error while status is Published or Processing: starts an episode in
+ *   `metadata.ingestionError` (see `ArticleIngestionErrorState`); `ingestionErrorNotification`
+ *   tells a Published owner once per episode. The episode ends at Scanned or Blocked.
  */
 export type RecomputeIngestionResult = {
   articleId: number;
@@ -3124,7 +3132,14 @@ export async function recomputeArticleIngestionInTx(
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-    select: { status: true, blocked: true, contentHash: true, result: true, updatedAt: true },
+    select: {
+      status: true,
+      blocked: true,
+      contentHash: true,
+      result: true,
+      updatedAt: true,
+      retryCount: true,
+    },
   });
 
   // Articles with no text to scan (empty/null title AND content) can never
@@ -3170,9 +3185,9 @@ export async function recomputeArticleIngestionInTx(
   const inErrorEpisode = current.ingestion === ArticleIngestionStatus.Error || !!errorEpisode;
   const inputHeld = images.some((image) => image.needsReview != null || hasBlockMarker(image));
   // A deferred url keeps the article off public, a moderator's rating included: it covers the
-  // images it was given, not a url still waiting to be proved. Moderation Lead, 2026-11-26: an
-  // article leaving Error, which the reconcile job's retries bring about unwatched, never goes
-  // public past an image a moderator has yet to clear.
+  // images it was given, not a url still waiting to be proved. An Error episode ends only past
+  // unheld images: the retry job republishes unwatched, so it must not publish past one a
+  // moderator has yet to clear.
   const next =
     hold?.deferred.length && derived === ArticleIngestionStatus.Scanned
       ? ArticleIngestionStatus.Pending
@@ -3195,16 +3210,42 @@ export async function recomputeArticleIngestionInTx(
   if (setScannedAt) {
     setFragments.push(Prisma.sql`"contentScannedAt" = ${new Date()}`);
   }
-  const trackErrorEpisode =
-    current.status === ArticleStatus.Published || current.status === ArticleStatus.Processing;
   const startErrorEpisode =
-    trackErrorEpisode && next === ArticleIngestionStatus.Error && !inErrorEpisode;
-  const enteredAt = Date.now();
-  if (startErrorEpisode) {
-    const state: ArticleIngestionErrorState = { enteredAt, rounds: 0 };
+    (current.status === ArticleStatus.Published || current.status === ArticleStatus.Processing) &&
+    next === ArticleIngestionStatus.Error &&
+    !inErrorEpisode;
+  const episode: ArticleIngestionErrorState | null = startErrorEpisode
+    ? { enteredAt: Date.now(), rounds: 0 }
+    : errorEpisode;
+  // A text check the retry job is still retrying is not yet a failure worth telling the owner of.
+  const textSpent = textError && (textModeration?.retryCount ?? 0) >= TEXT_MODERATION_RETRY_LIMIT;
+  const reason = articleIngestionErrorReason({
+    errorImages: errorImages - missingImages,
+    missingImages,
+    textError: textSpent,
+  });
+  // Only a Published owner is told, once per episode, and never of a block or hold: the message says
+  // only that a scan could not finish.
+  const notifyErrorEpisode =
+    !!episode &&
+    !episode.silent &&
+    !episode.notifiedAt &&
+    next === ArticleIngestionStatus.Error &&
+    current.status === ArticleStatus.Published &&
+    !inputHeld &&
+    !hold?.deferred.length &&
+    !hold?.refused.length &&
+    !!reason;
+  const episodeWrite =
+    episode && notifyErrorEpisode
+      ? { ...episode, notifiedAt: Date.now() }
+      : startErrorEpisode
+      ? episode
+      : null;
+  if (episodeWrite) {
     setFragments.push(
       Prisma.sql`metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${JSON.stringify(
-        state
+        episodeWrite
       )}::jsonb)`
     );
   } else if (
@@ -3225,9 +3266,8 @@ export async function recomputeArticleIngestionInTx(
     WHERE id = ${articleId}
   `;
 
-  // Populate post-commit hints. Notifications dedupe via `key`
-  // (article-published-$id / article-images-blocked-$id) so re-notifying on
-  // repeated terminal-state recomputes is safe.
+  // Populate post-commit hints. Notifications dedupe via `key`, so re-notifying on repeated
+  // terminal-state recomputes is safe.
   let publishedNotificationUserId: number | null = null;
   let problemsNotification: { userId: number; blockedImages: number; errorImages: number } | null =
     null;
@@ -3252,25 +3292,14 @@ export async function recomputeArticleIngestionInTx(
     };
   }
 
-  const reason = articleIngestionErrorReason({
-    errorImages: errorImages - missingImages,
-    missingImages,
-    textError,
-  });
-  // Never for a block or a hold: the owner hears only that a scan could not finish.
   const ingestionErrorNotification =
-    startErrorEpisode &&
-    current.status === ArticleStatus.Published &&
-    !inputHeld &&
-    !hold?.deferred.length &&
-    !hold?.refused.length &&
-    reason
+    episode && notifyErrorEpisode && reason
       ? {
           userId: current.userId,
           title: current.title,
           reason,
           imageProblem: errorImages > 0,
-          enteredAt,
+          enteredAt: episode.enteredAt,
         }
       : null;
 
@@ -3483,6 +3512,19 @@ async function markArticleImagesForRescan(imageIds: number[], articleUserId: num
   return new Set(flipped.map(({ id }) => id));
 }
 
+/**
+ * The `metadata` an article leaving Error for Rescan keeps: its episode, or a silent one when it has
+ * none, so the review hold still applies when the rescan settles.
+ */
+export const keepErrorEpisodeSql = (now: number) => Prisma.sql`CASE
+  WHEN ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
+    AND metadata->'ingestionError' IS NULL
+  THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${JSON.stringify(
+    silentIngestionErrorState(now)
+  )}::jsonb)
+  ELSE metadata
+END`;
+
 /** Content, cover and banner images, read from the primary: a block that landed seconds ago must not read as unblocked. */
 async function articleRescanCandidates(article: {
   id: number;
@@ -3613,7 +3655,8 @@ export async function rescanArticle({
     UPDATE "Article"
     SET ingestion = ${ArticleIngestionStatus.Rescan}::"ArticleIngestionStatus",
         "scanRequestedAt" = ${new Date()},
-        "contentScannedAt" = NULL
+        "contentScannedAt" = NULL,
+        metadata = ${keepErrorEpisodeSql(Date.now())}
     WHERE id = ${id}
   `;
   await preventReplicationLag('article', id);

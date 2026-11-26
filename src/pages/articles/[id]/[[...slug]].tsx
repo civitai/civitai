@@ -29,6 +29,7 @@ import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
+import { ingestionErrorNotice } from '~/shared/utils/article-ingestion-error';
 import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
@@ -603,9 +604,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           >
             {article.ingestion === ArticleIngestionStatus.Blocked
               ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-              : `This article is hidden from the public because its safety scan could not finish${
-                  scanStatus?.errorReason ? `: ${scanStatus.errorReason}` : ''
-                }. We retry automatically; you can also rescan the affected images, or replace them.`}
+              : ingestionErrorNotice({
+                  reason: scanStatus ? scanStatus.errorReason : undefined,
+                  retrying:
+                    (article.status === ArticleStatus.Published ||
+                      article.status === ArticleStatus.Processing) &&
+                    !article.metadata?.ingestionError?.exhaustedAt,
+                })}
           </AlertWithIcon>
         ) : null
       }

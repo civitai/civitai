@@ -15,3 +15,25 @@ export function articleIngestionErrorReason({
   if (parts.length < 2) return parts[0] ?? null;
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
+
+/**
+ * The owner's sidebar notice for an article at ingestion Error. `reason` is undefined while the scan
+ * status is unknown, and null when nothing failed outright: an image held for a moderator, which the
+ * owner is not told about.
+ */
+export function ingestionErrorNotice({
+  reason,
+  retrying,
+}: {
+  reason: string | null | undefined;
+  retrying: boolean;
+}): string {
+  if (reason === null)
+    return 'This article is hidden from the public until its safety review is complete.';
+  const retry = retrying
+    ? 'We retry automatically over the next few days; you can also rescan the affected images, or replace them.'
+    : 'You can rescan the affected images, or replace them.';
+  return `This article is hidden from the public because its safety scan could not finish${
+    reason ? `: ${reason}` : ''
+  }. ${retry}`;
+}

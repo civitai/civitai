@@ -86,18 +86,25 @@ export function articleTextScanFields(title: string | null, content: string | nu
 }
 
 /**
- * `Article.metadata.ingestionError`: one Error episode of a Published or Processing article, kept
- * until it reaches Scanned or Blocked. A retry round sends its images back to Rescan, which can
- * recompute the article through Pending, so the episode outlives a stay in Pending.
+ * `Article.metadata.ingestionError`: one Error episode of an article, kept until it reaches Scanned
+ * or Blocked. A retry round sends its images back to Rescan, which can recompute the article
+ * through Pending, so the episode outlives a stay in Pending; an author's save keeps it too. While
+ * it lasts, the article never goes public past an image held for a moderator.
  */
 export type ArticleIngestionErrorState = {
   enteredAt: number;
   rounds: number;
   lastRoundAt?: number;
   exhaustedAt?: number;
+  /** When its owner was told. */
+  notifiedAt?: number;
+  /** When the reconcile job last looked at it. */
+  checkedAt?: number;
+  /** Recorded after the fact (the article was at Error before episodes were): its owner is not told. */
+  silent?: boolean;
 };
 
-/** Days after the article entered Error that each retry round is due. */
+/** Days after the episode was recorded that each retry round is due. */
 export const INGESTION_ERROR_ROUND_DAYS = [1, 3, 7];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -109,20 +116,42 @@ export function readIngestionErrorState(metadata: unknown): ArticleIngestionErro
   return { ...state, enteredAt: state.enteredAt, rounds: Number(state.rounds) || 0 };
 }
 
+/** A recorded-after-the-fact episode, for an article found at Error without one. */
+export const silentIngestionErrorState = (now: number): ArticleIngestionErrorState => ({
+  enteredAt: now,
+  rounds: 0,
+  silent: true,
+});
+
 /**
  * What the reconcile job does with an article still at Error: `start` an episode it never recorded,
- * `round` when the next retry is due, `exhaust` once after the last one, else nothing.
+ * `round` when the next retry is due, `exhaust` a day after the last one (once its scans are back),
+ * and otherwise `check` it once a day, since a moderator clearing a held image recomputes nothing.
  */
 export function ingestionErrorStep(
   state: ArticleIngestionErrorState | null,
   now: number
-): 'start' | 'wait' | 'round' | 'exhaust' | 'done' {
+): 'start' | 'round' | 'exhaust' | 'check' | 'wait' {
   if (!state) return 'start';
-  if (state.rounds >= INGESTION_ERROR_ROUND_DAYS.length)
-    return state.exhaustedAt ? 'done' : 'exhaust';
-  return now >= state.enteredAt + INGESTION_ERROR_ROUND_DAYS[state.rounds] * DAY_MS
-    ? 'round'
-    : 'wait';
+  const due = INGESTION_ERROR_ROUND_DAYS[state.rounds];
+  if (due !== undefined && now >= state.enteredAt + due * DAY_MS) return 'round';
+  if (due === undefined && !state.exhaustedAt && now >= (state.lastRoundAt ?? 0) + DAY_MS)
+    return 'exhaust';
+  return now >= (state.checkedAt ?? state.enteredAt) + DAY_MS ? 'check' : 'wait';
+}
+
+/**
+ * The episode an author's save writes: the stored one, never one the client sent, and a silent one
+ * for an article already at Error without one, so the save cannot lift the review hold.
+ */
+export function savedIngestionErrorState(
+  stored: unknown,
+  ingestion: ArticleIngestionStatus,
+  now: number
+): ArticleIngestionErrorState | undefined {
+  const state = readIngestionErrorState(stored);
+  if (state) return state;
+  return ingestion === ArticleIngestionStatus.Error ? silentIngestionErrorState(now) : undefined;
 }
 
 /**

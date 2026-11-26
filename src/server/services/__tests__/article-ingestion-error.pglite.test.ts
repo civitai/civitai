@@ -1,7 +1,11 @@
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
-import { recomputeArticleIngestionInTx } from '~/server/services/article.service';
+import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
+import {
+  keepErrorEpisodeSql,
+  recomputeArticleIngestionInTx,
+} from '~/server/services/article.service';
 
 /**
  * An article's Error episode through the ingestion recompute, against real Postgres rows: when it
@@ -36,6 +40,7 @@ beforeAll(async () => {
     CREATE TABLE "EntityModeration" (
       id serial PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL,
       status "EntityModerationStatus" NOT NULL, blocked boolean, "contentHash" text, result jsonb,
+      "retryCount" int NOT NULL DEFAULT 0,
       "updatedAt" timestamp(3) NOT NULL DEFAULT now(), UNIQUE ("entityType", "entityId")
     );
     CREATE TABLE "ArticleContentLinkHold" (
@@ -63,7 +68,9 @@ const seed = async ({
   /** The title; empty leaves the article with no text to check. */
   text = '',
   textStatus,
+  textRetries = 0,
   moderatorNsfwLevel = null,
+  deferredUrls,
 }: {
   status?: string;
   ingestion?: string;
@@ -72,7 +79,9 @@ const seed = async ({
   content?: Img;
   text?: string;
   textStatus?: string;
+  textRetries?: number;
   moderatorNsfwLevel?: number | null;
+  deferredUrls?: string[];
 }) => {
   const images: [number, Img][] = [[COVER, cover]];
   if (content) images.push([CONTENT, content]);
@@ -93,8 +102,13 @@ const seed = async ({
   );
   if (textStatus)
     await h.pg.query(
-      `INSERT INTO "EntityModeration" ("entityType", "entityId", status) VALUES ('Article', $1, $2)`,
-      [ARTICLE, textStatus]
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "retryCount") VALUES ('Article', $1, $2, $3)`,
+      [ARTICLE, textStatus, textRetries]
+    );
+  if (deferredUrls)
+    await h.pg.query(
+      `INSERT INTO "ArticleContentLinkHold" ("articleId", deferred, "editorId") VALUES ($1, $2, $3)`,
+      [ARTICLE, deferredUrls, OWNER]
     );
 };
 
@@ -111,7 +125,10 @@ const recompute = async () => {
   return { ...row, notice: result.ingestionErrorNotification ?? null };
 };
 
-const EPISODE = { ingestionError: { enteredAt: 1_700_000_000_000, rounds: 1 } };
+// An episode whose owner was already told.
+const EPISODE = {
+  ingestionError: { enteredAt: 1_700_000_000_000, rounds: 1, notifiedAt: 1_700_000_000_000 },
+};
 
 describe('an Error episode starting', () => {
   it('records the episode and tells the owner what could not be scanned', async () => {
@@ -120,21 +137,62 @@ describe('an Error episode starting', () => {
     const after = await recompute();
 
     expect(after.ingestion).toBe('Error');
-    expect(after.metadata?.ingestionError).toEqual({ enteredAt: expect.any(Number), rounds: 0 });
-    expect(after.notice).toMatchObject({
+    const episode = after.metadata?.ingestionError as { enteredAt: number; notifiedAt: number };
+    expect(episode).toEqual({
+      enteredAt: expect.any(Number),
+      rounds: 0,
+      notifiedAt: expect.any(Number),
+    });
+    expect(Date.now() - episode.enteredAt).toBeLessThan(60_000);
+    expect(after.notice).toEqual({
       userId: OWNER,
+      title: '',
       reason: '1 image(s) could not be scanned',
       imageProblem: true,
+      enteredAt: episode.enteredAt,
     });
   });
 
-  it('names a failed text check when the images are fine', async () => {
-    await seed({ text: 'Some words', textStatus: 'Failed' });
+  it('tells the owner nothing more on a later recompute in the same episode', async () => {
+    await seed({ ingestion: 'Pending', content: { ingestion: 'Error' } });
+    await recompute();
+
+    expect((await recompute()).notice).toBeNull();
+  });
+
+  it('names a failed text check once the retry job has given up on it', async () => {
+    await seed({
+      text: 'Some words',
+      textStatus: 'Failed',
+      textRetries: TEXT_MODERATION_RETRY_LIMIT,
+    });
 
     expect((await recompute()).notice).toMatchObject({
       reason: 'the text check could not finish',
       imageProblem: false,
     });
+  });
+
+  it('waits to tell the owner while the retry job is still retrying the text check', async () => {
+    await seed({ text: 'Some words', textStatus: 'Failed', textRetries: 1 });
+
+    const after = await recompute();
+
+    expect(after.ingestion).toBe('Error');
+    expect(after.metadata?.ingestionError).toEqual({ enteredAt: expect.any(Number), rounds: 0 });
+    expect(after.notice).toBeNull();
+  });
+
+  it('says nothing to the owner while a content url is held', async () => {
+    await seed({ content: { ingestion: 'Error' }, deferredUrls: ['https://example.com/a.png'] });
+
+    expect((await recompute()).notice).toBeNull();
+  });
+
+  it('records no episode for a draft', async () => {
+    await seed({ status: 'Draft', content: { ingestion: 'Error' } });
+
+    expect((await recompute()).metadata).toEqual({});
   });
 
   it('says nothing to the owner while another image awaits review', async () => {
@@ -154,7 +212,7 @@ describe('an Error episode starting', () => {
 
     const after = await recompute();
 
-    expect(after.metadata?.ingestionError).toBeDefined();
+    expect(after.metadata?.ingestionError).toEqual({ enteredAt: expect.any(Number), rounds: 0 });
     expect(after.notice).toBeNull();
   });
 });
@@ -169,6 +227,29 @@ describe('an Error episode under way', () => {
     expect(after.metadata).toEqual(EPISODE);
     expect(after.notice).toBeNull();
   });
+
+  it('tells the owner once the text check it was waiting on gives up', async () => {
+    const waiting = { ingestionError: { enteredAt: 1_700_000_000_000, rounds: 0 } };
+    await seed({
+      ingestion: 'Error',
+      metadata: waiting,
+      text: 'Some words',
+      textStatus: 'Failed',
+      textRetries: TEXT_MODERATION_RETRY_LIMIT,
+    });
+
+    expect((await recompute()).notice).toMatchObject({
+      reason: 'the text check could not finish',
+      enteredAt: 1_700_000_000_000,
+    });
+  });
+
+  it('never tells the owner of an episode recorded after the fact', async () => {
+    const silent = { ingestionError: { enteredAt: 1_700_000_000_000, rounds: 1, silent: true } };
+    await seed({ ingestion: 'Pending', metadata: silent, content: { ingestion: 'Error' } });
+
+    expect((await recompute()).notice).toBeNull();
+  });
 });
 
 // Moderation Lead condition 2, scope A (2026-11-26): the hold applies at the way out of Error only.
@@ -179,6 +260,15 @@ describe('an Error episode ending', () => {
     const after = await recompute();
 
     expect(after.ingestion).toBe('Scanned');
+    expect(after.metadata).toEqual({});
+  });
+
+  it('drops the episode when the article is blocked', async () => {
+    await seed({ ingestion: 'Error', metadata: EPISODE, content: { ingestion: 'Blocked' } });
+
+    const after = await recompute();
+
+    expect(after.ingestion).toBe('Blocked');
     expect(after.metadata).toEqual({});
   });
 
@@ -210,5 +300,31 @@ describe('an Error episode ending', () => {
     await seed({ ingestion: 'Pending', content: { ingestion: 'Scanned', needsReview: 'minor' } });
 
     expect((await recompute()).ingestion).toBe('Scanned');
+  });
+});
+
+describe('a rescan of an article at Error that has no recorded episode', () => {
+  const rescanWrite = () =>
+    h.prisma
+      .$executeRaw`UPDATE "Article" SET ingestion = 'Rescan', metadata = ${keepErrorEpisodeSql(
+      Date.now()
+    )} WHERE id = ${ARTICLE}`;
+
+  it('stays hidden while a scanned image awaits review', async () => {
+    await seed({ ingestion: 'Error', content: { ingestion: 'Scanned', needsReview: 'minor' } });
+
+    await rescanWrite();
+    const after = await recompute();
+
+    expect(after.ingestion).toBe('Error');
+    expect(after.metadata?.ingestionError).toMatchObject({ silent: true });
+  });
+
+  it('keeps an episode it already has', async () => {
+    await seed({ ingestion: 'Error', metadata: EPISODE, content: { ingestion: 'Error' } });
+
+    await rescanWrite();
+
+    expect((await recompute()).metadata).toEqual(EPISODE);
   });
 });

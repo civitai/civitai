@@ -3,6 +3,7 @@ import type { ArticleIngestionInputs } from '~/server/services/article-ingestion
 import {
   deriveArticleIngestionState,
   ingestionErrorStep,
+  savedIngestionErrorState,
   textCheckSpentRetries,
 } from '~/server/services/article-ingestion.helpers';
 import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
@@ -123,7 +124,7 @@ describe('deriveArticleIngestionState', () => {
   });
 });
 
-// Moderation Lead, 2026-11-26: rounds at about 1, 3 and 7 days, three in all.
+// Rounds at about 1, 3 and 7 days, agreed with the moderation team (see the PR).
 describe('ingestionErrorStep, the Error retry schedule', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const enteredAt = Date.UTC(2026, 10, 1);
@@ -141,12 +142,42 @@ describe('ingestionErrorStep, the Error retry schedule', () => {
     [2, 6.9, 'wait'],
     [2, 7, 'round'],
   ] as const)('after %i round(s), on day %d: %s', (rounds, day, step) => {
-    expect(ingestionErrorStep({ enteredAt, rounds }, at(day))).toBe(step);
+    expect(ingestionErrorStep({ enteredAt, rounds, checkedAt: at(day) }, at(day))).toBe(step);
   });
 
-  it('stops after the third round, logging the exhaustion once', () => {
-    expect(ingestionErrorStep({ enteredAt, rounds: 3 }, at(30))).toBe('exhaust');
-    expect(ingestionErrorStep({ enteredAt, rounds: 3, exhaustedAt: at(8) }, at(30))).toBe('done');
+  it("marks the episode exhausted a day after the last round, once that round's scans are back", () => {
+    const last = { enteredAt, rounds: 3, lastRoundAt: at(7), checkedAt: at(7) };
+    expect(ingestionErrorStep(last, at(7.5))).toBe('wait');
+    expect(ingestionErrorStep(last, at(8))).toBe('exhaust');
+  });
+
+  it('looks again once a day, after the retries too, since a lifted hold recomputes nothing', () => {
+    const exhausted = { enteredAt, rounds: 3, exhaustedAt: at(8), checkedAt: at(8) };
+    expect(ingestionErrorStep(exhausted, at(8.5))).toBe('wait');
+    expect(ingestionErrorStep(exhausted, at(9))).toBe('check');
+    expect(ingestionErrorStep({ enteredAt, rounds: 1, checkedAt: at(1) }, at(2))).toBe('check');
+  });
+});
+
+describe('savedIngestionErrorState, the episode an author save writes', () => {
+  const stored = { ingestionError: { enteredAt: 5, rounds: 2, notifiedAt: 6 } };
+
+  it('keeps the stored episode', () => {
+    expect(savedIngestionErrorState(stored, ArticleIngestionStatus.Rescan, 99)).toEqual(
+      stored.ingestionError
+    );
+  });
+
+  it('records a silent one for an article at Error without one, so the save keeps the hold', () => {
+    expect(savedIngestionErrorState({}, ArticleIngestionStatus.Error, 99)).toEqual({
+      enteredAt: 99,
+      rounds: 0,
+      silent: true,
+    });
+  });
+
+  it('records none for an article that is not at Error', () => {
+    expect(savedIngestionErrorState({}, ArticleIngestionStatus.Scanned, 99)).toBeUndefined();
   });
 });
 
