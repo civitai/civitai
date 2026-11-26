@@ -64,6 +64,8 @@ export function JudgeSettingsPanel() {
 
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
+  // Drafts persist in the browser across sessions, so an old edit can sit unnoticed under a judge.
+  const hasDraft = draft != null && Object.keys(draft).length > 0;
 
   // Derive current values: draft overrides server data
   const currentName = draft?.name ?? judge?.name ?? '';
@@ -265,6 +267,20 @@ export function JudgeSettingsPanel() {
           <ModelSelector />
         </Stack>
       </ScrollArea>
+      {hasDraft && (
+        <Group mx="sm" gap="xs" justify="space-between" wrap="nowrap">
+          <Text size="xs" c="yellow">
+            Unsaved edits: Save and Duplicate will use them.
+          </Text>
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            onClick={() => selectedJudgeId != null && clearDraft(selectedJudgeId)}
+          >
+            Discard edits
+          </Button>
+        </Group>
+      )}
       <Group m="sm" gap="xs" wrap="nowrap">
         <Button
           leftSection={<IconDeviceFloppy size={16} />}
