@@ -18,6 +18,26 @@ CREATE TABLE "UserProfile" ("userId" INTEGER PRIMARY KEY, "coverImageId" INTEGER
 CREATE TABLE "EntityModeration" ("entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, status TEXT NOT NULL, "triggeredLabels" TEXT[] NOT NULL DEFAULT '{}', result JSONB);
 `;
 
+/** The tables `moderatorWithheldSql` reads besides "Image" and `CSAM_LINK_TABLES_SQL`'s, for a
+ *  suite that brings its own "Image". */
+export const WITHHELD_TABLES_SQL = `
+CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
+CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
+CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
+CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
+CREATE TABLE "BlockedImage" (hash bigint, reason text);
+CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
+CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
+CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
+CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+-- An outright retraction by default; an upgraded deny sets "deniedAt" earlier.
+CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL, "deniedAt" timestamptz NOT NULL DEFAULT now(), "retractedAt" timestamptz DEFAULT now());
+CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
+`;
+
 const SIBLING = 990900001;
 const SIBLING_OWNER = 990910001;
 const POST = 990920001;
