@@ -306,11 +306,11 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   - **Song flagged:** the song itself carries one of those flags (a moderation rule's Hold can set
     `modRule` on a song). 1 Approve song clears it the same way, then 2 Remove song, 3 Remove cover
     and 4 Set rating as on the Reported tab.
-  A song under a lyrics hold is listed only as that hold, and a flagged song only once, even when its
-  cover is flagged too (the cover row appears once the song's flag is decided). A flagged cover or
-  song withheld from the moderator (`withheldImageIds`) carries only its id and kind, and takes no
-  decision. Every decision needs `image.moderate`. The sidebar badge counts the flagged songs and
-  covers decided here, not lyrics holds, which CSAM holds counts; the tab's own count includes them.
+    A song under a lyrics hold is listed only as that hold, and a flagged song only once, even when its
+    cover is flagged too (the cover row appears once the song's flag is decided). A flagged cover or
+    song withheld from the moderator (`withheldImageIds`) carries only its id and kind, and takes no
+    decision. Every decision needs `image.moderate`. The sidebar badge counts the flagged songs and
+    covers decided here, not lyrics holds, which CSAM holds counts; the tab's own count includes them.
 - **Disputes** lists owners' rating disputes on songs (`RatingReview` entity type `Song`, see
   "Rating disputes" below), one row per dispute: the level the owner saw and the level they ask
   for, "Repeat ×n" from the second dispute on the same song, and the owner with whether they
@@ -400,6 +400,18 @@ there; a line without one is text. Image and video cards are unchanged.
   decisions stay available. Remove, strike and ban are offered as on a post hold; "Remove"
   unpublishes the post that contains the song. Dismiss releases the song, so it is back on the site
   and in search. The decisions are the main app's (`csam-hold-decision.ts`).
+
+## A song's rating
+
+A clean song's level is the highest of PG, its lyrics text-scan verdict (`EntityModeration`
+`TrackLyrics`, a text-scan verdict only: an XGuard one rates nothing) and its own cover's rating, once
+the cover is scanned and carries no block (`songLevel`, `src/server/services/audio-scan/song-rating.ts`).
+An nsfw lyrics verdict raises the song; it never blocks it. The song's own scan writes it when it
+decides the song (`decideSong`), and `rerateSong` (`image-scan-pipeline.ts`) writes it again,
+with a scan verdict's side effects, when an input changes: the cover's scan lands, a moderator
+removes the cover, or a lyrics verdict lands on a decided song. It may lower the level when an input
+goes away, never below PG or a collection judge's rating. A blocked or undecided song is left to its
+scan, and a locked level (a moderator's ruling) is never changed.
 
 ## Rating disputes
 

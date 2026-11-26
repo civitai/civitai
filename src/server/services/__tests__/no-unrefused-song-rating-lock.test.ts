@@ -43,6 +43,10 @@ const LEDGER: Record<string, { locks: number; decision: Decision }> = {
     locks: 1,
     decision: { kind: 'reads', why: 'loadImageForScan selects it' },
   },
+  'src/server/services/audio-scan/song-rating.ts': {
+    locks: 1,
+    decision: { kind: 'reads', why: 'rateSong selects it, leaving a locked song alone' },
+  },
   'src/server/services/user-preferences.service.ts': {
     locks: 1,
     decision: { kind: 'reads', why: 'an image select' },

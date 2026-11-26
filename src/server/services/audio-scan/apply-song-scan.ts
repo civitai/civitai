@@ -1,5 +1,6 @@
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { songLevel } from '~/server/services/audio-scan/song-rating';
 import { songVerdict } from '~/server/services/audio-scan/song-scan';
 import {
   readLyricsVerdict,
@@ -12,6 +13,7 @@ import {
   extractFailedSteps,
   loadImageForScan,
   markImageScanError,
+  rerateSong,
   resolveScanOutcome,
   sendIngestionSignal,
   type ScanLog,
@@ -115,13 +117,15 @@ const UNDECIDED: string[] = [ImageIngestionStatus.Pending, ImageIngestionStatus.
 
 /**
  * A song goes public only once its audio and, when it has lyrics, its lyrics have a verdict;
- * whichever lands last decides, and lyrics XGuard blocked block the song. A clean song waiting on
+ * whichever lands last decides, at the song's level (`songLevel`), and lyrics XGuard blocked block
+ * the song. A clean song waiting on
  * its lyrics stays Pending so the ingest cron re-drives it.
  */
 async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: SongDecision) {
   const image = await loadImageForScan(imageId);
+  // A later lyrics verdict (a rescan, an edited title) re-rates a decided song; it never decides one.
+  if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return rerateSong(imageId);
   const lyrics = await readLyricsVerdict(imageId);
-  if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return;
   const verdict = songVerdict(audio, lyrics.state !== 'none');
 
   if (verdict.action === 'retry') {
@@ -149,7 +153,7 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
         : lyrics.state === 'scanned' && lyrics.blocked
         ? // XGuard blocks lyrics on any label, so unlike the audio block it says nothing of minors.
           { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS }
-        : { nsfwLevel: NsfwLevel.PG },
+        : { nsfwLevel: await songLevel(image) },
     log: SONG_SCAN_LOG,
   });
 

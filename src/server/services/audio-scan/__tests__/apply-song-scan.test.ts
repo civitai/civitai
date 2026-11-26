@@ -6,6 +6,7 @@ const pipeline = vi.hoisted(() => ({
   applyIngestionSideEffects: vi.fn(),
   markImageScanError: vi.fn(),
   sendIngestionSignal: vi.fn(),
+  rerateSong: vi.fn(),
 }));
 
 vi.mock('~/server/services/image-scan-pipeline', async () => ({
@@ -60,6 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue(null);
   dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null);
+  dbMock.dbWrite.entityModeration.findMany.mockResolvedValue([]);
   pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Scanned', blockedFor: null });
   pipeline.markImageScanError.mockResolvedValue({ retryCount: 1, userId: 2, failureClass: 'x' });
 });
@@ -172,18 +174,22 @@ describe('a song with lyrics', () => {
     );
   });
 
-  it('is Scanned at PG whatever a text-scan verdict flagged: it is recorded, never a block', async () => {
+  // Decision L6 of the synced-lyrics feature: an nsfw lyrics verdict raises the song, never blocks it.
+  it('is Scanned at the level its text-scan verdict gave, never blocked by it', async () => {
     withLyrics({ status: 'Succeeded', blocked: false });
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
       status: 'Succeeded',
       blocked: false,
       triggeredLabels: ['nsfw'],
     } as never);
+    dbMock.dbWrite.entityModeration.findMany.mockResolvedValue([
+      { entityType: 'TrackLyrics', nsfwLevel: NsfwLevel.R, result: { version: 1 } },
+    ] as never);
 
     await run(scanned(false));
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
+      expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.R } })
     );
   });
 
@@ -243,7 +249,7 @@ describe('a lyrics verdict landing', () => {
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
   });
 
-  it('does not decide a song already decided', async () => {
+  it('does not decide a song already decided, only re-rates it', async () => {
     withLyrics({ status: 'Succeeded', blocked: true });
     audioRow('Succeeded');
     pipeline.loadImageForScan.mockResolvedValue(song({ ingestion: 'Scanned' }));
@@ -251,6 +257,7 @@ describe('a lyrics verdict landing', () => {
     await applySongLyricsVerdict(7);
 
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
+    expect(pipeline.rerateSong).toHaveBeenCalledWith(7);
   });
 
   it('leaves a stored audio verdict that found no audio to the audio lane, rather than counting it again', async () => {

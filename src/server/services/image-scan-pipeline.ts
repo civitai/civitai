@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
+  MediaType,
   ModerationRuleAction,
   NewOrderRankType,
   TagSource,
@@ -17,6 +18,7 @@ import {
   SignalMessages,
 } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { rateSong, songOfCover } from '~/server/services/audio-scan/song-rating';
 import {
   auditPostImageMeta,
   getTagsFromPrompt,
@@ -1386,6 +1388,47 @@ async function notifyImageAutoBlocked({
 
 // Post-update side effects
 // --------------------------------------------------
+const SONG_RATING_LOG: ScanLog = { name: 'song-rating', source: 'image-scan-pipeline' };
+
+/**
+ * Re-rates a decided song after one of its inputs changed (its cover, a lyrics verdict), with the
+ * effects a scan verdict's level has.
+ */
+export async function rerateSong(songId: number) {
+  await rateSong(songId, async (nsfwLevel) => {
+    const image = await loadImageForScan(songId);
+    const outcome: ScanOutcome = {
+      ingestion: ImageIngestionStatus.Scanned,
+      nsfwLevel,
+      blockedFor: null,
+      reviewKey: image.needsReview,
+    };
+    await sendIngestionSignal({
+      imageId: songId,
+      userId: image.userId,
+      ingestion: outcome.ingestion,
+      nsfwLevel,
+      log: SONG_RATING_LOG,
+    });
+    await applyIngestionSideEffects({ image, outcome });
+  });
+}
+
+/** Never throws: the cover's own verdict has landed. */
+async function rerateSongOfCover(coverId: number) {
+  try {
+    const songId = await songOfCover(coverId);
+    if (songId !== null) await rerateSong(songId);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: SONG_RATING_LOG.name,
+      message: (error as Error).message,
+      payload: { coverId },
+    });
+  }
+}
+
 export async function applyIngestionSideEffects({
   image,
   outcome,
@@ -1393,6 +1436,9 @@ export async function applyIngestionSideEffects({
   image: ScanImage;
   outcome: ScanOutcome;
 }) {
+  // A song's own cover is a postless image; its rating counts toward the song's.
+  if (image.type === MediaType.image && image.postId == null) await rerateSongOfCover(image.id);
+
   // handle blocked image updates
   if (outcome.ingestion === ImageIngestionStatus.Blocked) {
     await queueImageSearchIndexUpdate({

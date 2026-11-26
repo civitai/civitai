@@ -155,6 +155,7 @@ import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { rerateSong } from '~/server/services/image-scan-pipeline';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { ModeratorClientError } from '@civitai/moderation';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -435,7 +436,18 @@ export const removeSongCoverHandler = async ({
   const cover = await getSongCoverForRemoval(kyselyWrite, input.id);
   if (!cover) throw throwBadRequestError(NO_SONG_COVER_MESSAGE);
   if (cover.held) throw throwBadRequestError(HELD_SONG_COVER_MESSAGE);
-  return setTosViolationHandler({ input: { ...input, id: cover.coverId }, ctx });
+  const removed = await setTosViolationHandler({ input: { ...input, id: cover.coverId }, ctx });
+  // The cover's rating no longer counts toward the song's. The removal has landed either way.
+  if (!removed.held)
+    await rerateSong(input.id).catch((error: Error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'song-rating',
+        message: error.message,
+        payload: { songId: input.id },
+      })
+    );
+  return removed;
 };
 
 export const getImagesForModelVersionHandler = async ({
