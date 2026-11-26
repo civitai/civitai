@@ -13,10 +13,19 @@
 // batch's rows, one JSON object per line; ClickHouse reads everything after the FORMAT clause as data
 // in that format, never as SQL.
 //
-// The caller never waits on ClickHouse. Add marshals the row and puts it on a bounded queue with a
-// non-blocking send: a full queue drops the row (counted, reason ReasonQueueFull), it does not apply
-// back-pressure. Delivery is best effort: a batch that fails (after its retries, for a 5xx or
-// transport error) is dropped and its rows counted, through Config.Dropped and Writer.Dropped.
+// The caller never waits on ClickHouse. Add marshals the row and puts it on a queue bounded both in
+// rows (QueueSize) and in bytes (QueueBytes) with a non-blocking send: a full queue drops the row
+// (counted, reason ReasonQueueFull), it does not apply back-pressure, and the memory it holds is
+// bounded however large the rows are. A batch that fails (after its retries, for a 5xx or transport
+// error) is dropped and its rows counted, through Config.Dropped and Writer.Dropped.
+//
+// Delivery is at least once across retries, not exactly once: an attempt that times out or loses its
+// connection may still have been written, and its retry then writes the rows again (and a batch whose
+// last such attempt landed is counted dropped although it was written). Every attempt of one batch
+// carries the same insert_deduplication_token (random per Writer, then a batch counter) with
+// async_insert_deduplicate=1, so a table with insert deduplication enabled keeps one copy; on a table
+// without it, a retried batch can be duplicated. Keep RequestTimeout above the server's async flush
+// wait so a slow but successful insert is not retried.
 //
 // Settings sent with every INSERT: async_insert=1 (the server buffers small inserts from many pods
 // into larger parts, rather than creating a part per batch) and wait_for_async_insert=1. The latter
@@ -34,12 +43,15 @@ package chwrite
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +81,7 @@ const (
 // Defaults for zero Config fields.
 const (
 	DefaultQueueSize      = 10000
+	DefaultQueueBytes     = 64 << 20
 	DefaultBatchRows      = 1000
 	DefaultBatchBytes     = 1 << 20
 	DefaultFlushInterval  = time.Second
@@ -91,6 +104,9 @@ type Config struct {
 	// QueueSize is how many marshalled rows wait for the background goroutine (0: DefaultQueueSize).
 	// A row past it is dropped (ReasonQueueFull).
 	QueueSize int
+	// QueueBytes bounds the marshalled bytes waiting in the queue (0: DefaultQueueBytes). A row that
+	// would take it past this is dropped (ReasonQueueFull); a single row larger than it never queues.
+	QueueBytes int
 	// BatchRows sends a batch once it holds this many rows (0: DefaultBatchRows).
 	BatchRows int
 	// BatchBytes bounds a batch's body: a row that would take it past this starts the next batch
@@ -115,7 +131,9 @@ type Config struct {
 	// background goroutine, so concurrently: it must be safe for that and must not block.
 	Dropped func(n int, reason string)
 	// OnError, when set, is called from the background goroutine with each failed attempt's error
-	// (a retried one included). A transport error never carries the request URL.
+	// (a retried one included). A transport error never carries the request URL. An HTTP error
+	// carries up to 4 KiB of ClickHouse's answer, and ClickHouse quotes the offending input in a parse
+	// error: treat the text as holding row data, and never log it where the rows may not go.
 	OnError func(err error)
 }
 
@@ -127,11 +145,15 @@ type Writer struct {
 	ownHTTP    bool
 
 	batchRows, batchBytes int
-	interval              time.Duration
-	maxRetries            int
-	backoff, timeout      time.Duration
-	onDrop                func(int, string)
-	onError               func(error)
+	queueBytes            int64
+	// tokenPrefix and batchSeq make each batch's insert_deduplication_token (batchSeq: run's only).
+	tokenPrefix      string
+	batchSeq         uint64
+	interval         time.Duration
+	maxRetries       int
+	backoff, timeout time.Duration
+	onDrop           func(int, string)
+	onError          func(error)
 
 	// mu guards closed and the close of queue: Add holds it shared across its check and its
 	// (non-blocking) send, so no row is sent on a closed queue or lands after the final drain.
@@ -147,6 +169,8 @@ type Writer struct {
 
 	dropped atomic.Uint64
 	sent    atomic.Uint64
+	// queued is the marshalled bytes in the queue: added by Add, subtracted as run takes a row.
+	queued atomic.Int64
 }
 
 // New validates cfg and starts the background goroutine. The URL must be absolute http or https;
@@ -167,7 +191,7 @@ func New(cfg Config) (*Writer, error) {
 	if !validTable(cfg.Table) {
 		return nil, errors.New("clickhouse table: want an identifier or database.identifier ([A-Za-z_][A-Za-z0-9_]*)")
 	}
-	if cfg.QueueSize < 0 || cfg.BatchRows < 0 || cfg.BatchBytes < 0 || cfg.MaxRetries < 0 ||
+	if cfg.QueueSize < 0 || cfg.QueueBytes < 0 || cfg.BatchRows < 0 || cfg.BatchBytes < 0 || cfg.MaxRetries < 0 ||
 		cfg.FlushInterval < 0 || cfg.RetryBackoff < 0 || cfg.RequestTimeout < 0 {
 		return nil, errors.New("clickhouse writer: negative size, count or duration")
 	}
@@ -180,6 +204,8 @@ func New(cfg Config) (*Writer, error) {
 	q.Set("async_insert", "1")
 	// 1, not 0: see the package doc (a failed async flush must reach the dropped count).
 	q.Set("wait_for_async_insert", "1")
+	// With the per-batch insert_deduplication_token post adds: see the package doc.
+	q.Set("async_insert_deduplicate", "1")
 	q.Set("query", InsertQuery(cfg.Table))
 	u.RawQuery = q.Encode()
 
@@ -192,25 +218,31 @@ func New(cfg Config) (*Writer, error) {
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
+	var prefix [8]byte
+	if _, err := rand.Read(prefix[:]); err != nil {
+		return nil, fmt.Errorf("clickhouse writer: dedup token: %w", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &Writer{
-		endpoint:   u.String(),
-		user:       cfg.Username,
-		pass:       cfg.Password,
-		http:       &hc,
-		ownHTTP:    own,
-		batchRows:  orDefault(cfg.BatchRows, DefaultBatchRows),
-		batchBytes: orDefault(cfg.BatchBytes, DefaultBatchBytes),
-		interval:   orDefault(cfg.FlushInterval, DefaultFlushInterval),
-		maxRetries: cfg.MaxRetries,
-		backoff:    orDefault(cfg.RetryBackoff, DefaultRetryBackoff),
-		timeout:    orDefault(cfg.RequestTimeout, DefaultRequestTimeout),
-		onDrop:     cfg.Dropped,
-		onError:    cfg.OnError,
-		queue:      make(chan []byte, orDefault(cfg.QueueSize, DefaultQueueSize)),
-		ctx:        ctx,
-		cancel:     cancel,
-		done:       make(chan struct{}),
+		queueBytes:  int64(orDefault(cfg.QueueBytes, DefaultQueueBytes)),
+		tokenPrefix: hex.EncodeToString(prefix[:]),
+		endpoint:    u.String(),
+		user:        cfg.Username,
+		pass:        cfg.Password,
+		http:        &hc,
+		ownHTTP:     own,
+		batchRows:   orDefault(cfg.BatchRows, DefaultBatchRows),
+		batchBytes:  orDefault(cfg.BatchBytes, DefaultBatchBytes),
+		interval:    orDefault(cfg.FlushInterval, DefaultFlushInterval),
+		maxRetries:  cfg.MaxRetries,
+		backoff:     orDefault(cfg.RetryBackoff, DefaultRetryBackoff),
+		timeout:     orDefault(cfg.RequestTimeout, DefaultRequestTimeout),
+		onDrop:      cfg.Dropped,
+		onError:     cfg.OnError,
+		queue:       make(chan []byte, orDefault(cfg.QueueSize, DefaultQueueSize)),
+		ctx:         ctx,
+		cancel:      cancel,
+		done:        make(chan struct{}),
 	}
 	go w.run()
 	return w, nil
@@ -263,18 +295,33 @@ func (w *Writer) Add(row any) bool {
 		w.drop(1, ReasonMarshal)
 		return false
 	}
+	// The reason is decided under the lock and counted after it, so the Dropped hook never runs
+	// while Close waits for the lock.
+	if reason := w.enqueue(b); reason != "" {
+		w.drop(1, reason)
+		return false
+	}
+	return true
+}
+
+// enqueue puts b on the queue, or says why not ("" when queued).
+func (w *Writer) enqueue(b []byte) string {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if w.closed {
-		w.drop(1, ReasonShutdown)
-		return false
+		return ReasonShutdown
+	}
+	n := int64(len(b))
+	if w.queued.Add(n) > w.queueBytes {
+		w.queued.Add(-n)
+		return ReasonQueueFull
 	}
 	select {
 	case w.queue <- b:
-		return true
+		return ""
 	default:
-		w.drop(1, ReasonQueueFull)
-		return false
+		w.queued.Add(-n)
+		return ReasonQueueFull
 	}
 }
 
@@ -353,6 +400,7 @@ func (w *Writer) run() {
 				flush()
 				return
 			}
+			w.queued.Add(-int64(len(row)))
 			if n > 0 && batch.Len()+len(row)+1 > w.batchBytes {
 				flush()
 			}
@@ -376,13 +424,15 @@ func (w *Writer) run() {
 // send posts one batch of n rows, retrying a 5xx or transport error up to maxRetries times with a
 // doubling backoff, and counts the rows as sent or dropped.
 func (w *Writer) send(body []byte, n int) {
+	w.batchSeq++
+	token := w.tokenPrefix + "-" + strconv.FormatUint(w.batchSeq, 10)
 	wait := w.backoff
 	for attempt := 0; ; attempt++ {
 		if w.ctx.Err() != nil {
 			w.drop(n, ReasonShutdown)
 			return
 		}
-		reason, err := w.post(body)
+		reason, err := w.post(body, token)
 		if err == nil {
 			w.sent.Add(uint64(n)) //nolint:gosec // n is a row count, never negative
 			return
@@ -416,10 +466,11 @@ func (w *Writer) send(body []byte, n int) {
 const maxErrorBody = 4 << 10
 
 // post sends body once. A nil error is a 2xx; otherwise reason is the drop reason the failure maps to.
-func (w *Writer) post(body []byte) (reason string, err error) {
+func (w *Writer) post(body []byte, token string) (reason string, err error) {
 	ctx, cancel := context.WithTimeout(w.ctx, w.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint, bytes.NewReader(body))
+	target := w.endpoint + "&insert_deduplication_token=" + url.QueryEscape(token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return ReasonTransport, fmt.Errorf("clickhouse insert: %w", redact(err))
 	}

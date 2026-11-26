@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +51,10 @@ func fakeServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Reques
 }
 
 func ok(http.ResponseWriter, *http.Request) {}
+
+// tokenRE is an insert_deduplication_token: 16 hex digits of the Writer's random prefix, a dash, the
+// batch counter.
+var tokenRE = regexp.MustCompile(`^[0-9a-f]{16}-[1-9][0-9]*$`)
 
 // drop is one Config.Dropped call.
 type drop struct {
@@ -149,6 +154,15 @@ func TestBatchesByRows(t *testing.T) {
 	if got := bodies(seen()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("bodies = %q, want %q", got, want)
 	}
+	recs := seen()
+	suffixes := make([]string, 0, len(recs))
+	for _, r := range recs {
+		tok := r.query.Get("insert_deduplication_token")
+		suffixes = append(suffixes, tok[strings.LastIndexByte(tok, '-')+1:])
+	}
+	if want := []string{"1", "2", "3"}; !reflect.DeepEqual(suffixes, want) {
+		t.Fatalf("token batch counters = %v, want %v", suffixes, want)
+	}
 	if w.Sent() != 7 || w.Dropped() != 0 {
 		t.Fatalf("sent %d dropped %d, want 7 and 0", w.Sent(), w.Dropped())
 	}
@@ -210,12 +224,18 @@ func TestRequestShape(t *testing.T) {
 	if r.method != http.MethodPost || r.path != "/" || r.user != "writer" || r.pass != "pw" {
 		t.Fatalf("method %q path %q auth %q/%q", r.method, r.path, r.user, r.pass)
 	}
+	token := r.query.Get("insert_deduplication_token")
+	if !tokenRE.MatchString(token) || !strings.HasSuffix(token, "-1") {
+		t.Fatalf("insert_deduplication_token = %q, want <16 hex>-1 (the first batch)", token)
+	}
+	r.query.Del("insert_deduplication_token")
 	want := url.Values{
-		"application":           {"test-writer"},
-		"database":              {"exampledb"},
-		"async_insert":          {"1"},
-		"wait_for_async_insert": {"1"},
-		"query":                 {"INSERT INTO events FORMAT JSONEachRow"},
+		"application":              {"test-writer"},
+		"database":                 {"exampledb"},
+		"async_insert":             {"1"},
+		"wait_for_async_insert":    {"1"},
+		"async_insert_deduplicate": {"1"},
+		"query":                    {"INSERT INTO events FORMAT JSONEachRow"},
 	}
 	if !reflect.DeepEqual(r.query, want) {
 		t.Fatalf("query = %v, want %v", r.query, want)
@@ -325,6 +345,50 @@ func TestQueueFullDropsWithoutBlocking(t *testing.T) {
 	}
 }
 
+// The queue's byte bound: with one batch held in flight, rows of 8 marshalled bytes fill a 30-byte
+// bound after three (24 bytes); the fourth (32 > 30) is dropped at once although the row bound (100) is far off,
+// and a row larger than the bound on its own never queues. Once the server answers, the queued bytes
+// are released and a row fits again.
+func TestQueueBytesBound(t *testing.T) {
+	release := make(chan struct{})
+	srv, arrived, seen := fakeServer(t, func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	var drops dropLog
+	w := newWriter(t, Config{URL: srv.URL, Table: "events", QueueSize: 100, QueueBytes: 30, BatchRows: 1,
+		FlushInterval: time.Hour, Dropped: drops.hook})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+
+	if !w.Add(row{1}) {
+		t.Fatal("Add(1) = false")
+	}
+	waitRequest(t, arrived) // row 1 taken off the queue and in flight
+	var got []bool
+	for i := 2; i <= 5; i++ {
+		got = append(got, w.Add(row{i}))
+	}
+	got = append(got, w.Add(map[string]string{"pad": strings.Repeat("x", 40)}))
+	if want := []bool{true, true, true, false, false}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Add results = %v, want %v", got, want)
+	}
+	if want := []drop{{1, "queue_full"}, {1, "queue_full"}}; !reflect.DeepEqual(drops.get(), want) {
+		t.Fatalf("drops = %v, want %v", drops.get(), want)
+	}
+	once.Do(func() { close(release) })
+	closeWithin(t, w)
+	want := []string{"{\"id\":1}\n", "{\"id\":2}\n", "{\"id\":3}\n", "{\"id\":4}\n"}
+	if got := bodies(seen()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("bodies = %q, want %q", got, want)
+	}
+	if w.Sent() != 4 || w.Dropped() != 2 {
+		t.Fatalf("sent %d dropped %d, want 4 and 2", w.Sent(), w.Dropped())
+	}
+}
+
 // Rows still queued when Close is called are all sent (the flush interval would never fire).
 func TestCloseFlushesQueued(t *testing.T) {
 	srv, _, seen := fakeServer(t, ok)
@@ -425,6 +489,10 @@ func TestServerErrorRetriedThenDropped(t *testing.T) {
 	for i, r := range got {
 		if r.body != "{\"id\":1}\n{\"id\":2}\n" {
 			t.Fatalf("attempt %d body = %q", i, r.body)
+		}
+		// Every attempt of the batch carries the same deduplication token.
+		if tok := r.query.Get("insert_deduplication_token"); !tokenRE.MatchString(tok) || tok != got[0].query.Get("insert_deduplication_token") {
+			t.Fatalf("attempt %d token %q, attempt 0 %q", i, tok, got[0].query.Get("insert_deduplication_token"))
 		}
 	}
 	if want := []drop{{2, "http_5xx"}}; !reflect.DeepEqual(drops.get(), want) {
