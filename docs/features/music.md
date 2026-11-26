@@ -22,7 +22,10 @@ moderators and `music` flag holders. feed-go reads the
   The bar's cover and title open the song's detail view, and the creator's name opens the music tab
   of their profile (`songCreatorHref`).
 - **Lyrics:** stored in `TrackLyrics.lines` as `[{ t, text }]`, `t` in milliseconds or null when the
-  line has no time.
+  line has no time. Generator lyrics are saved untimed at post time, then timed against the song
+  by the orchestrator's `lyricsAlignment` recipe (`alignTrackLyrics`, not awaited), which sets
+  `source: aligned`. Labels stay untimed; a song it can't align (204), or whose lyrics changed
+  while it ran, keeps them untimed. The text is unchanged, so its scan stands.
 - **Visibility:** a song shows only once it is reviewed (`songReviewedSql` / `imageReviewedSql` in
   `src/server/common/image-visibility.ts`), which for a song includes the verdict on its lyrics text.
 
