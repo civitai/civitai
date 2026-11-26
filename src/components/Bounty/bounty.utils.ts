@@ -1,4 +1,7 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
+import type { SemanticBountySearchInput } from '~/server/schema/semantic-bounty-search.schema';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo } from 'react';
@@ -6,10 +9,7 @@ import produce from 'immer';
 import * as z from 'zod';
 
 import { Currency, BountyEngagementType, BountyType } from '~/shared/utils/prisma/enums';
-import type {
-  GetInfiniteBountySchema,
-  UpsertBountyInput,
-} from '~/server/schema/bounty.schema';
+import type { GetInfiniteBountySchema, UpsertBountyInput } from '~/server/schema/bounty.schema';
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -20,6 +20,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { BountySort, BountyStatus } from '~/server/common/enums';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -113,6 +114,59 @@ export const useQueryBounties = (
   });
 
   return { data, bounties, isLoading: isLoading || loadingPreferences, ...rest };
+};
+
+/** The bounty feed's filters that the semantic search takes, with the query. */
+export function toSemanticBountySearchInput(
+  filters: Partial<GetInfiniteBountySchema>,
+  query: string,
+  browsingLevel: number
+): Omit<SemanticBountySearchInput, 'limit'> {
+  return {
+    query,
+    browsingLevel,
+    types: filters.types,
+    mode: filters.mode,
+    status: filters.status,
+    baseModels: filters.baseModels,
+    userId: filters.userId,
+  };
+}
+
+/** The bounty feed answered by the semantic search. Idle without a query. */
+export const useSemanticBountyFeed = (
+  filters: Partial<GetInfiniteBountySchema>,
+  query: string | undefined
+) => {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { asTyped } = useSearchAsTyped(query);
+  const input = {
+    ...toSemanticBountySearchInput(filters, query ?? '', browsingLevel),
+    ...spellcheckFor(asTyped),
+  };
+  const { data, ...rest } = trpc.semanticBountySearch.search.useInfiniteQuery(input, {
+    enabled: !!query,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    ...withPlaceholderData({ keepPreviousData: true }),
+    // The feed's retry banner drives every attempt; a failure never falls back to the keyword feed.
+    retry: 0,
+    trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+  });
+  const flatData = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const { items: bounties, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'bounties',
+    data: flatData,
+    isRefetching: rest.isRefetching,
+  });
+  return {
+    ...rest,
+    bounties,
+    isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
+    correctedQuery: data?.pages[0]?.correctedQuery,
+    // Identifies the search, so the feed can scroll to the top when it changes.
+    searchKey: query ? JSON.stringify(input) : undefined,
+  };
 };
 
 export const getMainBountyAmount = (bounty?: {

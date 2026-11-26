@@ -9,6 +9,7 @@ import {
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 import { sanitizeRelayFallbackOutcome } from '~/utils/relay-fallback-outcome';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 /**
  * Sanitize the caller-supplied failure object before it reaches the event stream.
@@ -62,7 +63,10 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
   if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {
@@ -83,7 +87,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     res.setHeader('Cache-Control', 'no-store');
     res.status(400).json({ error: 'Missing or invalid bucket, key or uploadId' });
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-abort-invalid',
         userId,
         type,
@@ -116,7 +120,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // uncontained throw would unwind into the catch below and re-answer a request that
     // already succeeded. Not silent — @civitai/axiom reports its own ingest failures.
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-abort',
         userId,
         type,
@@ -169,7 +173,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       }
     } finally {
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-abort-error',
           userId,
           type,

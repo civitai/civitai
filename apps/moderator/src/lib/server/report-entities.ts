@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { reportEntityLabels, type ReportEntity } from '$lib/reports';
+import { reportEntityLabels, reportQueueOf, type ReportEntity } from '$lib/reports';
 
 /**
  * Where each report type's rows live, and who owns the thing being reported.
@@ -18,17 +18,26 @@ export type ReportEntityMeta = {
   /** The reported thing's own table. */
   table: string;
   /** Column on `table` naming the account the report is ABOUT. `null` where no single column says
-   *  that: `reportedUser` (the reported thing IS an account) and `chat`, whose subject is inferred by
-   *  `chatReportSubject` and added back at both `OWNED_REPORT_ENTITIES` call sites. */
-  ownerColumn: 'userId' | 'ownerId' | 'createdById' | 'sellerId' | null;
+   *  that: `reportedUser` (the reported thing IS an account), `chat`, whose subject is inferred by
+   *  `chatReportSubject` and added back at both `OWNED_REPORT_ENTITIES` call sites, and a type whose
+   *  `owner` names it instead. */
+  ownerColumn: OwnerColumn | null;
+  /** Whose content it is, where that is not on the queue's entity: the report row's `fk` to the
+   *  reported thing's own `table` and its owner column. */
+  owner?: { fk: string; table: string; ownerColumn: OwnerColumn };
   label: string;
 };
+
+type OwnerColumn = 'userId' | 'ownerId' | 'createdById' | 'sellerId' | 'buyerId';
 
 // Declaration order is display order wherever reports are grouped by type.
 const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
   image: { reportTable: 'ImageReport', fk: 'imageId', table: 'Image', ownerColumn: 'userId' },
   model: { reportTable: 'ModelReport', fk: 'modelId', table: 'Model', ownerColumn: 'userId' },
   post: { reportTable: 'PostReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
+  // A storyline text's report, keyed by the text's post: it is worked in the post queue
+  // (`REPORT_QUEUE_OF`) and outlives the text. The text itself is `PostTextReport.postTextId`.
+  postText: { reportTable: 'PostTextReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
   article: {
     reportTable: 'ArticleReport',
     fk: 'articleId',
@@ -105,6 +114,15 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'ServiceOffering',
     ownerColumn: 'sellerId',
   },
+  // A buyer review's report, keyed by its offering: it is worked in the offering queue
+  // (`REPORT_QUEUE_OF`). Its author is the review's buyer, not the offering's seller.
+  serviceDealReview: {
+    reportTable: 'ServiceDealReviewReport',
+    fk: 'serviceOfferingId',
+    table: 'ServiceOffering',
+    ownerColumn: null,
+    owner: { fk: 'serviceDealReviewId', table: 'ServiceDealReview', ownerColumn: 'buyerId' },
+  },
   challenge: {
     reportTable: 'ChallengeReport',
     fk: 'challengeId',
@@ -132,6 +150,13 @@ export const REPORT_ENTITIES: ReportEntityMeta[] = (Object.keys(TABLES) as Repor
 const BY_TYPE = new Map(REPORT_ENTITIES.map((e) => [e.type, e]));
 
 export const reportEntity = (type: ReportEntity): ReportEntityMeta => BY_TYPE.get(type)!;
+
+/**
+ * Every report type worked in `queue`: its own, and those `REPORT_QUEUE_OF` files there. Each one's
+ * `fk` names the queue's entity (the post queue's types both key by `postId`).
+ */
+export const reportQueueMembers = (queue: ReportEntity): ReportEntityMeta[] =>
+  REPORT_ENTITIES.filter((e) => reportQueueOf(e.type) === queue);
 
 /**
  * Which account a chat report is ABOUT, as a predicate over a joined `Chat` and its `Report`.
@@ -178,8 +203,13 @@ export const chatReportSubject = (
 `;
 
 /** Every type whose row names its owner in one column — i.e. all but `reportedUser` (the reported
- *  thing IS an account) and `chat` (no single column says it; see `chatReportSubject`). */
-export const OWNED_REPORT_ENTITIES = REPORT_ENTITIES.filter(
-  (e): e is ReportEntityMeta & { ownerColumn: NonNullable<ReportEntityMeta['ownerColumn']> } =>
-    e.ownerColumn !== null
+ *  thing IS an account) and `chat` (no single column says it; see `chatReportSubject`) — joined to
+ *  its owner: through `owner` where the queue's entity is not the owner's. */
+export const OWNED_REPORT_ENTITIES = REPORT_ENTITIES.flatMap(
+  (e): (ReportEntityMeta & { ownerColumn: OwnerColumn })[] =>
+    e.owner
+      ? [{ ...e, ...e.owner }]
+      : e.ownerColumn !== null
+      ? [{ ...e, ownerColumn: e.ownerColumn }]
+      : []
 );

@@ -82,12 +82,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string, opts?: { width?: number }) => `edge:${url}@${opts?.width}`,
 }));
-// The provenance-marker constant, stubbed so the test does not pull the image
-// upload service's env/S3 graph. Same stub the service's own unit test uses.
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-}));
-
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { baseHandler } from '~/pages/api/v1/blocks/gated-images';
 
@@ -126,6 +120,7 @@ function claimsWith(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
     ctx: {},
     scopes: [],
     maxBrowsingLevel: SFW_CEILING,
+    viewerBrowsingLevel: MATURE_CEILING,
     ...over,
   } as unknown as BlockTokenClaims;
 }
@@ -148,6 +143,9 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  // The row carries THIS app's published key (the SQL's `viaPublished`).
+  viaPublished: true,
+  modelRestricted: false,
   ...over,
 });
 
@@ -277,6 +275,57 @@ describe('GET /api/v1/blocks/gated-images — the maturity clamp reaches the wir
     // carries no mature bit. A token minted before the claim existed must not be
     // read as "no ceiling declared, so no ceiling applies".
     claimsBox.claims = claimsWith({ maxBrowsingLevel: undefined });
+    queryRaw.mockResolvedValue([row(1)]);
+
+    const { req, res } = createMocks({ query: { ids: '1' } });
+    await (baseHandler as any)(req, res);
+
+    expect((res._json() as any).images).toEqual([{ imageId: 1, status: 'hidden' }]);
+  });
+  it('a PG viewer on a mature domain is clamped to their own level', async () => {
+    claimsBox.claims = claimsWith({
+      maxBrowsingLevel: MATURE_CEILING,
+      viewerBrowsingLevel: NsfwLevel.PG,
+    });
+    queryRaw.mockResolvedValue([row(1)]);
+
+    const { req, res } = createMocks({ query: { ids: '1' } });
+    await (baseHandler as any)(req, res);
+
+    expect((res._json() as any).images).toEqual([{ imageId: 1, status: 'hidden' }]);
+  });
+
+  it('🔴 a token whose viewer level is 0 reads no images, not the public floor', async () => {
+    claimsBox.claims = claimsWith({ maxBrowsingLevel: MATURE_CEILING, viewerBrowsingLevel: 0 });
+    queryRaw.mockResolvedValue([row(1, { nsfwLevel: NsfwLevel.PG })]);
+
+    const { req, res } = createMocks({ query: { ids: '1' } });
+    await (baseHandler as any)(req, res);
+
+    expect((res._json() as any).images).toEqual([]);
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same PG row is visible to a PG token', async () => {
+    claimsBox.claims = claimsWith({
+      maxBrowsingLevel: MATURE_CEILING,
+      viewerBrowsingLevel: NsfwLevel.PG,
+    });
+    queryRaw.mockResolvedValue([row(1, { nsfwLevel: NsfwLevel.PG })]);
+
+    const { req, res } = createMocks({ query: { ids: '1' } });
+    await (baseHandler as any)(req, res);
+
+    expect((res._json() as any).images).toEqual([
+      expect.objectContaining({ imageId: 1, status: 'visible' }),
+    ]);
+  });
+
+  it('a token with no viewer claim fails closed to the public floor', async () => {
+    claimsBox.claims = claimsWith({
+      maxBrowsingLevel: MATURE_CEILING,
+      viewerBrowsingLevel: undefined,
+    });
     queryRaw.mockResolvedValue([row(1)]);
 
     const { req, res } = createMocks({ query: { ids: '1' } });

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -17,13 +16,13 @@ const VERSION_ID = 42;
 const MODEL_ID = 7;
 const USER_ID = 5;
 
-const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache } = vi.hoisted(
-  () => ({
+const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache, mockCurated } =
+  vi.hoisted(() => ({
     mockGetFilesForModelVersionCache: vi.fn(),
     mockCancellableQuery: vi.fn(),
     mockImagesCache: vi.fn(),
-  })
-);
+    mockCurated: vi.fn(),
+  }));
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: mockCancellableQuery },
@@ -47,6 +46,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
+  getShowcaseImageFilter: vi.fn(async () => () => true),
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(),
@@ -182,6 +182,7 @@ function primeOneModel(flags: { minor: boolean; sfwOnly: boolean }) {
 async function servedByModelsApi() {
   const { items } = await getModelsWithVersions({
     input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+    curate: mockCurated,
   });
   expect(items).toHaveLength(1);
   return items[0].modelVersions[0].images.map((i: { id: number }) => i.id);
@@ -199,6 +200,29 @@ async function servedByVersionApi() {
 beforeEach(() => {
   vi.clearAllMocks();
   redisMock.redis.get.mockResolvedValue(null);
+  mockCurated.mockImplementation(async (byVersion: unknown) => byVersion);
+});
+
+describe('/api/v1/models — a curated showcase', () => {
+  const COMMUNITY = image(9, NsfwLevel.X);
+  beforeEach(() => {
+    mockCurated.mockImplementation(async () => ({
+      [VERSION_ID]: { modelVersionId: VERSION_ID, images: [COMMUNITY, ...SHOWCASE] },
+    }));
+  });
+
+  it('is served in place of the default list, the .com one to a caller served only safe levels', async () => {
+    primeOneModel({ minor: false, sfwOnly: false });
+    expect(await servedByModelsApi()).toEqual([9, ...ALL_IDS]);
+    expect(mockCurated).toHaveBeenCalledTimes(1);
+    expect(mockCurated).toHaveBeenCalledWith(expect.anything(), 'com');
+  });
+
+  it("keeps a held model's curated images within its gallery level", async () => {
+    primeOneModel({ minor: true, sfwOnly: false });
+    storedModel({ minor: true, gallerySettings: { level: 0 } });
+    expect(await servedByModelsApi()).toEqual(SFW_IDS);
+  });
 });
 
 describe('/api/v1/models — a minor or SFW-only model', () => {
@@ -236,17 +260,67 @@ describe('/api/v1/models — a minor or SFW-only model', () => {
     expect(await servedByModelsApi()).toEqual(SFW_IDS);
   });
 
-  it('serves SFW with a warning, and does not throw, when the settings read fails', async () => {
+  it('serves SFW, and does not throw, when the settings read fails', async () => {
     primeOneModel({ minor: true, sfwOnly: false });
     redisMock.redis.get.mockRejectedValue(new Error('redis down'));
     expect(await servedByModelsApi()).toEqual(SFW_IDS);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'showcase-hold-settings-read',
-        modelId: MODEL_ID,
-      })
+  });
+});
+
+describe('/api/v1/models — a page with a held and an unflagged model', () => {
+  const OTHER_MODEL = 8;
+  const OTHER_VERSION = 43;
+
+  it('holds only the held model and serves the other whole', async () => {
+    primeOneModel({ minor: false, sfwOnly: true });
+    storedModel({ sfwOnly: true, gallerySettings: { level: 31 } });
+    const [row] = await (await mockCancellableQuery.getMockImplementation()!()).result();
+    mockCancellableQuery.mockResolvedValue({
+      result: async () => [
+        row,
+        { ...row, id: OTHER_MODEL, name: 'N', minor: false, sfwOnly: false },
+      ],
+    });
+    const [entry] = Object.values(await vi.mocked(dataForModelsCache.fetch)([MODEL_ID])) as {
+      versions: { id: number }[];
+    }[];
+    vi.mocked(dataForModelsCache.fetch).mockResolvedValue({
+      [MODEL_ID]: entry,
+      [OTHER_MODEL]: { ...entry, versions: [{ ...entry.versions[0], id: OTHER_VERSION }] },
+    } as never);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { id: VERSION_ID, meta: null },
+      { id: OTHER_VERSION, meta: null },
+    ] as never);
+    const [files] = Object.values(await mockGetFilesForModelVersionCache([VERSION_ID])) as {
+      files: { modelVersionId: number }[];
+    }[];
+    mockGetFilesForModelVersionCache.mockResolvedValue({
+      [VERSION_ID]: files,
+      [OTHER_VERSION]: {
+        modelVersionId: OTHER_VERSION,
+        files: files.files.map((file) => ({ ...file, modelVersionId: OTHER_VERSION })),
+      },
+    });
+    mockImagesCache.mockResolvedValue({
+      [VERSION_ID]: { modelVersionId: VERSION_ID, images: SHOWCASE },
+      [OTHER_VERSION]: {
+        modelVersionId: OTHER_VERSION,
+        images: SHOWCASE.map((i) => ({ ...i, modelVersionId: OTHER_VERSION })),
+      },
+    });
+
+    const { items } = await getModelsWithVersions({
+      input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+      curate: mockCurated,
+    });
+    const served = Object.fromEntries(
+      items.map((item: { id: number; modelVersions: { images: { id: number }[] }[] }) => [
+        item.id,
+        item.modelVersions[0].images.map((i) => i.id),
+      ])
     );
+    expect(served).toEqual({ [MODEL_ID]: SFW_IDS, [OTHER_MODEL]: ALL_IDS });
   });
 });
 
@@ -261,12 +335,9 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
     expect(await servedByVersionApi()).toEqual(ALL_IDS);
   });
 
-  it('serves SFW with a warning, and does not throw, when the settings read fails', async () => {
+  it('serves SFW, and does not throw, when the settings read fails', async () => {
     redisMock.redis.get.mockRejectedValue(new Error('redis down'));
     expect(await servedByVersionApi()).toEqual(SFW_IDS);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'showcase-hold-settings-read' })
-    );
   });
 
   it('leaves the entries it is handed unchanged', async () => {
@@ -296,10 +367,5 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
       new Map([[VERSION_ID, { modelId: MODEL_ID, minor: false, sfwOnly: false }]])
     );
     expect(held[VERSION_ID].images.map((i) => i.id)).toEqual(ALL_IDS);
-  });
-
-  it('serves no images of a version with no model', async () => {
-    const held = await holdShowcaseImages({ [VERSION_ID]: { images: SHOWCASE } }, new Map());
-    expect(held[VERSION_ID].images).toEqual([]);
   });
 });

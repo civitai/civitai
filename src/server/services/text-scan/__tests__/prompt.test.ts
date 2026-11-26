@@ -381,8 +381,8 @@ describe('setTextScanLabelMode', () => {
       expect.objectContaining({
         message: 'label mode updated',
         moderatorId: 5,
-        label: 'minor',
         mode: 'review',
+        payload: { label: 'minor' },
       })
     );
   });
@@ -444,7 +444,11 @@ describe('setTextScanCsamMode', () => {
     expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'csam');
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'label mode updated', label: 'csam', mode: 'review' })
+      expect.objectContaining({
+        message: 'label mode updated',
+        mode: 'review',
+        payload: { label: 'csam' },
+      })
     );
     resetTextScanRolloutCache();
   });

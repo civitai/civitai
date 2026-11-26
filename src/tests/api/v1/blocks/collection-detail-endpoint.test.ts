@@ -81,10 +81,13 @@ vi.mock('~/server/services/blocks/block-collections.service', async () => {
   const { classifyGatedImageForViewer } = await vi.importActual<typeof GatedImagesLogic>(
     '~/server/services/blocks/block-gated-images.logic'
   );
+  const { collectionItemExtraFields } = await import(
+    '~/server/services/blocks/block-collection-item-fields'
+  );
   return {
     hydrateBlockSubject: mockHydrate,
     getFollowedCollectionIds: mockFollowed,
-    mapImageItemToMedia: (data: any) => ({
+    mapImageItemToMedia: (data: any, collectionItem: any) => ({
       mediaId: data.id,
       type: data.type === 'video' ? 'video' : 'image',
       url: `edge:${data.url}`,
@@ -92,6 +95,12 @@ vi.mock('~/server/services/blocks/block-collections.service', async () => {
       height: data.height ?? null,
       creator: data.user ? { userId: data.user.id, username: data.user.username } : null,
       nsfwLevel: data.nsfwLevel ?? 0,
+      // The real extra-field rule, fed whatever the route passes as the collection item.
+      ...collectionItemExtraFields({
+        mediaType: data.type === 'video' ? 'video' : 'image',
+        metadata: data.metadata,
+        addedAt: collectionItem?.createdAt,
+      }),
     }),
     // The REAL shared gate under a one-line wrapper; the wrapper itself is pinned against
     // the real module in block-collections-cover.test.ts.
@@ -139,6 +148,9 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
     ctx: {},
     scopes: ['collections:read:self'],
     maxBrowsingLevel: 3,
+    // The viewer at every level: these cases mock the DOMAIN clamp, so the viewer
+    // level must not narrow it unless a case says so (the viewer clamp's own cases do).
+    viewerBrowsingLevel: 31,
     ...over,
   } as BlockTokenClaims;
 }
@@ -221,11 +233,37 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     expect(mockGetById).toHaveBeenCalled();
   });
 
+  it("reads a moderator subject's items with no moderator or owner view", async () => {
+    mockHydrate.mockResolvedValueOnce({ id: 42, username: 'mod', isModerator: true });
+    mockPerms.mockResolvedValueOnce({ read: true, publicCollection: true });
+    mockItems.mockResolvedValueOnce({ items: [], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockItems).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: false, asOwner: false })
+    );
+  });
+
   it('404 when the collection row is gone (getCollectionById throws)', async () => {
     mockGetById.mockRejectedValueOnce(new Error('No collection'));
     const { req, res } = createMocks({ query: { id: '7' } });
     await handler(req as never, res as never);
     expect(res._status()).toBe(404);
+  });
+
+  // The VIEWER's level held to the domain cap: a PG-only viewer on a mature domain
+  // is served PG items, never the domain's mature ones.
+  it('a PG-only viewer on a mature domain: the item service is read at PG', async () => {
+    mockMaturity.mockReturnValue({ browsingLevel: 31, isSfwCeiling: false });
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 31, viewerBrowsingLevel: 1 });
+    mockItems.mockResolvedValueOnce({ items: [], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockItems).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ browsingLevel: 1 }) })
+    );
   });
 
   it('200: threads the clamped browsingLevel, maps image/video, drops non-media, sets followed', async () => {
@@ -291,6 +329,50 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     expect(body.items[0]).toMatchObject({ mediaId: 1, type: 'image', url: 'edge:i1' });
     expect(body.items[1]).toMatchObject({ mediaId: 2, type: 'video', url: 'edge:v2' });
     expect(body.nextCursor).toBe('2');
+  });
+
+  // `addedAt` is when the item joined the collection, so it must come from the collection
+  // item's createdAt; the image carries its own (upload) createdAt, which must not leak.
+  it('items carry addedAt from the collection item and duration on a video', async () => {
+    mockItems.mockResolvedValueOnce({
+      items: [
+        {
+          type: 'image',
+          createdAt: new Date('2026-05-06T07:08:09.000Z'),
+          data: {
+            ...SCANNED,
+            id: 1,
+            url: 'i1',
+            type: 'image',
+            nsfwLevel: 1,
+            createdAt: new Date('2020-01-01T00:00:00.000Z'),
+            metadata: { duration: 9 },
+          },
+        },
+        {
+          type: 'image',
+          createdAt: null,
+          data: {
+            ...SCANNED,
+            id: 2,
+            url: 'v2',
+            type: 'video',
+            nsfwLevel: 1,
+            createdAt: new Date('2020-01-01T00:00:00.000Z'),
+            metadata: { duration: 12.5 },
+          },
+        },
+      ],
+      nextCursor: undefined,
+    });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const [image, video] = (res._json() as any).items;
+    expect(image.addedAt).toBe('2026-05-06T07:08:09.000Z');
+    expect(image).not.toHaveProperty('duration');
+    expect(video).toHaveProperty('addedAt', null);
+    expect(video.duration).toBe(12.5);
   });
 
   // One fixture per refused state, each a clean scanned image with exactly one change.

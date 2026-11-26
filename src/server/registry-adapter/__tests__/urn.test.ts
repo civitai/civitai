@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseCollectionSchemaUrn, registryUrn, urnNamespace } from '~/server/registry-adapter/urn';
+import {
+  parseCollectionSchemaUrn,
+  parseViewerSchemaUrn,
+  registryUrn,
+  urnNamespace,
+  viewerSchemaUrn,
+} from '~/server/registry-adapter/urn';
 
 describe('registryUrn', () => {
   it.each([
@@ -13,6 +19,14 @@ describe('registryUrn', () => {
       'urn:schema:apps.civitai.com:pixel-garden/seed_packs@v3',
     ],
     [{ kind: 'runtime', name: 'iframe', major: 1 }, 'urn:apps.civitai.com:runtime/iframe@1'],
+    [
+      { kind: 'service', name: 'app-search', major: 1 },
+      'urn:apps.civitai.com:service/app-search@1',
+    ],
+    [
+      { kind: 'service', name: 'app-search', major: 12 },
+      'urn:apps.civitai.com:service/app-search@12',
+    ],
     [
       { kind: 'document', slug: 'pixel-garden', collection: 'seed_packs', key: '01J:Ab.c-9' },
       'urn:apps.civitai.com:pixel-garden/seed_packs/01J:Ab.c-9',
@@ -38,8 +52,41 @@ describe('registryUrn', () => {
     { kind: 'app', slug: 'a'.repeat(65) },
     { kind: 'collection-schema', slug: 'pixel-garden', collection: 'c'.repeat(33), major: 1 },
     { kind: 'release', slug: 'pixel-garden', version: '1'.repeat(65) },
+    { kind: 'service', name: 'app/search', major: 1 },
+    { kind: 'service', name: 'app@search', major: 1 },
+    { kind: 'service', name: 'app:search', major: 1 },
+    { kind: 'service', name: 'App-Search', major: 1 },
+    { kind: 'service', name: '', major: 1 },
+    { kind: 'service', name: 's'.repeat(65), major: 1 },
+    { kind: 'service', name: 'app-search', major: 0 },
+    { kind: 'service', name: 'app-search', major: 1.5 },
+    { kind: 'service', name: 'app-search', major: -1 },
   ] as const)('refuses %o', (ref) => {
     expect(() => registryUrn(ref)).toThrow(/registry urn: invalid/);
+  });
+});
+
+describe('service URNs', () => {
+  // A document of an app slugged `service` is `service/{collection}/{key}`: three segments, where a
+  // service URN has two, so neither can spell the other.
+  const segments = (urn: string) => urn.slice('urn:apps.civitai.com:'.length).split('/');
+
+  it('has two segments where a document has three', () => {
+    const service = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+    const doc = registryUrn({
+      kind: 'document',
+      slug: 'service',
+      collection: 'app_search',
+      key: '1',
+    });
+    expect(segments(service)).toEqual(['service', 'app-search@1']);
+    expect(segments(doc)).toEqual(['service', 'app_search', '1']);
+  });
+
+  it('is not read as a collection schema, and is in the namespace', () => {
+    const urn = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+    expect(parseCollectionSchemaUrn(urn)).toBeNull();
+    expect(urnNamespace(urn)).toBe('apps.civitai.com');
   });
 });
 
@@ -94,5 +141,39 @@ describe('urnNamespace', () => {
     ['pixel-garden', null],
   ])('%s → %s', (urn, ns) => {
     expect(urnNamespace(urn)).toBe(ns);
+  });
+});
+
+describe('viewerSchemaUrn / parseViewerSchemaUrn (the per-viewer stream, viewer-feed.ts)', () => {
+  it('round-trips, and is the literal shape app-data-go builds', () => {
+    const urn = viewerSchemaUrn({ slug: 'bench-board-9', collection: 'votes_v2', major: 7 });
+    expect(urn).toBe('urn:schema:apps.civitai.com:bench-board-9/votes_v2.viewer@v7');
+    expect(parseViewerSchemaUrn(urn)).toEqual({
+      slug: 'bench-board-9',
+      collection: 'votes_v2',
+      major: 7,
+    });
+  });
+
+  it('🔴 a per-viewer URN is never a collection-schema URN, and no collection-schema URN is a per-viewer one', () => {
+    const viewer = 'urn:schema:apps.civitai.com:bench-board-9/votes_v2.viewer@v7';
+    const plain = 'urn:schema:apps.civitai.com:bench-board-9/votes_v2@v7';
+    expect(parseCollectionSchemaUrn(viewer)).toBeNull();
+    expect(parseViewerSchemaUrn(plain)).toBeNull();
+    // Positive control: each parser reads its own shape.
+    expect(parseCollectionSchemaUrn(plain)).not.toBeNull();
+    expect(parseViewerSchemaUrn(viewer)).not.toBeNull();
+  });
+
+  it.each([
+    'urn:schema:apps.civitai.com:bench-board-9/votes.viewer@v0',
+    'urn:schema:apps.civitai.com:bench-board-9/votes.viewer',
+    'urn:schema:apps.civitai.com:bench-board-9/votes.other@v1',
+    'urn:schema:apps.civitai.com:bench-board-9/votes.viewer.viewer@v1',
+    'urn:schema:apps.civitai.com:Bench/votes.viewer@v1',
+    'urn:schema:other-apps:bench-board-9/votes.viewer@v1',
+    `urn:schema:apps.civitai.com:bench-board-9/${'c'.repeat(33)}.viewer@v1`,
+  ])('null for %s', (urn) => {
+    expect(parseViewerSchemaUrn(urn)).toBeNull();
   });
 });

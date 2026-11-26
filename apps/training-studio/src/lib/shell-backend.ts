@@ -1,3 +1,4 @@
+import type { TrainingQuote } from './orchestrator-core';
 // The SvelteKit shell's StudioBackend: every call is a relative fetch to this app's own /api routes
 // (the session-gated wrappers under src/routes/api/*). Flow code goes through $lib/host's backend()
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
@@ -7,8 +8,6 @@ import type {
   EditGenerationItem,
   EditImageOption,
   StudioBackend,
-  SubmittedBatch,
-  TrainingRunPayload,
 } from '$lib/backend';
 import type {
   DatasetItem,
@@ -16,25 +15,11 @@ import type {
   TrainingDetail,
   TrainingRow,
 } from '$lib/data/trainingRows';
-import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
-import type { DatasetRatingCount } from '$lib/dataset-rating';
 import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
-import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
-import { MatureAckRequiredError } from '$lib/mature-charge';
+import { messageOf, studioServerCalls } from '$lib/studio-server-calls';
 import { UploadError, uploadProblem } from '$lib/upload';
 import { AUTO_LABEL_UNAVAILABLE_CODE, AutoLabelRefusedError } from '$lib/autolabel-errors';
-
-/** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
-async function messageOf(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { message?: string };
-    if (body.message) return body.message;
-  } catch {
-    // non-JSON body
-  }
-  return fallback;
-}
 
 /** Why an auto-label submit failed. Our route answers 4xx only for a refusal made before any workflow
  *  existed (its own, or the main app's gates, validation and limits), and its marked 503 when
@@ -49,20 +34,6 @@ async function autoLabelSubmitFailure(res: Response): Promise<Error> {
   return refused ? new AutoLabelRefusedError(body?.message || fallback) : new Error(fallback);
 }
 
-/** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
- *  so the caller can show the confirm. */
-async function startFailure(res: Response, fallback: string): Promise<Error> {
-  const body = (await res.json().catch(() => null)) as {
-    message?: string;
-    matureCount?: unknown;
-    code?: unknown;
-  } | null;
-  if (body?.code === FILES_PROCESSING_CODE) return new FilesProcessingError();
-  if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
-    return new MatureAckRequiredError(body.matureCount);
-  return new Error(body?.message || fallback);
-}
-
 /** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
 async function getFor<T>(path: string, fallback: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, { signal });
@@ -74,16 +45,6 @@ async function quoteFrom(path: string): Promise<number | null> {
   const res = await fetch(path);
   if (!res.ok) return null;
   return ((await res.json()) as { cost: number | null }).cost;
-}
-
-async function postFor(path: string, body: unknown, fallback: string) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await messageOf(res, fallback));
-  return (await res.json()) as { workflowId: string };
 }
 
 const READINESS_REQUEST_TIMEOUT_MS = 60_000;
@@ -101,6 +62,8 @@ async function postReadiness<T>(body: unknown): Promise<T> {
 }
 
 export const shellBackend: StudioBackend = {
+  ...studioServerCalls((path, init) => fetch(path, init)),
+
   listTrainings: () => getFor<TrainingRow[]>('/api/trainings', 'Failed to load trainings'),
 
   // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
@@ -111,8 +74,9 @@ export const shellBackend: StudioBackend = {
       'Failed to load training'
     ),
 
-  modelLive: async (modelId) => {
-    const res = await fetch(`/api/model-status?id=${modelId}`);
+  modelLive: async (modelId, modelVersionId) => {
+    const versionParam = modelVersionId ? `&versionId=${modelVersionId}` : '';
+    const res = await fetch(`/api/model-status?id=${modelId}${versionParam}`);
     if (!res.ok) throw new Error(await messageOf(res, `Model check failed (${res.status})`));
     return ((await res.json()) as { live: boolean }).live;
   },
@@ -130,7 +94,7 @@ export const shellBackend: StudioBackend = {
       )}`
     );
     if (!res.ok) throw new Error(await messageOf(res, `Dataset image unavailable (${res.status})`));
-    return res.blob();
+    return { blob: await res.blob(), nsfwLevel: res.headers.get('x-nsfw-level') ?? undefined };
   },
 
   listGenerations: async (media) => {
@@ -168,27 +132,6 @@ export const shellBackend: StudioBackend = {
     return (await res.json()) as { done: boolean; results: AutoLabelResult[] };
   },
 
-  submitTraining: async (runs: TrainingRunPayload[]) => {
-    const res = await fetch('/api/train', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ runs }),
-    });
-    if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
-    const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
-    return { workflowIds, failure };
-  },
-
-  datasetRating: async (blobIds) => {
-    const res = await fetch('/api/dataset-rating', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ blobIds }),
-    });
-    if (!res.ok) throw new Error(`Dataset rating failed (${res.status})`);
-    return (await res.json()) as DatasetRatingCount;
-  },
-
   datasetReadiness: (blobIds) => postReadiness<ReadinessProbe>({ blobIds }),
   datasetReadyToTrain: (run) => postReadiness<ReadinessCheck>({ run }),
 
@@ -203,8 +146,6 @@ export const shellBackend: StudioBackend = {
   editImageQuote: (imageUrl) =>
     quoteFrom(`/api/edit-image?imageUrl=${encodeURIComponent(imageUrl)}`),
 
-  editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
-
   editImagePoll: (workflowId, signal) =>
     getFor<{ done: boolean; options: EditImageOption[] }>(
       `/api/edit-image/${encodeURIComponent(workflowId)}`,
@@ -213,9 +154,6 @@ export const shellBackend: StudioBackend = {
     ),
 
   suggestQuote: () => quoteFrom('/api/suggest-instruction'),
-
-  suggestSubmit: (req) =>
-    postFor('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
 
   suggestPoll: (workflowId, signal) =>
     getFor<{ done: boolean; text?: string }>(
@@ -233,42 +171,11 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
   },
 
-  epochArchive: async (workflowId, kind) => {
-    const res = await fetch(
-      `/api/epoch-archive?id=${encodeURIComponent(workflowId)}&kind=${kind}`,
-      { method: 'POST' }
-    );
-    if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
-    return (await res.json()) as EpochArchive[];
-  },
-
   deleteTraining: async (workflowId) => {
     const res = await fetch(`/api/trainings?id=${encodeURIComponent(workflowId)}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
-  },
-
-  continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
-    const params = new URLSearchParams({
-      id: workflowId,
-      fromEpoch: String(fromEpoch),
-      addEpochs: String(addEpochs),
-    });
-    for (const currency of currencies) params.append('currencies', currency);
-    const res = await fetch(`/api/continue-training?${params}`);
-    if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
-    return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
-  },
-
-  continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
-    const res = await fetch('/api/continue-training', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies, matureAck }),
-    });
-    if (!res.ok) throw await startFailure(res, 'Could not start training.');
-    return ((await res.json()) as { workflowId: string }).workflowId;
   },
 
   // The shell's flow gets prices streamed from the /new server load (redis-cached, shared across
@@ -283,7 +190,7 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify(input),
     });
     if (!res.ok) return null;
-    return ((await res.json()) as { cost: number | null }).cost;
+    return (await res.json()) as TrainingQuote;
   },
 
   getBuzz: async () => {

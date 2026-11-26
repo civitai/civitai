@@ -175,6 +175,12 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .omit({
     type: true,
   })
+  .extend({
+    // Minted by the client once per tip and resent on its retries: the tip's ledger ids derive
+    // from it, so a retry after an unanswered send cannot move the Buzz twice. Optional: without
+    // one, every call is a new tip under a new id, with no dedup.
+    idempotencyKey: z.string().uuid().optional(),
+  })
   .check((ctx) => {
     if (
       ctx.value.entityType &&

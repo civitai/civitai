@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { withholdTrainingOutputs } from '~/server/services/orchestrator/training/studio-withheld-outputs';
 import { acceptGenerationLicense } from '~/server/services/generation-license.service';
 import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
@@ -28,6 +29,8 @@ import {
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
+import { assertGenerationAllowedNow } from '~/server/services/generation/generation-status-gate';
+import { env } from '~/env/server';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -41,6 +44,7 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { callerTagsRefusal } from '~/shared/utils/app-block-tags';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
@@ -58,12 +62,14 @@ import {
   patchWorkflowTags,
   queryWorkflows,
 } from '~/server/services/orchestrator/workflows';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
+  isFlagProtected,
   middleware,
   moderatorProcedure,
   protectedProcedure,
@@ -78,6 +84,7 @@ import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-itera
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
+  assertPresetGenerationAllowed,
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
@@ -86,10 +93,12 @@ import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
+import { expandServiceDealPrompt } from '~/server/services/creator-service-expand-prompt.service';
+import { expandServiceDealPromptSchema } from '~/server/schema/creator-service-deal.schema';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -130,17 +139,17 @@ const orchestratorMiddlewareFor = (options?: { allowRestricted: boolean }) =>
     const user = ctx.user;
     if (!user) throw throwAuthorizationError();
     const token = await getOrchestratorToken(user.id, ctx, options);
-    const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+    // Domain only: the viewer's mature-content setting must not withhold or block their own generations.
+    const allowMatureContent = ctx.domain === 'green' ? false : undefined;
     return next({
       ctx: {
         ...ctx,
         user,
         token,
         allowMatureContent,
-        hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+        hideMatureContent: ctx.domain === 'green',
       },
     });
-    // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
   });
 const orchestratorMiddleware = orchestratorMiddlewareFor();
 
@@ -169,7 +178,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   try {
     // Wall-clock deadline so a silent sysRedis half-open can't park every gen
     // tRPC call ~11min (a fast DOWN already rejects into the catch below).
-    genClient = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
+    genClient = await withSysReadBreaker(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
@@ -201,6 +210,26 @@ const orchestratorGuardedProcedure = guardedProcedure
   .use(regionProxyMiddleware);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
+/**
+ * The generation kill switch for onsite prompt enhancement, the paid LLM step a caller runs before
+ * generating. The same rule an onsite submit applies (moderators pass "disabled", "members only"
+ * refuses the free tier, a switch that cannot be read refuses everyone). It runs before the
+ * orchestrator token is fetched, so a refused caller costs nothing past the switch read.
+ * ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+ */
+const enhancePromptGenerationStatusMiddleware = middleware(async ({ ctx, next }) => {
+  const user = ctx.user;
+  if (!user) throw throwAuthorizationError();
+  if (env.ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS) await assertGenerationAllowedNow(user);
+  return next();
+});
+const orchestratorEnhanceProcedure = guardedProcedure
+  .use(enhancePromptGenerationStatusMiddleware)
+  .use(orchestratorMiddleware)
+  .use(experimentalMiddleware)
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
+
 // The iterative editor's default preset model. The model registry itself lives
 // in `preset-image-gen.service.ts` (shared with comics + the enqueued-panels job).
 const DEFAULT_ITERATE_MODEL = 'NanoBanana';
@@ -221,7 +250,7 @@ export const orchestratorRouter = router({
     }),
 
   // #region [prompt enhancement]
-  enhancePrompt: orchestratorGuardedProcedure
+  enhancePrompt: orchestratorEnhanceProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(promptEnhancementSchema)
     .mutation(async ({ ctx, input }) => {
@@ -240,23 +269,51 @@ export const orchestratorRouter = router({
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     }),
+  expandServiceDealPrompt: orchestratorEnhanceProcedure
+    .use(isFlagProtected('creatorServices'))
+    .use(rateLimit({ limit: 60, period: 3600 }))
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(expandServiceDealPromptSchema)
+    .mutation(({ ctx, input }) =>
+      expandServiceDealPrompt({
+        dealId: input.id,
+        sellerId: ctx.user.id,
+        instructions: input.instructions,
+        token: ctx.token,
+        isGreen: ctx.domain === 'green',
+        isModerator: ctx.user.isModerator,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      })
+    ),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
   queryWorkflowsByTags: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowQuerySchema)
     .query(async ({ ctx, input }) => {
-      return queryWorkflows({
+      const result = await queryWorkflows({
         ...input,
         token: ctx.token,
         hideMatureContent: ctx.hideMatureContent,
       });
+      const items = await withholdTrainingOutputs(ctx.user, result.items);
+      return {
+        ...result,
+        items: items.map((workflow) =>
+          withoutTrainingWeightHandles(workflow, { isModerator: ctx.user.isModerator })
+        ),
+      };
     }),
   getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
-    .query(({ ctx, input }) =>
-      getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } })
-    ),
+    .query(async ({ ctx, input }) => {
+      const workflow = await getWorkflow({
+        token: ctx.token,
+        path: { workflowId: input.workflowId },
+      });
+      const [gated] = await withholdTrainingOutputs(ctx.user, [workflow]);
+      return withoutTrainingWeightHandles(gated, { isModerator: ctx.user.isModerator });
+    }),
   // #endregion
 
   // #region [requests]
@@ -289,7 +346,7 @@ export const orchestratorRouter = router({
       const result = await updateWorkflow({
         ...input,
         token: ctx.token,
-        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+        viewer: { domain: ctx.domain },
       });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
@@ -349,7 +406,12 @@ export const orchestratorRouter = router({
         await patchWorkflowSteps({
           input: steps.map((step) => ({
             ...step,
-            patches: step.patches.map((patch) => ({ ...patch, path: `/metadata${patch.path}` })),
+            // `from` is rooted too: a step patch reads and writes the step's metadata only.
+            patches: step.patches.map((patch) => ({
+              ...patch,
+              path: `/metadata${patch.path}`,
+              ...(patch.from !== undefined ? { from: `/metadata${patch.from}` } : {}),
+            })),
           })),
           token: ctx.token,
         });
@@ -434,6 +496,9 @@ export const orchestratorRouter = router({
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
+      // `.input(z.any())` leaves tags unchecked.
+      const tagsRefusal = callerTagsRefusal(inputTags);
+      if (tagsRefusal) throw new TRPCError({ code: 'BAD_REQUEST', message: tagsRefusal });
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(
@@ -818,7 +883,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
     .query(({ ctx, input }) =>
-      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+      getWorkflowStatusUpdate({
+        token: ctx.token,
+        workflowId: input.workflowId,
+        isModerator: ctx.user.isModerator,
+      })
     ),
 
   // ── Generic iterative image editor endpoints ──
@@ -850,6 +919,8 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the paid prompt enhancement below, so a refused caller is charged nothing.
+      await assertPresetGenerationAllowed(ctx.user as SessionUser);
       await assertGenerationInputsUsable({
         urls: [input.sourceImageUrl, ...(input.referenceImages ?? []).map((ref) => ref.url)],
         userId: ctx.user.id,

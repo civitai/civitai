@@ -27,7 +27,8 @@ import App from 'next/app';
 import Head from 'next/head';
 import { serializeJsonLd } from '@civitai/shared/json-ld';
 import type { ReactElement } from 'react';
-import { useState } from 'react';
+import { lazy, useState } from 'react';
+import { registerReportProblemButton } from '~/utils/notifications';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -66,6 +67,8 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
+import { appendSetCookie } from '~/server/utils/set-cookie';
+import { siteCookieJar } from '@civitai/auth/client';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -102,7 +105,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import {
   ShellBootstrapProvider,
   useShellBootstrap,
@@ -128,6 +130,15 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
+
+// Lazy: the button loads with the first toast that offers it.
+registerReportProblemButton(
+  lazy(() =>
+    import('~/components/Feedback/ReportProblemButton').then((m) => ({
+      default: m.ReportProblemButton,
+    }))
+  )
+);
 
 // React Query Devtools renders a container div and mounts its UI imperatively
 // in an effect, so it is not SSR-safe: the server emits its div but the client
@@ -395,7 +406,7 @@ function MyApp(props: CustomAppProps) {
                                       {...cookies.referrals}
                                       pending={referralsPending}
                                     >
-                                      <FiltersProvider isRed={domain === 'red'}>
+                                      <FiltersProvider>
                                         <AdsProvider gated={adsGated}>
                                           <HiddenPreferencesProvider>
                                             <CivitaiLinkProvider>
@@ -405,12 +416,9 @@ function MyApp(props: CustomAppProps) {
                                                     <AuctionContextProvider>
                                                       <BaseLayout>
                                                         {isProd && <TrackPageView />}
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
                                                       </BaseLayout>
                                                     </AuctionContextProvider>
                                                   </ToursProvider>
@@ -524,9 +532,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = hasSessionCookie(cookies);
+  // A host-only site's shared-slot cookie is never its session (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+  const siteCookies = siteCookieJar(cookies, request.headers.host) ?? cookies;
+  let hasAuthCookie = hasSessionCookie(siteCookies);
   // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
-  const sessionCookie = sessionCookieKind(cookies);
+  const sessionCookie = sessionCookieKind(siteCookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(
@@ -742,6 +752,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // Without the request, region cannot reach a cacheable render's flags.
     req: botCache ? undefined : request,
   });
+  // The signed-out per-visitor rollouts (`~/server/services/signed-out-rollout`). Same rule as the
+  // region: a cacheable render gets no request, so its flags never vary per visitor.
+  if (typeof window === 'undefined') {
+    const { applySignedOutRolloutFlags } = await import('~/server/services/signed-out-rollout');
+    applySignedOutRolloutFlags(flags, { user: session?.user, req: botCache ? undefined : request });
+  }
 
   const domain = getRequestDomainColor(request);
 
@@ -829,21 +845,24 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { checkPreviewAccess } = await import('~/server/auth/preview-access');
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
+  let guardCookies: string[] = [];
   if (!guardTo && typeof window === 'undefined') {
     const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
-    guardTo =
-      sharedSlotNavigationSyncUrl({
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        cookies,
-      }) ?? undefined;
+    const sync = sharedSlotNavigationSyncUrl({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      cookies,
+      signedIn: !!session?.user,
+    });
+    if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }
   // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
   // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
   // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
   // Pinned by `app-guard-redirect-once.test.ts`.
   if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
+    for (const cookie of guardCookies) appendSetCookie(appContext.ctx.res, cookie);
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
   }

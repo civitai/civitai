@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
@@ -15,7 +16,7 @@ import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
-import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatButton } from '~/components/HatTurf/HatButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
@@ -115,13 +116,7 @@ function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
           entityType="image"
           reactions={data.reactions}
           metricsUnknown={data.stats?.statsUnknown}
-          metrics={{
-            likeCount: data.stats?.likeCountAllTime,
-            dislikeCount: data.stats?.dislikeCountAllTime,
-            heartCount: data.stats?.heartCountAllTime,
-            laughCount: data.stats?.laughCountAllTime,
-            cryCount: data.stats?.cryCountAllTime,
-          }}
+          metrics={imageStatsToReactionMetrics(data.stats)}
           targetUserId={data.user.id}
           abbreviate
           disableBuzzTip
@@ -139,7 +134,7 @@ function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
         )}
         <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
-          <HatTurfButton imageId={data.id} />
+          <HatButton imageId={data.id} />
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>
               <ThemeIcon className={cardClasses.infoChip} variant="light">

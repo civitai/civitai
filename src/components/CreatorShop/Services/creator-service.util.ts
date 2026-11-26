@@ -1,6 +1,7 @@
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { pluralize } from '~/shared/utils/pluralize';
+import { buyerHoldButtonLabel } from '~/shared/constants/creator-service-terms.constants';
 import type { RouterOutput } from '~/types/router';
 import type { ServiceOfferingFeedSort } from '~/server/schema/creator-service.schema';
 
@@ -17,6 +18,25 @@ export function serviceTermsLine(
   )} included`;
 }
 
+/**
+ * The request popup's hold button text and hold rule. The badge carries the amount, so the label is
+ * the short form and the full legal text stays as the accessible name. A buyer who is short buys
+ * Buzz, then clicks again: the hold is never placed on the back of a purchase.
+ */
+export function serviceHoldButtonProps(price: number) {
+  return {
+    label: 'Hold and send request',
+    'aria-label': buyerHoldButtonLabel(price),
+    performTransactionOnPurchase: false,
+  };
+}
+
+/** "12 deals · 75% on time" for a seller with finished deals, else null. */
+export function sellerRecordLine({ completed, onTime }: { completed: number; onTime: number }) {
+  if (!completed) return null;
+  return `${pluralize(completed, 'deal')} · ${Math.round((onTime / completed) * 100)}% on time`;
+}
+
 export function useQueryShopServices(userId: number, enabled: boolean) {
   const { data, isLoading } = trpc.creatorService.getForShop.useQuery({ userId }, { enabled });
   return { offerings: data ?? [], isLoading };
@@ -24,10 +44,10 @@ export function useQueryShopServices(userId: number, enabled: boolean) {
 
 export type ServiceFeedOffering = RouterOutput['creatorService']['getFeed']['items'][number];
 
-export function useServiceOfferingFeed(sort: ServiceOfferingFeedSort) {
+export function useServiceOfferingFeed(sort: ServiceOfferingFeedSort, query?: string) {
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.creatorService.getFeed.useInfiniteQuery(
-      { sort },
+      { sort, query },
       { getNextPageParam: (last) => last.nextCursor }
     );
   return {

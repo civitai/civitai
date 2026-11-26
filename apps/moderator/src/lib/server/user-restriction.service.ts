@@ -17,6 +17,8 @@ import type { TriggerOrigin } from '$lib/restrictions/origin';
 import { planRecheck, recheckResult, type Recheck } from '$lib/restrictions/recheck';
 import { isoTriggerTime } from '$lib/restrictions/trigger-evidence';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
+import { restrictedImageIds } from './retracted-media';
+import { holdsCsamReview } from './held-media';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
 // live in a client-safe module because the filter component needs them as values — see the note there.
@@ -126,6 +128,8 @@ const REMIX_SQL = sql<boolean>`(
 const ENHANCER_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
   '$.origin.enhancer'
 )})`;
+// Submitted through an App Block: the app may have written it, so it is never "typed".
+const APP_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath('$.origin.app')})`;
 // A prompt trigger is one with a non-empty `prompt`. `$[*]` wraps the legacy single-object shape too.
 const PROMPT_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
   '$[*] ? (@.prompt like_regex ".")'
@@ -140,7 +144,7 @@ const INCOMPLETE_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
 // Typed needs positive evidence: a row recorded before origin tracking has none, and neither does a
 // row whose triggers are not prompts (a manual mute), so neither may be called typed.
 const TYPED_SQL = sql<boolean>`(
-  ${PROMPT_SQL} and not (${UNRECORDED_SQL} or ${REMIX_SQL} or ${ENHANCER_SQL} or ${INCOMPLETE_SQL})
+  ${PROMPT_SQL} and not (${UNRECORDED_SQL} or ${REMIX_SQL} or ${ENHANCER_SQL} or ${APP_SQL} or ${INCOMPLETE_SQL})
 )`;
 
 // `promptMatch` is a server-side comparison against the source image's stored prompt, so this holds
@@ -397,9 +401,16 @@ export type RemixSource = {
   nsfwLevel: number;
   /** The stored generation prompt, for the diff against what was submitted. */
   prompt: string | null;
+  /** Withheld from this moderator: no key and no prompt. */
+  restricted?: true;
 };
 
-export async function getRemixSources(ids: readonly number[]): Promise<RemixSource[]> {
+/** The remix sources, with those withheld from `viewer` sent with no key or prompt (`restricted`).
+ *  A failed withheld read throws, so the page says the sources could not be loaded. */
+export async function getRemixSources(
+  ids: readonly number[],
+  viewer: App.Locals['user'] | undefined
+): Promise<RemixSource[]> {
   if (!ids.length) return [];
   const rows = await dbRead
     .selectFrom('Image as i')
@@ -412,5 +423,21 @@ export async function getRemixSources(ids: readonly number[]): Promise<RemixSour
     ])
     .where('i.id', 'in', [...ids])
     .execute();
-  return rows.map((r) => ({ ...r, type: r.type as MediaType }));
+  const withheld = await restrictedImageIds(
+    rows.map((r) => r.id),
+    { csamReview: holdsCsamReview(viewer) }
+  );
+  return rows.map(
+    (r): RemixSource =>
+      withheld.has(r.id)
+        ? {
+            id: r.id,
+            url: '',
+            type: 'image',
+            nsfwLevel: r.nsfwLevel,
+            prompt: null,
+            restricted: true,
+          }
+        : { ...r, type: r.type as MediaType }
+  );
 }

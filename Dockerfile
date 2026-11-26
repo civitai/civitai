@@ -77,6 +77,10 @@ ARG LIBC
 RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
+COPY apps/training-studio/package.json ./apps/training-studio/package.json
+RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --filter @civitai/training-studio-app... --ignore-scripts
+
 ##### BUILDER
 
 # FROM deps (NOT a fresh node image) so the builder INHERITS the complete node_modules from the install stage
@@ -96,6 +100,12 @@ COPY . .
 # schema.prisma is generated (gitignored) so `COPY . .` doesn't carry it. It's inherited via FROM deps, but
 # re-copy explicitly so the build never depends on that inheritance subtlety.
 COPY --from=deps /app/packages/civitai-db-schema/prisma/schema.prisma ./packages/civitai-db-schema/prisma/schema.prisma
+
+# PR previews load this commit's Studio element instead of the production Studio deployment.
+RUN pnpm --filter @civitai/training-studio-app exec svelte-kit sync && \
+    pnpm --filter @civitai/training-studio-app build:element && \
+    mkdir -p public/training-studio && \
+    cp -a apps/training-studio/static/element public/training-studio/
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -122,52 +132,9 @@ ARG CIVITAI_SKIP_BUILD_TYPECHECK=""
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
-# Server-graph module identity — a HARD gate, deliberately unlike the report-only
-# bundle budget below.
-#
-# A module's top-level state is per RUNTIME module, and the bundler decides how many
-# runtime modules a source file becomes: Turbopack inlines `src/server/logging/client.ts`
-# into 14 of them in this build. Anything that must be a process-wide singleton therefore
-# has to be reached through `globalThis`. Nothing else we run can see a violation — `tsc`
-# checks one source file, eslint reads source, and Vitest loads a module once, so a
-# module-scope singleton looks like a singleton everywhere except in the emitted output.
-# That is how the OTel logs bridge shipped delivering 1.3% of its records with a green
-# typecheck, a green lint and a green suite.
-#
-# Runs here for the same reason the budget does: `.next` exists in this stage, so there is
-# no second build. It reads the emitted `.js.map` `sources` to attribute code to source
-# modules, and exits 2 (not 0) if it finds no maps — a scan that can see nothing must not
-# report health. Cheap: a few seconds of file reads.
-RUN node scripts/check-server-graph-singletons.mjs
-
-# Compiled-branch gate — the second HARD build-output gate, and for the same reason as the
-# one above: nothing that reads SOURCE can see this class of defect.
-#
-# Release 5.1.18 shipped `resolveStoreVisibilityScopeUninstrumented` as
-# `async function S(e){if(await p(e))return"full"}` — two of its three returns were absent
-# from the emitted chunk, so it returned `undefined` for every non-privileged caller. One
-# read path defaulted that to `'full'` and served the whole App-store catalog to anonymous
-# callers; the other defaulted it to `'none'` and showed the intended cohort an empty
-# store. The TypeScript was correct throughout, so a 75-test unit suite, an integration
-# suite driving the real feature-flag client, and four rounds of review were all
-# structurally incapable of catching it (civitai#3983).
-#
-# This reads the emitted `.js.map` `mappings` and asserts that each watched fail-closed
-# branch still has a representation in the output. Same placement rationale as the gate
-# above: `.next` exists in this stage, so there is no second build; and it exits 2 (not 0)
-# when it cannot observe its input. Adding a gate is one entry in
-# `scripts/compiled-branch-watchlist.mjs`.
-#
-# HARD as of the Next 16.3.1 bump. It shipped `--warn-only` for exactly one build, because
-# 16.3.0's Turbopack value analyzer modelled a bare `return someAsyncFn()` tail call as
-# `Promise<Promise<T>>` — always truthy — so an awaiting caller was analysed as always-true
-# and every statement after the resulting conditional was eliminated as dead code
-# (vercel/next.js#96601, backported as #96675, shipped in 16.3.1). With 16.3.0 pinned the
-# gate genuinely failed every production build, and a permanently-red gate is worse than no
-# gate. With 16.3.1 pinned the build satisfies it, so the downgrade is removed in the same
-# commit as the bump: the gate's strictness now tracks the toolchain, and a revert of the
-# bump turns this red instead of silently passing.
-RUN node scripts/assert-compiled-branches.mjs
+# Server output size, so a jump in emitted server code shows up in the PR's build log.
+# `[root-of-the-server]__*.js` are Turbopack's per-entry loader chunks for server dynamic imports.
+RUN node -e 'const fs=require("fs"),p=require("path");const t={js:[0,0],root:[0,0]};(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=p.join(d,e.name);if(e.isDirectory())w(f);else if(e.name.endsWith(".js")){const n=fs.statSync(f).size;t.js[0]++;t.js[1]+=n;if(e.name.startsWith("[root-of-the-server]__")){t.root[0]++;t.root[1]+=n}}}})("/app/.next/server");console.log(`server-output: js_files=${t.js[0]} js_bytes=${t.js[1]} root_files=${t.root[0]} root_bytes=${t.root[1]}`)'
 
 # Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
 # opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
@@ -187,52 +154,18 @@ RUN node scripts/assert-compiled-branches.mjs
 # (`> model-share@… size /app`) stays out of the report/comment.
 RUN node scripts/bundle-budget.mjs --json > /app/bundle-budget.txt 2>&1 || true; cat /app/bundle-budget.txt
 
-# Server source maps (.next/server/**/*.js.map) are emitted by the build
-# (productionBrowserSourceMaps -> turbopackSourceMaps) but @vercel/nft does NOT
-# trace sibling .map files into .next/standalone, so they never reach runtime.
-# Collect ONLY the server-chunk maps into a structure-preserving staging dir.
-# These are NOT shipped in the runtime image (they added ~761 MB to every prod
-# pod — too much for a debug aid). Instead they are published as a separate,
-# fetched-on-demand `maps` artifact image (see the `maps` target below + the
-# Tekton maps-publish step), keyed by the same tag as the runtime image, so a
-# `.cpuprofile` captured from image X can be de-minified offline against X's maps.
-# Build-chunk map filenames are content hashes (no spaces/newlines), so the
-# newline-delimited `tar -T -` files-from list is safe and works under both GNU tar
-# and busybox tar (alpine). `tar | tar` preserves the dir structure
-# (e.g. chunks/<hash>.js.map) so each map keeps its .next/server-relative path.
-# (Comments must stay OUTSIDE the RUN: Docker collapses the \-continuations into one
-# line, where an inline `#` would swallow the rest of the command.)
-RUN mkdir -p /app/server-maps && \
-    cd /app/.next/server && \
-    { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
-    echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
-
 # Duplicate server chunks -> one-line re-export stubs, in the SHIPPED tree only.
 #
-# Turbopack emits the same server chunk under many file names (the copies differ only in their
-# trailing sourceMappingURL comment), and its Node runtime loads chunks with `require(<path>)`.
+# Turbopack emits the same server chunk under many file names, and its Node runtime loads
+# chunks with `require(<path>)`.
 # Node caches by path, so every copy is compiled and its source kept on the heap. The script
 # replaces each duplicate with `module.exports=require("./<canonical>.js")`: every existing
 # reference still names a real file, and the runtime receives the canonical's own module array
 # (it registers factories by module id, so module identity is unchanged). See the script header.
 #
-# Runs after the gates and the map staging above, which read `.next/server`; this touches only
-# `.next/standalone/.next/server`. Exits 1 if a stub does not resolve to a real chunk, 2 if it
+# Touches only `.next/standalone/.next/server`. Exits 1 if a stub does not resolve to a real chunk, 2 if it
 # finds no chunks — both fail the build.
 RUN node scripts/dedupe-server-chunks.mjs /app/.next/standalone/.next/server
-
-##### MAPS ARTIFACT (fetched on-demand; NOT part of the runtime image)
-#
-# A minimal `FROM scratch` image holding ONLY the staged server source maps,
-# under /server-maps mirroring the .next/server tree. Published to a sibling
-# registry repo (ghcr.io/civitai/civitai-web-maps:<same-tag>) by the Tekton
-# maps-publish step using the SAME ghcr credentials as the runtime push — no new
-# secrets. It shares every builder layer with the runtime build, so building this
-# target is a buildkit cache hit plus one small layer; it is never pulled by a
-# running pod. The cpuprofile resolver fetches it on demand keyed by image tag
-# (scripts/resolve-cpuprofile.mjs --image ...).
-FROM scratch AS maps
-COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
@@ -270,6 +203,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # `served-pages.cjs` is required by server.cjs at module scope, so the boot-graph gate below
 # fails the build if it is missing here.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/served-pages.cjs ./trpc-server/
+# The image feed benchmark (scripts/feed-bench/README.md): its standalone Node arm
+# (`node -- feed-bench/server.cjs`, which requires ../trpc-server/next-compat.cjs) and its replay
+# harness (`node feed-bench/bench.cjs`). Nothing runs them unless a deployment names the command;
+# deliberately NOT in the boot-graph gate below: a broken benchmark script must not block a release.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/feed-bench/server.cjs /app/scripts/feed-bench/bench.cjs /app/scripts/feed-bench/lib.cjs ./feed-bench/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).

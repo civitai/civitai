@@ -1,6 +1,5 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { ChallengePayload } from './source';
 
 /**
@@ -39,10 +38,9 @@ export const CHALLENGE_COLLECTION: CollectionSpec<ChallengePayload> = {
 };
 
 export function challengeVectorStore() {
-  const { qdrantUrl, qdrantApiKey, challengeCollection } = config.vectorSync;
   return new VectorStore<ChallengePayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    challengeCollection,
+    qdrantClient(),
+    config.vectorSync.challengeCollection,
     CHALLENGE_COLLECTION
   );
 }

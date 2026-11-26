@@ -3,7 +3,7 @@ import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { dbWrite } from '~/server/db/client';
 import { randomUUID } from 'node:crypto';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   dropRedetection,
@@ -20,6 +20,7 @@ import {
   type TextScanFlagLabel,
   type TextScanRedetection,
 } from '~/server/services/text-scan/flag-snapshot';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -106,7 +107,7 @@ const stale = () =>
 
 const LOCK_SECONDS = 120;
 const lockKey = (modelId: number, label: TextScanFlagLabel) =>
-  `${REDIS_SYS_KEYS.TEXT_SCAN.REDETECTION_LOCK}:${modelId}:${label}` as const;
+  `${REDIS_KEYS.TEXT_SCAN.REDETECTION_LOCK}:${modelId}:${label}` as const;
 
 // A keep runs for seconds across several writes, and the queue keeps listing the row meanwhile.
 // One resolution per model and label at a time; the lock expires on its own if the process dies.
@@ -119,15 +120,18 @@ export async function withResolutionLock<T>(
   const key = lockKey(modelId, label);
   // Per request, so a slow request whose lock expired cannot free the one a newer request now holds.
   const token = randomUUID();
-  const acquired = await sysRedis
-    .set(key, token, { NX: true, EX: LOCK_SECONDS })
+  const acquired = await boundedClusterCall('withResolutionLock', () =>
+    redis.set(key, token, { NX: true, EX: LOCK_SECONDS })
+  )
     .then((reply) => !!reply)
     .catch(() => true);
   if (!acquired) throw throwBadRequestError('This flag is being resolved. Reload and try again.');
   try {
     return await run();
   } finally {
-    await delIfValue(sysRedis, key, token).catch(() => null);
+    await boundedClusterCall('withResolutionLock.release', () =>
+      delIfValue(redis, key, token)
+    ).catch(() => null);
   }
 }
 
@@ -184,13 +188,12 @@ async function resolve({
       message: 'held detection resolved',
       entityType: 'Model',
       entityId: modelId,
-      label,
       kind: detection.kind ?? 'redetected',
       decision,
-      promptIds: detection.promptIds ?? null,
       moderatorId: userId,
+      payload: { label, promptIds: detection.promptIds ?? null },
       ...(decision !== 'closed' && { reason: reason ?? null, note: note ?? null }),
-    }).catch(() => null);
+    });
 
   // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
   // rule (`hasPendingAppeal` in the moderator app's getRedetectedModels).

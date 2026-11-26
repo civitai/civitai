@@ -273,7 +273,7 @@ export function coocSnapshotHolder(): CoocSnapshotHolder {
           error: error instanceof Error ? error.message : String(error),
         },
         'temp-search'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

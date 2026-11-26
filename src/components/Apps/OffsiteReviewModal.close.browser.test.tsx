@@ -56,7 +56,6 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
     <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
   ),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),

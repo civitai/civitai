@@ -27,7 +27,6 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { FileWithPath } from '@mantine/dropzone';
-import { openConfirmModal } from '@mantine/modals';
 import type { NotificationData } from '@mantine/notifications';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import {
@@ -53,6 +52,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
@@ -66,7 +66,12 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
+import {
+  auditTrainingTriggerWord,
+  labelAsTrained,
+  type TriggerWordAudit,
+} from '~/utils/metadata/training-trigger-word';
+import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   blankTagStr,
   labelDescriptions,
@@ -116,6 +121,7 @@ import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const TrainingImagesCaptions = dynamic(
   () =>
@@ -132,22 +138,13 @@ const TrainingImagesCaptionViewer = dynamic(
   { ssr: false }
 );
 
-const AutoLabelModal = dynamic(
-  () => import('~/components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal),
-  { ssr: false }
-);
-
 const AudioWaveform = dynamic(
   () => import('~/components/Training/Form/AudioWaveform').then((m) => m.AudioWaveform),
   { ssr: false }
 );
 
-const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
-  ssr: false,
-});
-
 function openImageSelectModal(props: ImageSelectModalProps) {
-  dialogStore.trigger({ component: ImageSelectModal, props });
+  openDialog(() => import('~/components/Training/Form/ImageSelectModal'), props);
 }
 
 const MAX_FILES_ALLOWED = 1000;
@@ -296,8 +293,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const isVideo = thisMediaType === 'video';
   const isAudio = thisMediaType === 'audio';
   const thisDefaultTrainingState = getDefaultTrainingStateFor(thisMediaType);
-  const domainColor = useDomainColor();
-  const isGreen = domainColor === 'green';
 
   const {
     updateImage,
@@ -350,6 +345,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
+  const isGreen = useDomainColor() === 'green';
+  // The server's verdict, so the browser holds no copy of the managed list. When the call fails
+  // (offline, rate limited) the shipped list decides, as it did before the server answered.
+  const auditTriggerWord = async (
+    word: string
+  ): Promise<Pick<TriggerWordAudit, 'severity'> | null> => {
+    if (!word.trim()) return null;
+    return queryUtils.training.auditTriggerWord
+      .fetch({ triggerWord: word })
+      .catch(() => auditTrainingTriggerWord(word, isGreen ? getProfanityFilter() : undefined));
+  };
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
   const features = useFeatureFlags();
@@ -1293,62 +1299,63 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
-      if (triggerWordInvalid !== (audit.severity !== 'clean')) {
-        setTriggerWordInvalid(model.id, thisMediaType, audit.severity !== 'clean');
+      const audit = await auditTriggerWord(triggerWord);
+      const severity = audit?.severity ?? 'clean';
+      if (triggerWordInvalid !== (severity !== 'clean')) {
+        setTriggerWordInvalid(model.id, thisMediaType, severity !== 'clean');
       }
 
-      if (audit.severity === 'hard') {
+      if (audit && severity === 'hard') {
         showNotification({
           icon: <IconX size={18} />,
           autoClose: false,
           color: 'red',
           title: 'Inappropriate trigger word',
-          message: `This trigger word has been blocked. Please review it and resubmit. Reason: ${audit.offendingWords.join(
-            ', '
-          )}`,
+          message: 'This trigger word has been blocked. Please review it and resubmit.',
         });
         return;
       }
 
       const continueSubmit = async () => {
         if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
-          return openConfirmModal({
+          return openConfirm({
             title: (
               <Group gap="xs">
                 <IconAlertTriangle color="gold" />
                 <Text size="lg">Missing labels</Text>
               </Group>
             ),
-            children:
+            message:
               'You have not provided any labels for your files. This can produce an inflexible model. We will also attempt to generate sample files, but they may not be what you are looking for. Are you sure you want to continue?',
             labels: { cancel: 'Cancel', confirm: 'Continue' },
-            centered: true,
-            onConfirm: handleNextAfterCheck,
+            // Not returned: the confirm closes at once rather than waiting out the upload.
+            onConfirm: () => {
+              void handleNextAfterCheck();
+            },
           });
         }
         await handleNextAfterCheck();
       };
 
-      if (audit.severity === 'soft') {
-        return openConfirmModal({
+      if (audit && severity === 'soft') {
+        return openConfirm({
           title: (
             <Group gap="xs">
               <IconAlertTriangle color="gold" />
               <Text size="lg">Check your trigger word</Text>
             </Group>
           ),
-          children: (
+          message: (
             <Stack gap="xs">
-              <Text size="sm">
-                {`These look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
-              </Text>
-              <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
+              <Text size="sm">This trigger word looks like it might be inappropriate.</Text>
+              <Text size="sm">If it is legitimate for your dataset, you can continue.</Text>
             </Stack>
           ),
           labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
-          centered: true,
-          onConfirm: continueSubmit,
+          // Not returned: the confirm closes at once rather than waiting out the upload.
+          onConfirm: () => {
+            void continueSubmit();
+          },
         });
       }
 
@@ -1564,10 +1571,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       disabled={autoLabeling.isRunning || !autoLabelConnected}
                       style={!autoLabelConnected ? { pointerEvents: 'initial' } : undefined}
                       onClick={() =>
-                        dialogStore.trigger({
-                          component: AutoLabelModal,
-                          props: { modelId: model.id, mediaType: thisMediaType },
-                        })
+                        openDialog(
+                          () => import('~/components/Training/Form/TrainingAutoLabelModal'),
+                          'AutoLabelModal',
+                          { modelId: model.id, mediaType: thisMediaType }
+                        )
                       }
                     >
                       <Group gap={4}>
@@ -1595,11 +1603,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     color="red"
                     disabled={autoLabeling.isRunning}
                     onClick={() => {
-                      openConfirmModal({
+                      openConfirm({
                         title: 'Remove all files?',
-                        children: 'This cannot be undone.',
+                        message: 'This cannot be undone.',
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                        centered: true,
                         onConfirm: () => {
                           setImageList(model.id, thisMediaType, []);
                           setAccordionUpload('uploading');
@@ -1646,9 +1653,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     onChange={(event) =>
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
-                    onBlur={() => {
-                      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
-                      if (audit.severity !== 'clean') {
+                    onBlur={async () => {
+                      const audit = await auditTriggerWord(triggerWord);
+                      if (audit && audit.severity !== 'clean') {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
                           const soft = audit.severity === 'soft';
@@ -1658,12 +1665,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                             color: soft ? 'yellow' : 'red',
                             title: soft ? 'Check this trigger word' : 'Inappropriate trigger word',
                             message: soft
-                              ? `This trigger word looks like it might be inappropriate: ${audit.offendingWords.join(
-                                  ', '
-                                )}. You can still continue if it is legitimate.`
-                              : `This trigger word has been blocked. Please review. Reason: ${audit.offendingWords.join(
-                                  ', '
-                                )}`,
+                              ? 'This trigger word looks like it might be inappropriate. You can still continue if it is legitimate.'
+                              : 'This trigger word has been blocked. Please review it.',
                           });
                         }
                       } else {

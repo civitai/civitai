@@ -3,6 +3,7 @@ import type {
   ChallengeJudgingCategory,
   UpsertChallengeCategoryInput,
 } from '~/server/schema/challenge.schema';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   CHALLENGE_CATEGORY_KEYS,
   CHALLENGE_PRESET_CATEGORIES,
@@ -141,6 +142,14 @@ export function pickCategoryRubric(
   const label = row?.label ?? category.name ?? category.key;
   const criteria = row?.criteria ?? category.criteria ?? '';
   return `${label.toUpperCase()} SCORING (0-10):\n${criteria}`.trim();
+}
+
+/**
+ * Whether a challenge is judged on the NSFW rubric variants: unless every level it allows is SFW.
+ * Decided per challenge, never per entry, so an SFW daily never reads `rubricNsfw`.
+ */
+export function usesNsfwRubrics(allowedNsfwLevel: number) {
+  return !getIsSafeBrowsingLevel(allowedNsfwLevel);
 }
 
 /** Concatenated rubric block for the selected categories, for `{{SCORING_RUBRICS}}` injection. */

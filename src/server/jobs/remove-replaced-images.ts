@@ -5,8 +5,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImages } from '~/server/services/image.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { REPLACED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -60,18 +58,10 @@ async function getStillPresentImageIds(ids: number[]) {
   return rows.map((r) => r.id);
 }
 
-/**
- * The holds the reap re-checks on the DELETE itself: every hold on the owner's account, and the
- * placeholder owner. Only valid on a statement over an unaliased "Image". `markerView` is what
- * `holdMarkerViewExists` returned.
- */
-export function replacedImageHoldGuard(markerView: boolean) {
-  const owner = Prisma.raw('"Image"."userId"');
-  return Prisma.sql`
-    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
-    "Image"."needsReview" IS DISTINCT FROM 'csam'
-    AND NOT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, markerView)})
-  `;
+/** Re-checked on the DELETE itself. Only valid on a statement over an unaliased "Image". */
+export function replacedImageHoldGuard() {
+  // Read off the row itself, so a flag committed while this DELETE runs still holds the image.
+  return Prisma.sql`"Image"."needsReview" IS DISTINCT FROM 'csam'`;
 }
 
 export const removeReplacedImages = createJob(
@@ -111,10 +101,12 @@ export const removeReplacedImages = createJob(
       // Deletes the row, the stored object, and the caches keyed on it. Past the retention
       // window there is nothing left to preserve, so this is the same destruction the inline
       // call used to do — just late enough that no live cache can still be pointing at it.
-      // A held account's images are the exception, and the guard leaves them in place.
-      const markerView = await holdMarkerViewExists();
-      const rows = await deleteImages(deletableIds, true, {
-        onlyWhere: replacedImageHoldGuard(markerView),
+      const rows = await deleteImages(deletableIds, {
+        actor: { system: 'remove-replaced-images' },
+        onlyWhere: replacedImageHoldGuard(),
+        // A row its child-safety case keeps stays in this queue, so the re-adoption check above runs
+        // again before it goes; a pending delete would take it unchecked.
+        queueKept: false,
       });
       deleted.push(...rows.map((x) => x.id));
     }
@@ -123,7 +115,7 @@ export const removeReplacedImages = createJob(
       await getStillPresentImageIds(deletableIds.filter((id) => !deletedSet.has(id)))
     );
 
-    // A held image stays queued until its hold ends, re-stamped so it goes to the back of the
+    // A kept image stays queued, re-stamped so it goes to the back of the
     // oldest-first batch and is checked again a window later, rather than filling every run's batch.
     if (held.size) {
       await dbWrite.$executeRaw`
@@ -154,7 +146,7 @@ export const removeReplacedImages = createJob(
       deleted: deleted.length,
       readopted: readopted.size,
       heldAtDelete: held.size,
-    }).catch(() => undefined);
+    });
 
     return { deleted: deleted.length, readopted: readopted.size, heldAtDelete: held.size };
   },

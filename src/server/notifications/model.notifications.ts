@@ -1,5 +1,6 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { OLD_DRAFT_LEAD_TEXT, OLD_DRAFT_NOTICE_DAYS } from '~/server/common/draft-reaping';
+import { draftKeptSql } from '~/server/common/draft-keep';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   createNotificationProcessor,
@@ -245,18 +246,22 @@ export const modelNotifications = createNotificationProcessor({
           mv.name version_name,
           m.id model_id,
           m.name model_name,
-          m.type model_type,
-          mv."publishedAt" updated_published_at
+          m.type model_type
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
-        where
-          pa."endsAt" IS NOT NULL
-          AND pa."endsAt" <= NOW()
-          AND pa."endsAt" >= '${lastSent}'
-        -- Wall-clock floor: bound to last 30 minutes so a stale cursor cannot force a
-        -- giant table scan. See new-model-from-following / new-model-version for details.
-        AND pa."endsAt" > NOW() - INTERVAL '30 minutes'
+        WHERE
+          -- Bounds the scan to recently ended gates (PaidAccess entityType+endsAt index); 2h leaves
+          -- room for a stalled process-ending-early-access run.
+          pa."endsAt" <= NOW()
+          AND pa."endsAt" > NOW() - INTERVAL '2 hours'
+          -- Keyed on the republish (publishedAt moves past endsAt), not on endsAt: a run that fires
+          -- before the republish is visible would leave the next run's lastSent already past endsAt.
+          AND mv."publishedAt" >= pa."endsAt"
+          -- 59s look-back: the republish may not be on the replica when the previous run read it.
+          -- The re-read is deduped by key.
+          AND mv."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND now()
+          AND mv."publishedAt" > NOW() - INTERVAL '30 minutes'
       ), early_access_complete AS (
         SELECT DISTINCT
           mve."userId" owner_id,
@@ -269,7 +274,6 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM early_access_versions ev
         JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
-        WHERE ev.updated_published_at > '${lastSent}' AND ev.updated_published_at < now()
       )
       SELECT
         concat('early-access-complete:', details->>'versionId') "key",
@@ -380,6 +384,8 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
+        -- A draft the reaper keeps is not warned.
+        AND NOT ${draftKeptSql('m')}
         AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days' AND NOW() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
         AND m."availability" != 'Private'::"Availability"
         -- EXISTS, not a JOIN, but the same semantics as the reaper's INNER
@@ -415,6 +421,19 @@ export const modelNotifications = createNotificationProcessor({
       message: `The hash in the metadata of your resource "${details.modelName}: ${details.versionName}" has been corrected. Please redownload it to ensure that your images report the correct hash going forward.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
         details.versionId
+      }`,
+    }),
+  },
+  'model-version-showcase-featured': {
+    displayName: 'Your image was featured in a model showcase',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username ?? 'A creator'} featured your image in the ${
+        details.modelName
+      } showcase`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
+        details.modelVersionId
       }`,
     }),
   },

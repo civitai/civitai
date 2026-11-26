@@ -138,7 +138,7 @@ getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | n
 | Gold    | No fixed limit | 1.5x                    |
 
 - Minimum cap: 100,000 for all tiers
-- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees, paid/early access, tips one user paid another (`USER_TIP_SQL`: not from account 0, not to self) and generation tips (`GENERATION_TIP_SQL`) (`PEAK_EARNING_PREDICATE_SQL`). Tips a creator pays out are netted from their bankable amount, not from the peak; Buzz a user paid the creator still counts toward a month only beyond what the creator sent that user in the window, tips included. Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. Pool forecasts and `earnedCache` in `buzz.service.ts` still count compensation
+- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees, paid/early access, tips one user paid another (`USER_TIP_SQL`: not from account 0, not to self) and generation tips (`GENERATION_TIP_SQL`) (`PEAK_EARNING_PREDICATE_SQL`). Tips a creator pays out are netted from their bankable amount, not from the peak; Buzz a user paid the creator still counts toward a month only beyond what the creator sent that user in the window, tips included. Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. `earnedCache` in `buzz.service.ts` still counts compensation
 - The highest tier across all active subscriptions is used
 
 **Relevant code:** `createUserCapCache()` in the service queries `CustomerSubscription` joined with `Product.metadata.tier`.
@@ -226,7 +226,7 @@ The three stage notifications run daily and gate on `getStageNotificationDays`, 
 
 - **Hold.** `creatorsProgramSettleCash` calls `getSettlementHolds(period)` and leaves out any creator with an undecided review (`open` or `escalated`, any period) or whose latest review is `withheld`. Their `cashPending` is untouched.
 - **Withheld is per cycle.** A withhold means not paid this cycle, never forfeited. The cash stays pending, and the next run files a new review for the creator (signal `withheld-carried`) whether or not they were credited again, so they are decided afresh each month. A later `cleared` review pays them.
-- **Decisions.** `POST /api/admin/creator-program-payout-review` (moderator session; body `id`, `userId`, `period`, `action` of `escalate` | `clear` | `withhold`, `version`, optional `note` and `askRef`). Every write to a row bumps `version`; a 409 means the row changed since it was read or the action is not allowed from its status (clear: open, escalated or withheld; escalate: open or cleared; withhold: open, escalated or cleared); a mismatched id, user or period is a 404. The decider recorded is the authenticated moderator, and each decision is appended to the row's `decisions` history. The route moves no money: a cleared creator (not banned, not program-banned) is added to the next settlement's account set.
+- **Decisions.** `POST /api/admin/creator-program-payout-review` (moderator session; body `id`, `userId`, `period`, `action` of `escalate` | `clear` | `withhold`, `version`, optional `note` and `askRef`). Every write to a row bumps `version`; a 409 means the row changed since it was read or the action is not allowed from its status (clear: open, escalated or withheld; escalate: open or cleared; withhold: open, escalated or cleared); a mismatched id, user or period is a 404. The decider recorded is the authenticated moderator, and each decision is appended to the row's `decisions` history. The route moves no money: a cleared creator (not banned, not program-banned) is added to the next settlement's account set. Moderators decide reviews on the moderator app's Payout Reviews page (`/creator-program/payout-reviews`), which calls this route; its buttons need the `creatorProgram.payoutReview.decide` permission. Its "Cleared, not yet settled" view lists the creators the next settlement will pay because of a clear since the last 15th (their latest review, nothing else holding them, not banned from the program), so a mistaken clear can be escalated or withheld before it is paid.
 - **Limits.** Every threshold, including the payout-jump percentile and how many earlier payouts it compares against, is read from sysRedis `creator-program:prepayout-limits` (JSON), ops-owned with no default in code; ask an infra owner. Until that key is set and valid, each run records a failed run and flags nobody. The review also uses the daily `creator-program-counterparty-review` job's minimum (`readMinimum`), which defaults to `DEFAULT_COUNTERPARTY_REVIEW_MIN` when nothing valid is stored.
 - **Fails open.** A missing or invalid key, no ClickHouse or an empty batch records a failed run and holds nobody. An error mid-run records a failed run but keeps the holds already filed. Either way the batch counts as unreviewed: settlement still pays everyone not held and logs `creator-program-prepayout-review-missing`. Missing tables (code deployed before the migration) behave the same. Any other error reading holds stops settlement before it pays anyone.
 - **Deploy order.** Apply `20261109120000_creator_program_payout_review` by hand before the deploy, then set the sysRedis key before the 1st.
@@ -262,7 +262,7 @@ Used for:
 - Peak earnings calculation (license fees, early access, tips)
 - Bankable amount (cutover balance, bankable earnings, banked and extracted since the cutover)
 - Pool value calculation (purchases, redeemable codes)
-- Pool forecast (projected earnings)
+- Pool forecast (last month's net banked pool, floored at what is banked this month)
 - Pool participants (bank/extract transactions)
 
 ### PostgreSQL
@@ -375,6 +375,5 @@ Shared utility tests: `src/shared/utils/__tests__/creator-program.utils.test.ts`
 | ------------------------------- | ------------------------------------------------ |
 | `CREATOR_POOL_TAXES`            | Tax percentage to deduct from gross revenue      |
 | `CREATOR_POOL_PORTION`          | Percentage of post-tax revenue allocated to pool |
-| `CREATOR_POOL_FORECAST_PORTION` | Percentage for forecasted pool size              |
 | `TIPALTI_API_URL`               | Tipalti API base URL                             |
 | `TIPALTI_*`                     | Various Tipalti auth credentials                 |

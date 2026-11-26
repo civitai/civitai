@@ -10,6 +10,11 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
 
+const studioWithheldWorkflowIds = vi.fn();
+vi.mock('~/server/services/orchestrator/training/studio-withheld', () => ({
+  studioWithheldWorkflowIds: (...args: unknown[]) => studioWithheldWorkflowIds(...args),
+}));
+
 const handler = (await import('~/pages/api/training-studio/model-status')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
@@ -18,16 +23,28 @@ const handler = (await import('~/pages/api/training-studio/model-status')).defau
 
 const OWNER = { id: 1, username: 'owner' } as SessionUser;
 const MODELS: Row[] = [
-  { id: 77, userId: 1, status: ModelStatus.Draft, deletedBy: null },
+  { id: 77, userId: 1, status: ModelStatus.Draft, deletedBy: null, versionIds: [770] },
   { id: 78, userId: 1, status: ModelStatus.Deleted, deletedBy: 1 },
   { id: 79, userId: 2, status: ModelStatus.Draft, deletedBy: null },
   { id: 80, userId: 1, status: ModelStatus.Deleted, deletedBy: 999 },
   { id: 81, userId: 1, status: ModelStatus.Deleted, deletedBy: null },
 ];
 
-type Row = { id: number; userId: number; status: ModelStatus; deletedBy: number | null };
+type Row = {
+  id: number;
+  userId: number;
+  status: ModelStatus;
+  deletedBy: number | null;
+  versionIds?: number[];
+};
 type Clause = { status?: { not: ModelStatus }; deletedBy?: { not: number } | null };
-type Where = { id: number; userId?: number; status?: { not: ModelStatus }; OR?: Clause[] };
+type Where = {
+  id: number;
+  userId?: number;
+  status?: { not: ModelStatus };
+  OR?: Clause[];
+  modelVersions?: { some: { id: number } };
+};
 // SQL's rules, not JS's: `deletedBy <> x` is not true for a NULL deletedBy.
 const passes = (r: Row, c: Clause) =>
   c.status
@@ -37,9 +54,13 @@ const passes = (r: Row, c: Clause) =>
     : r.deletedBy !== null && r.deletedBy !== c.deletedBy?.not;
 
 async function status(id: string) {
+  return call({ id }, OWNER);
+}
+
+async function call(query: Record<string, string>, user: SessionUser) {
   let code = 200;
   let body: unknown;
-  const req = { method: 'GET', query: { id } } as unknown as NextApiRequest;
+  const req = { method: 'GET', query } as unknown as NextApiRequest;
   const res = {
     setHeader: () => res,
     status(c: number) {
@@ -51,7 +72,7 @@ async function status(id: string) {
       return res;
     },
   } as unknown as NextApiResponse;
-  await handler(req, res, OWNER);
+  await handler(req, res, user);
   return { code, body };
 }
 
@@ -62,7 +83,8 @@ beforeEach(() => {
         m.id === where.id &&
         (where.userId === undefined || m.userId === where.userId) &&
         (!where.status || m.status !== where.status.not) &&
-        (!where.OR || where.OR.some((c) => passes(m, c)))
+        (!where.OR || where.OR.some((c) => passes(m, c))) &&
+        (!where.modelVersions || !!m.versionIds?.includes(where.modelVersions.some.id))
     );
     return row ? { id: row.id } : null;
   }) as never);
@@ -92,5 +114,57 @@ describe('GET /api/training-studio/model-status', () => {
 
   it('refuses a malformed id', async () => {
     expect((await status('abc')).code).toBe(400);
+  });
+
+  // A run added to an existing model links that model's version; the owner deleting the version
+  // ends the link while the model stays.
+  it('reports the run gone once its version is deleted, while the model lives', async () => {
+    expect(await call({ id: '77', versionId: '770' }, OWNER)).toEqual({
+      code: 200,
+      body: { live: true },
+    });
+    expect(await call({ id: '77', versionId: '771' }, OWNER)).toEqual({
+      code: 200,
+      body: { live: false },
+    });
+  });
+});
+
+describe('GET /api/training-studio/model-status?workflowIds', () => {
+  beforeEach(() => studioWithheldWorkflowIds.mockReset());
+
+  it("answers the caller's withheld runs among the ids asked", async () => {
+    studioWithheldWorkflowIds.mockResolvedValueOnce(['wf-2']);
+    expect(await call({ workflowIds: 'wf-1,wf-2,wf-1', userId: '1' }, OWNER)).toEqual({
+      code: 200,
+      body: { withheld: ['wf-2'] },
+    });
+    expect(studioWithheldWorkflowIds).toHaveBeenCalledWith(OWNER.id, ['wf-1', 'wf-2']);
+  });
+
+  it('withholds nothing from a moderator', async () => {
+    const mod = { ...OWNER, isModerator: true } as SessionUser;
+    expect(await call({ workflowIds: 'wf-1', userId: '1' }, mod)).toEqual({
+      code: 200,
+      body: { withheld: [] },
+    });
+    expect(studioWithheldWorkflowIds).not.toHaveBeenCalled();
+  });
+
+  it.each([[''], [Array.from({ length: 101 }, (_, i) => `wf-${i}`).join(',')]])(
+    'refuses an empty or oversized batch',
+    async (workflowIds) => {
+      expect((await call({ workflowIds, userId: '1' }, OWNER)).code).toBe(400);
+    }
+  );
+
+  it.each([
+    ['another user', '2'],
+    ['no user', undefined],
+  ])('gives no answer when the Studio asks for %s', async (_label, userId) => {
+    const query: Record<string, string> = { workflowIds: 'wf-1' };
+    if (userId) query.userId = userId;
+    expect((await call(query, OWNER)).code).toBe(userId ? 403 : 400);
+    expect(studioWithheldWorkflowIds).not.toHaveBeenCalled();
   });
 });

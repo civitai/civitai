@@ -32,10 +32,6 @@ const rpc = await vi.hoisted(async () => {
   return createBridgeRpcMock();
 });
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav moderator
-// gate; render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   // Spread the real module so every other export (e.g. `setTrpcBatchingEnabled`, which
   // FeatureFlagsProvider imports) still links; a missing export fails the whole FILE to

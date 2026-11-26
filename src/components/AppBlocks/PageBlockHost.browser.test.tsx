@@ -11,18 +11,6 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as MantineNotifications from '@mantine/notifications';
 import type * as AuthHelpers from '~/utils/auth-helpers';
 
-// PageBlockHost wires the money-path workflow bridge AND the storage bridge,
-// which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
-// and `trpc.useUtils()` at render — that needs the tRPC Context (the `withTRPC`
-// HoC) the network-free component scaffold doesn't provide. Mock the tRPC client
-// so these consent-focused tests stay network-free and mount the component
-// without a real tRPC provider. The workflow + storage bridges are exercised in
-// PageBlockHostWorkflow / PageBlockHostStorage.browser.test.tsx; here they're
-// inert stubs.
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Issue B: spy on the toast so the un-grantable-consent path is assertable without
 // mounting the full Notifications provider. Preserve the module's other exports.
 const showNotificationSpy = vi.fn();
@@ -79,6 +67,7 @@ vi.mock('~/utils/trpc', () => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {

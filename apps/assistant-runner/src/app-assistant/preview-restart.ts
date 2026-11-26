@@ -45,9 +45,12 @@ export type RestartErrorCode =
   | 'failed'
   | 'unavailable';
 
-/** What a restart answers the page: the block and host shown, never the tunnel's id. */
+/**
+ * What a restart answers the page: the block and host shown, never the tunnel's id. A direct
+ * preview's has no host (`StartedPreview`): the page gets its frame from civitai by block id.
+ */
 export type RestartOutcome =
-  | { ok: true; blockId: string; host: string }
+  | { ok: true; blockId: string; host?: string }
   | { ok: false; error: RestartErrorCode; message: string };
 
 /** What the HTTP layer asks for (`POST apps/:app/preview`): one restart, for a verified viewer. */
@@ -74,6 +77,10 @@ export const RESTART_MESSAGES = {
   // Restart starts a dev server that is not running; these say why it still does not run.
   'dev-server-no-project':
     'Your app’s dev server is not running, and the preview could not tell which project to start. Ask the assistant to start it, and the preview opens by itself.',
+  'dev-server-installing':
+    'Your app is still installing its dependencies. Try again in a minute, and the preview opens by itself.',
+  'dev-server-install-failed':
+    'Your app’s dependencies could not be installed, so its dev server could not start. Ask the assistant to look at it, and the preview opens by itself.',
   'dev-server-refused':
     'Your app’s dev server is not running, and your app would not start it. Ask the assistant to start it, and the preview opens by itself.',
   'dev-server-timeout':
@@ -90,6 +97,8 @@ export const RESTART_MESSAGES = {
 /** Which words say why a dev server the restart started does not run. */
 const DEV_SERVER_FAILED = {
   'no-project': 'dev-server-no-project',
+  installing: 'dev-server-installing',
+  'install-failed': 'dev-server-install-failed',
   refused: 'dev-server-refused',
   timeout: 'dev-server-timeout',
 } as const satisfies Record<
@@ -132,6 +141,9 @@ export interface PreviewRestarterOptions {
  * judges every gate, the sandbox dials it), then nothing more: no keep-alive, as no run is live, so
  * the tunnel idles out by civitai's own rules. A dev server that is not running (a resumed sandbox
  * runs none) is started first, as the assistant is told to start it (`RunnerPreview.startDevServer`).
+ * Where civitai serves the user's previews directly (its `preview/open`), the same start takes no
+ * tunnel step: it reuses the app's open session, or opens a new one under a fresh preview id when
+ * the old id's session ended (a resumed app), and answers its block id with no host.
  *
  * Two clicks for one app share one restart (one tunnel); each user has `RESTART_LIMIT` restarts in
  * `RESTART_WINDOW_MS` here, on top of civitai's own hourly cap on unsubmitted apps.
@@ -225,10 +237,15 @@ export class PreviewRestarter implements PreviewRestarts {
         shown = await preview.reopen();
       } catch (error) {
         if (!(error instanceof DevServerNotRunningError)) throw error;
-        // Not running (as after every resume): start it as the assistant would, then the same
-        // reopen. Still no run, no model call and no Buzz. Assumed: no reply is working in this
-        // sandbox meanwhile (one mid-`npm install` would see its dev server started early); the
-        // runner cannot see the page's replies from here.
+        // Not running (as after every resume): start it as the assistant would (installing its
+        // dependencies first when they are not, as a woken or remixed app's are not), then the
+        // same reopen. Still no run, no model call and no Buzz. The runner cannot see the page's
+        // replies from here. A reply's own `npm install` is looked for (`installing`) only when this
+        // project's dependencies are not installed yet, and only once, before ours starts: over an
+        // installed project a reply's install is not seen, and one a reply starts after that look
+        // can still run beside ours. A reply that has just finished installing, before its dev
+        // server starts, sees its dev server started early. The preview grant covers the install's
+        // bound (civitai's `PREVIEW_GRANT_TTL_SECONDS`).
         await preview.startDevServer();
         try {
           shown = await preview.reopen();
@@ -239,7 +256,7 @@ export class PreviewRestarter implements PreviewRestarts {
           throw reopenError;
         }
       }
-      return { ok: true, blockId: shown.blockId, host: shown.host };
+      return { ok: true, blockId: shown.blockId, ...(shown.host ? { host: shown.host } : {}) };
     } catch (error) {
       return this.#refusal(error);
     } finally {

@@ -49,8 +49,10 @@ const { acceptImage, closedAppellants, resolveImageAppeal } = await import(
 
 // Stand-ins cut to the columns the two resolve paths touch.
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
+  "userId" INTEGER,
   "needsReview" TEXT,
   "blockedFor" TEXT,
   "ingestion" TEXT,
@@ -63,8 +65,9 @@ CREATE TABLE "Image" (
 ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
+  PRIMARY KEY ("entityType", "entityId", "type"));
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -79,7 +82,11 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+-- Rates a restored image as its tags would: an untagged one would go back to the scanner.
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
+  UPDATE "Image" SET "nsfwLevel" = 1
+  WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" AND "ingestion" = 'Scanned' AND "blockedFor" IS NULL;
+$$;
 `;
 
 const IMAGE_ID = 41;

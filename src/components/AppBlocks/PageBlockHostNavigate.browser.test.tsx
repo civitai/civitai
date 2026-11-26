@@ -47,10 +47,6 @@ import type * as TrpcModule from '~/utils/trpc';
  * the constraint is recorded at the call site instead.
  */
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 SPREAD the real module and override only `trpc`, rather than the wholesale
 // factory the sibling PageBlockHost suites use. Those predate
 // `local-rules/no-wholesale-module-mock` and are red on it today: a hand-written
@@ -85,6 +81,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {
@@ -239,6 +236,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/settings', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -253,6 +251,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail/500', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -271,6 +270,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/Jos%C3%A9/2', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -324,6 +324,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -360,6 +361,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
         shallow: true,
+        scroll: false,
       });
     });
   });
@@ -485,6 +487,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
         shallow: true,
+        scroll: false,
       });
     });
   });

@@ -22,6 +22,7 @@
  */
 
 import { z } from 'zod';
+import { baseModelByName, ecosystemById } from '~/shared/constants/basemodel.constants';
 
 // WHO keeps access — everyone else is gated. Positive ("available to") framing,
 // matching the legacy allow-list model ("testers have it; others hidden"):
@@ -230,6 +231,29 @@ export function canGenerateBlockedTargets(rules: GateRuleView[]): CanGenerateBlo
     ecosystems: hiddenKeys(states.ecosystems),
     versionIds: hiddenKeys(states.modelVersionIds),
   };
+}
+
+/**
+ * Every target a gating rule names (hidden or disabled; `experimental` never gates), from
+ * already-applicable rules. What the orchestrator must ask the permission check about.
+ */
+export function gatingTargets(rules: GateRuleView[]): CanGenerateBlockedTargets {
+  const states = rulesToStates(rules);
+  return {
+    ecosystems: new Set(states.ecosystems.keys()),
+    versionIds: new Set(states.modelVersionIds.keys()),
+  };
+}
+
+/** Whether gate targets name this version by id or by its base model's ecosystem. */
+export function isTargetedBy(
+  resource: { id: number; baseModel: string },
+  targets: CanGenerateBlockedTargets
+): boolean {
+  if (targets.versionIds.has(resource.id)) return true;
+  const baseModel = baseModelByName.get(resource.baseModel);
+  const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
+  return !!ecosystemKey && targets.ecosystems.has(ecosystemKey);
 }
 
 /**

@@ -18,11 +18,19 @@ import { evalSys } from '../redis';
 import { cookieDomain } from './cookie';
 import { setDeviceCookie } from './device';
 import { clearLegacyCookies } from './legacy-cookies';
-import { acceptHubSession, addDeviceFamily, markFamilyLive } from './lineage';
+import { acceptHubSession, markFamilyLive } from './lineage';
 import { sessions } from './registry';
-import { canHoldSession, getSigner, sessionExpiresIn, setSessionCookie } from './session';
+import {
+  canHoldSession,
+  getSigner,
+  requireLiveSession,
+  sessionExpiresIn,
+  setSessionCookie,
+} from './session';
 import { getOrProduceSessionUser } from './session-producer';
+import { refusedAccountReason } from './account-refusal';
 import { signatureVerifier, verifier } from './verifier';
+import { isUnconfirmedSession } from './unconfirmed-session';
 
 // The hub moves its own session from the shared slot (Domain=<registrable>) to its host-only slot. Before the hub
 // reads the host-only slot first, /authorize copies the shared session into it (preUpgradeHubSession). Once it
@@ -57,7 +65,9 @@ const slotsDiffer = () => hostSessionCookieName() !== sessionCookieName();
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function newUpgrade(from: SessionClaims): Upgrade {
+/** `live`: the revocation-checked claims that authorize the copy (`from` may be signature-only). */
+function newUpgrade(from: SessionClaims, live: SessionClaims): Upgrade {
+  requireLiveSession(live);
   const now = Date.now();
   const { iat0, sid } = familyClaims(from, { clearImpersonation: true, now });
   return {
@@ -66,8 +76,15 @@ function newUpgrade(from: SessionClaims): Upgrade {
   };
 }
 
-const sign = ({ jti, claims }: Upgrade) =>
-  getSigner().mintSessionToken(claims, { jti, expiresIn: sessionExpiresIn(claims) });
+/** Null when the account may no longer hold a session: the copy is not made. */
+async function sign({ jti, claims }: Upgrade): Promise<string | null> {
+  // Runs on page requests: a failed read leaves the session where it is rather than failing the page.
+  const refused = await refusedAccountReason(Number(claims.sub), 'legacy-upgrade').catch(
+    () => true
+  );
+  if (refused) return null;
+  return getSigner().mintSessionToken(claims, { jti, expiresIn: sessionExpiresIn(claims) });
+}
 
 /** Whether `token` is a live session of the same family and account as `of`. */
 async function isSameSession(token: string | undefined, of: SessionClaims): Promise<boolean> {
@@ -89,14 +106,19 @@ async function honouredSession(token: string): Promise<SessionClaims | null> {
 function carryDeviceId(cookies: Cookies): string {
   const host = cookies.get(deviceCookieNameForSlot('host'));
   const shared = cookies.get(deviceCookieNameForSlot('shared'));
-  const id = (sessionCookieMode() === 'host' ? host ?? shared : shared ?? host) ?? randomUUID();
+  const id = (sessionCookieMode(null) === 'host' ? host ?? shared : shared ?? host) ?? randomUUID();
   if (host !== id) setDeviceCookie(cookies, id, 'host');
   return id;
 }
 
-async function recordFamily(cookies: Cookies, family: string | undefined): Promise<void> {
+// The copy keeps the session's family, so it needs no family record. carryDeviceId sets the host-slot device cookie
+// the account list is keyed by.
+async function markLiveAndCarryDeviceId(
+  cookies: Cookies,
+  family: string | undefined
+): Promise<void> {
   await markFamilyLive(family);
-  await addDeviceFamily(carryDeviceId(cookies), family, { proofFamily: family });
+  carryDeviceId(cookies);
 }
 
 /**
@@ -111,10 +133,11 @@ export async function preUpgradeHubSession(
 ): Promise<void> {
   if (!slotsDiffer() || shared.impersonatedBy != null || !canHoldSession(user)) return;
   if (await isSameSession(cookies.get(hostSessionCookieName()), shared)) return;
-  const upgrade = newUpgrade(shared);
+  const upgrade = newUpgrade(shared, shared);
   const token = await sign(upgrade);
+  if (!token) return;
   await sessions.trackToken(upgrade.jti, Number(upgrade.claims.sub)).catch(() => undefined);
-  await recordFamily(cookies, familyId({ ...upgrade.claims, jti: upgrade.jti }));
+  await markLiveAndCarryDeviceId(cookies, familyId({ ...upgrade.claims, jti: upgrade.jti }));
   setSessionCookie(cookies, token, 'host');
 }
 
@@ -193,14 +216,15 @@ export async function upgradeHubSession(
     if (stored) return finish(cookies, j0, await sign(stored), { won: false });
 
     const live = await verifier.verifyToken(sharedToken).catch(() => null);
-    if (!live || !(await acceptHubSession(live))) return null;
+    // Runs on every page request: an unconfirmed session is served as it is, not moved.
+    if (!live || isUnconfirmedSession(live) || !(await acceptHubSession(live))) return null;
 
     if (!(await takeLock(j0.jti))) {
       const winner = await awaitWinner(j0.jti);
       if (winner) return finish(cookies, j0, await sign(winner), { won: false });
       continue;
     }
-    const upgrade = newUpgrade(j0);
+    const upgrade = newUpgrade(j0, live);
     await sessions.trackToken(upgrade.jti, Number(upgrade.claims.sub)).catch(() => undefined);
     await evalSys(
       STORE_SCRIPT,
@@ -215,11 +239,12 @@ export async function upgradeHubSession(
 async function finish(
   cookies: Cookies,
   j0: SessionClaims,
-  token: string,
+  token: string | null,
   { won }: { won: boolean }
-): Promise<string> {
+): Promise<string | null> {
+  if (!token) return null;
   if (cookies.get(hostSessionCookieName()) !== token) setSessionCookie(cookies, token, 'host');
-  await recordFamily(cookies, familyId(j0));
+  await markLiveAndCarryDeviceId(cookies, familyId(j0));
   const retire = retireSharedSession();
   if (retire) await sessions.invalidateToken(j0.jti!, Number(j0.sub)).catch(() => undefined);
   // Only the minting request starts the TTL: a replay re-arming it would keep an ended token usable indefinitely.

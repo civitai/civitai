@@ -17,6 +17,7 @@ import {
   APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_INDEX_PATH_RE,
   APP_STORAGE_INDEX_TYPES,
+  APP_STORAGE_KEYED_BY,
   APP_STORAGE_KINDS,
   APP_STORAGE_LOG_MAX_ENTRIES,
   APP_STORAGE_MAX_COLLECTIONS,
@@ -175,6 +176,24 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ],
   ['exportable false', priv({ exportable: false }), true],
   ['exportable true on shared', shared({ exportable: true }), true],
+  // Viewer-keyed documents (docs/app-storage-generic-core.md): shared `own` only. Not phased:
+  // `viewerKeyedDocs` is on in production.
+  ['keyedBy viewer on shared own', shared({ keyedBy: 'viewer' }), true],
+  ['keyedBy parent+viewer on shared own', shared({ keyedBy: 'parent+viewer' }), true],
+  ['keyedBy unknown mode', shared({ keyedBy: 'parent' }), false],
+  ['keyedBy not a string', shared({ keyedBy: true }), false],
+  ['keyedBy on private', priv({ keyedBy: 'viewer' }), false],
+  ['keyedBy with write none', shared({ write: 'none', marks: ['vote'], keyedBy: 'viewer' }), false],
+  ['keyedBy with write anyone', shared({ write: 'anyone', keyedBy: 'viewer' }), false],
+  [
+    'keyedBy with write owner',
+    shared({ write: 'owner', counters: ['plays'], keyedBy: 'viewer' }),
+    false,
+  ],
+  ['keyedBy on a log collection', shared({ kind: 'log', keyedBy: 'viewer' }), false],
+  ['keyedBy with marks', shared({ keyedBy: 'parent+viewer', marks: ['vote'] }), false],
+  ['keyedBy with counters', shared({ keyedBy: 'viewer', counters: ['plays'] }), false],
+  ['keyedBy with an empty marks list', shared({ keyedBy: 'viewer', marks: [] }), false],
   ['imports only', imports(imp()), true],
   ['imports beside collections', { ...priv(), ...imports(imp({ access: 'readwrite' })) }, true],
   [
@@ -227,14 +246,14 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],
   ['registry public on shared', shared({ registry: 'public' }), true, true],
   ['write owner', shared({ write: 'owner', counters: ['plays'] }), true, true],
-  // accept, but phased — permission hooks
-  ['hook on a private collection', priv(hook()), true, true],
-  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true, true],
-  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true, true],
-  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true, true],
-  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true, true],
-  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true, true],
-  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true, true],
+  // accept — permission hooks (the `hooks` feature is on in production)
+  ['hook on a private collection', priv(hook()), true],
+  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true],
+  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true],
+  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true],
+  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true],
+  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true],
+  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true],
   // reject — containers
   ['storage null', null, false],
   ['storage array', [], false],
@@ -617,6 +636,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(p.registry.enum).toEqual([...APP_STORAGE_REGISTRY_AUDIENCES]);
     expect(p.visibility.enum).toEqual([...APP_STORAGE_VISIBILITIES]);
     expect(p.write.enum).toEqual([...APP_STORAGE_WRITE_POLICIES]);
+    expect(p.keyedBy.enum).toEqual([...APP_STORAGE_KEYED_BY]);
 
     for (const [field, max] of [
       ['counters', APP_STORAGE_MAX_COUNTERS],
@@ -749,6 +769,38 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(schemaAccepts(doc, { a: 'x' })).toBe(true);
     expect(schemaAccepts(doc, { a: 1 })).toBe(false);
     expect(() => schemaAccepts({ $ref: '#/$defs/missing' }, 1)).toThrow(/cannot resolve/);
+  });
+
+  // docs/app-storage-generic-core.md, rollout step 5: the tally primitives are removed, and the
+  // published schema says so WITHOUT changing what validates (approved manifests keep them, inert;
+  // submit refuses a new one, `deprecatedPrimitiveErrors`).
+  it('marks counters and marks removed (and write "none" in its description), as annotations only', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const p = collection.properties as Record<string, SchemaObject>;
+    for (const field of ['counters', 'marks'] as const) {
+      expect(p[field].deprecated, field).toBe(true);
+      expect(String(p[field].description), field).toMatch(/^REMOVED — use a viewer-keyed/);
+    }
+    // Not the whole `write` property: "own" is not deprecated, so `none` is deprecated in the
+    // description only (`deprecated` cannot sit on one enum value), and the description must not
+    // also offer it as available.
+    expect(p.write.deprecated).toBeUndefined();
+    const write = String(p.write.description);
+    expect(write).toContain('"none" is REMOVED');
+    expect(write).toContain('READ-ONLY');
+    expect(write).toContain('Use "own" with `keyedBy` (a viewer-keyed collection) instead.');
+    expect(write).not.toContain('Available today: "own" and "none".');
+    // Still accepted by the schema (and the parser, with every feature on, as on replay).
+    for (const storage of [
+      one({ visibility: 'shared', write: 'none', counters: ['plays'] }),
+      shared({ marks: ['vote'], counters: ['views'] }),
+    ]) {
+      expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
+      expect(parserAccepts(storage)).toBe(true);
+    }
   });
 
   it('the evaluator refuses a keyword it does not implement', () => {

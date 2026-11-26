@@ -14,6 +14,7 @@ import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
 import ModelsPage from '~/pages/models/index';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 
@@ -25,9 +26,11 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
  * request.
  */
 
-const mocks = vi.hoisted(() => ({ requested: [] as Record<string, unknown>[] }));
+const mocks = vi.hoisted(() => ({
+  requested: [] as Record<string, unknown>[],
+  versionRedirect: [] as (boolean | undefined)[],
+}));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof UseIsMobile>()),
   useIsMobile: () => false,
@@ -47,7 +50,16 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
 }));
 vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCardContext>()),
-  ModelCardContextProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  ModelCardContextProvider: ({
+    children,
+    useModelVersionRedirect,
+  }: {
+    children: React.ReactNode;
+    useModelVersionRedirect?: boolean;
+  }) => {
+    mocks.versionRedirect.push(useModelVersionRedirect);
+    return <>{children}</>;
+  },
   useModelSaleBadges: () => ({}),
 }));
 vi.mock('~/hooks/useEngagedModelMembership', async (importOriginal) => ({
@@ -114,6 +126,7 @@ const lastRequest = () => mocks.requested.at(-1) ?? {};
 beforeEach(() => {
   localStorage.clear();
   mocks.requested.length = 0;
+  mocks.versionRedirect.length = 0;
   router.query = {};
   router.isReady = true;
   router.pathname = '/models';
@@ -380,5 +393,53 @@ describe('model filters menu outside the /models toolbar', () => {
     await expect.element(page.getByText('Featured', { exact: true })).toBeVisible();
     await expect.element(page.getByText('Early Access', { exact: true })).not.toBeInTheDocument();
     await expect.element(page.getByText('On Sale', { exact: true })).not.toBeInTheDocument();
+  });
+});
+
+describe('the Hide Paid notice', () => {
+  const notice = () =>
+    page.getByText('Hiding paid models. Models with a free version show that version.');
+
+  test('shows when Hide Paid was saved, and Show all turns it off', async () => {
+    localStorage.setItem('model-filters', JSON.stringify({ hidePaid: true }));
+    await mount();
+    await expect.poll(() => lastRequest().hidePaid).toBe(true);
+    await expect.element(notice()).toBeVisible();
+    // Cards link to the free version they show.
+    expect(mocks.versionRedirect.at(-1)).toBe(true);
+
+    await userEvent.click(page.getByRole('button', { name: 'Show all' }));
+    await expect.poll(() => lastRequest().hidePaid).toBeUndefined();
+    await expect.element(notice()).not.toBeInTheDocument();
+    expect(mocks.versionRedirect.at(-1)).toBe(false);
+  });
+
+  test('Show all also clears Hide Paid from the URL', async () => {
+    router.query = { hidePaid: 'true' };
+    await mount();
+    await expect.element(notice()).toBeVisible();
+
+    await userEvent.click(page.getByRole('button', { name: 'Show all' }));
+    await expect.poll(() => router.query.hidePaid).toBeUndefined();
+    await expect.poll(() => lastRequest().hidePaid).toBeUndefined();
+    await expect.element(notice()).not.toBeInTheDocument();
+  });
+
+  test('is absent from an embedded feed whose filters are not the saved ones', async () => {
+    renderWithProviders(
+      <IsClientProvider>
+        <FiltersProvider>
+          <ModelsInfinite disableStoreFilters filters={{ hidePaid: true }} />
+        </FiltersProvider>
+      </IsClientProvider>
+    );
+    await expect.poll(() => lastRequest().hidePaid).toBe(true);
+    await expect.element(notice()).not.toBeInTheDocument();
+  });
+
+  test('is absent when Hide Paid is off', async () => {
+    await mount();
+    await expect.poll(() => mocks.requested.length).toBeGreaterThan(0);
+    await expect.element(notice()).not.toBeInTheDocument();
   });
 });

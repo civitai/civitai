@@ -159,9 +159,6 @@ describe('handleTextScanCallback', () => {
       });
       expect(adapter.applyTextScan).not.toHaveBeenCalled();
       expect(adapter.applyFailure).not.toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'subject not public; verdict dropped', entityId: 7 })
-      );
     }
   );
 
@@ -371,6 +368,38 @@ describe('handleTextScanCallback', () => {
     ).toHaveLength(0);
   });
 
+  describe('a late result for text the owner has since edited', () => {
+    // The row is pending on the edited text: it holds that submit's marker, which carries its hash.
+    const PENDING = 'ts-Post-7-edited-0-0';
+    beforeEach(() => {
+      updateMany.mockImplementation((async ({ where }: { where: { workflowId?: unknown } }) => {
+        const w = where.workflowId as string | { in: string[] } | undefined;
+        const hit =
+          w === undefined || (typeof w === 'string' ? w === PENDING : w.in.includes(PENDING));
+        return { count: hit ? 1 : 0 };
+      }) as never);
+    });
+    const callback = (externalId: string) => {
+      vi.mocked(getWorkflow).mockResolvedValue(
+        workflow({ nsfw: { level: 'none', reason: 'clean' } }, undefined, {
+          ...metadata,
+          externalId,
+        }) as any
+      );
+      return handleTextScanCallback({ workflowId: 'wf-late', status: 'succeeded' });
+    };
+
+    it('is not recorded or applied, so it cannot release the pending scan', async () => {
+      await callback('ts-Post-7-older-0-0');
+      expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    });
+
+    it('is applied when it is the result for the pending text (control)', async () => {
+      await callback(PENDING);
+      expect(adapter.applyTextScan).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('expects one step from a workflow without segments, so a second step is malformed', async () => {
     const wf = segmented([
       { nsfw: { level: 'none', reason: 'a' } },
@@ -381,9 +410,6 @@ describe('handleTextScanCallback', () => {
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'malformed', segments: 1 })
-    );
   });
 
   it('records the validated segment count when the metadata one is unusable', async () => {
@@ -396,7 +422,7 @@ describe('handleTextScanCallback', () => {
     });
   });
 
-  it('turns an unusable output into a Failed row, logs the reason, and takes no action', async () => {
+  it('turns an unusable output into a Failed row and takes no action', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
       workflow(undefined, "I'm sorry, I can't do that.") as any
     );
@@ -406,9 +432,6 @@ describe('handleTextScanCallback', () => {
       where: { entityType: 'Post', entityId: 7, workflowId: { in: ['wf-1', MARKER] } },
       data: { status: 'Failed', workflowId: 'wf-1' },
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'text-scan', reason: 'refused' })
-    );
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
     expect(adapter.applyFailure).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed' })
@@ -512,7 +535,7 @@ describe('handleTextScanCallback with segments', () => {
     );
   });
 
-  it('fails the entity closed when one segment is unusable, naming the segment', async () => {
+  it('fails the entity closed when one segment is unusable', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
       segmented([{ nsfw: { level: 'x', reason: 'Explicit.' } }, 'TRUNCATED']) as any
     );
@@ -523,9 +546,6 @@ describe('handleTextScanCallback with segments', () => {
       expect.objectContaining({ entityId: 7, status: 'failed' })
     );
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'truncated', segment: 1, segments: 2 })
-    );
   });
 
   it('fails the entity closed, recording no verdict, when one segment lacks a label', async () => {
@@ -542,9 +562,6 @@ describe('handleTextScanCallback with segments', () => {
     expect(data).not.toHaveProperty('result');
     expect(data).not.toHaveProperty('nsfwLevel');
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'missing_label', detail: 'nsfw', segment: 1 })
-    );
   });
 
   it('fails the entity closed when the workflow is missing a submitted step', async () => {
@@ -558,12 +575,9 @@ describe('handleTextScanCallback with segments', () => {
     expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
     expect(adapter.applyFailure).toHaveBeenCalled();
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'missing_segment', segment: 2 })
-    );
   });
 
-  it('fails an extra step with no segment in the log', async () => {
+  it('fails a workflow with more steps than submitted segments', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
       segmented(
         [{ nsfw: { level: 'none', reason: 'a' } }, { nsfw: { level: 'none', reason: 'b' } }],
@@ -572,12 +586,6 @@ describe('handleTextScanCallback with segments', () => {
     );
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(vi.mocked(updateMany).mock.calls[0][0].data).toMatchObject({ status: 'Failed' });
-    const logged = vi
-      .mocked(loggingMock.logToAxiom)
-      .mock.calls.map(([event]) => event as Record<string, unknown>)
-      .find((event) => event.message === 'unusable output');
-    expect(logged).toMatchObject({ reason: 'malformed', segments: 1 });
-    expect(logged).not.toHaveProperty('segment');
   });
 
   it('ignores a stale callback from a superseded multi-step workflow', async () => {
@@ -640,11 +648,6 @@ describe('handleTextScanCallback with some segments unusable', () => {
     ...over,
   });
   const raiseWrite = () => vi.mocked(updateMany).mock.calls[1]?.[0] as any;
-  const logged = (message: string) =>
-    vi
-      .mocked(loggingMock.logToAxiom)
-      .mock.calls.map(([event]) => event as Record<string, unknown>)
-      .find((event) => event.message === message);
 
   it('active: leaves the row Failed for retry and applies what the parsed segments raised', async () => {
     findUnique.mockResolvedValue(stored() as any);
@@ -679,12 +682,6 @@ describe('handleTextScanCallback with some segments unusable', () => {
     expect(adapter.applyTextScan.mock.invocationCallOrder[0]).toBeLessThan(
       adapter.applyFailure.mock.invocationCallOrder[0]
     );
-    expect(logged('partial verdict raised')).toMatchObject({
-      raised: ['minor'],
-      parsedSegments: 1,
-      segments: 2,
-      acted: true,
-    });
   });
 
   it('raises nsfw only above the stored level', async () => {
@@ -708,7 +705,6 @@ describe('handleTextScanCallback with some segments unusable', () => {
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(raiseWrite().where).toMatchObject({ entityType: 'Post:shadow', status: 'Failed' });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
-    expect(logged('partial verdict raised')).toMatchObject({ acted: false });
     expect(adapter.applyFailure).not.toHaveBeenCalled();
   });
 
@@ -727,7 +723,6 @@ describe('handleTextScanCallback with some segments unusable', () => {
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
     expect(adapter.applyFailure).toHaveBeenCalled();
-    expect(logged('partial verdict raised')).toBeUndefined();
   });
 
   it('raises nothing on a row a newer workflow already owns', async () => {
@@ -793,7 +788,6 @@ describe('handleTextScanCallback with some segments unusable', () => {
       triggeredLabels: [],
       result: stored().result,
     });
-    expect(logged('applying the partial verdict failed')).toMatchObject({ reverted: true });
 
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(adapter.applyTextScan).toHaveBeenCalledTimes(2);
@@ -822,7 +816,6 @@ describe('handleTextScanCallback with some segments unusable', () => {
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(updateMany).toHaveBeenCalledTimes(2);
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
-    expect(logged('partial verdict raised')).toBeUndefined();
   });
 
   it('raises nothing for an entity that no longer loads', async () => {
@@ -913,9 +906,6 @@ describe('a chat window verdict in csam review', () => {
 
     await handleTextScanCallback({ workflowId: 'wf-9', status: 'succeeded' });
 
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'entity gone before callback' })
-    );
     expect(adapter.applyTextScan).toHaveBeenCalledWith(
       expect.objectContaining({ entityId: 30, promptIds: { base: 1, csam: 7 } })
     );
@@ -950,12 +940,5 @@ describe('a callback for the retired ModelRules LLM scan', () => {
     expect(updateMany).not.toHaveBeenCalled();
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
     expect(adapter.applyFailure).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'info',
-        message: 'callback for the retired ModelRules scan dropped',
-        workflowId: 'wf-old',
-      })
-    );
   });
 });

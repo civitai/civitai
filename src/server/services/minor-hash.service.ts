@@ -7,6 +7,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import {
   MINOR_FLAG_SNAPSHOT_KEY,
   MINOR_LOCKED_PROPERTIES,
@@ -236,7 +237,7 @@ export async function checkMinorHashOnScan({
           sha256,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     return outcome;
@@ -251,7 +252,7 @@ export async function checkMinorHashOnScan({
         sha256,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return 'skipped';
   }
 }
@@ -333,7 +334,7 @@ export async function sweepMinorHashMatches({
           modelId: row.modelId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   });
 
@@ -341,7 +342,7 @@ export async function sweepMinorHashMatches({
 
   // Logged here rather than by the caller so an HTTP timeout on a long backfill
   // cannot lose the record of writes that already committed.
-  await logToAxiom(
+  logToAxiom(
     {
       type: 'info',
       name: 'minor-hash-sweep',
@@ -353,7 +354,7 @@ export async function sweepMinorHashMatches({
       failed: report.failed,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return report;
 }
@@ -394,18 +395,26 @@ const reviewMatchSameUploader = Prisma.sql`bool_or(EXISTS (
   SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
 ))`;
 
+/**
+ * The ids of the models on the minor file-match review queue, as a query; `where` (over `m`)
+ * narrows the models it reads. Shared with the nsfw lock backfill, which skips these models.
+ */
+export function pendingMinorHashMatchIdsSql(where: Prisma.Sql = Prisma.sql`TRUE`): Prisma.Sql {
+  return Prisma.sql`
+    WITH ${minorSrcCte}
+    SELECT m.id ${reviewMatchFrom} AND ${where}
+    GROUP BY m.id
+    HAVING NOT ${reviewMatchSameUploader}
+  `;
+}
+
 /** Whether the model is on the minor file-match review queue, waiting for a moderator. */
 export async function hasPendingMinorHashMatch(
   modelId: number,
   db: Pick<typeof dbRead, '$queryRaw'> = dbRead
 ): Promise<boolean> {
   const [row] = await db.$queryRaw<{ pending: boolean }[]>`
-    WITH ${minorSrcCte}
-    SELECT EXISTS (
-      SELECT 1 ${reviewMatchFrom} AND m.id = ${modelId}
-      GROUP BY m.id
-      HAVING NOT ${reviewMatchSameUploader}
-    ) AS pending
+    SELECT EXISTS (${pendingMinorHashMatchIdsSql(Prisma.sql`m.id = ${modelId}`)}) AS pending
   `;
   return row?.pending === true;
 }
@@ -713,7 +722,7 @@ export async function confirmMinorHashAutoFlag({
       message: 'moderator minor ruling not recorded on confirm',
       modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
     return { hadVerdict, stamped: false };
   }
 }
@@ -763,7 +772,7 @@ export async function revertMinorHashAutoFlag({
       name: 'text-scan',
       message: 'moderator minor ruling not recorded: model text unreadable',
       modelId,
-    }).catch(() => null);
+    });
 
   const report = await rollbackMinorHashAutoFlags({
     dryRun: false,
@@ -982,7 +991,7 @@ export async function resolveMinorFlagAppeal({
         name: 'minor-hash-rollback',
         message: 'appeal overturn: the flag rollback failed, unsetting minor instead',
         modelId,
-      }).catch(() => null);
+      });
     // The owner asked and a moderator agreed, so a minor flag from before the automation goes too.
     if (!report?.rolledBack) await setModelMinor({ id: modelId, minor: false, userId });
   }
@@ -1139,7 +1148,7 @@ async function rollBackFlagOnMinorModel(
   }).catch(() => null);
   await reassertModelPoiRestrictions(row.modelId);
   if (keptBy === 'sfwOnly')
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'info',
         name: 'minor-hash-rollback',
@@ -1147,7 +1156,7 @@ async function rollBackFlagOnMinorModel(
         modelId: row.modelId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 }
 
 export async function rollbackMinorHashAutoFlags({
@@ -1301,6 +1310,7 @@ export async function rollbackMinorHashAutoFlags({
           ids: row.prevMinorImageIds,
           action: SearchIndexUpdateQueueAction.Update,
         });
+        await queueDocumentsForImageMinorChanges({ minorImageIds: row.prevMinorImageIds });
       }
 
       report.rolledBack++;
@@ -1316,14 +1326,14 @@ export async function rollbackMinorHashAutoFlags({
           modelId: row.modelId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   });
 
   await limitConcurrency(tasks, concurrency);
   addConfirmedSamples();
 
-  await logToAxiom(
+  logToAxiom(
     {
       type: 'info',
       name: 'minor-hash-rollback',
@@ -1335,7 +1345,7 @@ export async function rollbackMinorHashAutoFlags({
       failed: report.failed,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return report;
 }

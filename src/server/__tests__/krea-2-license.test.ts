@@ -38,7 +38,6 @@ describe('Krea 2 licence registration', () => {
   it('imposes no commercial or mature restriction', () => {
     const server = baseModelLicenses['Krea 2']!;
     expect(server.nonCommercial).toBeUndefined();
-    expect(server.disableMature).toBeUndefined();
-    expect(server.restrictedNsfwLevels).toBeUndefined();
+    expect(baseModelRecords.find((r) => r.name === 'Krea 2')?.matureRestricted).toBeUndefined();
   });
 });

@@ -17,7 +17,7 @@ export const CLEAR_VAULT_ITEMS_TIME_BUDGET_MS = 4 * 60 * 1000;
 const BATCH_SIZE = 50;
 
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'clear-vault-items', ...data }, 'webhooks').catch(() => undefined);
+  logToAxiom({ name: 'clear-vault-items', ...data }, 'webhooks');
 };
 
 // Compare against the greater of `storageKb` and the active entitlement: `storageKb` can lag the

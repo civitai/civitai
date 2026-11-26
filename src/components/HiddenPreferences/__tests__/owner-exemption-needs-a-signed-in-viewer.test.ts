@@ -19,6 +19,7 @@ const prefs = (): HiddenPreferencesState => ({
   hiddenLoading: false,
   moderatedTags: [],
   systemHiddenTags: new Map([[SYSTEM_HIDDEN_TAG, true]]),
+  moderatedHiddenImages: new Map(),
 });
 
 function run(

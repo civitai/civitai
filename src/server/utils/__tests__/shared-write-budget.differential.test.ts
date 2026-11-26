@@ -23,6 +23,7 @@ const T0 = Date.parse('2032-01-02T03:04:05.000Z') + 613;
 
 // Small, pairwise-distinct, non-round buckets so every bucket binds often.
 const P: SharedWriteBudgetParams = {
+  keyspace: 'shared-write:v2',
   burst: { capacity: 3, refillIntervalMs: 7_919 },
   daily: { capacity: 5, refillIntervalMs: 13_337 },
   rejections: { capacity: 2, refillIntervalMs: 21_011 },

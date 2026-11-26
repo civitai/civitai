@@ -7,8 +7,10 @@
  * last successful read in this process returned, and with `known: false` when there has been none,
  * so the caller can fail closed.
  *
- * No age bound: while sysRedis is down the stored value cannot change (writes go to the same
- * store), so the last value read is the newest one there is.
+ * No age bound, and that is a trade-off: a process cut off from sysRedis keeps answering with its
+ * last value for as long as it stays cut off, and does not see a change an operator makes
+ * meanwhile (the store may still be reachable from other processes, or come back with a new value).
+ * The choice is between that stale value and fail-open defaults; the stale value is the safer one.
  */
 export type LastKnownRead<T> =
   | { known: true; value: T; source: 'live' | 'last-known'; ageMs: number }

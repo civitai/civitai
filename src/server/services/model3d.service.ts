@@ -16,15 +16,16 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
+import type { TagTarget } from '~/shared/utils/prisma/enums';
 import {
   EntityType,
   JobQueueType,
   MetricTimeframe,
   Model3DStatus,
-  TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
+  onlySelectableLevels,
   parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -65,13 +66,17 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
-import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
-  getPolyGenPostBlock,
-  getPolyGenPrimaryModel,
-} from '~/server/orchestrator/polygen/polygen-output';
+  getModel3DPostBlock,
+  model3DPostImages,
+} from '~/server/services/model3d-rating-v2.service';
+import { NsfwLevel } from '~/server/common/enums';
+import { imageNotRestrictedWhere, withServableImage } from '~/server/common/image-visibility';
+import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
+import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
+import type { SessionUser as AppSessionUser } from '~/types/session';
 
 type SessionUser = {
   id: number;
@@ -103,19 +108,23 @@ const model3dFileSelect = {
   createdAt: true,
 } satisfies Prisma.Model3DFileSelect;
 
+// Every image a 3D model read returns: never its generation data, which no 3D model surface shows
+// and which an image's owner may have hidden.
+const model3dImageSelect = { ...imageSelect, meta: false } satisfies Prisma.ImageSelect;
+
 const model3dDetailSelect = {
   id: true,
   name: true,
   description: true,
   userId: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: imageSelect },
+  thumbnailImage: { select: model3dImageSelect },
   licenseId: true,
   license: true,
   licenseDetails: true,
   workflowId: true,
   sourceImageId: true,
-  sourceImage: { select: imageSelect },
+  sourceImage: { select: model3dImageSelect },
   generationParams: true,
   status: true,
   nsfw: true,
@@ -161,7 +170,7 @@ const model3dListSelect = {
   publishedAt: true,
   createdAt: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: imageSelect },
+  thumbnailImage: { select: model3dImageSelect },
   user: { select: userWithCosmeticsSelect },
   metric: true,
   // Tags drive client-side `useApplyHiddenPreferences` filtering on the feed.
@@ -239,7 +248,11 @@ export const getModel3DById = async ({
       : null;
 
     return {
-      ...model3d,
+      ...withServableImage(
+        withServableImage(model3d, 'thumbnailImage', user?.id),
+        'sourceImage',
+        user?.id
+      ),
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
@@ -303,7 +316,8 @@ export const ensureModel3DFromWorkflow = async ({
   ctx,
 }: {
   input: EnsureModel3DFromWorkflowInput;
-  user: SessionUser;
+  // The full session user: the v2 rating's limits and flag read the user's tier and Flipt context.
+  user: AppSessionUser;
   ctx: Context;
 }) => {
   // Fast path: draft already exists (handler ran earlier, or a prior
@@ -340,22 +354,29 @@ export const ensureModel3DFromWorkflow = async ({
     const previewStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'model3DPreview') as
       | { output?: { images?: ImageBlob[] } }
       | undefined;
-    const thumbnailOverride = previewStep?.output?.images?.find((img) => !!img?.url);
+    const {
+      coverOverride: thumbnailOverride,
+      cover,
+      ratedUrls,
+    } = model3DPostImages(previewStep?.output?.images ?? [], polyGenStep.output.thumbnail);
 
-    // Same gate the generator UI applies: the mesh blob is never rated by the
-    // orchestrator, so the effective rating comes from the preview renders /
-    // auto-thumbnail. A mature result generated without mature-content billing
-    // must be unlocked (yellow Buzz → allowMatureContent) before it can be
-    // materialized into a postable draft.
+    // The mesh blob is never rated by the orchestrator, so the effective rating
+    // comes from the preview renders / auto-thumbnail.
     const effectiveNsfwLevel = maxNsfwLevel([
       primaryModel.nsfwLevel,
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    const postBlock = getPolyGenPostBlock({
+    const postBlock = await getModel3DPostBlock({
       primaryModel,
       effectiveNsfwLevel,
       allowMatureContent: workflow.allowMatureContent,
+      user,
+      req: ctx.req,
+      // A result with no preview render (FBX-only Tripo quad) is rated on the auto-thumbnail it shows.
+      previewUrls: ratedUrls,
+      coverUrl: cover?.url ?? undefined,
+      workflowId: input.workflowId,
     });
     if (postBlock) throw throwBadRequestError(postBlock);
 
@@ -401,6 +422,52 @@ export const ensureModel3DFromWorkflow = async ({
   }
   return created;
 };
+
+/**
+ * Feed rows in the card's shape: tags flattened for `useApplyHiddenPreferences`, and the viewer's
+ * own recommend (thumbs-up) per row so the card renders it toggled.
+ */
+async function withUserReviews(
+  rows: Prisma.Model3DGetPayload<{ select: typeof model3dListSelect }>[],
+  user?: SessionUser | null
+) {
+  const rowIds = rows.map((r) => r.id);
+  const userReviews =
+    user && rowIds.length
+      ? await dbRead.model3DReview.findMany({
+          where: { userId: user.id, model3dId: { in: rowIds } },
+          select: { id: true, model3dId: true, recommended: true },
+        })
+      : [];
+  const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
+  return rows.map(({ tags, ...rest }) => {
+    const review = reviewByModel.get(rest.id);
+    return {
+      ...withServableImage(rest, 'thumbnailImage', user?.id),
+      tags: tags.map((t) => t.tagId),
+      userReview: review ? { id: review.id, recommended: review.recommended } : null,
+    };
+  });
+}
+
+/**
+ * The feed cards of the given 3D models, unordered, with no visibility rule of its own: the caller
+ * decides which ids may be shown.
+ */
+export async function getModel3DFeedItemsByIds({
+  ids,
+  user,
+}: {
+  ids: number[];
+  user?: SessionUser | null;
+}) {
+  if (!ids.length) return [];
+  const rows = await dbRead.model3D.findMany({
+    where: { id: { in: ids } },
+    select: model3dListSelect,
+  });
+  return withUserReviews(rows, user);
+}
 
 export type Model3DGetInfinite = AsyncReturnType<typeof getModel3DsInfinite>;
 export const getModel3DsInfinite = async ({
@@ -594,31 +661,7 @@ export const getModel3DsInfinite = async ({
       nextCursor = nextItem?.id;
     }
 
-    // The signed-in user's own recommend (thumbs-up) per row, so the card can
-    // render the gold thumbs-up in its toggled state. One indexed lookup keyed
-    // on (userId, model3dId) rather than a per-row correlated sub-select.
-    const rowIds = rows.map((r) => r.id);
-    const userReviews =
-      user && rowIds.length
-        ? await dbRead.model3DReview.findMany({
-            where: { userId: user.id, model3dId: { in: rowIds } },
-            select: { id: true, model3dId: true, recommended: true },
-          })
-        : [];
-    const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
-
-    // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
-    // `useApplyHiddenPreferences` hook can apply tag-based filtering with
-    // the same shape it uses for the `'models'` branch.
-    const items = rows.map(({ tags, ...rest }) => {
-      const review = reviewByModel.get(rest.id);
-      return {
-        ...rest,
-        tags: tags.map((t) => t.tagId),
-        userReview: review ? { id: review.id, recommended: review.recommended } : null,
-      };
-    });
-
+    const items = await withUserReviews(rows, user);
     return { items, nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1282,7 +1325,16 @@ export const getModel3DByPostId = async ({
           userId: true,
           status: true,
           deletedAt: true,
-          thumbnailImage: { select: { id: true, url: true, name: true } },
+          thumbnailImage: {
+            select: {
+              id: true,
+              url: true,
+              name: true,
+              userId: true,
+              nsfwLevel: true,
+              modelRestricted: true,
+            },
+          },
         },
       },
     },
@@ -1301,10 +1353,11 @@ export const getModel3DByPostId = async ({
   )
     return null;
 
+  const { thumbnailImage: thumbnail } = withServableImage(model3d, 'thumbnailImage', userId);
   return {
     id: model3d.id,
     name: model3d.name,
-    thumbnailImage: model3d.thumbnailImage,
+    thumbnailImage: thumbnail && { id: thumbnail.id, url: thumbnail.url, name: thumbnail.name },
   };
 };
 
@@ -1558,13 +1611,22 @@ export const upsertModel3DFromWorkflow = async ({
 // Related Posts ("Makes & Uses") + Review summary
 // ---------------------------------------------------------------------------
 
+/** Every post level (a combination of image levels, Blocked included) sharing a level with `level`. */
+const postLevelsWithin = (level: number) =>
+  Array.from({ length: 2 * NsfwLevel.Blocked - 1 }, (_, i) => i + 1).filter(
+    (v) => (v & level) !== 0
+  );
+
 export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
 export const getModel3DRelatedPosts = async ({
   input,
   user,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
+  /** The viewer's resolved, capped level (`relatedPostsBrowsingLevel`); unset reads PG only. */
+  browsingLevel?: number;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
@@ -1580,13 +1642,36 @@ export const getModel3DRelatedPosts = async ({
 
     // Visibility:
     //  - Moderators see everything.
-    //  - Everyone else sees published+public posts AND their own posts
+    //  - Everyone else sees published+public posts rated within their level AND their own posts
     //    (any state, so a user who just created a draft post linked to this
     //    model3d sees it on the page immediately, before they hit Publish).
+    // A post's level is its images' combined level: it is listed when it shares a level with the
+    // viewer's, as the post feed does, and an unrated post (0) never is; nor is one with no cover
+    // the viewer may see. Blocked is never a level a viewer browses at.
+    const level = onlySelectableLevels(browsingLevel);
+    // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
+    // their level, out of review, never blocked and not restricted by its base model.
+    const coverGate: Prisma.ImageWhereInput = {
+      AND: [imageNotRestrictedWhere()],
+      ingestion: 'Scanned',
+      nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
+      needsReview: null,
+      blockedFor: null,
+      acceptableMinor: false,
+      poi: false,
+      minor: false,
+    };
     const publishedClause: Prisma.PostWhereInput = {
       publishedAt: { lte: new Date() },
       availability: { not: 'Private' },
+      nsfwLevel: { in: postLevelsWithin(level) },
+      images: { some: coverGate },
     };
+    const coverWhere: Prisma.ImageWhereInput = isModerator
+      ? imageNotRestrictedWhere({ viewerId })
+      : viewerId
+      ? { OR: [{ userId: viewerId }, coverGate] }
+      : coverGate;
     const visibility: Prisma.PostWhereInput = isModerator
       ? {}
       : viewerId
@@ -1612,13 +1697,13 @@ export const getModel3DRelatedPosts = async ({
         nsfwLevel: true,
         user: { select: userWithCosmeticsSelect },
         images: {
+          where: coverWhere,
           take: 1,
           orderBy: { index: 'asc' },
-          select: imageSelect,
+          select: model3dImageSelect,
         },
       },
     });
-
     let nextCursor: number | undefined;
     if (items.length > take) {
       const nextItem = items.pop();

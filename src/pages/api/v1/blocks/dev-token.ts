@@ -5,6 +5,11 @@ import { isSystemAccountMeta } from '@civitai/auth';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
+import {
+  checkAppBlocksCliCredential,
+  narrowBlockScopesToCredential,
+} from '~/server/auth/bearer-scope-tighten';
+import { isFullScopeUserKey } from '~/server/auth/full-user-credential';
 import { dbWrite } from '~/server/db/client';
 import { emitMintAuditToStdout } from '~/server/logging/mint-audit-stdout';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
@@ -18,9 +23,14 @@ import {
   resolveDevBuzzBudget,
   signDevScopedPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
+import {
+  appRateLimitMeta,
+  retryAfterSecondsOf,
+  sendAppRateLimited,
+} from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -277,7 +287,8 @@ export const config = {
 // (read/catalog + page spend + per-app storage; EXCLUDES social:tip:self +
 // block:settings:*) now live in dev-scoped-mint.service so the Phase-2 cookie
 // host-mint reuses the identical belt. Imported above.
-const RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
+// The window; the limit is the registry's `apps.dev-token`, resolved per user (its code default is 30).
+const RATE_LIMIT = { windowSeconds: 60 } as const;
 
 const PAGE_INSTANCE_PREFIX = 'page_';
 
@@ -395,8 +406,10 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // row has a non-null `clientId` (minted for an OAuth client a user authorized),
   // and `{ type: 'apiKey', id }` for a user-type personal-access key.
   //
-  //  - PERSONAL key (`subject.type !== 'oauth'`): pass unchanged — the dev's own
-  //    key mints as before. The mod + flag + ownership gates still apply.
+  //  - PERSONAL key (`subject.type !== 'oauth'`): a Full Access key, or one holding
+  //    AIServicesWrite (the preset the CLI's dev:live setup link creates), passes; a
+  //    narrower one passes unless `bearer-scope-tighten` enforces. The mod + flag +
+  //    ownership gates still apply.
   //
   //  - OAUTH token (`subject.type === 'oauth'`): pass ONLY if the token carries
   //    the dedicated `TokenScope.AppBlocksSubmit` bit. `oauthClient.create` is an
@@ -411,16 +424,17 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   //
   // The mod + not-banned gate (step 2) applies to BOTH paths. Ordered after auth
   // (401) and before the mod gate so an un-scoped OAuth token gets 403, not a leak.
-  if (session.subject?.type === 'oauth') {
-    if (!Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AppBlocksSubmit)) {
-      res.status(403).json({
-        message:
-          'dev-token needs a personal API key (full scope, create at ' +
-          'civitai.com/user/account) OR an OAuth login whose token carries the ' +
-          'Apps submit scope; real Buzz spend additionally needs AI Services scope',
-      });
-      return;
-    }
+  const credentialCheck = await checkAppBlocksCliCredential('/api/v1/blocks/dev-token', session, {
+    acceptAIServicesWrite: true,
+  });
+  if (credentialCheck !== 'ok') {
+    res.status(403).json({
+      message:
+        'dev-token needs a personal API key (full scope, or the AI Services preset, create at ' +
+        'civitai.com/user/account) OR an OAuth login whose token carries the ' +
+        'Apps submit scope; real Buzz spend additionally needs AI Services scope',
+    });
+    return;
   }
 
   // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
@@ -462,6 +476,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // fallback. Same atomic SET NX EX + INCR pattern as submit-version; fail
   // CLOSED on a malformed limiter result (never silently bypass a mint).
   const rateSubject = user.id ? `u:${user.id}` : `ip:${clientIp(req)}`;
+  const rateMax = await resolveUserAppLimit('apps.dev-token', user.id ? user : null);
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.DEV_TOKEN_RATE_LIMIT}:${rateSubject}` as const;
   let count: number;
   try {
@@ -469,7 +484,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // critical path. On a SILENT half-open the written command parks in node-redis's
     // reply queue until OS TCP keepalive (~11min) — a HANG, not a throw, so the
     // try/catch alone can't unpark it. Racing the `.exec()` against the sys read
-    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended hang
+    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=1000) turns that open-ended hang
     // into a clean rejection caught here → fail closed (503) instead of parking.
     const multiResult = await withSysReadDeadline(
       sysRedis
@@ -511,19 +526,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // proceed; the .catch keeps the orphaned promise from surfacing as unhandled.
     if (ttl < 0) void sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
-  if (count > RATE_LIMIT.max) {
+  if (count > rateMax) {
     // Bound the 429-path TTL read (#28) so a hung sysRedis.ttl can't park the
     // over-limit response. On a deadline/throw fall back to the full window.
     const retryAfter = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
       () => RATE_LIMIT.windowSeconds
     );
-    res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-    res.status(429).json({
-      message: 'Rate limit exceeded',
-      retryAfterSeconds: retryAfter,
-      limit: RATE_LIMIT.max,
-      windowSeconds: RATE_LIMIT.windowSeconds,
-    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.dev-token', retryAfterSecondsOf(retryAfter, RATE_LIMIT.windowSeconds)),
+      'Rate limit exceeded',
+      { retryAfterSeconds: retryAfter }
+    );
     return;
   }
 
@@ -563,7 +577,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // need. `oauthAllowed: null` ⇒ skip the OAuth-ceiling clamp (no client exists).
   type Resolved = {
     scopeSource: string[];
-    oauthAllowed: number | null;
+    oauthAllowed: bigint | null;
     signBlockId: string;
     signAppId: string;
     signAppBlockId: string;
@@ -626,7 +640,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     approvedAppBlockId = block.id;
     resolved = {
       scopeSource: approvedRaw.filter((s): s is string => typeof s === 'string'),
-      oauthAllowed: block.app.allowedScopes ?? 0,
+      oauthAllowed: block.app.allowedScopes ?? 0n,
       signBlockId: block.blockId,
       signAppId: block.appId,
       signAppBlockId: block.id,
@@ -845,7 +859,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     select: { muted: true, bannedAt: true },
   });
   const spendEntitled =
-    Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite) &&
+    hasScope(session.tokenScope ?? 0n, TokenScope.AIServicesWrite) &&
     subjectRow != null &&
     !subjectRow.muted &&
     !subjectRow.bannedAt;
@@ -856,7 +870,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // requested. Flipping this token to `?? false` is the breaking step and ships on
   // its own, behind the adoption evidence the mint-audit events below produce.
   const spendRequested = requestBudgetedSpend ?? true;
-  const granted = clampDevScopes({
+  const clamped = clampDevScopes({
     scopeSource: resolved.scopeSource,
     oauthAllowed: resolved.oauthAllowed,
     requestedScopes,
@@ -864,6 +878,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     spendRequested,
     allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
   });
+  // 7h. A personal key narrower than Full grants only the block scopes its own scope holds.
+  const granted =
+    session.subject?.type !== 'oauth' && !isFullScopeUserKey(session)
+      ? await narrowBlockScopesToCredential('/api/v1/blocks/dev-token', session, clamped)
+      : clamped;
 
   // 8. BUDGET CAP — only meaningful when ai:write:budgeted survived the clamp.
   // DEFAULT to the resolved app manifest's `page.buzzBudgetPerGen` (approved +

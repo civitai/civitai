@@ -30,7 +30,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -54,6 +53,7 @@ import { SortableBulkItem } from '~/components/Comics/SortableBulkItem';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -62,10 +62,6 @@ import { getMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
-
-const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
-  ssr: false,
-});
 
 function ReferencePanelPicker({
   panels,
@@ -383,34 +379,31 @@ export function PanelModal({
   };
 
   const handleOpenImageSelector = () => {
-    dialogStore.trigger({
-      component: ImageSelectModal,
-      props: {
-        title: 'Select from Generator',
-        selectSource: 'generation' as const,
-        videoAllowed: false,
-        importedUrls: [],
-        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
-          if (selected.length === 0) return;
-          const img = selected[0];
-          const width = (img.meta?.width as number) ?? 512;
-          const height = (img.meta?.height as number) ?? 512;
+    openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+      title: 'Select from Generator',
+      selectSource: 'generation' as const,
+      videoAllowed: false,
+      importedUrls: [],
+      onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
+        if (selected.length === 0) return;
+        const img = selected[0];
+        const width = (img.meta?.width as number) ?? 512;
+        const height = (img.meta?.height as number) ?? 512;
 
-          setEnhanceUploading(true);
-          try {
-            const cfId = await fetchAndUploadGeneratorImage(img.url, 'enhance', uploadEnhanceToCF);
-            setEnhanceSourceImage({
-              url: cfId,
-              previewUrl: getEdgeUrl(cfId, { width: 400, optimized: true }) ?? cfId,
-              width,
-              height,
-            });
-          } catch (err) {
-            showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
-          } finally {
-            setEnhanceUploading(false);
-          }
-        },
+        setEnhanceUploading(true);
+        try {
+          const cfId = await fetchAndUploadGeneratorImage(img.url, 'enhance', uploadEnhanceToCF);
+          setEnhanceSourceImage({
+            url: cfId,
+            previewUrl: getEdgeUrl(cfId, { width: 400, optimized: true }) ?? cfId,
+            width,
+            height,
+          });
+        } catch (err) {
+          showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
+        } finally {
+          setEnhanceUploading(false);
+        }
       },
     });
   };
@@ -531,50 +524,47 @@ export function PanelModal({
   };
 
   const handleBulkFromGenerator = () => {
-    dialogStore.trigger({
-      component: ImageSelectModal,
-      props: {
-        title: 'Select from Generator',
-        selectSource: 'generation' as const,
-        videoAllowed: false,
-        importedUrls: [],
-        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
-          if (selected.length === 0) return;
-          setBulkUploading(true);
-          try {
-            const newItems: BulkPanelItem[] = [];
-            for (const img of selected) {
-              const width = (img.meta?.width as number) ?? 512;
-              const height = (img.meta?.height as number) ?? 512;
-              let cfId: string;
-              try {
-                cfId = await fetchAndUploadGeneratorImage(img.url, 'bulk_gen', uploadBulkToCF);
-              } catch (err) {
-                showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
-                continue;
-              }
-              newItems.push({
-                id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                sourceImage: {
-                  url: cfId,
-                  cfId,
-                  width,
-                  height,
-                  preview: getEdgeUrl(cfId, { width: 120, optimized: true }) ?? cfId,
-                },
-                prompt: '',
-                aspectRatio: '3:4',
-                // Same plumbing as the Import tab — keep the workflow step
-                // meta around so the panel's Image carries proper attribution
-                // even when this is being used as a bulk source (no prompt).
-                meta: img.meta,
-              });
+    openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+      title: 'Select from Generator',
+      selectSource: 'generation' as const,
+      videoAllowed: false,
+      importedUrls: [],
+      onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
+        if (selected.length === 0) return;
+        setBulkUploading(true);
+        try {
+          const newItems: BulkPanelItem[] = [];
+          for (const img of selected) {
+            const width = (img.meta?.width as number) ?? 512;
+            const height = (img.meta?.height as number) ?? 512;
+            let cfId: string;
+            try {
+              cfId = await fetchAndUploadGeneratorImage(img.url, 'bulk_gen', uploadBulkToCF);
+            } catch (err) {
+              showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
+              continue;
             }
-            setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
-          } finally {
-            setBulkUploading(false);
+            newItems.push({
+              id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              sourceImage: {
+                url: cfId,
+                cfId,
+                width,
+                height,
+                preview: getEdgeUrl(cfId, { width: 120, optimized: true }) ?? cfId,
+              },
+              prompt: '',
+              aspectRatio: '3:4',
+              // Same plumbing as the Import tab — keep the workflow step
+              // meta around so the panel's Image carries proper attribution
+              // even when this is being used as a bulk source (no prompt).
+              meta: img.meta,
+            });
           }
-        },
+          setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
+        } finally {
+          setBulkUploading(false);
+        }
       },
     });
   };
@@ -602,47 +592,40 @@ export function PanelModal({
 
   // ── Import handlers ──
   const handleImportSelect = () => {
-    dialogStore.trigger({
-      component: ImageSelectModal,
-      props: {
-        title: 'Import Images as Panels',
-        selectSource: 'generation' as const,
-        videoAllowed: false,
-        importedUrls: importSelected.map((s) => s.url),
-        onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
-          if (selected.length === 0) return;
-          setImportUploading(true);
-          try {
-            const newItems: typeof importSelected = [];
-            for (const img of selected) {
-              const width = (img.meta?.width as number) ?? 512;
-              const height = (img.meta?.height as number) ?? 512;
-              try {
-                const cfId = await fetchAndUploadGeneratorImage(
-                  img.url,
-                  'import',
-                  uploadImportToCF
-                );
-                newItems.push({
-                  url: cfId,
-                  cfId,
-                  width,
-                  height,
-                  preview: getEdgeUrl(cfId, { width: 120, optimized: true }) ?? cfId,
-                  // Preserve the full workflow step meta (civitaiResources,
-                  // prompt, sampler, …) so the server can attribute the new
-                  // Image record to the model that produced it.
-                  meta: img.meta,
-                });
-              } catch (err) {
-                console.error('Failed to upload import image:', err);
-              }
+    openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+      title: 'Import Images as Panels',
+      selectSource: 'generation' as const,
+      videoAllowed: false,
+      importedUrls: importSelected.map((s) => s.url),
+      onSelect: async (selected: { url: string; meta?: Record<string, unknown> }[]) => {
+        if (selected.length === 0) return;
+        setImportUploading(true);
+        try {
+          const newItems: typeof importSelected = [];
+          for (const img of selected) {
+            const width = (img.meta?.width as number) ?? 512;
+            const height = (img.meta?.height as number) ?? 512;
+            try {
+              const cfId = await fetchAndUploadGeneratorImage(img.url, 'import', uploadImportToCF);
+              newItems.push({
+                url: cfId,
+                cfId,
+                width,
+                height,
+                preview: getEdgeUrl(cfId, { width: 120, optimized: true }) ?? cfId,
+                // Preserve the full workflow step meta (civitaiResources,
+                // prompt, sampler, …) so the server can attribute the new
+                // Image record to the model that produced it.
+                meta: img.meta,
+              });
+            } catch (err) {
+              console.error('Failed to upload import image:', err);
             }
-            setImportSelected((prev) => [...prev, ...newItems]);
-          } finally {
-            setImportUploading(false);
           }
-        },
+          setImportSelected((prev) => [...prev, ...newItems]);
+        } finally {
+          setImportUploading(false);
+        }
       },
     });
   };

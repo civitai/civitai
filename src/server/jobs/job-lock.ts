@@ -56,19 +56,19 @@ export async function acquireJobLock(
     logToAxiom(
       { type: 'job-lock', message: 'acquire-error', job: name, error: (e as Error)?.message },
       'webhooks'
-    ).catch();
+    );
     return failOpen ? NOOP_LOCK : null;
   }
   if (acquired !== 'OK') return null;
 
-  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
+  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks');
 
   let released = false;
   const release = async () => {
     if (released) return;
     released = true;
     clearInterval(interval);
-    logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
+    logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks');
     // Only while we still hold the token: a blind DEL let a fast run free a slow run's lock.
     await delIfValue(redis, key, token).catch(() => undefined);
   };

@@ -40,6 +40,7 @@ const page = (overrides: Partial<MysteryBoxOddsPageData> = {}): MysteryBoxOddsPa
   boxDefinitionId: 9,
   name: 'Birthday Box',
   description: null,
+  seller: null,
   version: 2,
   archived: false,
   noun: 'hat',

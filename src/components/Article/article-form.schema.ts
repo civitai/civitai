@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { upsertArticleInput } from '~/server/schema/article.schema';
+import { articleContentSchema, upsertArticleInput } from '~/server/schema/article.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 
 const baseSchema = upsertArticleInput
@@ -17,14 +17,20 @@ const baseSchema = upsertArticleInput
     userNsfwLevel: z.string().optional(),
     moderatorNsfwLevel: z.string().optional(),
     lockedProperties: z.string().array().optional(),
+    content: articleContentSchema,
   });
 
 /**
  * With the banner field shown, either image will do: a banner-only article uses its banner on
  * cards. Without it, the cover is required, even when the article already has a banner.
+ * `hasWithheldImage`: the article keeps a cover or banner this editor may not see, which a save
+ * leaves in place, so none need be uploaded.
  */
-export const articleFormSchema = (withBanner: boolean) =>
-  baseSchema.refine((data) => !!data.coverImage?.url || (withBanner && !!data.bannerImage?.url), {
-    error: 'Please upload a cover image',
-    path: ['coverImage'],
-  });
+export const articleFormSchema = (withBanner: boolean, hasWithheldImage = false) =>
+  baseSchema.refine(
+    (data) => hasWithheldImage || !!data.coverImage?.url || (withBanner && !!data.bannerImage?.url),
+    {
+      error: 'Please upload a cover image',
+      path: ['coverImage'],
+    }
+  );

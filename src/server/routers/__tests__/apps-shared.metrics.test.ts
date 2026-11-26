@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import type * as FliptClientModule from '~/server/flipt/client';
 import {
   appSharedStorageLatencyHistogram,
@@ -420,7 +421,7 @@ const CASES: Case[] = [
     {
       op,
       outcome: 'rate_limited',
-      path: 'throwSharedRateLimited',
+      path: 'throwAppRateLimited',
       arrange: RATE_LIMIT[op],
       act: ACT[op],
     },
@@ -704,7 +705,12 @@ describe('the title/body blocklist scan: a throw is unavailable moderation, a hi
     mockThrowOnBlocked.mockImplementationOnce(async (_values, opts) => {
       (opts as { onBlocked: (kind: 'link' | 'pattern') => void }).onBlocked('pattern');
     });
-  const auditBlocks = () => mockAuditPromptServer.mockRejectedValueOnce(new Error('blocked'));
+  // The audit's own message names what it matched; a distinctive word stands in for it here.
+  const AUDIT_WORD = 'zqauditword4417';
+  const auditBlocks = () =>
+    mockAuditPromptServer.mockRejectedValueOnce(
+      new Error(`Your prompt was flagged: ${AUDIT_WORD}`)
+    );
 
   const ROWS: Array<
     [
@@ -726,7 +732,8 @@ describe('the title/body blocklist scan: a throw is unavailable moderation, a hi
     [
       'platform audit blocks',
       auditBlocks,
-      { outcome: 'moderation_blocked', message: 'blocked', reportFiled: true },
+      // 🔴 REGRESSION: a fixed message, never the audit's own (which names the matched word).
+      { outcome: 'moderation_blocked', message: 'Content flagged for review', reportFiled: true },
     ],
   ];
   const OPS: Array<[op: 'append' | 'update', arrange: () => void]> = [
@@ -746,6 +753,7 @@ describe('the title/body blocklist scan: a throw is unavailable moderation, a hi
 
       expect(error).toBeInstanceOf(TRPCError);
       expect(error).toMatchObject({ code: 'BAD_REQUEST', message: expected.message });
+      expect((error as TRPCError).message).not.toContain(AUDIT_WORD);
       expect(isEscalatedServerFault(error), 'not escalated').toBe(false);
       expect(mockReleaseWrite.mock.calls, 'charged to the rejection bucket').toEqual([
         [{ rejected: true }],
@@ -766,11 +774,8 @@ describe('the platform audit unable to run (its 503) is unavailable moderation, 
   // moderation_unavailable. PROMPT_CHECK_FAIL_CLOSED=off restores the previous handling (an audit
   // block: Report row, alert, charged). A plain audit block is the positive control.
   const RETRY = 'Content could not be reviewed right now. Please try again.';
-  const AUDIT_503 = 'The prompt check is temporarily unavailable. Please try again in a moment.';
   const auditUnavailable = () =>
-    mockAuditPromptServer.mockRejectedValueOnce(
-      new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: AUDIT_503 })
-    );
+    mockAuditPromptServer.mockRejectedValueOnce(new PromptCheckUnavailableError());
   const OPS: Array<[op: 'append' | 'update', arrange: () => void]> = [
     ['append', () => appendDataPath()],
     ['update', () => existingRow()],
@@ -815,7 +820,11 @@ describe('the platform audit unable to run (its 503) is unavailable moderation, 
         (e: unknown) => e
       );
 
-      expect(error).toMatchObject({ code: 'BAD_REQUEST', message: AUDIT_503 });
+      // An audit block's message is the fixed one, whatever the audit said.
+      expect(error).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review',
+      });
       expect(isEscalatedServerFault(error)).toBe(false);
       expect(mockReleaseWrite.mock.calls).toEqual([[{ rejected: true }]]);
       expect(reportRows()).toBe(1);

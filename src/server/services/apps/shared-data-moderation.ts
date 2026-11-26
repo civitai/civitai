@@ -1,20 +1,25 @@
 import { createHash } from 'node:crypto';
 
-import { getProfanityFilter } from '~/libs/profanity-simple';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { findBlockedUserContent, stripBenignPhrases } from '~/server/services/blocklist.service';
+import {
+  getServerProfanityFilter,
+  type ServerProfanityFilter,
+} from '~/server/services/profanity-list.service';
 import { BlocklistType } from '~/server/common/enums';
 import {
   auditPromptEnriched,
   includesMinor,
+  includesNsfw,
   includesPoi,
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import { stripInvisible } from '~/server/utils/confusable-fold';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import {
   collectSharedDataLeaves,
   type SharedDataLeafKind,
@@ -144,8 +149,8 @@ export interface SharedTextScan {
 }
 
 /**
- * How many leaves in one scan may take the FULL profanity audit (see `auditLeaf`). Each costs
- * ~2.2 ms, so this bounds one write's worst case at ~70 ms. A leaf the prefilter flags once the
+ * How many leaves in one scan may take the FULL profanity audit (see `auditLeaf`), bounding one
+ * write's worst case. A leaf the prefilter flags once the
  * budget is spent is NOT passed: it becomes an `overflow` (`audit_budget`) hit, the same rule as
  * every other cap — text that was not fully read does not get through by being past a cap.
  */
@@ -182,22 +187,29 @@ type AuditLeafResult = AuditLeafMatch | null | typeof AUDIT_BUDGET_EXCEEDED | ty
  * Any other `success: false` is a hit whatever the triggers say — a check that only looked at
  * triggers would pass any refusal the audit reports without one.
  */
-async function auditLeaf(text: string, budget: { remaining: number }): Promise<AuditLeafResult> {
+async function auditLeaf(
+  text: string,
+  budget: { remaining: number },
+  profanity: ServerProfanityFilter
+): Promise<AuditLeafResult> {
   if (!text.trim()) return null;
   const stripped = await stripBenignPhrases(normalizeText(text), BlocklistType.PromptBenignPhrase);
   const input = stripped || text;
   if (input.length > MAX_AUDIT_PROMPT_LENGTH) return LEAF_TOO_LONG;
-  // 🔴 COST, measured: `auditPromptEnriched(_, _, true)` builds a fresh profanity matcher on every
-  // call, ~2.2 ms each — 1,000 leaves took 2.2 s against 12 ms with profanity off. So the profanity
-  // step is asked for only when the CACHED matcher (same config: no moderator whitelist) already
-  // finds profanity in the same normalised input. That prefilter reads a SUPERSET of what the audit
-  // reads (the audit additionally blanks booru rating/score/source tags first), so it can only send
-  // extra leaves down the full path, never fewer — and the verdict always comes from the audit
-  // itself. `shared-data-moderation.test.ts` pins fast-path ≡ full-audit over a corpus.
-  const mayBeProfane = getProfanityFilter().analyze(normalizeText(input)).isProfane;
+  // Only a leaf the filter already flags takes the full audit. The audit's input is a subset of
+  // this one (it also blanks booru tags), so this can add full audits, never drop one.
+  const mayBeProfane = profanity.filter.analyze(normalizeText(input)).isProfane;
+  if (mayBeProfane) profanity.countHit('appdata');
   const fullAudit = mayBeProfane && budget.remaining > 0;
   if (fullAudit) budget.remaining -= 1;
-  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit);
+  const { success, triggers, blockedFor } = auditPromptEnriched(
+    input,
+    undefined,
+    fullAudit ? profanity.filter : undefined,
+    {
+      nsfw: !!includesNsfw(normalizeText(text)),
+    }
+  );
   if (success) return mayBeProfane && !fullAudit ? AUDIT_BUDGET_EXCEEDED : null;
   const first = triggers[0];
   return {
@@ -232,13 +244,17 @@ export async function classifySharedTexts(
   const blocklistHits = await findBlockedUserContent(texts, { exemptFromPatterns: isModerator });
   const budget = { remaining: SHARED_DATA_FULL_AUDIT_BUDGET };
   const audits: AuditLeafResult[] = [];
+  // One filter for the whole scan, so the prefilter and the audit read the same list.
+  const profanity = await getServerProfanityFilter();
   // Sequential, so the budget is spent in leaf order and the outcome is deterministic.
-  for (const text of texts) audits.push(await auditLeaf(text, budget));
+  for (const text of texts) audits.push(await auditLeaf(text, budget, profanity));
 
   texts.forEach((text, index) => {
     const leaf = inputs[index];
     if (includesMinor(text))
       hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
+    if (containsPrivateMediaUrl(text))
+      hits.push({ category: 'link', matched: 'private_media', label: 'private_media', leaf });
     const poi = includesPoi(text);
     if (poi) {
       // `includesPoi` (no prompt-edit matching) returns the LIST word, never the input's spelling.
@@ -342,6 +358,78 @@ export async function enforcedBlockingHit(scan: SharedTextScan): Promise<SharedT
   return blockingHit(scan, { enforcePatterns });
 }
 
+// ── Naming the refused field ──────────────────────────────────────────────────
+
+/**
+ * Which field a refused write is refused for, so an author can find it without guess-and-retry.
+ *
+ * - `field` is a JSON path rooted at the request's own field names: `data.actions[2].text` for a
+ *   string inside `data`, `data.tags[2]` for an array element, `data` for the blob as a whole (a
+ *   walk cap), or `key` for the document key / counter key.
+ * - `fieldKind` is `key` when the refused text is an OBJECT KEY inside `data`. The path then names
+ *   the object that holds the key, never the key itself — the key IS the refused text.
+ */
+export interface SharedRefusalField {
+  field: string;
+  fieldKind: 'value' | 'key';
+}
+
+/** Stands in for an object key on the path that is itself refused text. */
+export const SHARED_REFUSAL_REDACTED_SEGMENT = '[*]';
+/** A path is made of app-chosen keys; cut it so a refusal stays short. */
+export const SHARED_REFUSAL_FIELD_MAX_CHARS = 256;
+const PLAIN_KEY = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * The field `hit` refuses the write for. `root` says which part of the request was scanned: the
+ * `data` blob (`scanSharedData`) or the document / counter key (`scanCounterKey`).
+ *
+ * 🔴 NEVER THE MATCHED TERM, NEVER THE MATCHED TEXT. The path is built from the app's own keys, and
+ * a key can itself be refused text, so a key segment is replaced by `[*]` when it is any hit's leaf
+ * in this scan, or contains any hit's `matched` term (case-insensitive). The refused leaf's own
+ * text never appears: a value is named by where it sits, and a refused key by its parent.
+ */
+export function sharedRefusalField(
+  scan: SharedTextScan,
+  hit: SharedTextHit,
+  root: 'data' | 'key'
+): SharedRefusalField {
+  if (root === 'key') return { field: 'key', fieldKind: 'value' };
+  const leaf = hit.leaf;
+  if (!leaf) return { field: 'data', fieldKind: 'value' };
+
+  const flaggedLeaves = new Set<string>();
+  const matchedTerms: string[] = [];
+  for (const h of scan.hits) {
+    if (h.leaf) flaggedLeaves.add(h.leaf.raw);
+    if (h.matched) matchedTerms.push(h.matched.toLowerCase());
+  }
+  const isRefusedText = (key: string) => {
+    if (flaggedLeaves.has(key)) return true;
+    const lower = key.toLowerCase();
+    return matchedTerms.some((term) => lower.includes(term));
+  };
+
+  // A refused KEY is named by the object that holds it.
+  const segments = leaf.kind === 'key' ? leaf.segments.slice(0, -1) : leaf.segments;
+  let field = 'data';
+  for (const part of segments) {
+    if (typeof part === 'number') field += `[${part}]`;
+    else if (isRefusedText(part)) field += SHARED_REFUSAL_REDACTED_SEGMENT;
+    else if (PLAIN_KEY.test(part)) field += `.${part}`;
+    else field += `[${JSON.stringify(part)}]`;
+  }
+  if (field.length > SHARED_REFUSAL_FIELD_MAX_CHARS) {
+    field = `${field.slice(0, SHARED_REFUSAL_FIELD_MAX_CHARS - 1)}…`;
+  }
+  return { field, fieldKind: leaf.kind };
+}
+
+/** The field as words, for a refusal that only carries a message (the legacy surface). */
+export function describeSharedRefusalField({ field, fieldKind }: SharedRefusalField): string {
+  return fieldKind === 'key' ? `field: an object key in ${field}` : `field: ${field}`;
+}
+
 /**
  * The alert a blocked shared write raises, by policy: minor/POI → the legal-block channel
  * (`type:error`), a general audit block → the content-block channel (`type:warning`), anything
@@ -370,7 +458,7 @@ export function emitSharedBlockAlert(
       appBlockId: ctx.appBlockId,
     },
     'block-audit'
-  ).catch(() => undefined);
+  );
 }
 
 // ── Recording ─────────────────────────────────────────────────────────────────
@@ -546,7 +634,7 @@ export async function recordSharedDataScan(
   ctx: SharedDataScanContext
 ): Promise<void> {
   const counts = categoryCounts(scan);
-  await logToAxiom(
+  logToAxiom(
     {
       name: 'app-blocks-shared-data-moderation-scan',
       type: 'info',
@@ -562,7 +650,7 @@ export async function recordSharedDataScan(
       ...counts,
     },
     'block-audit'
-  ).catch(() => undefined);
+  );
 
   const client = clickhouse;
   if (!client) return;
@@ -572,7 +660,7 @@ export async function recordSharedDataScan(
     try {
       await client.insert({ table, values: rows(), format: 'JSONEachRow' });
     } catch (error) {
-      await logToAxiom(
+      logToAxiom(
         {
           name: 'app-blocks-shared-data-moderation-record-failed',
           type: 'error',
@@ -584,7 +672,7 @@ export async function recordSharedDataScan(
           error: error instanceof Error ? error.name : typeof error,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
     }
   };
   await Promise.all([
@@ -623,7 +711,7 @@ export function scheduleSharedDataShadow(
             error: error instanceof Error ? error.name : typeof error,
           },
           'block-audit'
-        ).catch(() => undefined)
+        )
       );
   });
 }

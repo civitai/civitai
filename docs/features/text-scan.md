@@ -48,6 +48,16 @@ Storyline's (title → a rating and a takedown or restriction on the storyline) 
 ImageCaption's (an author's caption on one image of a storyline chapter, keyed by `imageId` → a
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
+ServiceOffering's (a Creator Services offering's title and description → `nsfw`) feeds the
+offering's rating, which is the highest of the seller's pick, this verdict and its cover image's
+level. The offering is shown once its content checks complete. Off or in shadow, XGuard runs, as for
+Crucible. It has no Clavata counterpart.
+
+AppDoc's (an App Blocks shared document: every string value and object key of its data → `nsfw`,
+keyed by the document's rating id) rates the document for content levels: its level is the higher
+of this verdict and its referenced images' levels (`src/server/services/apps/doc-rater.service.ts`).
+The `app-doc-rater` job submits it for apps whose `app-blocks-shared-doc-levels` flag is on; until
+`AppDoc` is active, those documents stay hidden from everyone but their author.
 
 ChatMessage, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;

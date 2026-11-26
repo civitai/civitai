@@ -748,7 +748,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       return l1Hits.length ? [...l1Hits, ...final] : final;
     }
 
-    async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
+    // `markAbsent` needs no handling here: this bust writes a marker for every id it is given.
+    async function bust(id: number | number[], options: BustOptions = {}) {
       const ids = Array.isArray(id) ? id : [id];
       if (ids.length === 0) return;
       dropLocal(ids);
@@ -766,7 +767,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
     }
 
-    async function invalidate(id: number | number[], options: { debounceTime?: number } = {}) {
+    async function invalidate(id: number | number[], options: BustOptions = {}) {
       const ids = Array.isArray(id) ? id : [id];
       if (ids.length === 0) return;
       dropLocal(ids);
@@ -790,6 +791,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const notFoundIds = cacheResults
         .filter((x) => (x as AnyRecord).notFound)
         .map((x) => x[idKey] as unknown as number);
+      // `markAbsent`: an id with no entry at all gets the same marker as a notFound one.
+      if (options.markAbsent) {
+        const present = new Set(cacheResults.map((x) => Number(x[idKey])));
+        notFoundIds.push(...ids.filter((id) => !present.has(Number(id))));
+      }
       if (notFoundIds.length > 0 && windowSeconds <= 0)
         await redis.del(notFoundIds.map((id) => `${key}:${id}` as RedisKeyTemplateCache));
       else if (notFoundIds.length > 0)
@@ -989,11 +995,21 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
 
 export type CacheBuilders = ReturnType<typeof createCacheBuilders>;
 
+export type BustOptions = {
+  // Seconds the bust holds the ids back; unset, the cache's own window.
+  debounceTime?: number;
+  // SWR caches only (a non-SWR bust already marks every id). Also hold back an id that has no
+  // entry: by default invalidate() leaves an absent key alone, so the next read caches whatever the
+  // origin answers, which from a lagging origin is the pre-write answer, for a full ttl. With this
+  // set, such an id gets a debounce marker for the window, so reads inside it are not cached.
+  markAbsent?: boolean;
+};
+
 // Declared structurally rather than as ReturnType<…createCachedArray> — that instantiates the generic
 // at its `object` constraint, so every consumer's element type collapses to `object`.
 export type CachedArray<T extends object> = {
   fetch(ids: number[], options?: CachedFetchOptions): Promise<T[]>;
-  bust(id: number | number[], options?: { debounceTime?: number }): Promise<void>;
+  bust(id: number | number[], options?: BustOptions): Promise<void>;
   refresh(id: number | number[]): Promise<void>;
   update(id: number, updater: (current: T) => T): Promise<boolean>;
   flush(): Promise<void>;

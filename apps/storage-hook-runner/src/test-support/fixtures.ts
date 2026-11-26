@@ -23,7 +23,7 @@ export function hookInput(over: Partial<HookInput> = {}): HookInput {
     doc: {
       version: 4,
       author: { kind: 'user', isViewer: true },
-      counters: { likes: 3 },
+      counters: {},
       marks: {},
     },
     tally: null,
@@ -68,3 +68,31 @@ export async function waitFor(what: string, cond: () => boolean, boundMs = 5_000
     await new Promise((r) => setTimeout(r, 2));
   }
 }
+
+/** The Pick of four system app, written as an author would: four takes, a pick, then a finish. */
+export const PICK_OF_FOUR = `
+export default defineRemixApp({
+  async run(ctx) {
+    const takes = await ctx.workflow({
+      kind: 'image',
+      prompt: 'Reimagine this image',
+      images: [ctx.source],
+      aspectRatio: 'source',
+      quantity: 4,
+    });
+    const pick = await ctx.ask({ kind: 'pick', prompt: 'Pick your favourite', images: takes.images });
+    const chosen = takes.images[pick];
+    const finish = await ctx.ask({
+      kind: 'choice',
+      prompt: 'Finish it',
+      image: chosen,
+      options: [
+        { value: 'upscale', label: 'Upscale 2x' },
+        { value: 'keep', label: 'Keep it' },
+      ],
+    });
+    if (finish === 'keep') return [chosen];
+    const { images } = await ctx.workflow({ kind: 'upscale', image: chosen, scale: 2 });
+    return images;
+  },
+});`;

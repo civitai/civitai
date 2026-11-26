@@ -37,6 +37,7 @@ vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) 
   ...(await importOriginal<typeof ImageDetailProviderModule>()),
   useImageDetailContext: () => ({
     images: [image],
+    items: [{ type: 'image', key: `img:${image.id}`, image }],
     index: 0,
     active: ctx.active,
     close: () => undefined,
@@ -59,10 +60,6 @@ vi.mock('~/components/HatTurf/detail/HatTurfDetailControls', async (importOrigin
   ...(await importOriginal<typeof HatTurfDetailControlsModule>()),
   HatTurfDetailControls: () => <div data-testid="hat-controls" style={{ width: 70, height: 36 }} />,
   HatTurfDetailBadge: () => <div data-testid="hat-badge" style={{ width: 36, height: 36 }} />,
-}));
-vi.mock('~/hooks/useCurrentUser', async (o) => ({
-  ...(await o<object>()),
-  useCurrentUser: () => null,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
   ...(await o<object>()),

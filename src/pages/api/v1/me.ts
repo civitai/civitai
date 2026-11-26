@@ -5,8 +5,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { getAccountStanding } from '~/server/services/account-standing.service';
 import { readApiKeyBuzzLimit } from '~/server/services/api-key.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
-import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Note: App Blocks do NOT call /api/v1/me directly. Layering withBlockScope
 // over AuthedEndpoint would dead-code the block-token path (the inner
@@ -15,7 +14,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
     const context = (req as any).context ?? {};
-    const tokenScope: number | undefined = context.tokenScope;
+    const tokenScope: bigint | undefined = context.tokenScope;
     const subject = context.subject ?? null;
     let buzzLimit = context.buzzLimit ?? null;
     // An API key's limit is re-read from the primary rather than taken from the bearer lookup, whose
@@ -45,15 +44,27 @@ export default AuthedEndpoint(
     const banned = !!user.bannedAt || !!standing?.banned;
     const muted = !!user.muted || !!standing?.muted;
 
+    const status = banned ? 'banned' : muted ? 'muted' : 'active';
+    // A credential with no scope bits identifies its user and nothing more.
+    if (subject !== null && tokenScope === TokenScope.None)
+      return res.send({
+        id: user.id,
+        username: user.username,
+        image: user.image ?? null,
+        status,
+        tokenScope: Number(tokenScope),
+        subject,
+      });
+
     // Release email and moderator status for session auth (no token) or when the
     // token carries the UserRead scope — same gate the OIDC userinfo endpoint uses.
-    const canReadProfile = subject === null || Flags.hasFlag(tokenScope ?? 0, TokenScope.UserRead);
+    const canReadProfile = subject === null || hasScope(tokenScope ?? 0n, TokenScope.UserRead);
 
     res.send({
       id: user.id,
       username: user.username,
       tier: user.tier,
-      status: banned ? 'banned' : muted ? 'muted' : 'active',
+      status,
       isMember: user.tier ? user.tier !== 'free' : false,
       subscriptions: Object.keys(user.subscriptions ?? {}),
       // Never `false`: a non-moderator must look identical to a caller the gate withheld it from.
@@ -65,9 +76,11 @@ export default AuthedEndpoint(
       // `subject` carries the (type, id) pair the orchestrator buckets spend by.
       // For OAuth-issued tokens the id is the clientId (stable across refresh
       // rotations); for User-type keys it's the ApiKey row id.
-      ...(subject !== null ? { tokenScope, buzzLimit, subject } : {}),
+      ...(subject !== null
+        ? { tokenScope: tokenScope == null ? tokenScope : Number(tokenScope), buzzLimit, subject }
+        : {}),
     });
   },
   ['GET'],
-  { allowBanned: true }
+  { allowBanned: true, scope: 'anyScope' }
 );

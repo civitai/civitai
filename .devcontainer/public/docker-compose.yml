@@ -34,7 +34,6 @@ services:
       # CLICKHOUSE_TRACKER_URL: 'https://clickhouse-tracker-dev.civitai.com'
       SEARCH_HOST: 'http://meilisearch:7700'
       NEXT_PUBLIC_SEARCH_HOST: 'http://meilisearch:7700'
-      METRICS_SEARCH_HOST: 'http://meilisearch:7700'
       S3_UPLOAD_ENDPOINT: 'http://minio:9000'
       S3_IMAGE_UPLOAD_ENDPOINT: 'http://minio:9000'
       # NEXT_PUBLIC_IMAGE_LOCATION: ''

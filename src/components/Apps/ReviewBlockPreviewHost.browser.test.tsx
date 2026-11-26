@@ -20,43 +20,53 @@ import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publis
 
 // Stub the real host so the test targets the control surface only. It surfaces the
 // security-relevant prop so we can assert what the host is actually told to do.
+// The console props the host was last handed, so a test can play the block through them.
+const hostProps = vi.hoisted(() => ({
+  onBlockError: undefined as ((raw: unknown) => void) | undefined,
+  onBlockReady: undefined as ((raw: unknown) => void) | undefined,
+}));
+
 vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
   PageBlockHost: ({
     reviewRunForReal,
     canOpenPage,
     bootSkeleton,
     trustTier,
+    onBlockError,
+    onBlockReady,
   }: {
     reviewRunForReal?: boolean;
     canOpenPage?: boolean;
     bootSkeleton?: boolean;
     trustTier?: string;
-  }) => (
-    <div
-      data-testid="page-host"
-      data-rfr={String(!!reviewRunForReal)}
-      // Surfaced so the chrome "Recently run" wiring is assertable: this surface
-      // must forward the VIEWER's `appBlocks && appBlocksPages`, not a
-      // per-surface constant and not half the run route's predicate.
-      data-can-open-page={String(!!canOpenPage)}
-      // Surfaced for the same reason: the moderator must review the SHIPPED
-      // presentation. Without this the whole review-preview plumbing was
-      // reversible with a fully green gate — hardcoding `false` here again, or
-      // dropping the key from the mint, killed nothing.
-      data-boot-skeleton={String(!!bootSkeleton)}
-      // 🔴 The forced tier is DEFENCE LAYER 2 (this file's own header): it is
-      // what makes `intersectSandbox` drop `allow-same-origin`, so the review
-      // iframe runs at an opaque origin rather than the moderator's. It was
-      // unpinned — flipping it to 'internal' type-checks and survived 1151
-      // tests across every Apps browser suite. Pre-existing, closed here
-      // because the stub was open on the desk.
-      data-trust-tier={String(trustTier)}
-    />
-  ),
-}));
-
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'mod' }),
+    onBlockError?: (raw: unknown) => void;
+    onBlockReady?: (raw: unknown) => void;
+  }) => {
+    hostProps.onBlockError = onBlockError;
+    hostProps.onBlockReady = onBlockReady;
+    return (
+      <div
+        data-testid="page-host"
+        data-rfr={String(!!reviewRunForReal)}
+        // Surfaced so the chrome "Recently run" wiring is assertable: this surface
+        // must forward the VIEWER's `appBlocks && appBlocksPages`, not a
+        // per-surface constant and not half the run route's predicate.
+        data-can-open-page={String(!!canOpenPage)}
+        // Surfaced for the same reason: the moderator must review the SHIPPED
+        // presentation. Without this the whole review-preview plumbing was
+        // reversible with a fully green gate — hardcoding `false` here again, or
+        // dropping the key from the mint, killed nothing.
+        data-boot-skeleton={String(!!bootSkeleton)}
+        // 🔴 The forced tier is DEFENCE LAYER 2 (this file's own header): it is
+        // what makes `intersectSandbox` drop `allow-same-origin`, so the review
+        // iframe runs at an opaque origin rather than the moderator's. It was
+        // unpinned — flipping it to 'internal' type-checks and survived 1151
+        // tests across every Apps browser suite. Pre-existing, closed here
+        // because the stub was open on the desk.
+        data-trust-tier={String(trustTier)}
+      />
+    );
+  },
 }));
 
 // The review surface reads the run route's OWN predicate — `appBlocks &&
@@ -143,8 +153,14 @@ vi.mock('~/utils/trpc', async () => {
 
 // eslint-disable-next-line import/first
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+// eslint-disable-next-line import/first
+import { ReviewConsoleProvider } from '~/components/Apps/ReviewConsole';
+// eslint-disable-next-line import/first
+import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
 
 beforeEach(() => {
+  hostProps.onBlockError = undefined;
+  hostProps.onBlockReady = undefined;
   mintCalls.inputs = [];
   mintCalls.bootSkeleton = false;
   flagState.appBlocks = false;
@@ -157,7 +173,8 @@ function mount() {
       publishRequestId="pubreq_X"
       slug="my-app"
       iframeSrc="https://my-app.example/?mr=entry"
-    />
+    />,
+    { user: { id: 1, username: 'mod' } }
   );
 }
 
@@ -311,5 +328,35 @@ describe('ReviewBlockPreviewHost — forwards the run route’s own flag conjunc
     mount();
     await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
     expect(canOpenPage()).toBe('false');
+  });
+});
+
+describe('ReviewBlockPreviewHost — the review page console', () => {
+  test('🔴 the host is handed this frame’s console sink: the block’s BLOCK_ERROR and BLOCK_READY reach the page’s store', async () => {
+    const store = createReviewConsoleStore();
+    renderWithProviders(
+      <ReviewConsoleProvider store={store}>
+        <ReviewBlockPreviewHost
+          publishRequestId="pubreq_X"
+          slug="my-app"
+          iframeSrc="https://my-app.example/?mr=entry"
+        />
+      </ReviewConsoleProvider>,
+      { user: { id: 1, username: 'mod' } }
+    );
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    hostProps.onBlockReady?.({ height: 0, sdkName: 'sdk', sdkVersion: '0.29.0' });
+    hostProps.onBlockError?.({ message: 'late failure', fatal: false, source: 'console', at: 7 });
+    expect(store.getState().sdk).toEqual({ name: 'sdk', version: '0.29.0' });
+    expect(store.getState().entries).toEqual([
+      expect.objectContaining({ message: 'late failure', fatal: false, source: 'console', at: 7 }),
+    ]);
+  });
+
+  test('outside the review page (the queue modal mounts no console) the host gets no sink', async () => {
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(hostProps.onBlockError).toBeUndefined();
+    expect(hostProps.onBlockReady).toBeUndefined();
   });
 });

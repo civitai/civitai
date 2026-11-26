@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -19,10 +20,11 @@ import {
   mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
 import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/collections/[id]?cursor&limit
@@ -36,15 +38,20 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
  * bare 404 (never 403), so the endpoint is not a private-collection existence
  * oracle. The permission decision reuses `getUserCollectionPermissionsById`.
  *
- * MATURITY: media items are clamped to the token's `maxBrowsingLevel` ceiling
- * (region-narrowed) by threading the clamped `browsingLevel` into
- * `getCollectionItemsByCollectionId` — the identical authority surface
- * /api/v1/blocks/images uses. Only image/video (playable) items are returned;
+ * MATURITY: media items are clamped to the VIEWER's level held to the token's
+ * domain ceiling (`resolveCatalogViewerBrowsingLevel`, region-narrowed) by
+ * threading the clamped `browsingLevel` into `getCollectionItemsByCollectionId`
+ * — the same clamp /api/v1/blocks/images uses. Only image/video (playable) items are returned;
  * model/post/article items are omitted.
  *
  * Response: `{ collection: { id, name, description, curator:{ userId, username },
  *   isPublic, followed }, items: [{ mediaId, type:'image'|'video', url, width,
- *   height, creator:{ userId, username }, nsfwLevel, reactTicket? }], nextCursor }`.
+ *   height, creator:{ userId, username }, nsfwLevel, addedAt, duration?,
+ *   reactTicket? }], nextCursor }`.
+ *
+ * `addedAt` is when the item was added to the collection (`CollectionItem.createdAt`),
+ * ISO 8601, or `null` when unknown. `duration` is the video length in seconds, present
+ * only on a video item with a known positive length; omitted otherwise.
  *
  * `reactTicket` is the provenance ticket `blocks.setReactionFromApp` requires before an app may
  * set the viewer's reaction on that item (`react-ticket.service.ts`). Bound to this app and this
@@ -100,8 +107,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'collection',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 
@@ -112,7 +129,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   try {
     // VISIBILITY gate. `read` is true for public/unlisted, and for the
@@ -160,6 +177,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       user: subjectUser,
       // The same image population /api/v1/blocks/images serves.
       imagesAsPublicCatalog: true,
+      // An app token is never a full-access key: no moderator or owner view of the items.
+      asModerator: false,
+      asOwner: false,
     });
 
     // Only playable media (image/video) that passes the shared block image gate.
@@ -168,10 +188,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       Parameters<typeof isPublicCollectionImage>[0];
     const items = expanded
       .filter((it) => it.type === 'image')
-      .map((it) => it.data as ImageItem)
-      .filter((image) => isPublicCollectionImage(image, browsingLevel))
-      .map((image) => {
-        const media = mapImageItemToMedia(image);
+      .map((it) => ({ item: it, image: it.data as ImageItem }))
+      .filter(({ image }) => isPublicCollectionImage(image, browsingLevel))
+      .map(({ item, image }) => {
+        // `item.createdAt` is when it was added to the collection (not the image's upload time).
+        const media = mapImageItemToMedia(image, item);
         const reactTicket = reactTicketForImage(claims, media.mediaId);
         return reactTicket ? { ...media, reactTicket } : media;
       });

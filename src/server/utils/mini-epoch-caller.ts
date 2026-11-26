@@ -60,9 +60,9 @@ export async function hasVersionGrant(userId: number, modelVersionId: number): P
 }
 
 /**
- * Classifies the caller of the epoch arm for a Private version, logs it, and answers whether they
- * are refused. `enforce` refuses `anonymous` and `other`; `enforce-anon` refuses only a request
- * that carries no credential at all.
+ * Classifies the caller of a Private model or version, logs it, and answers whether they are
+ * refused. `enforce` refuses `anonymous` and `other`; `enforce-anon` refuses only a request that
+ * carries no credential at all.
  */
 export async function evaluateMiniEpochCaller({
   req,
@@ -71,7 +71,6 @@ export async function evaluateMiniEpochCaller({
   ownerId,
   mode,
   scopeRefused,
-  pick,
 }: {
   req: NextApiRequest;
   user: Session['user'] | undefined;
@@ -80,8 +79,6 @@ export async function evaluateMiniEpochCaller({
   mode: Exclude<MiniEpochGateMode, 'off'>;
   /** The bearer credential lacks the route's scope: a signed-in caller is classed `other`. */
   scopeRefused: boolean;
-  /** How the training file was chosen: by id, or as the primary file, hidden from the caller or not. */
-  pick: 'by-id' | 'primary' | 'hidden-primary';
 }): Promise<{ callerClass: MiniEpochCallerClass; withhold: boolean }> {
   const orchestrator = matchesOrchestratorServiceToken(req);
 
@@ -104,14 +101,14 @@ export async function evaluateMiniEpochCaller({
     type: 'info',
     name: 'mini-epoch-caller',
     mode,
-    modelVersionId,
-    pick,
+    // Under `payload`: the dataset has no free top-level field.
+    payload: { isPrivate: true },
     authHeader: !!req.headers?.authorization,
     resolvedAs,
     callerClass,
     wouldRefuse,
     enforced: withhold,
-  }).catch(() => undefined);
+  });
 
   return { callerClass, withhold };
 }

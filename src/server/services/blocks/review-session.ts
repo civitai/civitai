@@ -99,6 +99,15 @@ export function signReviewAccessToken(params: SignReviewAccessTokenParams): stri
   return `${payloadB64}.${sigB64}`;
 }
 
+/**
+ * The review host URL with its ENTRY token appended as `mr=`, after any query the URL already
+ * has. The token is a credential: never log the result.
+ */
+export function withReviewEntryToken(url: string, token: string): string {
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}mr=${encodeURIComponent(token)}`;
+}
+
 export type VerifyReviewAccessTokenResult = {
   ok: boolean;
   modUserId?: number;
@@ -198,8 +207,14 @@ function resolveSecret(): string {
 // ---------------------------------------------------------------------------
 
 /** Callback-token TTL. Bounds the whole agent run (bundle pull → analysis →
- *  report POST). 30 min is a generous ceiling for a cost-capped single review. */
-export const AGENT_CALLBACK_TOKEN_TTL_SECONDS = 30 * 60;
+ *  report POST), so it must OUTLAST the review Job's `activeDeadlineSeconds` (set in
+ *  the infra template, 60m) — a runner that reports near its deadline, including
+ *  the partial report it POSTs when the deadline stops it, must still be accepted.
+ *  75m = the 60m deadline + 15m for the gap between minting and the Job starting
+ *  and for the callback retries. It stays below the stale-`running` sweeper's 90m
+ *  (`STALE_AGENT_REVIEW_RUNNING_MS`), so a row is only swept once its runner can
+ *  no longer report. Was 30m, which equalled the old 30m deadline. */
+export const AGENT_CALLBACK_TOKEN_TTL_SECONDS = 75 * 60;
 
 /** Domain-separation prefix for the agent report-callback bearer. Bump `v1` if
  *  the payload shape changes. */
@@ -227,7 +242,7 @@ export type SignAgentCallbackTokenParams = {
 
 /**
  * Mint a compact `base64url(payload).base64url(sig)` bearer bound to a
- * publishRequestId, valid for `ttlSeconds` (default 30m). Injected into the
+ * publishRequestId, valid for `ttlSeconds` (default 75m). Injected into the
  * review agent pod as CALLBACK_TOKEN.
  */
 export function signAgentCallbackToken(params: SignAgentCallbackTokenParams): string {

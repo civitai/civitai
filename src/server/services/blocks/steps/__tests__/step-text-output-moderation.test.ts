@@ -108,6 +108,9 @@ import {
 import * as TextOutputModeration from '~/server/services/blocks/steps/text-output-moderation';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+
+/** Every browsing level, so no fixture output is above the ceiling. */
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 const mockLogToAxiom = loggingMock.logToAxiom;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1046,21 +1049,6 @@ describe('textOutput — the trigger log', () => {
     });
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
-
-  it('a logging failure does not turn a decided verdict into a throw', async () => {
-    mockLogToAxiom.mockRejectedValue(new Error('axiom down'));
-    scannerReturns(scanOutput(['Young']));
-    await expect(
-      screenGeneratedText({
-        texts: [GENERATED_TEXT],
-        userId: 42,
-        isGreen: false,
-        appId: 'app-1',
-        stepId: 'fixture-chat',
-        model: CHAT_TYPE,
-      })
-    ).resolves.toMatchObject({ released: false });
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1133,14 +1121,14 @@ describe('textOutput — the media channel is closed at the READ path too', () =
       moderationPosture: 'none',
       extractText: undefined,
       extractOutput: () => [
-        { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: null },
+        { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: 'pg' },
       ],
     } as unknown as Partial<AnyBlockStep>);
   }
 
   it('snapshotFromWorkflow.imageUrls carries NOTHING from a text-posture step', () => {
     registryOverride.set(CHAT_TYPE, smugglingStep());
-    const snap = snapshotFromWorkflow(workflowWith(chatStep()));
+    const snap = snapshotFromWorkflow(workflowWith(chatStep()), TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toBeUndefined();
     expect(JSON.stringify(snap)).not.toContain(PROSE);
   });
@@ -1149,7 +1137,7 @@ describe('textOutput — the media channel is closed at the READ path too', () =
     // 🔴 This surface matters MORE: `queryAppWorkflows` / `cancelAppWorkflow`
     // return `AppWorkflow` UNWRAPPED — there is no scan in front of it at all.
     registryOverride.set(CHAT_TYPE, smugglingStep());
-    const projected = projectAppWorkflow(workflowWith(chatStep()));
+    const projected = projectAppWorkflow(workflowWith(chatStep()), TEST_OUTPUT_CEILING);
     expect(projected.images).toEqual([]);
     expect(JSON.stringify(projected)).not.toContain(PROSE);
   });
@@ -1160,11 +1148,11 @@ describe('textOutput — the media channel is closed at the READ path too', () =
     // the registry would pass both tests above. ONLY `moderationPosture` (and
     // the extractor's return url) differs.
     registryOverride.set(CHAT_TYPE, honestMediaStep());
-    expect(snapshotFromWorkflow(workflowWith(chatStep())).imageUrls).toEqual([
+    expect(snapshotFromWorkflow(workflowWith(chatStep()), TEST_OUTPUT_CEILING).imageUrls).toEqual([
       'https://blobs.example/real.webp',
     ]);
-    expect(projectAppWorkflow(workflowWith(chatStep())).images).toEqual([
-      { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: null },
+    expect(projectAppWorkflow(workflowWith(chatStep()), TEST_OUTPUT_CEILING).images).toEqual([
+      { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: 1 },
     ]);
   });
 });

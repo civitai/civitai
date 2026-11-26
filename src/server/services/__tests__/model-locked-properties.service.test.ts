@@ -93,6 +93,8 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/utils/cache-helpers', () => ({
   bustFetchThroughCache: vi.fn(),
   fetchThroughCache: vi.fn(),
+  // A face change busts the resource-data cache of the model's versions.
+  createCachedArray: vi.fn(() => ({ bust: vi.fn(), fetch: vi.fn(async () => []) })),
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
@@ -130,6 +132,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
+
+const SCAN_RATING_KEPT = /^This model is marked mature because of its text on civitai\.red/;
 
 const OWNER_ID = 101;
 const MODERATOR_ID = 7;
@@ -884,6 +888,43 @@ describe('system nsfw lock marker on a moderator save', () => {
     );
   });
 
+  // A verdict the text scan held for a clean .com face is a mature reading too: this flow keeps the
+  // rating, and a mature model cannot be made SFW-only here.
+  it("refuses the owner's untick of mature in the private flow while a held verdict stands", async () => {
+    mockStored({ nsfw: true, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await expect(
+      privateFromTraining({
+        user: { id: OWNER_ID, isModerator: false },
+        nsfw: false,
+        lockedProperties: [],
+      })
+    ).rejects.toThrow(/Mature content on a model marked as SFW/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  // Held on a model not yet mature, the verdict has no rating to keep: the owner's own tick stands
+  // (and this flow refuses mature beside SFW-only), never dropped as if locked.
+  it("does not drop the owner's tick of mature in the private flow on a model not yet mature", async () => {
+    mockStored({ nsfw: false, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await expect(
+      privateFromTraining({
+        user: { id: OWNER_ID, isModerator: false },
+        nsfw: true,
+        lockedProperties: [],
+      })
+    ).rejects.toThrow(/Mature content on a model marked as SFW/);
+  });
+
+  it("keeps the owner's untick in the private flow when nothing is held (control)", async () => {
+    mockStored({ nsfw: true, meta: {} });
+    await privateFromTraining({
+      user: { id: OWNER_ID, isModerator: false },
+      nsfw: false,
+      lockedProperties: [],
+    });
+    expect(updateData()).toHaveProperty('nsfw', false);
+  });
+
   it("keeps the marker and logs nothing on an owner's private-flow publish", async () => {
     mockStored({ ...locked, nsfw: false });
     await privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, lockedProperties: [] });
@@ -1173,6 +1214,35 @@ describe('upsertModel — content flags the row ends up with', () => {
       }
     );
 
+    it.each(['minor', 'poi'] as const)(
+      'holds the scan verdict as a %s lead when the scan rated it mature without a lock',
+      async (restriction) => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+
+        await upsert({
+          id: MODEL_ID,
+          userId: OWNER_ID,
+          [restriction]: true,
+          sfwOnly: false,
+          nsfw: false,
+        });
+
+        expect(updateData()).toEqual(
+          expect.objectContaining({
+            nsfw: false,
+            sfwOnly: true,
+            lockedProperties: expect.arrayContaining([restriction, 'sfwOnly']),
+          })
+        );
+        expect(updateData().meta).toEqual(
+          expect.objectContaining({
+            ownerFlagOverride: expect.objectContaining({ flags: [restriction] }),
+            restrictedNsfwVerdict: { source: 'text-scan', at: scanLock.at, restriction },
+          })
+        );
+      }
+    );
+
     it("writes no lead over a moderator's lock (control)", async () => {
       mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: null });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
@@ -1180,6 +1250,355 @@ describe('upsertModel — content flags the row ends up with', () => {
         expect.objectContaining({ ownerFlagOverride: expect.anything() })
       );
       expect(updateData().meta).not.toHaveProperty('restrictedNsfwVerdict');
+    });
+
+    describe('the owner cannot undo the scan rating alone', () => {
+      it('refuses unticking mature while the title and description are unchanged', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses unticking mature while the model keeps a .com face', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: [],
+          meta: { systemNsfwLock: scanLock },
+          ...({ sfwName: 'Safe', sfwCoverImageId: 4 } as object),
+        });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      // A face that is added or changed goes to the listing check first, covered elsewhere.
+      it('lets the owner remove the .com face while mature stays ticked', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: [],
+          meta: { systemNsfwLock: scanLock },
+          ...({ sfwName: 'Safe', sfwCoverImageId: 4 } as object),
+        });
+        await upsert({
+          id: MODEL_ID,
+          userId: OWNER_ID,
+          nsfw: true,
+          sfwName: null,
+          sfwCoverImageId: null,
+        });
+        expect(updateData()).toEqual(
+          expect.objectContaining({ sfwName: null, sfwCoverImageId: null })
+        );
+      });
+
+      it('refuses removing the face that kept a scan-rated model off mature', async () => {
+        mockStored({
+          nsfw: false,
+          lockedProperties: [],
+          meta: { systemNsfwLock: scanLock },
+          ...({ sfwName: 'Safe', sfwCoverImageId: 4 } as object),
+        });
+        await expect(
+          upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            sfwName: null,
+            sfwCoverImageId: null,
+          })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+      });
+
+      // A rescan dedups on the scanned text, so an edit alone may bring no fresh verdict.
+      // SFW-only has no lead handoff, unlike minor and POI.
+      it('refuses ticking SFW-only to clear the rating', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: true })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+      });
+
+      // As on main, where the scan's lock kept nsfw and the SFW-only flow was then refused.
+      it('refuses the private flow on a scan-rated model, keeping the rating', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, nsfw: false })
+        ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      // The flow's first read saw no rating; the scan rated it before the flow's row lock.
+      it('refuses the private flow when the scan rated the model after its first read', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        mockDbWrite.model.findUnique.mockResolvedValueOnce({
+          ...storedModel,
+          nsfw: false,
+          lockedProperties: [],
+          meta: {},
+        });
+        await expect(
+          privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, nsfw: false })
+        ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      it('still refuses when the same save edits the text', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            minor: false,
+            sfwOnly: false,
+            description: 'A description ',
+          })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+      });
+
+      it('judges the face as stored: an empty .com title is no face', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            minor: false,
+            sfwOnly: false,
+            sfwName: '<p></p>',
+            sfwCoverImageId: 4,
+          })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+      });
+
+      // The read before the save's transaction saw no rating; the scan rated it before the save's row lock.
+      it('refuses when the scan rated the model after the read the save started from', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        mockDbWrite.model.findUnique.mockResolvedValueOnce({
+          ...storedModel,
+          nsfw: false,
+          lockedProperties: [],
+          meta: {},
+        });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
+        ).rejects.toThrow(SCAN_RATING_KEPT);
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      describe('the message names the text the scan read', () => {
+        type Version = {
+          modelId?: number;
+          index: number;
+          status: ModelStatus;
+          name: string;
+          description: string | null;
+          trainedWords: string[];
+        };
+        // Honours the model and status filters and the order, so a query that read another
+        // model's versions or drafts would name them.
+        function mockVersions(versions: Version[]) {
+          mockDbWrite.modelVersion.findMany.mockImplementation((async (args: {
+            where?: { modelId?: number; status?: { in?: ModelStatus[] } };
+            orderBy?: { index?: 'asc' | 'desc' };
+          }) => {
+            const found = versions.filter(
+              (v) =>
+                (args?.where?.modelId === undefined ||
+                  (v.modelId ?? MODEL_ID) === args.where.modelId) &&
+                (!args?.where?.status?.in || args.where.status.in.includes(v.status))
+            );
+            return args?.orderBy?.index === 'asc'
+              ? [...found].sort((a, b) => a.index - b.index)
+              : found;
+          }) as never);
+        }
+        const unticking = () =>
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+
+        it('lists the title, description and published versions, never a draft', async () => {
+          mockStored({
+            nsfw: true,
+            lockedProperties: [],
+            meta: { systemNsfwLock: { ...scanLock, reason: 'stored-scan-reason' } },
+          });
+          mockVersions([
+            {
+              index: 2,
+              status: ModelStatus.Scheduled,
+              name: 'v2.0',
+              description: null,
+              trainedWords: [],
+            },
+            {
+              modelId: MODEL_ID + 1,
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'other-model',
+              description: '<p>Other</p>',
+              trainedWords: [],
+            },
+            {
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: '<p>Notes</p>',
+              trainedWords: ['tag'],
+            },
+            {
+              index: 1,
+              status: ModelStatus.Draft,
+              name: 'draft-only',
+              description: '<p>Draft</p>',
+              trainedWords: [],
+            },
+          ]);
+
+          const error = await unticking().catch((e: Error) => e);
+
+          expect((error as Error).message).toBe(
+            'This model is marked mature because of its text on civitai.red, which includes its title, its description, and the names, descriptions, and trained words of its published versions ("v1.0" and "v2.0"). It stays marked mature until that text changes: edit it and save, and once the new text is checked and passes, you can change the rating.'
+          );
+          expect((error as Error).message).not.toContain('stored-scan-reason');
+          expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+        });
+
+        it('leaves out the fields with no text', async () => {
+          mockStored({
+            nsfw: true,
+            lockedProperties: [],
+            description: '<p> </p>',
+            meta: { systemNsfwLock: scanLock },
+          });
+          mockVersions([
+            {
+              index: 3,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: '<p></p>',
+              trainedWords: [],
+            },
+          ]);
+
+          await expect(unticking()).rejects.toThrow(
+            'This model is marked mature because of its text on civitai.red, which includes its title and the names of its published versions ("v1.0"). It stays'
+          );
+        });
+
+        it('names only the title and description when no version is published', async () => {
+          mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+          mockVersions([
+            {
+              index: 4,
+              status: ModelStatus.Draft,
+              name: 'draft-only',
+              description: '<p>Draft</p>',
+              trainedWords: ['tag'],
+            },
+          ]);
+
+          await expect(unticking()).rejects.toThrow(
+            'This model is marked mature because of its text on civitai.red, which includes its title and its description. It stays'
+          );
+        });
+        it("tells only the owner: someone else's save gets no scan explanation", async () => {
+          mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+          mockVersions([
+            {
+              index: 0,
+              status: ModelStatus.Published,
+              name: 'v1.0',
+              description: null,
+              trainedWords: [],
+            },
+          ]);
+
+          await expect(
+            upsert({
+              id: MODEL_ID,
+              userId: OWNER_ID + 1,
+              nsfw: false,
+              minor: false,
+              sfwOnly: false,
+            })
+          ).resolves.toBeNull();
+          expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
+          expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+        });
+      });
+
+      it('lets it through once a clean rescan has dropped the marker', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: {} });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
+      it('lets it through once a moderator has ruled on the rating', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        // Read by the guard before the save's transaction and again on the locked row.
+        mockDbWrite.modActivity.findFirst
+          .mockResolvedValueOnce({ id: 1 } as never)
+          .mockResolvedValueOnce({ id: 1 } as never);
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
+      it("reads the ruling on the locked row through the save's own transaction", async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        // Its own modActivity, so a ruling read sent to dbWrite cannot pass for the one on the locked row.
+        const txActivity = { findFirst: vi.fn().mockResolvedValue({ id: 1 }) };
+        const tx = new Proxy(mockDbWrite, {
+          get: (target, key) => (key === 'modActivity' ? txActivity : Reflect.get(target, key)),
+        });
+        mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+          typeof arg === 'function' ? arg(tx) : Promise.all(arg as unknown[])) as never);
+        // The guard before the transaction sees the ruling too; the locked-row read must find it on tx.
+        mockDbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+        try {
+          await upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            minor: false,
+            sfwOnly: false,
+          });
+        } finally {
+          mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+            typeof arg === 'function' ? arg(mockDbWrite) : Promise.all(arg as unknown[])) as never);
+        }
+        expect(txActivity.findFirst).toHaveBeenCalledTimes(1);
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
+      it('keeps an xguard rating through the owner untick, as it is locked', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: ['nsfw'],
+          meta: { systemNsfwLock: { source: 'xguard-text-moderation', at: scanLock.at } },
+        });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        // Left out of the write (the stored true stands) or written as true; never cleared.
+        expect([undefined, true]).toContain(updateData().nsfw);
+      });
+
+      it('never blocks on a marker no clean read can release (an older xguard rating)', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: [],
+          meta: { systemNsfwLock: { source: 'xguard-text-moderation', at: scanLock.at } },
+        });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
+      it("leaves the owner's own rating, with no scan marker, theirs to change", async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: null });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
     });
 
     it('keeps a lead already waiting', async () => {

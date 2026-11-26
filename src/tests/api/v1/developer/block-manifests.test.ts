@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -11,7 +12,7 @@ const mockDbWrite = dbMock.dbWrite;
  *  - Any manifest update lands at status='pending' (re-enters moderation)
  *  - Publisher-supplied trustTier/renderMode are ignored on INSERT
  *  - Existing trustTier/renderMode are preserved on UPDATE (separate
- *    pre-upsert check 403s on attempted change)
+ *    pre-write check 403s on attempted change)
  */
 
 const { mockValidator, mockEnv } = vi.hoisted(() => {
@@ -83,12 +84,25 @@ beforeEach(() => {
   mockEnv.JOB_TOKEN = 'job-secret';
   mockValidator.validate.mockReturnValue({ valid: true });
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
-    allowedScopes: 0xffffff,
+    allowedScopes: 0xffffffn,
     allowedOrigins: ['https://blocks.civitai.com'],
   });
-  mockDbRead.appBlock.findUnique.mockResolvedValue(null);
-  mockDbWrite.appBlock.upsert.mockResolvedValue({ id: 'ab_new', status: 'pending' });
+  mockDbWrite.appBlock.findUnique.mockResolvedValue(null);
+  mockDbWrite.appBlock.create.mockResolvedValue({ id: 'ab_new', status: 'pending' });
+  mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
 });
+
+const createData = () =>
+  (mockDbWrite.appBlock.create.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> }).data;
+const updateArgs = () =>
+  mockDbWrite.appBlock.updateMany.mock.calls.at(-1)?.[0] as {
+    where: Record<string, unknown>;
+    data: Record<string, unknown>;
+  };
+const expectNoWrite = () => {
+  expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+  expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+};
 
 describe('POST /api/v1/developer/block-manifests', () => {
   describe('consecutive hyphens in a NEW blockId', () => {
@@ -108,7 +122,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
           `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`,
         ],
       });
-      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+      expectNoWrite();
     });
 
     it('422s a new block with a reserved blockId without writing', async () => {
@@ -122,7 +136,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
           `blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-" are used for dev tunnel hosts, so the app's address would never reach it. Choose a different blockId.`,
         ],
       });
-      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+      expectNoWrite();
     });
 
     it.each(['my-app', 'ab-c-d', 'plainapp'])('accepts a new block %s', async (blockId) => {
@@ -130,11 +144,11 @@ describe('POST /api/v1/developer/block-manifests', () => {
       const res = makeRes();
       await handler(makeReq({ body: bodyFor(blockId) }), res);
       expect(res._status).toBe(200);
-      expect(mockDbWrite.appBlock.upsert).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(1);
     });
 
     it('accepts an update to an EXISTING block whose blockId contains consecutive hyphens', async () => {
-      mockDbRead.appBlock.findUnique.mockResolvedValue({
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
         id: 'ab_legacy',
         manifest: { something: 'old' },
         status: 'approved',
@@ -145,12 +159,12 @@ describe('POST /api/v1/developer/block-manifests', () => {
       const res = makeRes();
       await handler(makeReq({ body: bodyFor('old--name') }), res);
       expect(res._status).toBe(200);
-      expect(mockDbWrite.appBlock.upsert).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledTimes(1);
     });
   });
 
   it('H-1: update branch sets status=pending (re-enters moderation)', async () => {
-    mockDbRead.appBlock.findUnique.mockResolvedValue({
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
       id: 'ab_existing',
       manifest: { something: 'old' },
       status: 'approved',
@@ -161,10 +175,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
     const res = makeRes();
     await handler(makeReq({ body: VALID_BODY }), res);
     expect(res._status).toBe(200);
-    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
-      update: { status?: string };
-    };
-    expect(upsertArgs.update.status).toBe('pending');
+    expect(updateArgs().data.status).toBe('pending');
   });
 
   it('M1: trustTier supplied in manifest is IGNORED on INSERT (forced unverified)', async () => {
@@ -180,11 +191,8 @@ describe('POST /api/v1/developer/block-manifests', () => {
       res
     );
     expect(res._status).toBe(200);
-    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
-      create: { trustTier?: string; renderMode?: string };
-    };
-    expect(upsertArgs.create.trustTier).toBe('unverified');
-    expect(upsertArgs.create.renderMode).toBe('iframe');
+    expect(createData().trustTier).toBe('unverified');
+    expect(createData().renderMode).toBe('iframe');
   });
 
   it('SPEND: a manifest-declared spendTier / cap override NEVER reaches the row (INSERT)', async () => {
@@ -210,18 +218,12 @@ describe('POST /api/v1/developer/block-manifests', () => {
       res
     );
     expect(res._status).toBe(200);
-    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
-      create: Record<string, unknown>;
-      update: Record<string, unknown>;
-    };
-    for (const key of ['spendTier', 'spendCapBuzzPerDay', 'spendVelocityMaxGens']) {
-      expect(upsertArgs.create).not.toHaveProperty(key);
-      expect(upsertArgs.update).not.toHaveProperty(key);
-    }
+    for (const key of ['spendTier', 'spendCapBuzzPerDay', 'spendVelocityMaxGens'])
+      expect(createData()).not.toHaveProperty(key);
   });
 
   it('SPEND: a manifest-declared spendTier NEVER reaches the row (UPDATE branch)', async () => {
-    mockDbRead.appBlock.findUnique.mockResolvedValue({
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
       id: 'ab_existing',
       manifest: { something: 'old' },
       status: 'approved',
@@ -240,10 +242,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
       res
     );
     expect(res._status).toBe(200);
-    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
-      update: Record<string, unknown>;
-    };
-    expect(upsertArgs.update).not.toHaveProperty('spendTier');
+    expect(updateArgs().data).not.toHaveProperty('spendTier');
   });
 
   it('M1: renderMode supplied in manifest is IGNORED on INSERT (forced iframe)', async () => {
@@ -259,11 +258,148 @@ describe('POST /api/v1/developer/block-manifests', () => {
       res
     );
     expect(res._status).toBe(200);
-    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
-      create: { trustTier?: string; renderMode?: string };
-    };
-    expect(upsertArgs.create.renderMode).toBe('iframe');
-    expect(upsertArgs.create.trustTier).toBe('unverified');
+    expect(createData().renderMode).toBe('iframe');
+    expect(createData().trustTier).toBe('unverified');
+  });
+
+  describe('stores tagline/repository trimmed', () => {
+    const TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
+    const REPO = 'https://github.com/example-org/test-block';
+    const PAD = ` \t\n${' '.repeat(600)}\n\t `;
+    const paddedBody = () => ({
+      ...VALID_BODY,
+      manifest: {
+        ...VALID_BODY.manifest,
+        tagline: `${PAD}${TAGLINE}${PAD}`,
+        repository: `${PAD}${REPO}${PAD}`,
+      },
+    });
+    type Written = { manifest: Record<string, unknown> };
+
+    it('writes the trimmed values on both the create and update payloads', async () => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      await handler(makeReq({ body: paddedBody() }), makeRes());
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
+        id: 'ab_existing',
+        manifest: { something: 'old' },
+        status: 'approved',
+        trustTier: 'unverified',
+        renderMode: 'iframe',
+      });
+      const res = makeRes();
+      await handler(makeReq({ body: paddedBody() }), res);
+      expect(res._status).toBe(200);
+      expect(TAGLINE).toHaveLength(140);
+      const created = createData() as Written;
+      const updated = updateArgs().data as Written;
+      expect(created.manifest.tagline).toBe(TAGLINE);
+      expect(created.manifest.repository).toBe(REPO);
+      expect(updated.manifest.tagline).toBe(TAGLINE);
+      expect(updated.manifest.repository).toBe(REPO);
+    });
+
+    it('a padded re-upload of the stored (trimmed) manifest is unchanged, not re-moderated', async () => {
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
+        id: 'ab_existing',
+        manifest: { ...VALID_BODY.manifest, tagline: TAGLINE, repository: REPO },
+        status: 'approved',
+        trustTier: 'unverified',
+        renderMode: 'iframe',
+      });
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: paddedBody() }), res);
+      expect(res._status).toBe(200);
+      expect(res._body).toEqual({ id: 'ab_existing', status: 'approved', unchanged: true });
+      expectNoWrite();
+    });
+  });
+
+  describe('a remix app row', () => {
+    const row = (status: string, manifest: unknown = VALID_BODY.manifest) => ({
+      id: 'ab_rx_remix',
+      manifest,
+      status,
+      trustTier: 'unverified',
+      renderMode: 'iframe',
+    });
+    const REFUSAL = { error: 'A remix app is edited on the remix apps page.' };
+
+    it.each(['remix', 'remix_disabled'])(
+      '🔴 409s an upload onto a remix row (status %s) without writing, even when the manifest is unchanged',
+      async (status) => {
+        mockDbWrite.appBlock.findUnique.mockResolvedValue(row(status));
+        const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+        const res = makeRes();
+        await handler(makeReq({ body: VALID_BODY }), res);
+        expect(res._status).toBe(409);
+        expect(res._body).toEqual(REFUSAL);
+        expectNoWrite();
+      }
+    );
+
+    it('🔴 the update is conditional on a non-remix status, and 409s when the row became one under it', async () => {
+      mockDbWrite.appBlock.findUnique
+        .mockResolvedValueOnce(row('approved', { something: 'old' }))
+        .mockResolvedValueOnce({ status: 'remix' });
+      mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: VALID_BODY }), res);
+      expect(updateArgs().where).toEqual({
+        id: 'ab_rx_remix',
+        status: { notIn: ['remix', 'remix_disabled'] },
+      });
+      expect(res._status).toBe(409);
+      expect(res._body).toEqual(REFUSAL);
+    });
+
+    it('a row gone under the update is a retryable conflict, not a remix refusal', async () => {
+      mockDbWrite.appBlock.findUnique
+        .mockResolvedValueOnce(row('approved', { something: 'old' }))
+        .mockResolvedValueOnce(null);
+      mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: VALID_BODY }), res);
+      expect(res._status).toBe(409);
+      expect(res._body).toEqual({
+        error: 'This block changed while it was being written. Try again.',
+      });
+    });
+
+    // The primary read is the point: a replica can lag behind the status that refuses the upload.
+    it('reads the row from the primary, never a replica', async () => {
+      mockDbRead.appBlock.findUnique.mockResolvedValue(row('approved', { something: 'old' }));
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      await handler(makeReq({ body: VALID_BODY }), makeRes());
+      expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.findUnique).toHaveBeenCalled();
+    });
+
+    it('CONTROL: an approved store row with a changed manifest still goes back to pending', async () => {
+      mockDbWrite.appBlock.findUnique.mockResolvedValue(row('approved', { something: 'old' }));
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: VALID_BODY }), res);
+      expect(res._status).toBe(200);
+      expect(res._body).toEqual({ id: 'ab_rx_remix', status: 'pending', requiresReapproval: true });
+      expect(updateArgs().data.status).toBe('pending');
+    });
+  });
+
+  it('409s a create that lost a race to another create, and updates nothing', async () => {
+    mockDbWrite.appBlock.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+    const res = makeRes();
+    await handler(makeReq({ body: VALID_BODY }), res);
+    expect(res._status).toBe(409);
+    expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -280,7 +416,7 @@ describe('POST /api/v1/developer/block-manifests — JOB_TOKEN not configured', 
       const res = makeRes();
       await handler(makeReq({ body: VALID_BODY, token: secret }), res);
       expect(res._status).toBe(503);
-      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+      expectNoWrite();
     }
   );
 

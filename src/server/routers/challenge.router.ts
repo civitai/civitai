@@ -1,3 +1,4 @@
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
@@ -28,6 +29,9 @@ import {
   upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
+import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
+import { challengeTextQueryLevel } from '~/server/services/semantic-challenge-search.service';
 import { z } from 'zod';
 import {
   isFlagProtected,
@@ -47,7 +51,7 @@ import {
   getChallengeDetail,
   getChallengeForEdit,
   getChallengeEvents,
-  getChallengeWinners,
+  getVisibleChallengeWinners,
   getCompletedChallengesWithWinners,
   getDailyChallenges,
   getInfiniteChallenges,
@@ -88,6 +92,36 @@ import {
 import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
+
+/**
+ * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
+ * request's own unless a minor verdict narrowed it to the safe levels. After such a verdict the
+ * viewer's own challenges are held to every gate too (`ownRowsExempt: false`), even when their level
+ * was already safe.
+ */
+async function guardTextQuery(
+  input: { query?: string; browsingLevel?: number },
+  ctx: Pick<Context, 'features' | 'user' | 'track'>
+): Promise<{ browsingLevel: number | undefined; ownRowsExempt?: false } | 'refuse'> {
+  const query = input.query?.trim();
+  if (!query) return { browsingLevel: input.browsingLevel };
+  const effective = getEffectiveBrowsingLevel({
+    isGreen: ctx.features.isGreen,
+    isLoggedIn: !!ctx.user,
+    requested: input.browsingLevel,
+  });
+  const verdict = await challengeTextQueryLevel({
+    query,
+    level: effective,
+    user: ctx.user,
+    track: ctx.track,
+  });
+  if (verdict === 'refuse') return 'refuse';
+  const browsingLevel = verdict.level === effective ? input.browsingLevel : verdict.level;
+  return verdict.narrowed ? { browsingLevel, ownRowsExempt: false } : { browsingLevel };
+}
 
 // Router definition
 export const challengeRouter = router({
@@ -96,14 +130,20 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) =>
-      getInfiniteChallenges({
+    // The feed searches the text when the semantic search fails, so it refuses the same way.
+    .use(refuseProfaneSearch)
+    .query(async ({ input, ctx }) => {
+      const guard = await guardTextQuery(input, ctx);
+      // The feed's search fallback: the page says it was refused, never which check refused it.
+      if (guard === 'refuse') return { items: [], nextCursor: undefined, refused: true as const };
+      return getInfiniteChallenges({
         ...input,
+        ...guard,
         currentUserId: ctx.user?.id,
         isGreen: ctx.features.isGreen,
         canAccessUserChallenges: ctx.features.userChallenges,
-      })
-    ),
+      });
+    }),
 
   // Active + next few upcoming daily (System) challenges for the horizontal daily row
   getDaily: publicProcedure
@@ -150,9 +190,13 @@ export const challengeRouter = router({
     .input(getChallengeWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getChallengeWinners(input.challengeId, {
+      getVisibleChallengeWinners({
+        challengeId: input.challengeId,
+        browsingLevel: input.browsingLevel,
         isGreen: ctx.features.isGreen,
         viewerId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator ?? false,
+        canAccessUserChallenges: ctx.features.userChallenges,
       })
     ),
 
@@ -161,13 +205,18 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCompletedChallengesWithWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) =>
-      getCompletedChallengesWithWinners({
+    .use(refuseProfaneSearch)
+    .query(async ({ input, ctx }) => {
+      const guard = await guardTextQuery(input, ctx);
+      if (guard === 'refuse') return { items: [], nextCursor: undefined };
+      return getCompletedChallengesWithWinners({
         ...input,
+        ...guard,
         isGreen: ctx.features.isGreen,
         currentUserId: ctx.user?.id,
-      })
-    ),
+        canAccessUserChallenges: ctx.features.userChallenges,
+      });
+    }),
 
   // Get winner cooldown status for current user on a challenge
   getWinnerCooldownStatus: protectedProcedure
@@ -223,7 +272,9 @@ export const challengeRouter = router({
   getForEdit: moderatorProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeForEdit(input.id)),
+    .query(({ input, ctx }) =>
+      getChallengeForEdit(input.id, { seesReportListed: seesReportListed(ctx) })
+    ),
 
   // User: create-eligibility status for the create page (non-throwing; mirrors the create gate).
   // Read-only and returns only the caller's own score/limits, so it is NOT behind `userChallenges`:
@@ -301,7 +352,13 @@ export const challengeRouter = router({
   rescan: moderatorProcedure
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      rescanChallenge({
+        id: input.id,
+        moderatorId: ctx.user.id,
+        csamReview: !!ctx.features?.csamReports,
+      })
+    ),
 
   rejudge: moderatorProcedure
     .input(challengeQuickActionSchema)
@@ -376,7 +433,9 @@ export const challengeRouter = router({
   getEvents: moderatorProcedure
     .input(getChallengeEventsSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeEvents(input)),
+    .query(({ input, ctx }) =>
+      getChallengeEvents(input, { seesReportListed: seesReportListed(ctx) })
+    ),
 
   // Moderator: Create or update a challenge event
   upsertEvent: moderatorProcedure
@@ -395,7 +454,14 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ imageId: z.number(), judgeUserId: z.number() }))
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getJudgeCommentForImage(input)),
+    .query(({ input, ctx }) =>
+      getJudgeCommentForImage({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
+    ),
 
   // --- Judge Playground ---
 
@@ -421,7 +487,9 @@ export const challengeRouter = router({
   playgroundReviewImage: moderatorProcedure
     .input(playgroundReviewImageSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => playgroundReviewImage(input)),
+    .mutation(({ input, ctx }) =>
+      playgroundReviewImage({ ...input, csamReview: !!ctx.features?.csamReports })
+    ),
 
   // Moderator: Playground — dry-run the pairwise ladder over a real field. Writes nothing, but
   // every comparison is a paid LLM call, so it stays behind moderatorProcedure.

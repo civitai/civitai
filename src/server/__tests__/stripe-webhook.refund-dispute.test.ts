@@ -124,6 +124,16 @@ import handler from '~/pages/api/webhooks/stripe';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
+
 type Reward = {
   id: number;
   userId: number;
@@ -563,10 +573,6 @@ describe('stripe webhook: charge.refunded', () => {
     expect(clawbacks()).toEqual([]);
     expect(buzzAttributions.find((a) => a.id === 'bba_1')?.status).toBe('paid_out');
     expect(gift?.status).toBe('Pending');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'partial-refund', paymentIntentId: 'pi_buzz' }),
-      'webhooks'
-    );
   });
 
   it('revokes when a later partial refund completes the refund', async () => {
@@ -606,13 +612,6 @@ describe('stripe webhook: charge.refunded', () => {
     expect(first.statusCode).toBeGreaterThanOrEqual(400);
     expect(rewardStatus(1)).toBe('Revoked');
     expect(rewardStatus(2)).toBe('Pending');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stage: 'refund-payment-intent-lookup',
-        paymentIntentId: 'pi_membership',
-      }),
-      'webhooks'
-    );
 
     const retry = await deliver('charge.refunded', charge('pi_membership', 2500, 2500));
     expect(retry.statusCode).toBe(200);
@@ -632,10 +631,6 @@ describe('stripe webhook: charge.refunded', () => {
     expect(rewardStatus(1)).toBe('Settled');
     expect(gift?.status).toBe('Refunded');
     expect(clawbacks()).toHaveLength(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'referral-revoke', paymentIntentId: 'pi_buzz' }),
-      'webhooks'
-    );
 
     const retry = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
     expect(retry.statusCode).toBe(200);
@@ -716,13 +711,6 @@ describe('stripe webhook: disputes', () => {
         activity: 'chargeback:dp_pi_gift:banned',
       },
     ]);
-    expect(disputeBanLogs()).toEqual([
-      expect.objectContaining({
-        userId: GIFTER,
-        eventId: 'evt_charge.dispute.closed',
-        outcome: 'banned',
-      }),
-    ]);
   });
 
   // The account's ModActivity row is the one place the dispute id is kept.
@@ -769,9 +757,6 @@ describe('stripe webhook: disputes', () => {
         activity: 'chargeback:dp_pi_buzz:already-banned',
       }),
     ]);
-    expect(disputeBanLogs()).toEqual([
-      expect.objectContaining({ userId: REFEREE, outcome: 'already-banned' }),
-    ]);
   });
 
   it('bans once when Stripe delivers a lost dispute twice', async () => {
@@ -782,7 +767,6 @@ describe('stripe webhook: disputes', () => {
     expect(users.get(REFEREE)?.bannedAt).toBe(firstBan);
     expect(banSideEffects.sendModerationEmail).toHaveBeenCalledTimes(1);
     expect(modActivities).toHaveLength(1);
-    expect(disputeBanLogs().map((l) => l.outcome)).toEqual(['banned', 'already-recorded']);
   });
 
   // A moderator who lifts a dispute ban has decided; a redelivery or a resend must not undo that.
@@ -799,7 +783,6 @@ describe('stripe webhook: disputes', () => {
     expect(res.statusCode).toBe(200);
     expect(users.get(REFEREE)?.bannedAt).toBeNull();
     expect(modActivities).toHaveLength(1);
-    expect(disputeBanLogs().map((l) => l.outcome)).toEqual(['banned', 'already-recorded']);
   });
 
   it('does not ban a replayed dispute after an earlier ban it found is lifted', async () => {
@@ -828,9 +811,6 @@ describe('stripe webhook: disputes', () => {
         activity: 'chargeback:dp_pi_buzz:skipped-moderator',
       }),
     ]);
-    expect(disputeBanLogs()).toEqual([
-      expect.objectContaining({ type: 'warning', outcome: 'skipped-moderator' }),
-    ]);
   });
 
   it('still revokes, and answers 200, when no user matches the payer', async () => {
@@ -852,9 +832,6 @@ describe('stripe webhook: disputes', () => {
     expect(first.statusCode).toBeGreaterThanOrEqual(400);
     expect(rewardStatus(1)).toBe('Revoked');
     expect(users.get(REFEREE)?.bannedAt).toBeNull();
-    expect(disputeBanLogs()).toEqual([
-      expect.objectContaining({ userId: REFEREE, outcome: 'failed' }),
-    ]);
 
     const retry = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
 
@@ -984,7 +961,6 @@ describe('stripe webhook: disputes', () => {
     expect(res.statusCode).toBe(200);
     expect(rewardStatus(1)).toBe('Revoked');
     expect(users.get(REFEREE)?.bannedAt).toBeNull();
-    expect(disputeBanLogs()).toEqual([expect.objectContaining({ outcome: 'skipped-test-mode' })]);
   });
 
   it('claws back once when a refunded payment is later lost in a dispute', async () => {

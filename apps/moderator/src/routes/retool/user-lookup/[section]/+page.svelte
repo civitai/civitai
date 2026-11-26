@@ -4,6 +4,7 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import MemorialPanel from '../MemorialPanel.svelte';
   import { fetchAccountLinks } from '../account-links';
   import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
@@ -38,6 +39,7 @@
   import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
   import MembershipCancelPanel from '../MembershipCancelPanel.svelte';
   import MembershipResyncPanel from '../MembershipResyncPanel.svelte';
+  import MembershipGiftCompPanel from '../MembershipGiftCompPanel.svelte';
   import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
@@ -123,6 +125,9 @@
       {/if}
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+      {/if}
+      {#if data.grants['user.membership.gift.comp']}
+        <MembershipGiftCompPanel userId={result.identity.id} />
       {/if}
       <ModerationMemoryPanel
         userId={result.identity.id}
@@ -295,8 +300,10 @@
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
         canDelete={!!data.grants['user.deleteAccount']}
-        deleteHold={data.deleteHold}
       />
+      {#if data.memorial}
+        <MemorialPanel identity={result.identity} panel={data.memorial} />
+      {/if}
       {#if data.grants['user.removeReactions']}
         <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
       {/if}

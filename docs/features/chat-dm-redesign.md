@@ -101,8 +101,9 @@ model ChatMember {
 The rail's segmented control becomes **Inbox / Requests / Archived**, replacing
 Active / Pending / Archived:
 
-- **Inbox** — `Joined`, plus `Invited` where `filteredAt IS NULL`
-- **Requests** — `Invited` where `filteredAt IS NOT NULL`
+- **Inbox** — `Joined` or `Invited` where `filteredAt IS NULL`
+- **Requests** — any membership where `filteredAt IS NOT NULL`: an `Invited` request, or a `Joined`
+  member who deleted the conversation and was written to again (see Delete outranks the policy)
 - **Archived** — `Ignored`, `Left`, `Kicked` (unchanged)
 
 `getUnreadMessagesForUserHandler` counts the Inbox bucket, so it selects on the same two things:
@@ -111,9 +112,9 @@ the filtering achieves nothing), and both inbox statuses are included (or an unf
 rings a badge no tab accounts for). It selects that list from `inboxStatuses` in
 `src/shared/utils/chat.ts` for that reason.
 
-Accepting a request needs no extra handling: the existing invite accept/reject moves the member
-to `Joined`, and the bucket rule only consults `filteredAt` for `Invited` members, so the thread
-moves to the inbox on its own.
+Accepting an `Invited` request moves the member to `Joined` and clears `filteredAt`. A member who
+deleted the conversation is still `Joined`, so accepting is a same-status Join in `modifyUser`: it
+clears `filteredAt` only, with no join notice and `joinedAt` untouched. Only the member can do it.
 
 The global settings live on their own screen inside the chat window, opened by the ⚙ in the rail
 header — the same place the mockup puts it. *Message sounds* and *hide offensive words* moved

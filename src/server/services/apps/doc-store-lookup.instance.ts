@@ -23,7 +23,7 @@ export function getDocStoreLookup(): DocStoreLookup {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

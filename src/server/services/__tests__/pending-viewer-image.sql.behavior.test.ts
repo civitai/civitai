@@ -51,7 +51,9 @@ beforeAll(async () => {
       (1, 100, ${UPLOADER}, 1, 'Scanned', true, NULL),    -- acceptableMinor
       (2, 100, ${UPLOADER}, 1, 'Scanned', false, NULL),   -- plain, visible to everyone
       (3, 100, ${UPLOADER}, 1, 'Error', false, NULL),     -- rated, never reviewed
-      (4, 100, ${UPLOADER}, 1, 'Scanned', false, 'minor'), -- awaiting moderator review
+      (4, 100, ${UPLOADER}, 1, 'Scanned', false, 'minor'), -- held for minor review
+      (5, 100, ${UPLOADER}, 1, 'Scanned', false, 'csam'),  -- held for csam review
+      (6, 100, ${UPLOADER}, 1, 'Scanned', false, 'poi'),   -- awaiting another moderator review
       (10, 200, ${UPLOADER}, 4, 'Scanned', false, NULL),  -- managed collection, above the level
       (11, 200, ${UPLOADER}, 0, 'Pending', false, NULL),  -- managed collection, unrated
       (12, 200, ${UPLOADER}, 32, 'Scanned', false, NULL), -- managed collection, Blocked level
@@ -95,7 +97,21 @@ describe('a pending image read by a signed-in non-moderator', () => {
   });
 
   it('shows the uploader all of their own images within the level, plus their unrated ones', async () => {
-    expect(await visibleTo(UPLOADER)).toEqual([1, 2, 3, 4, 11, 20, 21, 22, 23, 25, 27, 28, 30]);
+    expect(await visibleTo(UPLOADER)).toEqual([
+      1, 2, 3, 4, 5, 6, 11, 20, 21, 22, 23, 25, 27, 28, 30,
+    ]);
+  });
+
+  it('shows the uploader their own images held for csam or minor review; nobody else gets them', async () => {
+    const own = await visibleTo(UPLOADER);
+    expect(own).toContain(4);
+    expect(own).toContain(5);
+    for (const viewer of [STRANGER, MANAGER, COLLECTION_OWNER, OTHER_MANAGER]) {
+      expect(await visibleTo(viewer)).not.toContain(4);
+      expect(await visibleTo(viewer)).not.toContain(5);
+      expect(await visibleTo(viewer, COLLECTION)).not.toContain(4);
+      expect(await visibleTo(viewer, COLLECTION)).not.toContain(5);
+    }
   });
 
   it("shows a collection manager the collection's reviewed images above the level, and no unrated, Blocked or acceptableMinor ones", async () => {
@@ -129,9 +145,12 @@ describe('a pending image read by a signed-in non-moderator', () => {
 });
 
 // getImagesForPosts and getImagesForModelVersion apply these conditions plus their own level check.
-const passOthersConditions = async (userId: number) => {
+const passOthersConditions = async (
+  userId: number,
+  options?: Parameters<typeof pendingOthersImageConditions>[1]
+) => {
   const sql = Prisma.sql`SELECT i.id FROM "Image" i
-    WHERE ${Prisma.join(pendingOthersImageConditions(userId), ' AND ')} ORDER BY i.id`;
+    WHERE ${Prisma.join(pendingOthersImageConditions(userId, options), ' AND ')} ORDER BY i.id`;
   return (await db.query<{ id: number }>(sql.text, sql.values)).rows.map((r) => r.id);
 };
 
@@ -140,10 +159,19 @@ describe("the per-image conditions on another user's pending images", () => {
     expect(await passOthersConditions(STRANGER)).toEqual([2, 10, 11, 12, 21, 24, 27, 28]);
   });
 
-  it("exempt the viewer's own images", async () => {
+  it("exempt the viewer's own images, but for those held for csam or minor review", async () => {
     expect(await passOthersConditions(UPLOADER)).toEqual([
-      1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30,
+      1, 2, 3, 6, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30,
     ]);
+  });
+
+  it("with the owner's view, exempt the viewer's own held images too", async () => {
+    expect(await passOthersConditions(UPLOADER, { ownerSeesHeld: true })).toEqual([
+      1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30,
+    ]);
+    expect(await passOthersConditions(STRANGER, { ownerSeesHeld: true })).toEqual(
+      await passOthersConditions(STRANGER)
+    );
   });
 });
 

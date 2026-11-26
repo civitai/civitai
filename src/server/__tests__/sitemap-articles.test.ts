@@ -70,6 +70,12 @@ describe('sitemap-articles.xml', () => {
     expect(sql).toMatch(/a\.availability != 'Unsearchable'/);
   });
 
+  it('follows the article availability rule for the sitemap', async () => {
+    const { sql } = await run([]);
+
+    expect(sql).toMatch(/a\.availability != 'Private'/);
+  });
+
   it('never lists an article the page answers with a 404', async () => {
     const { sql } = await run([]);
 

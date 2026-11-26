@@ -85,7 +85,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
     decision: 'no-metadata',
     sites: 1,
   },
-  'src/pages/api/admin/temp/migrate-article-images.ts#processBatch': {
+  'src/server/api-routes/admin/temp/migrate-article-images.ts#processBatch': {
     decision: 'no-metadata',
     sites: 1,
   },
@@ -120,6 +120,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
 const STAMPER_FUNCTIONS: string[] = [
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
   'src/server/services/image.service.ts#createImage',
 ];
 
@@ -522,7 +523,7 @@ function rawMetadataAssignment(sql: string): string | null {
     if (sql[i] === '$' && sql[i + 1] === '{') i = interpolationEnd(sql, i + 2);
     else if (sql[i] === '(') depth++, i++;
     else if (sql[i] === ')') depth--, i++;
-    else if (depth === 0 && (sql[i] === ',' || /^\s+WHERE\b/i.test(sql.slice(i, i + 20))))
+    else if (depth === 0 && (sql[i] === ',' || /^\s+(WHERE|FROM)\b/i.test(sql.slice(i, i + 20))))
       return sql.slice(start, i).trim();
     else i++;
   }
@@ -546,6 +547,14 @@ type UpdateDecision =
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
   | 'raw-server-keys'
+  /** Raw SET to exactly `withoutGraceMarkersSql()`: the stored value minus two fixed server keys. */
+  | 'raw-grace-marker-strip'
+  /**
+   * Raw SET to exactly `liftedMetadataSql` or `unblockedMetadataSql`: the stored value minus fixed
+   * keys, or, while the owner is deleted, that plus the grace breadcrumbs under fixed keys with
+   * server-computed values.
+   */
+  | 'raw-grace-marker-lift'
   /**
    * Raw SET merging exactly one literal, non-provenance key whose value is a `::text` parameter: a
    * string under a fixed key cannot add or replace any other key.
@@ -561,7 +570,9 @@ type UpdateDecision =
   /** `data` is `cond ? { … } : { … }`: two object literals, neither naming metadata. */
   | 'literal-branches'
   /** `data: { [flag]: <boolean> }`, `flag` being the schema's closed enum of boolean columns. */
-  | 'boolean-flag-key';
+  | 'boolean-flag-key'
+  /** `data: CSAM_IMAGE_BLOCK`, image.service's flat literal of the block columns, none metadata. */
+  | 'csam-image-block';
 
 /** Every update site that can write `metadata`, keyed by enclosing function. */
 const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: number }> = {
@@ -590,7 +601,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
-  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
+  'src/server/api-routes/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
@@ -602,7 +613,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 2,
   },
-  'src/server/services/account-deletion-images.ts#unblockAccountDeletionImages': {
+  'src/server/services/account-deletion-images.ts#restoreAccountDeletionImageBatch': {
     decision: 'raw-server-keys',
     sites: 1,
   },
@@ -610,7 +621,16 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  'src/server/services/image.service.ts#setImageNsfwLevelFromKnights': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image.service.ts#handleUnblockImages': {
+    decision: 'raw-grace-marker-lift',
+    sites: 1,
+  },
+  // A moderator's block drops a moderation rule's keys: the removal is the moderator's now.
+  'src/server/services/image.service.ts#writeModeratorBlock': {
     decision: 'raw-server-keys',
     sites: 1,
   },
@@ -630,6 +650,23 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-mod-rule-metadata',
     sites: 1,
   },
+  'src/server/services/image-scan-result.service.ts#blockImageFromRating': {
+    decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
+  'src/server/services/report.service.ts#settleResolvedAppeals': {
+    decision: 'raw-grace-marker-lift',
+    sites: 1,
+  },
+  'src/server/services/user.service.ts#blockBannedUserImages': {
+    decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
+  'src/server/services/user.service.ts#blockUserImagesAsCsam': {
+    decision: 'csam-image-block',
+    sites: 1,
+  },
+  'src/server/services/csam.service.ts#blockListed': { decision: 'csam-image-block', sites: 1 },
   'src/server/services/image.service.ts#toggleImageFlag': {
     decision: 'boolean-flag-key',
     sites: 1,
@@ -641,6 +678,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
 };
 
 const IMAGE_SCHEMA = readFileSync(join(ROOT, 'src/server/schema/image.schema.ts'), 'utf8');
+const IMAGE_SERVICE = readFileSync(join(ROOT, 'src/server/services/image.service.ts'), 'utf8');
 
 /** Does this update site's shape match its recorded decision? Returns a reason when not. */
 function checkUpdateDecision(decision: UpdateDecision, site: Site): string | null {
@@ -663,7 +701,8 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       const value = propertyValue(propertyValue(region, 'data') ?? '', 'metadata');
       if (!value) return 'no longer writes metadata as a property';
       const literal = resolveLiteral(value, body);
-      const spreads = [...literal.matchAll(/\.\.\./g)];
+      // The grace-block rating record (account-deletion-grace.ts) is server keys too.
+      const spreads = [...literal.matchAll(/\.\.\.(?!ratingRecordedUnderGrace\()/g)];
       const source = /^\{\s*\.\.\.([\w$]+(?:\.metadata)?)\s*,/.exec(literal)?.[1];
       if (!source || spreads.length !== 1)
         return 'metadata is not one spread of stored metadata plus literal keys';
@@ -672,6 +711,18 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         new RegExp(String.raw`\bconst ${escapeRe(source)} = \(?image\.metadata\b`).test(body);
       if (!isStored) return `spreads ${source}, not an existing row's stored metadata`;
       if (PROVENANCE_TOKEN.test(literal)) return 'merged keys name a provenance key';
+      return null;
+    }
+    case 'raw-grace-marker-strip': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      if (expr !== '${withoutGraceMarkersSql()}')
+        return 'metadata is no longer the stored value minus the grace-block breadcrumbs';
+      return null;
+    }
+    case 'raw-grace-marker-lift': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      if (expr !== '${liftedMetadataSql}' && expr !== '${unblockedMetadataSql}')
+        return 'metadata is no longer a lifted value from image-visibility';
       return null;
     }
     case 'raw-server-keys': {
@@ -684,7 +735,9 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         const cast = /^::(\w+)/.exec(expr.slice(end))?.[1];
         const fixedKey = /^[A-Z][A-Z0-9_]*$/.test(param) && cast === 'text';
         const scalar = cast !== undefined && ['int', 'integer', 'float8', 'numeric'].includes(cast);
-        if (!fixedKey && !scalar) return `interpolates \${${param}} into metadata`;
+        // ` - key::text` for each grace breadcrumb (image-removal-mode.ts): fixed server keys only.
+        const graceStrip = param === 'minusPriorKeysSql';
+        if (!fixedKey && !scalar && !graceStrip) return `interpolates \${${param}} into metadata`;
       }
       return null;
     }
@@ -705,9 +758,15 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
     }
     case 'raw-mod-rule-metadata': {
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      const metadataSet = /const metadataSet\s*=\s*Prisma\.sql`([^`]*)`/
+        .exec(body)?.[1]
+        .replace(/\s+/g, ' ');
       if (
-        expr !==
-        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
+        // A block also strips the grace-block breadcrumbs (two fixed server keys) off the result.
+        expr !== '${withoutGraceMarkersSql(metadataSet)}' ||
+        metadataSet !==
+          // A stored CSAM block keeps the stored value: the rule did not decide it.
+          `CASE WHEN \${metadataJson}::jsonb IS NULL OR \${csamBlocked} THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (
@@ -747,6 +806,15 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         )
       )
         return 'the flag schema is no longer the closed enum of boolean columns';
+      return null;
+    }
+    case 'csam-image-block': {
+      if ((propertyValue(region, 'data') ?? '') !== 'CSAM_IMAGE_BLOCK')
+        return 'data is no longer CSAM_IMAGE_BLOCK';
+      const def = /export const CSAM_IMAGE_BLOCK = (\{[^{}]*\}) as const;/.exec(IMAGE_SERVICE);
+      if (!def) return 'CSAM_IMAGE_BLOCK is no longer a flat object literal';
+      if (/\bmetadata\b|\.\.\.|\[/.test(def[1]))
+        return 'CSAM_IMAGE_BLOCK writes metadata or an unreadable key';
       return null;
     }
   }
@@ -836,7 +904,7 @@ describe('Image metadata provenance — update-site ledger', () => {
 
   it('scans a real update population', () => {
     // Positive control: the filter is applied to a population that is not empty.
-    expect(collect(UPDATE_CALL).length).toBeGreaterThan(20);
+    expect(collect(UPDATE_CALL).length).toBeGreaterThan(19);
     expect(collect(RAW_UPDATE).length).toBeGreaterThan(20);
   });
 

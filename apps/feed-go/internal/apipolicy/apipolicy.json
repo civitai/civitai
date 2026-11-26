@@ -1,0 +1,30 @@
+{
+  "regionBlockDefault": [
+    {
+      "region": "GB",
+      "effectiveDate": "2025-07-24"
+    },
+    {
+      "region": "AU",
+      "effectiveDate": "2026-03-15"
+    }
+  ],
+  "botUserAgentPatterns": [
+    {
+      "name": "bingbot",
+      "source": "(bingbot|adidxbot|MicrosoftPreview|BingPreview)",
+      "ignoreCase": true
+    },
+    {
+      "name": "googlebot",
+      "source": "(Googlebot|AdsBot-Google|Mediapartners-Google|FeedFetcher-Google|GoogleOther|Storebot-Google|APIs-Google)",
+      "ignoreCase": true
+    }
+  ],
+  "privateCacheControl": "max-age=0, private, no-cache",
+  "regionBlockResponse": {
+    "status": 451,
+    "contentType": "application/json",
+    "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+  }
+}

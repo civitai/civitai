@@ -82,10 +82,6 @@ import type * as TrpcMod from '~/utils/trpc';
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
-}));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock) — see the sibling browser test for why.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -162,7 +158,7 @@ function measure() {
 
 async function renderAndMeasure(ui: ReactElement): Promise<Geometry> {
   await page.viewport(1440, 900);
-  renderWithProviders(ui);
+  renderWithProviders(ui, { user: { id: 1, username: 'author', isModerator: false } });
   await expect.element(page.getByTestId('body')).toBeInTheDocument();
   // Two frames so layout + the injected stylesheet have both settled.
   await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -195,7 +191,7 @@ const tallBody = (
  */
 async function renderTallAndScroll(ui: ReactElement) {
   await page.viewport(1440, 900);
-  renderWithProviders(ui);
+  renderWithProviders(ui, { user: { id: 1, username: 'author', isModerator: false } });
   await expect.element(page.getByTestId('body')).toBeInTheDocument();
   await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as Notifications from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
@@ -92,14 +92,16 @@ function item(id: string, status: string, clientId: string, isYours: boolean) {
   };
 }
 
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 
 async function revoke() {
   await renderWithProviders(
-    <ModalsProvider>
+    <>
       <ConnectedAppsCard />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
   await userEvent.click(page.getByTitle('Revoke access'));
 }
@@ -108,6 +110,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.revokeResult = { success: true, catalogItemsWithdrawn: 2 };
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('ConnectedAppsCard revoke and catalog items', () => {
   test("the confirmation counts the app's active items not under the user's own listing", async () => {

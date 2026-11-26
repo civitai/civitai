@@ -9,9 +9,11 @@ import { cycleContaining, importCycles, importGraph, REPO_ROOT, rel } from './im
  * cycle's size squared). Neither may rise. A new cycle or a module joining one raises both; an edge
  * merging two cycles raises only the weight. Cutting one cycle while adding another of the same
  * size passes: a count cannot see membership.
+ *
+ * Dynamic `import()` counts: the bundler still builds its target, so `await import()` is not a cut.
  */
-const MAX_MODULES_IN_CYCLES = 51;
-const MAX_CYCLE_WEIGHT = 759;
+const MAX_MODULES_IN_CYCLES = 224;
+const MAX_CYCLE_WEIGHT = 26520;
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -25,8 +27,7 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// Static imports only: a call-site `await import()` is how a cycle edge is cut.
-const graph = importGraph(sources(path.join(REPO_ROOT, 'src')), { followDynamic: false });
+const graph = importGraph(sources(path.join(REPO_ROOT, 'src')));
 const cycles = importCycles(graph);
 const modulesInCycles = cycles.reduce((n, c) => n + c.length, 0);
 const weight = cycles.reduce((n, c) => n + c.length ** 2, 0);
@@ -51,8 +52,8 @@ describe('import cycles across src/', () => {
       throw new Error(
         `Import cycles grew: ${modulesInCycles} modules in cycles (cap ${MAX_MODULES_IN_CYCLES}), ` +
           `weight ${weight} (cap ${MAX_CYCLE_WEIGHT}).\n` +
-          `Find the import you added between two modules of one cycle below and make it a call-site ` +
-          `\`await import()\`, or import the specific module instead of a barrel:\n\n` +
+          `Find the import you added between two modules of one cycle below and break it as ` +
+          `docs/dev/import-cycles.md describes (an \`await import()\` does not count as a cut):\n\n` +
           listing()
       );
     }

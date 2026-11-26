@@ -12,8 +12,20 @@ const PICTURE =
     '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="500"><rect width="400" height="500" fill="#456"/></svg>'
   );
 
-const h = vi.hoisted(() => ({ requested: [] as number[][] }));
+const h = vi.hoisted(() => ({ requested: [] as number[][], covers: [] as unknown[] }));
 
+const cover = (c: { id: number; entityType: string; entityId: number }) => ({
+  ...c,
+  url: PICTURE,
+  type: 'image',
+  name: `cover-${c.id}`,
+  metadata: null,
+  nsfwLevel: 1,
+  width: 400,
+  height: 500,
+  tags: [],
+  postId: 1,
+});
 // One showcased image and one showcased model, whose cover is another image.
 const covers = [
   { id: 101, entityType: 'Image', entityId: 101 },
@@ -37,7 +49,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof Trpc>()),
     trpc: makeTrpcProxy({
       'image.getEntitiesCoverImage': {
-        useQuery: () => ({ data: covers, isLoading: false, isRefetching: false }),
+        useQuery: () => ({ data: h.covers, isLoading: false, isRefetching: false }),
       },
     }),
   };
@@ -70,10 +82,10 @@ vi.mock('~/components/TrackView/useTrackImpression', () => ({
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof EdgeMediaModule>()),
   EdgeMedia2: ({ className }: { className?: string }) => (
+    // eslint-disable-next-line @next/next/no-img-element -- a test stand-in for EdgeMedia2
     <img src={PICTURE} className={className} style={{ width: '100%', height: '100%' }} alt="" />
   ),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: () => undefined,
@@ -127,7 +139,9 @@ import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 afterEach(() => {
   cleanup();
   h.requested = [];
+  h.covers = covers;
 });
+h.covers = covers;
 
 describe('Hat Turf hats in a profile Showcase', () => {
   test('a showcased image draws its hats; a model card, whose cover is an image, does not', async () => {
@@ -144,7 +158,8 @@ describe('Hat Turf hats in a profile Showcase', () => {
     await renderWithProviders(
       <div style={{ width: 900 }}>
         <ShowcaseSection user={user} />
-      </div>
+      </div>,
+      { user: { id: 1 } }
     );
     const hats = () => [...document.body.querySelectorAll('[data-testid="hat-turf-hat"]')];
     await vi.waitFor(() => expect(hats()).toHaveLength(1));
@@ -152,5 +167,42 @@ describe('Hat Turf hats in a profile Showcase', () => {
     // The one hat is on the image's card: its link opens that image.
     const card = hats()[0].closest('a');
     expect(card?.getAttribute('href') ?? '').toContain('101');
+  });
+});
+
+describe('View all on a profile Showcase', () => {
+  test('a wide Showcase with more items than its rows unfolds them in place', async () => {
+    h.covers = Array.from({ length: 13 }, (_, i) =>
+      cover({ id: 300 + i, entityType: 'Image', entityId: 300 + i })
+    );
+    const user = {
+      id: 5,
+      profile: {
+        showcaseItems: Array.from({ length: 13 }, (_, i) => ({
+          entityType: 'Image',
+          entityId: 300 + i,
+        })),
+      },
+    } as unknown as Parameters<typeof ShowcaseSection>[0]['user'];
+    const screen = await renderWithProviders(
+      <div style={{ width: 1440 }}>
+        <ShowcaseSection user={user} />
+      </div>,
+      { user: { id: 1 } }
+    );
+
+    const shown = () =>
+      [...document.body.querySelectorAll<HTMLElement>('a[href*="/images/3"]')].filter(
+        (a) => getComputedStyle(a).visibility !== 'hidden'
+      ).length;
+    await vi.waitFor(() => expect(shown()).toBeLessThan(13));
+
+    await screen.getByRole('button', { name: 'View all 13' }).click();
+    await vi.waitFor(() => expect(shown()).toBe(13));
+    await expect.element(screen.getByRole('button', { name: 'Show less' })).toBeVisible();
+
+    await screen.getByRole('button', { name: 'Show less' }).click();
+    await vi.waitFor(() => expect(shown()).toBeLessThan(13));
+    await expect.element(screen.getByRole('button', { name: 'View all 13' })).toBeVisible();
   });
 });

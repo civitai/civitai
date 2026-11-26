@@ -1,21 +1,25 @@
-import { Prisma } from '@prisma/client';
+import type * as BlockedImageHash from '~/server/services/blocked-image-hash';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const { getIsImageBlocked, canCheckBlockedImageHash } = vi.hoisted(() => ({
   getIsImageBlocked: vi.fn<(hash: bigint) => Promise<boolean>>(),
   canCheckBlockedImageHash: vi.fn<() => boolean>(),
 }));
-vi.mock('~/server/services/blocked-image-hash', () => ({
+vi.mock('~/server/services/blocked-image-hash', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockedImageHash>()),
   getIsImageBlocked,
   canCheckBlockedImageHash,
 }));
 
 const findMany = dbMock.dbRead.image.findMany;
 const { getMyImages } = await import('~/server/services/image.service');
-const { ownerHeldSql } = await import('~/server/services/legal-hold.service');
 
 const whereOf = () => findMany.mock.calls[0][0].where;
 
@@ -28,6 +32,7 @@ describe('getMyImages — published only', () => {
   it('lists published media only, by default', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -43,6 +48,7 @@ describe('getMyImages — published only', () => {
   it("also lists unpublished media from the crucible entry modal's drafts, still only the caller's own", async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -72,15 +78,12 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   const errorQueryOf = () =>
     findMany.mock.calls.map(([args]) => args).find((args) => args.where.ingestion === 'Error');
 
-  const holdCheck = dbMock.dbWrite.$queryRaw;
   const blockedHashes = getIsImageBlocked;
 
   beforeEach(() => {
     findMany.mockImplementation(async ({ where }) =>
       where.ingestion === 'Error' ? [failedUpload] : [listed]
     );
-    holdCheck.mockReset();
-    holdCheck.mockResolvedValue([{ held: false }] as never);
     blockedHashes.mockReset();
     blockedHashes.mockResolvedValue(false);
     canCheckBlockedImageHash.mockReset();
@@ -90,6 +93,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   const listForEntry = (cursor?: number) =>
     getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.video],
       limit: 10,
       publishedOnly: true,
@@ -119,6 +123,20 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     expect(days).toBeLessThan(7.01);
   });
 
+  it('holds them to a SFW-capped request too, unrated ones included', async () => {
+    await getMyImages({
+      userId: 42,
+      servableLevels: sfwBrowsingLevelsFlag,
+      mediaTypes: [MediaType.video],
+      limit: 10,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
+    expect(errorQueryOf()?.where.AND).toContainEqual({
+      nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
+    });
+  });
+
   it('adds them to the first page only, so paging never repeats one', async () => {
     const { items } = await listForEntry(800);
     expect(items.map((x) => x.id)).toEqual([800]);
@@ -129,6 +147,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   it('leaves callers that list unpublished media too without them', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: false,
@@ -141,6 +160,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   it('leaves other published-only callers without failed uploads', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -149,36 +169,9 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     expect(findMany).toHaveBeenCalledTimes(1);
   });
 
-  it('checks the hold of the caller, and only lists failed uploads the caller owns', async () => {
+  it('only lists failed uploads the caller owns', async () => {
     await listForEntry();
-    expect(holdCheck).toHaveBeenCalledTimes(1);
-    const boundValues = (holdCheck.mock.calls[0].slice(1) as { values?: unknown[] }[]).flatMap(
-      (value) => value.values ?? [value]
-    );
-    expect(boundValues).toContain(42);
-    // The statement as Postgres gets it: the owner the hold SQL reads is the caller.
-    const [strings, ...values] = holdCheck.mock.calls[0] as unknown as [string[], ...unknown[]];
-    const statement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
-    expect(statement.sql).toMatch(/FROM \(SELECT \?::int AS "userId"\) m$/);
-    expect(statement.sql).toContain('m."userId"');
-    // The full owner-hold condition, not a weaker one.
-    expect(statement.sql).toContain(ownerHeldSql(Prisma.raw('m."userId"')).sql);
-    expect(statement.values.filter((value) => value === 42)).toEqual([42]);
     for (const [args] of findMany.mock.calls) expect(args.where.userId).toBe(42);
-  });
-
-  it('lists none for an owner whose content is held', async () => {
-    holdCheck.mockResolvedValue([{ held: true }] as never);
-    const { items } = await listForEntry();
-    expect(items.map((x) => x.id)).toEqual([800]);
-    expect(errorQueryOf()).toBeUndefined();
-    expect(findMany).toHaveBeenCalledTimes(1);
-  });
-
-  it('lists none when the hold cannot be read', async () => {
-    holdCheck.mockRejectedValue(new Error('replica down'));
-    const { items } = await listForEntry();
-    expect(items.map((x) => x.id)).toEqual([800]);
   });
 
   it('leaves out a failed upload that a block reason was written on', async () => {
@@ -213,6 +206,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     );
     const { items, nextCursor } = await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.video],
       limit: 2,
       publishedOnly: true,

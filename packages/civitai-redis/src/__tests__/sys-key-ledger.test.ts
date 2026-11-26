@@ -1,0 +1,256 @@
+import { describe, expect, it } from 'vitest';
+import { REDIS_SYS_KEYS } from '../client';
+
+/**
+ * A ledger of every key and prefix in `REDIS_SYS_KEYS`, the key registry of the system Redis.
+ *
+ * The system Redis is a single node meant for durable state, and it is being wound down: no new
+ * data should go into it. Cache data belongs in `REDIS_KEYS`, on the sharded cache cluster. This
+ * test pins the exact set of leaf values below, so a change to the registry has to be a decision
+ * someone made, not a side effect of a feature PR.
+ *
+ * The list is a hand-maintained literal on purpose. Never build it from `REDIS_SYS_KEYS`.
+ */
+const SYS_KEY_LEDGER = [
+  'app:cases:send-running',
+  'app:cases:sends-paused',
+  'app:page-access',
+  'app:review-batch',
+  'buzz-withdrawal-request:status',
+  'clavata-policies',
+  'client',
+  'collection:random-seed',
+  'counters:chat-messages',
+  'counters:email-verifications',
+  'counters:history-downloads',
+  'creator-program:bankable-snapshot',
+  'creator-program:bankable-spent',
+  'creator-program:counterparty-review-indirect',
+  'creator-program:counterparty-review-max-hops',
+  'creator-program:counterparty-review-min',
+  'creator-program:counterparty-review-warnings',
+  'creator-program:flip-phases',
+  'creator-program:prepayout-limits',
+  'crucible:anchor-votes',
+  'crucible:dismissed-pairs',
+  'crucible:elo',
+  'crucible:judge-entry-votes',
+  'crucible:judges',
+  'crucible:judging-session',
+  'crucible:served-pair',
+  'crucible:user-votes',
+  'crucible:vote-outcomes',
+  'crucible:voted',
+  'daily-challenge:config',
+  'device:accounts',
+  'disabled-healthchecks',
+  'dl:link',
+  'dl:linkid',
+  'dl:links:cred',
+  'download:count',
+  'download:limits',
+  'entities',
+  'event',
+  'feed:image:exists',
+  'generation:blocked-prompts',
+  'generation:client',
+  'generation:count',
+  'generation:custom-challenge',
+  'generation:engines',
+  'generation:gate-rules:by-id',
+  'generation:gate-rules:migrated',
+  'generation:limits',
+  'generation:messages:by-id',
+  'generation:messages:migrated',
+  'generation:moderation-cache-probe',
+  'generation:moderation-verdict',
+  'generation:remix-audit-checked',
+  'generation:status',
+  'generation:tokens',
+  'generation:workflows',
+  'headless-post:idempotency',
+  'hugging-face-import:config',
+  'index-updates:image-metric',
+  'index-updates:model-metric-affected',
+  'index-updates:model-metric-last-flush',
+  'indexes:image-deleted',
+  'job',
+  'limits:chat-messages',
+  'limits:email-verifications',
+  'limits:history-downloads',
+  'linked-account-review:config',
+  'linked-account-review:filed',
+  'message-as-civitai:idempotency',
+  'metric-reconciliation:nightly-exactness',
+  'new-order:active-slot',
+  'new-order:blessed-buzz',
+  'new-order:config',
+  'new-order:exp',
+  'new-order:fervor',
+  'new-order:judgments:acolyte-failed',
+  'new-order:judgments:all',
+  'new-order:judgments:correct',
+  'new-order:matches',
+  'new-order:pending-buzz',
+  'new-order:processing:batch-cutoff',
+  'new-order:processing:last-processed-at',
+  'new-order:processing:lock',
+  'new-order:processing:pending-count',
+  'new-order:queues',
+  'new-order:ratings',
+  'new-order:recently-granted-buzz',
+  'new-order:sanity-checks',
+  'new-order:sanity-failures',
+  'new-order:smite-progress',
+  'non-critical-healthchecks',
+  'notices:banking-change-sent',
+  'notices:klein9b-sent',
+  'notices:nc-older-sent',
+  'notices:nc-recent-sent',
+  'oauth:xchg',
+  'packed:generation:orchestrator-tokens',
+  'packed:system:entity-moderation:urls',
+  'packed:system:entity-moderation:words',
+  'packed:system:scanner-policy:candidate-ids',
+  'packed:system:scanner-policy:candidates',
+  'packed:system:scanner-policy:exports',
+  'packed:system:scanner-policy:run-results',
+  'packed:system:scanner-policy:run-state',
+  'packed:system:scanner-policy:system-prompts',
+  'packed:training:studio-dataset-rating',
+  'packed:training:studio-from-prices',
+  'queues:buckets',
+  'queues:seen-images',
+  'queues:user-content-removal',
+  'research:ratings-sanity-ids',
+  'research:ratings-tracks-2',
+  'retool-endpoint:rate-limit',
+  'run-wordlists',
+  'search-index-cleanup:cursors',
+  'session:all',
+  'session:device-families',
+  'session:family-live',
+  'session:family-state',
+  'session:hub-upgrade',
+  'session:hub-upgrade-lock',
+  'session:pending-authz',
+  'session:token-state',
+  'session:user-cut',
+  'swap:used',
+  'system:article-verdict-resubmits',
+  'system:blocks:app-spend-cap',
+  'system:blocks:apps-catalog-rate-limit',
+  'system:blocks:buzz-cap',
+  'system:blocks:consent-budget',
+  'system:blocks:custom-comfy-settle',
+  'system:blocks:dev-token-rate-limit',
+  'system:blocks:dev-tunnel',
+  'system:blocks:dev-tunnel-ephemeral-rate-limit',
+  'system:blocks:emergency-kill-list',
+  'system:blocks:fork-session',
+  'system:blocks:gen-idem',
+  'system:blocks:goods-cap',
+  'system:blocks:goods-idem',
+  'system:blocks:hibernation-wake-ticket',
+  'system:blocks:listing-check-spend',
+  'system:blocks:live-pointer-takedown',
+  'system:blocks:output-unlock-lock',
+  'system:blocks:private-run-buzz-cap',
+  'system:blocks:review-auto-builds',
+  'system:blocks:review-run-for-real-buzz-cap',
+  'system:blocks:step-quote',
+  'system:blocks:submissions-rate-limit',
+  'system:blocks:submit-rate-limit',
+  'system:blocks:tip-cap',
+  'system:blocks:tip-idem',
+  'system:blocks:training-quote',
+  'system:blocks:withdraw-rate-limit',
+  'system:browsing-setting-addons',
+  'system:collection-ai-review:attempts',
+  'system:content:region-warning',
+  'system:creation-blocked-tags',
+  'system:crucible-entry-accepted',
+  'system:crucible-judging',
+  'system:crucible-theme-review',
+  'system:deleted-user-image-purge-limit',
+  'system:entity-moderation',
+  'system:feature-status',
+  'system:features',
+  'system:feed-request-capture',
+  'system:feed-shadow',
+  'system:feedback:rate-limit',
+  'system:generation-input-external-host-users',
+  'system:image-ingestion-gauges',
+  'system:knights-v2-sources',
+  'system:live-feature-flags',
+  'system:pending-image-restores',
+  'system:permissions',
+  'system:pricing:fee-allowance-boost',
+  'system:scanner-policy:run-cancel',
+  'system:scanner-policy:run-counter',
+  'system:semantic-search-audit',
+  'system:site-alerts',
+  'system:site-alerts:seq',
+  'system:suspicious-audit-matches',
+  'system:text-scan:clavata-cutover',
+  'system:text-scan:config',
+  'system:text-scan:label-modes',
+  'system:text-scan:modes',
+  'system:text-scan:web-search',
+  'system:upload-key-owner',
+  'system:upload-prompt-scan-retry',
+  'system:user-score-multipliers',
+  'training:status',
+  'urllists',
+  'webhooks:image-scan:job-reason',
+  'webhooks:model-file-scan:processed',
+  'webhooks:stripe:air-notified',
+  'wordlists',
+];
+
+const ADDED_MESSAGE = [
+  'A key was added to REDIS_SYS_KEYS (the system Redis). Nothing new should go there.',
+  '- Cache data, or anything with a TTL that can be rebuilt: add it to REDIS_KEYS (the cache cluster) instead.',
+  '  Keys used together in one Lua script, MULTI or multi-key command need a shared {hash-tag} there.',
+  '- A lock, rate limiter or single-use marker: also REDIS_KEYS, as a single key or with a shared {hash-tag}.',
+  '- Genuinely durable data: put it in Postgres.',
+  'If the system Redis really is the only option, get explicit sign-off from the system Redis owners,',
+  'then add the key to SYS_KEY_LEDGER in packages/civitai-redis/src/__tests__/sys-key-ledger.test.ts',
+  'and say in the PR why it cannot live anywhere else. Added:',
+].join('\n');
+
+const REMOVED_MESSAGE = [
+  'A key listed in SYS_KEY_LEDGER is no longer in REDIS_SYS_KEYS.',
+  'If you removed or moved it on purpose, delete it from SYS_KEY_LEDGER in',
+  'packages/civitai-redis/src/__tests__/sys-key-ledger.test.ts in the same PR.',
+  'If you renamed it, that is a new system Redis key: see the message for added keys. Missing:',
+].join('\n');
+
+function leafValues(node: unknown): string[] {
+  if (node !== null && typeof node === 'object') return Object.values(node).flatMap(leafValues);
+  return [String(node)];
+}
+
+describe('REDIS_SYS_KEYS ledger', () => {
+  const current = new Set(leafValues(REDIS_SYS_KEYS));
+  const ledger = new Set(SYS_KEY_LEDGER);
+
+  it('has no system Redis key that is not in the ledger', () => {
+    const added = [...current].filter((key) => !ledger.has(key)).sort();
+    expect(added, ADDED_MESSAGE).toEqual([]);
+  });
+
+  it('has no ledger entry that is no longer a system Redis key', () => {
+    const removed = [...ledger].filter((key) => !current.has(key)).sort();
+    expect(removed, REMOVED_MESSAGE).toEqual([]);
+  });
+
+  it('lists each key once', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(ledger.size);
+  });
+
+  // The ledger's size, written out: a change to it is a change to this number too.
+  it('holds 194 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(194);
+  });
+});

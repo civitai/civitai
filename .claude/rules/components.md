@@ -27,6 +27,8 @@ src/
 ## Components and styling
 
 - **Mantine first:** `import { Button, Group, Text } from '@mantine/core'`, icons from `@tabler/icons-react`.
+- **Colours:** theme tokens (Tailwind classes with `dark:` variants, or `var(--mantine-color-*)`); no hex literals in components.
+- **Responsive:** do layout in CSS or Tailwind variants (`@max-md:` and the other `@` variants query the nearest `@container`; `max-md:` queries the viewport), not in JS. `useIsMobile()` measures the nearest container, not the viewport (pass `{ type: 'media' }` for a viewport query).
 - **Tailwind with `clsx`:** `<div className={clsx('flex items-center gap-2', cond && 'bg-blue-500')} />`.
 - **SCSS modules only when needed:** `import styles from './Component.module.scss'`.
 - **TypeScript:** use `import type { ButtonProps } from '@mantine/core'`, define Props interfaces, and take enums from `~/shared/utils/prisma/enums`.
@@ -49,7 +51,7 @@ Why: `src/providers/ThemeProvider.tsx` sets `Popover` `withinPortal: false` app-
 
 ## Data, state and forms
 
-- **State:** Zustand for global state, React Query for server state, React Hook Form (with Zod schemas) for forms.
+- **State:** Zustand for global state, React Query for server state, React Hook Form (with Zod schemas) for forms. Form entry point: `~/libs/form` (`useForm` + `Form` + `Input*`); generation forms use form-graph.
 - **API calls:** `import { trpc } from '~/utils/trpc'`, then `trpc.user.getProfile.useQuery()`.
 - **Current user:** `import { useCurrentUser } from '~/hooks/useCurrentUser'`.
 - **File uploads:** use the S3 upload hooks and providers.
@@ -63,7 +65,7 @@ Why: `src/providers/ThemeProvider.tsx` sets `Popover` `withinPortal: false` app-
 
 ## Modals
 
-Use Mantine modals with proper accessibility and keyboard handling, managed through the dialog registry:
-- Register dialogs in `src/components/Dialog/dialog-registry2.ts`; URL-routed ones as a `<name>.dialog.ts` in `src/components/Dialog/routed-dialog/`, imported by its `registry.ts`.
-- `DialogProvider` for context-based modal management; `RoutedDialogProvider` for URL-based modal state.
-- Open dialogs through the registry so modal handling stays consistent.
+- Open a dialog with `openDialog(() => import('…/XModal'), props)` (`src/components/Dialog/openDialog.ts`): pass the import, so the modal loads on first open rather than with the opener (the import-cycle guards still count it as an edge). The dialog component calls `useDialogContext()`. No new file per modal; a shared opener (`Dialog/triggers/`) earns its place only with behaviour (a fixed id, a check) or two or more callers.
+- Confirms: `openConfirm` (`Dialog/Common/ConfirmDialog`). Alerts: `openAlert` (`Dialog/Common/AlertDialog`). A titled modal around arbitrary content: `openContentDialog` (`Dialog/Common/ContentDialog`). `@mantine/modals` is gone; `no-unlisted-dialog-open` fails on an import of it, and on a new direct `dialogStore.trigger` outside `Dialog/`. A dialog's `Modal`/`Drawer` takes `closeOnEscape` from `useDialogContext()` (the spread, or `dialog.closeOnEscape && …`), so Escape closes only the top dialog; the guard checks it. A closed dialog leaves `dialogs` at once but stays mounted in the store's `closing` list until its exit transition ends (`onExitTransitionEnd`, which the spread passes on; a 1s fallback otherwise). Tests that wipe the page with dialogs open call `dialogStore.closeAll()` first, which skips the transition.
+- URL-routed dialogs: the URL rule in a `<name>.dialog.ts` in `src/components/Dialog/routed-dialog/` (it names its modal only through `import type`), listed in `registry.ts`; the component goes in `RoutedDialogProvider`'s map.
+- `DialogProvider` renders the dialog stack; `RoutedDialogProvider` handles URL-based modal state.

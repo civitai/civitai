@@ -558,14 +558,17 @@ async function notifySiteAppealResolved(input: {
       .where('id', '=', appeal.userId)
       .executeTakeFirst();
     if (!appellant?.email) return;
-    await siteAppealResolutionEmail.send({
-      to: appellant.email,
-      username: appellant.username ?? 'there',
-      category: input.category,
-      approved: input.decision === 'Approved',
-      restored: input.restored,
-      appealUrl: `${civitaiAppUrl()}${SITE_APPEAL_PATH}`,
-    });
+    await siteAppealResolutionEmail.send(
+      {
+        to: appellant.email,
+        username: appellant.username ?? 'there',
+        category: input.category,
+        approved: input.decision === 'Approved',
+        restored: input.restored,
+        appealUrl: `${civitaiAppUrl()}${SITE_APPEAL_PATH}`,
+      },
+      { userId: appeal.userId }
+    );
   } catch (e) {
     console.error('site appeal email failed', { appealId: appeal.id, error: (e as Error).message });
   }

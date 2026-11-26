@@ -1,12 +1,14 @@
 import { resolveFeedSort } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import { closeModal, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useRevealableImages } from '~/components/HiddenPreferences/useRevealableImages';
 import type { BaseDataTypeMap } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -139,12 +141,20 @@ export function useFeedImageItems<TItem extends BaseDataTypeMap['images'][number
   return { flatData, items, loadingPreferences, hiddenCount };
 }
 
+const noImages: never[] = [];
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
-  options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
+  options?: {
+    keepPreviousData?: boolean;
+    enabled?: boolean;
+    applyHiddenPreferences?: boolean;
+    /** Also return `revealable`: what only the viewer's own hidden users, images or tags took out. */
+    withRevealable?: boolean;
+  }
 ) => {
   const currentUser = useCurrentUser();
-  const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
+  const { applyHiddenPreferences = true, withRevealable, ...queryOptions } = options ?? {};
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   // Only the domains that cap browsing (green) get `browsingLevel` backfilled by
@@ -193,6 +203,7 @@ export const useQueryImages = (
     disabled: !applyHiddenPreferences,
     isRefetching: rest.isRefetching,
   });
+  const revealable = useRevealableImages(withRevealable ? flatData : noImages, items);
 
   // Debug-mode override so the retry UI can be exercised without a real
   // backend failure. The parent combines this with React Query's isError to
@@ -205,6 +216,7 @@ export const useQueryImages = (
     data,
     flatData,
     images: items,
+    revealable,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,
     isLoading: isLoading || loadingPreferences,
@@ -266,7 +278,7 @@ export function useReportCsamImages(
         title: 'Image reported',
         message: 'Your request has been received',
       });
-      closeModal('confirm-csam');
+      dialogStore.closeById('confirm-csam');
       await onSuccess?.(...args);
     },
     async onError(error, ...args) {
@@ -285,11 +297,10 @@ export function useReportCsamImages(
   });
 
   const mutate = (args: Parameters<typeof reportCsamImage.mutate>[0]) => {
-    openConfirmModal({
-      modalId: 'confirm-csam',
+    openConfirm({
+      id: 'confirm-csam',
       title: 'Report CSAM',
-      children: `Are you sure you want to report this as CSAM?`,
-      centered: true,
+      message: `Are you sure you want to report this as CSAM?`,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: reportCsamImage.isPending },
       closeOnConfirm: false,

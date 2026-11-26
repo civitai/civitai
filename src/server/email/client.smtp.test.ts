@@ -85,6 +85,15 @@ describe('sendEmail over SMTP', () => {
   beforeAll(async () => {
     sink = await startSink();
     env.EMAIL_PORT = sink.port;
+    // @civitai/email builds the transport from process.env, read on the first send.
+    Object.assign(process.env, {
+      EMAIL_HOST: env.EMAIL_HOST,
+      EMAIL_PORT: String(sink.port),
+      EMAIL_SECURE: 'false',
+      EMAIL_USER: env.EMAIL_USER,
+      EMAIL_PASS: env.EMAIL_PASS,
+      EMAIL_FROM: env.EMAIL_FROM,
+    });
   });
   afterAll(() => sink.close());
 
@@ -95,6 +104,7 @@ describe('sendEmail over SMTP', () => {
       to: ['a@test.dev', 'b@test.dev'],
       subject: 'Hello',
       html: '<p>Body</p>',
+      tags: { template: 'test', mailClass: 'transactional' },
     });
 
     expect(sink.received).toHaveLength(1);

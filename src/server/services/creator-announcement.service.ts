@@ -26,6 +26,8 @@ import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
+import { isImageServable, isUploaderId } from '~/server/common/image-visibility';
+import { blockLeavesMedia } from '~/server/common/image-block-marker';
 
 // Two-arg classed form, as free-placement uses: the one-arg form shares an int4 keyspace
 // with `article.service.ts`, which locks on a bare articleId, so a hashed key could collide
@@ -59,6 +61,10 @@ const creatorAnnouncementSelect = {
       // MediaHash renders this while a cover is blurred; without it a blurred cover is an
       // empty box rather than a placeholder.
       hash: true,
+      userId: true,
+      modelRestricted: true,
+      ingestion: true,
+      blockedFor: true,
     },
   },
   user: { select: { id: true, username: true, image: true, deletedAt: true } },
@@ -69,23 +75,48 @@ const creatorAnnouncementSelect = {
 
 type RawCreatorAnnouncement = {
   metadata: unknown;
-  cover: { nsfwLevel: number } | null;
+  cover: {
+    nsfwLevel: number;
+    userId: number;
+    modelRestricted: boolean;
+    ingestion: string;
+    blockedFor: string | null;
+  } | null;
 };
+
+/** The cover a viewer may see, without the fields only this check reads; its uploader always may. */
+function servableCover<C extends NonNullable<RawCreatorAnnouncement['cover']>>(
+  cover: C | null,
+  viewerId: number | undefined
+) {
+  if (!cover) return null;
+  if (
+    !isImageServable(cover, viewerId) ||
+    !blockLeavesMedia(cover, isUploaderId(viewerId) ? viewerId : undefined)
+  )
+    return null;
+  const { ingestion: _ingestion, blockedFor: _blockedFor, ...rest } = cover;
+  return rest;
+}
 
 /**
  * `Announcement` has no nsfwLevel of its own, so the cover's level IS the announcement's —
  * text carries no rating here. Surfaced as a top-level field anyway so callers gate on one
  * number and cannot forget the cover, which is the only thing that can be mature.
  */
-function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement: T) {
-  return {
-    ...announcement,
-    // Parsed here, as the sitewide DTO does, so the client reads metadata.actions
-    // without a cast rather than being trusted to know the shape.
-    metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
-    nsfwLevel: announcement.cover?.nsfwLevel ?? 0,
+const toCreatorAnnouncementDTO =
+  (viewerId: number | undefined) =>
+  <T extends RawCreatorAnnouncement>(announcement: T) => {
+    const cover = servableCover(announcement.cover, viewerId);
+    return {
+      ...announcement,
+      cover,
+      // Parsed here, as the sitewide DTO does, so the client reads metadata.actions
+      // without a cast rather than being trusted to know the shape.
+      metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
+      nsfwLevel: cover?.nsfwLevel ?? 0,
+    };
   };
-}
 
 /**
  * Cosmetics and the profile-picture row are not columns on `User`, so the select cannot
@@ -166,7 +197,9 @@ export async function getCreatorAnnouncements({
   // fan-outs and several KB per row, duplicated across rows that all share one author, for
   // fields nothing reads. The FIELDS are still present so both queries have one DTO shape.
   // If a byline is ever added to the profile, flip this — do not remove the argument.
-  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
+  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO(viewerId)), {
+    hydrate: false,
+  });
 }
 
 /*
@@ -295,7 +328,7 @@ async function resolveFollowedLiveAuthors({
         error: error instanceof Error ? error.message : String(error),
         domain: domain ?? ANY_DOMAIN,
       },
-    }).catch(() => undefined);
+    });
     return undefined;
   }
 }
@@ -384,7 +417,7 @@ export async function getFollowedAnnouncements({
   });
 
   const items = await withAuthorIdentity(
-    announcements.slice(0, limit).map(toCreatorAnnouncementDTO),
+    announcements.slice(0, limit).map(toCreatorAnnouncementDTO(userId)),
     { hydrate: true }
   );
 

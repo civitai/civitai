@@ -5,6 +5,7 @@ import type * as RedisClientPkg from '@civitai/redis/client';
 import type * as ClickhouseClientPkg from '@civitai/clickhouse/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
+import promClient from 'prom-client';
 
 /**
  * The production server evaluates each server module once per bundler module graph, all in one
@@ -64,6 +65,8 @@ const GLOBALS = [
   '__civitaiRedisClients',
   'globalClickhouse',
   'globalClickhouseLongQueries',
+  'globalClickhouseMetrics',
+  'globalClickhouseDownloads',
   'globalPgWrite',
   'globalPgRead',
   'globalPgReadLong',
@@ -137,6 +140,148 @@ describe('process-global server singletons (production)', () => {
     expect(b.clickhouse).toBe(a.clickhouse);
     expect(a.clickhouseLongQueries).toBeDefined();
     expect(b.clickhouseLongQueries).toBe(a.clickhouseLongQueries);
+  });
+
+  it('dedicated metrics ClickHouse client: one per process, on its own connection settings', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+      CLICKHOUSE_METRICS_PASSWORD: 'metrics-pass',
+    });
+    const [a, b] = await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(1);
+    expect(a.clickhouseMetrics).toBeDefined();
+    expect(b.clickhouseMetrics).toBe(a.clickhouseMetrics);
+    expect(factories.createClickhouseClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: 'http://clickhouse-metrics.test',
+        username: 'metrics-user',
+        password: 'metrics-pass',
+      })
+    );
+  });
+
+  it('dedicated metrics ClickHouse client: an unset password is passed as unset, not left to the shared default', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+    });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    const options = (factories.createClickhouseClient.mock.calls as unknown[][])[0][0] as Record<
+      string,
+      unknown
+    >;
+    // An absent key would let the factory fill it from CLICKHOUSE_PASSWORD, the shared server's.
+    expect(Object.prototype.hasOwnProperty.call(options, 'password')).toBe(true);
+    expect(options.password).toBeUndefined();
+  });
+
+  // The factory's default is 300s; a hung dedicated server would hold the image-metrics-swr
+  // refresher's slots and the per-id populate locks that long.
+  it('dedicated metrics ClickHouse client: a short request timeout, 10s by default and overridable', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+    });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestTimeoutMs: 10_000 })
+    );
+
+    clearGlobals();
+    factories.createClickhouseClient.mockClear();
+    setEnv({ CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: 7_500 });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestTimeoutMs: 7_500 })
+    );
+  });
+
+  it('dedicated metrics ClickHouse client: not built when its env is unset', async () => {
+    const { clickhouseMetrics } = await evaluateTwice(
+      () => import('~/server/clickhouse/metrics-client')
+    ).then(([a]) => a);
+    expect(clickhouseMetrics).toBeUndefined();
+    expect(factories.createClickhouseClient).not.toHaveBeenCalled();
+  });
+
+  it('dedicated downloads ClickHouse client: one per process, its own login, a 2s request timeout', async () => {
+    setEnv({
+      CLICKHOUSE_DOWNLOADS_HOST: 'http://clickhouse-downloads.test',
+      CLICKHOUSE_DOWNLOADS_USERNAME: 'downloads-user',
+    });
+    const [a, b] = await evaluateTwice(() => import('~/server/clickhouse/downloads-client'));
+    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(1);
+    expect(a.clickhouseDownloads).toBeDefined();
+    expect(b.clickhouseDownloads).toBe(a.clickhouseDownloads);
+    const options = (factories.createClickhouseClient.mock.calls as unknown[][])[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(options).toMatchObject({
+      host: 'http://clickhouse-downloads.test',
+      username: 'downloads-user',
+      requestTimeoutMs: 2_000,
+    });
+    // An absent key would let the factory fill it from CLICKHOUSE_PASSWORD, the shared server's.
+    expect(Object.prototype.hasOwnProperty.call(options, 'password')).toBe(true);
+    expect(options.password).toBeUndefined();
+  });
+
+  // A fake transport that fails the first read with a connection reset, then answers.
+  const resettingTransport = () => {
+    const query = vi.fn();
+    query
+      .mockRejectedValueOnce(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }))
+      .mockResolvedValue({ json: async () => [{ count: 4 }] });
+    return { query };
+  };
+  const retries = async (name: string) => {
+    const metric = promClient.register.getSingleMetric(`civitai_app_${name}`);
+    const { values } = metric ? await metric.get() : { values: [] };
+    return values.find((v) => v.labels.outcome === 'ok')?.value ?? 0;
+  };
+
+  it('dedicated downloads ClickHouse client: every read carries the server-side stop settings, and a reset is re-sent and counted on its own counter', async () => {
+    setEnv({
+      CLICKHOUSE_DOWNLOADS_HOST: 'http://clickhouse-downloads.test',
+      CLICKHOUSE_DOWNLOADS_USERNAME: 'downloads-user',
+    });
+    const transport = resettingTransport();
+    factories.createClickhouseClient.mockImplementation(() => transport as never);
+    try {
+      const [mod] = await evaluateTwice(() => import('~/server/clickhouse/downloads-client'));
+      const downloadsBefore = await retries('downloads_clickhouse_retry_total');
+      const imageBefore = await retries('image_metrics_clickhouse_retry_total');
+
+      await expect(mod.queryDownloadsClickhouse('SELECT 1 AS count', { h: 5n })).resolves.toEqual([
+        { count: 4 },
+      ]);
+
+      expect(transport.query).toHaveBeenCalledTimes(2);
+      for (const [params] of transport.query.mock.calls)
+        expect(params).toEqual({
+          query: 'SELECT 1 AS count',
+          format: 'JSONEachRow',
+          query_params: { h: 5n },
+          clickhouse_settings: {
+            max_execution_time: 2,
+            cancel_http_readonly_queries_on_client_close: 1,
+          },
+        });
+      expect((await retries('downloads_clickhouse_retry_total')) - downloadsBefore).toBe(1);
+      expect((await retries('image_metrics_clickhouse_retry_total')) - imageBefore).toBe(0);
+    } finally {
+      factories.createClickhouseClient.mockImplementation(() => ({ ch: true }));
+    }
+  });
+
+  it('dedicated downloads ClickHouse client: not built when its env is unset', async () => {
+    const { clickhouseDownloads } = await evaluateTwice(
+      () => import('~/server/clickhouse/downloads-client')
+    ).then(([a]) => a);
+    expect(clickhouseDownloads).toBeUndefined();
+    expect(factories.createClickhouseClient).not.toHaveBeenCalled();
   });
 
   it('primary pg pools: one write/read/read-long set per process', async () => {

@@ -8,19 +8,40 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const { deleteAccount, deleteAccountHold } = vi.hoisted(() => ({
+const {
+  deleteAccount,
+  getMemorialPanelState,
+  proposeMemorial,
+  confirmMemorial,
+  reverseMemorial,
+} = vi.hoisted(() => ({
+  proposeMemorial: vi.fn(async () => ({ ok: true as const })),
+  confirmMemorial: vi.fn(async () => ({ ok: true as const })),
+  reverseMemorial: vi.fn(async () => ({ ok: true as const })),
   deleteAccount: vi.fn(async () => ({ ok: true as const })),
-  deleteAccountHold: vi.fn<() => Promise<'clear' | 'held' | 'unknown'>>(async () => 'clear'),
+  getMemorialPanelState: vi.fn(async () => ({
+    memorial: null,
+    proposedBy: null,
+    confirmedBy: null,
+  })),
+}));
+const { addUserNote } = vi.hoisted(() => ({ addUserNote: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/moderation-memory.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/moderation-memory.service')>()),
+  addUserNote,
 }));
 vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-actions.service')>()),
   deleteAccount,
-  deleteAccountHold,
+  getMemorialPanelState,
+  proposeMemorial,
+  confirmMemorial,
+  reverseMemorial,
 }));
 
-const { actions, load } = await import('../+page.server');
+const { actions } = await import('../+page.server');
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 
 const formEvent = (grants: Record<string, boolean>, fields: Record<string, string>) => {
   const data = new FormData();
@@ -33,7 +54,34 @@ const formEvent = (grants: Record<string, boolean>, fields: Record<string, strin
 
 beforeEach(() => {
   vi.clearAllMocks();
-  deleteAccountHold.mockResolvedValue('clear');
+});
+
+// Policy: docs/features/memorialized-profiles.md.
+describe('memorial actions — bound to user.memorialize', () => {
+  const fields = {
+    userId: String(TARGET),
+    basis: 'attestation',
+    note: 'first-hand',
+    tributes: '[]',
+    proposedAt: '2026-11-24T00:00:00.000Z',
+  };
+
+  it.each(['memorialPropose', 'memorialConfirm', 'memorialReverse'] as const)(
+    '%s refuses a moderator without the grant, before any note or call',
+    async (name) => {
+      const result = await actions[name](formEvent({ 'user.deleteAccount': true }, fields));
+      expect(result).toMatchObject({ status: 403, data: { scope: 'denied' } });
+      expect(addUserNote).not.toHaveBeenCalled();
+      expect(proposeMemorial).not.toHaveBeenCalled();
+      expect(confirmMemorial).not.toHaveBeenCalled();
+      expect(reverseMemorial).not.toHaveBeenCalled();
+    }
+  );
+
+  it('memorialConfirm reaches the service with the grant', async () => {
+    await actions.memorialConfirm(formEvent({ 'user.memorialize': true }, fields));
+    expect(confirmMemorial).toHaveBeenCalledWith(TARGET, fields.proposedAt);
+  });
 });
 
 describe('deleteAccount action — bound to user.deleteAccount', () => {
@@ -61,67 +109,5 @@ describe('deleteAccount action — bound to user.deleteAccount', () => {
       removeModels: undefined,
       removeImages: false,
     });
-  });
-});
-
-describe('deleteAccount action — a legal hold', () => {
-  const withGrant = () =>
-    formEvent(
-      { 'user.deleteAccount': true },
-      { userId: String(TARGET), username: 'not_a_real_user' }
-    );
-
-  it.each([
-    ['held', 'Account under legal hold; contact Legal.'],
-    ['unknown', "Couldn't check legal hold status; try again."],
-  ] as const)('refuses a %s account without calling the deletion', async (hold, error) => {
-    deleteAccountHold.mockResolvedValue(hold);
-
-    const result = await actions.deleteAccount(withGrant());
-
-    expect(result).toMatchObject({ status: 400, data: { scope: 'account', error } });
-    expect(deleteAccountHold).toHaveBeenCalledWith(TARGET);
-    expect(deleteAccount).not.toHaveBeenCalled();
-  });
-});
-
-describe('load — the hold behind the Delete account button', () => {
-  const loadEvent = (
-    section: string,
-    grants: Record<string, boolean>,
-    result: unknown = { identity: { id: TARGET } }
-  ) =>
-    ({
-      params: { section },
-      url: new URL('https://moderator.invalid/retool/user-lookup/admin?q=1'),
-      locals: { grants },
-      parent: async () => ({ result }),
-    } as unknown as Parameters<typeof load>[0]);
-
-  it.each(['clear', 'held', 'unknown'] as const)(
-    'passes a %s hold through on Admin for someone with the permission',
-    async (hold) => {
-      deleteAccountHold.mockResolvedValue(hold);
-      expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toEqual({
-        section: 'admin',
-        deleteHold: hold,
-      });
-      expect(deleteAccountHold).toHaveBeenCalledWith(TARGET);
-    }
-  );
-
-  it('asks nothing when no account was found', async () => {
-    expect(await load(loadEvent('admin', { 'user.deleteAccount': true }, null))).toMatchObject({
-      deleteHold: null,
-    });
-    expect(deleteAccountHold).not.toHaveBeenCalled();
-  });
-
-  it('does not ask without the permission or off Admin', async () => {
-    expect(await load(loadEvent('admin', {}))).toMatchObject({ deleteHold: null });
-    expect(await load(loadEvent('basic', { 'user.deleteAccount': true }))).toMatchObject({
-      deleteHold: null,
-    });
-    expect(deleteAccountHold).not.toHaveBeenCalled();
   });
 });

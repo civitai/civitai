@@ -83,11 +83,12 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     why: 'updatedAt only, which is not cached',
   },
   'src/server/events/turf/flag-day.ts': {
-    writes: 2,
+    writes: 3,
     busts: 0,
     why:
-      "the Flag Race swap replaces the home block's Collection, which is plain mode, not a contest, " +
-      'so its rows are not in the cached value; it busts the home block cache instead',
+      "the Flag Race swap replaces the home block's Collection and adds to the all-time flags " +
+      'Collection, both plain mode, not contests, so their rows are not in the cached value; it ' +
+      'busts the home block cache instead',
   },
   'src/server/games/daily-challenge/challenge-rewards.ts': {
     writes: 2,
@@ -116,12 +117,17 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     busts: 0,
     why: 'model rows only; the cache holds image entries',
   },
-  'src/pages/api/admin/migrate-likes.ts': {
+  'src/server/api-routes/admin/migrate-likes.ts': {
     writes: 1,
     busts: 0,
     why: 'one-off migration of model likes; model rows only',
   },
-  'src/pages/api/admin/migrate-likes-models.ts': {
+  'scripts/oneoffs/backfill-liked-models.ts': {
+    writes: 1,
+    busts: 0,
+    why: 'one-off backfill of model likes into Model bookmark collections; model rows only',
+  },
+  'src/server/api-routes/admin/migrate-likes-models.ts': {
     writes: 1,
     busts: 0,
     why: 'one-off migration of model likes; model rows only',

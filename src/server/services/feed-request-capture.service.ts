@@ -1,18 +1,19 @@
-import { trace } from '@opentelemetry/api';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
-import { logToAxiom } from '~/server/logging/client';
+import {
+  CAPTURE_OFF,
+  createSampledRowBuffer,
+  parseCaptureConfig,
+  type CaptureConfig,
+} from '~/server/clickhouse/sampled-row-buffer';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
+export { MAX_BUFFERED_ROWS, parseCaptureConfig } from '~/server/clickhouse/sampled-row-buffer';
+
 export const FEED_REQUEST_CAPTURE_TABLE = 'feedRequests';
 const CONFIG_TTL_MS = 15_000;
-const FLUSH_INTERVAL_MS = 2_000;
-const FLUSH_AT_ROWS = 200;
-/** Rows held while an insert is in flight; beyond this they are shed, never queued. */
-export const MAX_BUFFERED_ROWS = 2_000;
-const ERROR_LOG_INTERVAL_MS = 60_000;
 
 const batchCounter = registerCounterWithLabels({
   name: 'feed_request_capture_batches_total',
@@ -25,28 +26,7 @@ const rowCounter = registerCounterWithLabels({
   labelNames: ['outcome'] as const,
 });
 
-export type FeedCaptureConfig = {
-  /** 0..1; 0 disables capture. */
-  sampleRate: number;
-  /** Epoch ms after which capture stops regardless of sampleRate. */
-  until: number;
-};
-
-const CAPTURE_OFF: FeedCaptureConfig = { sampleRate: 0, until: 0 };
-
-export function parseCaptureConfig(
-  raw: Record<string, string> | null | undefined
-): FeedCaptureConfig {
-  const rate = Number(raw?.sampleRate ?? 0);
-  const untilRaw = raw?.until?.trim();
-  let until = Number.POSITIVE_INFINITY;
-  if (untilRaw) until = /^\d+$/.test(untilRaw) ? Number(untilRaw) : Date.parse(untilRaw);
-  return {
-    sampleRate: Number.isFinite(rate) ? Math.min(Math.max(rate, 0), 1) : 0,
-    // An `until` that does not parse disables capture rather than running unbounded.
-    until: Number.isNaN(until) ? 0 : until,
-  };
-}
+export type FeedCaptureConfig = CaptureConfig;
 
 const FLAG_FIELDS = [
   'withMeta',
@@ -292,92 +272,20 @@ type CaptureDeps = {
 };
 
 export function createFeedRequestCapture(deps: CaptureDeps): FeedRequestCapture {
-  const now = deps.now ?? Date.now;
-  const random = deps.random ?? Math.random;
-  const flushIntervalMs = deps.flushIntervalMs ?? FLUSH_INTERVAL_MS;
-  let buffer: FeedRequestRow[] = [];
-  let inflight: Promise<void> | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let dropped = 0;
-  let lastErrorAt = 0;
-
-  function reportFailure(e: Error, rows: number) {
-    batchCounter.inc({ outcome: 'failed' });
-    if (deps.onError) return deps.onError(e, rows);
-    if (now() - lastErrorAt <= ERROR_LOG_INTERVAL_MS) return;
-    lastErrorAt = now();
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'feedRequests capture flush failed',
-        details: { rows },
-        message: e.message,
-      },
-      'clickhouse'
-    ).catch(() => undefined);
-  }
-
-  // One insert at a time: a slow ClickHouse holds one batch plus the bounded buffer,
-  // not an unbounded set of in-flight requests.
-  async function flush() {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    if (inflight || buffer.length === 0) return;
-    const rows = buffer;
-    buffer = [];
-    inflight = deps
-      .insert(rows)
-      .then(
-        () => batchCounter.inc({ outcome: 'ok' }),
-        (e) => reportFailure(e as Error, rows.length)
-      )
-      .finally(() => {
-        inflight = null;
-        if (buffer.length) scheduleFlush();
-      });
-    await inflight;
-  }
-
-  function scheduleFlush() {
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void flush();
-    }, flushIntervalMs);
-    timer.unref?.();
-  }
-
-  async function record(input: CapturableSearchInput, outcome: FeedRequestOutcome) {
-    const traceId = trace.getActiveSpan()?.spanContext().traceId ?? '';
-    const at = now();
-    try {
-      const config = await deps.getConfig();
-      if (config.sampleRate <= 0 || at > config.until) return;
-      if (random() >= config.sampleRate) return;
-      if (buffer.length >= MAX_BUFFERED_ROWS) {
-        dropped++;
-        rowCounter.inc({ outcome: 'dropped' });
-        return;
-      }
-      buffer.push(buildFeedRequestRow(input, outcome, at, traceId));
-      rowCounter.inc({ outcome: 'buffered' });
-      if (buffer.length >= FLUSH_AT_ROWS) void flush();
-      else scheduleFlush();
-    } catch {
-      // Capture must never surface on the feed path.
-    }
-  }
-
+  const rows = createSampledRowBuffer<FeedRequestRow>({
+    ...deps,
+    table: FEED_REQUEST_CAPTURE_TABLE,
+    counters: { batches: batchCounter, rows: rowCounter },
+  });
   return {
-    record,
-    flush,
+    record: (input, outcome) =>
+      rows.push((at, traceId) => buildFeedRequestRow(input, outcome, at, traceId)),
+    flush: rows.flush,
     get pending() {
-      return buffer.length;
+      return rows.pending;
     },
     get dropped() {
-      return dropped;
+      return rows.dropped;
     },
   };
 }

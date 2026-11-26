@@ -36,7 +36,8 @@ export function EventCosmeticsPreview({ children }: { children: React.ReactNode 
   );
 }
 
-const Context = createContext<ContentSettingsStore | null>(null);
+/** Exported for test harnesses that seed the store without trpc. */
+export const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
 export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
@@ -46,12 +47,14 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
       // These lists are filtered on the server by these two, read from the session, which this
-      // mutation has refreshed by the time it returns: the app image picker's posted list, and a
-      // shop's services (mature ones show only at the viewer's level). A list fetched before that
-      // was filtered at the old level. A no-op for a list that has not been opened.
+      // mutation has refreshed by the time it returns: the app image picker's posted list, a 3D
+      // model's related posts, and a shop's services (mature ones show only at the viewer's
+      // level). A list fetched before that was filtered at the old level. A no-op for a list
+      // that has not been opened.
       if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
         void queryUtils.blockImagePicker.getPosted.reset();
         void queryUtils.creatorService.getForShop.reset();
+        void queryUtils.model3d.getRelatedPosts.reset();
       }
 
       // Patch every confirmed field into the getSettings React Query cache so
@@ -205,7 +208,7 @@ type StoreStateActions = {
 };
 
 type ContentSettingsStore = ReturnType<typeof createContentSettingsStore>;
-function createContentSettingsStore(state: StoreState) {
+export function createContentSettingsStore(state: StoreState) {
   return createStore<StoreState & StoreStateActions>()(
     devtools(
       (set) => ({

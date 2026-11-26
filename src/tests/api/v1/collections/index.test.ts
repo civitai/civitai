@@ -559,7 +559,7 @@ describe.each(['list', 'detail'] as const)('held gallery level on the cover (%s)
 
     const item = await requestCollection(endpoint, cleanCover, { query });
 
-    expect(mockGetHeldLevelsByPost).toHaveBeenCalledWith([7]);
+    expect(mockGetHeldLevelsByPost).toHaveBeenCalledWith([7], { withOwners: false });
     expect(item.coverImageUrl).toBeNull();
     expect(item.coverImage).toBeNull();
   });

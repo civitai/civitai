@@ -103,7 +103,7 @@ export async function retryUploadPromptScans(deps: RetryUploadPromptScansDeps = 
               message: `retry failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
               imageId,
               attempt,
-            }).catch(() => null)
+            })
           );
       })
     );

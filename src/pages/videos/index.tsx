@@ -7,9 +7,12 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { videoFeedSearchOn } from '~/components/Search/search-target';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 function VideosPage() {
   const { hidden, ...filters } = useImageFilters('videos');
+  const features = useFeatureFlags();
 
   return (
     <>
@@ -28,6 +31,7 @@ function VideosPage() {
               filters={{ ...filters, types: ['video'] }}
               showEof
               showAds
+              searchable={videoFeedSearchOn(features)}
             />
           </IsClient>
         </Stack>

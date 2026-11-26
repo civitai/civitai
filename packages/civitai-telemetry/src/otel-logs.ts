@@ -61,7 +61,7 @@ export const otelLogRecordsEmittedCounter = registerInstrumentationMetric(
   () =>
     new promClient.Counter({
       name: EMITTED_METRIC,
-      help: 'Structured log records handed to the OTel Logs API by the Axiom bridge',
+      help: 'Log records handed to the OTel Logs API through the structured-log sink',
       registers: [instrumentationRegistry],
     })
 );
@@ -77,8 +77,20 @@ export const otelLogRecordsSkippedCounter = registerInstrumentationMetric(
     // values that label may take; putting it here type-checks the call sites backwards.)
     new promClient.Counter<'reason'>({
       name: SKIPPED_METRIC,
-      help: 'Structured log records NOT emitted over OTLP, by reason',
+      help: 'Log records sent to the structured-log sink but NOT emitted over OTLP, by reason',
       labelNames: ['reason'] as const,
+      registers: [instrumentationRegistry],
+    })
+);
+
+const CONSOLE_DROPPED_METRIC = PROM_PREFIX + 'otel_console_records_dropped_total';
+
+export const otelConsoleRecordsDroppedCounter = registerInstrumentationMetric(
+  CONSOLE_DROPPED_METRIC,
+  () =>
+    new promClient.Counter({
+      name: CONSOLE_DROPPED_METRIC,
+      help: 'Console calls written to stdout but not forwarded over OTLP, over the per-second record or byte budget',
       registers: [instrumentationRegistry],
     })
 );
@@ -139,6 +151,7 @@ export const OTEL_LOG_ATTRIBUTE_KEYS = [
   'civitai.pod',
   'civitai.user_id',
   'civitai.request_id',
+  'civitai.source',
 ] as const;
 
 export type OtelLogAttributes = Record<string, string | number | boolean>;
@@ -165,6 +178,8 @@ export function buildOtelLogAttributes(data: MixedObject, datastream?: string): 
   put('civitai.pod', data?.pod);
   put('civitai.user_id', data?.userId ?? data?.user);
   put('civitai.request_id', data?.requestId ?? data?.request_id);
+  // `logSource`, not `source`: many app-logger payloads carry their own unbounded `source` field.
+  put('civitai.source', data?.logSource);
 
   return attrs;
 }
@@ -247,8 +262,8 @@ export function resetOtelLogBridge(): void {
 //     entries too far in the future and holding through a large correction would drop
 //     every record until the wall clock caught up.
 //   - Uniqueness holds only if every emitter in the process shares ONE sequence. Module
-//     scope is enough because this module is a build-checked SINGLETON
-//     (`scripts/server-graph-watchlist.mjs`); a second copy would have its own counter.
+//     scope is enough only while the bundler emits this module once; nothing checks that,
+//     and a second copy would have its own counter.
 const NANOS_PER_MS = 1_000_000;
 
 /** The largest backward wall-clock step the sequence holds through; see above. */

@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql, pendingOthersImageConditions } from '~/server/common/image-visibility';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  pendingOthersImageConditions,
+} from '~/server/common/image-visibility';
 import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -14,7 +17,8 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  * page asks for every level, which the domain cap holds to PG/PG-13 on the SFW site, so `levels` is
  * that ceiling: a badge on civitai.com must not count mature items only civitai.red can show. Each branch mirrors the clauses that decide that:
  * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
- *   Archived) and leaves out Private models; `getModelsWithImagesAndModelVersions` drops TakenDown.
+ *   Archived) and leaves out Private models; it also leaves out TakenDown for all but the owner and
+ *   moderators, which this count drops for everyone.
  * - Image: `getAllImages` with `pending` and `reviewCollectionId` keeps the collection's unrated
  *   and `acceptableMinor` images only when their uploader submitted them, with the same image and
  *   post filters as any read of the image.
@@ -56,7 +60,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
     JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
     WHERE rv_i.id = ci."imageId"
       AND ((rv_i."nsfwLevel" & ${levels}) != 0 OR rv_i."nsfwLevel" = 0)
-      AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
+      AND ${imageNotRestrictedSql({ alias: 'rv_i' })}
       AND (rv_i."nsfwLevel" = 0 OR ${imageReviewedSql('rv_i')})
       AND rv_i."needsReview" IS NULL
       AND ((rv_i."nsfwLevel" != 0 AND NOT rv_i."acceptableMinor") OR ci."addedById" = rv_i."userId")
@@ -72,6 +76,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
       AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
       AND rv_a."publishedAt" IS NOT NULL
       AND rv_a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND rv_a."availability" != 'Private'::"Availability"
       AND (rv_a."nsfwLevel" & ${levels}) != 0
   )
   ELSE false
@@ -127,8 +132,10 @@ export const pendingViewerImageSql = ({
 }) => {
   const own = Prisma.sql`i."userId" = ${userId}`;
   const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
+  // `userId` must be the id of a request that carries the owner's view: their held images show.
   const others = pendingOthersImageConditions(userId, {
     acceptableMinorAlso: review ? reviewSubmissionSql(review) : undefined,
+    ownerSeesHeld: true,
   });
   return Prisma.sql`(${Prisma.join(others, ' AND ')}
     AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${

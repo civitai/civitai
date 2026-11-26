@@ -23,8 +23,7 @@ import { MembershipGiftStatus, PaymentProvider } from '~/shared/utils/prisma/enu
 
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 
-const log = (data: MixedObject) =>
-  logToAxiom({ name: 'membership-gift', ...data }, 'webhooks').catch(() => null);
+const log = (data: MixedObject) => logToAxiom({ name: 'membership-gift', ...data }, 'webhooks');
 
 // Stripe subscription statuses that mean the row is dead and a fresh gift sub can be created.
 const TERMINAL_STATUSES = ['canceled', 'incomplete_expired'];
@@ -478,6 +477,14 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
   if (live && subscription.product.provider !== PaymentProvider.Stripe)
     throw throwBadRequestError('This membership is not managed by Stripe');
 
+  // Claimed before the tier switch: a moderator's revoke of a comp only matches an unclaimed gift,
+  // so the two cannot both win and leave the holder on a higher tier with no gift behind it.
+  const { count: claimed } = await dbWrite.membershipGift.updateMany({
+    where: { id: gift.id, status: MembershipGiftStatus.Fulfilled },
+    data: { acceptedAt: gift.acceptedAt ?? new Date() },
+  });
+  if (claimed === 0) throw throwBadRequestError('This gift is not available to accept');
+
   // Moving the holder UP to the gifted tier is the one thing acceptance itself does, and it
   // happens once rather than per month. proration_behavior 'none' means Stripe raises no
   // invoice for the change — the accept click is what consents to the new recurring price.
@@ -499,7 +506,7 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
 
   await dbWrite.membershipGift.update({
     where: { id: gift.id },
-    data: { status: MembershipGiftStatus.Active, acceptedAt: new Date() },
+    data: { status: MembershipGiftStatus.Active },
   });
 
   await armNextGiftMonth({ userId });

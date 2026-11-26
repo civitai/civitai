@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -10,7 +11,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
 import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
@@ -34,6 +35,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 export const config = {
   api: {
@@ -52,11 +54,19 @@ export const config = {
  * an in-block image browser can switch endpoints with minimal change. The
  * CRITICAL difference:
  *
- *   The effective browsing level is AUTHORITATIVELY CLAMPED to the block
- *   token's color-domain ceiling (`claims.maxBrowsingLevel`). A SFW-domain
- *   (green/blue) block CANNOT fetch mature catalog images, no matter what the
+ *   The effective browsing level is AUTHORITATIVELY CLAMPED to the VIEWER's
+ *   ceiling from the block token: the color-domain ceiling
+ *   (`claims.maxBrowsingLevel`) intersected with the viewer's own level
+ *   (`claims.viewerBrowsingLevel`), via `resolveCatalogViewerBrowsingLevel` —
+ *   the viewer's level held to the domain cap by the main site's rule
+ *   (`clampToDomainCap`). A SFW-domain
+ *   (green/blue) block CANNOT fetch mature catalog images, and neither can a
+ *   viewer on a mature domain who has mature content off, no matter what the
  *   client sends — there is no `nsfw` / `browsingLevel` knob on this endpoint's
  *   schema at all, so maturity is NEVER read from the request beyond the clamp.
+ *
+ *   The domain ceiling alone is not this route's clamp: on `red` it would show
+ *   R/X/XXX images to a PG viewer.
  *
  * Why Option B (a block-gated endpoint) and NOT clamping the public
  * /api/v1/images: the public endpoint is the apex public-API contract +
@@ -70,7 +80,8 @@ export const config = {
  * declarable+grantable scope adds CLI-validator + per-app-allowedScopes
  * friction with NO security value (this endpoint is strictly MORE restricted
  * than the public /api/v1/images). The token is required ONLY for its signed
- * `maxBrowsingLevel` claim (the maturity ceiling), NOT for authorization.
+ * `maxBrowsingLevel` + `viewerBrowsingLevel` claims (the maturity ceiling), NOT
+ * for authorization.
  * withBlockScope still runs FULL token validation + revocation + `private,
  * no-store` + exact-origin CORS; it just skips the per-scope check. Anon → 401.
  * (Previously gated on `catalog:read`, retired as no-value friction.)
@@ -167,18 +178,31 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // endpoint already returns for the paging guard / bulkhead shed.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'images',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 
-  // AUTHORITATIVE clamp — maturity comes ONLY from the token's domain ceiling,
-  // then narrowed to SFW for region-restricted viewers (mirrors the public
-  // /api/v1/images region override the shared search service does NOT apply).
-  // (The schema doesn't even expose nsfw/browsingLevel, so there is nothing to
-  // read from the request; this is the single maturity authority.)
-  const regionRestricted = isRegionRestricted(getRegion(req));
-  let { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  // AUTHORITATIVE clamp — maturity comes ONLY from the token (see the route doc);
+  // the schema exposes no nsfw/browsingLevel.
+  let browsingLevel = resolveCatalogViewerBrowsingLevel(claims, {
+    regionRestricted: isRegionRestricted(getRegion(req)),
+  });
+  // Only an empty cap gives 0, and the search reads 0 as its default level, not as none.
+  if (!browsingLevel) {
+    res.status(200).json({ items: [], metadata: {} });
+    return;
+  }
 
   const { limit, page, cursor, type, withMeta, flatMeta, withTags, ...data } = reqParams.data;
 
@@ -247,8 +271,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         req,
       }
     );
-    // Images picked by id name no model, so each is held by its own post's model.
-    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
+    // Each image is held by its own post's model: a model or version search selects by resource, so
+    // it can return images posted to another model's gallery.
+    const items = await withoutHeldImages(found);
 
     const metadata: Metadata = { nextCursor };
     if (usingPaging) {
@@ -343,7 +368,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 });
 
 // No requiredScope: any valid block token is accepted (see doc above). The
-// maturity clamp (resolveCatalogBrowsingLevel) remains the whole authority
+// maturity clamp (resolveCatalogViewerBrowsingLevel) remains the whole authority
 // surface. allowOpaqueOrigin: an UNVERIFIED block runs at an opaque origin
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
@@ -352,8 +377,8 @@ export default withBlockScope(baseHandler, {
   endpoint: 'images',
   allowOpaqueOrigin: true,
   // Public, maturity-clamped image catalog — the same argument as blocks/models.ts. No
-  // requiredScope, nothing viewer-scoped, nothing written; the maturity ceiling comes from
-  // the token's own signed claim, not from the approval row, so a failed approval read
+  // requiredScope, nothing written; the maturity ceiling comes from the token's own signed
+  // claims (domain ceiling and viewer level), not from the approval row, so a failed approval read
   // cannot widen what this returns.
   onApprovalLookupFailure: 'serve',
 });

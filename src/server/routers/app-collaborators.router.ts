@@ -13,10 +13,11 @@ import {
   setCollaboratorDisplayedSchema,
   transferIdSchema,
 } from '~/server/schema/blocks/app-collaborator.schema';
-import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
+import { enforceAppBlocksAuthorFlag } from '~/server/trpc/app-blocks-author.middleware';
 import { rateLimit } from '~/server/middleware.trpc';
-import { appDeveloperProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
+import { appDeveloperProcedure, protectedProcedure, router } from '~/server/trpc';
 import type { SessionUser } from '~/types/session';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * App Listing COLLABORATORS — seat management, ownership transfer, and the APP-SCOPED
@@ -62,20 +63,6 @@ import type { SessionUser } from '~/types/session';
  * session (or a Full personal key) satisfies via `enforceTokenScope`'s early return.
  * Annotate the day a CLI command needs one.
  */
-
-const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
-  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
-  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
-  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
-  // subject (a capability has nothing to authorize without one), so the compiler makes
-  // this refusal mandatory rather than optional. Keep it: it is also what makes the
-  // middleware safe if it is ever attached to a `publicProcedure`.
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-  }
-  if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-});
 
 /** Map the service's typed errors onto tRPC codes; pass anything else through. */
 async function run<T>(fn: () => Promise<T>): Promise<T> {
@@ -124,13 +111,7 @@ export const appCollaboratorsRouter = router({
    * (notification only). Rate-limited so an owner cannot spray invitations.
    */
   invite: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many collaborator invitations — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.collaborator-invites')))
     .input(inviteAppCollaboratorSchema)
     .mutation(async ({ ctx, input }) => {
       assertNotBanned(ctx.user as SessionUser);
@@ -161,13 +142,7 @@ export const appCollaboratorsRouter = router({
    * when the accumulated id set actually changes, not per keystroke.
    */
   ineligibleTargets: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 600,
-        period: 3600,
-        errorMessage: 'Too many collaborator lookups — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.collaborator-lookups')))
     .input(screenAppCollaboratorTargetsSchema)
     .query(async ({ ctx, input }) => {
       assertNotBanned(ctx.user as SessionUser);
@@ -383,13 +358,7 @@ export const appCollaboratorsRouter = router({
    * pending offer confers ZERO capability on the recipient.
    */
   initiateTransfer: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 10,
-        period: 3600,
-        errorMessage: 'Too many ownership transfer attempts — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.ownership-transfers')))
     .input(initiateAppTransferSchema)
     .mutation(async ({ ctx, input }) => {
       assertNotBanned(ctx.user as SessionUser);

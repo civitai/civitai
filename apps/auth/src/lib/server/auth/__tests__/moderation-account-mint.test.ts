@@ -14,12 +14,15 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => ({ mintSessionToken: h.mintSessionToken, maxAge: 1234 }),
 }));
-vi.mock('../registry', () => ({ sessions: { trackToken: vi.fn(async () => {}) } }));
+vi.mock('../registry', () => ({ sessions: { trackToken: vi.fn(async () => undefined) } }));
 vi.mock('../verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
 vi.mock('../cookie', () => ({ cookieDomain: () => undefined }));
 vi.mock('../device', () => ({ getOrCreateDeviceId: vi.fn(), linkAccount: vi.fn() }));
 vi.mock('../../axiom', () => ({ logToAxiom: h.logToAxiom }));
-vi.mock('../../db/db', () => ({ db: {} }));
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 vi.mock('../../redis', () => ({
   getRedis: () => ({
     packed: {
@@ -83,6 +86,6 @@ describe('other ways to become the moderation account at the hub', () => {
   });
 
   it('no OAuth token pair is issued for it', async () => {
-    await expect(createOAuthTokenPair(900, 'client', 1)).rejects.toMatchObject({ status: 403 });
+    await expect(createOAuthTokenPair(900, 'client', 1n)).rejects.toMatchObject({ status: 403 });
   });
 });

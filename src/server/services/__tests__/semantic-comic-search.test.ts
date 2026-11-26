@@ -1,22 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { SessionUser } from '~/types/session';
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   fetched: [] as number[][],
   hiddenFor: [] as (number | undefined)[],
   rows: new Map<number, Record<string, unknown>>(),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
+  evalBoolean: vi.fn<() => { enabled: unknown }>(),
+  fliptClient: null as null | {
+    evaluateBoolean: (req: { entityId: string; context: Record<string, string> }) => {
+      enabled: unknown;
+    };
+  },
+}));
+
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: async (text: string) => text,
 }));
+vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -45,6 +65,7 @@ vi.mock('~/server/search-index/comics.search-index', () => ({
 const { searchSemanticComics, levelsWithin, MAX_HITS_PER_USER } = await import(
   '~/server/services/semantic-comic-search.service'
 );
+const { resolveSemanticBrowsingLevel } = await import('~/server/services/semantic-query-guard');
 
 const { PG, PG13, R, X } = NsfwLevel;
 const comic = (
@@ -107,7 +128,9 @@ beforeEach(() => {
   h.hiddenFor = [];
   h.rows = new Map();
   h.includesInappropriate.mockReset().mockReturnValue(false);
-  loggingMock.logToAxiom.mockClear();
+  // The containment switch reads enabled (clamped) unless a test lifts it.
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: true });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
 });
 
 describe('levelsWithin', () => {
@@ -187,12 +210,62 @@ describe('semantic comic search', () => {
     expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
   });
 
-  it('logs how many candidates came back and how many survived hydration', async () => {
+  it('searches a signed-in non-moderator at their own level once the switch is disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
     h.rows.set(10, comic(10));
-    await search([11, 10]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'semantic-comic-search', returned: 2, hydrated: 1 })
-    );
+    h.rows.set(11, comic(11, { level: R }));
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    expect(ids(await search([11, 10], { browsingLevel: PG | R, user: viewer }))).toEqual([11, 10]);
+    expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
+  });
+
+  describe('a segment that lifts the switch for one account', () => {
+    const EXEMPT = { id: 500, isModerator: false } as SessionUser;
+    const OTHER = { id: 502, isModerator: false } as SessionUser;
+    const asked: { entityId: string; context: Record<string, string> }[] = [];
+    beforeEach(() => {
+      asked.length = 0;
+      // Flipt matches segments on the context, never the entity id.
+      h.fliptClient = {
+        evaluateBoolean: (req) => {
+          asked.push(req);
+          return { enabled: req.context.userId !== String(EXEMPT.id) };
+        },
+      };
+    });
+
+    it('keeps every other signed-in non-moderator clamped', async () => {
+      await search([], { browsingLevel: PG | R, user: OTHER });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+    });
+
+    it('searches the exempt account at its own level', async () => {
+      await search([], { browsingLevel: PG | R, user: EXEMPT });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
+      expect(asked).toEqual([
+        { flagKey: expect.any(String), entityId: '500', context: { userId: '500' } },
+      ]);
+    });
+
+    it('keeps a signed-out visitor clamped, asking with no user', async () => {
+      await search([], { browsingLevel: PG | R, user: undefined });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+      expect(asked).toEqual([{ flagKey: expect.any(String), entityId: 'global', context: {} }]);
+    });
+  });
+
+  it('holds the clamp when the switch cannot be read', async () => {
+    h.fliptClient = null;
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    await search([], { browsingLevel: PG | R, user: viewer });
+    expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+  });
+
+  it('treats a missing clamp value as clamped; only an explicit false lifts it', () => {
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    expect(resolveSemanticBrowsingLevel(PG | R, viewer, undefined)).toBe(PG);
+    expect(resolveSemanticBrowsingLevel(PG | R, viewer, true)).toBe(PG);
+    expect(resolveSemanticBrowsingLevel(PG | R, viewer, false)).toBe(PG | R);
   });
 });
 
@@ -233,7 +306,13 @@ describe('semantic comic search: the query audit', () => {
   it('refuses a refused query before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const result = await search([10], { browsingLevel: 31, user: MOD });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     expect(sent).toHaveLength(0);
   });
 
@@ -247,8 +326,31 @@ describe('semantic comic search: the query audit', () => {
       user: MOD,
       correctedQuery: 'corrected',
     });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     // The refused correction's candidates are never hydrated.
     expect(h.fetched).toEqual([]);
   });
+});
+
+describeSemanticAuditContract({
+  index: 'comics',
+  run: ({ source, user, cursor }) => {
+    for (const id of [10, 12]) h.rows.set(id, comic(id));
+    return searchSemanticComics({
+      input: { query: 'space pirates', browsingLevel: PG, limit: 10, cursor },
+      user,
+      browsingLevelCap: undefined,
+      candidateSource: source,
+    });
+  },
+  ids: [10, 12],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

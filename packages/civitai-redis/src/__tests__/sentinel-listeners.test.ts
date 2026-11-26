@@ -50,6 +50,66 @@ describe('attachSysSentinelListeners', () => {
     expect(errorCounter.inc).not.toHaveBeenCalled();
   });
 
+  it('logs a sentinel-list event only when the list size changes, and counts every one', () => {
+    const client = fakeClient();
+    const log = vi.fn();
+    const topologyCounter = fakeCounter();
+    const errorCounter = fakeCounter();
+
+    attachSysSentinelListeners(client, { deployment: 'd', log, topologyCounter, errorCounter });
+
+    const scan = (size: number) =>
+      client.fire('topology-change', { type: 'SENTINE_LIST_CHANGE', size });
+    scan(3);
+    scan(3);
+    scan(3);
+    expect(log).toHaveBeenCalledOnce();
+
+    scan(2);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenLastCalledWith(
+      'Redis sentinel topology change [type=SENTINE_LIST_CHANGE, host=?, port=?]',
+      { type: 'SENTINE_LIST_CHANGE', size: 2 }
+    );
+
+    scan(2);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(topologyCounter.inc).toHaveBeenCalledTimes(5);
+  });
+
+  it('logs the first sentinel-list event even when it carries no size', () => {
+    const client = fakeClient();
+    const log = vi.fn();
+    attachSysSentinelListeners(client, {
+      deployment: 'd',
+      log,
+      topologyCounter: fakeCounter(),
+      errorCounter: fakeCounter(),
+    });
+
+    client.fire('topology-change', { type: 'SENTINE_LIST_CHANGE' });
+    expect(log).toHaveBeenCalledOnce();
+  });
+
+  it('logs every repeated node event; only the sentinel-list event is deduplicated', () => {
+    const client = fakeClient();
+    const log = vi.fn();
+    attachSysSentinelListeners(client, {
+      deployment: 'd',
+      log,
+      topologyCounter: fakeCounter(),
+      errorCounter: fakeCounter(),
+    });
+
+    const master = { type: 'MASTER_CHANGE', node: { host: 'h1', port: 6379 } };
+    client.fire('topology-change', master);
+    client.fire('topology-change', master);
+    client.fire('topology-change', { type: 'SENTINE_LIST_CHANGE', size: 3 });
+    client.fire('topology-change', { type: 'SENTINE_LIST_CHANGE', size: 3 });
+
+    expect(log).toHaveBeenCalledTimes(3);
+  });
+
   // RedisSentinel forwards its connections' errors as `error` (passthroughClientErrorEvents), in
   // the shape @redis/client 6.3.0 builds; sentinel-master-loss.integration.test.ts checks that
   // shape against a real master loss.

@@ -30,9 +30,6 @@ import {
  * the markup looks identical — which is precisely how this shipped.
  */
 
-// AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // 🔴 IframeHost calls useFeatureFlags() (added by #3497 for the in-host "open the
 // page" affordance) and the REAL hook THROWS without a FeatureFlagsProvider, which
 // this scaffold does not mount. Without this mock, every test that gets far enough

@@ -2,7 +2,9 @@
 
 One model, two faces. A creator can give a model a separate title, description and cover for
 civitai.com, which shows no mature content, while civitai.red keeps the original listing. With
-nothing set, both sites show the same listing.
+nothing set, both sites show the same title and description. The cover can still differ without a
+face: a non-mature model's civitai.com showcase cover (`docs/features/version-showcase.md`) applies
+to civitai.com viewers on its own.
 
 The editor presents the two faces as the model's civitai.red card and its civitai.com card.
 
@@ -78,6 +80,46 @@ The .com fields are never fed to the automatic checks that set `Model.nsfw`; tho
 A .com face is also refused when the model's own listing (.red title, description and trigger
 words) fails the listing check. The refusal names those fields; the check's reason is kept for
 moderators and never sent to the owner. A check that could not run says so, separately.
+
+The listing check's verdict is stored on the model (`meta.comFaceIntent`, server-owned, hidden from
+clients) with a hash of the text it read, and reused while that text is unchanged, so a repeat
+attempt is not judged again. A detection means the model is made for sexual content: when it was
+read from the model's stored listing and the model is marked mature, the nsfw rating is locked
+(`model-com-face-intent.service.ts`, marker source `com-face-intent`). A model that is not marked
+mature keeps listing by its images and is refused a face without a lock; if it is later marked
+mature, the stored detection locks it on the next attempt, unless a moderator has ruled on its
+rating since. A text-scan rating marker the lock replaces is kept on the verdict and put back when
+the lock is lifted. The refusal offers the dispute only while the lock is the listing check's. A
+rating marked mature by the text scan alone carries no lock, so the owner can still add a face, but
+the owner cannot unmark it, or remove the face that listed it, without editing the text.
+
+A model whose .red text the text scan reads as mature is not marked mature while it has a complete
+.com face whose text passed the check (`meta.sfwFaceCheckedAt`, a stamp of what was checked and the
+prompt version that checked it; a new prompt version re-checks the face). The verdict is held on
+the model (`meta.comFaceHeldVerdict`) and applied in the same transaction as any write that takes
+the face away: the model is marked mature and the owner gets the rating notice; an already-mature
+model gets the text scan's marker; where the rating is held (minor, POI, Private, SFW-only lock), it
+waits as a moderator's lead. This holds even when the same save edits the .red title or
+description: the rescan that follows a lost face reads the new text, and if it is no longer mature
+it releases the marker, so the owner can change the rating. While a verdict is held, the owner of a
+model already marked mature cannot unmark it, as for the scan's marker; a rescan that reads edited
+text as not mature drops the held verdict.
+
+### Dispute
+
+The .com tab of the editor explains the lock and offers **Dispute**, which files a locked-setting
+review of the nsfw lock tagged `dispute: comFaceIntent`, only when it names that lock alone and no
+moderator has ruled on it (a rejected review included) since it was set. A job (`com-face-intent-disputes`, every
+10 minutes) re-checks each one with a slower pass. If that allows it, the review is approved as
+the system: the lock and its marker go, the stored detection is marked overturned, and the owner
+is told. Anything else stays in the moderators' lock-review queue, marked with what the re-check
+found. A moderator who approves any review lifting the nsfw lock also overturns the detection.
+Each re-check is logged with the first verdict, as a sample for tuning the check. Creator Studio's
+Make Safe shows a refused model with a **Dispute** link to the editor.
+
+Creator Studio's models page counts the creator's published mature models with no face, no nsfw
+lock and no flag ruling a face out, in a banner that opens the "Can be listed on civitai.com"
+filter (`comFaceReadySql`), where Make Safe drafts their faces in bulk.
 
 ## Listing re-check
 

@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Axiom from '../axiom';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -17,7 +18,6 @@ vi.mock('../db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('../storage', () => ({ getStorage: () => ({ deleteObject: async () => undefined }) }));
 vi.mock('../redis', () => ({
   getRedis: () => ({ del: vi.fn(async () => 0) }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
@@ -45,10 +45,16 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
+CREATE TYPE "EntityType" AS ENUM ('Image');
+CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
+CREATE TABLE "JobQueue" (
+  "entityId" INTEGER NOT NULL, "entityType" "EntityType" NOT NULL, "type" "JobQueueType" NOT NULL,
+  "data" JSONB, "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+  UNIQUE ("entityType", "entityId", "type")
+);
 CREATE TABLE "Thread" (
   "id" INTEGER PRIMARY KEY,
   "articleId" INTEGER UNIQUE REFERENCES "Article"(id) ON DELETE CASCADE,
@@ -72,16 +78,16 @@ CREATE TABLE "CommentV3" (
 );
 `;
 
-const HELD = 7;
-const UNHELD = 8;
+const AUTHOR = 8;
+const REPLIER = 7;
 
 let db: PGlite;
 
 beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   await db.exec(`
-    INSERT INTO "EvidenceHeldUser" VALUES (${HELD});
     INSERT INTO "Article" VALUES (50, NULL, 1);
     INSERT INTO "CommentTopic" VALUES ('article', 50);
     INSERT INTO "Thread" (id, "articleId") VALUES (300, 50);
@@ -95,13 +101,13 @@ afterEach(async () => {
 });
 
 const rows = async (query: string) => (await db.query(query)).rows;
-const deleteArticle = () => moderateArticle({ action: 'delete', articleId: 50, userId: 1 });
+const deleteArticle = () => moderateArticle({ action: 'delete', articleId: 50, userId: 99 });
 
 describe("a moderator's article delete", () => {
-  it('deletes the article with its comments when no author is held', async () => {
+  it('deletes the article with its comments', async () => {
     await db.exec(`
-      INSERT INTO "CommentV2" VALUES (1, ${UNHELD}, 300);
-      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${UNHELD}, NULL), (2, 'article', 50, ${UNHELD}, NULL);
+      INSERT INTO "CommentV2" VALUES (1, ${AUTHOR}, 300);
+      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${AUTHOR}, NULL), (2, 'article', 50, ${AUTHOR}, NULL);
     `);
 
     expect(await deleteArticle()).toEqual({ ok: true });
@@ -112,12 +118,12 @@ describe("a moderator's article delete", () => {
     expect(await rows(`SELECT id FROM "CommentV3"`)).toEqual([]);
   });
 
-  it('deletes a held author’s comments with it too, in both tables', async () => {
+  it('deletes reply threads’ comments with it too, in both tables', async () => {
     await db.exec(`
-      INSERT INTO "CommentV2" VALUES (1, ${UNHELD}, 300);
+      INSERT INTO "CommentV2" VALUES (1, ${AUTHOR}, 300);
       INSERT INTO "Thread" (id, "parentThreadId", "rootThreadId", "commentId") VALUES (301, 300, 300, 1);
-      INSERT INTO "CommentV2" VALUES (2, ${HELD}, 301);
-      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${UNHELD}, NULL), (5, 'article', 50, ${HELD}, NULL);
+      INSERT INTO "CommentV2" VALUES (2, ${REPLIER}, 301);
+      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${AUTHOR}, NULL), (5, 'article', 50, ${REPLIER}, NULL);
     `);
 
     expect(await deleteArticle()).toEqual({ ok: true });
@@ -126,5 +132,26 @@ describe("a moderator's article delete", () => {
     expect(await rows(`SELECT id FROM "Thread"`)).toEqual([]);
     expect(await rows(`SELECT id FROM "CommentV2"`)).toEqual([]);
     expect(await rows(`SELECT id FROM "CommentV3"`)).toEqual([]);
+  });
+});
+
+describe("a moderator's article delete with an orphaned cover", () => {
+  const queued = () => rows(`SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete'`);
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (90, 1);
+      UPDATE "Article" SET "coverId" = 90 WHERE id = 50;
+    `);
+  });
+
+  it('queues the image for pending-deletes as a moderator delete, and leaves the row to it', async () => {
+    expect(await deleteArticle()).toEqual({ ok: true });
+
+    expect(await rows(`SELECT id FROM "Article"`)).toEqual([]);
+    expect(await queued()).toEqual([
+      { entityId: 90, data: { cleanup: true, moderatorDelete: true } },
+    ]);
+    expect(await rows(`SELECT id FROM "Image"`)).toEqual([{ id: 90 }]);
   });
 });

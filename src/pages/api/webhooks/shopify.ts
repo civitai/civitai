@@ -15,7 +15,7 @@ export const config = {
 };
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'shopify-webhook', type: 'error', ...data }).catch(() => null);
+  logToAxiom({ name: 'shopify-webhook', type: 'error', ...data });
 
 async function buffer(readable: Readable) {
   const chunks = [];

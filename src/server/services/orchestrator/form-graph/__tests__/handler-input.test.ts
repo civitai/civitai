@@ -601,7 +601,7 @@ describe('minimax-h3-image.handler', () => {
       height: 1568,
       quantity: 3,
       seed: 42,
-      diffusionModel: null,
+      diffusionModel: 'urn:air:test:3463368',
     });
   });
 
@@ -646,12 +646,23 @@ describe('minimax-h3-image.handler', () => {
     });
   });
 
-  it('caps quantity at 4 even when the tier allows more', () => {
-    const parsed = generationHub.parse(
-      { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
-      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 } }
-    );
-    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(4);
+  it('a creator checkpoint and its LoRAs reach the orchestrator, on create and edit', async () => {
+    for (const workflow of ['txt2img', 'img2img:edit']) {
+      const steps = await dispatch({
+        workflow,
+        ecosystem: 'MiniMaxH3Image',
+        prompt: 'a cat',
+        images: [IMAGE],
+        model: { id: 424242, baseModel: 'MiniMax H3 Image', model: { type: 'Checkpoint' } },
+        resources: [
+          { id: 111, baseModel: 'MiniMax H3 Image', model: { type: 'LORA' }, strength: 0.8 },
+        ],
+      });
+      expect(firstInput(steps)).toMatchObject({
+        diffusionModel: 'urn:air:test:424242',
+        loras: { 'urn:air:test:111': 0.8 },
+      });
+    }
   });
 
   it('accepts sixteen references and no more', () => {
@@ -714,9 +725,71 @@ describe('ideogram.handler', () => {
     });
   });
 
+  it('4.6 routes to fal with very_low quality', async () => {
+    const v46 = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      model: 3480351,
+      aspectRatio: '1:1',
+      quality: 'very_low',
+    });
+    expect(firstInput(v46)).toMatchObject({
+      engine: 'fal',
+      model: 'ideogram46',
+      operation: 'createImage',
+      width: 2048,
+      height: 2048,
+      quality: 'very_low',
+    });
+  });
+
+  it('4.6 transparent sends a transparent background as png', async () => {
+    const v46 = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a logo',
+      seed: 42,
+      model: 3480351,
+      transparent: true,
+    });
+    expect(firstInput(v46)).toMatchObject({ background: 'transparent', outputFormat: 'png' });
+  });
+
+  // ideogram46 rejects a background on high-precision edits.
+  it('4.6 high-precision edit sends editPrecision and drops transparent', async () => {
+    const edit = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      model: 3480351,
+      images: [IMAGE],
+      editPrecision: 'high',
+      transparent: true,
+    });
+    const input = firstInput(edit);
+    expect(input).toMatchObject({ model: 'ideogram46', editPrecision: 'high' });
+    expect(input).not.toHaveProperty('background');
+  });
+
+  // ideogram45 rejects very_low; a 4.6 pick carried onto 4.5 must not reach fal.
+  it('corrects very_low to medium on 4.5', async () => {
+    const v45 = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      model: 3375798,
+      quality: 'very_low',
+    });
+    expect(firstInput(v45)).toMatchObject({ model: 'ideogram45', quality: 'medium' });
+  });
+
   // 4.0 generation is off and out of the locked version list, so a 4.0 request (a remix) is moved
-  // to 4.5 rather than sent to comfy.
-  it('moves a 4.0 request to 4.5 on fal', async () => {
+  // to the default, 4.6, rather than sent to comfy.
+  it('moves a 4.0 request to 4.6 on fal', async () => {
     const v40 = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'Ideogram',
@@ -724,7 +797,7 @@ describe('ideogram.handler', () => {
       seed: 42,
       model: 3246186,
     });
-    expect(firstInput(v40)).toMatchObject({ engine: 'fal', model: 'ideogram45' });
+    expect(firstInput(v40)).toMatchObject({ engine: 'fal', model: 'ideogram46' });
   });
 
   it('edit sends imageSize auto and keeps image order', async () => {
@@ -740,6 +813,26 @@ describe('ideogram.handler', () => {
       operation: 'editImage',
       imageSize: 'auto',
       images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+});
+
+describe('seedance.handler', () => {
+  it('v2.5 flash sends its model and keeps a 30 s duration', async () => {
+    const flash = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'Seedance',
+      prompt: 'a fox in snow',
+      seed: 42,
+      model: 3480344,
+      resolution: '480p',
+      duration: 30,
+    });
+    expect(firstInput(flash)).toMatchObject({
+      engine: 'seedance',
+      model: 'v2.5-flash',
+      resolution: '480p',
+      duration: 30,
     });
   });
 });
@@ -966,6 +1059,8 @@ describe('moss-image.handler', () => {
       aspectRatio: '16:9',
       steps: 40,
       cfgScale: 4,
+      sampler: 'dpmpp_2m',
+      scheduler: 'sgm_uniform',
       seed: 42,
       quantity: 2,
       resources: [{ id: 111, baseModel: 'MOSS Image', model: { type: 'LORA' }, strength: 0.8 }],
@@ -980,6 +1075,8 @@ describe('moss-image.handler', () => {
       height: 768,
       steps: 40,
       cfgScale: 4,
+      sampler: 'dpmpp_2m',
+      scheduler: 'sgm_uniform',
       seed: 42,
       quantity: 2,
     });

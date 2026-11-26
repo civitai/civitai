@@ -7,35 +7,217 @@
 /** The owner `deleteUser` hands kept content to; the main app's `PLACEHOLDER_OWNER_ID`. */
 const PLACEHOLDER_OWNER_ID = -1;
 
+/** An alias (`i`) or an aliased column (`m."userId"`), checked because the SQL splices it as written. */
+export function sqlRef(ref: string): string {
+  if (!/^[a-z_][a-z0-9_]*(\."[a-z_][a-z0-9_]*")?$/i.test(ref))
+    throw new Error(`Bad SQL reference: ${ref}`);
+  return ref;
+}
+
+/**
+ * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
+ * user).
+ */
+export function heldUserSql(column: string): string {
+  const user = sqlRef(column);
+  return `(
+      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (${user})::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
+    )`;
+}
+
+/** Whether the "Image" row aliased `image` is itself in the CSAM queue or blocked as CSAM. */
+export function heldItemImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."needsReview" = 'csam' OR ${image}."blockedFor" = 'CSAM')`;
+}
+
 /**
  * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
- * is named on any CsamReport (subject or secondary user) or has an active evidence hold. The one
- * definition both routes run, as plain SQL so each app wraps it in its own builder.
+ * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
+ * its own builder.
  *
  * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the
- * placeholder owner, whose content a report naming it would otherwise open. Names the
- * "EvidenceHeldUser" view, so a database without it fails the statement, which refuses.
+ * placeholder owner, whose content a report naming it would otherwise open.
  */
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const owner = `${image}."userId"`;
+  // Keep in step with the main app's OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts): an image
+  // blocked for a reason added there and not here is still held here whenever its owner is held.
   return `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
     OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
-      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${owner})
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        -- CASE, not AND: Postgres may cast before it tests the pattern, and one bad row would fail
-        -- every request.
-        WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                   THEN (hs.details ->> 'secondaryUserId')::bigint END = ${owner}
-      )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${owner})
-    ))
+      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
 }
+
+/**
+ * Whether another image on the same stored url as the "Image" row aliased `image` is held by its
+ * own state: a live row in the CSAM queue, blocked as CSAM (`heldItemImageSql`) or listed on any
+ * CsamReport, or a moderator-deleted one that was in CSAM review or is listed. The same file must
+ * not be served through a second row. Item-level only, never the owner's, which is why it is not
+ * `heldUrlSql` (held-url.ts), whose legs also read the owner, post and model. Never NULL.
+ */
+export function sharedFileHeldImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'sf_i' || image === 'sf_d')
+    throw new Error(`Bad table alias: ${image}`);
+  return `(
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = ${image}.url AND sf_i.id <> ${image}.id
+        AND (${heldItemImageSql(
+          'sf_i'
+        )} OR (sf_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = ${image}.url AND sf_d."imageId" <> ${image}.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+    )
+  )`;
+}
+
+/** `heldImageSql`, false rather than NULL for an image with no review flag or block reason. */
+export function heldImageKnownSql(image: string): string {
+  return `COALESCE(${heldImageSql(image)}, false)`;
+}
+
+/**
+ * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
+ * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs. With
+ * `scanFlag: false` a scan flag alone does not count; with `hold: false` a hold alone does not.
+ */
+export function csamSignalImageSql(
+  image: string,
+  { scanFlag = true, hold = true }: { scanFlag?: boolean; hold?: boolean } = {}
+): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  const id = `${image}.id`;
+  const flagged = scanFlag
+    ? `
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelFlag" sf WHERE sf."itemId" = si.id AND sf.snapshot ->> 'csam' = 'true'
+        )`
+    : '';
+  return `(
+    EXISTS (
+      SELECT 1 FROM "BlockedImage" sb WHERE sb.hash = ${image}."pHash" AND sb.reason = 'CSAM'
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ScanLabelItem" si
+      WHERE si."imageId" = ${id} AND (
+        ${hold ? `si."voidReason" = 'csam-hold'` : 'false'}${flagged}
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelVote" sv WHERE sv."itemId" = si.id AND sv.reason = 'csam-realistic'
+        )
+      )
+    )
+  )`;
+}
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/** A signed 64-bit integer as SQL literal text; throws on anything else, since the text is spliced. */
+function int64Literal(value: bigint | string): string {
+  const text = String(value);
+  if (!/^-?\d{1,19}$/.test(text)) throw new Error('Bad int64');
+  const n = BigInt(text);
+  if (n < INT64_MIN || n > INT64_MAX) throw new Error('Bad int64');
+  return n.toString();
+}
+
+/**
+ * Copies blocklist CSAM entries into "BlockedImage", the table `csamSignalImageSql` reads; a row of
+ * another reason becomes CSAM. Never deletes: no unblock ends a live CSAM entry, and a stale row only
+ * keeps an image to moderators cleared for CSAM review. `null` for no hashes. Starts with
+ * @civitai/db's REDACT_LOG_MARKER, so the slow-query log never records the hashes.
+ */
+export function mirrorBlockedHashesSql(hashes: (bigint | string)[]): string | null {
+  const values = [...new Set(hashes.map(int64Literal))];
+  if (!values.length) return null;
+  return `/* log:redact */ INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
+    .map((hash) => `(${hash}, 'CSAM')`)
+    .join(', ')} ON CONFLICT (hash) DO UPDATE SET reason = EXCLUDED.reason`;
+}
+
+/** Whether the scan of the "Image" row aliased `image` has not finished, so its signals cannot be
+ *  read. A Blocked image finished its scan. */
+export function unreadableImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."ingestion"::text NOT IN ('Scanned', 'Blocked'))`;
+}
+
+/**
+ * Each blocked_images hash's newest row as (reason, disabled): argMax on created_at, where on a
+ * same-second tie a live CSAM row wins. The app's CSAM-entry readers use this same tie-break
+ * (csamBlockedHashes in both apps), so everything that reads it agrees on every row.
+ */
+export const NEWEST_BLOCKLIST_ROW_SQL = `argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false))`;
+
+/** Hashes whose newest row is a live CSAM entry. */
+export const LIVE_CSAM_SQL = `SELECT toString(hash) AS hash FROM (
+  SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest
+  FROM blocked_images
+  WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM')
+  GROUP BY hash
+) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`;
+
+/** Each image id listed on a CsamReport, as text, with that report's createdAt (a row per listing). */
+export const CSAM_REPORT_LISTINGS_SQL = `SELECT listed.id, listed."createdAt" FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id,
+      lr."createdAt"
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL`;
+
+/** A predicate on the CsamReport row aliased `alias`, as SQL text with no parameters. */
+export type CsamReportFilter = (alias: string) => string;
+
+/** Every image id listed on a CsamReport passing `filter` (on any report if none is given), as text. */
+export const csamReportListedImageIdsSql = (filter?: CsamReportFilter) => `SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le${
+      filter
+        ? `
+    WHERE ${filter('lr')}`
+        : ''
+    }
+  ) listed
+  WHERE listed.id IS NOT NULL`;
+
+/** Every image id listed on any CsamReport, whatever its state, as text. */
+export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = csamReportListedImageIdsSql();
+
+/**
+ * The users a CsamReport passing `filter` names, as its subject or its secondary user. One distinct
+ * `"userId"` text per row, never null, since the secondary user is read out of the report's details.
+ */
+export const csamReportNamedUserIdsSql = (filter: CsamReportFilter) => `
+  SELECT hc."userId"::text AS "userId"
+  FROM "CsamReport" hc
+  WHERE hc."userId" IS NOT NULL AND ${filter('hc')}
+  UNION
+  SELECT hs.details ->> 'secondaryUserId'
+  FROM "CsamReport" hs
+  WHERE hs.details ->> 'secondaryUserId' IS NOT NULL AND ${filter('hs')}
+`;
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 /** Containers every current browser plays. The codec inside is the browser's call: one it cannot

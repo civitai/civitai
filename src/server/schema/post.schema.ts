@@ -206,6 +206,11 @@ export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;
 export const reorderPostImagesSchema = z.object({
   id: z.number(),
   imageIds: z.number().array(),
+  /** The whole reading order, images and storyline text items; when given, `imageIds` is ignored. */
+  items: z
+    .object({ type: z.enum(['image', 'text']), id: z.number().int().positive() })
+    .array()
+    .optional(),
 });
 
 export const getImageMoveTargetsSchema = z.object({ fromPostId: z.number().int() });

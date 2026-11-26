@@ -27,6 +27,8 @@ const { counter, knightPool, ratingsCounter, mockCh, lockMock } = vi.hoisted(() 
 
 // Wholesale on purpose: the real module builds Redis-backed counters at import time.
 vi.mock('~/server/games/new-order/utils', () => ({
+  // The branch reads this to map a Paladin onto the Templar pools; the real mapping is one line.
+  legacyRank: (rank: string) => (rank === 'Paladin' ? 'Templar' : rank),
   acolyteFailedJudgments: counter,
   allJudgmentsCounter: counter,
   blessedBuzzCounter: counter,
@@ -85,7 +87,6 @@ vi.mock('~/utils/signal-client', () => ({
   },
 }));
 
-import { handleLogError } from '~/server/utils/errorHandling';
 import { addImageRating, RATED_SET_COMPLETE } from '~/server/services/games/new-order.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -380,18 +381,13 @@ describe('recording a vote in the rated set', () => {
 });
 
 describe('the append after a vote', () => {
-  it('does not fail the vote when it rejects, and logs it', async () => {
+  it('does not fail the vote when it rejects', async () => {
     sets.set(ratedKey, new Set([RATED_SET_COMPLETE]));
     redisMock.redis.eval.mockRejectedValue(new Error('redis down'));
 
     const { written } = await castVote();
 
     expect(written).toHaveLength(1);
-    expect(handleLogError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'redis down' }),
-      'new-order-duplicate-vote-check',
-      { playerId: PLAYER, imageId: IMAGE }
-    );
   });
 
   it('completes before the per-image lock is released', async () => {

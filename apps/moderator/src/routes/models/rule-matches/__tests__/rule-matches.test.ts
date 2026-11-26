@@ -117,6 +117,39 @@ describe('model rule matches load', () => {
   });
 });
 
+describe('model rule matches cover images', () => {
+  // The withheld read has no database here, so it withholds every cover: none may carry a key.
+  it('sends no cover key to a moderator without the grant when the withheld read fails', async () => {
+    getHoldCoverImages.mockResolvedValue(
+      new Map([
+        [
+          12,
+          {
+            images: [
+              {
+                id: 990000601,
+                url: 'cover-key',
+                nsfwLevel: 1,
+                type: 'image',
+                minor: false,
+                acceptableMinor: false,
+              },
+            ],
+            total: 1,
+          },
+        ],
+      ])
+    );
+    const data = await loadAt('');
+    expect(data.items).toEqual([
+      expect.objectContaining({
+        id: 12,
+        coverImages: [{ id: 990000601, url: '', nsfwLevel: 1, restricted: true }],
+      }),
+    ]);
+  });
+});
+
 describe('model rule matches decide', () => {
   it.each(['confirm', 'dismiss_not_subject', 'dismiss_allowed'])(
     'sends %s to the main app with the hash the moderator saw and the trimmed note',

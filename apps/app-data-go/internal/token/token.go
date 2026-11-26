@@ -1,0 +1,209 @@
+// Package token gets this service's own access token from the auth hub with the OAuth client
+// credentials grant (RFC 6749 §4.4): the service token the shared collections' level streams are
+// read with (WRITES-DESIGN.md, "Signed-out viewers"; the adapter accepts it while its service-client
+// list and its shared-level allowlist name this client). A copy of apps/app-index-go/internal/token,
+// with the comments made this service's.
+//
+// A token is fetched when first needed and kept until shortly before it expires, or until the
+// consumer reports that the registry refused it (Invalidate), whichever comes first. Errors never
+// carry the client secret or a token.
+package token
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Config names the token endpoint and the client.
+type Config struct {
+	// URL is the hub's token endpoint.
+	URL string
+	// ClientID and ClientSecret authenticate this service as an OAuth client (HTTP Basic).
+	ClientID, ClientSecret string
+	// Resource, when set, is sent as the RFC 8707 `resource` the token is for.
+	Resource string
+	// Scope, when set, is sent as `scope`.
+	Scope string
+}
+
+// ErrRefused is a token endpoint answer that refused this client (EndpointError.Refused): asking
+// again with the same credentials gets the same answer, unlike an unreachable or failing hub.
+var ErrRefused = errors.New("token endpoint refused this client")
+
+// EndpointError is a non-2xx answer from the token endpoint: its status and its OAuth `error` code
+// ("none" when it sent none, or one this service does not echo). It never carries a token or secret.
+type EndpointError struct {
+	Status int
+	Code   string
+}
+
+func (e *EndpointError) Error() string {
+	return fmt.Sprintf("token endpoint answered HTTP %d (error %s)", e.Status, e.Code)
+}
+
+// Refused reports whether the hub refused this client, a 4xx other than 429 (RFC 6749 §5.2:
+// invalid_client, unauthorized_client, invalid_scope, ...), rather than failed to answer: a 429 or a
+// 5xx is the hub's trouble, not the client's.
+func (e *EndpointError) Refused() bool {
+	return e.Status >= 400 && e.Status < 500 && e.Status != http.StatusTooManyRequests
+}
+
+// Is makes a refusing EndpointError ErrRefused.
+func (e *EndpointError) Is(target error) bool { return target == ErrRefused && e.Refused() }
+
+// Outcome names a fetch's err as the `outcome` of a fetch metric: "ok", "refused" (ErrRefused) or
+// "unavailable" (anything else: unreachable, a 429 or 5xx, an answer without a token).
+func Outcome(err error) string {
+	switch {
+	case err == nil:
+		return OutcomeOK
+	case errors.Is(err, ErrRefused):
+		return OutcomeRefused
+	default:
+		return OutcomeUnavailable
+	}
+}
+
+// The values Outcome answers.
+const (
+	OutcomeOK          = "ok"
+	OutcomeRefused     = "refused"
+	OutcomeUnavailable = "unavailable"
+)
+
+// Outcomes are every value Outcome answers.
+var Outcomes = []string{OutcomeOK, OutcomeRefused, OutcomeUnavailable}
+
+// Margin is how long before its expiry a token is replaced, so a subscription never opens with a
+// token about to run out.
+const Margin = 30 * time.Second
+
+// RequestTimeout bounds one call to the token endpoint.
+const RequestTimeout = 10 * time.Second
+
+// Source hands out this service's access token.
+type Source struct {
+	cfg  Config
+	http *http.Client
+	// Now is the clock; nil is time.Now.
+	Now func() time.Time
+	// OnFetch, when set, is called after each call to the token endpoint with its error (nil: a
+	// token was fetched).
+	OnFetch func(err error)
+
+	mu    sync.Mutex
+	tok   string
+	until time.Time
+}
+
+// New is a Source for cfg. hc nil is a client with RequestTimeout.
+func New(cfg Config, hc *http.Client) *Source {
+	if hc == nil {
+		hc = &http.Client{Timeout: RequestTimeout}
+	}
+	return &Source{cfg: cfg, http: hc}
+}
+
+func (s *Source) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+// Token is a token valid for at least Margin more, fetching one when the kept one is missing,
+// near its expiry, or was invalidated.
+func (s *Source) Token(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tok != "" && s.now().Before(s.until) {
+		return s.tok, nil
+	}
+	tok, life, err := s.fetch(ctx)
+	if s.OnFetch != nil {
+		s.OnFetch(err)
+	}
+	if err != nil {
+		return "", err
+	}
+	s.tok, s.until = tok, s.now().Add(life-Margin)
+	return tok, nil
+}
+
+// TokenExpiring is Token, and when the token expires (its kept-until time plus Margin): a stream
+// opened with it is closed before then.
+func (s *Source) TokenExpiring(ctx context.Context) (string, time.Time, error) {
+	tok, err := s.Token(ctx)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return tok, s.until.Add(Margin), nil
+}
+
+// Invalidate drops the kept token: the next Token fetches a new one.
+func (s *Source) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tok, s.until = "", time.Time{}
+}
+
+// fetch calls the token endpoint once.
+func (s *Source) fetch(ctx context.Context) (string, time.Duration, error) {
+	form := url.Values{"grant_type": {"client_credentials"}}
+	if s.cfg.Resource != "" {
+		form.Set("resource", s.cfg.Resource)
+	}
+	if s.cfg.Scope != "" {
+		form.Set("scope", s.cfg.Scope)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.URL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", 0, errors.New("token request could not be built")
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	// RFC 6749 §2.3.1: the id and secret are form-encoded before Basic encoding.
+	req.SetBasicAuth(url.QueryEscape(s.cfg.ClientID), url.QueryEscape(s.cfg.ClientSecret))
+	res, err := s.http.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", 0, ctx.Err()
+		}
+		// The error text names the URL only; it is still not echoed.
+		return "", 0, errors.New("token endpoint unreachable")
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+	var body struct {
+		AccessToken string  `json:"access_token"`
+		ExpiresIn   float64 `json:"expires_in"`
+		Error       string  `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &body)
+	if res.StatusCode/100 != 2 {
+		code := body.Error
+		if code == "" || len(code) > 64 || strings.ContainsAny(code, " \n\"") {
+			code = "none"
+		}
+		return "", 0, &EndpointError{Status: res.StatusCode, Code: code}
+	}
+	if body.AccessToken == "" {
+		return "", 0, errors.New("token endpoint answered without an access_token")
+	}
+	life := time.Duration(body.ExpiresIn * float64(time.Second))
+	if life <= Margin {
+		// Too short to keep: use it for this subscription only.
+		life = Margin
+	}
+	return body.AccessToken, life, nil
+}

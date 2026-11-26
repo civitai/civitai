@@ -607,7 +607,7 @@ export const expCounter = createCounter({
   ttl: CacheTTL.week,
 });
 
-export const poolKeys = {
+const queuePoolKeys = {
   [NewOrderRankType.Acolyte]: {
     a: [
       `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1:a`,
@@ -646,7 +646,16 @@ export const poolKeys = {
   },
 };
 
-export const poolCounters = {
+// Paladin only exists in the Knights app; the original game keeps those players in the Templar queues.
+export const legacyRank = (rank: NewOrderRankType): Exclude<NewOrderRankType, 'Paladin'> =>
+  rank === 'Paladin' ? 'Templar' : rank;
+
+export const poolKeys = {
+  ...queuePoolKeys,
+  [NewOrderRankType.Paladin]: queuePoolKeys[legacyRank('Paladin')],
+};
+
+const queuePoolCounters = {
   [NewOrderRankType.Acolyte]: {
     a: poolKeys[NewOrderRankType.Acolyte].a.map((key) =>
       createCounter({
@@ -719,6 +728,11 @@ export const poolCounters = {
       }),
     ],
   },
+};
+
+export const poolCounters = {
+  ...queuePoolCounters,
+  [NewOrderRankType.Paladin]: queuePoolCounters[legacyRank('Paladin')],
 };
 
 type NewOrderSlot = 'a' | 'b';
@@ -871,6 +885,8 @@ export type VotingRateLimitConfig = {
    * falls back to the legacy sequential drain.
    */
   poolQuotas?: Partial<Record<NewOrderRankType, number[]>>;
+  /** Validated by `parseLinkDetectionConfig`; the linking job stays off while it is absent. */
+  linkDetection?: unknown;
 };
 
 // Re-export the pure quota math from a side-effect-free module so unit tests
@@ -949,7 +965,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-unavailable',
       details: { userId, reason: 'redis-client-unavailable' },
       message: `Rate limiter denied vote for user ${userId}: Redis client unavailable`,
-    }).catch(() => null);
+    });
     return DENIED_RESPONSE;
   }
 
@@ -967,7 +983,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-config-missing',
       details: { userId, reason: 'config-not-set-using-defaults' },
       message: `new-order:config missing — rate limiter using built-in defaults for user ${userId}; re-seed the Redis config`,
-    }).catch(() => null);
+    });
   }
 
   const now = Date.now();
@@ -1061,7 +1077,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-unavailable',
       details: { userId, reason: 'redis-operation-failed', error: (error as Error).message },
       message: `Rate limiter denied vote for user ${userId}: Redis operation failed`,
-    }).catch(() => null);
+    });
     return DENIED_RESPONSE;
   }
 }

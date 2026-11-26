@@ -19,10 +19,6 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 const h = vi.hoisted(() => ({ upload: vi.fn() }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 42, username: 'tester' }),
-}));
-
 vi.mock('~/utils/consumer-blob-upload', async (importOriginal) => ({
   ...(await importOriginal<typeof BlobUploadMod>()),
   uploadConsumerBlob: h.upload,
@@ -255,7 +251,8 @@ async function mount(props: Partial<typeof baseProps> & { reviewMode?: boolean }
     <>
       <PageBlockHost {...baseProps} {...props} />
       <DialogProvider />
-    </>
+    </>,
+    { user: { id: 42, username: 'tester' } }
   );
   await vi.waitFor(() => {
     if (!iframe().contentWindow) throw new Error('not mounted yet');

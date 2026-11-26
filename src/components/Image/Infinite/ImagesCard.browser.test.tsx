@@ -1,6 +1,6 @@
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
-import type { ReactNode } from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { act, type ReactNode } from 'react';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
@@ -8,7 +8,14 @@ import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 
 const guard = { safe: true };
-const features = { stickerPlacement: true, imageCardInfoButton: false, imageGeneration: false };
+const features: Record<string, boolean> = {
+  stickerPlacement: true,
+  imageCardInfoButton: false,
+  imageGeneration: false,
+};
+const viewer = { isModerator: false };
+/** Whether the mocked CDN media refuses to load. */
+const cdn = { refuses: false, failedBeforeAttach: null as HTMLImageElement | null };
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -19,7 +26,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy() };
 });
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
+  useCurrentUser: () => ({
+    id: 1,
+    isModerator: viewer.isModerator,
+    muted: false,
+    filePreferences: {},
+  }),
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   useImagesContext: () => ({ getImages: () => [] }),
@@ -46,18 +58,33 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   RoutedDialogLink: ({ children }: { children: ReactNode }) => <>{children}</>,
   triggerRoutedDialog: () => undefined,
 }));
-vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  EdgeMedia2: () => (
-    <div
-      style={{
-        width: '100%',
-        height: '100%',
-        background: 'linear-gradient(135deg,#3b5bdb,#9c36b5)',
-      }}
-    />
-  ),
-}));
+vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => {
+  const { useEffect } = await import('react');
+  function EdgeMedia2({
+    onError,
+    mediaRef,
+  }: {
+    onError?: (e: { target: EventTarget | null }) => void;
+    mediaRef?: [HTMLImageElement | null, (img: HTMLImageElement | null) => void];
+  }) {
+    useEffect(() => {
+      if (cdn.refuses) onError?.({ target: null });
+      // As EdgeMedia does: the element, once mounted, whatever already happened to it.
+      if (cdn.failedBeforeAttach) mediaRef?.[1](cdn.failedBeforeAttach);
+    }, [onError, mediaRef]);
+    return (
+      <div
+        data-testid="cdn-mock"
+        style={{
+          width: '100%',
+          height: '100%',
+          background: 'linear-gradient(135deg,#3b5bdb,#9c36b5)',
+        }}
+      />
+    );
+  }
+  return { ...(await importOriginal<object>()), EdgeMedia2 };
+});
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {
     return <>{children(guard.safe)}</>;
@@ -86,12 +113,14 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
 }));
 
 import { ImagesCard } from './ImagesCard';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
-function imageData(s: Record<string, number>) {
+function imageData(s: Record<string, number>, extra: Record<string, unknown> = {}) {
   return {
+    ...extra,
     id: 1,
     url: 'x',
     type: MediaType.image,
@@ -231,5 +260,154 @@ describe('ImagesCard action row', () => {
       .closest('[class*="actionsFooter"]')!;
     (footer as HTMLElement).click();
     expect(onClick).not.toHaveBeenCalled();
+  });
+});
+
+describe('a scanned image the CDN refuses', () => {
+  const routeImg = () => document.querySelector('img[src="/api/mod/retracted-media/1"]');
+  const renderScanned = async () =>
+    await renderWithProviders(
+      <IntersectionObserverProvider>
+        <ImagesCard data={imageData(zero, { ingestion: 'Scanned' })} height={300} />
+      </IntersectionObserverProvider>
+    );
+  const setUp = (isModerator: boolean, cdnLeg: boolean) => {
+    viewer.isModerator = isModerator;
+    features.modRetractedMedia = true;
+    features.modRetractedMediaCdnLeg = cdnLeg;
+    cdn.refuses = true;
+  };
+  afterEach(() => {
+    viewer.isModerator = false;
+    features.modRetractedMedia = false;
+    features.modRetractedMediaCdnLeg = false;
+    cdn.refuses = false;
+    cdn.failedBeforeAttach = null;
+  });
+
+  // A server-rendered image can fail before hydration attaches onError, and that event is not replayed.
+  test("moves a moderator's card whose image failed before it was attached", async () => {
+    setUp(true, true);
+    cdn.refuses = false;
+    cdn.failedBeforeAttach = await new Promise<HTMLImageElement>((resolve) => {
+      const img = new Image();
+      img.onerror = () => resolve(img);
+      img.src = '/__missing__.png';
+    });
+    await renderScanned();
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  test("moves a moderator's card to the retracted-media route, at full opacity", async () => {
+    setUp(true, true);
+    await renderScanned();
+    await expect.poll(routeImg).not.toBeNull();
+    // Dimmed is for a blocked image; a scanned one served this way is shown as it is.
+    expect(routeImg()!.classList.contains('opacity-30')).toBe(false);
+  });
+
+  // civitai/civitai#10202: the route decides which refused scanned images it serves.
+  test("moves a moderator's card with the CDN-refusal leg off too", async () => {
+    setUp(true, false);
+    await renderScanned();
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  test('keeps everyone else on the CDN', async () => {
+    setUp(false, true);
+    await renderScanned();
+    await expect
+      .poll(() => document.querySelector('[data-testid="cdn-mock"], img[src^="/api/mod/"]'))
+      .not.toBeNull();
+    // The mock refuses in its first effect; act flushes it, so a fallback would be committed here.
+    await act(async () => undefined);
+    expect(routeImg()).toBeNull();
+  });
+});
+
+// The model page carousel's tile mirrors this card: same hook, same route, same mocks.
+describe('a model carousel tile (ImagePreview) the CDN refuses', () => {
+  const ID = 990000701;
+  const routeImg = () => document.querySelector(`img[src="/api/mod/retracted-media/${ID}"]`);
+  const cdnTile = () => document.querySelector('[data-testid="cdn-mock"]');
+  const preview = (over: Record<string, unknown> = {}) => ({
+    id: ID,
+    url: `key-${ID}`,
+    name: null,
+    type: MediaType.image,
+    width: 512,
+    height: 768,
+    hash: null,
+    ingestion: 'Scanned' as const,
+    ...over,
+  });
+  const render = async (over: Record<string, unknown> = {}) =>
+    await renderWithProviders(
+      <ImagePreview image={preview(over) as never} style={{ width: 300 }} />
+    );
+  /** The mock refuses in its first effect; act flushes it, so a fallback would be committed here. */
+  const settled = async () => {
+    await expect.poll(() => cdnTile() ?? routeImg()).not.toBeNull();
+    await act(async () => undefined);
+  };
+  const setUp = (isModerator: boolean, flag = true) => {
+    viewer.isModerator = isModerator;
+    features.modRetractedMedia = flag;
+    cdn.refuses = true;
+  };
+  afterEach(() => {
+    viewer.isModerator = false;
+    features.modRetractedMedia = false;
+    cdn.refuses = false;
+    cdn.failedBeforeAttach = null;
+  });
+
+  test("moves a moderator's scanned image to the retracted-media route", async () => {
+    setUp(true);
+    await render();
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  // A server-rendered image can fail before hydration attaches onError, and that event is not replayed.
+  test("moves a moderator's image that failed before it was attached", async () => {
+    setUp(true);
+    cdn.refuses = false;
+    cdn.failedBeforeAttach = await new Promise<HTMLImageElement>((resolve) => {
+      const img = new Image();
+      img.onerror = () => resolve(img);
+      img.src = '/__missing__.png';
+    });
+    await render();
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  test('loads a blocked image from the route from the start', async () => {
+    setUp(true);
+    cdn.refuses = false;
+    await render({ ingestion: 'Blocked' });
+    await expect.poll(routeImg).not.toBeNull();
+    expect(cdnTile()).toBeNull();
+  });
+
+  test('keeps everyone else on the CDN', async () => {
+    setUp(false);
+    await render();
+    await settled();
+    expect(routeImg()).toBeNull();
+  });
+
+  test('keeps a moderator on the CDN while the flag is off', async () => {
+    setUp(true, false);
+    await render();
+    await settled();
+    expect(routeImg()).toBeNull();
+  });
+
+  // The other callers pass images without `ingestion`; they keep the CDN as before.
+  test('keeps an image with no ingestion on the CDN', async () => {
+    setUp(true);
+    await render({ ingestion: undefined });
+    await settled();
+    expect(routeImg()).toBeNull();
   });
 });

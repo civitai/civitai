@@ -112,6 +112,7 @@ const REMIX_MENU_APPS = SEED_REMIX_APPS.map(({ slug, name, description, target, 
   target,
   icon: spec.icon,
   enabled: true,
+  inReview: false,
   engine: 'engine' in spec ? spec.engine : DEFAULT_ENGINE,
   output: 'image' as const,
 }));
@@ -180,6 +181,19 @@ describe('Remix apps in the Remix menu', () => {
     await expect
       .element(page.getByRole('menuitem', { name: runtimeApp.name }))
       .not.toBeInTheDocument();
+  });
+
+  test("lists the viewer's own app in review, marked so, beside the enabled ones", async () => {
+    h.apps = [{ ...firstApp, enabled: false, inReview: true }, { ...REMIX_MENU_APPS[2] }];
+    renderMenu(video);
+    await page.getByRole('button', { name: 'Remix' }).click();
+
+    await expect
+      .element(page.getByRole('menuitem', { name: new RegExp(firstApp.name) }))
+      .toHaveTextContent('In review: only you can run it');
+    await expect
+      .element(page.getByRole('menuitem', { name: REMIX_MENU_APPS[2].name }))
+      .not.toHaveTextContent('In review');
   });
 
   test('with the flag off the sole option runs without a menu', async () => {

@@ -1,10 +1,8 @@
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
-import { getWorkflow } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from './db';
 import {
   getManagerWorkflow,
-  getOrchestratorClient,
   probeOrchestratorBlob,
   type BlobProbe,
   releaseModerationGate,
@@ -18,6 +16,7 @@ import { logToAxiom } from './axiom';
 import { getClickhouse } from './clickhouse';
 import { TRAINING_STEP_TYPES } from './training-orchestration.service';
 import { usersByIds } from './users.service';
+import { withheldUrls } from './retracted-media';
 import { mapBounded, someBounded } from './bounded';
 import { MAX_INT4, parseWorkflowId, type ParsedWorkflowId } from './workflow-id';
 export { parseWorkflowId, type ParsedWorkflowId };
@@ -85,6 +84,8 @@ export type TrainingFeedQuery = {
   dateFrom?: Date;
   dateTo?: Date;
   cannotPublish?: boolean;
+  /** Whose view this is: an owner's legacy profile image withheld from them is sent as null. */
+  viewer: App.Locals['user'] | undefined;
 };
 
 export type TrainingFeedFile = {
@@ -244,8 +245,17 @@ export async function getTrainingModelsFeed(query: TrainingFeedQuery): Promise<{
     versionsByModel.set(modelId, list);
   }
 
+  const withheldAvatars = await withheldUrls(
+    models.map((m) => m.userImage),
+    query.viewer,
+    'training-models'
+  );
   return {
-    items: models.map((m) => ({ ...m, versions: versionsByModel.get(m.id) ?? [] })),
+    items: models.map((m) => ({
+      ...m,
+      userImage: m.userImage && withheldAvatars.has(m.userImage) ? null : m.userImage,
+      versions: versionsByModel.get(m.id) ?? [],
+    })),
     nextCursor: models.length === limit ? models[models.length - 1].id : undefined,
   };
 }
@@ -370,9 +380,16 @@ export type TrainingReviewRow = PausedTrainingRow & {
   checked: boolean;
 };
 
+export type ClosedTrainingRow = PausedTrainingRow & {
+  /** What the run and its gate report, for the moderator. */
+  reason: string;
+};
+
 export type TrainingReviewQueue = {
-  /** Under review first, then the rest; oldest first within each. */
+  /** Rows a moderator can act on: under review first, then the unchecked; oldest first within each. */
   items: TrainingReviewRow[];
+  /** Paused, but the orchestrator answered that the gate is no longer under review: nothing to rule. */
+  closed: ClosedTrainingRow[];
   /** At least one row could not be checked; those are listed unchecked. */
   workflowFilterUnavailable: boolean;
   /** A read did not answer (as opposed to answering with something unreadable): worth retrying. */
@@ -385,7 +402,8 @@ export type TrainingReviewQueue = {
 export const MAX_PAUSED_VERSIONS = 300;
 
 /**
- * Every Paused version whose gate's workflow the orchestrator still has.
+ * Every Paused version whose gate's workflow the orchestrator still has, split by whether that gate is
+ * still under review: a closed one is listed apart, with nothing to rule on.
  *
  * The orchestrator round-trip is NOT incidental. A paused version whose workflow has expired can never
  * be approved — the gate is gone — so listing it gives the moderator a row whose every button
@@ -417,7 +435,13 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
   const truncated = fetched.length > MAX_PAUSED_VERSIONS;
   const rows = fetched.slice(0, MAX_PAUSED_VERSIONS).sort((a, b) => a.id - b.id);
   if (!rows.length)
-    return { items: [], workflowFilterUnavailable: false, unanswered: false, truncated };
+    return {
+      items: [],
+      closed: [],
+      workflowFilterUnavailable: false,
+      unanswered: false,
+      truncated,
+    };
 
   // The gate's picker, as the version route releases with: the scored one returns a version's
   // finished run, and the queue would check a workflow other than the one Approve acts on.
@@ -453,17 +477,29 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
     { concurrency: PENDING_READ_CONCURRENCY, budgetMs: PENDING_READ_BUDGET_MS }
   );
 
-  const classified = withWorkflow.flatMap((row, i): TrainingReviewRow[] => {
+  const classified: TrainingReviewRow[] = [];
+  const closed: ClosedTrainingRow[] = [];
+  withWorkflow.forEach((row, i) => {
     const read = reads[i];
-    if (read?.kind === 'gone') return [];
+    if (read?.kind === 'gone') return;
     const reading = read?.kind === 'read' ? read.reading : null;
-    return [{ ...row, underReview: reading?.underReview ?? false, checked: reading !== null }];
+    // Closed only on a run that names this version: the file's workflow id is the owner's to write, and
+    // Approve refuses a run that does not belong — that refusal must stay reachable.
+    if (reading && !reading.underReview && reading.claimedModelVersionId === row.id)
+      closed.push({ ...row, reason: closedGateReason(reading) });
+    else
+      classified.push({
+        ...row,
+        underReview: reading?.underReview ?? false,
+        checked: reading !== null,
+      });
   });
   return {
     items: [
       ...classified.filter((r) => r.underReview),
       ...classified.filter((r) => !r.underReview),
     ],
+    closed,
     workflowFilterUnavailable: classified.some((r) => !r.checked),
     unanswered: reads.some((r) => r === undefined),
     truncated,
@@ -496,9 +532,9 @@ export type TrainingVersionDetail = {
   jobId: string | null;
   trainingResults: TrainingResults;
   /** Set only for a Training Studio run, whose dataset is per-item blobs on this workflow (its
-   *  `Training Data` row points at the trained model). Read from model meta, not file metadata,
-   *  which the owner can edit, and must match this version's own run: the model's other versions
-   *  may be ordinary zip runs. */
+   *  `Training Data` row points at the trained model). Read from version or model meta, not file
+   *  metadata, which the owner can edit, and must match this version's own run: the model's other
+   *  versions may be ordinary zip runs. */
   studioWorkflowId: string | null;
 };
 
@@ -521,20 +557,25 @@ export async function getTrainingVersionDetail(
       'm.name as modelName',
       'u.id as userId',
       'u.username',
-      sql<string | null>`m.meta->>'trainingStudioWorkflowId'`.as('modelStudioWorkflowId'),
+      // The version's own link, else its model's (a draft made before versions carried one).
+      sql<
+        string | null
+      >`COALESCE(mv.meta->>'trainingStudioWorkflowId', m.meta->>'trainingStudioWorkflowId')`.as(
+        'linkedStudioWorkflowId'
+      ),
     ])
     .where('mv.id', '=', versionId)
     .executeTakeFirst();
   if (!version) return null;
 
   const trainingResults = await getTrainingResults(versionId);
-  const { modelStudioWorkflowId, ...rest } = version;
+  const { linkedStudioWorkflowId, ...rest } = version;
 
   return {
     ...rest,
     studioWorkflowId:
-      modelStudioWorkflowId && trainingResults?.workflowId === modelStudioWorkflowId
-        ? modelStudioWorkflowId
+      linkedStudioWorkflowId && trainingResults?.workflowId === linkedStudioWorkflowId
+        ? linkedStudioWorkflowId
         : null,
     workflowId: trainingResults?.workflowId ?? null,
     jobId: trainingResults?.jobId ?? null,
@@ -601,11 +642,13 @@ export async function moderateTrainingData(input: {
   const workflowId = trainingResults?.workflowId;
   if (!workflowId) return { ok: false, error: 'No workflow id on this version.' };
 
-  const { data: workflow, error } = await getWorkflow({
-    client: getOrchestratorClient(),
-    path: { workflowId },
-  });
-  if (error || !workflow) return { ok: false, error: `Could not load workflow ${workflowId}.` };
+  const loaded = await getManagerWorkflow(workflowId);
+  if (!loaded.ok)
+    return { ok: false, error: `Could not load workflow ${workflowId}: ${loaded.error}` };
+  const workflow = (loaded.workflow ?? {}) as RawWorkflow;
+  // The manager API writes PascalCase; the webhook takes the consumer API's camelCase, and every
+  // workflow status is one word.
+  const status = str(workflow.status)?.toLowerCase();
 
   // Checked BEFORE the gate is released, because both are knowable from what we already hold and
   // neither is recoverable afterwards: releasing a gate we cannot then record leaves the version Paused
@@ -616,7 +659,7 @@ export async function moderateTrainingData(input: {
       error:
         'WEBHOOK_TOKEN is not configured, so the approval could not be recorded. Nothing was changed.',
     };
-  if (!workflow.status)
+  if (!status)
     return {
       ok: false,
       error: `Workflow ${workflowId} reports no status, so the approval could not be recorded. Nothing was changed.`,
@@ -624,11 +667,17 @@ export async function moderateTrainingData(input: {
   // The workflow id lives in ModelFile.metadata, which the model's OWNER can write, so on its own it
   // does not establish that this workflow is the one this version submitted. The tag is written by
   // the main app at submit time and the reviewed user cannot set it.
-  if (!workflow.tags?.includes(`modelVersion:${input.modelVersionId}`))
+  if (!tagsOf(workflow).includes(`modelVersion:${input.modelVersionId}`))
     return {
       ok: false,
       error: `Workflow ${workflowId} does not belong to model version ${input.modelVersionId}, so the gate was not touched. Escalate this — it should not happen.`,
     };
+  // After the tag check, so a reading of some other version's run cannot pass for this gate.
+  // Refused only when the orchestrator says the gate is closed: a run it answered unreadably goes on
+  // to the release, which refuses a closed gate itself.
+  const read = readTrainingWorkflow(workflowId, workflow);
+  if (read.ok && !read.reading.underReview)
+    return { ok: false, error: `${closedGateReason(read.reading)} Nothing was changed.` };
 
   const released = await releaseModerationGate(workflowId, input.approve);
   if (!released.ok) return released;
@@ -650,7 +699,7 @@ export async function moderateTrainingData(input: {
     moderatorId: input.moderatorId,
   });
 
-  const synced = await notifyTrainingWebhook(input.modelVersionId, workflowId, workflow.status);
+  const synced = await notifyTrainingWebhook(input.modelVersionId, workflowId, status);
   // Again: a build during the webhook still saw the version Paused and under review.
   invalidateTrainingReviewQueue();
   if (!synced) {
@@ -1214,9 +1263,9 @@ export async function moderateTrainingWorkflow(
   return { ok: true, moderationStatus: after };
 }
 
-/** How far back a pending gate can have been submitted: the longest default gate window plus slack for
- *  ledger ingestion. A run older than this has expired and been refunded. */
-const PENDING_WINDOW_MS = 49 * 3_600_000;
+/** How far back a pending gate can have been CHARGED. Must exceed the longest `DEFAULT_GATE_WINDOW_MS`:
+ *  the gate window runs from the step's start, not from the charge, so queue wait extends it. */
+const PENDING_WINDOW_MS = 72 * 3_600_000;
 /** Workflows read from the orchestrator per page load. Exported for tests. */
 export const MAX_PENDING_CANDIDATES = 300;
 const PENDING_READ_CONCURRENCY = 8;
@@ -1235,6 +1284,59 @@ type QueueRead =
   | { kind: 'read'; reading: WorkflowReading }
   /** Answered, but not a training run this app can read. */
   | { kind: 'unreadable' };
+
+function closedGateReason(reading: WorkflowReading): string {
+  return `The gate is not under review (run: ${
+    reading.status?.toLowerCase() ?? 'no status'
+  }, gate: ${reading.moderationStatus ?? 'no moderation status'}).`;
+}
+
+export type TrainingGateState =
+  | { state: 'open' }
+  /** The orchestrator says so, or there is no workflow to ask about: Approve and Deny cannot act. */
+  | { state: 'closed'; reason: string }
+  /** Not confirmed either way. The actions stay available: a failed read must not block a ruling. */
+  | { state: 'unknown'; reason: string };
+
+/**
+ * Whether a version's gate can still be ruled on, from the file and the manager read Approve acts on.
+ * Decided by the orchestrator, not `trainingStatus`, which a webhook copies from it and can lag.
+ * Never rejects.
+ */
+export async function getTrainingGateState(versionId: number): Promise<TrainingGateState> {
+  try {
+    const workflowId = (await getGateTrainingResults(versionId))?.workflowId;
+    if (!workflowId)
+      return { state: 'closed', reason: 'This version has no training workflow to rule on.' };
+    const read = await readForQueue(workflowId);
+    if (!read)
+      return {
+        state: 'unknown',
+        reason: 'The orchestrator did not answer, so the gate could not be confirmed open.',
+      };
+    if (read.kind === 'gone')
+      return {
+        state: 'closed',
+        reason: `Workflow ${workflowId} is gone: its gate expired or was removed.`,
+      };
+    if (read.kind === 'unreadable')
+      return {
+        state: 'unknown',
+        reason: `Workflow ${workflowId} could not be read as a training run, so the gate could not be confirmed open.`,
+      };
+    if (read.reading.underReview) return { state: 'open' };
+    // As in the queue: a run that does not name this version is left to Approve to refuse.
+    if (read.reading.claimedModelVersionId !== versionId)
+      return {
+        state: 'unknown',
+        reason: `Workflow ${workflowId} does not name this version, so its gate could not be confirmed.`,
+      };
+    return { state: 'closed', reason: closedGateReason(read.reading) };
+  } catch (e) {
+    console.error('[training-data] gate check failed', e);
+    return { state: 'unknown', reason: 'The gate could not be checked.' };
+  }
+}
 
 /** One queue row's workflow, through the manager read. Undefined when the orchestrator did not answer. */
 async function readForQueue(workflowId: string): Promise<QueueRead | undefined> {

@@ -9,16 +9,20 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 }));
 
 /**
- * A taken-down model's search document carries no images, nor do the collection covers drawn from
- * them. Entering or leaving TakenDown queues the model's document and its collections; another
- * change of mode queues the model's document only, and an edit that leaves the mode alone neither.
+ * A taken-down model has no search document, and the collection covers drawn from its images skip
+ * them. Entering TakenDown deletes the model's document and queues its collections; leaving it
+ * rewrites both; another change of mode rewrites the model's document only, and an edit that leaves
+ * the mode alone queues neither.
  */
 
-const { modelsSearchIndex, collectionsSearchIndex } = await import('~/server/search-index');
+const { modelsSearchIndex, collectionsSearchIndex, articlesSearchIndex } = await import(
+  '~/server/search-index'
+);
 const { changeModelModifierHandler } = await import('../model.controller');
 type ModHandler = { handler: (input: { modelId: number }, ctx: unknown) => Promise<unknown> };
-const takeDown = (await import('~/pages/api/mod/model/take-down')).default as unknown as ModHandler;
-const bringBack = (await import('~/pages/api/mod/model/bring-back'))
+const takeDown = (await import('~/server/api-routes/mod/model/take-down'))
+  .default as unknown as ModHandler;
+const bringBack = (await import('~/server/api-routes/mod/model/bring-back'))
   .default as unknown as ModHandler;
 const { setModelShowcaseCollection, updateModelById } = await import(
   '~/server/services/model.service'
@@ -27,15 +31,18 @@ const { setModelShowcaseCollection, updateModelById } = await import(
 const MODEL = 1;
 const OWNER = 5;
 const COLLECTION = 9;
+const ARTICLE = 11;
 let mode: string | null;
 
 const queued = vi.spyOn(modelsSearchIndex, 'queueUpdate');
 const collectionsQueued = vi.spyOn(collectionsSearchIndex, 'queueUpdate');
+const articlesQueued = vi.spyOn(articlesSearchIndex, 'queueUpdate');
 
 beforeEach(() => {
   vi.clearAllMocks();
   queued.mockResolvedValue(undefined as never);
   collectionsQueued.mockResolvedValue(undefined as never);
+  articlesQueued.mockResolvedValue(undefined as never);
   mode = null;
   const row = () => ({ id: MODEL, userId: OWNER, status: 'Published', mode, meta: {} });
   for (const db of [dbMock.dbRead, dbMock.dbWrite]) {
@@ -48,6 +55,8 @@ beforeEach(() => {
       const sql = strings.join('?');
       if (sql.includes('pg_class')) return [{ present: true }];
       if (sql.includes('"CollectionItem"')) return [{ collectionId: COLLECTION }];
+      // The articles whose cover or banner is one of the model's images.
+      if (sql.includes('FROM "Article" a WHERE a."coverId"')) return [{ id: ARTICLE }];
       return [];
     }) as never);
   dbMock.dbWrite.model.update.mockImplementation((async ({ data }: { data: object }) => ({
@@ -60,14 +69,22 @@ beforeEach(() => {
 const ctx = (isModerator = false) =>
   ({ user: { id: OWNER, isModerator }, track: { modelEvent: vi.fn() } } as never);
 const actor = { actor: { id: 7 }, tracker: { modelEvent: vi.fn() } };
-const reindexed = () =>
+const queuedAs = (action: SearchIndexUpdateQueueAction) =>
   queued.mock.calls.some(([items]) =>
     items.some(
       (item) =>
-        (item as { id: number }).id === MODEL &&
-        (item as { action?: string }).action === SearchIndexUpdateQueueAction.Update
+        (item as { id: number }).id === MODEL && (item as { action?: string }).action === action
     )
   );
+const reindexed = () => queuedAs(SearchIndexUpdateQueueAction.Update);
+const queuedActions = () =>
+  queued.mock.calls.flatMap(([items]) =>
+    items
+      .filter((item) => (item as { id: number }).id === MODEL)
+      .map((item) => (item as { action?: string }).action)
+  );
+const removedFromSearch = () =>
+  queuedAs(SearchIndexUpdateQueueAction.Delete) && !queuedAs(SearchIndexUpdateQueueAction.Update);
 
 const collectionRebuilt = () =>
   collectionsQueued.mock.calls.some(([items]) =>
@@ -78,20 +95,29 @@ const collectionRebuilt = () =>
     )
   );
 
+const articleRebuilt = () =>
+  articlesQueued.mock.calls.some(([items]) =>
+    items.some(
+      (item) =>
+        (item as { id: number }).id === ARTICLE &&
+        (item as { action?: string }).action === SearchIndexUpdateQueueAction.Update
+    )
+  );
+
 // The collection rebuild runs after the response; let it settle before reading what it queued.
 const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 describe("a change of a model's mode", () => {
-  it('reindexes the model when a moderator takes it down', async () => {
+  it('removes the model from search when a moderator takes it down', async () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: 'TakenDown' }, ctx: ctx(true) });
-    expect(reindexed()).toBe(true);
+    expect(removedFromSearch()).toBe(true);
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
 
-  it('reindexes the model when it is taken down in the moderator app', async () => {
+  it('removes the model from search when it is taken down in the moderator app', async () => {
     await takeDown.handler({ modelId: MODEL }, actor);
-    expect(reindexed()).toBe(true);
+    expect(removedFromSearch()).toBe(true);
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
@@ -100,9 +126,24 @@ describe("a change of a model's mode", () => {
     mode = 'TakenDown';
     await bringBack.handler({ modelId: MODEL }, actor);
     expect(reindexed()).toBe(true);
+    expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
+
+  it.each([
+    ['takes it down', null, 'TakenDown', true],
+    ['brings it back', 'TakenDown', null, true],
+    ['archives it', null, 'Archived', false],
+  ] as const)(
+    '🔴 when a moderator %s, rebuilds the articles its images cover only into or out of TakenDown',
+    async (_, from, to, rebuilt) => {
+      mode = from;
+      await changeModelModifierHandler({ input: { id: MODEL, mode: to } as never, ctx: ctx(true) });
+      await settled();
+      expect(articleRebuilt()).toBe(rebuilt);
+    }
+  );
 
   it('does not reindex on an edit that leaves the mode alone', async () => {
     await setModelShowcaseCollection({ id: MODEL, collectionId: null, userId: OWNER });
@@ -119,21 +160,23 @@ describe("a change of a model's mode", () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: to } as never, ctx: ctx() });
     await settled();
     expect(reindexed()).toBe(true);
+    // Archived stays searchable.
+    expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
     expect(collectionRebuilt()).toBe(false);
   });
 
   // Prisma's `{ set }` form says the same as a bare value.
   it.each([
-    ['takes it down', 'TakenDown', true],
-    ['archives it', 'Archived', false],
-  ])('reads the set form when a locked write %s', async (_, to, rebuilt) => {
+    ['takes it down', 'TakenDown', SearchIndexUpdateQueueAction.Delete, true],
+    ['archives it', 'Archived', SearchIndexUpdateQueueAction.Update, false],
+  ])('reads the set form when a locked write %s', async (_, to, action, rebuilt) => {
     await updateModelById({
       id: MODEL,
       data: { mode: { set: to as never } },
       meta: (stored) => stored ?? {},
     });
     await settled();
-    expect(reindexed()).toBe(true);
+    expect(queuedActions()).toEqual([action]);
     expect(collectionRebuilt()).toBe(rebuilt);
   });
 

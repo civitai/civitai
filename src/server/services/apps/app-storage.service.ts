@@ -332,6 +332,7 @@ async function resolveStorageContext(
   privateRun: boolean;
 }> {
   const resolved = await resolveBlockToken(blockToken, {
+    admitRunner: false,
     // Per-instance revocation FIRST. A token's signature and expiry say nothing about the
     // install, so without this an uninstall or a mod toggling the instance off leaves every
     // already-minted token reading and writing until natural expiry. A publisher ban writes
@@ -764,9 +765,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       // `increase()`/`rate()` over a window with no new writes, never the
       // series itself.
       appStorageUserQuotaUntrackedCounter.inc({ app_block_id: appBlockId });
-      logToAxiom({ event: 'user_quota_relation_missing', appBlockId, slug }, STORAGE_LOG).catch(
-        () => undefined
-      );
+      logToAxiom({ event: 'user_quota_relation_missing', appBlockId, slug }, STORAGE_LOG);
     }
     const usedBytes = Number(quotaRows[0]?.used_bytes ?? '0');
     const rowCount = Number(quotaRows[0]?.row_count ?? '0');
@@ -894,9 +893,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
           key: key,
         },
         STORAGE_LOG
-      ).catch(() => {
-        // swallow — best-effort logging must never break the quota refusal it is observing.
-      });
+      );
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'app quota exceeded',
@@ -958,7 +955,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
           key: key,
         },
         STORAGE_LOG
-      ).catch(() => undefined);
+      );
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'per-user storage quota exceeded',
@@ -1023,9 +1020,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
         isInsert,
       },
       STORAGE_LOG
-    ).catch(() => {
-      // swallow — best-effort logging must never break the write it is observing.
-    });
+    );
     // User-facing audit: unify the W4 storage feed into the same Activity
     // tab that surfaces workflow + scope events. Axiom log above stays
     // for ops/debug visibility; this row populates /apps/activity.
@@ -1107,9 +1102,7 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
             key: key,
           },
           STORAGE_LOG
-        ).catch(() => {
-          // swallow — best-effort logging must never break the delete it is observing.
-        });
+        );
         // User-facing audit row — only on actual deletion (a no-op
         // delete shouldn't appear in the user's activity feed).
         void (async () => {

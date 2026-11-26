@@ -1,8 +1,8 @@
-import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import type { EventInput } from '~/server/schema/event.schema';
 import {
+  donateToEventSchema,
   eventCosmeticScoresSchema,
   eventSchema,
   placeableContentPageSchema,
@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/event.schema';
 import { markEventPointsWatched } from '~/server/events/points/watch.service';
 import { eventUserOf, eventViewerOf } from '~/server/events/event-viewer';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import {
   activateEventCosmetic,
   donate,
@@ -32,6 +33,7 @@ import {
   getEventCosmeticScores,
   getEventHatCatalog,
   getMyEventHats,
+  getMyEventHatPlacementStats,
   getPlaceableEventContent,
   getPlaceableEventContentPage,
   getWornEventHat,
@@ -125,7 +127,7 @@ export const eventRouter = router({
     .mutation(({ ctx, input }) => activateEventCosmetic({ user: eventUserOf(ctx), ...input })),
   donate: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
-    .input(eventSchema.extend({ amount: z.number() }))
+    .input(donateToEventSchema)
     .mutation(({ input, ctx }) => donate({ userId: ctx.user.id, ...input })),
   getDonors: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -196,15 +198,33 @@ export const eventRouter = router({
   getMyHats: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyEventHats({ user: eventUserOf(ctx), ...input })),
+    .query(({ ctx, input }) =>
+      getMyEventHats({ user: eventUserOf(ctx), asOwner: isSessionOrFullUserKey(ctx), ...input })
+    ),
+  getMyHatPlacementStats: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyEventHatPlacementStats({ user: eventUserOf(ctx), ...input })),
   getPlaceableContent: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getPlaceableEventContent({ user: eventUserOf(ctx), ...input })),
+    .query(({ ctx, input }) =>
+      getPlaceableEventContent({
+        user: eventUserOf(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
+        ...input,
+      })
+    ),
   getPlaceableContentPage: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(placeableContentPageSchema)
-    .query(({ ctx, input }) => getPlaceableEventContentPage({ user: eventUserOf(ctx), ...input })),
+    .query(({ ctx, input }) =>
+      getPlaceableEventContentPage({
+        user: eventUserOf(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
+        ...input,
+      })
+    ),
   // Marks live point topics as on screen, so the pusher sends them (events/points/watch.ts). Called on
   // view and every 30s while in view; no Postgres on this path. A page refreshing its sections makes
   // about 6 a minute, plus one per section scrolled into view and one per 50 hats; anonymous viewers

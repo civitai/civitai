@@ -5,9 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { isFlipt } from '../flipt/client';
 
 const logError = (name: string, details: Record<string, unknown>) => {
-  logToAxiom({ type: 'error', name, details }, 'clickhouse').catch(() => {
-    // Ignore logging failures
-  });
+  logToAxiom({ type: 'error', name, details }, 'clickhouse');
 };
 
 /**

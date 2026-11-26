@@ -107,6 +107,7 @@ export const appListingNotifications = createNotificationProcessor({
     displayName: 'App listing not approved',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppListingModerationNotificationDetails;
       return {
@@ -159,6 +160,7 @@ export const appListingNotifications = createNotificationProcessor({
     displayName: 'App listing needs re-review',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppListingModerationNotificationDetails;
       return {

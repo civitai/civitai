@@ -441,18 +441,21 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       JSONB_BUILD_OBJECT(
       'version', 3,
       'commentId', c.id,
-      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END,
+      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE c."entityId" END,
       'threadType', CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
       WHEN 'model3dReview' THEN 'comment'
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'postTextId', ptx.id,
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
       WHEN 'model3dReview' THEN 'comment'
       ELSE c."entityType"::text
@@ -464,13 +467,34 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       JOIN "User" u ON c."userId" = u.id
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
+      LEFT JOIN "PostText" ptx ON c."entityType" = 'postText' AND ptx.id = c."entityId"
+      LEFT JOIN LATERAL (
+      SELECT i.id FROM "Image" i
+      WHERE ptx.id IS NOT NULL AND i."postId" = ptx."postId"
+      AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+      AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
+      ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
+      CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
+      CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -i.id ELSE i.id END
+      LIMIT 1
+      ) pti ON true
       WHERE NOT (c."entityType" = 'model')
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."entityType"::text <> 'featurePage'
       AND c."userId" != pc."userId"
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published' AND da."userId" <> pc."userId"
+      AND (da.status <> 'Published' OR da.availability = 'Private') AND da."userId" <> pc."userId"
+      )
+      AND NOT EXISTS (
+      SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
+      WHERE c."entityType" = 'postText' AND ht.id = c."entityId"
+      AND (ht.refused OR ht."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = ht.id AND th.label = 'csam' AND th.status = 'Pending') OR (
+      (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
+      OR hp."nsfwLevel" = 0) AND hp."userId" <> pc."userId"
+      ))
       )
       AND NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -564,18 +588,21 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ) ELSE JSONB_BUILD_OBJECT(
       'version', 3,
       'commentId', c.id,
-      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END,
+      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE c."entityId" END,
       'threadType', CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
       WHEN 'model3dReview' THEN 'comment'
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'postTextId', ptx.id,
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
       WHEN 'model3dReview' THEN 'comment'
       ELSE c."entityType"::text
@@ -588,17 +615,38 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "Model" m ON (c."entityType" = 'model') AND m.id = c."entityId"
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
+      LEFT JOIN "PostText" ptx ON c."entityType" = 'postText' AND ptx.id = c."entityId"
+      LEFT JOIN LATERAL (
+      SELECT i.id FROM "Image" i
+      WHERE ptx.id IS NOT NULL AND i."postId" = ptx."postId"
+      AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+      AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
+      ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
+      CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
+      CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -i.id ELSE i.id END
+      LIMIT 1
+      ) pti ON true
       WHERE c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."entityType"::text <> 'featurePage'
       AND (NOT (c."entityType" = 'model') OR c."parentId" IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm
       WHERE c."entityType" = 'model' AND hm.id = c."entityId"
       AND (hm.status <> 'Published' OR hm.poi)
+      )
+      AND NOT EXISTS (
+      SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
+      WHERE c."entityType" = 'postText' AND ht.id = c."entityId"
+      AND (ht.refused OR ht."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = ht.id AND th.label = 'csam' AND th.status = 'Pending') OR (
+      (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
+      OR hp."nsfwLevel" = 0)
+      ))
       )
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
@@ -635,18 +683,21 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ) ELSE JSONB_BUILD_OBJECT(
       'version', 3,
       'commentId', c.id,
-      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END,
+      'threadParentId', CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE c."entityId" END,
       'threadType', CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
       WHEN 'model3dReview' THEN 'comment'
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'postTextId', ptx.id,
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
+      WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
       WHEN 'model3dReview' THEN 'comment'
       ELSE c."entityType"::text
@@ -660,23 +711,44 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "Model" m ON (c."entityType" = 'model') AND m.id = c."entityId"
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
+      LEFT JOIN "PostText" ptx ON c."entityType" = 'postText' AND ptx.id = c."entityId"
+      LEFT JOIN LATERAL (
+      SELECT i.id FROM "Image" i
+      WHERE ptx.id IS NOT NULL AND i."postId" = ptx."postId"
+      AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+      AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
+      ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
+      CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
+      CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -i.id ELSE i.id END
+      LIMIT 1
+      ) pti ON true
       WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
-      AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
+      AND (c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes' OR c."updatedAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes')
       AND c."tosViolation" = false
       AND c.hidden IS NOT TRUE
       AND c."deletedAt" IS NULL
+      AND c."entityType"::text <> 'featurePage'
       AND c.content LIKE '%"mention:%'
       AND (NOT (c."entityType" = 'model') OR m."userId" > 0)
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm
       WHERE c."entityType" = 'model' AND hm.id = c."entityId"
       AND (hm.status <> 'Published' OR hm.poi)
+      )
+      AND NOT EXISTS (
+      SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
+      WHERE c."entityType" = 'postText' AND ht.id = c."entityId"
+      AND (ht.refused OR ht."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = ht.id AND th.label = 'csam' AND th.status = 'Pending') OR (
+      (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
+      OR hp."nsfwLevel" = 0)
+      ))
       )
       UNION
       SELECT DISTINCT
@@ -691,7 +763,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       FROM "Model" m
       JOIN "User" u ON m."userId" = u.id
       WHERE m."userId" > 0
-      AND (m."publishedAt" > '2026-01-01T00:00:00.000Z' OR m."updatedAt" > '2026-01-01T00:00:00.000Z')
+      AND (m."publishedAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes' OR m."updatedAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes')
       AND m.description LIKE '%"mention:%'
       AND m.status = 'Published'
       UNION
@@ -727,7 +799,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ORDER BY x.first_at
       LIMIT 10
       ) am
-      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'
+      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes'
       AND a.status = 'Published'
       AND a.ingestion = 'Scanned'
       AND a."publishedAt" > now() - interval '30 days'

@@ -1,9 +1,9 @@
+import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Text } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { safeInternalPath } from '~/utils/url-helpers';
 
@@ -25,12 +25,12 @@ export function DeletePostButton({
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { mutate, isPending: isLoading } = trpc.post.delete.useMutation({
-    async onSuccess(_, { id }) {
-      // router.push('/posts');
-      showSuccessNotification({
-        title: 'Post deleted',
-        message: 'Successfully deleted post',
-      });
+    async onSuccess(result, { id }) {
+      if (!notifyDeleteNotice(result))
+        showSuccessNotification({
+          title: 'Post deleted',
+          message: 'Successfully deleted post',
+        });
       if (returnUrl) router.replace(returnUrl);
       else if (currentUser?.username) router.replace(`/user/${currentUser.username}/posts`);
       else router.replace('/posts');
@@ -45,21 +45,18 @@ export function DeletePostButton({
   });
 
   const onClick = () => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete Post',
-        message: (
-          <Text>
-            Are you sure you want to delete this post? The images in this post{' '}
-            <strong>will also be deleted</strong>.
-          </Text>
-        ),
-        labels: { cancel: `Cancel`, confirm: `Delete Post` },
-        confirmProps: { color: 'red' },
-        onConfirm: () => {
-          mutate({ id: postId });
-        },
+    openConfirm({
+      title: 'Delete Post',
+      message: (
+        <Text>
+          Are you sure you want to delete this post? The images in this post{' '}
+          <strong>will also be deleted</strong>.
+        </Text>
+      ),
+      labels: { cancel: `Cancel`, confirm: `Delete Post` },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        mutate({ id: postId });
       },
     });
   };

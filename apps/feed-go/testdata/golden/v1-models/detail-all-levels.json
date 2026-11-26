@@ -1,0 +1,1227 @@
+{
+  "name": "detail-all-levels",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "imageLocation": "https://image.example.test/golden",
+    "baseUrl": "https://site.example.test",
+    "coverageNext": false,
+    "baseModelFeedMetrics": false,
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
+  },
+  "request": {
+    "path": "/api/v1/models/5001",
+    "query": "",
+    "headers": {
+      "host": "site.example.test",
+      "cf-ipcountry": "US"
+    }
+  },
+  "world": {
+    "models": [
+      {
+        "id": 5001,
+        "name": "Model 5001",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "description": "<p>About model 5001</p>",
+        "sfwDescription": null,
+        "allowNoCredit": true,
+        "allowCommercialUse": [
+          "Image",
+          "RentCivit"
+        ],
+        "allowDerivatives": true,
+        "allowDifferentLicense": false,
+        "type": "Checkpoint",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": true,
+        "nsfwLevel": 31,
+        "status": "Published",
+        "createdAt": {
+          "$date": "2026-05-01T08:00:00.000Z"
+        },
+        "lastVersionAt": {
+          "$date": "2026-06-01T10:00:00.500Z"
+        },
+        "publishedAt": {
+          "$date": "2026-05-02T08:00:00.000Z"
+        },
+        "locked": false,
+        "meta": {},
+        "mode": null,
+        "availability": "Public",
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 5,
+          "thumbsDownCount": 0,
+          "commentCount": 1,
+          "collectedCount": 2,
+          "tippedAmountCount": 0
+        },
+        "userId": 1001,
+        "cursorId": "330|1001|5001"
+      }
+    ],
+    "modelData": {
+      "5001": {
+        "modelId": 5001,
+        "hashes": [
+          "H5001"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6001,
+            "index": 0,
+            "name": "v6001",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6001</p>",
+            "trainedWords": [
+              "golden token"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": false
+          },
+          {
+            "id": 6002,
+            "index": 1,
+            "name": "v6002",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Draft",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6002</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          },
+          {
+            "id": 6003,
+            "index": 2,
+            "name": "v6003",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 4,
+            "description": "<p>Version 6003</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          }
+        ]
+      }
+    },
+    "modelTags": {
+      "5001": {
+        "modelId": 5001,
+        "tagIds": [
+          11,
+          12
+        ]
+      }
+    },
+    "tags": {
+      "11": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      },
+      "12": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label"
+      },
+      "13": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      }
+    },
+    "users": {
+      "1001": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901"
+      },
+      "1002": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null
+      }
+    },
+    "profilePictures": {
+      "1001": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        }
+      },
+      "1002": "notFound"
+    },
+    "paidAccessGates": [
+      5001
+    ],
+    "paidAccess": {
+      "6001": "notFound",
+      "6002": "notFound",
+      "6003": {
+        "entityId": 6003,
+        "ownerId": 1001,
+        "endsAtMs": 1781611200000,
+        "timeframeDays": 7,
+        "terms": {},
+        "sales": []
+      }
+    },
+    "images": {
+      "6001": {
+        "modelVersionId": 6001,
+        "images": [
+          {
+            "id": 8001,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008001.jpeg",
+            "url": "00000000-0000-4000-8000-000000008001",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8001",
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8001"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6001
+          },
+          {
+            "id": 8002,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008002.jpeg",
+            "url": "00000000-0000-4000-8000-000000008002.mp4",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8002",
+            "type": "video",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8002"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6001
+          }
+        ]
+      },
+      "6002": "notFound",
+      "6003": {
+        "modelVersionId": 6003,
+        "images": [
+          {
+            "id": 8003,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008003.jpeg",
+            "url": "00000000-0000-4000-8000-000000008003",
+            "nsfwLevel": 8,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8003",
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8003"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6003
+          }
+        ]
+      }
+    },
+    "imageTags": {
+      "8001": {
+        "imageId": 8001,
+        "tags": []
+      },
+      "8002": {
+        "imageId": 8002,
+        "tags": []
+      },
+      "8003": {
+        "imageId": 8003,
+        "tags": []
+      }
+    },
+    "files": {
+      "6001": {
+        "modelVersionId": 6001,
+        "files": [
+          {
+            "id": 7001,
+            "url": "https://storage.example.test/models/7001.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "model.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7001"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7001"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "full",
+              "fp": "fp32"
+            }
+          },
+          {
+            "id": 7002,
+            "url": "https://storage.example.test/models/7002.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "golden_pruned.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7002"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7002"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          },
+          {
+            "id": 7003,
+            "url": "https://storage.example.test/models/7003.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "config.yaml",
+            "overrideName": null,
+            "type": "Config",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7003"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7003"
+              }
+            ],
+            "metadata": {
+              "format": "Other"
+            }
+          },
+          {
+            "id": 7004,
+            "url": "https://storage.example.test/models/7004.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "secret.bin",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Private",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7004"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7004"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          },
+          {
+            "id": 7006,
+            "url": "https://storage.example.test/models/7006.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "model.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7006"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7006"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          }
+        ]
+      },
+      "6002": "notFound",
+      "6003": {
+        "modelVersionId": 6003,
+        "files": [
+          {
+            "id": 7005,
+            "url": "https://storage.example.test/models/7005.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "pony_v3.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6003,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7005"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7005"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          }
+        ]
+      }
+    },
+    "metricPrivacy": {
+      "1001": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      }
+    },
+    "membership": {},
+    "gallerySettings": {},
+    "addons": [
+      {
+        "type": "none",
+        "nsfwLevels": [
+          8,
+          16
+        ],
+        "disablePoi": false
+      },
+      {
+        "type": "some",
+        "nsfwLevels": [
+          4,
+          8,
+          16
+        ],
+        "disableMinor": true,
+        "disablePoi": true
+      }
+    ],
+    "stats": {
+      "vaeLinked": [],
+      "modelMetrics": [
+        {
+          "modelId": 5001,
+          "downloadCount": 1007,
+          "thumbsUpCount": 309,
+          "thumbsDownCount": 3,
+          "commentCount": 12,
+          "tippedAmountCount": 40
+        }
+      ],
+      "versionMetrics": [
+        {
+          "modelVersionId": 6001,
+          "downloadCount": 102,
+          "thumbsUpCount": 21,
+          "thumbsDownCount": 1
+        },
+        {
+          "modelVersionId": 6002,
+          "downloadCount": 103,
+          "thumbsUpCount": 22,
+          "thumbsDownCount": 1
+        },
+        {
+          "modelVersionId": 6003,
+          "downloadCount": 104,
+          "thumbsUpCount": 23,
+          "thumbsDownCount": 1
+        }
+      ],
+      "versionMeta": [
+        {
+          "id": 6001,
+          "meta": {}
+        },
+        {
+          "id": 6002,
+          "meta": {}
+        },
+        {
+          "id": 6003,
+          "meta": {}
+        }
+      ]
+    },
+    "vaeFiles": [],
+    "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
+    "trainingData": [],
+    "responseCache": {}
+  },
+  "redis": {
+    "packed:caches:data-for-model-2:5001": {
+      "value": {
+        "modelId": 5001,
+        "hashes": [
+          "H5001"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6001,
+            "index": 0,
+            "name": "v6001",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6001</p>",
+            "trainedWords": [
+              "golden token"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": false
+          },
+          {
+            "id": 6002,
+            "index": 1,
+            "name": "v6002",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Draft",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6002</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          },
+          {
+            "id": 6003,
+            "index": 2,
+            "name": "v6003",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 4,
+            "description": "<p>Version 6003</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE4mmaGFzaGVzkaVINTAwMaR0YWdzkKh2ZXJzaW9uc5PeABKiaWTNF3GlaW5kZXgApG5hbWWldjYwMDG0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhTRFhMIDEuMK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/afcOkK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2n4YBCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9uszxwPlZlcnNpb24gNjAwMTwvcD6sdHJhaW5lZFdvcmRzkaxnb2xkZW4gdG9rZW6ldmFlSWTAp2NvdmVyZWTDq2NvdmVyZWROZXh0wt4AEqJpZM0XcqVpbmRleAGkbmFtZaV2NjAwMrRlYXJseUFjY2Vzc1RpbWVGcmFtZQCpYmFzZU1vZGVsqFNEWEwgMS4wrWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9p9w6QrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/afhgEKZzdGF0dXOlRHJhZnSlZmxhZ3MArGF2YWlsYWJpbGl0eaZQdWJsaWOpbnNmd0xldmVsAatkZXNjcmlwdGlvbrM8cD5WZXJzaW9uIDYwMDI8L3A+rHRyYWluZWRXb3Jkc5CldmFlSWTAp2NvdmVyZWTCq2NvdmVyZWROZXh0wt4AEqJpZM0Xc6VpbmRleAKkbmFtZaV2NjAwM7RlYXJseUFjY2Vzc1RpbWVGcmFtZQCpYmFzZU1vZGVspFBvbnmtYmFzZU1vZGVsVHlwZahTdGFuZGFyZKljcmVhdGVkQXTW/2n3DpCudHJhaW5pbmdTdGF0dXPAq3B1Ymxpc2hlZEF01v9p+GAQpnN0YXR1c6lQdWJsaXNoZWSlZmxhZ3MArGF2YWlsYWJpbGl0eaZQdWJsaWOpbnNmd0xldmVsBKtkZXNjcmlwdGlvbrM8cD5WZXJzaW9uIDYwMDM8L3A+rHRyYWluZWRXb3Jkc5CldmFlSWTAp2NvdmVyZWTCq2NvdmVyZWROZXh0wqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5001": {
+      "value": {
+        "modelId": 5001,
+        "tagIds": [
+          11,
+          12
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE4mmdGFnSWRzkgsMqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-tags:11": {
+      "value": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkC6RuYW1lqWNoYXJhY3Rlcqluc2Z3TGV2ZWwBpHR5cGWtVXNlckdlbmVyYXRlZKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:12": {
+      "value": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDKRuYW1lpXN0eWxlqW5zZndMZXZlbAGkdHlwZaVMYWJlbKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:13": {
+      "value": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDaRuYW1lrmV4Y2x1ZGVkIHRoaW5nqW5zZndMZXZlbAGkdHlwZa1Vc2VyR2VuZXJhdGVkqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWpZGVsZXRlZEF0wKVpbWFnZdkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwOTAxqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+pZGVsZXRlZEF0wKVpbWFnZcCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKxVUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:paid-access:ModelVersion:6001": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:paid-access:ModelVersion:6002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:paid-access:ModelVersion:6003": {
+      "value": {
+        "entityId": 6003,
+        "ownerId": 1001,
+        "endsAtMs": 1781611200000,
+        "timeframeDays": 7,
+        "terms": {},
+        "sales": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAHqGVudGl0eUlkzRdzp293bmVySWTNA+moZW5kc0F0TXPLQnntBNfgAACtdGltZWZyYW1lRGF5cweldGVybXPeAAClc2FsZXOQqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:images-for-model-version-2:6001": {
+      "value": {
+        "modelVersionId": 6001,
+        "images": [
+          {
+            "id": 8001,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008001.jpeg",
+            "url": "00000000-0000-4000-8000-000000008001",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8001",
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8001"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6001
+          },
+          {
+            "id": 8002,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008002.jpeg",
+            "url": "00000000-0000-4000-8000-000000008002.mp4",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8002",
+            "type": "video",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8002"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6001
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRdxpmltYWdlc5LeABKiaWTNH0GmdXNlcklkzQPppG5hbWXZKTAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODAwMS5qcGVno3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDAxqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDAxpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAOld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDAxpm9uU2l0ZcKnaGFzTWV0YcOxaGFzUG9zaXRpdmVQcm9tcHTDqXJlbWl4T2ZJZMCjcG9pwqVtaW5vcsKsYXZhaWxhYmlsaXR5plB1YmxpY65tb2RlbFZlcnNpb25JZM0Xcd4AEqJpZM0fQqZ1c2VySWTNA+mkbmFtZdkpMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDAyLmpwZWejdXJs2SgwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgwMDIubXA0qW5zZndMZXZlbASld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDAypHR5cGWldmlkZW+obWV0YWRhdGHeAAOld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDAypm9uU2l0ZcKnaGFzTWV0YcOxaGFzUG9zaXRpdmVQcm9tcHTDqXJlbWl4T2ZJZMCjcG9pwqVtaW5vcsKsYXZhaWxhYmlsaXR5plB1YmxpY65tb2RlbFZlcnNpb25JZM0XcahjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6003": {
+      "value": {
+        "modelVersionId": 6003,
+        "images": [
+          {
+            "id": 8003,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008003.jpeg",
+            "url": "00000000-0000-4000-8000-000000008003",
+            "nsfwLevel": 8,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8003",
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8003"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6003
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRdzpmltYWdlc5HeABKiaWTNH0OmdXNlcklkzQPppG5hbWXZKTAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODAwMy5qcGVno3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDAzqW5zZndMZXZlbAild2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDAzpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAOld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDAzpm9uU2l0ZcKnaGFzTWV0YcOxaGFzUG9zaXRpdmVQcm9tcHTDqXJlbWl4T2ZJZMCjcG9pwqVtaW5vcsKsYXZhaWxhYmlsaXR5plB1YmxpY65tb2RlbFZlcnNpb25JZM0Xc6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:files-for-model-version-2:6001": {
+      "value": {
+        "modelVersionId": 6001,
+        "files": [
+          {
+            "id": 7001,
+            "url": "https://storage.example.test/models/7001.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "model.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7001"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7001"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "full",
+              "fp": "fp32"
+            }
+          },
+          {
+            "id": 7002,
+            "url": "https://storage.example.test/models/7002.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "golden_pruned.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7002"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7002"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          },
+          {
+            "id": 7003,
+            "url": "https://storage.example.test/models/7003.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "config.yaml",
+            "overrideName": null,
+            "type": "Config",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7003"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7003"
+              }
+            ],
+            "metadata": {
+              "format": "Other"
+            }
+          },
+          {
+            "id": 7004,
+            "url": "https://storage.example.test/models/7004.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "secret.bin",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Private",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7004"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7004"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          },
+          {
+            "id": 7006,
+            "url": "https://storage.example.test/models/7006.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "model.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6001,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7006"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7006"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRdxpWZpbGVzld4AD6JpZM0bWaN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwMDEuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWWxbW9kZWwuc2FmZXRlbnNvcnOsb3ZlcnJpZGVOYW1lwKR0eXBlpU1vZGVsqnZpc2liaWxpdHmmUHVibGljsHBpY2tsZVNjYW5SZXN1bHSnU3VjY2Vzc7FwaWNrbGVTY2FuTWVzc2FnZbFObyBQaWNrbGUgaW1wb3J0c692aXJ1c1NjYW5SZXN1bHSnU3VjY2Vzc7B2aXJ1c1NjYW5NZXNzYWdlwKlzY2FubmVkQXTW/2n4ZxiubW9kZWxWZXJzaW9uSWTNF3GmaGFzaGVzkt4AAqR0eXBlpkF1dG9WMqRoYXNopUE3MDAx3gACpHR5cGWmU0hBMjU2pGhhc2iqQUJDREVGNzAwMahtZXRhZGF0Yd4AA6Zmb3JtYXSqU2FmZVRlbnNvcqRzaXplpGZ1bGyiZnCkZnAzMt4AD6JpZM0bWqN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwMDIuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWW5Z29sZGVuX3BydW5lZC5zYWZldGVuc29yc6xvdmVycmlkZU5hbWXApHR5cGWlTW9kZWyqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0XcaZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwMDLeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDAyqG1ldGFkYXRh3gADpmZvcm1hdKpTYWZlVGVuc29ypHNpemWmcHJ1bmVkomZwpGZwMTbeAA+iaWTNG1ujdXJs2TRodHRwczovL3N0b3JhZ2UuZXhhbXBsZS50ZXN0L21vZGVscy83MDAzLnNhZmV0ZW5zb3JzpnNpemVLQstAyBzW5jH4oaRuYW1lq2NvbmZpZy55YW1srG92ZXJyaWRlTmFtZcCkdHlwZaZDb25maWeqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0XcaZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwMDPeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDAzqG1ldGFkYXRh3gABpmZvcm1hdKVPdGhlct4AD6JpZM0bXKN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwMDQuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWWqc2VjcmV0LmJpbqxvdmVycmlkZU5hbWXApHR5cGWlTW9kZWyqdmlzaWJpbGl0eadQcml2YXRlsHBpY2tsZVNjYW5SZXN1bHSnU3VjY2Vzc7FwaWNrbGVTY2FuTWVzc2FnZbFObyBQaWNrbGUgaW1wb3J0c692aXJ1c1NjYW5SZXN1bHSnU3VjY2Vzc7B2aXJ1c1NjYW5NZXNzYWdlwKlzY2FubmVkQXTW/2n4ZxiubW9kZWxWZXJzaW9uSWTNF3GmaGFzaGVzkt4AAqR0eXBlpkF1dG9WMqRoYXNopUE3MDA03gACpHR5cGWmU0hBMjU2pGhhc2iqQUJDREVGNzAwNKhtZXRhZGF0Yd4AA6Zmb3JtYXSqU2FmZVRlbnNvcqRzaXplpnBydW5lZKJmcKRmcDE23gAPomlkzRteo3VybNk0aHR0cHM6Ly9zdG9yYWdlLmV4YW1wbGUudGVzdC9tb2RlbHMvNzAwNi5zYWZldGVuc29yc6ZzaXplS0LLQMgc1uYx+KGkbmFtZbFtb2RlbC5zYWZldGVuc29yc6xvdmVycmlkZU5hbWXApHR5cGWlTW9kZWyqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0XcaZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwMDbeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDA2qG1ldGFkYXRh3gADpmZvcm1hdKpTYWZlVGVuc29ypHNpemWmcHJ1bmVkomZwpGZwMTaoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:files-for-model-version-2:6002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:files-for-model-version-2:6003": {
+      "value": {
+        "modelVersionId": 6003,
+        "files": [
+          {
+            "id": 7005,
+            "url": "https://storage.example.test/models/7005.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "pony_v3.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6003,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7005"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7005"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRdzpWZpbGVzkd4AD6JpZM0bXaN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwMDUuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWWzcG9ueV92My5zYWZldGVuc29yc6xvdmVycmlkZU5hbWXApHR5cGWlTW9kZWyqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0Xc6ZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwMDXeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDA1qG1ldGFkYXRh3gADpmZvcm1hdKpTYWZlVGVuc29ypHNpemWmcHJ1bmVkomZwpGZwMTaoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8001": {
+      "value": {
+        "imageId": 8001,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0GkdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8002": {
+      "value": {
+        "imageId": 8002,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0KkdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8003": {
+      "value": {
+        "imageId": 8003,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0OkdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1001": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"none\",\"nsfwLevels\":[8,16],\"disablePoi\":false},{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"disablePoi\":true}]"
+    }
+  },
+  "expect": {
+    "body": "{\"id\":5001,\"name\":\"Model 5001\",\"coverImageId\":null,\"sfwCoverImageId\":null,\"description\":\"<p>About model 5001</p>\",\"allowNoCredit\":true,\"allowCommercialUse\":[\"Image\",\"RentCivit\"],\"allowDerivatives\":true,\"allowDifferentLicense\":false,\"type\":\"Checkpoint\",\"minor\":false,\"sfwOnly\":false,\"poi\":false,\"nsfw\":true,\"nsfwLevel\":31,\"availability\":\"Public\",\"userId\":1001,\"hasActivePaidAccess\":true,\"hasSfwFace\":false,\"baseModels\":[\"SDXL 1.0\",\"Pony\"],\"cosmetic\":null,\"eventDecoration\":null,\"supportsGeneration\":true,\"stats\":{\"downloadCount\":1007,\"thumbsUpCount\":309,\"thumbsDownCount\":3,\"commentCount\":12,\"tippedAmountCount\":40},\"creator\":{\"username\":\"artist_one\",\"image\":\"https://image.example.test/golden/00000000-0000-4000-8000-000000008901/width=96/artist_one.jpeg\"},\"tags\":[\"character\",\"style\"],\"modelVersions\":[{\"id\":6001,\"index\":0,\"name\":\"v6001\",\"baseModel\":\"SDXL 1.0\",\"baseModelType\":\"Standard\",\"createdAt\":\"2026-05-03T09:00:00.000Z\",\"publishedAt\":\"2026-05-04T09:00:00.000Z\",\"status\":\"Published\",\"flags\":0,\"availability\":\"Public\",\"nsfwLevel\":1,\"description\":\"<p>Version 6001</p>\",\"trainedWords\":[\"golden token\"],\"covered\":true,\"coveredNext\":false,\"stats\":{\"downloadCount\":102,\"thumbsUpCount\":21,\"thumbsDownCount\":1},\"files\":[{\"id\":7001,\"sizeKB\":12345.6789,\"name\":\"model5001_v6001_full_fp32.safetensors\",\"overrideName\":null,\"type\":\"Model\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"SafeTensor\",\"size\":\"full\",\"fp\":\"fp32\"},\"hashes\":{\"AutoV2\":\"A7001\",\"SHA256\":\"ABCDEF7001\"},\"downloadUrl\":\"https://site.example.test/api/download/models/6001?fileId=7001\"},{\"id\":7002,\"sizeKB\":12345.6789,\"name\":\"golden_pruned.safetensors\",\"overrideName\":null,\"type\":\"Model\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"SafeTensor\",\"size\":\"pruned\",\"fp\":\"fp16\"},\"hashes\":{\"AutoV2\":\"A7002\",\"SHA256\":\"ABCDEF7002\"},\"downloadUrl\":\"https://site.example.test/api/download/models/6001?fileId=7002\",\"primary\":true},{\"id\":7003,\"sizeKB\":12345.6789,\"name\":\"config.yaml\",\"overrideName\":null,\"type\":\"Config\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"Other\"},\"hashes\":{\"AutoV2\":\"A7003\",\"SHA256\":\"ABCDEF7003\"},\"downloadUrl\":\"https://site.example.test/api/download/models/6001?fileId=7003\"},{\"id\":7006,\"sizeKB\":12345.6789,\"name\":\"model5001_v6001_pruned_fp16.safetensors\",\"overrideName\":null,\"type\":\"Model\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"SafeTensor\",\"size\":\"pruned\",\"fp\":\"fp16\"},\"hashes\":{\"AutoV2\":\"A7006\",\"SHA256\":\"ABCDEF7006\"},\"downloadUrl\":\"https://site.example.test/api/download/models/6001?fileId=7006\"}],\"images\":[{\"url\":\"https://image.example.test/golden/00000000-0000-4000-8000-000000008001/original=true/8001.jpeg\",\"nsfwLevel\":1,\"width\":832,\"height\":1216,\"hash\":\"UHASH8001\",\"type\":\"image\",\"onSite\":false,\"hasMeta\":true,\"hasPositivePrompt\":true,\"remixOfId\":null,\"poi\":false,\"minor\":false},{\"url\":\"https://image.example.test/golden/00000000-0000-4000-8000-000000008002.mp4/original=true/8002.mp4\",\"nsfwLevel\":4,\"width\":832,\"height\":1216,\"hash\":\"UHASH8002\",\"type\":\"video\",\"onSite\":false,\"hasMeta\":true,\"hasPositivePrompt\":true,\"remixOfId\":null,\"poi\":false,\"minor\":false}],\"downloadUrl\":\"https://site.example.test/api/download/models/6001\"},{\"id\":6003,\"index\":2,\"name\":\"v6003\",\"baseModel\":\"Pony\",\"baseModelType\":\"Standard\",\"createdAt\":\"2026-05-03T09:00:00.000Z\",\"publishedAt\":\"2026-05-04T09:00:00.000Z\",\"status\":\"Published\",\"flags\":0,\"availability\":\"Public\",\"nsfwLevel\":4,\"description\":\"<p>Version 6003</p>\",\"covered\":false,\"coveredNext\":false,\"earlyAccessDeadline\":\"2026-06-16T12:00:00.000Z\",\"paidAccess\":{\"permanent\":false,\"endsAt\":\"2026-06-16T12:00:00.000Z\"},\"stats\":{\"downloadCount\":104,\"thumbsUpCount\":23,\"thumbsDownCount\":1},\"files\":[{\"id\":7005,\"sizeKB\":12345.6789,\"name\":\"pony_v3.safetensors\",\"overrideName\":null,\"type\":\"Model\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"SafeTensor\",\"size\":\"pruned\",\"fp\":\"fp16\"},\"hashes\":{\"AutoV2\":\"A7005\",\"SHA256\":\"ABCDEF7005\"},\"downloadUrl\":\"https://site.example.test/api/download/models/6003?fileId=7005\",\"primary\":true}],\"images\":[{\"url\":\"https://image.example.test/golden/00000000-0000-4000-8000-000000008003/original=true/8003.jpeg\",\"nsfwLevel\":8,\"width\":832,\"height\":1216,\"hash\":\"UHASH8003\",\"type\":\"image\",\"onSite\":false,\"hasMeta\":true,\"hasPositivePrompt\":true,\"remixOfId\":null,\"poi\":false,\"minor\":false}],\"downloadUrl\":\"https://site.example.test/api/download/models/6003\"}]}",
+    "sql": {
+      "text": "SELECT mm.\"modelId\" as \"id\", m.\"name\", m.\"sfwName\", m.\"coverImageId\", m.\"sfwCoverImageId\", m.\"description\", m.\"sfwDescription\", m.\"allowNoCredit\", m.\"allowCommercialUse\", m.\"allowDerivatives\", m.\"allowDifferentLicense\", m.\"type\", mm.\"minor\", m.\"sfwOnly\", mm.\"poi\", m.\"nsfw\", mm.\"nsfwLevel\", mm.\"status\", m.\"createdAt\", mm.\"lastVersionAt\", m.\"publishedAt\", m.\"locked\", m.\"meta\", mm.\"mode\", mm.\"availability\", jsonb_build_object( 'downloadCount', mm.\"downloadCount\", 'thumbsUpCount', mm.\"thumbsUpCount\", 'thumbsDownCount', mm.\"thumbsDownCount\", 'commentCount', mm.\"commentCount\", 'collectedCount', mm.\"collectedCount\", 'tippedAmountCount', mm.\"tippedAmountCount\" ) as \"rank\", mm.\"userId\", CONCAT(mm.\"thumbsUpCount\", '|', mm.\"downloadCount\", '|', mm.\"modelId\") as \"cursorId\" FROM \"ModelMetric\" mm JOIN \"Model\" m ON m.\"id\" = mm.\"modelId\" WHERE (mm.\"poi\" = false OR mm.\"userId\" = $1) AND mm.\"status\" = $2::\"ModelStatus\" AND mm.\"modelId\" IN ($3) AND mm.\"availability\" != 'Private'::\"Availability\" AND (mm.\"nsfwLevel\" & $4) != 0 ORDER BY mm.\"thumbsUpCount\" DESC, mm.\"downloadCount\" DESC, mm.\"modelId\" LIMIT $5",
+      "values": [
+        null,
+        "Published",
+        5001,
+        31,
+        101
+      ]
+    }
+  }
+}

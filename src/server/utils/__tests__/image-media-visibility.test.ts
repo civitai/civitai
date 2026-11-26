@@ -1,7 +1,11 @@
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { describe, expect, it } from 'vitest';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import {
+  canViewImageMedia,
+  keepCrawlerAnswerOutOfEdgeCache,
   viewerCanSeeImageMedia,
   withoutMedia,
   withoutMediaReferences,
@@ -98,6 +102,8 @@ async function withViewerMedia(
     nsfwLevel: image.nsfwLevel,
     userId: image.user.id,
     postId: null,
+    ingestion: 'Scanned',
+    blockedFor: null,
   });
   return canSee ? image : withoutMedia(image);
 }
@@ -146,6 +152,21 @@ describe('image.get media for a viewer', () => {
     );
   });
 
+  it("refuses a blocked image's media to its owner unless the block is exempt; a moderator keeps it", async () => {
+    const blocked = (blockedFor: string) => ({
+      nsfwLevel: NsfwLevel.PG,
+      userId: OWNER_ID,
+      postId: null,
+      ingestion: 'Blocked',
+      blockedFor,
+    });
+    const owner = ctxFor(viewers['the owner on the SFW domain']);
+    const moderator = ctxFor(viewers['a moderator on the SFW domain']);
+    expect(await viewerCanSeeImageMedia(owner, blocked(BlockedReason.Moderated))).toBe(false);
+    expect(await viewerCanSeeImageMedia(owner, blocked(BlockedReason.AiNotVerified))).toBe(true);
+    expect(await viewerCanSeeImageMedia(moderator, blocked(BlockedReason.Moderated))).toBe(true);
+  });
+
   it('keeps a crawler-only answer out of the shared signed-out edge cache', async () => {
     const crawler = ctxFor(viewers['a crawler on the mature domain']);
     await withViewerMedia(crawler, imageAt(NsfwLevel.R));
@@ -159,6 +180,45 @@ describe('image.get media for a viewer', () => {
     const human = ctxFor(viewers['signed out on the mature domain']);
     await withViewerMedia(human, imageAt(NsfwLevel.PG));
     expect(human.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
+  });
+});
+
+describe('keepCrawlerAnswerOutOfEdgeCache', () => {
+  const signedOut = (headerValue?: string | string[]) => ({
+    req: { headers: headerValue === undefined ? {} : { [VERIFIED_BOT_HEADER]: headerValue } },
+    cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, skip: false },
+  });
+  const run = (ctx: ReturnType<typeof signedOut>) => {
+    keepCrawlerAnswerOutOfEdgeCache(ctx as never);
+    return ctx.cache;
+  };
+  const uncached = { edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 };
+  const cached = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+
+  it.each([['googlebot'], ['bingbot'], [['bingbot']]])(
+    'keeps a signed-out answer to the crawler %j out of the edge cache',
+    (value) => {
+      expect(run(signedOut(value))).toMatchObject(uncached);
+    }
+  );
+
+  // Only the values the crawler decision sets count: anything else is a client's guess.
+  it.each([[undefined], [''], ['1'], ['true'], ['GoogleBot'], [[]]])(
+    'leaves a signed-out answer with header %j cacheable',
+    (value) => {
+      expect(run(signedOut(value))).toMatchObject(cached);
+    }
+  );
+
+  it('leaves a signed-in answer with a crawler header cacheable', () => {
+    const ctx = { ...signedOut('googlebot'), user: { id: 1 } };
+    keepCrawlerAnswerOutOfEdgeCache(ctx as never);
+    expect(ctx.cache).toMatchObject(cached);
+  });
+
+  it('does nothing for a crawler on a route with no cache context', () => {
+    const { req } = signedOut('googlebot');
+    expect(() => keepCrawlerAnswerOutOfEdgeCache({ req } as never)).not.toThrow();
   });
 });
 
@@ -195,5 +255,65 @@ describe('withoutMediaReferences', () => {
     const copy = structuredClone(input);
     withoutMediaReferences(input);
     expect(input).toEqual(copy);
+  });
+});
+
+const KEY_OWNER = 7;
+// A capped (SFW) domain: signed in, without canViewNsfw.
+const green = { features: { canViewNsfw: false }, req: { headers: {} } };
+const mature = { nsfwLevel: NsfwLevel.X, user: { id: KEY_OWNER } };
+const key = (tokenScope: bigint) => ({
+  apiKeyId: 9,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey' as const, id: 9 },
+  tokenScope,
+});
+
+const canSee = (ctx: object) => canViewImageMedia({ ...green, ...ctx } as never, mature);
+
+describe('canViewImageMedia owner and moderator exemption from the domain cap', () => {
+  it('lets a moderator and the owner past the cap on a session or a full-access key', () => {
+    expect(canSee({ user: { id: 5, isModerator: true } })).toBe(true);
+    expect(canSee({ user: { id: KEY_OWNER } })).toBe(true);
+    expect(canSee({ user: { id: 5, isModerator: true }, ...key(TokenScope.Full) })).toBe(true);
+    expect(canSee({ user: { id: KEY_OWNER }, ...key(TokenScope.Full) })).toBe(true);
+  });
+
+  it('holds a moderator or the owner to the cap on a scoped token', () => {
+    expect(canSee({ user: { id: 5, isModerator: true }, ...key(TokenScope.ModelsRead) })).toBe(
+      false
+    );
+    expect(canSee({ user: { id: KEY_OWNER }, ...key(TokenScope.ModelsRead) })).toBe(false);
+  });
+
+  // A full-scope token an OAuth app holds is still not the user's own credential.
+  it('holds a moderator or the owner to the cap on a full-scope OAuth token', () => {
+    const oauth = {
+      apiKeyId: undefined,
+      apiKeyType: undefined,
+      subject: { type: 'oauth', id: 'app' },
+      tokenScope: TokenScope.Full,
+    };
+    expect(canSee({ user: { id: 5, isModerator: true }, ...oauth })).toBe(false);
+    expect(canSee({ user: { id: KEY_OWNER }, ...oauth })).toBe(false);
+  });
+
+  it('holds anyone else to the cap', () => {
+    expect(canSee({ user: { id: 6 } })).toBe(false);
+    expect(canSee({})).toBe(false);
+  });
+});
+
+describe('canViewImageMedia on a capped domain', () => {
+  const stranger = { ...green, user: { id: 6 } } as never;
+  const rated = (nsfwLevel: number) => ({ nsfwLevel, user: { id: KEY_OWNER } });
+
+  it('keeps a mixed rating wholly inside the cap', () => {
+    expect(canViewImageMedia(stranger, rated(NsfwLevel.PG | NsfwLevel.PG13))).toBe(true);
+  });
+
+  it('withholds an unrated image and a mixed rating that reaches above the cap', () => {
+    expect(canViewImageMedia(stranger, rated(0))).toBe(false);
+    expect(canViewImageMedia(stranger, rated(NsfwLevel.PG | NsfwLevel.R))).toBe(false);
   });
 });

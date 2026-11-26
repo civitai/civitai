@@ -9,9 +9,9 @@
 // declares none — or an environment without a document store — resolves from the legacy store,
 // exactly as before the document store existed.
 //
-// Any other shared collection never holds an item. A `write: "none"` one exists only for marks
-// and counters, which an app commonly keys by the item's own key (e.g. per-item downvotes); an
-// owner-written one has no user author. Neither moves an app nor takes part in a lookup, so such
+// Any other shared collection never holds an item. A `write: "none"` one existed only for marks
+// and counters (removed; it is read-only now), which an app commonly keyed by the item's own key
+// (e.g. per-item downvotes); an owner-written one has no user author. Neither moves an app nor takes part in a lookup, so such
 // a document can neither make a key ambiguous nor answer for an item.
 //
 // Accepted trade-off: between a version that declares shared collections going live and the
@@ -29,13 +29,22 @@
 //     authoritative again — leftover legacy copies of deleted documents come back, and items
 //     that exist only in the document store stop resolving.
 //
+// Content levels: while `app-blocks-shared-doc-levels` is on for the app, a document-store item
+// also carries its rating (`doc-levels.ts`); `hidden` is still a moderator hide only.
+//
 // Document store: production namespace only, so a dev or review document never resolves; only
 // the item collections the APPROVED manifest declares are probed, so an app with none costs
 // no document-store query.
-import { isDocStoreError } from '~/server/services/apps/doc-store.types';
+import { isDocStoreError, type DocRating } from '~/server/services/apps/doc-store.types';
 
 export type SharedItem =
-  | { kind: 'found'; authorUid: number | null; hidden: boolean }
+  | {
+      kind: 'found';
+      authorUid: number | null;
+      hidden: boolean;
+      /** A document-store item while content levels are on for the app; never a legacy one. */
+      rating?: DocRating;
+    }
   /**
    * More than one declared item collection holds the key (the store's primary key includes
    * the collection), so the key does not name one item.
@@ -86,9 +95,16 @@ async function findInDocStore(args: {
   if (shared.length === 0) return { kind: 'not_authoritative' };
 
   const { getDocStoreLookup } = await import('~/server/services/apps/doc-store-lookup.instance');
+  // Content levels (`doc-levels.ts`): while on for the app, the item's rating comes back too, for
+  // App Store publishing to decide on. `hidden` stays a moderator hide (attribution is level-blind).
+  const { isSharedDocLevelsOn } = await import('~/server/services/apps/doc-levels');
   let matches;
   try {
-    matches = await getDocStoreLookup().findSharedByKey(args.appBlockId, shared, args.key);
+    const rating = await isSharedDocLevelsOn(args.appBlockId);
+    const lookup = getDocStoreLookup();
+    matches = rating
+      ? await lookup.findSharedByKey(args.appBlockId, shared, args.key, { rating: true })
+      : await lookup.findSharedByKey(args.appBlockId, shared, args.key);
   } catch (err) {
     // No store here: fall back to the legacy store. Unconfigured is expected (dev, previews);
     // a configured store that refuses (its role bypasses RLS) re-opens the legacy fallback for
@@ -105,7 +121,7 @@ async function findInDocStore(args: {
             appBlockId: args.appBlockId,
           },
           'app-blocks'
-        ).catch(() => undefined);
+        );
       }
       return { kind: 'not_authoritative' };
     }

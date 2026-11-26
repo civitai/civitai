@@ -20,7 +20,7 @@ vi.mock('~/server/events', () => ({
   ],
 }));
 
-const { default: handler } = await import('~/pages/api/mod/unequip-event-cosmetics');
+const { default: handler } = await import('~/server/api-routes/mod/unequip-event-cosmetics');
 const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
 
 const WEARERS: Record<number, number[]> = { 12: [301, 302], 14: [303] };

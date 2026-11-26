@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { constants } from '~/server/common/constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 import {
   publicBrowsingLevelsFlag,
@@ -45,8 +47,8 @@ vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   isRedCapableHost: (host?: string | null) => host === 'civitai.red',
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  // Passthrough: invoke handler with no session user (the anon public path).
-  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
+  // Passthrough: invoke handler as the request's `testUser` (anonymous when unset).
+  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.testUser),
   handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e) }),
 }));
 
@@ -138,9 +140,24 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     const res = await invoke({ nsfw: 'true' });
     const [, ctx] = mockRunModelSearch.mock.calls[0];
     expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
-    // nsfwImagePassthrough still mirrors the client nsfw flag — unchanged from
-    // pre-refactor behavior (the region override only narrows browsingLevel).
-    expect(ctx.nsfwImagePassthrough).toBe(true);
+    // Images are held to that level too: the nsfw widening does not apply there.
+    expect(ctx.nsfwImagePassthrough).toBe(false);
+  });
+
+  it('keeps an nsfw=true answer out of the shared cache, in every region', async () => {
+    for (const restricted of [true, false]) {
+      mockIsRegionRestricted.mockReturnValue(restricted);
+      const res = await invoke({ nsfw: 'true' });
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+    }
+  });
+
+  it('leaves the default answer to the shared cache (control)', async () => {
+    for (const restricted of [true, false]) {
+      mockIsRegionRestricted.mockReturnValue(restricted);
+      const res = await invoke({});
+      expect(res.headers['Cache-Control']).toBeUndefined();
+    }
   });
 
   it('query path uses the same browsingLevel for the Meili pre-step', async () => {
@@ -187,4 +204,100 @@ describe('/api/v1/models — an explicit sort reaches the Meili pre-step, the sc
     const [input] = mockRunModelSearch.mock.calls[0];
     expect(input.sort).toBe('Highest Rated');
   });
+});
+
+describe('/api/v1/models moderator view follows the credential', () => {
+  const moderator = { id: 5, isModerator: true };
+  const personalKey = (tokenScope: bigint) => ({
+    tokenScope,
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+  });
+  const FULL = TokenScope.Full;
+  const MODELS_READ = TokenScope.ModelsRead;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockGetRegion.mockReturnValue('US');
+    mockIsRegionRestricted.mockReturnValue(false);
+  });
+
+  async function searchedAs(context: object | undefined, query: Record<string, string> = {}) {
+    const req = {
+      method: 'GET',
+      query,
+      headers: { host: 'civitai.com' },
+      url: '/api/v1/models',
+      testUser: moderator,
+      context,
+    } as unknown as NextApiRequest;
+    const res = fakeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    return mockRunModelSearch.mock.calls[0][1].user;
+  }
+
+  it.each([
+    ['a session', undefined],
+    ['a full-scope personal key', personalKey(FULL)],
+  ])('keeps the moderator view on %s', async (_label, context) => {
+    expect(await searchedAs(context)).toEqual(moderator);
+  });
+
+  it.each([
+    ['a scoped personal key', personalKey(MODELS_READ)],
+    [
+      'an app token',
+      { tokenScope: FULL, apiKeyId: 9, apiKeyType: 'Access', subject: { type: 'oauth', id: 'c' } },
+    ],
+  ])('searches as signed out on %s', async (_label, context) => {
+    expect(await searchedAs(context)).toBeUndefined();
+  });
+
+  it('searches as signed out for a non-moderator on a scoped key too', async () => {
+    const req = {
+      method: 'GET',
+      query: {},
+      headers: { host: 'civitai.com' },
+      url: '/api/v1/models',
+      testUser: { id: 6, isModerator: false },
+      context: personalKey(MODELS_READ),
+    } as unknown as NextApiRequest;
+    const res = fakeRes();
+    await handler(req, res);
+    expect(mockRunModelSearch.mock.calls[0][1].user).toBeUndefined();
+  });
+
+  it('keeps the system account as it is on its own key', async () => {
+    const system = { id: constants.system.user.id, isModerator: true };
+    const req = {
+      method: 'GET',
+      query: {},
+      headers: { host: 'civitai.com' },
+      url: '/api/v1/models',
+      testUser: system,
+      context: personalKey(MODELS_READ),
+    } as unknown as NextApiRequest;
+    const res = fakeRes();
+    await handler(req, res);
+    expect(mockRunModelSearch.mock.calls[0][1].user).toEqual(system);
+  });
+
+  it('searches as signed out for an own list filtered to Private models', async () => {
+    expect(
+      await searchedAs(personalKey(MODELS_READ), { hidden: 'true', availability: 'Private' })
+    ).toBeUndefined();
+  });
+
+  it.each(['hidden', 'followed', 'favorites'])(
+    "keeps the caller's id, without the moderator view, for their %s list",
+    async (list) => {
+      expect(await searchedAs(personalKey(MODELS_READ), { [list]: 'true' })).toEqual({
+        ...moderator,
+        isModerator: false,
+      });
+    }
+  );
 });

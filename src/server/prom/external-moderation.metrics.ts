@@ -3,8 +3,7 @@
 // WHY this exists: `moderatePrompt` is an OUTBOUND HTTP call to a third-party classifier that runs
 // INLINE and SERIALLY on the generation submission path (`generateFromGraph` → `auditPromptServer` →
 // here). It is bounded by `AbortSignal.timeout(EXTERNAL_MODERATION_TIMEOUT_MS)` (default 5 s), and it
-// was FAIL-SOFT: the caller caught, logged, and proceeded with `flagged:false`. (`auditPromptServer`
-// now refuses such a submit with a 503 instead; the classifier verdict itself still fails soft.) Those
+// was FAIL-SOFT: the caller caught, logged, and proceeded with `flagged:false`. Those
 // two properties together are what made it invisible. Nothing timed it, nothing counted its failures, and because a
 // failure is swallowed, a fully-down moderation gateway and a healthy one look identical from every
 // instrument the app had — the only trace was a one-line Axiom event per failure, which carries no

@@ -1,14 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   bustModelGallerySettings: vi.fn(),
   getCreatorGalleryHiddenUserIds: vi.fn(async () => []),
 }));
 
-const { bustPostVersionCache, getHeldGalleryLevel, getHeldLevelsByPost, getWithheldVersionIds } =
-  await import('~/server/services/model.service');
+const {
+  bustPostVersionCache,
+  getDeletedModelVersionIds,
+  getHeldGalleryLevel,
+  getHeldLevelsByPost,
+  getWithheldVersionIds,
+} = await import('~/server/services/model.service');
 
 // Model 1 is minor with PG stored, model 2 is SFW-only with PG13 stored, model 3 is unflagged.
 const models: Record<number, { minor: boolean; sfwOnly: boolean; level: number }> = {
@@ -130,7 +138,7 @@ describe('getHeldGalleryLevel', () => {
     expect(await getHeldGalleryLevel({ postId: 100 })).toBeUndefined();
   });
 
-  it('fails rather than skipping a model whose settings it cannot read', async () => {
+  it('holds a model whose settings it cannot read at SFW rather than skipping it', async () => {
     const read = dbMock.dbRead.model.findFirst.getMockImplementation();
     for (const db of [dbMock.dbRead, dbMock.dbWrite])
       db.model.findFirst.mockImplementation((async (args: { where: { id: number } }) => {
@@ -138,7 +146,28 @@ describe('getHeldGalleryLevel', () => {
         return read?.(args as never);
       }) as never);
 
-    await expect(getHeldGalleryLevel({ modelIds: [3, 1] })).rejects.toThrow('read failed');
+    const level = await getHeldGalleryLevel({ modelIds: [3, 1] });
+    expect(level).toBeDefined();
+    expect(Flags.intersection(level!, ~sfwBrowsingLevelsFlag)).toBe(0);
+  });
+
+  it('reads the cached settings of every model on a page in one round trip', async () => {
+    await getHeldGalleryLevel({ modelIds: [1, 2, 3] });
+    vi.clearAllMocks();
+
+    const level = await getHeldGalleryLevel({ modelIds: [1, 2, 3] });
+
+    expect(level).toBe(models[1].level & models[2].level);
+    expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
+    const singleReads = redisMock.redis.get.mock.calls.filter(([key]) =>
+      /^model:gallery-settings:\d+$/.test(String(key))
+    );
+    expect(singleReads).toEqual([]);
+  });
+
+  it('reads each model on its own when the batched read fails', async () => {
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    expect(await getHeldGalleryLevel({ modelIds: [1, 3] })).toBe(models[1].level);
   });
 
   it('holds nothing for a model it does not know', async () => {
@@ -233,6 +262,16 @@ describe('getHeldLevelsByPost', () => {
     });
   });
 
+  it('holds the same posts without reading owners when asked not to', async () => {
+    expect(
+      Object.fromEntries(await getHeldLevelsByPost([100, 200], { withOwners: false }))
+    ).toEqual({
+      100: { level: 1, ownerId: undefined },
+      200: { level: 2, ownerId: undefined },
+    });
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+  });
+
   it('asks nothing for no posts, or for posts on no held model', async () => {
     expect((await getHeldLevelsByPost([])).size).toBe(0);
     expect((await getHeldLevelsByPost([300, 7])).size).toBe(0);
@@ -270,5 +309,33 @@ describe('getWithheldVersionIds', () => {
   it('names no version it cannot find', async () => {
     dbMock.dbRead.modelVersion.findMany.mockResolvedValueOnce([] as never);
     expect([...(await getWithheldVersionIds([42]))]).toEqual([]);
+  });
+});
+
+describe('getDeletedModelVersionIds', () => {
+  beforeEach(() => {
+    // Model 2 is deleted; the fake answers the status the query asks for, so a query that stops
+    // asking for one returns every model.
+    const status: Record<number, string> = { 1: 'Published', 2: 'Deleted', 3: 'Unpublished' };
+    dbMock.dbRead.model.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] }; status?: string };
+    }) =>
+      where.id.in
+        .filter((id) => where.status === undefined || status[id] === where.status)
+        .map((id) => ({ id }))) as never);
+  });
+
+  it('names only the versions of a deleted model, whether or not their model is known', async () => {
+    // 20 is looked up; 30 comes mapped to deleted model 2, which the version cache would not say
+    // (it maps 30 to model 3), so the caller's map must be used; 990's model is not deleted.
+    const deleted = await getDeletedModelVersionIds([10, 20, 30, 990], new Map([[30, 2]]));
+
+    expect([...deleted]).toEqual([20, 30]);
+  });
+
+  it('names a deleted model version passed with its model', async () => {
+    expect([...(await getDeletedModelVersionIds([21], new Map([[21, 2]])))]).toEqual([21]);
   });
 });

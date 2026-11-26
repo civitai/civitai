@@ -1,4 +1,5 @@
 import type { shownActivity } from '@civitai/shared/held-media';
+import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -33,7 +34,7 @@ type ModelModActivity = {
 
 type ModelVersionModActivity = {
   entityType: 'modelVersion';
-  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}`;
+  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}` | 'revokeEarlyAccess';
 };
 
 type ImageTagModActivity = {
@@ -46,10 +47,14 @@ export type ImageModActivity = {
   activity:
     | TagActivities
     | 'review'
+    | typeof LIFT_KEPT_ACTIVITY
     | 'setNsfwLevel'
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
+    | 'retractedMedia:view'
+    // A version showcase removal: the version it was removed from.
+    | `versionShowcaseRemove:${number}`
     | ReturnType<typeof shownActivity>;
 };
 
@@ -77,6 +82,10 @@ type UserModActivity = {
     // The account was already muted by a moderator, so a scam verdict hid its content and opened no case.
     | 'scamCleanup'
     | 'mutePendingReview'
+    // A moderator cleared, or edited, another user's profile text or links.
+    | 'clearProfile'
+    | 'editProfile'
+    | 'removeLink'
     | 'overturnPendingReviewMute'
     | 'mute'
     | 'unmute'
@@ -94,8 +103,15 @@ type UserModActivity = {
     | 'undoMembershipCancel'
     // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
     | 'resyncMembership'
+    // A moderator re-read a user's Tipalti payee into UserPaymentConfiguration (tipalti-payee-resync.service).
+    | 'tipaltiResync:enable'
+    | 'tipaltiResync:disable'
+    | 'tipaltiResync:status'
     // A moderator released a built personal-data export to the account owner (personal-data-export.service).
     | 'releasePersonalDataExport'
+    | 'memorialPropose'
+    | 'memorialConfirm'
+    | 'memorialReverse'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -117,6 +133,11 @@ type UserModActivity = {
     // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
     // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
     | `mintMembershipCode:${string}`
+    // A moderator comped a membership gift to this account (`compMembershipGift:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the gift itself lives on MembershipGift.
+    | `compMembershipGift:${string}`
+    // A moderator took back a comped gift (`revokeCompMembershipGift:<giftId>`).
+    | `revokeCompMembershipGift:${string}`
     // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
     | `revokeMembershipCode:${string}`
     // Support ended a Buzz-purchased membership early (`endBuzzMembership:<productId>`).
@@ -183,12 +204,37 @@ export type StorylineModActivity = {
 
 type CrucibleModActivity = {
   entityType: 'crucible';
-  activity: 'takeDown';
+  activity: 'takeDown' | 'updateSettings';
 };
 
 type SiteAlertModActivity = {
   entityType: 'siteAlert';
   activity: 'post' | 'edit' | 'extend' | 'end';
+};
+
+type SearchQueryRuleModActivity = {
+  entityType: 'searchQueryRule';
+  activity: 'dryRun';
+};
+
+type ProfanityListModActivity = {
+  entityType: 'profanityList';
+  activity: 'dryRun';
+};
+
+type PublishRequestHoldModActivity = {
+  entityType: 'publishRequestHold';
+  activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
+};
+
+type PostTextModActivity = {
+  entityType: 'postText';
+  activity: 'refuse' | 'restore' | 'csamHold';
+};
+
+type ServiceDealReviewModActivity = {
+  entityType: 'serviceDealReview';
+  activity: 'csamHold';
 };
 
 type CsamReportModActivity = {
@@ -199,6 +245,9 @@ type CsamReportModActivity = {
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | PublishRequestHoldModActivity
+  | ServiceDealReviewModActivity
+  | ProfanityListModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
@@ -216,6 +265,8 @@ type ModActivity = {
   | SiteAlertModActivity
   | HeldMediaGridModActivity
   | StorylineModActivity
+  | SearchQueryRuleModActivity
+  | PostTextModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
@@ -249,7 +300,7 @@ export async function trackModActivity(
   if (input.entityId && !Array.isArray(input.entityId)) input.entityId = [input.entityId];
   await client.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
+    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId}::int[])
     ON CONFLICT DO NOTHING
   `;
 }

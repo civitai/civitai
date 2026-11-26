@@ -2,7 +2,7 @@ import type { NextApiRequest } from 'next';
 // From the package rather than the `~/server/redis/client` shim on purpose: it is a pure helper
 // with no client state, and importing it through the shim would force every suite that mocks the
 // shim to add it to its mock factory.
-import { prefixCacheKey } from '@civitai/redis';
+import { checkFixedWindowWith, type FixedWindowCounter, prefixCacheKey } from '@civitai/redis';
 import { redis } from '~/server/redis/client';
 import { resolveClientIp } from '~/server/utils/client-ip';
 
@@ -58,38 +58,40 @@ export const PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS = 60;
 // limiter's keys.
 const KEY_PREFIX = 'public-api:rate-limit';
 
-export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts';
+export type PublicApiRateLimitFamily =
+  | 'articles'
+  | 'collections'
+  | 'posts'
+  | 'comics'
+  | 'verify'
+  | 'verify-signed-in-ip';
+
+// /api/v1/verify parses an uploaded file of up to 10 MiB in-process, so it gets a tighter budget.
+const FAMILY_MAX: Partial<Record<PublicApiRateLimitFamily, { unauth: number; auth: number }>> = {
+  verify: { unauth: 10, auth: 30 },
+  // Keyed by IP across signed-in callers, so one address can't multiply its budget with accounts.
+  'verify-signed-in-ip': { unauth: 60, auth: 60 },
+};
 
 export type PublicApiRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-export async function checkFixedWindow(
+export function checkFixedWindow(
   key: string,
   max: number,
-  windowSeconds: number
+  windowSeconds: number,
+  options: { failOpen?: boolean } = {}
 ): Promise<PublicApiRateLimitResult> {
-  try {
-    const count = await redis.incrBy(key as never, 1);
-    if (count === 1) {
-      await redis.expire(key as never, windowSeconds);
-    } else {
-      // Re-assert a lost TTL (a crash between INCR and EXPIRE would otherwise
-      // strand a TTL-less key → permanent lock). Same mitigation the sibling
-      // limiters use.
-      const ttl = await redis.ttl(key as never);
-      if (ttl < 0) await redis.expire(key as never, windowSeconds);
-    }
-
-    if (count <= max) return { allowed: true };
-
-    let retryAfter = await redis.ttl(key as never);
-    if (!Number.isFinite(retryAfter) || retryAfter < 1) retryAfter = windowSeconds;
-    return { allowed: false, retryAfterSeconds: retryAfter };
-  } catch {
-    // Fail open — a redis incident must never break a public read.
-    return { allowed: true };
-  }
+  // Fails open by default: a redis incident must never break a public read. A caller guarding
+  // something other than a public read can ask to fail closed.
+  return checkFixedWindowWith(
+    redis as unknown as FixedWindowCounter,
+    key,
+    max,
+    windowSeconds,
+    options
+  );
 }
 
 /**
@@ -109,18 +111,23 @@ export async function checkPublicApiRateLimit({
   req,
   family,
   userId,
+  failOpen,
 }: {
   req: NextApiRequest;
   family: PublicApiRateLimitFamily;
   userId?: number;
+  failOpen?: boolean;
 }): Promise<PublicApiRateLimitResult> {
   const authed = typeof userId === 'number';
-  const max = authed ? PUBLIC_API_RATE_LIMIT_AUTH_MAX : PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
+  const limits = FAMILY_MAX[family];
+  const max = authed
+    ? limits?.auth ?? PUBLIC_API_RATE_LIMIT_AUTH_MAX
+    : limits?.unauth ?? PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
   const bucket = authed ? `user:${userId}` : `ip:${resolveClientIp(req)}`;
   // Minted from a literal rather than derived from REDIS_KEYS, so it does not inherit the
   // environment namespace from the key table — apply it explicitly. Without this a non-production
   // deployment burns PRODUCTION users' rate-limit budget and can 429 real traffic. No-op in
   // production.
   const key = prefixCacheKey(`${KEY_PREFIX}:${family}:${bucket}`);
-  return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS);
+  return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS, { failOpen });
 }

@@ -8,6 +8,9 @@ import {
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
 } from '~/server/services/blocks/workflow.service';
 
+/** Every browsing level, so no fixture output is above the ceiling. */
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
+
 /**
  * The read side of `kind:'workflow'`: which orchestrator steps a snapshot and the
  * queue projection treat as submitted by this bridge, and what each contributes.
@@ -18,6 +21,7 @@ const blob = (url: string, over: Record<string, unknown> = {}) => ({
   url,
   available: true,
   type: 'image',
+  nsfwLevel: 'pg',
   ...over,
 });
 
@@ -67,7 +71,8 @@ describe('buildBlockWorkflowStepsMetadata', () => {
 describe('snapshotFromWorkflow — kind:workflow', () => {
   it('adds one `steps` entry per recorded step and unions their images', () => {
     const snapshot = snapshotFromWorkflow(
-      workflow([GEN, UPSCALE], [{ name: 'gen' }, { name: '$1' }])
+      workflow([GEN, UPSCALE], [{ name: 'gen' }, { name: '$1' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(snapshot.imageUrls).toEqual([
       'https://img/gen-0.png',
@@ -80,12 +85,17 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         $type: 'imageGen',
         status: 'succeeded',
         imageUrls: ['https://img/gen-0.png', 'https://img/gen-1.png'],
+        outputs: [
+          { url: 'https://img/gen-0.png', nsfwLevel: 'pg' },
+          { url: 'https://img/gen-1.png', nsfwLevel: 'pg' },
+        ],
       },
       {
         name: '$1',
         $type: 'imageUpscaler',
         status: 'succeeded',
         imageUrls: ['https://img/up.png'],
+        outputs: [{ url: 'https://img/up.png', nsfwLevel: 'pg' }],
         // Blobs removed; the rest forwarded.
         output: { scale: 2 },
       },
@@ -97,7 +107,8 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
 
   it('🔴 a `suppressOutput` step contributes to NEITHER image list', () => {
     const snapshot = snapshotFromWorkflow(
-      workflow([GEN, UPSCALE], [{ name: 'gen', suppressOutput: true }, { name: '$1' }])
+      workflow([GEN, UPSCALE], [{ name: 'gen', suppressOutput: true }, { name: '$1' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(snapshot.imageUrls).toEqual(['https://img/up.png']);
     expect(snapshot.steps?.[0]).toEqual({ name: 'gen', $type: 'imageGen', status: 'succeeded' });
@@ -114,18 +125,23 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
     const labels = [{ url: 'https://img/mesh.glb', format: 'glb', variant: 'model' }];
 
     const shown = workflow([GEN, mesh], [{ name: 'gen' }, { name: 'mesh' }]);
-    expect(snapshotFromWorkflow(shown).imageUrls).toContain('https://img/mesh.glb');
-    expect(snapshotFromWorkflow(shown).model3dOutputs).toEqual(labels);
-    expect(projectAppWorkflow(shown).model3dOutputs).toEqual(labels);
+    expect(snapshotFromWorkflow(shown, TEST_OUTPUT_CEILING).imageUrls).toContain(
+      'https://img/mesh.glb'
+    );
+    expect(snapshotFromWorkflow(shown, TEST_OUTPUT_CEILING).model3dOutputs).toEqual(labels);
+    expect(projectAppWorkflow(shown, TEST_OUTPUT_CEILING).model3dOutputs).toEqual(labels);
 
     // Suppressed: the url is in no image list, so no label names it either.
     const hidden = workflow([GEN, mesh], [{ name: 'gen' }, { name: 'mesh', suppressOutput: true }]);
-    expect('model3dOutputs' in snapshotFromWorkflow(hidden)).toBe(false);
-    expect('model3dOutputs' in projectAppWorkflow(hidden)).toBe(false);
+    expect('model3dOutputs' in snapshotFromWorkflow(hidden, TEST_OUTPUT_CEILING)).toBe(false);
+    expect('model3dOutputs' in projectAppWorkflow(hidden, TEST_OUTPUT_CEILING)).toBe(false);
   });
 
   it('omits top-level `imageUrls` when every step that has images suppressed them', () => {
-    const snapshot = snapshotFromWorkflow(workflow([GEN], [{ name: 'gen', suppressOutput: true }]));
+    const snapshot = snapshotFromWorkflow(
+      workflow([GEN], [{ name: 'gen', suppressOutput: true }]),
+      TEST_OUTPUT_CEILING
+    );
     expect('imageUrls' in snapshot).toBe(false);
     expect(snapshot.steps).toHaveLength(1);
   });
@@ -133,7 +149,10 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
   it('🔴 drops a step the submit did NOT record, as it always has', () => {
     // Not natively extracted and not recorded: a step this bridge did not submit.
     const stray = { ...UPSCALE, name: 'platform-step' };
-    const snapshot = snapshotFromWorkflow(workflow([GEN, stray], [{ name: 'gen' }]));
+    const snapshot = snapshotFromWorkflow(
+      workflow([GEN, stray], [{ name: 'gen' }]),
+      TEST_OUTPUT_CEILING
+    );
     expect(snapshot.imageUrls).toEqual(['https://img/gen-0.png', 'https://img/gen-1.png']);
     expect(snapshot.steps?.map((s) => s.name)).toEqual(['gen']);
     expect(snapshot.stepOutputs).toBeUndefined();
@@ -169,7 +188,8 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         ],
         [{ name: 'gen' }, { name: '$1' }, { name: '$2' }, { name: '$3' }, { name: '$4' }],
         { status: 'failed', cost: { total: 41 } }
-      )
+      ),
+      TEST_OUTPUT_CEILING
     );
     // A failed workflow still carries what it charged and what it produced.
     expect(snapshot.status).toBe('failed');
@@ -205,7 +225,8 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
       output: { steps: [child(0), child(1)] },
     };
     const snapshot = snapshotFromWorkflow(
-      workflow([GEN, repeat, child(0), child(1)], [{ name: 'gen' }, { name: 'loop' }])
+      workflow([GEN, repeat, child(0), child(1)], [{ name: 'gen' }, { name: 'loop' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(snapshot.imageUrls).toEqual([
       'https://img/gen-0.png',
@@ -221,6 +242,7 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         $type: 'imageUpscaler',
         status: 'succeeded',
         imageUrls: ['https://img/child-0.png'],
+        outputs: [{ url: 'https://img/child-0.png', nsfwLevel: 'pg' }],
         output: {},
       },
       {
@@ -228,6 +250,7 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         $type: 'imageUpscaler',
         status: 'succeeded',
         imageUrls: ['https://img/child-1.png'],
+        outputs: [{ url: 'https://img/child-1.png', nsfwLevel: 'pg' }],
         output: {},
       },
     ]);
@@ -244,7 +267,8 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
       workflow(
         [{ $type: 'repeat', name: 'loop', status: 'succeeded' }, child],
         [{ name: 'loop', suppressOutput: true }]
-      )
+      ),
+      TEST_OUTPUT_CEILING
     );
     expect('imageUrls' in snapshot).toBe(false);
     expect(snapshot.steps?.[1]).toEqual({
@@ -262,14 +286,18 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
       status: 'succeeded',
       output: { blob: blob('https://img/grandchild.png') },
     };
-    const snapshot = snapshotFromWorkflow(workflow([grandchild], [{ name: 'loop' }]));
+    const snapshot = snapshotFromWorkflow(
+      workflow([grandchild], [{ name: 'loop' }]),
+      TEST_OUTPUT_CEILING
+    );
     expect(snapshot.imageUrls).toEqual(['https://img/grandchild.png']);
     expect(snapshot.steps?.map((s) => s.name)).toEqual(['loop.0.1']);
   });
 
   it('maps an `expired` step', () => {
     const snapshot = snapshotFromWorkflow(
-      workflow([{ $type: 'echo', name: 'a', status: 'expired' }], [{ name: 'a' }])
+      workflow([{ $type: 'echo', name: 'a', status: 'expired' }], [{ name: 'a' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(snapshot.steps).toEqual([{ name: 'a', $type: 'echo', status: 'expired' }]);
   });
@@ -279,7 +307,10 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
       ...UPSCALE,
       name,
     }));
-    const snapshot = snapshotFromWorkflow(workflow(lookalikes, [{ name: 'loop' }]));
+    const snapshot = snapshotFromWorkflow(
+      workflow(lookalikes, [{ name: 'loop' }]),
+      TEST_OUTPUT_CEILING
+    );
     expect(snapshot.steps).toBeUndefined();
     expect('imageUrls' in snapshot).toBe(false);
   });
@@ -298,7 +329,8 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
           },
         ],
         [{ name: 'write' }]
-      )
+      ),
+      TEST_OUTPUT_CEILING
     );
     expect(snapshot.steps).toEqual([
       { name: 'write', $type: 'chatCompletion', status: 'succeeded' },
@@ -313,7 +345,7 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
     ['an entry without a name', [{ name: 'gen' }, { suppressOutput: true }]],
     ['an entry that is not an object', ['gen']],
   ])('ignores a record that is %s: the snapshot is what it was before', (_label, records) => {
-    const snapshot = snapshotFromWorkflow(workflow([GEN, UPSCALE], records));
+    const snapshot = snapshotFromWorkflow(workflow([GEN, UPSCALE], records), TEST_OUTPUT_CEILING);
     expect('steps' in snapshot).toBe(false);
     // The unrecorded pass-through step is dropped, exactly as before.
     expect(snapshot.imageUrls).toEqual(['https://img/gen-0.png', 'https://img/gen-1.png']);
@@ -321,11 +353,12 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
 
   it('leaves a single-step pass-through snapshot byte-identical', () => {
     const passThrough = { ...UPSCALE, name: BLOCK_STEP_NAME };
-    expect(snapshotFromWorkflow(workflow([passThrough], undefined))).toEqual({
+    expect(snapshotFromWorkflow(workflow([passThrough], undefined), TEST_OUTPUT_CEILING)).toEqual({
       workflowId: '42-20261012',
       status: 'succeeded',
       cost: { total: 64 },
       imageUrls: ['https://img/up.png'],
+      outputs: [{ url: 'https://img/up.png', nsfwLevel: 'pg' }],
       stepOutputs: [{ $type: 'imageUpscaler', output: { scale: 2 } }],
     });
   });
@@ -347,7 +380,8 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
           modelId: 7,
           modelVersionId: 9,
         },
-      })
+      }),
+      TEST_OUTPUT_CEILING
     );
     expect(snapshot.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 1 }]);
     expect(snapshot.publishedModel).toEqual({ modelId: 7, modelVersionId: 9, published: false });
@@ -375,13 +409,13 @@ describe('a suppressed TRAINING step still reports its ready epochs', () => {
   const record = [{ name: 'train', suppressOutput: true as const }];
 
   it('on the snapshot', () => {
-    const snapshot = snapshotFromWorkflow(workflow([training], record));
+    const snapshot = snapshotFromWorkflow(workflow([training], record), TEST_OUTPUT_CEILING);
     expect(snapshot.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 2 }]);
     expect('imageUrls' in snapshot).toBe(false);
   });
 
   it('on the queue projection', () => {
-    const projection = projectAppWorkflow(workflow([training], record));
+    const projection = projectAppWorkflow(workflow([training], record), TEST_OUTPUT_CEILING);
     expect(projection.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 2 }]);
     expect(projection.images).toEqual([]);
   });
@@ -390,7 +424,8 @@ describe('a suppressed TRAINING step still reports its ready epochs', () => {
 describe('projectAppWorkflow — kind:workflow', () => {
   it('publishes a recorded step’s images, but not a suppressed step’s', () => {
     const projection = projectAppWorkflow(
-      workflow([GEN, UPSCALE], [{ name: 'gen', suppressOutput: true }, { name: '$1' }])
+      workflow([GEN, UPSCALE], [{ name: 'gen', suppressOutput: true }, { name: '$1' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(projection.images.map((i) => i.url)).toEqual(['https://img/up.png']);
   });
@@ -406,21 +441,24 @@ describe('projectAppWorkflow — kind:workflow', () => {
       workflow(
         [{ $type: 'repeat', name: 'loop', status: 'succeeded', output: { steps: [child] } }, child],
         [{ name: 'loop' }]
-      )
+      ),
+      TEST_OUTPUT_CEILING
     );
     expect(projection.images.map((i) => i.url)).toEqual(['https://img/child-0.png']);
   });
 
   it('still drops an unrecorded pass-through step', () => {
     const projection = projectAppWorkflow(
-      workflow([{ ...UPSCALE, name: 'stray' }], [{ name: 'gen' }])
+      workflow([{ ...UPSCALE, name: 'stray' }], [{ name: 'gen' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(projection.images).toEqual([]);
   });
 
   it('is unchanged for a workflow with no record', () => {
     const projection = projectAppWorkflow(
-      workflow([GEN, { ...UPSCALE, name: BLOCK_STEP_NAME }], undefined)
+      workflow([GEN, { ...UPSCALE, name: BLOCK_STEP_NAME }], undefined),
+      TEST_OUTPUT_CEILING
     );
     expect(projection.images.map((i) => i.url)).toEqual([
       'https://img/gen-0.png',

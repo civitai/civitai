@@ -20,7 +20,7 @@ const DATA = { files: [{ id: 1, url: 'model/7/a.safetensors' }] };
 // transforms the result. We drive it directly with a fake next() so no router graph has to load.
 async function run(
   user: { id: number; isModerator: boolean } | undefined,
-  { ownerUnknown = false }: { ownerUnknown?: boolean } = {}
+  { ownerUnknown = false, ownerView = true }: { ownerUnknown?: boolean; ownerView?: boolean } = {}
 ) {
   // Fresh copy each call so a leaked mutation of the shared fixture can't make a later case pass.
   const data = { files: DATA.files.map((f) => ({ ...f })) };
@@ -29,7 +29,7 @@ async function run(
       ownerId: () => (ownerUnknown ? undefined : OWNER),
       strip: (d) => ({ ...d, files: withoutFileUrls(d.files) as typeof d.files }),
     },
-    { data, input: { id: 1 }, user }
+    { data, input: { id: 1 }, user, ownerView }
   );
   return { data: resolved };
 }
@@ -40,6 +40,11 @@ describe('ownerOnlyFileUrls', () => {
   it('keeps the url for the version owner', async () => {
     const result = await run({ id: OWNER, isModerator: false });
     expect(result.data.files[0].url).toBe('model/7/a.safetensors');
+  });
+
+  it('strips the url for the owner on a credential without the owner view', async () => {
+    const result = await run({ id: OWNER, isModerator: false }, { ownerView: false });
+    expect(result.data.files[0].url).toBeUndefined();
   });
 
   it('keeps the url for a moderator who is not the owner', async () => {

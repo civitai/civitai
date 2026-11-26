@@ -34,6 +34,7 @@ vi.mock('~/server/trpc', async (importOriginal) => ({
 import handler from '~/pages/api/v1/models/com-face';
 import {
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
 } from '~/shared/utils/model-sfw-face';
 
@@ -211,12 +212,15 @@ describe('POST /api/v1/models/com-face', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  // The refusal is the endpoint's own reply in `error`, marked so Creator Studio offers the
+  // dispute instead of a retry; the rest go through the shared error handler's `message`.
   it.each([
-    [COM_FACE_REFUSED_MESSAGE, /in the model editor/],
-    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/],
-  ])(
+    [COM_FACE_REFUSED_MESSAGE, /in the model editor/, 422, 'error', 'intent-refused'],
+    [COM_FACE_REFUSED_EDIT_MESSAGE, /in the model editor/, 400, 'message', undefined],
+    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/, 400, 'message', undefined],
+  ] as const)(
     'tells the card which fields a refused draft read, apart from a check that failed',
-    async (thrown, shown) => {
+    async (thrown, shown, status, field, code) => {
       caller.model.getCoverCandidates.mockResolvedValue([
         { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
       ]);
@@ -224,9 +228,10 @@ describe('POST /api/v1/models/com-face', () => {
         new TRPCError({ code: 'BAD_REQUEST', message: thrown })
       );
       const res = await call({ action: 'draft', modelId: 11 });
-      expect(res.statusCode).toBe(400);
-      expect(res.body.message).toMatch(shown);
-      expect(res.body.message).toMatch(/civitai\.red/);
+      expect(res.statusCode).toBe(status);
+      expect(res.body[field]).toMatch(shown);
+      expect(res.body[field]).toMatch(/civitai\.red/);
+      expect(res.body.code).toBe(code);
     }
   );
 

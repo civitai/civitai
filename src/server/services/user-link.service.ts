@@ -7,7 +7,8 @@ import { dbWrite, dbRead } from '~/server/db/client';
 
 export const getUserLinks = async ({ userId }: { userId: number }) => {
   return await dbRead.userLink.findMany({
-    where: { userId },
+    // A banned user's links are not served; a ban whose archive failed keeps them as evidence.
+    where: { userId, user: { bannedAt: null } },
     select: {
       id: true,
       url: true,

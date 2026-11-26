@@ -5,7 +5,7 @@ import ts from 'typescript';
 import { afterAll, describe, expect, it } from 'vitest';
 
 /**
- * Every route under `src/pages/api/mod` must default-export a call to one of the wrappers below,
+ * Every route under `src/server/api-routes/mod` and `src/pages/api/mod` must default-export a call to one of the wrappers below,
  * imported from the module that defines it. `ModEndpoint` and `defineModeratorEndpoint` apply the
  * moderator credential rule (pinned in
  * `src/server/__tests__/moderator-rest-wrappers.credential-requirements.test.ts`);
@@ -27,6 +27,11 @@ const WEBHOOK_ROUTES = [
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
+  'image/kono-set-nsfw-level',
+  'knights/notification-types',
+  'knights/reset-player',
+  'knights/shop/cosmetics',
+  'knights/shop/membership',
   'mod-rules',
   'mute-user-pending-review',
   'new-order/manage-queue',
@@ -45,7 +50,10 @@ const WEBHOOK_ROUTES = [
 ];
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
-const MOD_ROUTES = path.join(REPO_ROOT, 'src/pages/api/mod');
+const MOD_ROUTE_DIRS = ['src/server/api-routes/mod', 'src/pages/api/mod'].map((dir) =>
+  path.join(REPO_ROOT, dir)
+);
+const MOD_CATCH_ALL = '[...path]'; // a router, not a route
 
 function routeFiles(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -141,12 +149,13 @@ describe('defaultExportWrapper', () => {
   });
 });
 
-describe('routes under src/pages/api/mod', () => {
-  const files = routeFiles(MOD_ROUTES);
-  const wrappers = files.map((file) => ({
-    route: path.relative(MOD_ROUTES, file).replace(/\\/g, '/').replace(/\.ts$/, ''),
-    wrapper: defaultExportWrapper(file, fs.readFileSync(file, 'utf8')),
-  }));
+describe('routes under /api/mod', () => {
+  const wrappers = MOD_ROUTE_DIRS.flatMap((dir) =>
+    routeFiles(dir).map((file) => ({
+      route: path.relative(dir, file).replace(/\\/g, '/').replace(/\.ts$/, ''),
+      wrapper: defaultExportWrapper(file, fs.readFileSync(file, 'utf8')),
+    }))
+  ).filter((w) => w.route !== MOD_CATCH_ALL);
   const routesOn = (name: string) =>
     wrappers
       .filter((w) => w.wrapper === name)
@@ -157,6 +166,8 @@ describe('routes under src/pages/api/mod', () => {
   it('finds routes on both moderator wrappers', () => {
     expect(routesOn('ModEndpoint').length).toBeGreaterThan(5);
     expect(routesOn('defineModeratorEndpoint').length).toBeGreaterThan(5);
+    // A route only the catch-all serves, so the walk cannot pass on the kept files alone.
+    expect(wrappers.some((w) => w.route === 'homeblock/create')).toBe(true);
   });
 
   it('all default-export a moderator or webhook wrapper', () => {
@@ -169,7 +180,7 @@ describe('routes under src/pages/api/mod', () => {
 });
 
 /**
- * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above: in the
+ * Routes elsewhere under `src/pages/api` or `src/server/api-routes` that read `isModerator` outside the wrappers above: in the
  * route file, or in a module `defaultExportOrigins` reaches from it, up to three hops. A read is the
  * identifier or a string element access (`x['isModerator']`). Not seen, among others: a check
  * under another name, a computed key, an import used only as a callee or inside a function body,
@@ -200,6 +211,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'training-studio/check-text':
     'passed to the edit-prompt audit, the same flag the generator gives auditPromptServer',
+  'training-studio/model-status':
+    'moderators are answered with no withheld runs: they may see a taken-down run in full',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
@@ -217,6 +230,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/model-versions/bust-cache': 'owner-or-moderator cache bust; owners bust their own versions',
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
   'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
+  'v1/models/index':
+    'the system account keeps its moderator rights on its own keys when listing models',
   'v1/permissions/check': 'entity access check that also admits owners and public entities',
   'webhooks/stripe': 'a lost dispute skips banning a payer who is a moderator; not a caller gate',
 };
@@ -234,9 +249,11 @@ const APP_BLOCKS_CLI_ROUTES = [
 ];
 
 const API_ROUTES = path.join(REPO_ROOT, 'src/pages/api');
+// The routes the /api/<key>/[...path] catch-alls serve, named the same way.
+const SERVED_API_ROUTES = path.join(REPO_ROOT, 'src/server/api-routes');
 const routeName = (file: string) =>
   path
-    .relative(API_ROUTES, file)
+    .relative(file.startsWith(SERVED_API_ROUTES) ? SERVED_API_ROUTES : API_ROUTES, file)
     .replace(/\\/g, '/')
     .replace(/\.tsx?$/, '');
 
@@ -510,7 +527,7 @@ describe('namesIdentifier and callsImported', () => {
 });
 
 /**
- * Every route under `src/pages/api` that calls `requireFullScopeSession` directly, moderator-only
+ * Every route under `src/pages/api` or `src/server/api-routes` that calls `requireFullScopeSession` directly, moderator-only
  * or not, so a route gaining or losing the call has to be listed here on purpose. Routes that get
  * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) or a shared gate
  * (`allowTrainingStudio`) are not listed, and this
@@ -545,8 +562,10 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'v1/creator/engagement',
 ];
 
-describe('routes under src/pages/api outside the moderator wrappers', () => {
-  const files = routeFiles(API_ROUTES).filter((f) => /\.tsx?$/.test(f));
+describe('API routes outside the moderator wrappers', () => {
+  const files = [...routeFiles(API_ROUTES), ...routeFiles(SERVED_API_ROUTES)].filter((f) =>
+    /\.tsx?$/.test(f)
+  );
   const sources = new Map(files.map((f) => [routeName(f), fs.readFileSync(f, 'utf8')]));
   const outsideWrappers = files
     .filter((file) => !(defaultExportWrapper(file, sources.get(routeName(file)) ?? '') in WRAPPERS))
@@ -556,6 +575,7 @@ describe('routes under src/pages/api outside the moderator wrappers', () => {
 
   it('walks the api tree', () => {
     expect(files.length).toBeGreaterThan(300);
+    expect(files.some((f) => routeName(f) === 'admin/permission')).toBe(true);
   });
 
   it("resolves a real route's default export to its module", () => {
@@ -602,6 +622,14 @@ describe('routes under src/pages/api outside the moderator wrappers', () => {
   it.each(APP_BLOCKS_CLI_ROUTES)('%s is an App Blocks CLI route', (route) => {
     const source = sources.get(route) ?? '';
     expect(source).not.toBe('');
-    expect(namesIdentifier(route, source, 'AppBlocksSubmit')).toBe(true);
+    // The `AppBlocksSubmit` check lives in `checkAppBlocksCliCredential`.
+    expect(
+      callsImported(
+        route,
+        source,
+        'checkAppBlocksCliCredential',
+        '~/server/auth/bearer-scope-tighten'
+      )
+    ).toBe(true);
   });
 });

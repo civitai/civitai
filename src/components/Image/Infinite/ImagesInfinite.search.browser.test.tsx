@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { useRouter } from 'next/router';
+import { useSyncExternalStore } from 'react';
 import type * as BrowsingLevel from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as FeedSearch from '~/components/Image/Infinite/useImageFeedSearch';
 import type * as ImageUtils from '~/components/Image/image.utils';
@@ -19,8 +20,35 @@ const state = vi.hoisted(() => ({
   searchFails: false,
   refusal: undefined as string | undefined,
   searchInputs: [] as unknown[],
+  searchOptions: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
+  features: {} as Record<string, boolean>,
+  periodWrites: [] as unknown[],
 }));
+
+// The saved feed filters: a store the fake `useFiltersContext` reads and writes, so a write lands
+// in the next render as it does in the app.
+const savedFilters = vi.hoisted(() => {
+  let snapshot: { period?: string } = {};
+  const listeners = new Set<() => void>();
+  return {
+    get: () => snapshot,
+    set(patch: { period?: string }) {
+      snapshot = { ...snapshot, ...patch };
+      listeners.forEach((listener) => listener());
+    },
+    reset(period?: string) {
+      snapshot = { period };
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+});
+const useSavedFilters = () => useSyncExternalStore(savedFilters.subscribe, savedFilters.get);
+const useUrlQuery = () =>
+  useRouter().query as { query?: string; period?: string; similarTo?: string };
 
 const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
   images: ids.map((id) => ({ id, width: 100, height: 100 })),
@@ -35,15 +63,16 @@ const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
 
 vi.mock('~/components/Image/Infinite/useImageFeedSearch', async (importOriginal) => ({
   ...(await importOriginal<typeof FeedSearch>()),
-  useImageFeedSearchQuery: () => 'red dragon',
-  useSemanticImageFeed: (input: unknown) => {
+  useImageFeedSearchQuery: () => useUrlQuery().query,
+  useSemanticImageFeed: (input: unknown, options?: unknown) => {
     state.searchInputs.push(input);
+    state.searchOptions.push(options);
     return state.searchFails ? result([], { isError: true }) : result([101, 102]);
   },
 }));
 vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUtils>()),
-  useImageFilters: () => ({ query: 'red dragon' }),
+  useImageFilters: () => ({ ...useSavedFilters(), ...useUrlQuery() }),
   useQueryImages: (_filters: unknown, options: { enabled?: boolean }) => {
     state.feedEnabled.push(options.enabled);
     return { ...result([1, 2, 3]), debugRetryActive: false, debugDelayMs: 0 };
@@ -59,12 +88,11 @@ vi.mock('@trpc/react-query', async (importOriginal) => ({
   getQueryKey: () => ['stub'],
 }));
 vi.mock('~/components/Search/useSearchRefusal', () => ({
-  useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
+  useSearchRefusal: () => ({ refusal: state.refusal }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
-  useFeatureFlags: () => ({}),
+  useFeatureFlags: () => state.features,
 }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevel>()),
@@ -72,7 +100,14 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
 }));
 vi.mock('~/providers/FiltersProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof Filters>()),
-  useFiltersContext: () => vi.fn(),
+  useFiltersContext: (selector: (store: unknown) => unknown) =>
+    selector({
+      images: useSavedFilters(),
+      setImageFilters: (patch: { period?: string }) => {
+        state.periodWrites.push(patch);
+        savedFilters.set(patch);
+      },
+    }),
 }));
 vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', async (importOriginal) => ({
   ...(await importOriginal<typeof Masonry>()),
@@ -90,7 +125,12 @@ describe('ImagesInfinite with a search', () => {
     state.searchFails = false;
     state.refusal = undefined;
     state.searchInputs = [];
+    state.searchOptions = [];
     state.feedEnabled = [];
+    state.features = {};
+    state.periodWrites = [];
+    savedFilters.reset();
+    localStorage.clear();
     useRouter().query = { query: 'red dragon' };
   });
 
@@ -101,6 +141,112 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon' });
     expect(page.getByText('image 1', { exact: true }).query()).toBeNull();
     expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  // Videos are their own index: the videos feed searches it, and only with its flag.
+  test.each([
+    ['videos', true, true],
+    ['videos', false, false],
+    ['images', true, false],
+  ] as const)(
+    'a %s feed with semanticVideoSearch %s searches the video index: %s',
+    async (filterType, flagOn, videos) => {
+      state.features = { semanticVideoSearch: flagOn };
+      renderWithProviders(<ImagesInfiniteContent searchable filterType={filterType} />);
+
+      await expect.element(page.getByText('image 101')).toBeVisible();
+      expect(state.searchOptions.at(-1)).toEqual({ videos });
+    }
+  );
+
+  test('shows the images like ?similarTo= and keeps the plain feed switched off', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    await expect.element(page.getByRole('link', { name: 'this image' })).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ imageId: 42, query: undefined });
+    expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('ignores ?similarTo= without feedSearch', async () => {
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('ignores ?similarTo= without moreLikeThis', async () => {
+    state.features = { feedSearch: true };
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('a refused query never falls back to ?similarTo=', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
+    state.refusal = 'illegal';
+    useRouter().query = { query: 'bad words', similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('Warning')).toBeVisible();
+    expect(state.searchInputs.length).toBeGreaterThan(0);
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('a typed query replaces ?similarTo=', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
+    useRouter().query = { query: 'red dragon', similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', imageId: undefined });
+  });
+
+  const postedAfters = () =>
+    (state.searchInputs.filter(Boolean) as { postedAfter?: Date }[]).map(
+      (input) => input.postedAfter
+    );
+
+  test("starts over all time, not the feed's saved week, and gives the week back on clear", async () => {
+    savedFilters.reset('Week');
+    const screen = await renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(postedAfters().length).toBeGreaterThan(0);
+    expect(postedAfters().every((postedAfter) => postedAfter === undefined)).toBe(true);
+    expect(state.periodWrites).toEqual([{ period: 'AllTime' }]);
+
+    useRouter().query = {};
+    await screen.rerender(<ImagesInfiniteContent searchable />);
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.periodWrites).toEqual([{ period: 'AllTime' }, { period: 'Week' }]);
+  });
+
+  test('keeps a period picked during the search when it is cleared', async () => {
+    savedFilters.reset('Week');
+    const screen = await renderWithProviders(<ImagesInfiniteContent searchable />);
+    await expect.element(page.getByText('image 101')).toBeVisible();
+
+    savedFilters.set({ period: 'Month' });
+    useRouter().query = {};
+    await screen.rerender(<ImagesInfiniteContent searchable />);
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.periodWrites).toEqual([{ period: 'AllTime' }]);
+  });
+
+  test('a period on the URL outranks the reset', async () => {
+    savedFilters.reset('Week');
+    useRouter().query = { query: 'red dragon', period: 'Month' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(postedAfters().length).toBeGreaterThan(0);
+    expect(postedAfters().every((postedAfter) => postedAfter instanceof Date)).toBe(true);
   });
 
   test('falls back to the plain feed, with a retry, when the search fails', async () => {
@@ -120,5 +266,22 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.length).toBeGreaterThan(0);
     expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
     expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('ignores ?searchSort=newest without the Newest sort flag', async () => {
+    useRouter().query = { query: 'red dragon', searchSort: 'newest' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', sort: undefined });
+  });
+
+  test('asks for newest first with the Newest sort flag on', async () => {
+    state.features = { imageSearchNewestSort: true };
+    useRouter().query = { query: 'red dragon', searchSort: 'newest' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', sort: 'newest' });
   });
 });

@@ -1,6 +1,6 @@
 import { Button } from '@mantine/core';
 import { IconCloudDownload } from '@tabler/icons-react';
-import { openAddFromImportsModal } from '~/components/Dialog/triggers/add-from-hugging-face-imports';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ModelFileType } from '~/server/common/constants';
@@ -30,7 +30,13 @@ export function AddFromImportsButton({
       variant="light"
       leftSection={<IconCloudDownload size={14} />}
       onClick={() =>
-        openAddFromImportsModal({ modelVersionId, modelType, adoptFiles, types, title })
+        openDialog(() => import('~/components/Moderation/HuggingFaceImport/AddFromImportsModal'), {
+          modelVersionId,
+          modelType,
+          adoptFiles,
+          types,
+          title,
+        })
       }
     >
       {label}

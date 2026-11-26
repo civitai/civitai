@@ -79,7 +79,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile

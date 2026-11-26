@@ -27,12 +27,14 @@ export const RUNNER_VIEWER_TTL_SECONDS = 5 * 60;
 /**
  * A preview grant's life. It must outlast one Restart preview, as the runner makes every call of
  * one with it: the steps before the tunnel's start (waiting for an app the page just started,
- * `RESTART_WAIT_MS`, and maybe its dev server) plus `TUNNEL_START_BUDGET_MS`, which owns the
- * arithmetic of everything from the start on (both in apps/assistant-runner
- * `preview-restart.ts`). A grant that runs out mid-restart leaves a tunnel open that nothing
- * connects to. `CLOCK_SKEW_SECONDS` is for clocks, not part of this.
+ * `RESTART_WAIT_MS`; installing its dependencies when they are not, as a woken or remixed app's
+ * are not, `NPM_INSTALL_CALL_TIMEOUT_MS`; and maybe starting its dev server, `DEV_SERVER_WAIT_MS`)
+ * plus `TUNNEL_START_BUDGET_MS`, which owns the arithmetic of everything from the start on (all in
+ * apps/assistant-runner, `preview-restart.ts`, `preview.ts` and `npm-install.ts`). A grant that
+ * runs out mid-restart leaves a tunnel open that nothing connects to. `CLOCK_SKEW_SECONDS` is for
+ * clocks, not part of this.
  */
-export const PREVIEW_GRANT_TTL_SECONDS = 7 * 60;
+export const PREVIEW_GRANT_TTL_SECONDS = 9 * 60;
 const ALGORITHM = 'ES256';
 const CLOCK_SKEW_SECONDS = 30;
 
@@ -69,7 +71,7 @@ function parse(pem: string): { privateKey: KeyObject; publicKey: KeyObject } | n
   logToAxiom({
     type: 'app-assistant.runner-signing-key.unusable',
     message: `ASSISTANT_RUNNER_SIGNING_KEY is unusable (${reason}); the runner endpoints answer 503`,
-  }).catch(() => undefined);
+  });
   return null;
 }
 

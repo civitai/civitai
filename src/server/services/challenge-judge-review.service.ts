@@ -1,10 +1,14 @@
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { collectionItemLagId, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { judgeReviewCommentSql } from '~/server/games/daily-challenge/challenge-helpers';
 import { clearLadder } from '~/server/games/daily-challenge/challenge-pairwise-store';
 import { writeJudgeComment } from '~/server/services/commentv3/comment-write.service';
 import { bulkDeleteComments } from '~/server/services/commentv3/moderation.service';
 import { toggleReaction } from '~/server/services/reaction.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 /**
@@ -108,6 +112,20 @@ export async function rejudgeEntries({
       WHERE id = ${challengeId}
     `,
   ]);
+  // A re-save right after this reads these entries from the primary, not a replica still holding
+  // the cleared tag.
+  await Promise.all(
+    imageIds.map((imageId) =>
+      preventReplicationLag(
+        'collectionItem',
+        collectionItemLagId(collectionId, 'imageId', imageId)
+      ).catch((error) =>
+        logSysRedisFailOpen('write-degraded', 'challengeJudgeReview.rejudgeEntries', error, {
+          collectionId,
+        })
+      )
+    )
+  );
   await bustContestCollectionItemsCache(imageIds);
   return { entries: imageIds.length, comments: commentIds.length };
 }
@@ -115,10 +133,29 @@ export async function rejudgeEntries({
 export async function getJudgeCommentForImage({
   imageId,
   judgeUserId,
+  userId,
+  isModerator,
+  ownerSeesHeld = false,
 }: {
   imageId: number;
   judgeUserId: number;
+  userId?: number;
+  isModerator?: boolean;
+  ownerSeesHeld?: boolean;
 }) {
+  const visible = await assertImageVisibleToViewer({
+    id: imageId,
+    userId,
+    isModerator,
+    ownerSeesHeld,
+  }).then(
+    () => true,
+    (error: unknown) => {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+      throw error;
+    }
+  );
+  if (!visible) return null;
   const result = await dbRead.$queryRaw<[{ content: string }?]>`
     SELECT c.content
     FROM "CommentV3" c

@@ -8,8 +8,13 @@ import {
   hasScalarChanges,
   isApprovedEdit,
   isUnpublishedEdit,
+  listingFieldsFromManifest,
+  onsiteCategoryEditableByModerator,
+  MANIFEST_COPY_FIELD_NOTE,
+  MANIFEST_LINK_FIELD_NOTE,
   materialEditBlockedReason,
   scopeDisclosureLockedForEdit,
+  scopesDriftedForEdit,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
 import { scopeJustificationError } from '~/components/Apps/offsiteSubmitFormConfig';
@@ -103,13 +108,15 @@ describe('kind-aware editing (isOnsiteEdit)', () => {
   it('an ON-SITE patch still carries every OTHER changed scalar', () => {
     // The narrowing must be surgical: this is what stops "drop externalUrl" turning into
     // "the on-site details form saves nothing".
+    // (Name / tagline / description / category are manifest-governed on-site, so the field
+    // changed here is one the form still owns.)
     const ctx = makeCtx({ kind: 'onsite' });
     const patch = buildScalarPatch(ctx, {
       ...editContextToForm(ctx),
-      name: 'Renamed',
+      contentRating: 'pg13',
       externalUrl: 'https://evil.example.com/',
     });
-    expect(patch.name).toBe('Renamed');
+    expect(patch.contentRating).toBe('pg13');
     expect(patch.externalUrl).toBeUndefined();
   });
 
@@ -231,7 +238,8 @@ describe('connect scope disclosure', () => {
       scopeJustifications: { UserRead: 'updated', ModelsWrite: 'reason' },
     };
     const patch = buildScalarPatch(ctx, form);
-    expect(patch.requestedScopes).toBe(FULL);
+    // Sent as a JSON number.
+    expect(patch.requestedScopes).toBe(Number(FULL));
     expect(patch.scopeJustifications).toEqual({ UserRead: 'updated', ModelsWrite: 'reason' });
   });
 
@@ -243,7 +251,8 @@ describe('connect scope disclosure', () => {
       connectAllowedScopes: FULL,
     });
     const patch = buildScalarPatch(ctx, editContextToForm(ctx));
-    expect(patch.requestedScopes).toBe(FULL);
+    // Sent as a JSON number.
+    expect(patch.requestedScopes).toBe(Number(FULL));
   });
 
   it('no scope fields for a listing without a connect client', () => {
@@ -436,13 +445,8 @@ describe('materialEditBlockedReason', () => {
     const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
     expect(offsite).toMatch(/App URL/);
     expect(onsite).not.toMatch(/App URL/);
-    // Both still name the three fields that exist for either kind, so the on-site branch is
-    // a narrowing rather than a different (or empty) sentence.
-    for (const copy of [offsite, onsite]) {
-      expect(copy).toMatch(/name/i);
-      expect(copy).toMatch(/source repository/i);
-      expect(copy).toMatch(/content rating/i);
-    }
+    // Both name the content rating as locked; only off-site can still change its name and links.
+    for (const copy of [offsite, onsite]) expect(copy).toMatch(/content rating/i);
   });
 
   it('🔴 the locked set is exactly the SERVER’s material set — one list, not two', () => {
@@ -463,6 +467,35 @@ describe('materialEditBlockedReason', () => {
     const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
     for (const copy of [offsite, onsite]) expect(copy).toMatch(/issue tracker/i);
   });
+
+  /**
+   * 🔴 ON-SITE, PINNED WHOLE. The name, tagline, description and both links come from the
+   * manifest, so the on-site notice must neither call them "locked until republish" nor say the
+   * tagline and description "can be edited now" — both were true only of off-site.
+   */
+  it('🔴 the ON-SITE notice says the copy and links come from the manifest (owner)', () => {
+    expect(
+      materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite', role: 'owner' }))
+    ).toBe(
+      'This app is unpublished, so its content rating is locked. Changing it needs moderator ' +
+        'review, and an unpublished listing has no way to reach it. Republish the app from the ' +
+        'Publishing tab first, then edit it — the edit is staged for review. Its name, tagline, ' +
+        'description, source repository and issue tracker come from block.manifest.json, and ' +
+        'its category is set by the manifest or a moderator.'
+    );
+  });
+
+  it('🔴 the ON-SITE notice for a seated editor names the owner, not a tab they cannot see', () => {
+    expect(
+      materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite', role: 'editor' }))
+    ).toBe(
+      'This app is unpublished, so its content rating is locked. Changing it needs moderator ' +
+        "review, and an unpublished listing has no way to reach it. The app's owner has to " +
+        'republish it before it can be edited — the Publishing tab that does it is theirs, not ' +
+        'yours. Its name, tagline, description, source repository and issue tracker come from ' +
+        'block.manifest.json, and its category is set by the manifest or a moderator.'
+    );
+  });
 });
 
 describe('isUnpublishedEdit', () => {
@@ -475,16 +508,8 @@ describe('isUnpublishedEdit', () => {
 });
 
 /**
- * 🔴 THE SCOPE-DRIFT ARM, which is NOT implied by the material lock.
- *
- * `buildScalarPatch` sends `requestedScopes` when the justifications changed OR when the
- * connect client's CURRENT `allowedScopes` has drifted from the stored snapshot, and
- * `materialPatchChanges` counts that key as material only when the two masks DIFFER. So
- * while they agree a justification edit is trivial and saves fine on an unpublished
- * listing; once they have drifted, the drifted mask rides along on EVERY patch and even a
- * tagline-only save is refused. Disabling the boxes in the first case would remove a
- * legitimate edit; leaving them live in the second is the fillable-but-unsaveable defect
- * one field further out.
+ * A justification edit (offline-access declaration included) is material, so every unpublished
+ * connect listing locks the boxes. Drift is separate: it fails even a tagline-only save.
  */
 describe('scopeDisclosureLockedForEdit', () => {
   const connect = {
@@ -493,35 +518,38 @@ describe('scopeDisclosureLockedForEdit', () => {
     connectRequestedScopes: 12,
   };
 
-  it('🔴 is FALSE while the masks agree — a justification edit is trivial and saves', () => {
-    expect(scopeDisclosureLockedForEdit(makeCtx({ status: 'removed', ...connect }))).toBe(false);
+  it('🔴 is TRUE on an unpublished connect listing even while the masks agree (justifications are material)', () => {
+    expect(scopeDisclosureLockedForEdit(makeCtx({ status: 'removed', ...connect }))).toBe(true);
   });
 
-  it('🔴 is TRUE once the mask has DRIFTED on an unpublished listing', () => {
-    expect(
-      scopeDisclosureLockedForEdit(
-        makeCtx({ status: 'removed', ...connect, connectAllowedScopes: 28 })
-      )
-    ).toBe(true);
-  });
-
-  it('🔴 drift alone is NOT enough — a live listing stages the change instead of refusing it', () => {
-    // On `approved` a material change routes to a SHADOW revision and goes to review; it is
-    // only the `removed` branch that has nowhere to route it. Same drift, opposite answer,
-    // so the status clause is individually killable.
+  it('🔴 is FALSE on a live or not-yet-live listing: the edit is staged or applied, not refused', () => {
     for (const status of ['draft', 'pending', 'approved'] as const) {
-      expect(
-        scopeDisclosureLockedForEdit(makeCtx({ status, ...connect, connectAllowedScopes: 28 })),
-        status
-      ).toBe(false);
+      expect(scopeDisclosureLockedForEdit(makeCtx({ status, ...connect })), status).toBe(false);
     }
   });
 
-  it('🔴 no connect client ⇒ no scope section ⇒ never locked, even with the masks apart', () => {
-    // A non-connect listing renders no disclosure at all, so a `true` here would be a lock
-    // on nothing — and `buildScalarPatch` emits no scope keys for it either.
+  it('no connect client ⇒ no scope section ⇒ never locked', () => {
     expect(
-      scopeDisclosureLockedForEdit(
+      scopeDisclosureLockedForEdit(makeCtx({ status: 'removed', connectClientId: null }))
+    ).toBe(false);
+  });
+});
+
+describe('scopesDriftedForEdit', () => {
+  const connect = {
+    connectClientId: 'oauth-1',
+    connectAllowedScopes: 12,
+    connectRequestedScopes: 12,
+  };
+  it('is false while the masks agree, true once they drift on an unpublished listing', () => {
+    expect(scopesDriftedForEdit(makeCtx({ status: 'removed', ...connect }))).toBe(false);
+    expect(
+      scopesDriftedForEdit(makeCtx({ status: 'removed', ...connect, connectAllowedScopes: 28 }))
+    ).toBe(true);
+  });
+  it('no connect client is never drifted, even with the masks apart', () => {
+    expect(
+      scopesDriftedForEdit(
         makeCtx({
           status: 'removed',
           connectClientId: null,
@@ -531,24 +559,51 @@ describe('scopeDisclosureLockedForEdit', () => {
       )
     ).toBe(false);
   });
-
-  it('🔴 absent masks read as 0 on BOTH sides, exactly as the server’s `?? 0` does', () => {
-    // A legacy context with neither field is NOT drifted (0 vs 0). One side present and
-    // non-zero IS. Asserting both directions is what stops an `undefined !== undefined`
-    // style mutant reading every legacy row as drifted and locking a box that saves fine.
+  it('drift on the requested side alone counts', () => {
+    // 28 carries a bit the allowed 12 lacks, so a check of only what the allowed mask gained misses it.
     expect(
-      scopeDisclosureLockedForEdit(makeCtx({ status: 'removed', connectClientId: 'oauth-1' }))
-    ).toBe(false);
+      scopesDriftedForEdit(makeCtx({ status: 'removed', ...connect, connectRequestedScopes: 28 }))
+    ).toBe(true);
+  });
+  it('drift on a live listing is not a lock (it is staged for review)', () => {
+    for (const status of ['draft', 'pending', 'approved'] as const) {
+      expect(
+        scopesDriftedForEdit(makeCtx({ status, ...connect, connectAllowedScopes: 28 })),
+        status
+      ).toBe(false);
+    }
+  });
+  it('absent masks read as 0 on both sides, as the server’s `?? 0` does', () => {
+    expect(scopesDriftedForEdit(makeCtx({ status: 'removed', connectClientId: 'oauth-1' }))).toBe(
+      false
+    );
     expect(
-      scopeDisclosureLockedForEdit(
+      scopesDriftedForEdit(
         makeCtx({ status: 'removed', connectClientId: 'oauth-1', connectAllowedScopes: 4 })
       )
     ).toBe(true);
+  });
+});
+
+describe('materialEditBlockedReason — connect listings name their justifications', () => {
+  it('🔴 an unpublished connect listing (masks agree) lists the permission justifications as locked', () => {
     expect(
-      scopeDisclosureLockedForEdit(
-        makeCtx({ status: 'removed', connectClientId: 'oauth-1', connectRequestedScopes: 4 })
+      materialEditBlockedReason(
+        makeCtx({
+          status: 'removed',
+          connectClientId: 'oauth-1',
+          connectAllowedScopes: 12,
+          connectRequestedScopes: 12,
+          role: 'owner',
+        })
       )
-    ).toBe(true);
+    ).toBe(
+      'This app is unpublished, so its name, App URL, source repository, issue tracker, content ' +
+        'rating and permission justifications (including offline access) are locked. Changing ' +
+        'any of them needs moderator review, and an unpublished listing has no way to reach it. ' +
+        'Republish the app from the Publishing tab first, then edit those fields — the edit is ' +
+        'staged for review. Tagline, description and category can be edited now.'
+    );
   });
 });
 
@@ -663,7 +718,11 @@ describe('🔴 scope drift — the save dead end, and the copy that denies it', 
       connectScopeJustifications: { UserRead: 'We show your display name on the dashboard.' },
     });
     expect(scopeJustificationError(editContextToForm(undrifted))).toBeUndefined();
-    expect(scopeDisclosureLockedForEdit(undrifted)).toBe(false);
+    // Not the drift dead end: the tagline, description and category still save, and the copy
+    // says so. (The justification boxes are locked on any unpublished connect listing, because a
+    // justification edit is material — `scopeDisclosureLockedForEdit` above.)
+    expect(scopesDriftedForEdit(undrifted)).toBe(false);
+    expect(materialEditBlockedReason(undrifted)).toMatch(/can be edited now/i);
   });
 
   it('🔴 the COPY tells the truth in the drifted state — it no longer promises an edit that cannot land', () => {
@@ -885,5 +944,159 @@ describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', (
     const current = { ...editContextToForm(ON_LISTING), betaMessage: 'y' };
     const patch = buildScalarPatch(ON_LISTING, current);
     expect(patch.betaMessage).toBe('y');
+  });
+});
+
+/**
+ * 🔴 ON-SITE LINKS ARE MANIFEST-GOVERNED. The listing is minted with `repository` / `bugs` at
+ * submit and re-synced from them on every approve, so the edit form shows both read-only and
+ * never sends them (the server refuses the keys on an on-site listing).
+ */
+describe('on-site source repository / issue tracker come from the manifest', () => {
+  const withLinks = (kind?: 'onsite' | 'offsite') =>
+    makeCtx({
+      ...(kind ? { kind } : {}),
+      scalars: {
+        ...makeCtx().scalars,
+        sourceRepoUrl: 'https://github.com/civitai/vitrine',
+        issueTrackerUrl: 'https://github.com/civitai/vitrine/issues',
+      },
+    });
+
+  it('only an explicit on-site kind is manifest-owned; offsite and ABSENT are author-owned', () => {
+    expect(listingFieldsFromManifest(withLinks('onsite'))).toBe(true);
+    expect(listingFieldsFromManifest(withLinks('offsite'))).toBe(false);
+    expect(listingFieldsFromManifest(withLinks())).toBe(false);
+  });
+
+  it('🔴 an ON-SITE patch never carries either link — changed or cleared', () => {
+    const ctx = withLinks('onsite');
+    for (const [sourceRepoUrl, issueTrackerUrl] of [
+      ['https://gitlab.com/other/app', 'https://example.com/help'],
+      ['', ''],
+    ]) {
+      const patch = buildScalarPatch(ctx, {
+        ...editContextToForm(ctx),
+        sourceRepoUrl,
+        issueTrackerUrl,
+        contentRating: 'pg13',
+      });
+      expect('sourceRepoUrl' in patch).toBe(false);
+      expect('issueTrackerUrl' in patch).toBe(false);
+      // The narrowing is surgical: the rest of the patch still goes out.
+      expect(patch.contentRating).toBe('pg13');
+    }
+  });
+
+  it('CONTROL: an OFF-SITE patch still carries both changed links', () => {
+    const ctx = withLinks('offsite');
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      sourceRepoUrl: 'https://gitlab.com/other/app',
+      issueTrackerUrl: '',
+    });
+    expect(patch.sourceRepoUrl).toBe('https://gitlab.com/other/app');
+    expect(patch.issueTrackerUrl).toBeNull();
+  });
+
+  it('the read-only notes name the manifest key each link comes from', () => {
+    expect(MANIFEST_LINK_FIELD_NOTE).toEqual({
+      sourceRepoUrl:
+        'Comes from "repository" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      issueTrackerUrl:
+        'Comes from "bugs" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+    });
+  });
+});
+
+/**
+ * 🔴 ON-SITE NAME / TAGLINE / DESCRIPTION ARE MANIFEST-GOVERNED. The listing is minted with the
+ * manifest's `name` / `tagline` / `description` at submit and re-synced from them on every
+ * block-version approve, so the edit form shows the three read-only and never sends them (the
+ * server refuses the keys on an on-site listing).
+ */
+describe('on-site name / tagline / description / category come from the app', () => {
+  it('🔴 an ON-SITE patch never carries name, tagline, description or category — changed or cleared', () => {
+    // makeCtx's category is 'utility', so both rows are a real change.
+    const ctx = makeCtx({ kind: 'onsite' });
+    for (const [name, tagline, description, category] of [
+      ['Renamed', 'A different tagline', 'A different description', 'games'],
+      ['Renamed', '', '', null],
+    ] as const) {
+      const patch = buildScalarPatch(ctx, {
+        ...editContextToForm(ctx),
+        name,
+        tagline,
+        description,
+        category,
+        contentRating: 'pg13',
+      });
+      expect('name' in patch).toBe(false);
+      expect('tagline' in patch).toBe(false);
+      expect('description' in patch).toBe(false);
+      expect('category' in patch).toBe(false);
+      // The narrowing is surgical: the rest of the patch still goes out.
+      expect(patch.contentRating).toBe('pg13');
+    }
+  });
+
+  it('a MODERATOR writing the listing itself may still change an on-site category', () => {
+    expect(onsiteCategoryEditableByModerator(makeCtx({ kind: 'onsite', role: 'moderator' }))).toBe(
+      true
+    );
+    // Owners and editors may not; nor may anyone on an off-site listing (it is simply editable).
+    for (const role of ['owner', 'editor', undefined] as const) {
+      expect(
+        onsiteCategoryEditableByModerator(makeCtx({ kind: 'onsite', role })),
+        String(role)
+      ).toBe(false);
+    }
+    expect(onsiteCategoryEditableByModerator(makeCtx({ kind: 'offsite', role: 'moderator' }))).toBe(
+      false
+    );
+    // An approved listing with a revision open saves to the revision, whose on-site apply drops it.
+    expect(
+      onsiteCategoryEditableByModerator(
+        makeCtx({ kind: 'onsite', role: 'moderator', status: 'approved', shadowId: 'shadow-1' })
+      )
+    ).toBe(false);
+
+    const ctx = makeCtx({ kind: 'onsite', role: 'moderator' });
+    const patch = buildScalarPatch(ctx, { ...editContextToForm(ctx), category: 'games' });
+    expect(patch.category).toBe('games');
+  });
+
+  it('CONTROL: an OFF-SITE patch still carries all four, cleared ones as null', () => {
+    const ctx = makeCtx({ kind: 'offsite' });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      name: 'Renamed',
+      tagline: 'A different tagline',
+      description: '',
+      category: 'games',
+    });
+    expect(patch.name).toBe('Renamed');
+    expect(patch.tagline).toBe('A different tagline');
+    expect(patch.description).toBeNull();
+    expect(patch.category).toBe('games');
+  });
+
+  it('the read-only notes name the manifest key each field comes from', () => {
+    expect(MANIFEST_COPY_FIELD_NOTE).toEqual({
+      name:
+        'Comes from "name" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      tagline:
+        'Comes from "tagline" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      description:
+        'Comes from "description" in block.manifest.json. Change it there and submit a new ' +
+        'version; the listing takes it when that version is approved.',
+      category:
+        'Comes from "category" in block.manifest.json while your app has no category yet; once ' +
+        'one is set, a moderator changes it. The listing takes it when a version is approved.',
+    });
   });
 });

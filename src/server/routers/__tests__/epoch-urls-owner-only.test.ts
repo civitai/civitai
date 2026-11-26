@@ -116,7 +116,7 @@ const SURFACES: [string, (user: Viewer) => Promise<File[]>][] = [
         files: [weights()],
       });
       const res = await modelFileRouter.createCaller(ctx(user)).getByVersionId({ id: VERSION });
-      return res.files as File[];
+      return res!.files as File[];
     },
   ],
 ];

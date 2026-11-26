@@ -31,7 +31,11 @@ export type EdgeMediaProps = EdgeUrlProps &
     disableWebm?: boolean;
     disablePoster?: boolean;
     videoProps?: React.HTMLAttributes<HTMLVideoElement> &
-      React.MediaHTMLAttributes<HTMLVideoElement> & { hoverPlay?: boolean; standby?: boolean };
+      React.MediaHTMLAttributes<HTMLVideoElement> & {
+        hoverPlay?: boolean;
+        keepPlaying?: boolean;
+        standby?: boolean;
+      };
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
     /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
     imageId?: number;

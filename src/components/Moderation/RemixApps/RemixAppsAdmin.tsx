@@ -11,6 +11,7 @@ import {
   Stack,
   Switch,
   Table,
+  Tabs,
   Text,
   Textarea,
   TextInput,
@@ -24,9 +25,9 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import { useMemo, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { ImageAskStep } from '~/components/Image/Remix/RemixAppModal';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer } from '~/shared/remix-apps/define';
 import {
@@ -37,6 +38,11 @@ import {
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  RemixAppsSubmitted,
+  type SubmittedRow,
+} from '~/components/Moderation/RemixApps/RemixAppsSubmitted';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export type AdminRow = RouterOutput['remixApp']['admin']['list'][number];
 
@@ -71,7 +77,12 @@ function describeSpec(input: RemixAppInput) {
 /** The mod list of remix apps: add, edit, enable, order and test-run them. */
 export function RemixAppsAdmin() {
   const utils = trpc.useUtils();
-  const { data: rows = [], isLoading } = trpc.remixApp.admin.list.useQuery();
+  const { data: allRows = [], isLoading } = trpc.remixApp.admin.list.useQuery();
+  const rows = useMemo(() => allRows.filter((row) => !('user' in row)), [allRows]);
+  const submitted = useMemo(
+    () => allRows.filter((row): row is SubmittedRow => 'user' in row),
+    [allRows]
+  );
   const [editing, setEditing] = useState<RemixAppInput | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
 
@@ -82,9 +93,9 @@ export function RemixAppsAdmin() {
   const order = trpc.remixApp.admin.order.useMutation({ onSuccess: refresh, onError });
   const remove = trpc.remixApp.admin.delete.useMutation({ onSuccess: refresh, onError });
   const confirmDelete = (slug: string) =>
-    openConfirmModal({
+    openConfirm({
       title: `Delete ${slug}?`,
-      children: (
+      message: (
         <Text size="sm">
           This removes the app row for good, and with it any installs of it. It cannot be undone.
         </Text>
@@ -98,31 +109,41 @@ export function RemixAppsAdmin() {
     const slugs = rows.map((r) => r.slug);
     const [slug] = slugs.splice(index, 1);
     slugs.splice(index + by, 0, slug);
-    order.mutate({ slugs });
+    // User apps keep a place after every system app, not a stale one among them.
+    order.mutate({ slugs: [...slugs, ...submitted.map((r) => r.slug)] });
   };
 
   return (
-    <>
-      <RemixAppsList
-        rows={rows}
-        isLoading={isLoading}
-        onAdd={() => setEditing(NEW_APP)}
-        onMove={move}
-        onToggle={(slug, enabled) => setEnabled.mutate({ slug, enabled })}
-        onEdit={setEditing}
-        onTest={setTesting}
-        onDelete={confirmDelete}
-      />
-      {editing && (
-        <RemixAppEditor
-          initial={editing}
-          isNew={!rows.some((r) => r.slug === editing.slug)}
-          onClose={() => setEditing(null)}
-          onSaved={refresh}
+    <Tabs defaultValue="apps">
+      <Tabs.List mb="md">
+        <Tabs.Tab value="apps">Apps</Tabs.Tab>
+        <Tabs.Tab value="submitted">Submitted ({submitted.length})</Tabs.Tab>
+      </Tabs.List>
+      <Tabs.Panel value="submitted">
+        <RemixAppsSubmitted rows={submitted} />
+      </Tabs.Panel>
+      <Tabs.Panel value="apps">
+        <RemixAppsList
+          rows={rows}
+          isLoading={isLoading}
+          onAdd={() => setEditing(NEW_APP)}
+          onMove={move}
+          onToggle={(slug, enabled) => setEnabled.mutate({ slug, enabled })}
+          onEdit={setEditing}
+          onTest={setTesting}
+          onDelete={confirmDelete}
         />
-      )}
-      {testing && <RemixAppTestRun slug={testing} onClose={() => setTesting(null)} />}
-    </>
+        {editing && (
+          <RemixAppEditor
+            initial={editing}
+            isNew={!rows.some((r) => r.slug === editing.slug)}
+            onClose={() => setEditing(null)}
+            onSaved={refresh}
+          />
+        )}
+        {testing && <RemixAppTestRun slug={testing} onClose={() => setTesting(null)} />}
+      </Tabs.Panel>
+    </Tabs>
   );
 }
 
@@ -297,7 +318,6 @@ function RemixAppEditor({
   const [target, setTarget] = useState<string>(initial.target);
   const [specText, setSpecText] = useState(JSON.stringify(initial.spec, null, 2));
 
-  // The server runs the same schema, and also checks the slug and the target.
   const parsed = useMemo(() => {
     let spec: unknown;
     try {
@@ -473,6 +493,18 @@ function RemixAppTestRun({ slug, onClose }: { slug: string; onClose: () => void 
               {text ? 'Answer' : 'Skip'}
             </Button>
           </Group>
+        )}
+        {state?.status === 'ask' && state.ask.kind === 'image' && (
+          <Stack gap={4}>
+            <Text size="sm" fw={600}>
+              {state.ask.prompt}
+            </Text>
+            <ImageAskStep
+              ask={state.ask}
+              pending={start.isPending}
+              onAnswer={(answer) => quote([...answers, answer])}
+            />
+          </Stack>
         )}
         {state?.status === 'priced' && ready && (
           <Group justify="space-between">

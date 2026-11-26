@@ -27,6 +27,8 @@ const SERVER_APP_ID = 'verified-app-77';
 const CLIENT_METADATA = {
   blockPublishedAppId: 'client-app-1',
   blockUploadedAppId: 'client-app-2',
+  blockGenerationSourceAppId: 'client-app-3',
+  blockSharedUploadAppId: 'client-app-4',
   size: 12345,
   width: 640,
   blockedAppId: 'not-provenance',
@@ -49,20 +51,25 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: 4242 } as never);
   // The fixture key was issued to user 1, who saves every image here.
-  redisMock.sysRedis.mGet.mockResolvedValue(['1'] as never);
+  redisMock.redis.mGet.mockResolvedValue(['1'] as never);
 });
 
 describe('block provenance metadata keys', () => {
-  it('lists the published and the uploaded key', () => {
+  it('lists the published, the uploaded, the private generation-source and the shared-upload key', () => {
     expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual([
       'blockPublishedAppId',
       'blockUploadedAppId',
+      'blockGenerationSourceAppId',
+      'blockSharedUploadAppId',
     ]);
   });
 
   it.each([
     ['blockPublishedAppId', true],
     ['blockUploadedAppId', true],
+    ['blockGenerationSourceAppId', true],
+    ['blockSharedUploadAppId', true],
+    ['blockGenerationSourceRef', false],
     ['blockUploadedAppIds', false],
     ['blockedAppId', false],
     ['publishedAppId', false],
@@ -117,6 +124,19 @@ describe('createImage', () => {
     } as never);
 
     expect(createdMetadata()).toEqual({ ...UNRELATED, blockUploadedAppId: SERVER_APP_ID });
+  });
+
+  it('writes the private generation-source key from blockProvenance, and only that key', async () => {
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA },
+      blockProvenance: { key: 'blockGenerationSourceAppId', appId: SERVER_APP_ID },
+    } as never);
+
+    expect(createdMetadata()).toEqual({ ...UNRELATED, blockGenerationSourceAppId: SERVER_APP_ID });
   });
 
   it('writes provenance onto a row that had no metadata', async () => {
@@ -174,6 +194,44 @@ describe('createImage', () => {
       type: 'image',
       skipIngestion: true,
       metadata: { ...CLIENT_METADATA, judgeRating: forged },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
+  it('drops a client moderation rule id, which decides whether a removal reads as a rule block', async () => {
+    const parsed = imageSchema.parse({
+      url: KEY,
+      metadata: { size: 1, ruleId: 999999999, ruleReason: 'x' },
+    });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, ruleId: 999999999, ruleReason: 'x' },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
+  it('drops a client account-deletion prior state, which an account restore writes back', async () => {
+    const forged = {
+      accountDeletionPriorIngestion: 'Scanned',
+      accountDeletionPriorBlockedFor: null,
+      accountDeletionPriorNeedsReview: 'minor',
+      accountDeletionPriorNsfwLevel: 1,
+      accountDeletionPriorNsfwLevelLocked: true,
+    };
+    const parsed = imageSchema.parse({ url: KEY, metadata: { size: 1, ...forged } });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, ...forged },
     } as never);
     expect(createdMetadata()).toEqual(UNRELATED);
   });

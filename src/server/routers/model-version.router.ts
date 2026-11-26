@@ -12,8 +12,10 @@ import {
   earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionForEditHandler,
   getModelVersionHandler,
+  getExplorationPromptsHandler,
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
+  getVersionsByIdsHandler,
   getVersionLicenseHandler,
   modelVersionDonationGoalHandler,
   modelVersionEarlyAccessPurchaseHandler,
@@ -44,16 +46,15 @@ import {
   setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
+  revokeUserEarlyAccessSchema,
 } from '~/server/schema/model-version.schema';
 import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   deleteExplorationPrompt,
-  getExplorationPromptsById,
   getLicensingRoots,
   getModelVersionsByModelType,
   getVersionById,
-  getVersionsByIds,
   addLinkedComponent,
   linkOfficialFileByHash,
   setLinkedComponents,
@@ -63,6 +64,7 @@ import {
   getUserEarlyAccessModelVersions,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
+import { moderatorRevokeEarlyAccess } from '~/server/services/model-version-access-revoke.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -83,7 +85,6 @@ import {
 import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 const versionFileUrlsForOwner = ownerOnlyFileUrls<
   Awaited<ReturnType<typeof getModelVersionHandler>>
@@ -96,6 +97,9 @@ const versionFileUrlsForOwner = ownerOnlyFileUrls<
     return {
       ...data,
       files: isModelDeletedOrTakenDown(data.model) ? withoutEpochUrls(files) : files,
+      offDomainTrainingData: isModelDeletedOrTakenDown(data.model)
+        ? null
+        : view.offDomain(data.files),
     };
   },
   forOwner: (data) => {
@@ -194,9 +198,7 @@ export const modelVersionRouter = router({
   getVersionsByIds: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)
-    .query(({ input, ctx }) =>
-      getVersionsByIds({ ...input, browsingLevel: getRequestBrowsingLevel(ctx) })
-    ),
+    .query(getVersionsByIdsHandler),
   getLicensingRoots: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getLicensingRootsSchema)
@@ -204,7 +206,7 @@ export const modelVersionRouter = router({
   getExplorationPromptsById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
-    .query(({ input }) => getExplorationPromptsById(input)),
+    .query(getExplorationPromptsHandler),
   getUserEarlyAccessVersions: protectedProcedure.query(({ ctx }) =>
     getUserEarlyAccessModelVersions({ userId: ctx.user.id })
   ),
@@ -308,6 +310,12 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .mutation(publishPrivateModelVersionHandler),
   bustCache: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => bustMvCache(input.id)),
+  /** Refunds nothing: see moderatorRevokeEarlyAccess. */
+  revokeUserEarlyAccess: moderatorProcedure
+    .input(revokeUserEarlyAccessSchema)
+    .mutation(({ input: { userId, modelVersionId, reason }, ctx }) =>
+      moderatorRevokeEarlyAccess({ userId, modelVersionId, reason, moderatorId: ctx.user.id })
+    ),
   enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
     enqueueJobs([
       {

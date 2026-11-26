@@ -37,7 +37,9 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 
 await import('~/server/services/text-scan/profiles/article.profile');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
-const { handleTextCategoryCallback } = await import('~/server/services/text-scan/category');
+const { handleTextCategoryCallback, submitTextCategoryScan } = await import(
+  '~/server/services/text-scan/category'
+);
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { textScanTextHash, getActiveTextScanPrompts } = await import(
   '~/server/services/text-scan/prompt'
@@ -150,6 +152,27 @@ describe('scanEntity: the article category call', () => {
     expect(JSON.stringify(record())).toBe(baselineRecord);
   });
 
+  it('tells the caller whether the call went out, since it never throws for a failure', async () => {
+    const profile = getTextScanProfile('Article')!;
+    const subject = (await profile.load([5])).get(5)!;
+    const submit = (over: Partial<typeof subject> = {}) =>
+      submitTextCategoryScan({
+        entityType: 'Article',
+        entityId: 5,
+        subject: { ...subject, ...over },
+        hook: profile.category!,
+        model: 'm',
+        maxInputChars: 4000,
+        scanCallbackUrl: 'https://example.com/cb?token=t',
+      });
+    expect(await submit()).toBe('submitted');
+    vi.mocked(submitWorkflow).mockResolvedValueOnce({ error: 'bad request' } as any);
+    expect(await submit()).toBe('failed');
+    expect(await submit({ fields: [] })).toBe('empty');
+    vi.mocked(getCategoryTags).mockResolvedValueOnce([]);
+    expect(await submit()).toBe('no-categories');
+  });
+
   it('clears the category, and sends no call, when the text is now empty', async () => {
     dbMock.dbWrite.article.findMany.mockResolvedValue([
       { ...ARTICLE, title: '', content: '' },
@@ -253,6 +276,67 @@ describe('handleTextCategoryCallback', () => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow('{"category":"story"}'));
     await callback('failed');
     expect(writeArgs()).toEqual([[null, 5]]);
+  });
+
+  const categoryLog = (message: string) =>
+    vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([arg]) => arg as Record<string, unknown>)
+      .find((arg) => arg.name === 'text-category' && arg.message === message);
+
+  it('logs what the orchestrator reported for a failed workflow, never the text', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      categoryWorkflow('', {
+        status: 'failed',
+        steps: [
+          {
+            $type: 'chatCompletion',
+            status: 'failed',
+            retries: 2,
+            input: { messages: [{ role: 'user', content: 'SECRET ARTICLE TEXT' }] },
+          },
+        ],
+      })
+    );
+    await callback('failed');
+    const log = categoryLog('workflow failed; category cleared');
+    expect(log?.payload).toMatchObject({
+      workflowStatus: 'failed',
+      stepStatus: 'failed',
+      retries: 2,
+    });
+    expect(JSON.stringify(log)).not.toContain('SECRET ARTICLE TEXT');
+  });
+
+  it('logs only the length of an answer too long to be a category name', async () => {
+    const prose = 'x'.repeat(41);
+    vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow(JSON.stringify({ category: prose })));
+    await callback();
+    const log = categoryLog('unusable output; category cleared');
+    expect(log?.payload).toMatchObject({ answer: '41 chars' });
+    expect(JSON.stringify(log)).not.toContain(prose);
+  });
+
+  it('logs the finish reason and the off-list name for unusable output', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      categoryWorkflow('', {
+        steps: [
+          {
+            $type: 'chatCompletion',
+            output: {
+              choices: [
+                { message: { content: '{"category":"announcement"}' }, finishReason: 'stop' },
+              ],
+            },
+          },
+        ],
+      })
+    );
+    await callback();
+    expect(categoryLog('unusable output; category cleared')?.payload).toMatchObject({
+      finishReason: 'stop',
+      answer: 'announcement',
+    });
   });
 
   it('a failing write resolves and never touches the scan record', async () => {

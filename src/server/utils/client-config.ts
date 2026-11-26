@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders } from 'http';
 import semver from 'semver';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { SITE_ALERTS_VERSION_FIELD } from '~/shared/constants/site-alert.constants';
 
 // The CLIENT hash is a single global key (forced-client-update version/date
@@ -21,8 +21,9 @@ export async function getClientConfigCached(): Promise<Record<string, string>> {
   if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
   // Wall-clock deadline so a stalled/half-open sysRedis can't park this hGetAll for
   // OS-keepalive minutes (the sys client has no socketTimeout, and a per-command
-  // timeout can't abort a written command).
-  const client = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT));
+  // timeout can't abort a written command). A failed read is not cached, so during an outage every
+  // web tRPC call re-reads: the read breaker (when enabled) stops each one waiting the deadline.
+  const client = await withSysReadBreaker(sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT));
   clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
   return client;
 }

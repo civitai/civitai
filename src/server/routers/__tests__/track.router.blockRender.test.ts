@@ -24,6 +24,7 @@ vi.mock('~/server/redis/client', () => ({
   redis: {},
   sysRedis: { hGetAll: vi.fn(async () => ({})) },
   withSysReadDeadline: (p: Promise<unknown>) => p,
+  withSysReadBreaker: (p: Promise<unknown>) => p,
   REDIS_SYS_KEYS: { CLIENT: 'client' },
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));

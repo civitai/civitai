@@ -20,17 +20,14 @@ const getAllHiddenForUser = vi.fn(async () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: (...a: unknown[]) => getAllHiddenForUser(...(a as [])),
 }));
-// The service imports the provenance-marker const from block-image-upload.service;
-// stub it so the test doesn't pull that module's env/s3 graph.
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-}));
-
 import {
   getBlockGatedImagesByIds,
   resolveViewerBrowsingLevel,
 } from '~/server/services/blocks/block-gated-images.service';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const SFW = NsfwLevel.PG | NsfwLevel.PG13; // 3
@@ -56,6 +53,8 @@ const clean = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  // The row carries THIS app's published key (the SQL's `viaPublished`).
+  viaPublished: true,
   ...over,
 });
 
@@ -325,9 +324,43 @@ describe('getBlockGatedImagesByIds', () => {
 });
 
 describe('resolveViewerBrowsingLevel', () => {
-  it('fails closed to the public (PG) floor for an absent/zero ceiling', () => {
-    expect(resolveViewerBrowsingLevel(undefined)).toBe(publicBrowsingLevelsFlag);
-    expect(resolveViewerBrowsingLevel(null)).toBe(publicBrowsingLevelsFlag);
-    expect(resolveViewerBrowsingLevel(0)).toBe(publicBrowsingLevelsFlag);
+  it('fails closed to the public (PG) floor when either claim is absent or zero', () => {
+    expect(resolveViewerBrowsingLevel({})).toBe(publicBrowsingLevelsFlag);
+    expect(resolveViewerBrowsingLevel({ maxBrowsingLevel: allBrowsingLevelsFlag })).toBe(
+      publicBrowsingLevelsFlag
+    );
+    expect(resolveViewerBrowsingLevel({ viewerBrowsingLevel: allBrowsingLevelsFlag })).toBe(
+      publicBrowsingLevelsFlag
+    );
+    expect(resolveViewerBrowsingLevel({ maxBrowsingLevel: 0, viewerBrowsingLevel: 0 })).toBe(
+      publicBrowsingLevelsFlag
+    );
+  });
+
+  it('🔴 a negative viewer claim never widens to the domain ceiling', () => {
+    expect(
+      resolveViewerBrowsingLevel({
+        maxBrowsingLevel: allBrowsingLevelsFlag,
+        viewerBrowsingLevel: -1,
+      })
+    ).toBe(publicBrowsingLevelsFlag);
+  });
+
+  it('a PG viewer on an all-levels domain gets PG, not the domain ceiling', () => {
+    expect(
+      resolveViewerBrowsingLevel({
+        maxBrowsingLevel: allBrowsingLevelsFlag,
+        viewerBrowsingLevel: NsfwLevel.PG,
+      })
+    ).toBe(NsfwLevel.PG);
+  });
+
+  it('an all-levels viewer on an SFW domain gets the domain ceiling', () => {
+    expect(
+      resolveViewerBrowsingLevel({
+        maxBrowsingLevel: publicBrowsingLevelsFlag,
+        viewerBrowsingLevel: allBrowsingLevelsFlag,
+      })
+    ).toBe(publicBrowsingLevelsFlag);
   });
 });

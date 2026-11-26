@@ -10,7 +10,8 @@ import {
 import type { ChatTool } from '@civitai/components-chat/core';
 
 import type { Logger } from '../core/interfaces';
-import { DevTunnelError, type DevTunnels } from './dev-tunnel';
+import { DevTunnelError, type DevTunnels, type PreviewOpenAnswer } from './dev-tunnel';
+import { npmInstallRunningProbe, runNpmInstall } from './npm-install';
 
 /**
  * How often a live run stamps its app's tunnel's idle clock. civitai reaps a tunnel 30 minutes
@@ -28,8 +29,9 @@ const DETAIL_CHARS = 500;
  * How long `startDevServer` waits for the dev server it started to listen; its last probe can run
  * up to `PROBE_TIMEOUT_MS` past it. Vite on a scaffolded App Block listens within seconds. The whole
  * Restart is one request whose grant must still cover the tunnel's start after this
- * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app, so
- * this is kept short.
+ * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app and, for
+ * a project whose dependencies are not installed, its install (`NPM_INSTALL_TIMEOUT_MS`), so this
+ * is kept short.
  */
 export const DEV_SERVER_WAIT_MS = 20_000;
 const DEV_SERVER_POLL_MS = 1_000;
@@ -53,8 +55,16 @@ export interface RunnerPreviewDeps {
     call(
       tool: string,
       args: Record<string, unknown>,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      /** `timeoutMs`: how long to wait for its answer (`AppSandbox.call`'s own default unless set). */
+      options?: { timeoutMs?: number }
     ): Promise<{ text: string; isError: boolean }>;
+    /**
+     * The open app's current preview id (`AppSandbox.previewId`), and a new one
+     * (`AppSandbox.rotatePreviewId`). Without them, or without an id, every preview is a dev tunnel.
+     */
+    previewId?(): Promise<string | null>;
+    rotatePreviewId?(): Promise<string>;
   };
   /** civitai's dev-tunnel endpoints, with this run's grant. */
   tunnels: DevTunnels;
@@ -72,25 +82,44 @@ export interface RunnerPreviewDeps {
   tunnelStartBy?: number;
 }
 
-/** The tunnel this run opened: kept in this process's memory only, never in a result. */
-interface OpenTunnel {
+/** The preview this run opened: kept in this process's memory only, never in a result. */
+interface OpenPreview {
+  /**
+   * `tunnel`: a dev tunnel the sandbox dials. `direct`: civitai's preview session, served by the
+   * sandbox service with no tunnel (civitai's `preview/open`), kept and closed by its block id.
+   */
+  transport: 'tunnel' | 'direct';
   sessionId: string;
   /** The sandbox it serves: another app opened by `create_app` is another preview. */
   app: string;
   blockId: string;
-  host: string;
+  /** A tunnel's host; `null` for a direct preview, whose session host the runner never keeps. */
+  host: string | null;
   /** What it was opened with: a start asking for other scopes or auth opens it again. */
   declaredScopes: string[];
   declaredAuth: 'block-token' | 'oauth' | undefined;
+  /**
+   * Whether the preview certainly has those scopes and auth. A tunnel start always writes a new
+   * session; a direct open may answer a session already open for the app's preview id (an earlier
+   * reply's, the page's Restart preview's), which keeps the scopes it was opened with. So a direct
+   * one is known only when the open wrote it: after a rotated preview id, or after this run ended
+   * the session before it (`#openDirect` does so for every start that declares scopes or auth).
+   */
+  scopesKnown: boolean;
   /** What the start that opened it answered: a start of the same preview answers it again. */
   result: StartedPreview;
 }
 
-/** What a start answers (and the page reads `blockId` and `host` of): never the tunnel's id. */
+/**
+ * What a start answers (and the page reads `blockId` and `host` of): never the tunnel's id. A
+ * direct preview's answer has no `host`: its session host is itself the credential that loads the
+ * preview, so it never reaches the assistant, the journal or the saved conversation; the page gets
+ * the frame from civitai by `blockId`.
+ */
 export interface StartedPreview {
   shown: true;
   blockId: string;
-  host: string;
+  host?: string;
   next_step: string;
 }
 
@@ -103,17 +132,23 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  * tunnel for the run grant's user; the sandbox only ever gets its own single-use key's host and sish's
  * host key, as in the browser; the assistant never gets the raw tunnel tools, so it cannot point the
  * sandbox at a host civitai did not open. What a result says (and so what the page and the saved
- * conversation see) is the block id and the host, never the tunnel's id.
+ * conversation see) is the block id (and a tunnel's host), never the tunnel's id.
+ *
+ * Direct preview (civitai's `app-assistant-direct-preview` flag): each start first asks civitai's
+ * `preview/open` with the app's sandbox's preview id. When civitai answers with a session, the
+ * sandbox service serves the preview itself and no tunnel step is taken; that preview is kept
+ * alive and closed by its block id, and its answer carries no host. Otherwise (`tunnel`, the flag
+ * off) it is the dev tunnel, as before.
  *
  * While the run lives (`keepWhileRunning`) the open app's preview is kept from idling out
  * (`PREVIEW_KEEPALIVE_MS`), whoever opened it: this run, an earlier one, or the page's Restart
- * preview, as long as the app's sandbox is connected to it. `close()`, as the run
+ * preview (a tunnel as long as the app's sandbox is connected to it). `close()`, as the run
  * ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
  * looking at it for a while after the reply ends.
  */
 export class RunnerPreview {
   readonly #deps: RunnerPreviewDeps;
-  #open: OpenTunnel | null = null;
+  #open: OpenPreview | null = null;
   #timer: ReturnType<typeof setInterval> | undefined;
   #keeping = false;
   /** Set by `keepWhileRunning`: a run's preview (never a run-less restart's) is kept alive. */
@@ -133,11 +168,11 @@ export class RunnerPreview {
 
   /**
    * For a run: from now until `close()`, keeps the open app's preview from idling out, whoever
-   * opened it. Each tick asks the open app's sandbox which host its tunnel is connected to
-   * (`tunnel_status`) and has civitai keep the run's user's tunnel at that host: never another
-   * app's (it is not that app's sandbox), never another user's (civitai checks the owner), and
-   * never one the sandbox has let go (paused, disconnected), which civitai then lets idle out.
-   * Paused by `stop_preview` (the user asked for it to go) until the next start.
+   * opened it (`#keepTarget`): a tunnel by the host the app's sandbox is connected to
+   * (`tunnel_status`), a direct preview by its block id. Never another app's (it is not that app's
+   * sandbox), never another user's (civitai checks the owner), and never a tunnel the sandbox has
+   * let go (paused, disconnected), which civitai then lets idle out. Paused by `stop_preview` (the
+   * user asked for it to go) until the next start.
    */
   keepWhileRunning(): void {
     if (this.#closed) return;
@@ -269,7 +304,16 @@ export class RunnerPreview {
    * to listen. Never a second one: one already running (or started meanwhile by another start, which
    * the sandbox refuses ours for) is only waited for. The project is the directory the sandbox last
    * ran it in, else the app key's own, else the only top-level directory, that holds a
-   * `block.manifest.json`. Throws `DevServerStartError`, saying what failed, when it does not run.
+   * `block.manifest.json`. A project whose dependencies are not installed (an app whose files were
+   * seeded: woken from hibernation, remixed; or one whose last install was cut off) gets
+   * `npm install` first, bounded by `NPM_INSTALL_TIMEOUT_MS`, as the assistant is told to before it
+   * starts one; else `npm run dev` finds no `vite` and exits 127. Installed means npm's own record of
+   * a finished install, `node_modules/.package-lock.json`, which npm (7 and later) writes last: a
+   * `node_modules` alone may be what a killed install left. One that is installed is never installed
+   * into, and none is installed while another npm install runs in the sandbox (the assistant's own,
+   * in a reply): two in one directory break its tree. Throws `DevServerStartError`, saying what
+   * failed, when it does not run (`installing`: another install runs, or the sandbox would not say
+   * whether one does; `install-failed`: ours did not exit 0, or did not answer).
    */
   startDevServer(signal?: AbortSignal): Promise<void> {
     return this.#serial(async () => {
@@ -279,6 +323,10 @@ export class RunnerPreview {
       if (status?.running !== true) {
         const dir = await this.#projectDir(app.app, status, signal);
         if (!dir) throw new DevServerStartError('no-project');
+        if (!(await this.#installed(dir, signal))) {
+          if (await this.#installRunning(signal)) throw new DevServerStartError('installing');
+          await this.#install(dir, signal);
+        }
         const started = await this.#deps.sandbox.call(
           'dev_server_start',
           { command: `cd ${dir} && ${DEV_SERVER_COMMAND}` },
@@ -325,6 +373,70 @@ export class RunnerPreview {
       .map((line) => line.trim())
       .filter(Boolean);
     return dirs.length === 1 && isProjectDir(dirs[0]!) ? dirs[0]! : null;
+  }
+
+  /**
+   * Whether the project's dependencies are installed: `node_modules/.package-lock.json` exists,
+   * which npm writes last in a finished install. Only `test -f`'s own exit 0 says so: a check that
+   * failed otherwise (a tool error, no answer) reads as not installed, so it installs (when no other
+   * install runs). An install over installed dependencies is npm finding little to do; skipping one
+   * that was needed is the dev server's exit 127. (An npm older than 7 writes no such file, so every
+   * start would install; the sandbox's npm is newer.)
+   */
+  async #installed(dir: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: `test -f ${dir}/node_modules/.package-lock.json`, timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      return !probe.isError && exitCodeOf(probe.text) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether an npm install runs anywhere in the sandbox now (`npmInstallRunningProbe`). Only its own
+   * `idle` says none does: a check that failed (a tool error, no answer, another output) reads as one
+   * running, so nothing is installed. A second install beside a running one breaks the project's
+   * tree, which is worse than asking the user to try again.
+   */
+  async #installRunning(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: npmInstallRunningProbe(), timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      return !(
+        !probe.isError &&
+        exitCodeOf(probe.text) === 0 &&
+        outputOf(probe.text).trim() === 'idle'
+      );
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * `cd <dir> && npm install` (`runNpmInstall`: bounded in the sandbox by `NPM_INSTALL_TIMEOUT_MS`,
+   * which kills it past that, and waited for that long plus `CALL_SLACK_MS`). Throws
+   * `install-failed` unless it exited 0. It runs inside the start's turn of `#serial`, so a
+   * `start_preview` meanwhile waits.
+   *
+   * The install keeps running if the page's request times out upstream; the next Restart finds it
+   * installed, or is told it is still installing.
+   */
+  async #install(dir: string, signal?: AbortSignal): Promise<void> {
+    let installed: { text: string; isError: boolean };
+    try {
+      installed = await runNpmInstall(this.#deps.sandbox, dir, signal);
+    } catch {
+      throw new DevServerStartError('install-failed');
+    }
+    if (installed.isError || exitCodeOf(installed.text) !== 0)
+      throw new DevServerStartError('install-failed');
   }
 
   async #hasManifest(dir: string, signal?: AbortSignal): Promise<boolean> {
@@ -408,14 +520,16 @@ export class RunnerPreview {
         : undefined;
     // Already open for this app in this run (by itself after the dev server started, or by an
     // earlier call) and asked for again as it is: the same answer, and nothing is opened twice.
-    // Another block id, or other scopes or auth than it was opened with, is a new start.
+    // Another block id, or other scopes or auth than it was opened with (or than a direct preview
+    // may have, `scopesKnown`), is a new start.
     const open = this.#open;
     if (
       open &&
       open.app === app.name &&
       (typeof input.block_id !== 'string' || input.block_id === open.blockId) &&
-      (declaredScopes === undefined || sameScopes(declaredScopes, open.declaredScopes)) &&
-      (declaredAuth === undefined || declaredAuth === open.declaredAuth)
+      (declaredScopes === undefined ||
+        (open.scopesKnown && sameScopes(declaredScopes, open.declaredScopes))) &&
+      (declaredAuth === undefined || (open.scopesKnown && declaredAuth === open.declaredAuth))
     )
       return open.result;
     const blockId = typeof input.block_id === 'string' ? input.block_id : app.app;
@@ -423,6 +537,10 @@ export class RunnerPreview {
       throw new Error(
         'Pass block_id: 3-40 characters, lowercase letters, digits and dashes, starting with a letter.'
       );
+
+    // 0. A direct preview, when civitai opens one for this user: no tunnel at all.
+    const direct = await this.#openDirect(app.name, blockId, declaredScopes, declaredAuth, signal);
+    if (direct) return direct;
 
     // 1. A fresh single-use key, made in the sandbox: only its public half leaves it.
     const key = await sandbox.call('tunnel_key', {}, signal);
@@ -488,45 +606,227 @@ export class RunnerPreview {
 
     // A preview of another block this run opened goes; one of the same block civitai already replaced.
     const previous = this.#open;
-    if (previous && previous.blockId !== blockId) await close(previous.sessionId);
-    const result: StartedPreview = {
-      shown: true,
-      blockId,
-      host: started.host,
-      next_step:
-        'The user sees the preview now. To see what they see, call sandbox__preview_check.',
-    };
+    if (previous && previous.blockId !== blockId) await this.#closeOpen(previous);
+    const result = shownResult(blockId, started.host);
     this.#open = {
+      transport: 'tunnel',
       sessionId: started.sessionId,
       app: app.name,
       blockId,
       host: started.host,
       declaredScopes: declaredScopes ?? [],
       declaredAuth,
+      scopesKnown: true,
       result,
     };
     if (this.#keepCurrent) this.#keepAlive();
     return result;
   }
 
+  /**
+   * The direct preview of `blockId` (served by the sandbox service, with no tunnel), when civitai's
+   * `preview/open` opens one for this user; `null` when it says to open a dev tunnel, or when the
+   * app's sandbox has no preview id to open it under.
+   *
+   * civitai answers a session already open for the app's preview id as it is (scopes included),
+   * writes one for an id never used, and answers `fresh` for an id whose session has ended (a
+   * resumed app, a stopped preview): then the id is rotated once and asked again, which civitai
+   * always writes; a second `fresh` is an error, never a loop. So it takes at most two opens.
+   */
+  async #openDirect(
+    appName: string,
+    blockId: string,
+    declaredScopes: string[] | undefined,
+    declaredAuth: 'block-token' | 'oauth' | undefined,
+    signal?: AbortSignal
+  ): Promise<StartedPreview | null> {
+    const { sandbox, tunnels } = this.#deps;
+    if (!sandbox.previewId || !sandbox.rotatePreviewId) return null;
+    const previous = this.#open;
+
+    let previewId: string | null;
+    try {
+      previewId = await sandbox.previewId();
+    } catch (error) {
+      // The sandbox service would not say: the dev tunnel, as before direct previews.
+      this.#warn(error, 'reading the preview id failed');
+      return null;
+    }
+    if (!previewId) return null;
+
+    // An open session keeps the scopes it was opened with, so a start that declares scopes or auth
+    // ends the app's direct session first (`stopBlock` leaves tunnels alone). A failed stop only
+    // matters if civitai then answers `direct`: with the flag off it must not fail a tunnel start.
+    const sameBlock =
+      previous?.transport === 'direct' && previous.app === appName && previous.blockId === blockId;
+    const declares = (declaredScopes?.length ?? 0) > 0 || declaredAuth !== undefined;
+    let ended = false;
+    let stopError: unknown;
+    if (sameBlock || declares) {
+      try {
+        await tunnels.stopBlock(blockId, signal);
+        if (sameBlock) this.#open = null;
+        ended = true;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        stopError = error;
+        this.#warn(error, 'ending a direct preview before opening it failed');
+      }
+    }
+
+    const ask = (id: string) =>
+      tunnels.open(
+        {
+          blockId,
+          previewId: id,
+          ...(declaredScopes ? { declaredScopes } : {}),
+          ...(declaredAuth ? { declaredAuth } : {}),
+        },
+        signal,
+        // A start with a deadline (the page's Restart preview, `tunnelStartBy`) asks once: retries
+        // could use up the time its tunnel fallback needs.
+        this.#deps.tunnelStartBy !== undefined ? { once: true } : undefined
+      );
+    let answer: PreviewOpenAnswer | null;
+    let rotated = false;
+    try {
+      answer = await this.#askOrFallBack(() => ask(previewId), signal);
+      if (answer?.mode === 'direct' && 'fresh' in answer) {
+        let next: string;
+        try {
+          next = await sandbox.rotatePreviewId();
+        } catch (error) {
+          this.#warn(error, 'rotating the preview id failed');
+          throw new DevTunnelError('The preview id could not be renewed.', 503, 'unavailable');
+        }
+        rotated = true;
+        answer = await this.#askOrFallBack(() => ask(next), signal);
+        if (answer?.mode === 'direct' && 'fresh' in answer) {
+          const twice = new DevTunnelError(
+            'A new preview id was answered as used.',
+            503,
+            'unavailable'
+          );
+          this.#warn(twice, 'civitai answered a rotated preview id as used');
+          throw twice;
+        }
+      }
+    } catch (error) {
+      throw new Error(refusalMessage(error), { cause: error });
+    }
+    if (!answer || answer.mode === 'tunnel' || 'fresh' in answer) {
+      // The dev tunnel (the flag went off mid-run, or civitai could not be asked) while this run's
+      // direct preview of the block is still open (its stop failed above): close it once more
+      // before the tunnel replaces it here.
+      if (sameBlock && stopError !== undefined && previous) await this.#closeOpen(previous, signal);
+      return null;
+    }
+    // The stop failed and civitai answered a session it did not write after a fresh id: it may be
+    // the old one, with the old scopes. Fail as the stop did, rather than show it as current.
+    if (stopError !== undefined && !rotated)
+      throw new Error(refusalMessage(stopError), { cause: stopError });
+    if (sandbox.active?.name !== appName || this.#closed) {
+      // As a tunnel start closes what it opened: the session is the old app's, which nothing shows.
+      await tunnels
+        .stopBlock(blockId, signal)
+        .catch((error) => this.#warn(error, 'closing a preview failed'));
+      throw new Error(
+        'Your app changed while the preview was starting. Start the preview again in the open app.'
+      );
+    }
+
+    if (previous && previous.blockId !== blockId) await this.#closeOpen(previous);
+    // No host: the session host is the preview's credential (see `StartedPreview`).
+    const result = shownResult(blockId);
+    this.#open = {
+      transport: 'direct',
+      sessionId: answer.sessionId,
+      app: appName,
+      blockId,
+      host: null,
+      declaredScopes: declaredScopes ?? [],
+      declaredAuth,
+      scopesKnown: rotated || ended,
+      result,
+    };
+    if (this.#keepCurrent) this.#keepAlive();
+    return result;
+  }
+
+  /**
+   * One `preview/open`, or `null` (the dev tunnel) when it failed without refusing: every start
+   * asks it first, so with the flag off a civitai hiccup on it (out of reach, a 5xx, `unavailable`
+   * after its retries, an odd answer) must not cost the tunnel start. A refusal from civitai's
+   * gates (a 4xx with a code) is thrown: the tunnel start would refuse the same. So is an abort.
+   */
+  async #askOrFallBack(
+    ask: () => Promise<PreviewOpenAnswer>,
+    signal?: AbortSignal
+  ): Promise<PreviewOpenAnswer | null> {
+    try {
+      return await ask();
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof DevTunnelError && error.status < 500 && error.code !== undefined)
+        throw error;
+      this.#warn(error, 'asking civitai how to open the preview failed; opening a tunnel');
+      return null;
+    }
+  }
+
+  /** Closes a preview this run opened: a tunnel by its id, a direct one by its block. */
+  async #closeOpen(open: OpenPreview, signal?: AbortSignal): Promise<void> {
+    const { tunnels } = this.#deps;
+    await (open.transport === 'direct'
+      ? tunnels.stopBlock(open.blockId, signal)
+      : tunnels.stop(open.sessionId, signal)
+    ).catch((error) => this.#warn(error, 'closing a preview failed'));
+  }
+
   async #stop(signal?: AbortSignal) {
+    const { sandbox, tunnels } = this.#deps;
     const open = this.#open;
     this.#open = null;
     this.#stopKeeping();
-    if (open)
-      await this.#deps.tunnels
-        .stop(open.sessionId, signal)
-        .catch((error) => this.#warn(error, 'closing a preview failed'));
-    // A preview an earlier reply started is not this run's to close at civitai (its id went with that
-    // run): closing the sandbox's side ends it, and civitai's side idles out.
+    // A direct preview has no sandbox side: civitai ends it by its block (and a session already
+    // gone is stopped too).
+    if (open?.transport === 'direct') {
+      const asked = await tunnels.stopBlock(open.blockId, signal).then(
+        () => true,
+        (error) => {
+          this.#warn(error, 'closing a preview failed');
+          return false;
+        }
+      );
+      return { stopped: asked };
+    }
+    if (open) await this.#closeOpen(open, signal);
+    // A preview an earlier reply started has no id here: closing the sandbox's side ends a tunnel,
+    // and civitai's side idles out.
     let disconnected = false;
-    if (this.#deps.sandbox.active?.state === 'running') {
-      const result = await this.#deps.sandbox
+    let tunnelStopped = false;
+    if (sandbox.active?.state === 'running') {
+      const result = await sandbox
         .call('tunnel_disconnect', {}, signal)
         .catch(() => ({ text: '', isError: true }));
       disconnected = !result.isError;
+      tunnelStopped =
+        !result.isError &&
+        (parseJson(result.text) as { stopped?: unknown } | null)?.stopped === true;
     }
-    return { stopped: Boolean(open) || disconnected };
+    // No tunnel ran in the sandbox: the preview an earlier reply (or the page's Restart preview)
+    // opened may be a direct one, which only civitai can end: by the app's block, as it ran under
+    // (which can differ from the app's key), whichever run opened it.
+    let ended = false;
+    if (!open && !tunnelStopped) {
+      const blockId = await this.previewBlockId(signal);
+      if (blockId)
+        ended = await tunnels.stopBlock(blockId, signal).catch((error) => {
+          this.#warn(error, 'closing a preview failed');
+          return false;
+        });
+    }
+    return { stopped: Boolean(open) || disconnected || ended };
   }
 
   #keepAlive(): void {
@@ -546,18 +846,26 @@ export class RunnerPreview {
   async #tick(): Promise<void> {
     if (this.#closed || this.#keeping) return;
     this.#keeping = true;
-    let host: string | null = null;
+    let target: { host: string } | { blockId: string } | null = null;
     try {
-      host = await this.#connectedHost();
+      target = await this.#keepTarget();
       // Ended, or stopped (`stop_preview`), while the sandbox was asked.
-      if (!host || this.#closed || !this.#timer) return;
-      await this.#deps.tunnels.keepalive({ host });
+      if (!target || this.#closed || !this.#timer) return;
+      await this.#deps.tunnels.keepalive(target);
     } catch (error) {
       if (error instanceof DevTunnelError && error.status === 404) {
-        // civitai has no tunnel of the user's at that host (it went, at its cap or stopped): one may
+        // civitai has no preview of the user's there (it went, at its cap or stopped): one may
         // open later (the page's Restart preview), so the next tick looks again. One this run
         // opened there is gone, so a start of the same preview opens a new one.
-        if (this.#open?.host === host) this.#open = null;
+        const open = this.#open;
+        if (
+          open &&
+          target &&
+          ('host' in target
+            ? open.transport === 'tunnel' && open.host === target.host
+            : open.transport === 'direct' && open.blockId === target.blockId)
+        )
+          this.#open = null;
         return;
       }
       // Refused (a gate, the dev-tunnel flag) or the grant is no longer good: nothing to keep alive
@@ -570,15 +878,30 @@ export class RunnerPreview {
   }
 
   /**
-   * The host the open app's sandbox has a tunnel running to (`tunnel_status`), else `null`: no app
-   * open and running, no tunnel in it, or an answer that does not say.
+   * What a tick keeps alive, while the open app's sandbox runs (else `null`): this run's direct
+   * preview of that app, by its block id (which can differ from the app's key); else the host the
+   * sandbox has a tunnel running to (`tunnel_status`); else the app's direct preview by
+   * `previewBlockId()`, whichever run opened it (an earlier reply's, the page's Restart preview's).
+   * That last is asked for direct sessions only (`DevTunnels.keepalive`), so a tunnel the sandbox
+   * has let go is never kept: civitai answers it as none, and it idles out as before.
    */
-  async #connectedHost(): Promise<string | null> {
+  async #keepTarget(): Promise<{ host: string } | { blockId: string } | null> {
     const app = this.#deps.sandbox.active;
     if (!app || app.state !== 'running') return null;
+    const open = this.#open;
+    if (open?.transport === 'direct' && open.app === app.name) return { blockId: open.blockId };
+    const host = await this.#connectedHost(app.name);
+    if (host) return { host };
+    const blockId = await this.previewBlockId();
+    // Another app opened meanwhile: its preview is looked at the next tick.
+    return blockId && this.#deps.sandbox.active?.name === app.name ? { blockId } : null;
+  }
+
+  /** The host app `appName`'s sandbox has a tunnel running to (`tunnel_status`), else `null`. */
+  async #connectedHost(appName: string): Promise<string | null> {
     const status = await this.#deps.sandbox.call('tunnel_status', {});
     // Another app opened meanwhile: its sandbox is asked at the next tick.
-    if (status.isError || this.#deps.sandbox.active?.name !== app.name) return null;
+    if (status.isError || this.#deps.sandbox.active?.name !== appName) return null;
     const { running, host } = (parseJson(status.text) ?? {}) as {
       running?: unknown;
       host?: unknown;
@@ -604,15 +927,24 @@ export class DevServerNotRunningError extends Error {
 }
 
 /**
- * Starting the dev server failed: `no-project` (which project to start was not clear), `refused` (the
- * sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode` is its code),
- * or `timeout` (it never listened in time).
+ * Starting the dev server failed: `no-project` (which project to start was not clear),
+ * `installing` (its dependencies are not installed, and another npm install runs in the sandbox, or
+ * the sandbox would not say; nothing was installed or started), `install-failed` (its dependencies
+ * were not installed, and `npm install` did not exit 0 or did not answer; nothing was started),
+ * `refused` (the sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode`
+ * is its code), or `timeout` (it never listened in time).
  */
 export class DevServerStartError extends Error {
   override name = 'DevServerStartError';
   readonly exitCode: number | null;
   constructor(
-    readonly reason: 'no-project' | 'refused' | 'exited' | 'timeout',
+    readonly reason:
+      | 'no-project'
+      | 'installing'
+      | 'install-failed'
+      | 'refused'
+      | 'exited'
+      | 'timeout',
     status?: DevServerStatus
   ) {
     super(`The dev server did not start (${reason}).`);
@@ -700,6 +1032,16 @@ export function manifestOf(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** What a start answers once the preview of `blockId` is open (a tunnel's at `host`). */
+function shownResult(blockId: string, host?: string): StartedPreview {
+  return {
+    shown: true,
+    blockId,
+    ...(host ? { host } : {}),
+    next_step: 'The user sees the preview now. To see what they see, call sandbox__preview_check.',
+  };
 }
 
 /** The same scopes, in any order. */

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createOwnerImageSearch,
   createSemanticImageSearch,
+  setImageSearchAsTyped,
   withSemanticImageSearch,
 } from '~/components/Search/semanticImageSearchClient';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -30,6 +32,43 @@ const meili = () => ({
 const imageRequest = (params: Record<string, unknown>) => ({
   indexName: IMAGES_SEARCH_INDEX,
   params: { query: 'fox', hitsPerPage: 50, page: 0, ...params },
+});
+
+describe('the image search page searched as typed', () => {
+  const sent = async (asTyped: string | undefined, query: string) => {
+    const search = fakeSearch([{ ids: [1] }]);
+    const client = withSemanticImageSearch(
+      meili() as never,
+      createSemanticImageSearch({ search, asTyped: () => asTyped })
+    );
+    await client.search([imageRequest({ query })] as never);
+    return search.mock.calls[0][0];
+  };
+
+  it('sends the original text with the spelling correction off', async () => {
+    expect(await sent('Shikata nee', 'Shikata nee')).toMatchObject({
+      query: 'Shikata nee',
+      spellcheck: false,
+    });
+  });
+
+  it('ends the choice once another query is searched, so retyping it is corrected again', async () => {
+    const search = fakeSearch([{ ids: [1] }, { ids: [1] }, { ids: [1] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+    setImageSearchAsTyped('Shikata nee');
+    await client.search([imageRequest({ query: 'Shikata nee' })] as never);
+    await client.search([imageRequest({ query: 'anime girl' })] as never);
+    await client.search([imageRequest({ query: 'Shikata nee', page: 1 })] as never);
+    expect(search.mock.calls.map(([input]) => input.spellcheck)).toEqual([
+      false,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('leaves the correction on for a new search (control)', async () => {
+    expect(await sent('Shikata nee', 'anime girl')).not.toHaveProperty('spellcheck');
+  });
 });
 
 describe('withSemanticImageSearch', () => {
@@ -157,5 +196,35 @@ describe('withSemanticImageSearch', () => {
     await client.search([imageRequest({ query: 'fox', similarTo: 42 })] as never);
 
     expect(search.mock.calls[0][0]).toMatchObject({ query: 'fox', imageId: undefined });
+  });
+});
+
+describe('createOwnerImageSearch', () => {
+  // As the real select: own images, no `user`.
+  const getMyImages = vi.fn(async () => ({
+    items: [{ id: 1, nsfwLevel: 1, url: 'a', type: 'image', metadata: { hash: 'h' } }],
+  }));
+  const caller = { id: 7, username: 'fox', image: 'fox.png' };
+  const run = (searchOwner: ReturnType<typeof createOwnerImageSearch>, query: string) =>
+    searchOwner(IMAGES_SEARCH_INDEX, { query, hitsPerPage: 10, page: 0 } as never) as Promise<{
+      hits: { user?: { id: number; username: string } }[];
+    }>;
+
+  it("gives the empty-query list the caller's user", async () => {
+    const searchOwner = createOwnerImageSearch({
+      getMyImages: getMyImages as never,
+      getUser: () => caller,
+    });
+    const { hits } = await run(searchOwner, '');
+    expect(hits[0].user).toMatchObject(caller);
+  });
+
+  it('leaves hits without a user when nobody is signed in', async () => {
+    const searchOwner = createOwnerImageSearch({
+      getMyImages: getMyImages as never,
+      getUser: () => undefined,
+    });
+    const { hits } = await run(searchOwner, '  ');
+    expect(hits[0].user).toBeUndefined();
   });
 });

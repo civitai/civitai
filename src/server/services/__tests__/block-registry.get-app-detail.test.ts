@@ -3,7 +3,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 redisMock.redis.packed.set.mockImplementation(async () => undefined);
 redisMock.redis.set.mockImplementation(async () => undefined);
-redisMock.redis.scanIterator.mockImplementation(async function* () {});
+redisMock.redis.scanIterator.mockImplementation(async function* () {
+  // no cached keys to scan
+});
 const mockDbRead = dbMock.dbRead;
 
 // getAppDetail builds liveUrl from `env.APPS_DOMAIN` via a dynamic import of
@@ -23,7 +25,12 @@ function capturedSql(): string {
   let sql = '';
   for (let i = 0; i < strings.length; i++) {
     sql += strings[i];
-    if (i < values.length) sql += `$${i + 1}`;
+    if (i < values.length) {
+      const v = values[i];
+      // A Prisma.Sql fragment (Prisma.raw) is inlined as its text; anything else is a bind.
+      const fragment = v && typeof v === 'object' ? (v as { sql?: unknown }).sql : undefined;
+      sql += typeof fragment === 'string' ? fragment : `$${i + 1}`;
+    }
   }
   return sql;
 }
@@ -277,7 +284,8 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
     expect(sql).toMatch(/LEFT JOIN "User" u ON u\.id = oc\."userId"/);
     expect(sql).toMatch(/u\.id AS owner_user_id/);
     expect(sql).toMatch(/u\.username AS owner_username/);
-    expect(sql).toMatch(/u\.image AS owner_image/);
+    // The fallback column: `User.image`, nulled when it names a held or blocked profile picture.
+    expect(sql).toMatch(/ELSE u\.image END AS owner_image/);
     // 🔴 The SELECT list PROJECTS exactly this key set and nothing else.
     //
     // Assert on the PROJECTED KEYS (the `AS` alias, else the trailing column

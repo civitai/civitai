@@ -109,8 +109,8 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       `/api/mod/*` endpoint today, and the two precedents are both procedures.
       ⚠️ **Built but not clicked** — this needs a signed-in moderator session in a browser before it
       counts as done by `apps/moderator/CLAUDE.md`'s own standard. Since replaced by
-      `commentv3.setTosViolation`: the `commentv2` router was deleted 2026-11-05 (release 2 of the write
-      flip, not deployed).
+      `commentv3.setTosViolation`: the `commentv2` router was deleted in release 2 of the write flip
+      (#8035, merged 2026-11-06).
 
       *Filed until 2026-08-24 as "CommentV2 has no ToS field — main-app schema change", which sent
       three status passes past it as blocked. It had one: `CommentV2.tosViolation`
@@ -326,13 +326,10 @@ findings are done — see the parity checklist.
       the block-check coverage; the obstacle is that a chapter thread is keyed on
       (project, chapter position) rather than a single entity id. Superseded 2026-10-30: the procedure was
       removed, not rerouted, when chapter comments moved to the v3 write path (built 2026-11-05,
-      release 2, not deployed; see `docs/plans/comments-v3-write-flip.md`).
-- [ ] **No way back from a ToS flag on a comment.** Setting it is a one-way door: nothing in the main
-      app or the spoke clears `tosViolation` on `Comment` or `CommentV2`, and there is no comment
-      equivalent of `restoreImages`. That was survivable while the flag did nothing on v2 threads; as of
-      2026-08-24 it is what removes the comment, and a ban purge can set it across an account in one
-      action. Wants the mirror of the flag — a moderator-only unflag that also reopens the reports the
-      ToS action closed.
+      release 2; see `docs/plans/comments-v3-write-flip.md`).
+- [x] **No way back from a ToS flag on a comment.** Fixed 2026-08-31: `/api/mod/comment/restore-from-tos`
+      (`bulkClearCommentV3TosViolation`, CommentV3 since Phase 5) clears the flag and returns the ToS
+      reports it actioned to Pending; User Lookup calls it.
 - [x] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
       troubleshoot issues."* The quoted 50 was already wrong — the cap was 200 — but the real defect
       was that one cap covered both sides, so a reward-earning account's receipts consumed all of it

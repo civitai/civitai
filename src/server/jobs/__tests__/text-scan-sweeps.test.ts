@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Mode from '~/server/services/text-scan/mode';
 import type * as Submit from '~/server/services/text-scan/submit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof Submit>()),
@@ -166,7 +165,7 @@ describe('sweepChatWindows', () => {
     expect(lastCursor()).toBe(4);
   });
 
-  it('stops at the time budget and logs how far behind it is', async () => {
+  it('stops at the time budget and reports how far behind it is', async () => {
     cursorAt(0);
     let t = 0;
     let reads = 0;
@@ -182,14 +181,6 @@ describe('sweepChatWindows', () => {
     const result = await sweepChatWindows(NOW, { batchSize: 2, budgetMs: 2500, clock: () => t });
     expect(result).toMatchObject({ caughtUp: false, lagMs: NOW.getTime() - SETTLED.getTime() });
     expect(reads).toBe(3);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'text-scan',
-        type: 'warning',
-        message: 'sweep behind',
-        job: 'text-scan-chat-windows',
-      })
-    );
   });
 
   it('a full batch whose second row is unsettled is caught up after one read', async () => {
@@ -214,9 +205,6 @@ describe('sweepChatWindows', () => {
     await sweepChatWindows(NOW);
     expect(scanEntity).toHaveBeenCalledTimes(2);
     upserted(TEXT_SCAN_CHAT_CURSOR_KEY, 2);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'text-scan', type: 'error', message: 'sweep scan threw' })
-    );
   });
 
   it('leaves the cursor alone when nothing is new', async () => {

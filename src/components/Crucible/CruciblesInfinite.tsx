@@ -1,4 +1,3 @@
-import type { GetCruciblesInfiniteSchema } from '~/server/schema/crucible.schema';
 import {
   Button,
   Center,
@@ -19,24 +18,36 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { CrucibleCard, CrucibleCardSkeleton } from '~/components/Cards/CrucibleCard';
-import { useCrucibleFilters, useQueryCrucibles } from './crucible.utils';
+import { useCrucibleFilters, useQueryCrucibles, type CrucibleFeedFilters } from './crucible.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 
 export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const cruciblesFilters = useCrucibleFilters();
   const currentUser = useCurrentUser();
-  const hasFilters = !!(filterOverrides?.status || filterOverrides?.contentType);
+  const hasFilters = !!(
+    filterOverrides?.status ||
+    filterOverrides?.contentType ||
+    filterOverrides?.query
+  );
 
   const filters = removeEmpty({ ...cruciblesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { crucibles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
+  const {
+    crucibles,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+    serverRefusal,
+  } = useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
 
   const browsingLevel = useBrowsingLevelDebounced();
   const openIds = useMemo(
@@ -97,6 +108,8 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
+      ) : serverRefusal ? (
+        <SearchRefusalNotice refusal="policy" refusedBy={serverRefusal.refusedBy} />
       ) : (
         <CruciblesEmptyState hasFilters={hasFilters} isLoggedIn={!!currentUser} />
       )}
@@ -104,7 +117,7 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
   );
 }
 
-type Props = { filters?: Partial<GetCruciblesInfiniteSchema>; showEof?: boolean };
+type Props = { filters?: CrucibleFeedFilters; showEof?: boolean };
 
 /**
  * Skeleton grid for CruciblesInfinite loading state

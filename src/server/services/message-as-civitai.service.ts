@@ -9,10 +9,15 @@ import { createHash, randomUUID } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
+import {
+  claimIdempotencyKey,
+  IdempotencyUnavailableError,
+} from '~/server/services/idempotency-key.service';
 import { reportConcernsUser } from '~/server/services/report-subject';
 import { resolveChatIdentity } from '~/server/utils/chat-group';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import {
   throwBadRequestError,
   throwConflictError,
@@ -24,11 +29,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 
 export const MESSAGE_AS_CIVITAI_ACTIVITY = 'message-as-civitai';
-const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
-// Long enough for any send to finish; a crash mid-send frees the key after this rather than after a day.
-const PENDING_TTL_SECONDS = 5 * 60;
 const SEND_LOCK_SECONDS = 30;
-const PENDING = 'pending';
 
 function requireModerationAccountId(): number {
   const id = getModerationAccountId();
@@ -144,15 +145,21 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
 
   // One send per target at a time: the cap is a count followed by an insert, and a first message creates
   // the thread, so two concurrent sends would each pass the count or race to create it.
-  const lockKey = `${REDIS_SYS_KEYS.MESSAGE_AS_CIVITAI.SEND_LOCK}:${userId}` as const;
+  const lockKey = `${REDIS_KEYS.MESSAGE_AS_CIVITAI.SEND_LOCK}:${userId}` as const;
   const owner = randomUUID();
-  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: SEND_LOCK_SECONDS })) === null)
+  // A cluster failure or timeout throws: no lock, no send.
+  const taken = await boundedClusterCall('sendAsCivitai.lock', () =>
+    redis.set(lockKey, owner, { NX: true, EX: SEND_LOCK_SECONDS })
+  );
+  if (taken === null)
     throw throwConflictError('Another message to this user is being sent; retry in a moment.');
   try {
     return await sendLocked({ actorId, userId, message, context, moderationId });
   } finally {
     // Only our own lock: a send that outlived the TTL must not free the next sender's.
-    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
+    await boundedClusterCall('sendAsCivitai.unlock', () => delIfValue(redis, lockKey, owner)).catch(
+      () => undefined
+    );
   }
 }
 
@@ -213,7 +220,7 @@ async function sendLocked({
         entityType,
         entityId,
         message: e.message,
-      }).catch(() => undefined)
+      })
     );
   await audit('chatMessage', sent.id);
   if (context?.reportId) {
@@ -221,7 +228,7 @@ async function sendLocked({
     const concerns = await reportConcernsUser(reportId, userId).catch((e: Error) => e);
     if (concerns === true) await audit('report', reportId);
     else
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'message-as-civitai-report-link-dropped',
         reason: concerns === false ? 'not-about-recipient' : 'check-failed',
@@ -230,7 +237,7 @@ async function sendLocked({
         userId,
         reportId,
         chatMessageId: sent.id,
-      }).catch(() => undefined);
+      });
   }
   // Delivered already; a failed tray notice must not free the idempotency key for a second send.
   await nudge({ userId, chatId, messageId: sent.id }).catch(() => undefined);
@@ -252,27 +259,36 @@ export async function sendAsCivitaiOnce(input: SendAsCivitaiInput & { idempotenc
   const scope = input.idempotencyKey
     ? `${input.idempotencyKey}:${content}`
     : `auto:${Math.floor(Date.now() / 60_000)}:${content}`;
-  const key = `${REDIS_SYS_KEYS.MESSAGE_AS_CIVITAI.IDEMPOTENCY}:${input.actorId}:${scope}` as const;
 
-  const fresh = await sysRedis.set(key, PENDING, { NX: true, EX: PENDING_TTL_SECONDS });
-  if (fresh === null) {
-    const stored = await sysRedis.get(key);
-    if (!stored || stored === PENDING)
-      throw throwConflictError('This message is already being sent; retry in a moment.');
-    return { ...(JSON.parse(stored) as { chatId: number; messageId: number }), deduped: true };
-  }
+  const claim = await claimIdempotencyKey('message-as-civitai', `${input.actorId}:${scope}`).catch(
+    (error) => {
+      // The key store is on but unusable (its table not applied, or Postgres down): send nothing,
+      // rather than send without a guard. The moderator sees the refusal and can retry.
+      if (error instanceof IdempotencyUnavailableError)
+        throw throwServiceUnavailableError(
+          'Messaging as Civitai is unavailable right now; nothing was sent.',
+          error
+        );
+      throw error;
+    }
+  );
+  if (claim.status === 'done' && claim.result)
+    return {
+      ...(JSON.parse(claim.result) as { chatId: number; messageId: number }),
+      deduped: true,
+    };
+  if (claim.status !== 'claimed')
+    throw throwConflictError('This message is already being sent; retry in a moment.');
 
   let result: Awaited<ReturnType<typeof sendAsCivitai>>;
   try {
     result = await sendAsCivitai(input);
   } catch (e) {
-    await sysRedis.del(key).catch(() => undefined);
+    await claim.release().catch(() => undefined);
     throw e;
   }
   // Sent: if storing the result fails, the pending key still refuses a retry until it lapses.
-  await sysRedis
-    .set(key, JSON.stringify(result), { EX: IDEMPOTENCY_TTL_SECONDS })
-    .catch(() => undefined);
+  await claim.store(JSON.stringify(result)).catch(() => undefined);
   return { ...result, deduped: false };
 }
 

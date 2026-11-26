@@ -28,6 +28,7 @@ import {
 } from '~/server/services/blocks/app-listing-store-gate';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { APP_SURFACE_PARAM, resolveAppOpenSurface } from '~/shared/utils/app-store-telemetry';
+import { canOpenAppRunPages } from '~/shared/utils/app-blocks-access';
 import { Page } from '~/components/AppLayout/Page';
 import {
   APPS_RUN_FROM_PARAM,
@@ -181,8 +182,9 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     };
     // GATE FIRST, fail-closed. Both flags required. A viewer without them gets
     // a 404 — the page is invisible/un-enumerable until W10 launch widens the
-    // `app-blocks-pages-enabled` segment.
-    if (!features?.appBlocks || !features?.appBlocksPages) {
+    // `app-blocks-pages-enabled` segment. The approved-app notification asks the
+    // submitter the same question at send time, so it never links here for them.
+    if (!canOpenAppRunPages(features)) {
       return { notFound: true };
     }
     const launchOrigin = parseAppsRunOrigin(ctx.query?.[APPS_RUN_FROM_PARAM]);
@@ -361,6 +363,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // `from` and `surface` are acquisition attribution: where the launch link was built. Both
     // are parsed to closed values (`parseAppsRunOrigin` / `resolveAppOpenSurface`), so a
     // hand-edited query string can mislabel its own row but cannot put text in it.
+    // `sl`, `src` and `from` are HOST-OWNED query params: keep `HOST_OWNED_RUN_PARAMS`
+    // (`~/shared/utils/apps-run-origin`) in step when adding one, or it leaks to the app.
     const subListingId = isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null;
     void recordAppListingOpen({
       appBlockId: page.appBlockId,
@@ -670,6 +674,7 @@ function AppPage(props: AppRunProps) {
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
+    appData,
     error,
     // `terminal` = the mint failed, nothing usable is left, AND the hook's
     // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
@@ -834,6 +839,7 @@ function AppPage(props: AppRunProps) {
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
           effectiveBrowsingLevel={effectiveBrowsingLevel}
+          appData={appData}
           tokenError={error != null}
           tokenTerminal={terminal}
           viewer={viewer}

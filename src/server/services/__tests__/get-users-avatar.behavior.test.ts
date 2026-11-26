@@ -14,8 +14,8 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb
-    );
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb,
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text, "userId" int);
     CREATE TABLE "User" (
       id int PRIMARY KEY, username text, email text, image text, "profilePictureId" int,
       "deletedAt" timestamp, "bannedAt" timestamp, muted boolean DEFAULT false, meta jsonb
@@ -25,6 +25,7 @@ beforeAll(async () => {
       (3, 'flagged', 'Scanned', 'csam'), (4, 'blocked', 'Blocked', NULL);
     INSERT INTO "User" (id, username, "profilePictureId") VALUES
       (1, 'u1', 1), (2, 'u2', 2), (3, 'u3', 3), (4, 'u4', 4);
+    INSERT INTO "User" (id, username, image) VALUES (5, 'u5', 'unrated');
   `);
 });
 afterAll(() => pg.close());
@@ -44,5 +45,13 @@ describe('getUsers with the avatar', () => {
     const users = await getUsers({ ids: [1, 2, 3, 4], include: ['avatar'], limit: 10 } as never);
     const avatars = Object.fromEntries(users.map((u) => [u.id, u.avatarUrl ?? null]));
     expect(avatars).toEqual({ 1: 'scanned', 2: null, 3: null, 4: null });
+  });
+
+  it('rates a profile picture by its level and the User.image fallback 0', async () => {
+    const users = await getUsers({ ids: [1, 5], include: ['avatar'], limit: 10 } as never);
+    const rated = Object.fromEntries(
+      users.map((u) => [u.id, [u.avatarUrl, (u as { avatarNsfwLevel?: number }).avatarNsfwLevel]])
+    );
+    expect(rated).toEqual({ 1: ['scanned', 1], 5: ['unrated', 0] });
   });
 });

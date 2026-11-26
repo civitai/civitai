@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as OgImageHelpers from '~/server/utils/og-image-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -95,5 +96,82 @@ describe('/api/og?type=article image', () => {
     });
     await render();
     expect(pickedImage()).toBe('banner-key');
+  });
+});
+
+describe('/api/og?type=article image flags', () => {
+  const cover = (over: Record<string, unknown>) => ({
+    ...image('cover-key'),
+    ingestion: 'Scanned',
+    needsReview: null,
+    modelRestricted: false,
+    acceptableMinor: false,
+    minor: false,
+    ...over,
+  });
+  const cleanBanner = {
+    ...banner('Scanned'),
+    modelRestricted: false,
+    acceptableMinor: false,
+    minor: false,
+  };
+
+  it('shows a cover that is not flagged (control)', async () => {
+    mockArticle({ coverImage: cover({}), bannerImage: cleanBanner });
+    await render();
+    expect(pickedImage()).toBe('cover-key');
+  });
+
+  it.each([
+    ['acceptable-minor', { acceptableMinor: true }],
+    ['minor-flagged and rated past the minor content limit', { minor: true, nsfwLevel: 4 }],
+  ])('shows the banner over a cover that is %s', async (_, over) => {
+    mockArticle({ coverImage: cover(over), bannerImage: cleanBanner });
+    await render();
+    expect(pickedImage()).toBe('banner-key');
+  });
+
+  it('shows no image when the only banner is acceptable-minor', async () => {
+    mockArticle({ coverImage: null, bannerImage: { ...cleanBanner, acceptableMinor: true } });
+    await render();
+    expect(pickedImage()).toBeNull();
+  });
+});
+
+describe('/api/og?type=article images listed on a report', () => {
+  const scanned = (id: number, key: string) => ({
+    ...image(key),
+    id,
+    ingestion: 'Scanned',
+    needsReview: null,
+  });
+  const listing = (ids: number[]) =>
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Prisma.sql(strings, ...(values as never[])).sql.includes('"CsamReport"')
+        ? ids.map((id) => ({ id }))
+        : []) as never);
+
+  it('🔴 shows the banner over a listed cover', async () => {
+    listing([10]);
+    mockArticle({ coverImage: scanned(10, 'cover-key'), bannerImage: scanned(11, 'banner-key') });
+    await render();
+    expect(pickedImage()).toBe('banner-key');
+  });
+
+  it('🔴 shows no image when the only banner is listed', async () => {
+    listing([11]);
+    mockArticle({ coverImage: null, bannerImage: scanned(11, 'banner-key') });
+    await render();
+    expect(pickedImage()).toBeNull();
+  });
+
+  it('shows the cover when nothing is listed (control)', async () => {
+    listing([]);
+    mockArticle({ coverImage: scanned(10, 'cover-key'), bannerImage: scanned(11, 'banner-key') });
+    await render();
+    expect(pickedImage()).toBe('cover-key');
   });
 });

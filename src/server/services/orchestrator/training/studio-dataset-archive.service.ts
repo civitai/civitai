@@ -1,5 +1,9 @@
 import { Upload } from '@aws-sdk/lib-storage';
-import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import {
+  parseBlobVerdictHeaders,
+  type BlobVerdictHeaders,
+} from '~/shared/orchestrator/blob-verdict-headers';
+import { datasetRating, type RatedEntry } from '~/server/services/training-data-rating';
 import type { Prisma } from '@prisma/client';
 import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
@@ -28,6 +32,7 @@ import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-u
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { buildUploadKey } from '~/utils/upload-key';
 import { backoffDelay } from '~/utils/backoff';
+import { studioRunOfVersion } from '~/server/services/orchestrator/training/studio-run-link';
 
 /**
  * A Training Studio run trains on orchestrator blobs, never a zip, so publishing it creates a
@@ -51,6 +56,8 @@ export type StudioDatasetArchive =
       status: 'archived';
       items: number;
       skipped: number;
+      /** Of `skipped`, the items the orchestrator withholds: left out of the zip, never rated. */
+      blocked?: number;
       /** Every item of an approved run is in the zip, each rated: the only zip that can be
        *  shared. */
       complete?: boolean;
@@ -134,12 +141,34 @@ const EXT_BY_MIME: Record<string, string> = {
   'audio/ogg': 'ogg',
 };
 
+const MEDIA_EXTENSIONS = new Set([...Object.values(EXT_BY_MIME), 'jpeg']);
+
+/**
+ * A blob's name in the zip: by its media type, else by a media extension on its key, else `bin`.
+ * Never `txt`: a blob named like a caption would be read back as one and never rated.
+ */
 function extensionFor(key: string, contentType: string | null): string {
-  const fromKey = key.includes('.') ? key.split('.').pop() : undefined;
-  if (fromKey && /^[a-z0-9]{1,5}$/i.test(fromKey)) return fromKey.toLowerCase();
   const mime = contentType?.split(';')[0].trim().toLowerCase();
-  return (mime && EXT_BY_MIME[mime]) || 'bin';
+  if (mime && EXT_BY_MIME[mime]) return EXT_BY_MIME[mime];
+  const fromKey = key.includes('.') ? key.split('.').pop()?.toLowerCase() : undefined;
+  return fromKey && MEDIA_EXTENSIONS.has(fromKey) ? fromKey : 'bin';
 }
+
+const BLOCKED_BLOB_PATH = '/v2/consumer/blobs/blocked/';
+const blockedReasonOf = (verdict: BlobVerdictHeaders) =>
+  verdict.status === 'rated' ? verdict.blockedReason : null;
+
+/** Whether `url` is the orchestrator's own blocked placeholder route. */
+const blockedPlaceholder = (url: string, baseUrl: string) => {
+  try {
+    const target = new URL(url);
+    return (
+      target.origin === new URL(baseUrl).origin && target.pathname.startsWith(BLOCKED_BLOB_PATH)
+    );
+  } catch {
+    return false;
+  }
+};
 
 async function fetchBlob({
   baseUrl,
@@ -156,6 +185,8 @@ async function fetchBlob({
   key: string;
   contentType: string | null;
   nsfwLevel: string | null;
+  /** Set when the orchestrator withholds the blob: by header, or by resolving to its placeholder. */
+  blockedReason: string | null;
 } | null> {
   const key = blobKeyFromAir(air);
   try {
@@ -174,6 +205,10 @@ async function fetchBlob({
       key,
       contentType: response.headers.get('content-type'),
       nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
+      // fetch followed any redirect, so the placeholder shows as the final url, not a Location.
+      blockedReason:
+        blockedReasonOf(parseBlobVerdictHeaders(response.headers, response.status)) ??
+        (blockedPlaceholder(response.url, baseUrl) ? 'blocked' : null),
     };
   } catch {
     return null;
@@ -233,16 +268,21 @@ async function uploadDatasetZip({
 
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
+  let blocked = 0;
   let captions = 0;
-  let nsfwLevel = 0;
-  let unrated = 0;
+  const rated: RatedEntry[] = [];
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
-      const level = blob.nsfwLevel ? orchestratorNsfwLevelMap[blob.nsfwLevel] : undefined;
-      if (level) nsfwLevel |= level;
-      else unrated += 1;
+      // A blocked blob is left out, with its caption: what came back is the placeholder. It counts
+      // as unrated, so the zip is never fully rated.
+      if (blob.blockedReason) {
+        rated.push({ mediaType: 'image', nsfwLevel: null });
+        blocked += 1;
+        continue;
+      }
+      rated.push({ mediaType: 'image', nsfwLevel: blob.nsfwLevel });
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -270,9 +310,9 @@ async function uploadDatasetZip({
     url: url.split('?')[0],
     bytes: archive.pointer(),
     included,
+    blocked,
     captions,
-    nsfwLevel: nsfwLevel || undefined,
-    fullyRated: unrated === 0,
+    ...datasetRating(rated),
     skipped: items.length - included,
     backend: useB2 ? ('backblaze' as const) : ('cloudflare' as const),
   };
@@ -298,6 +338,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       modelVersionId: true,
       modelVersion: {
         select: {
+          meta: true,
           model: {
             select: {
               id: true,
@@ -324,8 +365,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     return { fileId, outcome: 'unavailable', reason };
   };
 
-  const workflowId = (model.meta as { trainingStudioWorkflowId?: string } | null)
-    ?.trainingStudioWorkflowId;
+  const workflowId = studioRunOfVersion(file.modelVersion.meta, model.meta);
   if (!workflowId) return markUnavailable('not a Training Studio model');
 
   // A banned or deleted owner cannot be minted a token, so their run is read with the service token.
@@ -364,6 +404,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       status: 'archived',
       items: stored.included,
       skipped: stored.skipped,
+      ...(stored.blocked > 0 && { blocked: stored.blocked }),
       complete:
         stored.skipped === 0 &&
         stored.included === total &&

@@ -88,7 +88,7 @@ ca-certificate.crt
 # IDE
 *~
 
-src/pages/api/admin/*.json
+src/server/api-routes/admin/*.json
 trace/trace.json
 trace/types.json
 
@@ -200,3 +200,9 @@ __pycache__/
 # inside each worktree -- screenshots, REVIEW.md. It must never reach a commit, or
 # one task's artifacts ride a merge into main and seed every later worktree.
 .foreman/
+
+# scripts/lib/ts7.mjs install lock (left behind only by a killed install)
+tools/ts7/.install.lock
+
+# Written by the related tests' cache key step in CI (scripts/ci/related-install-key.mjs).
+.related-install-manifests.txt

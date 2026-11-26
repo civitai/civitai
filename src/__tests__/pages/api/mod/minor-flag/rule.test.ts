@@ -48,7 +48,7 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOri
   settleFlagAppealsAfterModeratorLift: m.settle,
 }));
 
-import handler from '~/pages/api/mod/minor-flag/rule';
+import handler from '~/server/api-routes/mod/minor-flag/rule';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
@@ -102,7 +102,8 @@ beforeEach(() => {
     exec: vi.fn().mockResolvedValue(['OK', 1]),
   }));
   redisMock.sysRedis.ttl.mockResolvedValue(60);
-  redisMock.sysRedis.eval.mockResolvedValue(1);
+  // The flag lock is on the cache cluster.
+  redisMock.redis.eval.mockResolvedValue(1);
 });
 
 describe('minorFlag.rule', () => {
@@ -419,13 +420,13 @@ describe('minorFlag.rule', () => {
 
   it('refuses while another request holds the flag lock, without ruling', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(flagged('poi'));
-    redisMock.sysRedis.set.mockResolvedValueOnce(null);
+    redisMock.redis.set.mockResolvedValueOnce(null);
     const res = await call({ ...body, label: 'poi', keep: false });
     expect(res.status).toBe(400);
     expect(errorOf(res)).toContain('being resolved');
     nothingRuled();
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect(redisMock.redis.eval).not.toHaveBeenCalled();
   });
 
   it('releases the flag lock when the ruling throws', async () => {
@@ -433,7 +434,7 @@ describe('minorFlag.rule', () => {
     m.grantPoi.mockRejectedValueOnce(new Error('db down'));
     const res = await call({ ...body, label: 'poi', keep: false });
     expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(redisMock.sysRedis.eval).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.eval).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a ruling that does not name the text it was made on', async () => {

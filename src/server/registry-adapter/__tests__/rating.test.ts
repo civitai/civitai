@@ -1,7 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { Principal, Recheck } from '~/server/registry-adapter/auth';
 import {
@@ -28,6 +28,7 @@ import {
   listenGrpc,
 } from '~/server/registry-adapter/grpc';
 import type { Adapter, StreamEvent } from '~/server/registry-adapter/protocol';
+import type { ServeOptions } from '~/server/registry-adapter/serve';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
@@ -36,6 +37,30 @@ import {
   createMemorySnapshotStore,
   fixtureDocSource,
 } from '../../../../scripts/registry-adapter-fixture/fixture-source';
+
+// The site reads its region lists when its module loads, so they are set before any import: one
+// country restricted to SFW (`ZY`) and the site's default block list spelled out (`GB`). Every
+// other case is sent from `DE` (`UNRESTRICTED_ORIGIN`), which neither list names, so only the
+// production-rule cases below see them. `meta` is believed here, as it is once the gateway sets it
+// (`metaTrusted`); request-origin.test.ts covers the adapter with it off.
+const regionEnvBefore = vi.hoisted(() => {
+  const before = {
+    REGION_RESTRICTION_CONFIG: process.env.REGION_RESTRICTION_CONFIG,
+    REGION_BLOCK_CONFIG: process.env.REGION_BLOCK_CONFIG,
+    REGISTRY_ADAPTER_TRUST_META: process.env.REGISTRY_ADAPTER_TRUST_META,
+  };
+  process.env.REGION_RESTRICTION_CONFIG = 'ZY:2025-01-01';
+  process.env.REGION_BLOCK_CONFIG = 'GB:2025-07-24';
+  process.env.REGISTRY_ADAPTER_TRUST_META = '1';
+  return before;
+});
+// The environment is the worker's, so it is put back for the files that run after this one.
+afterAll(() => {
+  for (const [name, value] of Object.entries(regionEnvBefore)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 /**
  * Per-token content-rating enforcement (the registry's auth extension, as an origin serves it):
@@ -128,7 +153,7 @@ function source(world: { rating: string | null; blockRating?: string }) {
   });
   const docs = createDocFeed({
     source: fixtureDocSource(() => cat),
-    resolve: resolveFromCatalog(readApps, SWITCH_ON),
+    resolve: resolveFromCatalog(readApps, SWITCH_ON, { requireDocLevels: false }),
     store,
     pollMs: 5,
     sleep: abortableSleep,
@@ -145,6 +170,7 @@ function edit(cat: FixtureCatalog, title: string) {
 
 const ALL_LEVELS = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
 const UP_TO_R = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R;
+const UP_TO_X = UP_TO_R | NsfwLevel.X;
 
 /** The site's verification, faked: each token is a user with saved browsing settings. */
 const TOKENS: Record<
@@ -163,6 +189,12 @@ const TOKENS: Record<
   'r-token': {
     subject: 'user:2/client:a',
     user: { showNsfw: true, browsingLevel: UP_TO_R },
+    expiresAt: () => null,
+  },
+  // R and X in the saved level, XXX not.
+  'rx-token': {
+    subject: 'user:9/client:a',
+    user: { showNsfw: true, browsingLevel: UP_TO_X },
     expiresAt: () => null,
   },
   // Another user who may read exactly what `r-token`'s may.
@@ -192,6 +224,10 @@ const verifyToken = async (token: string) => {
     verified.add(token);
     return {
       subject: 'user:7/client:a',
+      userId: 7,
+      clientId: 'a',
+      scope: 0n,
+      actor: null,
       user: { showNsfw: true, browsingLevel: ALL_LEVELS },
       expiresAt: null,
     };
@@ -202,6 +238,10 @@ const verifyToken = async (token: string) => {
     verified.add(token);
     return {
       subject: 'user:8/client:a',
+      userId: 8,
+      clientId: 'a',
+      scope: 0n,
+      actor: null,
       user: { showNsfw: first, browsingLevel: ALL_LEVELS },
       expiresAt: null,
     };
@@ -209,12 +249,26 @@ const verifyToken = async (token: string) => {
   if (token.startsWith('soon-token:')) {
     return {
       subject: 'user:5/client:a',
+      userId: 5,
+      clientId: 'a',
+      scope: 0n,
+      actor: null,
       user: { showNsfw: true, browsingLevel: ALL_LEVELS },
       expiresAt: new Date(Number(token.slice('soon-token:'.length))),
     };
   }
   const t = TOKENS[token];
-  return t ? { subject: t.subject, user: t.user, expiresAt: t.expiresAt() } : null;
+  return t
+    ? {
+        subject: t.subject,
+        userId: Number(/^user:(\d+)\//.exec(t.subject)?.[1]),
+        clientId: 'a',
+        scope: 0n,
+        actor: null,
+        user: t.user,
+        expiresAt: t.expiresAt(),
+      }
+    : null;
 };
 
 const servers: Server[] = [];
@@ -227,8 +281,8 @@ afterEach(async () => {
   }
 });
 
-async function httpServer(a: Adapter) {
-  const server = createRegistryServer(a, { verifyToken, tokenRecheckMs: 50 });
+async function httpServer(a: Adapter, extra: Pick<ServeOptions, 'regionRestricted'> = {}) {
+  const server = createRegistryServer(a, { verifyToken, tokenRecheckMs: 50, ...extra });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return (server.address() as AddressInfo).port;
@@ -236,11 +290,27 @@ async function httpServer(a: Adapter) {
 
 type Response = { status: number; text: string; wwwAuthenticate: string | null };
 
+/**
+ * The region every request here is sent from unless a case names its own: a country neither list
+ * names. A request with no region is held to SFW (`request-origin.ts`), so without it every
+ * signed-in case would read as SFW. A case sends no region by setting the header to `undefined`.
+ */
+const UNRESTRICTED_ORIGIN: Record<string, string | undefined> = { 'cf-ipcountry': 'DE' };
+const NO_REGION: Record<string, string | undefined> = { 'cf-ipcountry': undefined };
+
+/** `headers` over `UNRESTRICTED_ORIGIN`, without the ones a case set to `undefined`. */
+const withOrigin = (headers: Record<string, string | undefined>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries({ ...UNRESTRICTED_ORIGIN, ...headers }).filter(
+      (e): e is [string, string] => e[1] !== undefined
+    )
+  );
+
 /** One HTTP subscription: read until `done(text)` holds, the response ends, or 5s pass. */
 async function get(
   port: number,
   query: string,
-  headers: Record<string, string> = {},
+  headers: Record<string, string | undefined> = {},
   done: (text: string) => boolean = (t) => t.includes('event: live')
 ): Promise<Response> {
   const abort = new AbortController();
@@ -249,7 +319,10 @@ async function get(
   let status = 0;
   let wwwAuthenticate: string | null = null;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}${query}`, { headers, signal: abort.signal });
+    const res = await fetch(`http://127.0.0.1:${port}${query}`, {
+      headers: withOrigin(headers),
+      signal: abort.signal,
+    });
     status = res.status;
     wwwAuthenticate = res.headers.get('www-authenticate');
     const reader = res.body!.getReader();
@@ -697,19 +770,32 @@ async function viaGrpc(
   a: Adapter,
   schema: string,
   token: string | null,
-  until: (events: StreamEvent[]) => boolean = (e) => e.some((x) => x.type === 'live')
+  until: (events: StreamEvent[]) => boolean = (e) => e.some((x) => x.type === 'live'),
+  extra: Pick<ServeOptions, 'regionRestricted'> & {
+    metadata?: Record<string, string | undefined>;
+    /** `SubscribeRequest.meta`, as its bytes. */
+    meta?: Uint8Array;
+  } = {}
 ): Promise<Outcome> {
-  const server = createGrpcServer(a, { verifyToken, tokenRecheckMs: 50 });
+  const server = createGrpcServer(a, {
+    verifyToken,
+    tokenRecheckMs: 50,
+    regionRestricted: extra.regionRestricted,
+  });
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
   const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const metadata = new grpc.Metadata();
   if (token !== null) metadata.set('authorization', `Bearer ${token}`);
+  for (const [name, value] of Object.entries(withOrigin(extra.metadata ?? {}))) {
+    metadata.set(name, value);
+  }
   const subscribe = (client as unknown as SourceClient).Subscribe;
   return new Promise<Outcome>((resolve) => {
     const out: StreamEvent[] = [];
     let cancelled = false;
-    const call = subscribe.call(client, { schema, cursor: '', urns: [], filter: '' }, metadata);
+    const request = { schema, cursor: '', urns: [], filter: '', meta: extra.meta };
+    const call = subscribe.call(client, request, metadata);
     const finish = (outcome: Outcome) => {
       clearTimeout(timer);
       client.close();
@@ -828,6 +914,7 @@ describe('the re-check is jittered, so streams opened together do not re-check t
         let calls = 0;
         const principal: Principal = {
           subject: 'user:9/client:a',
+          token: { userId: 9, clientId: 'a', scope: 0n, actor: null },
           audience: ANONYMOUS_AUDIENCE,
           expiresAt: null,
           recheck: async (): Promise<Recheck> => {
@@ -1108,6 +1195,10 @@ describe('appContentRating: the listing’s rating when known, else the block’
     ['unrated', 'g', 'g'],
     ['R', 'g', 'R'],
     ['pg', null, 'pg'],
+    // `xxx` is a known rating: the listing's wins, and is never replaced by the block's.
+    ['xxx', 'x', 'xxx'],
+    ['XXX', 'pg', 'XXX'],
+    [null, 'xxx', 'xxx'],
     // Neither known: the first one set, else null; both fail closed (`audienceAdmits`).
     ['unrated', '', 'unrated'],
     ['', 'pg-13', 'pg-13'],
@@ -1115,6 +1206,118 @@ describe('appContentRating: the listing’s rating when known, else the block’
     [null, null, null],
   ])('listing %j, block %j: %j', (listing, block, published) => {
     expect(rated(listing, block)).toBe(published);
+  });
+});
+
+const LEVEL = {
+  PG: NsfwLevel.PG | NsfwLevel.PG13,
+  R: NsfwLevel.R,
+  X: NsfwLevel.X,
+  XXX: NsfwLevel.XXX,
+};
+const showing = (browsingLevel: number) => audienceForUser({ showNsfw: true, browsingLevel });
+/** Every audience a token can have, by name; `held` is an all-levels user from a held region. */
+const AUDIENCES = {
+  anonymous: ANONYMOUS_AUDIENCE,
+  m: showing(LEVEL.PG),
+  mr: showing(LEVEL.PG | LEVEL.R),
+  mx: showing(LEVEL.PG | LEVEL.X),
+  mrx: showing(LEVEL.PG | LEVEL.R | LEVEL.X),
+  'm+xxx': showing(LEVEL.PG | LEVEL.XXX),
+  'mr+xxx': showing(LEVEL.PG | LEVEL.R | LEVEL.XXX),
+  'mx+xxx': showing(LEVEL.PG | LEVEL.X | LEVEL.XXX),
+  'mrx+xxx': showing(LEVEL.PG | LEVEL.R | LEVEL.X | LEVEL.XXX),
+  held: audienceForUser({ showNsfw: true, browsingLevel: ALL_LEVELS }, { regionRestricted: true }),
+};
+type AudienceName = keyof typeof AUDIENCES;
+const AUDIENCE_NAMES = Object.keys(AUDIENCES) as AudienceName[];
+
+describe('🔴 audienceAdmits: xxx reaches only an audience whose level includes XXX', () => {
+  it('each audience is keyed by the mature ratings it may read', () => {
+    expect(Object.fromEntries(AUDIENCE_NAMES.map((n) => [n, AUDIENCES[n].key]))).toEqual({
+      anonymous: 'm',
+      m: 'm',
+      mr: 'mr',
+      mx: 'mx',
+      mrx: 'mrx',
+      'm+xxx': 'm+xxx',
+      'mr+xxx': 'mr+xxx',
+      'mx+xxx': 'mx+xxx',
+      'mrx+xxx': 'mrx+xxx',
+      held: 'm',
+    });
+  });
+
+  it.each<[string | null, AudienceName[]]>([
+    ['g', AUDIENCE_NAMES],
+    ['pg13', AUDIENCE_NAMES],
+    ['r', ['mr', 'mrx', 'mr+xxx', 'mrx+xxx']],
+    ['x', ['mx', 'mrx', 'mx+xxx', 'mrx+xxx']],
+    ['xxx', ['m+xxx', 'mr+xxx', 'mx+xxx', 'mrx+xxx']],
+    ['XXX', ['m+xxx', 'mr+xxx', 'mx+xxx', 'mrx+xxx']],
+    // Not trimmed, as the site does not trim: an unknown rating, which fails closed to an
+    // audience that may read every mature rating.
+    [' xxx ', ['mrx+xxx']],
+    ['unrated', ['mrx+xxx']],
+    [null, ['mrx+xxx']],
+  ])('rating %j is admitted to exactly %j', (rating, admitted) => {
+    expect(AUDIENCE_NAMES.filter((n) => audienceAdmits(AUDIENCES[n], rating))).toEqual(admitted);
+  });
+});
+
+describe('🔴 an xxx-rated app reaches only a subscription whose level includes XXX', () => {
+  const named = (schema: string) =>
+    schema === APPS ? `"urn":"${APP_URN}"` : schema === RELEASES ? RELEASE_URN : DOC;
+
+  it.each<[string, string | null, string, boolean]>([
+    // [schema, token, listing rating, sent]
+    [APPS, 'x-token', 'xxx', true],
+    [APPS, 'rx-token', 'xxx', false],
+    [APPS, 'x-off-token', 'xxx', false],
+    [APPS, null, 'xxx', false],
+    [RELEASES, 'x-token', 'xxx', true],
+    [RELEASES, 'rx-token', 'xxx', false],
+    [NOTES, 'x-token', 'XXX', true],
+    [NOTES, 'rx-token', 'XXX', false],
+    // Positive control: an x-rated app reaches the R+X token on every stream.
+    [APPS, 'rx-token', 'x', true],
+    [RELEASES, 'rx-token', 'x', true],
+    [NOTES, 'rx-token', 'x', true],
+  ])('%s, token %s, app rated %s: sent = %s', async (schema, token, rating, sent) => {
+    const port = await httpServer(source({ rating, blockRating: 'x' }).adapter);
+    const res = await get(port, q(schema), token ? bearer(token) : {});
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
+    expect(res.text.includes(named(schema))).toBe(sent);
+  });
+
+  it('a listing rated xxx over a block rated x is published as xxx', async () => {
+    const port = await httpServer(source({ rating: 'xxx', blockRating: 'x' }).adapter);
+    const res = await get(port, q(APPS), bearer('x-token'));
+    expect(res.text).toContain('"contentRating":"xxx"');
+  });
+
+  it('the schema stream: an R+X token gets the x app’s collection schema, never the xxx one’s', async () => {
+    const apps = () => [listedApp('sun-notes', 'x'), listedApp('moon-notes', 'xxx')];
+    const port = await httpServer(catalogSource(apps));
+    const rx = await get(port, q(SCHEMAS), bearer('rx-token'));
+    expect(upsertedUrns(rx.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('sun-notes')].sort()
+    );
+    expect(rx.text).not.toContain('moon-notes');
+    const all = await get(port, q(SCHEMAS), bearer('x-token'));
+    expect(upsertedUrns(all.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('moon-notes'), notesSchemaOf('sun-notes')].sort()
+    );
+  });
+
+  it('an all-levels token from a region held to SFW is sent no xxx app', async () => {
+    const port = await httpServer(source({ rating: 'xxx' }).adapter, {
+      regionRestricted: (origin) => origin.headers['cf-ipcountry'] === 'ZZ',
+    });
+    const res = await get(port, q(APPS), { ...bearer('x-token'), 'cf-ipcountry': 'ZZ' });
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(['live']);
   });
 });
 
@@ -1157,5 +1360,324 @@ describe('🔴 an app with no rating reaches only an audience that may read ever
     const port = await httpServer(catalogSource(apps('pg')));
     const res = await get(port, q(APPS));
     expect(upsertedUrns(res.text)).toEqual([urnOfApp('sun-notes'), urnOfApp('tide-log')]);
+  });
+});
+
+/**
+ * A region the site restricts to SFW content: the site sends its requests to the SFW domain,
+ * where no mature rating is shown whatever the user's settings. These cases replace the site's
+ * region rule with one keyed on a header the test sets, so they pin that a binding hands the
+ * request's own headers to the rule and narrows the audience by its answer; `request-origin.test.ts`
+ * pins the site's rule itself.
+ */
+const RESTRICTED = { 'cf-ipcountry': 'ZZ' };
+const zzRestricted: ServeOptions['regionRestricted'] = (origin) =>
+  origin.headers['cf-ipcountry'] === 'ZZ';
+
+describe('🔴 from a region the site restricts to SFW, a token is sent no mature-rated app', () => {
+  it('the SFW rule narrows an X user to what anonymous reads', () => {
+    const user = { showNsfw: true, browsingLevel: ALL_LEVELS };
+    expect(audienceForUser(user).key).toBe('mrx+xxx');
+    expect(audienceForUser(user, { regionRestricted: true }).key).toBe('m');
+    expect(audienceForUser(user, { regionRestricted: true }).key).toBe(ANONYMOUS_AUDIENCE.key);
+    expect(audienceForUser(user, { regionRestricted: true }).allowed).toEqual({
+      r: false,
+      x: false,
+      xxx: false,
+    });
+    expect(audienceForUser(user, { regionRestricted: false }).key).toBe('mrx+xxx');
+  });
+
+  it.each([
+    [NOTES, 'x', DOC],
+    [NOTES, 'r', DOC],
+    [APPS, 'x', `"urn":"${APP_URN}"`],
+    [RELEASES, 'r', RELEASE_URN],
+  ])(
+    '%s, app rated %s: an X token from the restricted region is sent nothing',
+    async (schema, rating, named) => {
+      const port = await httpServer(source({ rating }).adapter, { regionRestricted: zzRestricted });
+      const res = await get(port, q(schema), { ...bearer('x-token'), ...RESTRICTED });
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(['live']);
+      expect(res.text.includes(named)).toBe(false);
+    }
+  );
+
+  it('positive control: the same X token from elsewhere is sent the x app', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter, {
+      regionRestricted: zzRestricted,
+    });
+    const res = await get(port, q(NOTES), { ...bearer('x-token'), 'cf-ipcountry': 'DE' });
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+    expect(res.text.includes(DOC)).toBe(true);
+  });
+
+  it('a pg app still reaches the X token from the restricted region', async () => {
+    const port = await httpServer(source({ rating: 'pg' }).adapter, {
+      regionRestricted: zzRestricted,
+    });
+    const res = await get(port, q(NOTES), { ...bearer('x-token'), ...RESTRICTED });
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it('a cursor issued to the X token elsewhere is cursor_expired from the restricted region', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter, {
+      regionRestricted: zzRestricted,
+    });
+    const first = await get(port, q(NOTES), bearer('x-token'));
+    expect(events(first.text)).toEqual(['upsert', 'live']);
+    const cursor = liveCursor(first.text);
+    const res = await get(port, q(NOTES, `&cursor=${encodeURIComponent(cursor)}`), {
+      ...bearer('x-token'),
+      ...RESTRICTED,
+    });
+    expect([res.status, JSON.parse(res.text).error]).toEqual([410, 'cursor_expired']);
+    expect(res.text.includes(DOC)).toBe(false);
+  });
+
+  it('invariant: re-checks from the restricted region compare like with like, so the stream stays open', async () => {
+    const port = await httpServer(source({ rating: 'pg' }).adapter, {
+      regionRestricted: zzRestricted,
+    });
+    const started = Date.now();
+    // Many re-checks (every ~50ms) pass in this window; one that compared the clamped audience
+    // with the user's own would end the stream with cursor_expired.
+    const res = await get(
+      port,
+      q(NOTES),
+      { ...bearer('x-token'), ...RESTRICTED },
+      (t) => t.includes('event: error') || Date.now() - started > 600
+    );
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it('🔴 a restriction that takes effect mid-stream ends it with cursor_expired, and the re-snapshot is SFW', async () => {
+    let restricted = false;
+    const port = await httpServer(source({ rating: 'x' }).adapter, {
+      regionRestricted: () => restricted,
+    });
+    const res = await get(port, q(NOTES), bearer('x-token'), (t) => {
+      if (t.includes('event: live')) restricted = true;
+      return t.includes('event: error');
+    });
+    expect(events(res.text)).toEqual(['upsert', 'live', 'error']);
+    expect(errorOf(res.text)).toBe('cursor_expired');
+    const again = await get(port, q(NOTES), bearer('x-token'));
+    expect(events(again.text)).toEqual(['live']);
+  });
+
+  it('🔴 gRPC: the region is read from the call metadata, with the same result', async () => {
+    const { adapter } = source({ rating: 'x' });
+    const from = (metadata: Record<string, string>) =>
+      viaGrpc(adapter, NOTES, 'x-token', undefined, { regionRestricted: zzRestricted, metadata });
+    expect(shapes((await from(RESTRICTED)).events)).toEqual(['live']);
+    // Positive control: the same call from elsewhere is sent the x app's document.
+    expect(shapes((await from({ 'cf-ipcountry': 'DE' })).events)).toEqual([
+      `upsert ${DOC}`,
+      'live',
+    ]);
+  });
+});
+
+/**
+ * The production region rule: the cases above replace it; these build each server WITHOUT a rule,
+ * so the site's own lists (set at the top of this file) decide. A binding that ignored the rule
+ * (`?? (() => false)`) sends every one of these the x app.
+ */
+describe('🔴 the production region rule: restricted (ZY) and blocked (GB) regions are held to SFW', () => {
+  it.each([
+    ['ZY, restricted', NOTES, 'x', DOC],
+    ['GB, blocked', NOTES, 'x', DOC],
+    ['GB, blocked', APPS, 'r', `"urn":"${APP_URN}"`],
+    ['GB, blocked', RELEASES, 'x', RELEASE_URN],
+  ])(
+    '%s: %s, app rated %s, is sent nothing for an X token over HTTP',
+    async (_n, schema, rating, named) => {
+      const country = _n.slice(0, 2);
+      const port = await httpServer(source({ rating }).adapter);
+      const res = await get(port, q(schema), { ...bearer('x-token'), 'cf-ipcountry': country });
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(['live']);
+      expect(res.text.includes(named)).toBe(false);
+    }
+  );
+
+  it('positive control: the same X token from DE is sent the x app over HTTP', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const res = await get(port, q(NOTES), { ...bearer('x-token'), 'cf-ipcountry': 'DE' });
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it('a cursor issued to the X token in DE is cursor_expired from GB', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const first = await get(port, q(NOTES), { ...bearer('x-token'), 'cf-ipcountry': 'DE' });
+    const cursor = liveCursor(first.text);
+    const res = await get(port, q(NOTES, `&cursor=${encodeURIComponent(cursor)}`), {
+      ...bearer('x-token'),
+      'cf-ipcountry': 'GB',
+    });
+    expect([res.status, JSON.parse(res.text).error]).toEqual([410, 'cursor_expired']);
+    expect(res.text.includes(DOC)).toBe(false);
+  });
+
+  it('invariant: re-checks from GB keep the stream open', async () => {
+    const port = await httpServer(source({ rating: 'pg' }).adapter);
+    const started = Date.now();
+    const res = await get(
+      port,
+      q(NOTES),
+      { ...bearer('x-token'), 'cf-ipcountry': 'GB' },
+      (t) => t.includes('event: error') || Date.now() - started > 600
+    );
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it.each([['ZY'], ['GB']])(
+    'gRPC from %s: the X token is sent nothing of the x app',
+    async (country) => {
+      const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+        metadata: { 'cf-ipcountry': country },
+      });
+      expect(shapes(res.events)).toEqual(['live']);
+    }
+  );
+
+  it('positive control: gRPC from DE is sent the x app', async () => {
+    const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+      metadata: { 'cf-ipcountry': 'DE' },
+    });
+    expect(shapes(res.events)).toEqual([`upsert ${DOC}`, 'live']);
+  });
+});
+
+/**
+ * A request with no region (no country header: one that reached the adapter through a proxy that
+ * does not forward the edge's headers) is held to SFW by the production rule, whatever the user's
+ * settings. Each server is built WITHOUT a rule; the DE positive controls above are the same token
+ * and app with a country, sent the x app.
+ */
+describe('🔴 the production region rule: a request with no region is held to SFW', () => {
+  it('the audience of an X user with no region is the SFW one', async () => {
+    const { regionRestricted } = await import('~/server/registry-adapter/request-origin');
+    const user = { showNsfw: true, browsingLevel: ALL_LEVELS };
+    const held = regionRestricted({ headers: {} });
+    expect(held).toBe(true);
+    expect(audienceForUser(user, { regionRestricted: held }).key).toBe('m');
+  });
+
+  it.each([
+    [NOTES, 'x', DOC],
+    [NOTES, 'r', DOC],
+    [APPS, 'x', `"urn":"${APP_URN}"`],
+    [RELEASES, 'r', RELEASE_URN],
+  ])(
+    'HTTP: %s, app rated %s, is sent nothing for an X token with no region',
+    async (schema, rating, named) => {
+      const port = await httpServer(source({ rating }).adapter);
+      const res = await get(port, q(schema), { ...bearer('x-token'), ...NO_REGION });
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(['live']);
+      expect(res.text.includes(named)).toBe(false);
+    }
+  );
+
+  it('HTTP: a pg app still reaches the X token with no region', async () => {
+    const port = await httpServer(source({ rating: 'pg' }).adapter);
+    const res = await get(port, q(NOTES), { ...bearer('x-token'), ...NO_REGION });
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it('gRPC: the X token with no region metadata is sent nothing of the x app', async () => {
+    const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+      metadata: NO_REGION,
+    });
+    expect(shapes(res.events)).toEqual(['live']);
+  });
+});
+
+/**
+ * The request's `meta` (the registry spec's rule 10), as the registry gateway sets it from the
+ * edge's headers, which then never reach the adapter: a `meta` country is judged as the header
+ * is, wins over a header, and malformed `meta` is none. Each server is built WITHOUT a rule, and
+ * every case is the X token and the x app, so what it is sent is the region decision.
+ */
+describe('🔴 the production region rule reads the request’s meta', () => {
+  const meta = (json: string) => `&meta=${encodeURIComponent(json)}`;
+  const sent = async (query: string, headers: Record<string, string | undefined>) => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const res = await get(port, q(NOTES, query), { ...bearer('x-token'), ...headers });
+    expect(res.status).toBe(200);
+    return events(res.text);
+  };
+
+  it.each([
+    ['meta GB, no header: held by the UK block', meta('{"country":"GB"}'), NO_REGION, ['live']],
+    [
+      'meta isuk is not read: meta DE with isuk is sent the x app',
+      meta('{"country":"DE","isuk":"true"}'),
+      NO_REGION,
+      ['upsert', 'live'],
+    ],
+    ['meta ZY, no header: held by the restriction', meta('{"country":"ZY"}'), NO_REGION, ['live']],
+    [
+      'positive control: meta DE, no header, is sent the x app',
+      meta('{"country":"DE"}'),
+      NO_REGION,
+      ['upsert', 'live'],
+    ],
+    [
+      'meta DE wins over the header GB',
+      meta('{"country":"DE"}'),
+      { 'cf-ipcountry': 'GB' },
+      ['upsert', 'live'],
+    ],
+    [
+      'meta GB wins over the header DE',
+      meta('{"country":"GB"}'),
+      { 'cf-ipcountry': 'DE' },
+      ['live'],
+    ],
+    [
+      'meta without the key: the header GB decides',
+      meta('{"locale":"en"}'),
+      { 'cf-ipcountry': 'GB' },
+      ['live'],
+    ],
+    ['no meta: the header GB decides', '', { 'cf-ipcountry': 'GB' }, ['live']],
+    ['no meta: the header DE decides', '', { 'cf-ipcountry': 'DE' }, ['upsert', 'live']],
+  ])('HTTP: %s', async (_n, query, headers, expected) => {
+    expect(await sent(query, headers)).toEqual(expected);
+  });
+
+  it.each([
+    ['not JSON', '{"country":"DE"'],
+    ['an array', '["DE"]'],
+    ['a string', '"DE"'],
+    ['null', 'null'],
+    ['a country that is not a string', '{"country":["DE"]}'],
+  ])('HTTP: malformed meta (%s) is none', async (_n, json) => {
+    expect(await sent(meta(json), NO_REGION)).toEqual(['live']);
+    expect(await sent(meta(json), { 'cf-ipcountry': 'DE' })).toEqual(['upsert', 'live']);
+  });
+
+  const bytes = (json: string) => Buffer.from(json, 'utf8');
+  it.each([
+    ['meta GB wins over the metadata DE', bytes('{"country":"GB"}'), {}, ['live']],
+    [
+      'meta DE, no region metadata, is sent the x app',
+      bytes('{"country":"DE"}'),
+      NO_REGION,
+      [`upsert ${DOC}`, 'live'],
+    ],
+    ['malformed meta, no region metadata: held', bytes('["DE"]'), NO_REGION, ['live']],
+    ['malformed meta, metadata DE decides', bytes('{"country":7}'), {}, [`upsert ${DOC}`, 'live']],
+    ['no meta: the metadata GB decides', undefined, { 'cf-ipcountry': 'GB' }, ['live']],
+  ])('gRPC: %s', async (_n, m, metadata, expected) => {
+    const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+      metadata,
+      meta: m,
+    });
+    expect(shapes(res.events)).toEqual(expected);
   });
 });

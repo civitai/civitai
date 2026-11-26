@@ -171,8 +171,7 @@ async function handle(req, res) {
   // Under Next the undecodable-path DecodeError is thrown while routes are still being resolved,
   // before the routing headers are applied, so the 400 carries none of them. A plain 404 is
   // answered after they are applied.
-  const pathname = (req.url || '/').split('?', 1)[0];
-  const matched = matchPage(pathname);
+  const matched = served.matchRequestPage(matchPage, req);
   if (matched.decodeError) return compat.sendBadRequest(res);
   compat.applyRoutingHeaders(res, routed.headers);
   if (matched.notFound) return compat.sendNotFound(res);

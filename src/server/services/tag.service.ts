@@ -51,6 +51,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { canViewerOpenModel } from '~/server/services/model-visibility.service';
+import { assertMayLoosenImages } from '~/server/services/moderator-withheld.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -562,9 +563,11 @@ export const getVotableTags = async ({
   id,
   take = 100,
   isModerator = false,
+  ownerSeesHeld = false,
 }: GetVotableTagsSchema & {
   userId?: number;
   isModerator?: boolean;
+  ownerSeesHeld?: boolean;
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
@@ -596,7 +599,7 @@ export const getVotableTags = async ({
     results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
     // imageTagsCache is keyed by image id alone, so the viewer check runs first.
-    await assertImageVisibleToViewer({ id, userId, isModerator });
+    await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
     // Fetch from cache
@@ -768,7 +771,10 @@ export const addTagVotes = async ({
   tags,
   isModerator,
   vote,
-}: TagVotingInput & { vote: number }) => {
+  csamReview = false,
+}: TagVotingInput & { vote: number; csamReview?: boolean }) => {
+  if (isModerator && type === 'image' && vote < 0)
+    await assertMayLoosenImages([id], { csamReview });
   // Determine vote weight
   let isCreator = false;
   if (type === 'model') {
@@ -819,6 +825,54 @@ export const addTagVotes = async ({
     await modelVotableTagsCache.bust(id);
   }
 };
+/** A moderator's weighted votes on image tags, applied whole or not at all on what is withheld. */
+export async function voteImageTagsAsModerator({
+  votes,
+  userId,
+  csamReview,
+}: {
+  votes: { imageId: number; tagId: number; vote: number }[];
+  userId: number;
+  csamReview: boolean;
+}) {
+  // Grouped by (imageId, vote) so each group is one service call with an array of tag ids.
+  const removals = new Map<number, number[]>();
+  const additions = new Map<string, { imageId: number; vote: number; tagIds: number[] }>();
+  for (const v of votes) {
+    if (v.vote === 0) {
+      const arr = removals.get(v.imageId) ?? [];
+      arr.push(v.tagId);
+      removals.set(v.imageId, arr);
+    } else {
+      const key = `${v.imageId}:${v.vote}`;
+      const cur = additions.get(key) ?? { imageId: v.imageId, vote: v.vote, tagIds: [] };
+      cur.tagIds.push(v.tagId);
+      additions.set(key, cur);
+    }
+  }
+
+  await assertMayLoosenImages(
+    votes.filter((v) => v.vote < 0).map((v) => v.imageId),
+    { csamReview }
+  );
+
+  await Promise.all([
+    ...Array.from(removals.entries()).map(([id, tagIds]) =>
+      removeTagVotes({ userId, type: 'image', id, tags: tagIds })
+    ),
+    ...Array.from(additions.values()).map((group) =>
+      addTagVotes({
+        userId,
+        type: 'image',
+        id: group.imageId,
+        tags: group.tagIds,
+        vote: group.vote,
+        isModerator: true,
+        csamReview,
+      })
+    ),
+  ]);
+}
 // #endregion
 
 export const addTags = async ({ tags, entityIds, entityType, relationship }: AdjustTagsSchema) => {
@@ -952,7 +1006,12 @@ export const findOrCreateTagsByName = async (tags: string[]) => {
   return tagCache;
 };
 
-export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
+export const disableTags = async ({
+  tags,
+  entityIds,
+  entityType,
+  csamReview,
+}: AdjustTagsSchema & { csamReview: boolean }) => {
   const isTagIds = typeof tags[0] === 'number';
   // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
@@ -976,6 +1035,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
     // view ever starts honoring `disabled`, and to keep model mutations uniformly busting.
     await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
+    await assertMayLoosenImages(entityIds, { csamReview });
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT "imageId", "tagId"
       FROM "TagsOnImageDetails"

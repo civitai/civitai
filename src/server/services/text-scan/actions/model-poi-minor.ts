@@ -262,7 +262,7 @@ async function recordHold({
       entityType: 'Model',
       entityId: modelId,
       workflowId,
-    }).catch(() => null);
+    });
   return written > 0;
 }
 
@@ -484,7 +484,7 @@ export async function flagModelPoi({
     entityType: 'Model',
     entityId: modelId,
     workflowId,
-  }).catch(() => null);
+  });
   return { written: true, notified };
 }
 
@@ -574,7 +574,7 @@ export async function flagModelMinor({
     entityType: 'Model',
     entityId: modelId,
     workflowId,
-  }).catch(() => null);
+  });
   return { written: true, notified };
 }
 
@@ -735,7 +735,7 @@ export async function grantModelTextScanPoi({
     entityType: 'Model',
     entityId: modelId,
     moderatorId: userId,
-  }).catch(() => null);
+  });
   return true;
 }
 

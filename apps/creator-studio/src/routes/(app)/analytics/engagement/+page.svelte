@@ -28,16 +28,36 @@
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
   const rows = $derived(data.engagement ?? []);
+  const needAttention = $derived(rows.filter((m) => m.comments > 0 || m.downvotes > 0).length);
+  const hotRank = (modelId: number): number | null => data.hotRanks?.ranks[modelId] ?? null;
   const sortValue = (m: NonNullable<PageData['engagement']>[number], key: string): number =>
     key === 'comments' ? m.comments : key === 'upvotes' ? m.upvotes : m.downvotes;
   const sorted = $derived.by(() => {
-    const list = data.engagement ? [...data.engagement] : [];
+    const list = [...rows];
     const dir = sortDir === 'desc' ? -1 : 1;
+    if (sortKey === 'hotRank')
+      // "desc" = best rank first, like the counts. Unranked models go last in both directions.
+      return list.sort((a, b) => {
+        const ra = hotRank(a.modelId);
+        const rb = hotRank(b.modelId);
+        if (ra === null || rb === null) return (ra === null ? 1 : 0) - (rb === null ? 1 : 0);
+        return dir * (rb - ra);
+      });
     return list.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
   });
   const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / perPage)));
   const curPage = $derived(Math.min(pageNum, totalPages));
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
+  // No snapshot day complete yet (the job is new or off): no column, rather than a column of "—" that
+  // reads as "none of your models rank". A failed read still shows it, marked unavailable.
+  const showHotRank = $derived(data.hotRanks === null || data.hotRanks.day !== null);
+  const hotRankNote = $derived(
+    data.hotRanks === null
+      ? ' · Hot rank unavailable right now'
+      : data.hotRankAsOf
+        ? ` · Hot rank ${data.hotRankAsOf}`
+        : ''
+  );
 </script>
 
 <AnalyticsHeader />
@@ -46,21 +66,22 @@
   <div class="placeholder">Engagement is temporarily unavailable — please try again shortly.</div>
 {:else if rows.length === 0}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-    <strong class="text-dark-2">Nothing to review</strong> — none of your published models have downvotes
-    or comments.
+    <strong class="text-dark-2">No published models yet</strong> — they will show up here once you publish
+    one.
   </div>
 {:else}
   <div class="cs-panel p-4">
     <p class="mb-3 text-sm font-medium text-white">
       Engagement by model
-      <span class="text-xs text-dark-3">· all-time · click a column to sort</span>
+      <span class="text-xs text-dark-3">· all-time{hotRankNote} · click a column to sort</span>
     </p>
 
-    {#snippet sortHead(key: string, label: string)}
+    {#snippet sortHead(key: string, label: string, hint: string | undefined = undefined)}
       {@const active = sortKey === key}
       <Table.Head class="text-right {active ? 'bg-dark-5/40' : ''}">
         <button
           type="button"
+          title={hint}
           onclick={() => sorting.toggle(key)}
           class="flex w-full cursor-pointer items-center justify-end gap-1 hover:text-white {active
             ? 'font-medium text-white'
@@ -80,7 +101,13 @@
     {/snippet}
 
     <div class="mb-3">
-      <Pagination total={sorted.length} noun="model" {curPage} {totalPages} />
+      <Pagination
+        total={sorted.length}
+        noun="model"
+        {curPage}
+        {totalPages}
+        note="{num(needAttention)} with comments or downvotes"
+      />
     </div>
     <Table.Root>
       <Table.Header>
@@ -89,6 +116,13 @@
           {@render sortHead('comments', 'Comments')}
           {@render sortHead('upvotes', 'Upvotes')}
           {@render sortHead('downvotes', 'Downvotes')}
+          {#if showHotRank}
+            {@render sortHead(
+              'hotRank',
+              'Hot rank',
+              'Position in the Hot feed, among every model it can show, before browsing-level filters. Updated nightly.'
+            )}
+          {/if}
         </Table.Row>
       </Table.Header>
       <Table.Body>
@@ -121,6 +155,12 @@
             >
               {m.downvotes ? num(m.downvotes) : '—'}
             </Table.Cell>
+            {#if showHotRank}
+              {@const rank = hotRank(m.modelId)}
+              <Table.Cell class="text-right tabular-nums {rank ? 'text-white' : 'text-dark-4'}">
+                {rank ? `#${num(rank)}` : '—'}
+              </Table.Cell>
+            {/if}
           </Table.Row>
         {/each}
       </Table.Body>

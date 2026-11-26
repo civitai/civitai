@@ -22,6 +22,7 @@ import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createKrea3Input } from './krea3.handler';
 import { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
+import { createFibo2Input } from './fibo2.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
 import { createMingInput } from './ming.handler';
@@ -56,7 +57,6 @@ import { createSoniloInput } from './sonilo.handler';
 import {
   createPolyGenInput,
   createTripoInput,
-  createHunyuan3dInput,
   createPixal3dInput,
   createTrellis2Input,
 } from './model3d.handler';
@@ -81,6 +81,7 @@ export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createKrea3Input } from './krea3.handler';
 export { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
+export { createFibo2Input } from './fibo2.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
 export { createMingInput } from './ming.handler';
@@ -115,7 +116,6 @@ export { createSoniloInput } from './sonilo.handler';
 export {
   createPolyGenInput,
   createTripoInput,
-  createHunyuan3dInput,
   createPixal3dInput,
   createTrellis2Input,
 } from './model3d.handler';
@@ -200,6 +200,8 @@ function createStep(
       return createKrea3Input(data, handlerCtx);
     case 'MiniMaxH3Image':
       return createMinimaxH3ImageInput(data, handlerCtx);
+    case 'Fibo2':
+      return createFibo2Input(data, handlerCtx);
 
     case 'PonyV7':
       return createPonyV7Input(data, handlerCtx);
@@ -314,9 +316,6 @@ function createStep(
 
     case 'Tripo':
       return createTripoInput(data, handlerCtx);
-
-    case 'Hunyuan3D':
-      return createHunyuan3dInput(data, handlerCtx);
 
     case 'Pixal3D':
       return createPixal3dInput(data, handlerCtx);

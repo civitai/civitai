@@ -1,0 +1,35 @@
+{
+  "name": "models-moderator",
+  "description": "A moderator on the mature host: no POI or privacy clause and no cap, so the client's filter is sent as it came.",
+  "request": {
+    "path": "/api/search/indexes/models_v9/search",
+    "body": "{\"q\":\"m\",\"filter\":[\"a = 1\"]}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": {
+    "id": 1004,
+    "username": "mod",
+    "isModerator": true,
+    "browsingLevel": 31,
+    "showNsfw": true
+  },
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[{\"id\":141,\"name\":\"M\",\"sfwName\":\"S\",\"user\":{\"id\":9,\"image\":\"x\",\"profilePicture\":{\"nsfwLevel\":16}}}],\"query\":\"m\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/models_v9/search",
+      "body": {
+        "q": "m",
+        "filter": [
+          "a = 1"
+        ]
+      }
+    },
+    "body": "{\"hits\":[{\"id\":141,\"name\":\"M\",\"user\":{\"id\":9,\"image\":\"x\",\"profilePicture\":{\"nsfwLevel\":16}}}],\"query\":\"m\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  }
+}

@@ -13,6 +13,10 @@ const h = vi.hoisted(() => ({
   users: new Map<number, Record<string, unknown> | null>(),
 }));
 
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   isSecureCookie: () => false,
@@ -43,6 +47,7 @@ vi.mock('$lib/server/auth/session-producer', () => ({
 import type * as CivitaiAuth from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { POST } from '../+server';
+import { markUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 
 const MOD = 100;
 const USER = 200;
@@ -94,6 +99,12 @@ describe('POST /api/auth/refresh', () => {
     });
     expect(expiresIn).toBeLessThanOrEqual(60 * 60);
     expect(h.sys.hashes.get(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE)?.has('family-a')).toBe(true);
+  });
+
+  it('answers 503 and mints nothing for a session accepted without reading the session store', async () => {
+    markUnconfirmedSession(h.claims as never);
+    expect(await statusOf()).toBe(503);
+    expect(h.minted).toHaveLength(0);
   });
 
   it('refuses a banned account', async () => {

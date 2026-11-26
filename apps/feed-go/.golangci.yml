@@ -1,0 +1,62 @@
+# golangci-lint v2 configuration for apps/feed-go, run by .github/workflows/feed-go.yml (the
+# version is pinned there). Any finding fails the job. Suppress a false positive with a narrowly
+# scoped `//nolint:<linter> // <reason>` on the line, never by disabling a linter here.
+version: "2"
+
+run:
+  # Lint the integration tier too (files under the `integration` build tag).
+  build-tags:
+    - integration
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - contextcheck
+    - errcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - govet
+    - misspell
+    - noctx
+    - perfsprint
+    - prealloc
+    # v2 merges gosimple and stylecheck into staticcheck; its default check set applies.
+    - staticcheck
+    - unconvert
+    - unparam
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        # Struct field order here follows the JS object / SELECT column order it mirrors, which is
+        # what a reader cross-checks against the Node code; reordering for padding would trade that
+        # for bytes on structs that are never held in bulk.
+        - fieldalignment
+        # Measured on the first run: 15 findings, every one an `err` (or `got`/`in`/`s`) redeclared
+        # in an inner scope with the outer value never read again — the idiomatic Go form, no bug.
+        - shadow
+  exclusions:
+    rules:
+      # jspack's msgpack encoder and decoder read and write length and integer fields as wire bytes:
+      # each int->byte / uint16 / uint32 conversion (and the decoder's uint->int8/16/32/64 and
+      # length->int) is a deliberate truncation or reinterpretation inside a branch that bounds the
+      # value, mirroring msgpackr's own codec; every decoded length is checked against the bytes left.
+      - path: internal/jspack/jspack\.go
+        linters:
+          - gosec
+        text: G115
+      # The msgpack reader's differential test writes random msgpack (a reproducible generator,
+      # not a secret) byte by byte: each int->byte / ->uint64 conversion is a deliberate truncation
+      # to the wire width, and the corpus is meant to include out-of-range values.
+      - path: internal/hydrate/msgpack_diff_test\.go
+        linters:
+          - gosec
+        text: G115|G404
+
+issues:
+  # Report everything: a capped report hides findings behind the first few.
+  max-issues-per-linter: 0
+  max-same-issues: 0

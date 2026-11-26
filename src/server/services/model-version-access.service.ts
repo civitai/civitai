@@ -3,12 +3,18 @@ import { EntityAccessPermission } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
-/** The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). */
+/**
+ * The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). The
+ * amount and currency paid weigh the buyer in the Hot head-start bar, which reads these keys in SQL
+ * (migration 20271128120100_model_hot_score_buyer_price_weight).
+ */
 export const EARLY_ACCESS_PURCHASES = [
   {
     type: 'download',
     transactionKey: 'download-buzzTransactionId',
     purchasedAtKey: 'download-purchasedAt',
+    amountKey: 'download-amount',
+    buzzTypeKey: 'download-buzzType',
     permissions:
       EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload,
   },
@@ -16,9 +22,16 @@ export const EARLY_ACCESS_PURCHASES = [
     type: 'generation',
     transactionKey: 'generation-buzzTransactionId',
     purchasedAtKey: 'generation-purchasedAt',
+    amountKey: 'generation-amount',
+    buzzTypeKey: 'generation-buzzType',
     permissions: EntityAccessPermission.EarlyAccessGeneration,
   },
 ] as const;
+
+/** The meta keys one purchase kind writes on a grant, so a revoke or refund moves them together. */
+export function purchaseMetaKeys(kind: (typeof EARLY_ACCESS_PURCHASES)[number]) {
+  return [kind.transactionKey, kind.purchasedAtKey, kind.amountKey, kind.buzzTypeKey];
+}
 
 /** Meta key a gift claim records its permissions under, so a refund can leave the gift's bits. */
 export const GIFT_PERMISSIONS_KEY = 'gift-permissions';
@@ -152,4 +165,67 @@ export async function revokeModelVersionAccess({
       accessorType: 'User',
     },
   });
+}
+
+/** Purchase and gift keys a moderator revoke moves into a `revocations` entry. */
+const ARCHIVED_ON_REVOKE_KEYS = [
+  ...EARLY_ACCESS_PURCHASES.flatMap(purchaseMetaKeys),
+  'giftLinkId',
+  GIFT_PERMISSIONS_KEY,
+];
+
+/** Meta key holding a grant's moderator revokes, oldest first. */
+export const REVOCATIONS_KEY = 'revocations';
+
+/**
+ * A moderator's revoke, for a purchase refunded outside the unpublish refund. The row stays with no
+ * permissions, as the record of what was paid: its purchase and gift keys move into a new entry of
+ * `revocations`, with who revoked it and when. The unpublish refund reads only the live keys, so it
+ * can't refund it again, and a later purchase starts a fresh refund window. A grant from before
+ * permissions were recorded (0, no `revocations`) still counts as access, so it is revoked too.
+ * Returns the grant as it was, or null when there was none to revoke.
+ */
+export async function archiveModelVersionAccess({
+  client = dbWrite,
+  userId,
+  modelVersionId,
+  revokedById,
+}: {
+  client?: Prisma.TransactionClient;
+  userId: number;
+  modelVersionId: number;
+  revokedById: number;
+}) {
+  const meta = asJsonbObjectSql('ea."meta"');
+  const [before] = await client.$queryRaw<{ permissions: number; meta: unknown }[]>`
+    WITH before AS (
+      SELECT permissions, meta FROM "EntityAccess" ea
+       WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
+         AND "accessorId" = ${userId} AND "accessorType" = 'User'
+         AND (permissions <> 0 OR NOT (${meta} ? ${REVOCATIONS_KEY}::text))
+       FOR UPDATE
+    )
+    UPDATE "EntityAccess" ea
+       SET permissions = 0,
+           meta = (${meta} - ${ARCHIVED_ON_REVOKE_KEYS}::text[]) || jsonb_build_object(
+             ${REVOCATIONS_KEY}::text,
+             (CASE WHEN jsonb_typeof(${meta} -> ${REVOCATIONS_KEY}::text) = 'array'
+                   THEN ${meta} -> ${REVOCATIONS_KEY}::text ELSE '[]'::jsonb END)
+             || jsonb_build_array(
+                  (SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+                     FROM jsonb_each(${meta}) e
+                    WHERE e.key = ANY(${ARCHIVED_ON_REVOKE_KEYS}::text[]))
+                  || jsonb_build_object(
+                       'revokedAt', now(),
+                       'revokedById', ${revokedById}::int,
+                       'refundedExternally', true
+                     )
+                )
+           )
+      FROM before
+     WHERE ea."accessToId" = ${modelVersionId} AND ea."accessToType" = 'ModelVersion'
+       AND ea."accessorId" = ${userId} AND ea."accessorType" = 'User'
+    RETURNING before.permissions, before.meta
+  `;
+  return before ?? null;
 }

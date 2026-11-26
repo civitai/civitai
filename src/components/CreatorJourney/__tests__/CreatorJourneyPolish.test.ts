@@ -37,6 +37,7 @@ const journey = (
     earned: [],
     activity: { milestones: [], closestNext: null },
     secrets,
+    reveals: [],
     share: { shareable: [], hiddenOnProfile: [] },
     ...extra,
   } as unknown as Journey);
@@ -85,7 +86,7 @@ describe('journey page polish', () => {
     expect(hrefs).toContain(CREATOR_SHOWCASE_HREF);
   });
 
-  // Justin asked for the explainer to drop down in place rather than send people to the account page.
+  // By request, the explainer drops down in place rather than sending people to the account page.
   it('opens the Creator Score explainer in place instead of linking off', () => {
     const page = mount(journey());
     const hrefs = [...page.querySelectorAll('a')].map((a) => a.getAttribute('href'));

@@ -17,7 +17,11 @@ const queue = { types: ['Prompt'], fallback: 'Prompt' } as never;
 const load = async (query: string) => {
   captured.sql.length = 0;
   captured.params.length = 0;
-  return restrictionTriageLoad(new URL(`http://x/audit/generator-restrictions${query}`), queue);
+  return restrictionTriageLoad(
+    new URL(`http://x/audit/generator-restrictions${query}`),
+    queue,
+    undefined
+  );
 };
 
 describe('restriction queue ?selected', () => {

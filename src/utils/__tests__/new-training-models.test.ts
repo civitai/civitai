@@ -22,18 +22,19 @@ import {
   trainingModelInfo,
 } from '~/utils/training';
 import {
-  catalogFlagKeys,
+  hostFlagKeys,
   MODEL_CARDS,
   PARAM_DEFAULTS,
 } from '../../../apps/training-studio/src/lib/data/trainingModels';
 
 const models = [
-  ['qwen21', BM.Qwen21, 'image'],
-  ['ming', BM.Ming, 'image'],
-  ['yue2', BM.YuE2, 'audio'],
+  ['qwen21', BM.Qwen21, 'image', 'qwen21-training', 32],
+  ['ming', BM.Ming, 'image', 'ming-training', 32],
+  ['yue2', BM.YuE2, 'audio', 'yue2-training', 32],
+  ['minimaxh3image', BM.MiniMaxH3Image, 'image', 'minimaxh3-image-training', 16],
 ] as const;
 
-describe.each(models)('%s training identity', (key, id, media) => {
+describe.each(models)('%s training identity', (key, id, media, flagKey, networkSize) => {
   it('persists the base-model identity used to publish the trained LoRA', () => {
     const info = trainingModelInfo[key];
     expect(info.baseModel).toBe(baseModelById.get(id)?.name);
@@ -55,7 +56,7 @@ describe.each(models)('%s training identity', (key, id, media) => {
   it('keeps Studio completion lookup on the same checkpoint and ecosystem', () => {
     const info = trainingModelInfo[key];
     const card = MODEL_CARDS.find((c) => c.type === key)!;
-    expect(card.flagKey).toBe(`${key}-training`);
+    expect(card.flagKey).toBe(flagKey);
     expect(card.media).toBe(media);
     expect(card.versions[0]).toMatchObject({
       key,
@@ -65,8 +66,8 @@ describe.each(models)('%s training identity', (key, id, media) => {
     });
     expect(PARAM_DEFAULTS[key]).toMatchObject({
       batchSize: 1,
-      networkDim: 32,
-      networkAlpha: 32,
+      networkDim: networkSize,
+      networkAlpha: networkSize,
       textEncoderLr: 0,
       lrScheduler: 'constant',
     });
@@ -74,8 +75,8 @@ describe.each(models)('%s training identity', (key, id, media) => {
 });
 
 describe('Training Studio embed model gates', () => {
-  it('maps every gated Studio card to a feature flag the host can evaluate', () => {
-    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(catalogFlagKeys().sort());
+  it('maps every Studio gate to a feature flag the host can evaluate', () => {
+    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(hostFlagKeys().sort());
   });
 
   it('asks Flipt the same key the standalone Studio asks', () => {
@@ -133,6 +134,7 @@ describe('Training Studio follows the classic trainer model flags', () => {
     hidream_o1: 'hidreamO1Training',
     anima: 'animaTraining',
     minimaxh3: 'minimaxh3Training',
+    minimaxh3image: 'minimaxh3ImageTraining',
     zimageturbo: 'zimageturboTraining',
     ltx25: 'ltx25Training',
     ltx23: 'ltx23Training',

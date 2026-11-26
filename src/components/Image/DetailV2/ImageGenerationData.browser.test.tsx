@@ -23,9 +23,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     useUtils: () => ({ image: { getGenerationData: { setData: vi.fn() } } }),
   },
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, isModerator: false }),
-}));
 
 import { ImageGenerationData } from './ImageGenerationData';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -38,7 +35,8 @@ async function renderPanel() {
   renderWithProviders(
     <div style={{ width: 400 }}>
       <ImageGenerationData imageId={1} collapsible />
-    </div>
+    </div>,
+    { user: { id: 1, isModerator: false } }
   );
   await vi.waitFor(() => {
     expect(copyControl()).toBeTruthy();

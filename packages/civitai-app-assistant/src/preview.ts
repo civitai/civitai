@@ -25,7 +25,11 @@ export function previewRefusal(code: unknown): string | null {
   }
 }
 
-/** What the page shows of a preview the server runner started: never the tunnel's id. */
+/**
+ * What the page shows of a preview the server runner started: never the tunnel's id. `host` is the
+ * tunnel's host, or `''` for a direct preview, whose session host the runner never reports (it is
+ * the preview's credential); the page fetches either preview's frame from civitai by `blockId`.
+ */
 export interface ShownPreview {
   blockId: string;
   host: string;
@@ -35,13 +39,15 @@ export interface ShownPreview {
 const HOST = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 /**
- * The preview a server runner's `start_preview` result shows (`{ blockId, host }`), or `null` when the
- * output is not one: the page reads only these two fields of it.
+ * The preview a server runner's `start_preview` result (or Restart preview answer) shows
+ * (`{ blockId, host }`, or `{ blockId }` with no host for a direct preview), or `null` when the
+ * output is not one: the page reads only these two fields of it. A host that is there must be one.
  */
 export function runnerPreviewOf(output: unknown): ShownPreview | null {
   if (!output || typeof output !== 'object') return null;
   const { blockId, host } = output as { blockId?: unknown; host?: unknown };
   if (typeof blockId !== 'string' || !isAppBlockId(blockId)) return null;
+  if (host === undefined) return { blockId, host: '' };
   if (typeof host !== 'string' || !HOST.test(host)) return null;
   return { blockId, host };
 }

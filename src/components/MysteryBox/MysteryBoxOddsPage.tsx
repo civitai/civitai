@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Group,
   SegmentedControl,
@@ -12,6 +13,7 @@ import { useMemo } from 'react';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
+import { NextLink } from '~/components/NextLink/NextLink';
 import {
   baseOddsView,
   formatChance,
@@ -60,6 +62,14 @@ export function MysteryBoxOddsPage({
         <Title order={1} size="h2">
           {page.name}: odds and contents
         </Title>
+        {page.seller?.username && (
+          <Text size="sm" data-testid="box-odds-seller">
+            Sold by{' '}
+            <Anchor component={NextLink} href={`/user/${page.seller.username}/shop`} inherit>
+              @{page.seller.username}
+            </Anchor>
+          </Text>
+        )}
         <Text size="sm" c="dimmed" data-testid="box-odds-meta">
           {[
             `Version ${page.version}`,

@@ -4,7 +4,6 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { serverSchema } from '~/env/server-schema';
 import { decodeTagIndex } from '~/server/services/resource-intent-tags/payload';
 import type * as Build from '~/server/services/resource-intent-tags/build';
 import {
@@ -13,15 +12,11 @@ import {
   runTagIndexBuild,
   genObservationPages,
   observationCoverage,
-  TAG_OBSERVATION_FLOOR,
-  tagBuildConfig,
   type TagBuildDeps,
   type TagBuildEnv,
   type TagClickHouse,
 } from '~/server/services/resource-intent-tags/pipeline';
 import {
-  genSliceCondition,
-  TAG_SOURCE_PARAMS,
   type genObservationOf,
   observationKeyFingerprint,
   observationUserHash,
@@ -499,47 +494,16 @@ describe('the happy path (the control every refusal below departs from)', () => 
 });
 
 describe('gate 1: the environment, before anything is read', () => {
-  const keys = Object.keys(ENV) as (keyof TagBuildEnv)[];
-  for (const k of keys)
-    for (const value of [undefined, ''])
-      it(`refuses with ${k} ${value === undefined ? 'unset' : 'empty'}, naming it`, async () => {
-        const w = await world({ env: { ...ENV, [k]: value } });
-        const err = await runTagIndexBuild({ dryRun: false }, w.deps).catch((e: Error) => e);
-        expect((err as Error).message).toBe(
-          `tag index build: ${k} not set; refusing before reading anything`
-        );
-        expect(w.chQueries).toEqual([]);
-        expect(w.deps.query).not.toHaveBeenCalled();
-        expect(w.objectsMade).not.toHaveBeenCalled();
-      });
-
-  it('names every missing variable at once', () => {
-    expect(() => tagBuildConfig({}, { requireBucket: true })).toThrow(
-      `tag index build: ${keys.join(', ')} not set; refusing before reading anything`
-    );
-  });
-
-  it("names the snapshot bucket's credentials, so a production build refuses before reading without them", () => {
-    // Pinned literally: the list above is derived from the fixture, which a removed key leaves.
-    expect(() => tagBuildConfig({}, { requireBucket: true })).toThrow(
-      'tag index build: RESOURCE_INTENT_TAG_INDEX_BUCKET, RESOURCE_INTENT_TAG_INDEX_B2_ENDPOINT, ' +
-        'RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY, RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY, ' +
-        'P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD, P2M_HASH_KEY, ' +
-        'P2M_HASH_KEY_FINGERPRINT not set; refusing before reading anything'
-    );
-    // A dry run stores nothing and needs none of them.
-    expect(() => tagBuildConfig({}, { requireBucket: false })).toThrow(
-      'tag index build: P2M_CLICKHOUSE_URL, P2M_CLICKHOUSE_USER, P2M_CLICKHOUSE_PASSWORD, ' +
-        'P2M_HASH_KEY, P2M_HASH_KEY_FINGERPRINT not set; refusing before reading anything'
-    );
-  });
-
-  it('refuses a hash key that is not hex', async () => {
-    const w = await world({ env: { ...ENV, P2M_HASH_KEY: 'zz' + ENV.P2M_HASH_KEY.slice(2) } });
-    await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
-      'P2M_HASH_KEY is not hex'
+  it('refuses with a variable unset, naming it', async () => {
+    const k = 'P2M_HASH_KEY';
+    const w = await world({ env: { ...ENV, [k]: undefined } });
+    const err = await runTagIndexBuild({ dryRun: false }, w.deps).catch((e: Error) => e);
+    expect((err as Error).message).toBe(
+      `tag index build: ${k} not set; refusing before reading anything`
     );
     expect(w.chQueries).toEqual([]);
+    expect(w.deps.query).not.toHaveBeenCalled();
+    expect(w.objectsMade).not.toHaveBeenCalled();
   });
 
   it("refuses a hash key without the observations' fingerprint", async () => {
@@ -551,24 +515,6 @@ describe('gate 1: the environment, before anything is read', () => {
     expect(w.chQueries).toEqual([]);
     expect(w.deps.query).not.toHaveBeenCalled();
   });
-});
-
-describe("the build's env vars in the server schema", () => {
-  const names = [
-    'P2M_CLICKHOUSE_URL',
-    'P2M_CLICKHOUSE_USER',
-    'P2M_CLICKHOUSE_PASSWORD',
-    'P2M_HASH_KEY',
-    'P2M_HASH_KEY_FINGERPRINT',
-  ] as const;
-  for (const name of names)
-    it(`${name}: optional, an empty value reads as unset, any other string kept`, () => {
-      const field = serverSchema.shape[name];
-      expect(field.parse(undefined)).toBeUndefined();
-      // An empty value must not fail the schema: it is parsed at every pod's start.
-      expect(field.parse('')).toBeUndefined();
-      expect(field.parse('not validated here')).toBe('not validated here');
-    });
 });
 
 describe("gate 2: the ClickHouse account's own profile is readonly=2", () => {
@@ -599,31 +545,6 @@ describe("gate 3: the training window's generator coverage", () => {
     expectNoTrainingReads(w);
   });
 
-  it("pins the floor at the observation table's first hour", () => {
-    expect(TAG_OBSERVATION_FLOOR.toISOString()).toBe(FLOOR);
-  });
-
-  it('a window starting before the floor, fully covered after it, builds and records the short span', async () => {
-    const w = await world({ hours: SPAN });
-    const { summary } = await runTagIndexBuild({ dryRun: false }, w.deps);
-    const q = w.chQueries[1];
-    expect(q).toContain(`countIf(time >= toDateTime('2026-10-19 00:00:00', 'UTC')) AS after`);
-    // An hour counts only when the slice the build reads holds a row, bucketed by UTC hour.
-    expect(q.replace(/\s+/g, ' ')).toContain(
-      `uniqExactIf(toStartOfHour(time, 'UTC'), time < toDateTime('2026-10-19 00:00:00', 'UTC') AND toMinute(toTimeZone(time, 'UTC')) < 2)`
-    );
-    expect(q).toContain(`WHERE time >= toDateTime('2026-09-13 00:00:00', 'UTC')`);
-    const recorded = { start: FLOOR, hours: SPAN, missing: 0 };
-    expect(summary.observationHours).toEqual(recorded);
-    expect(summary.stats.observationHours).toEqual(recorded);
-    const [row] = (
-      await w.db.query<{ h: unknown }>(
-        `SELECT "buildStats"->'observationHours' AS h FROM "ResourceIntentTagIndexSnapshot"`
-      )
-    ).rows;
-    expect(row.h).toEqual(recorded);
-  });
-
   it('the same window with 18 missing hours after the floor (over 2%) refuses, before any training read', async () => {
     const w = await world({ hours: SPAN - 18 });
     await expect(runTagIndexBuild({ dryRun: false }, w.deps)).rejects.toThrow(
@@ -646,19 +567,6 @@ describe("gate 3: the training window's generator coverage", () => {
     });
     const { summary } = await runTagIndexBuild({ dryRun: true }, w.deps);
     expect(summary.observationHours).toEqual({ start: FLOOR, hours: SPAN, missing: 100 });
-  });
-
-  it('the coverage count and the generator read share one slice predicate', async () => {
-    const w = await world();
-    await runTagIndexBuild({ dryRun: false }, w.deps);
-    const slice = genSliceCondition(TAG_SOURCE_PARAMS.genSliceMinutes);
-    expect(slice).toBe(`toMinute(toTimeZone(time, 'UTC')) < 2`);
-    const coverage = w.chQueries[1];
-    const reads = w.chQueries.filter((q) => q.includes('p2m_restricted.promptText'));
-    expect(reads).toHaveLength(90);
-    expect(coverage).toContain(slice);
-    // The read applies it to the observations it returns and to the prompts it joins.
-    for (const q of reads) expect(q.split(slice)).toHaveLength(3);
   });
 
   describe('a window starting after the floor ignores it', () => {

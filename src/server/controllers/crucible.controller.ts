@@ -2,6 +2,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import type {
   CheckCrucibleEntryEligibilitySchema,
+  DismissJudgingPairSchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
@@ -32,13 +33,13 @@ import {
   getCrucibleJudgeEligibility,
 } from '~/server/services/crucible-eligibility.service';
 import { toggleCrucibleFollow } from '~/server/services/crucible-engagement.service';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { logToAxiom } from '~/server/logging/client';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
   checkCrucibleEntryEligibility,
   createCrucibleEntryPost,
+  dismissJudgingPair,
   cancelCrucible,
   removeCrucibleEntry,
   removeCrucibleEntryAsOwner,
@@ -66,22 +67,9 @@ import {
   submitVote,
   withoutEntryScores,
   withEntryCounts,
+  getAllBlockedCreatorIds,
+  getBlockLists,
 } from '~/server/services/crucible.service';
-
-/** Creators who blocked the viewer and creators the viewer blocked; empty for moderators. */
-const getBlockLists = async (user: Context['user']) => {
-  if (!user || user.isModerator) return { blockedBy: [], blocked: [] };
-  const [blockedBy, blocked] = await Promise.all([
-    BlockedByUsers.getCached({ userId: user.id }),
-    BlockedUsers.getCached({ userId: user.id }),
-  ]);
-  return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
-};
-
-const getAllBlockedCreatorIds = async (user: Context['user']) => {
-  const { blockedBy, blocked } = await getBlockLists(user);
-  return [...new Set([...blockedBy, ...blocked])];
-};
 
 /** Bounded for a `notIn`; on overflow the viewer's own block list is dropped first. */
 const getBlockedCreatorIds = async (user: Context['user']) => {
@@ -108,7 +96,29 @@ export const getInfiniteCruciblesHandler = async ({
   return { items: await withEntryCounts(items), nextCursor };
 };
 
-export const getCrucibleByIdHandler = async ({
+/** The images' review fields decide visibility on the server; they never reach the client. */
+const withoutCoverReview = <
+  I extends { needsReview?: unknown; tosViolation?: unknown },
+  H extends { needsReview?: unknown },
+  T extends { image: I | null; heroImage?: H | null }
+>(
+  crucible: T | null
+) => {
+  if (!crucible) return crucible;
+  const heroImage = crucible.heroImage
+    ? (({ needsReview: _review, ...hero }) => hero)(crucible.heroImage)
+    : crucible.heroImage;
+  if (!crucible.image) return { ...crucible, heroImage } as T & { image: null };
+  const { needsReview: _review, tosViolation: _tos, ...image } = crucible.image;
+  return { ...crucible, image, heroImage };
+};
+
+export const getCrucibleByIdHandler = async (args: {
+  input: GetCrucibleByIdSchema;
+  ctx: Context;
+}) => withoutCoverReview(await crucibleForViewer(args));
+
+const crucibleForViewer = async ({
   input,
   ctx,
 }: {
@@ -134,20 +144,22 @@ export const getCrucibleByIdHandler = async ({
       prizeWinners: [],
     };
   }
-  if (crucible && isCrucibleHiddenByScan(crucible, viewer)) return null;
+  if (crucible?.hiddenByScan) return null;
   // On green a non-SFW crucible is returned so the page can point to the mature site; its adult
   // text stays off green.
   const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;
-  if (crucible && ctx.features?.isGreen && crucible.textNsfw && !canPreview)
-    return { ...crucible, name: 'Crucible', description: null };
-  // A background image that hasn't passed its scan falls back to the cover for everyone else.
-  if (
-    crucible?.heroImage &&
-    crucible.heroImage.ingestion !== ImageIngestionStatus.Scanned &&
-    !canPreview
-  )
-    return { ...crucible, heroImage: null };
-  return crucible;
+  // A background image that hasn't passed its scan, has no rating or is held for review falls back
+  // to the cover for everyone else.
+  const withheldHero =
+    !!crucible?.heroImage &&
+    (crucible.heroImage.ingestion !== ImageIngestionStatus.Scanned ||
+      crucible.heroImage.nsfwLevel === 0 ||
+      crucible.heroImage.needsReview != null) &&
+    !canPreview;
+  const served = crucible && withheldHero ? { ...crucible, heroImage: null } : crucible;
+  if (served && ctx.features?.isGreen && served.textNsfw && !canPreview)
+    return { ...served, name: 'Crucible', description: null };
+  return served;
 };
 
 export const createCrucibleHandler = async ({
@@ -325,6 +337,17 @@ export const submitVoteHandler = async ({
     userId: ctx.user.id,
     blockedCreatorIds: await getAllBlockedCreatorIds(ctx.user),
   });
+};
+
+export const dismissJudgingPairHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DismissJudgingPairSchema;
+  ctx: ProtectedContext;
+}) => {
+  await assertCanJudgeCrucible({ userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  return dismissJudgingPair({ ...input, userId: ctx.user.id });
 };
 
 export const cancelCrucibleHandler = async ({

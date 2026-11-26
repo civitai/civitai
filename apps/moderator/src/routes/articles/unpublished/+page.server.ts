@@ -1,4 +1,3 @@
-import { imageKeptReasonLabel } from '$lib/image-kept-reasons';
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
@@ -17,10 +16,15 @@ const querySchema = z.object({
     .catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { page, username, status } = parseQuery(url, querySchema);
 
-  const data = await getModeratorArticles({ page, username: username || undefined, status });
+  const data = await getModeratorArticles({
+    page,
+    username: username || undefined,
+    status,
+    viewer: locals.user,
+  });
 
   return { status: status ?? 'all', username, ...data };
 };
@@ -33,12 +37,7 @@ async function runAction(action: 'restore' | 'delete', request: Request, userId:
 
   const result = await moderateArticle({ action, articleId, userId });
   if (!result.ok) return fail(502, { error: result.error });
-  // Only the label reaches the browser; the reason would say which hold applies.
-  const kept = (result.kept ?? []).map(({ id, reason }) => ({
-    id,
-    label: imageKeptReasonLabel[reason],
-  }));
-  return { success: true, kept };
+  return { success: true };
 }
 
 export const actions: Actions = {

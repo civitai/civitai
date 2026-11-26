@@ -30,13 +30,6 @@ import { onReadyAttributeWrite } from '../../../test/commitWindow';
  * covered directly in BlockGenerationSourceUploadModal.browser.test.tsx.
  */
 
-// Stub trpc so PageBlockHost mounts network-free (same shape as the resource-
-// picker test). The image-upload branch itself makes no tRPC call from the host —
-// the moderated path's persist/gate live INSIDE the (unrendered) modal.
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
@@ -71,6 +64,7 @@ vi.mock('~/utils/trpc', () => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {

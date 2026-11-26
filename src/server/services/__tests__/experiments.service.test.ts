@@ -30,7 +30,6 @@ const user = {
 const moderator = { ...user, id: 7, isModerator: true } as SessionUser;
 
 const FEED = 'exp-hat-turf-feed-card';
-const DETAIL = 'exp-hat-turf-image-detail';
 const hit = (variantKey: string, segmentKeys: string[] = ['all-users']): FliptVariantDetail => ({
   match: true,
   variantKey,
@@ -45,7 +44,7 @@ describe('getExperimentAssignments', () => {
 
   it('buckets on the user id and passes the user context, so pin and tester segments can match', async () => {
     await getExperimentAssignments({ user });
-    expect(evals.map((e) => e.flag).sort()).toEqual([FEED, DETAIL].sort());
+    expect(evals.map((e) => e.flag).sort()).toEqual([FEED]);
     for (const e of evals) {
       expect(e.entityId).toBe('4242');
       expect(e.context).toMatchObject({ userId: '4242', isModerator: 'false' });
@@ -78,10 +77,10 @@ describe('getExperimentAssignments', () => {
     answers.set(FEED, hit('control'));
     const out = await getExperimentAssignments({
       user: moderator,
-      overrideCookie: 'hatTurfFeedCard:badge-popover,hatTurfImageDetail:bogus',
+      overrideCookie: 'hatTurfFeedCard:badge-popover,retiredExperiment:bogus',
     });
     expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'override' });
-    expect(evals.map((e) => e.flag)).toEqual([DETAIL]);
+    expect(evals).toEqual([]);
   });
 
   it('drops cookie pairs naming inherited properties instead of throwing', async () => {

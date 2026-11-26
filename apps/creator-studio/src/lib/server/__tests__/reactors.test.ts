@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import {
   assembleReactorPage,
   parseReactorQuery,
@@ -84,7 +85,9 @@ function database(
       return id === IMAGE && userId === OWNER ? [{ id: IMAGE }] : [];
     }
     if (q.text.includes('count(*)'))
-      return Object.entries(counts).map(([reaction, n]) => ({ reaction, n }));
+      return q.text.includes('GROUP BY')
+        ? Object.entries(counts).map(([reaction, n]) => ({ reaction, n }))
+        : [{ n: counts[q.params[1] as string] ?? 0 }];
     if (isFollowProbe(q)) {
       const [target, ids] = q.params as [number, number[]];
       return target === OWNER
@@ -167,14 +170,23 @@ describe('getReactors page', () => {
     expect(page?.reactors[1]).toMatchObject({ deleted: false, banned: true, username: 'u2' });
   });
 
+  it('binds the owner-hidden review list as one text[] parameter, never an array literal', async () => {
+    await getReactors({} as never, OWNER, 'image', IMAGE, firstPage);
+    const q = pageQuery();
+    expect(q?.text).toContain('"needsReview" <> ALL($1::text[])');
+    expect(q?.params[0]).toEqual([...OWNER_HIDDEN_REVIEWS]);
+    expect(q?.text).not.toContain("'{");
+  });
+
   it('pages older accounts with userId < cursor, descending', async () => {
     await getReactors({} as never, OWNER, 'image', IMAGE, {
       reaction: 'Like',
       cursor: { dir: 'after', userId: 500 },
     });
     const q = pageQuery();
-    expect(q?.text).toContain('AND "userId" < $7 ORDER BY "userId" DESC LIMIT $8');
+    expect(q?.text).toContain('AND "userId" < $8 ORDER BY "userId" DESC LIMIT $9');
     expect(q?.params).toEqual([
+      [...OWNER_HIDDEN_REVIEWS],
       IMAGE,
       'Like',
       OWNER,
@@ -192,7 +204,7 @@ describe('getReactors page', () => {
       reaction: 'Like',
       cursor: { dir: 'before', userId: 500 },
     });
-    expect(pageQuery()?.text).toContain('AND "userId" > $7 ORDER BY "userId" ASC LIMIT $8');
+    expect(pageQuery()?.text).toContain('AND "userId" > $8 ORDER BY "userId" ASC LIMIT $9');
     expect(page?.reactors.map((r) => r.userId)).toEqual([502, 501]);
   });
 

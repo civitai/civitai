@@ -37,7 +37,7 @@ export type HatStatCounts = {
 
 /**
  * What a hat earned: its points large in its team's colour, beside the four ways that make them up.
- * The points tile is at least square (Justin, 2026-10-09): its minimum width is the 2x2's height,
+ * The points tile is at least square (2026-10-09): its minimum width is the 2x2's height,
  * two way tiles and a gap, and a long number widens it. A card too narrow for both side by side
  * stacks the points above the 2x2.
  */

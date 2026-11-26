@@ -92,7 +92,7 @@ export type PurgeReviewSnapshotsResult = {
 };
 
 const logPurge = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'purge-review-snapshots', ...data }, 'webhooks').catch(() => undefined);
+  logToAxiom({ name: 'purge-review-snapshots', ...data }, 'webhooks');
 
 /**
  * Core sweep (exported for unit tests, mirroring the service-fn +
@@ -146,9 +146,11 @@ export async function purgeExpiredReviewSnapshots(
   const rows = await dbRead.appBlockPublishRequest.findMany({
     where: {
       status: { in: [...PURGEABLE_TERMINAL_STATUSES] },
-      // gt cursor: don't re-walk what previous runs already handled.
+      // gte cursor+1ms, not gt: the cursor is saved in whole ms but updatedAt is
+      // timestamptz(6), so `gt` re-matches the last row while it is the newest
+      // due row, and every run re-scans it without advancing the cursor.
       // lt cutoff: THE RETENTION GATE — not yet 30 days terminal, not eligible.
-      updatedAt: { gt: cursor, lt: cutoff },
+      updatedAt: { gte: new Date(cursor.getTime() + 1), lt: cutoff },
     },
     orderBy: { updatedAt: 'asc' },
     take: batchSize,
@@ -260,13 +262,12 @@ export async function purgeExpiredReviewSnapshots(
   // Rows are ordered ascending and every row is < cutoff, so this can never
   // advance past something that was not yet due.
   //
-  // ACCEPTED LIMITATION: because the next run resumes with `gt`, a row sharing
-  // the last row's exact `updatedAt` that fell outside this batch's `take` is
-  // never revisited. The column is `timestamptz(6)` and the rows are
-  // independent moderator/developer actions, so colliding at microsecond
-  // resolution is vanishingly unlikely, and the cost if it happens is one
-  // snapshot that is never reclaimed — storage, never a wrong delete. Accepted
-  // rather than paid for with a composite `(updatedAt, id)` keyset cursor.
+  // ACCEPTED LIMITATION: the cursor is stored in whole milliseconds and the
+  // next run resumes at the following millisecond, so a row whose `updatedAt`
+  // falls in the same MILLISECOND as this batch's last row but outside this
+  // batch's `take` is never revisited. The cost if it happens is one snapshot
+  // that is never reclaimed — storage, never a wrong delete. Accepted rather
+  // than paid for with a composite `(updatedAt, id)` keyset cursor.
   const maxUpdatedAt = rows[rows.length - 1].updatedAt;
   await setCursor(maxUpdatedAt);
 

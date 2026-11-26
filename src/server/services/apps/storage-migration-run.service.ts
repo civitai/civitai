@@ -131,9 +131,7 @@ async function isRunsTableMissing(err: unknown): Promise<boolean> {
 }
 
 function log(type: 'info' | 'error', fields: Record<string, unknown>): void {
-  logToAxiom({ name: 'app-storage-migration-run', type, ...fields }, 'app-blocks').catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'app-storage-migration-run', type, ...fields }, 'app-blocks');
 }
 
 function toRun(r: Record<string, unknown>): StorageMigrationRun {
@@ -364,13 +362,15 @@ export async function loadStorageMigrationBaseline(args: {
    * not the documents' schema: the baseline is the latest approved request instead.
    */
   selfManifest?: unknown;
-}): Promise<{ prev: unknown | null; history: unknown[] }> {
+}): Promise<{ prev: unknown | null; history: unknown[]; approved: unknown[] }> {
   const block = await dbWrite.appBlock.findFirst({
     where: { blockId: args.slug },
     select: { id: true, manifest: true },
   });
-  if (!block) return { prev: null, history: [] };
-  const approved =
+  if (!block) return { prev: null, history: [], approved: [] };
+  // EVERY approval, uncapped: `keyedBy` is immutable against any version that ever declared a
+  // collection (`checkStorageMigrations`). The schema diff reads the newest `history` only.
+  const everApproved =
     (await dbWrite.appBlockPublishRequest.findMany({
       where: {
         slug: args.slug,
@@ -378,9 +378,10 @@ export async function loadStorageMigrationBaseline(args: {
         ...(args.excludePublishRequestId ? { NOT: { id: args.excludePublishRequestId } } : {}),
       },
       orderBy: { reviewedAt: 'desc' },
-      take: STORAGE_MIGRATION_HISTORY,
       select: { id: true, manifest: true },
     })) ?? [];
+  const approved = everApproved.slice(0, STORAGE_MIGRATION_HISTORY);
+  const allManifests = everApproved.map((r) => r.manifest);
   const storageOf = (m: unknown) =>
     JSON.stringify((m as { storage?: unknown } | null)?.storage ?? null);
   const latest = approved[0];
@@ -390,7 +391,11 @@ export async function loadStorageMigrationBaseline(args: {
     storageOf(block.manifest) === storageOf(args.selfManifest) &&
     storageOf(latest?.manifest) !== storageOf(args.selfManifest)
   ) {
-    return { prev: latest?.manifest ?? null, history: approved.map((r) => r.manifest) };
+    return {
+      prev: latest?.manifest ?? null,
+      history: approved.map((r) => r.manifest),
+      approved: allManifests,
+    };
   }
   if (block.manifest && latest && storageOf(latest.manifest) !== storageOf(block.manifest)) {
     log('error', {
@@ -404,6 +409,7 @@ export async function loadStorageMigrationBaseline(args: {
   return {
     prev: block.manifest ?? latest?.manifest ?? null,
     history: approved.map((r) => r.manifest),
+    approved: allManifests,
   };
 }
 

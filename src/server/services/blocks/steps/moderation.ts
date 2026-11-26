@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { Workflow } from '@civitai/orchestration-client';
-import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { auditAppBlockPrompt } from '~/server/services/blocks/pass-through-prompt-audit';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   getStepByOrchestratorType,
@@ -104,6 +104,8 @@ export type StepModerationRequest = {
    * needs the flag pays for it, and the router keeps no per-posture branch.
    */
   loadIsModerator: () => Promise<boolean>;
+  /** The submitting App Block, recorded on a stored refusal so moderators see it came from an app. */
+  appBlockId: string;
 };
 
 type StepModerationHandler = (req: StepModerationRequest) => Promise<void>;
@@ -238,7 +240,7 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
      */
     promptAudit: {
       output: null,
-      submit: async ({ step, params, userId, isGreen, loadIsModerator }) => {
+      submit: async ({ step, params, userId, isGreen, loadIsModerator, appBlockId }) => {
         const text = step.auditableText?.(params);
 
         // 🔴 FAIL CLOSED ON "NOTHING TO AUDIT", per request.
@@ -281,12 +283,14 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
           );
         }
 
-        await auditPromptServer({
+        await auditAppBlockPrompt({
           prompt: text.prompt,
           negativePrompt: text.negativePrompt,
           userId,
           isGreen,
           isModerator: await loadIsModerator(),
+          appBlockId,
+          stepType: step.id,
         });
       },
     },

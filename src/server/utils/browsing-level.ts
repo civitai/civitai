@@ -6,6 +6,7 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   allBrowsingLevelsFlag,
+  onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -39,12 +40,21 @@ export function getServerBrowsingLevel({
   user,
 }: {
   canViewNsfw: boolean;
-  user?: { showNsfw?: boolean | null; browsingLevel?: number | null } | null;
+  user?: {
+    showNsfw?: boolean | null;
+    browsingLevel?: number | null;
+    isModerator?: boolean | null;
+  } | null;
 }): number {
   // Green (SFW) domain forces a cap that overrides the saved preference.
   if (!canViewNsfw) return user ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
   // Blue/red: honor the user's saved preference; fall back to public when nsfw is off.
-  return user?.showNsfw && user.browsingLevel ? user.browsingLevel : publicBrowsingLevelsFlag;
+  // Only a moderator's browsing picker offers Blocked, so anyone else's saved bit is dropped.
+  const saved =
+    user?.browsingLevel && !user.isModerator
+      ? onlySelectableLevels(user.browsingLevel)
+      : user?.browsingLevel;
+  return user?.showNsfw && saved ? saved : publicBrowsingLevelsFlag;
 }
 
 /**
@@ -113,31 +123,34 @@ export const domainBrowsingLevelCap = ({
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
 
 /**
+ * The verified search crawler making this request, if any: the header the API request policy
+ * sets after checking the user agent and source address. Its answers can differ from a
+ * signed-out visitor's, so the edge cache must not keep them (`createContext`).
+ */
+export const requestVerifiedCrawler = (req: Pick<NextApiRequest, 'headers'> | undefined) =>
+  parseVerifiedBotHeader(req?.headers[VERIFIED_BOT_HEADER]);
+
+/**
  * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
  * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
  */
 export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
   const canViewNsfw = !!ctx.features.canViewNsfw;
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  const isAuthorized = !!ctx.user || (requestVerifiedCrawler(ctx.req) !== null && canViewNsfw);
   return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
 }
 
 /**
  * A parent's level (a bounty's, an entry's) is its images' combined level, so the cap on the
- * parent does not reach each image: this drops those above the cap, mixed ratings that reach
- * above it, and unrated ones. The owner
- * and moderators keep them, since edit forms are filled from these reads and save back only the
- * images they were shown.
+ * parent does not reach each image: this applies it per image. An edit saved from such a read
+ * keeps the dropped links (`shownImageIds` on `updateEntityImages`).
  */
 export function capNestedImages<T extends { nsfwLevel?: number | null }>(
   images: T[],
-  ctx: Pick<Context, 'user' | 'features' | 'req'>,
-  { ownerId }: { ownerId?: number | null } = {}
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
 ) {
   const cap = requestDomainBrowsingLevelCap(ctx);
-  if (cap === undefined || ctx.user?.isModerator) return images;
-  if (ownerId != null && ctx.user?.id === ownerId) return images;
+  if (cap === undefined) return images;
   return images.filter((image) => isRatingWithinCap(image.nsfwLevel, cap));
 }
 
@@ -150,6 +163,29 @@ export const clampToDomainCap = (requested: number | undefined, cap: number) =>
   (requested ?? 0) & cap || cap;
 
 export type RequestBrowsingLevels = { browsingLevel?: number; preCapBrowsingLevel?: number };
+
+/**
+ * Drops the Blocked bit from a request's levels, in place, unless a moderator asked: only their
+ * browsing picker offers it.
+ */
+export function stripBlockedForNonModerator(input: RequestBrowsingLevels, isModerator?: boolean) {
+  if (isModerator) return;
+  if (input.browsingLevel !== undefined)
+    input.browsingLevel = selectableOrInvalid(input.browsingLevel);
+  if (input.preCapBrowsingLevel !== undefined)
+    input.preCapBrowsingLevel = selectableOrInvalid(input.preCapBrowsingLevel);
+}
+
+/**
+ * A number or numeric string as a level held to the browsing levels; a negative or fractional one
+ * becomes NaN, so the procedure's schema refuses it rather than masking it into a valid level.
+ * Anything else is left for the schema to refuse.
+ */
+function selectableOrInvalid(level: unknown) {
+  if (typeof level !== 'number' && typeof level !== 'string') return level as number;
+  const value = Number(level);
+  return Number.isInteger(value) && value >= 0 ? onlySelectableLevels(value) : NaN;
+}
 
 /**
  * Clamps a request's levels to the domain cap, in place. `preCapBrowsingLevel`
@@ -188,6 +224,19 @@ export function resolveRequestBrowsingLevels(
 
   const cap = requestDomainBrowsingLevelCap(ctx);
   if (cap !== undefined) clampRequestBrowsingLevels(input, cap);
+}
+
+/**
+ * The level a listing of other people's posts is filtered to: the request's level (or, signed in,
+ * the saved preference), held to the domain cap; PG where neither says anything.
+ */
+export function relatedPostsBrowsingLevel(
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  requested: number | undefined
+) {
+  const levels: RequestBrowsingLevels = { browsingLevel: requested };
+  resolveRequestBrowsingLevels(levels, ctx);
+  return viewerBrowsingLevel(ctx as Context, levels.browsingLevel || publicBrowsingLevelsFlag);
 }
 
 /** The levels the public API v1 serves: every level, or only the safe ones in a restricted region. */

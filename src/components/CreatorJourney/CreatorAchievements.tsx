@@ -2,6 +2,7 @@ import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
 import { useEffect, useState } from 'react';
 import { LinkedText } from '~/components/CreatorJourney/journey-links';
+import { rarityLabel } from '~/components/CreatorJourney/milestone-rarity';
 import {
   accentVar,
   HEXAGON,
@@ -257,6 +258,7 @@ type TileState = 'earned' | 'progress' | 'pending' | 'locked';
 
 function MilestoneTile({ milestone, state }: { milestone: Milestone; state: TileState }) {
   const copy = measureCopy[milestone.measure];
+  const rarity = rarityLabel(milestone.rarity);
   return (
     <div
       data-state={state}
@@ -287,6 +289,11 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
         </Text>
         {state === 'progress' && (
           <ProgressBar current={milestone.current} threshold={milestone.threshold} thin />
+        )}
+        {rarity && (
+          <Text size="xs" c="dimmed" className="tabular-nums">
+            {rarity}
+          </Text>
         )}
       </div>
     </div>

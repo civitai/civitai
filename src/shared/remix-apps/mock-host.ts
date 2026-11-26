@@ -7,7 +7,14 @@ import type {
   RemixWorkflowRequest,
   RemixWorkflowResult,
 } from '~/shared/remix-apps/define';
-import { replayRemixApp, type RemixEffect, type RemixLogEntry } from '~/shared/remix-apps/replay';
+import {
+  REMIX_IMAGE_STAND_IN,
+  remixLogSize,
+  replayRemixApp,
+  type RemixEffect,
+  type RemixLogEntry,
+  type RemixReplayer,
+} from '~/shared/remix-apps/replay';
 
 export type RemixTraceStep =
   | { type: 'workflow'; request: RemixWorkflowRequest; result: RemixWorkflowResult }
@@ -17,15 +24,17 @@ export type RemixTraceStep =
 export function firstAnswer(spec: RemixAsk): RemixAnswer {
   if (spec.kind === 'choice') return spec.options[0].value;
   if (spec.kind === 'pick') return 0;
+  if (spec.kind === 'image') return REMIX_IMAGE_STAND_IN;
   return 'remix';
 }
 
 /** Placeholder outputs shaped like the real ones: as many images, at the size they would be. */
-function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
+export function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
   const image = (i: number, width?: number, height?: number): RemixImage => ({
     url: `mock://remix/${step}/${i}`,
-    width,
-    height,
+    // A size the app chose can be any number.
+    width: remixLogSize(width),
+    height: remixLogSize(height),
   });
   if (request.kind === 'upscale') {
     const { width, height } = request.image;
@@ -78,14 +87,14 @@ export async function dryRunRemixApp(
  * `null` when the app finishes on that answer. What a host prices the option buttons from.
  */
 export async function remixOptionEffects(
-  app: RemixApp,
+  replay: RemixReplayer,
   source: RemixAppSource,
   log: readonly RemixLogEntry[],
   spec: Extract<RemixAsk, { kind: 'choice' }>
 ): Promise<{ value: string; next: RemixEffect | null }[]> {
   return Promise.all(
     spec.options.map(async ({ value }) => {
-      const outcome = await replayRemixApp(app, source, [...log, { type: 'ask', answer: value }]);
+      const outcome = await replay(source, [...log, { type: 'ask', answer: value }]);
       return { value, next: outcome.status === 'done' ? null : outcome.effect };
     })
   );

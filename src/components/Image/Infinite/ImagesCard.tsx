@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
@@ -21,7 +22,7 @@ import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
-import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatButton } from '~/components/HatTurf/HatButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
@@ -44,6 +45,8 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
@@ -97,6 +100,11 @@ function ImagesCardContent({
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;
+  const {
+    src: retractedSrc,
+    onCdnError,
+    mediaRef,
+  } = useRetractedMedia(image, features.modRetractedMedia ? currentUser : null);
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -160,7 +168,14 @@ function ImagesCardContent({
                   })}
                   className="absolute inset-0"
                 >
-                  {safe ? (
+                  {safe && retractedSrc ? (
+                    <RetractedMedia
+                      src={retractedSrc}
+                      type={image.type}
+                      alt={image.name ?? undefined}
+                      className={clsx(cardClasses.image, { ['opacity-30']: isBlocked })}
+                    />
+                  ) : safe ? (
                     <EdgeMedia2
                       metadata={image.metadata}
                       src={image.url}
@@ -178,6 +193,9 @@ function ImagesCardContent({
                       contain
                       loading="lazy"
                       imageId={image.id}
+                      onError={onCdnError}
+                      mediaRef={mediaRef}
+                      videoProps={{ onError: onCdnError }}
                       // fadeIn
                     />
                   ) : (
@@ -436,14 +454,7 @@ function ImageReactions({
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
       useLive={inView !== false}
     >
       {(metrics) => {
@@ -506,7 +517,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
-                  {turf && <HatTurfButton imageId={image.id} />}
+                  {turf && <HatButton imageId={image.id} />}
                 </div>
               </div>
             </div>

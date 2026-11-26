@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * GET /api/v1/model-versions/[id], by-hash/[hash] and the POST by-hash batch all shape their body
@@ -9,12 +10,15 @@ import { NsfwLevel } from '~/server/common/enums';
  * returns it. The hold itself is covered in model.service.v1-showcase-hold.test.ts.
  */
 
-const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold } = vi.hoisted(() => ({
-  mockGetVaeFiles: vi.fn(),
-  mockGetImages: vi.fn(),
-  mockGetPaidAccess: vi.fn(),
-  mockHold: vi.fn(),
-}));
+const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold, mockCurated } = vi.hoisted(
+  () => ({
+    mockGetVaeFiles: vi.fn(),
+    mockGetImages: vi.fn(),
+    mockGetPaidAccess: vi.fn(),
+    mockHold: vi.fn(),
+    mockCurated: vi.fn(),
+  })
+);
 
 // No privacy row: a version with no privacy inputs.
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
@@ -84,6 +88,7 @@ const image = (id: number, nsfwLevel: number) => ({
   height: 1,
   hash: null,
   meta: null,
+  tags: [],
 });
 const SHOWCASE = [image(1, NsfwLevel.X), image(2, NsfwLevel.PG)];
 
@@ -131,7 +136,11 @@ async function prepare(images?: unknown[]) {
     modelVersion(),
     new URL('https://civitai.com'),
     images as any,
-    null
+    null,
+    false,
+    false,
+    allBrowsingLevelsFlag,
+    mockCurated
   );
 }
 
@@ -142,6 +151,7 @@ beforeEach(() => {
   mockGetVaeFiles.mockResolvedValue([]);
   mockGetImages.mockResolvedValue(SHOWCASE);
   mockGetPaidAccess.mockResolvedValue({});
+  mockCurated.mockImplementation(async (byVersion: unknown) => byVersion);
   // Stand-in for the hold on a held model: keeps only the PG image.
   mockHold.mockImplementation(
     async (byVersion: Record<number, { images: { nsfwLevel: number }[] }>) =>
@@ -169,6 +179,23 @@ describe('a model version response', () => {
   it('holds images handed in by the by-hash batch the same way', async () => {
     const body = await prepare(SHOWCASE);
     expect(mockGetImages).not.toHaveBeenCalled();
+    expect(servedUrls(body)).toEqual(['u2']);
+  });
+
+  it('serves a curated showcase in its place, and holds the community images it features', async () => {
+    const community = { ...image(9, NsfwLevel.X), url: 'community' };
+    mockCurated.mockImplementation(async (byVersion: Record<number, { images: unknown[] }>) => ({
+      [VERSION]: { images: [community, ...byVersion[VERSION].images] },
+    }));
+    const body = await prepare();
+    expect(mockCurated).toHaveBeenCalledTimes(1);
+    expect(mockCurated).toHaveBeenCalledWith(expect.anything(), 'red');
+    const [held] = mockHold.mock.calls[0];
+    expect(held[VERSION].images.map((i: { url: string }) => i.url)).toEqual([
+      'community',
+      'u1',
+      'u2',
+    ]);
     expect(servedUrls(body)).toEqual(['u2']);
   });
 

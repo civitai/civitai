@@ -10,7 +10,7 @@ import { IconEye, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { openWildcardPreview } from '~/components/Dialog/triggers/wildcard-preview';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { editPromptAttentionRange } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import type { SnippetReference, SnippetsNodeValue } from '~/shared/generation/values';
 import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
@@ -174,7 +174,7 @@ function SnippetsAwareEditor(props: GenerationTextEditorProps) {
       // signal). Targets with at least one `#category` make the cut.
       .filter((t) => parsePromptSnippetReferences(t.text).length > 0);
     if (targets.length === 0) return;
-    openWildcardPreview({
+    openDialog(() => import('~/components/Generate/Input/WildcardPreviewModal'), {
       wildcardSetIds: snippets.wildcardSetIds,
       targets,
       // Reopening the modal after a previous OK should show the same
@@ -413,7 +413,8 @@ function EditorBody({
       editorProps: {
         attributes: {
           class: clsx(
-            'tiptap-textarea-editor outline-none',
+            // px-3 stays here, not on the shell: a press in the shell's side padding never reaches ProseMirror.
+            'tiptap-textarea-editor px-3 outline-none',
             // Mantine input-style baseline so the editor sits naturally
             // inside Input.Wrapper labels.
             'text-sm leading-snug',
@@ -582,7 +583,7 @@ function EditorBody({
       <div
         {...rest}
         className={clsx(
-          'tiptap-textarea-shell cursor-text rounded-md border border-solid px-3 py-2',
+          'tiptap-textarea-shell cursor-text rounded-md border border-solid py-2',
           'border-gray-3 bg-gray-0 dark:border-dark-4 dark:bg-dark-6',
           'focus-within:border-blue-5 dark:focus-within:border-blue-4',
           error && 'border-red-5 dark:border-red-5',
@@ -591,11 +592,8 @@ function EditorBody({
         )}
         style={shellStyle}
         onMouseDown={(e) => {
-          // Clicks anywhere in the padding / dead horizontal space inside
-          // the shell focus the editor (matching <textarea> feel). When
-          // the click lands inside the ProseMirror element itself, bail
-          // out so the editor's own selection logic handles caret
-          // placement at the click position.
+          // Clicks in the shell's vertical padding / empty space below the text focus the
+          // editor (matching <textarea> feel); clicks inside ProseMirror keep its own caret placement.
           if (!editor || disabled) return;
           // React events bubble through portals back to their React-tree
           // parent. Tiptap's suggestion popover is rendered with

@@ -10,6 +10,7 @@ import {
   Tabs,
   Text,
 } from '@mantine/core';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 import { HoverCard } from '~/components/MantineOverlays';
 import { Dropzone } from '@mantine/dropzone';
 import {
@@ -36,7 +37,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import {
   GeneratorMediaPicker,
-  useGeneratorSelectionStore,
+  generatorSelectionStore,
+  useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -44,6 +46,7 @@ import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import {
+  clipDisplaySeconds,
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
@@ -69,6 +72,7 @@ import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
 import { formatDate } from '~/utils/date-helpers';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 /**
  * Props for the CrucibleSubmitEntryModal
@@ -392,8 +396,8 @@ export default function CrucibleSubmitEntryModal({
   const countAutoSubmitFailure = () =>
     setAutoSubmit((prev) => prev && { ...prev, failed: prev.failed + 1 });
 
-  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelection();
+  const deselectAllGenerator = generatorSelectionStore.actions.clear;
 
   const createEntryPostMutation = trpc.crucible.createEntryPost.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
@@ -636,6 +640,7 @@ export default function CrucibleSubmitEntryModal({
     const eligibilityPending = ineligibleReasons === undefined;
     const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
     const levelAllowedByModels = !ineligibleReasons?.includes('required-model-level');
+    const levelAllowedByLicense = !ineligibleReasons?.includes('restricted-model');
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
@@ -691,10 +696,12 @@ export default function CrucibleSubmitEntryModal({
       },
       {
         label: 'Content level',
-        passes: isCompatibleNsfw && levelAllowedByModels,
+        passes: isCompatibleNsfw && levelAllowedByModels && levelAllowedByLicense,
         passText: `${imageNsfwLabel} content`,
         failReason: !isCompatibleNsfw
           ? `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`
+          : !levelAllowedByLicense
+          ? `${imageNsfwLabel} content (${RESTRICTED_IMAGE_REASON})`
           : `${imageNsfwLabel} content (a required model allows only PG and PG-13)`,
       },
       ...(maxClipSeconds
@@ -702,10 +709,12 @@ export default function CrucibleSubmitEntryModal({
             {
               label: 'Clip length',
               passes: isShortEnough,
-              passText: clipSeconds ? formatDuration(clipSeconds) : 'Within the limit',
-              failReason: `${formatDuration(Math.ceil(clipSeconds ?? 0))} (max ${formatDuration(
-                maxClipSeconds
-              )})`,
+              passText: clipSeconds
+                ? formatDuration(clipDisplaySeconds(clipSeconds, maxClipSeconds))
+                : 'Within the limit',
+              failReason: `${formatDuration(
+                clipDisplaySeconds(clipSeconds ?? 0, maxClipSeconds)
+              )} (max ${formatDuration(maxClipSeconds)})`,
             },
           ]
         : []),
@@ -737,10 +746,9 @@ export default function CrucibleSubmitEntryModal({
         : !isCompatibleNsfw
         ? `Content level mismatch (${imageNsfwLabel} ${noun}, requires ${requiredNsfwLabel})`
         : !isShortEnough
-        ? // Ceiling, so a 120.01s clip against a 120s limit does not render both as "2:00".
-          `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
-            maxClipSeconds as number
-          )})`
+        ? `Too long (${formatDuration(
+            clipDisplaySeconds(clipSeconds ?? 0, maxClipSeconds ?? null)
+          )}, max ${formatDuration(maxClipSeconds as number)})`
         : !levelAllowedByModels
         ? 'A required model allows only PG and PG-13'
         : !isRecentEnough
@@ -871,10 +879,13 @@ export default function CrucibleSubmitEntryModal({
 
     try {
       for (const imageId of validImageIds) {
-        await submitEntryMutation.mutateAsync({
-          crucibleId,
-          imageId,
-        });
+        // One key per entry (crucible and image), held across a failure that may have charged the
+        // fee, so submitting it again is the same entry, charged once.
+        await withPaymentIntentKey(
+          submissionIntent('crucible-entry', { crucibleId, imageId }),
+          (idempotencyKey) =>
+            submitEntryMutation.mutateAsync({ crucibleId, imageId, idempotencyKey })
+        );
       }
 
       showSuccessNotification({

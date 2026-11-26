@@ -50,6 +50,9 @@ async function seedCrucible({
   ingestion = 'Scanned',
   textNsfw = false,
   coverIngestion = 'Scanned' as string | null,
+  coverNeedsReview = null as string | null,
+  coverTosViolation = false,
+  coverNsfwLevel = 1,
 }: {
   id: number;
   status?: string;
@@ -59,9 +62,15 @@ async function seedCrucible({
   ingestion?: string;
   textNsfw?: boolean;
   coverIngestion?: string | null;
+  coverNeedsReview?: string | null;
+  coverTosViolation?: boolean;
+  coverNsfwLevel?: number;
 }) {
   if (coverIngestion)
-    await db.query(`INSERT INTO "Image" (id, ingestion) VALUES ($1, $2)`, [id, coverIngestion]);
+    await db.query(
+      `INSERT INTO "Image" (id, ingestion, "needsReview", "tosViolation", "nsfwLevel") VALUES ($1, $2, $3, $4, $5)`,
+      [id, coverIngestion, coverNeedsReview, coverTosViolation, coverNsfwLevel]
+    );
   await db.query(
     `INSERT INTO "Crucible" (id, "userId", name, status, ingestion, "textNsfw", "startAt", "endAt", "createdAt", "imageId")
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $9)`,
@@ -106,7 +115,10 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending','Scanned','Error','Blocked','NotFound','Rescan');
     CREATE TABLE "Image" (
       id INT PRIMARY KEY,
-      ingestion "ImageIngestionStatus" NOT NULL
+      ingestion "ImageIngestionStatus" NOT NULL,
+      "needsReview" TEXT,
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false,
+      "nsfwLevel" INT NOT NULL DEFAULT 1
     );
     CREATE TABLE "UserEngagement" (
       "userId" INT NOT NULL,
@@ -252,6 +264,9 @@ describe('crucible-ending-soon recipients', () => {
     ['its text', { ingestion: 'Pending' }],
     ['its cover', { coverIngestion: 'Pending' }],
     ['it has no cover', { coverIngestion: null }],
+    ['its cover is in review', { coverNeedsReview: 'minor' }],
+    ['its cover is a ToS violation', { coverTosViolation: true }],
+    ['its cover is unrated', { coverNsfwLevel: 0 }],
   ])('reaches only the host while %s keeps it hidden', async (_, hidden) => {
     await seedCrucible({ id: 10, ...crossing, ...hidden });
     await follow(10, FOLLOWER);

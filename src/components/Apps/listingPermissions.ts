@@ -10,7 +10,7 @@ import {
 import {
   isSensitiveTokenScope,
   TokenScope,
-  tokenScopeLabels,
+  tokenScopeLabel,
 } from '~/shared/constants/token-scope.constants';
 import { capitalize } from '~/utils/string-helpers';
 
@@ -58,7 +58,7 @@ export function blockScopePermissions(
       title: SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? humaniseScopeId(scope),
       detail: permissionDetail(scope, noteIrrevocable),
       sensitive: isSensitiveBlockScope(scope),
-      rank: typeof bit === 'number' ? bit : Number.POSITIVE_INFINITY,
+      rank: typeof bit === 'bigint' ? Number(bit) : Number.POSITIVE_INFINITY,
     };
   });
 }
@@ -96,13 +96,15 @@ function humaniseScopeId(scope: string): string {
 export function connectScopePermissions(keys: string[]): ListingPermission[] {
   const rows: ListingPermission[] = [];
   for (const key of keys) {
-    const bit = TokenScope[key as keyof typeof TokenScope];
-    if (typeof bit !== 'number' || bit <= 0) continue;
+    const bit = Object.hasOwn(TokenScope, key)
+      ? TokenScope[key as keyof typeof TokenScope]
+      : undefined;
+    if (typeof bit !== 'bigint' || bit <= 0n) continue;
     rows.push({
       id: key,
-      title: tokenScopeLabels[bit] || key,
+      title: tokenScopeLabel(bit) || key,
       sensitive: isSensitiveTokenScope(bit),
-      rank: bit,
+      rank: Number(bit),
     });
   }
   return rows;

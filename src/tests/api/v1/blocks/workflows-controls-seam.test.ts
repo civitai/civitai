@@ -482,7 +482,7 @@ describe('assertBlockWorkflowMintedForViewer reaches the wire', () => {
     // to the SAME token the middleware admitted — a stripped-wrong or hardcoded
     // value would still reach a mocked verifier, and every other assertion here
     // would stay green.
-    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam', { admitRunner: false });
   });
 });
 
@@ -536,7 +536,9 @@ describe('the rate-limit postures reach the wire unchanged', () => {
     mockCheckBlockPollRateLimit.mockResolvedValue({ allowed: false });
     const out = await call(pollHandler, { workflowId: OWN_ID }, '/api/v1/blocks/workflows/poll');
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ snapshot: { workflowId: OWN_ID, status: 'processing' } });
+    expect(out.json).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
     expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 
@@ -548,7 +550,9 @@ describe('the rate-limit postures reach the wire unchanged', () => {
       '/api/v1/blocks/workflows/cancel'
     );
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ snapshot: { workflowId: OWN_ID, status: 'processing' } });
+    expect(out.json).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 

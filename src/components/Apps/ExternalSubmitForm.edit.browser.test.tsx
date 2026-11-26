@@ -673,3 +673,131 @@ describe('ExternalSubmitForm (edit) — source repository', () => {
       .toBeInTheDocument();
   });
 });
+
+describe('ExternalSubmitForm (edit) — ON-SITE links come from block.manifest.json', () => {
+  const REPO = 'https://github.com/civitai/vitrine';
+  const ISSUES = 'https://github.com/civitai/vitrine/issues';
+  const onsiteCtx = () =>
+    makeCtx({
+      kind: 'onsite',
+      scalars: { ...makeCtx().scalars, sourceRepoUrl: REPO, issueTrackerUrl: ISSUES },
+    });
+
+  test('🔴 both links render READ-ONLY with their manifest key, not as editable inputs', async () => {
+    // On-site opens straight on Details (no URL step).
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    const repo = page.getByTestId('apps-offsite-edit-source-repo-manifest');
+    const issues = page.getByTestId('apps-offsite-edit-issue-tracker-manifest');
+    await expect.element(repo).toHaveValue(REPO);
+    await expect.element(issues).toHaveValue(ISSUES);
+    await expect.element(repo).toBeDisabled();
+    await expect.element(issues).toBeDisabled();
+    await expect
+      .element(page.getByText(/Comes from "repository" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Comes from "bugs" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    // The editable off-site inputs are not rendered at all.
+    expect(page.getByTestId('apps-offsite-edit-source-repo').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-edit-issue-tracker').elements()).toHaveLength(0);
+  });
+
+  test('a save of an on-site listing never sends either link', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    // The name is manifest-governed on-site too, so the edit that drives the save is the beta
+    // flag, which the form still owns.
+    await page.getByRole('checkbox', { name: /This app is in beta/ }).click();
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    const arg = mocks.updateListing.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.isBeta).toBe(true);
+    expect('sourceRepoUrl' in arg.patch).toBe(false);
+    expect('issueTrackerUrl' in arg.patch).toBe(false);
+  });
+
+  test('CONTROL: an off-site listing keeps the editable inputs and no manifest note', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'offsite' })} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByTestId('apps-offsite-edit-source-repo')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-source-repo-manifest').elements()).toHaveLength(0);
+  });
+});
+
+describe('ExternalSubmitForm (edit) — ON-SITE name, tagline and description come from block.manifest.json', () => {
+  const NAME = 'Vitrine from the manifest';
+  const TAGLINE = 'A tagline from the manifest';
+  const DESCRIPTION = 'A description from the manifest';
+  const onsiteCtx = () =>
+    makeCtx({
+      kind: 'onsite',
+      scalars: { ...makeCtx().scalars, name: NAME, tagline: TAGLINE, description: DESCRIPTION },
+    });
+
+  test('🔴 all three render READ-ONLY with their manifest key, not as editable inputs', async () => {
+    // On-site opens straight on Details (no URL step).
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    const name = page.getByTestId('apps-offsite-edit-name-manifest');
+    const tagline = page.getByTestId('apps-offsite-edit-tagline-manifest');
+    const description = page.getByTestId('apps-offsite-edit-description-manifest');
+    await expect.element(name).toHaveValue(NAME);
+    await expect.element(tagline).toHaveValue(TAGLINE);
+    await expect.element(description).toHaveValue(DESCRIPTION);
+    await expect.element(name).toBeDisabled();
+    await expect.element(tagline).toBeDisabled();
+    await expect.element(description).toBeDisabled();
+    await expect
+      .element(page.getByText(/Comes from "name" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Comes from "tagline" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Comes from "description" in block\.manifest\.json/))
+      .toBeInTheDocument();
+    // The editable inputs are not rendered at all: the only control per label is the disabled one.
+    expect(page.getByTestId('apps-offsite-edit-name').elements()).toHaveLength(0);
+    for (const label of [/^Name/, /^Tagline/, /^Description/]) {
+      const boxes = page.getByRole('textbox', { name: label }).elements() as HTMLInputElement[];
+      expect(boxes, String(label)).toHaveLength(1);
+      expect(boxes[0].disabled, String(label)).toBe(true);
+    }
+  });
+
+  test('🔴 the category renders READ-ONLY with where it comes from', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    const category = page.getByTestId('apps-offsite-edit-category-manifest');
+    await expect.element(category).toBeDisabled();
+    await expect
+      .element(page.getByText(/Comes from "category" in block\.manifest\.json while your app/))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-category').elements()).toHaveLength(0);
+  });
+
+  // 🟡 INVARIANT GUARD, not regression coverage: only the beta flag changes here, so this could
+  // not fail on the pre-change code either. The regression case is `offsiteEditConfig.test.ts`
+  // ("never carries … changed or cleared"), which changes all four values.
+  test('a save of an on-site listing never sends name, tagline or description', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={onsiteCtx()} />);
+    await page.getByRole('checkbox', { name: /This app is in beta/ }).click();
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    const arg = mocks.updateListing.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.isBeta).toBe(true);
+    expect('name' in arg.patch).toBe(false);
+    expect('tagline' in arg.patch).toBe(false);
+    expect('description' in arg.patch).toBe(false);
+    expect('category' in arg.patch).toBe(false);
+  });
+
+  test('CONTROL: an off-site listing keeps the editable inputs and no manifest note', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ kind: 'offsite' })} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByTestId('apps-offsite-edit-name')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-edit-category')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-category-manifest').elements()).toHaveLength(0);
+    await expect.element(page.getByRole('textbox', { name: /^Tagline/ })).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-name-manifest').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-edit-tagline-manifest').elements()).toHaveLength(0);
+  });
+});

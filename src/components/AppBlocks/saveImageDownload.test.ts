@@ -14,11 +14,20 @@ import {
   SAVE_BYTES_MAX_BYTES,
   SAVE_BYTES_MAX_BYTES_PER_WINDOW,
   SAVE_BYTES_MAX_PER_WINDOW,
+  SAVE_BYTES_MODEL_3D_MAX_BYTES,
   SAVE_BYTES_WINDOW_MS,
   saveBytesWindowHasRoom,
   type SaveBytesClassification,
   type SaveBytesWindowEntry,
 } from './saveImageDownload';
+import {
+  ab as abOf,
+  buildFbx,
+  buildGlb,
+  buildLargeFbx,
+  concatBytes,
+  FBX_MAGIC,
+} from './__tests__/model3dFixtures';
 
 /** The classified type, or `null` for a refusal — what these cases assert on. */
 const classifiedType = (bytes: ArrayBuffer, filename?: string) => {
@@ -718,5 +727,132 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
     const refused = processSaveBytes({ bytes: oneOver, filename: 'a.txt' }, [], T0 + 31, classify);
     expect(refused.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
     expect(classify).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Binary glTF / FBX `bytes` saves. The model check itself is @civitai/app-sdk/save-model3d's (the one
+// copy, tested there); these cases pin what this host does around it: the classification order, the
+// name, and that a failed candidate is refused rather than saved as another type.
+describe('classifySaveBytesContent — 3D models (.glb / .fbx)', () => {
+  const GLB = abOf(buildGlb({ binBytes: 36 }));
+  const FBX = abOf(buildFbx());
+
+  it('saves a GLB / FBX under .glb / .fbx whatever the filename says', () => {
+    expect(prepareSaveBytes({ bytes: GLB, filename: 'mesh.exe' })).toEqual({
+      ok: true,
+      type: 'model/gltf-binary',
+      filename: 'mesh.glb',
+    });
+    expect(prepareSaveBytes({ bytes: FBX, filename: 'a/../rig' })).toEqual({
+      ok: true,
+      type: 'model/x-fbx',
+      filename: 'rig.fbx',
+    });
+  });
+
+  it('🔴 a model candidate that fails the check is refused, never saved as another type', () => {
+    // A valid GLB with a PNG after it (bytes past its declared length), and an FBX magic with a
+    // truncated header. Both start like a model; neither may fall through to image or text.
+    for (const bytes of [
+      concatBytes(buildGlb({ binBytes: 8 }), new Uint8Array(PNG)),
+      concatBytes(FBX_MAGIC, new Uint8Array(8)),
+    ]) {
+      expect(classifySaveBytesContent(abOf(bytes), 'x.txt')).toEqual({
+        ok: false,
+        error: 'file type is not allowed',
+      });
+    }
+  });
+
+  it('🔴 a .glb / .fbx NAME never makes non-model bytes a model', () => {
+    expect(prepareSaveBytes({ bytes: PNG, filename: 'turnaround.glb' })).toEqual({
+      ok: true,
+      type: 'image/png',
+      filename: 'turnaround.png',
+    });
+    expect(classifiedType(textAb('glTF is a format'), 'x.glb')).toBe('text/plain');
+    expect(classifiedType(textAb('Kaydara FBX Binary  '), 'x.fbx')).toBe('text/plain');
+  });
+
+  it('🔴 a PNG + GLB polyglot is a PNG (images first), and saves as .png', () => {
+    const polyglot = abOf(concatBytes(new Uint8Array(PNG), buildGlb({ binBytes: 16 })));
+    expect(prepareSaveBytes({ bytes: polyglot, filename: 'x.glb' })).toEqual({
+      ok: true,
+      type: 'image/png',
+      filename: 'x.png',
+    });
+  });
+});
+
+describe('processSaveBytes — the 3D per-file cap (100 MB) vs every other type (50 MB)', () => {
+  const MB = 1024 * 1024;
+  const T0 = 4_000_000;
+
+  it('pins the cap', () => {
+    expect(SAVE_BYTES_MODEL_3D_MAX_BYTES).toBe(100 * MB);
+  });
+
+  it('🔴 a 60 MB GLB and FBX are accepted (over the 50 MB cap, under the 3D cap)', () => {
+    const glb = processSaveBytes(
+      { bytes: abOf(buildGlb({ totalBytes: 60 * MB })), filename: 'big.glb' },
+      [],
+      T0
+    );
+    expect(glb.result).toEqual({ ok: true, type: 'model/gltf-binary', filename: 'big.glb' });
+    expect(glb.recent).toEqual([{ at: T0, size: 60 * MB }]);
+    const fbx = processSaveBytes(
+      { bytes: abOf(buildLargeFbx(60 * MB + 3)), filename: 'big' },
+      [],
+      T0
+    );
+    expect(fbx.result).toEqual({ ok: true, type: 'model/x-fbx', filename: 'big.fbx' });
+  });
+
+  it('🔴 a 110 MB GLB and FBX are too large, and never classified', () => {
+    const classify = vi.fn(classifySaveBytesContent);
+    for (const bytes of [buildGlb({ totalBytes: 110 * MB }), buildLargeFbx(110 * MB + 1)]) {
+      const r = processSaveBytes({ bytes: abOf(bytes) }, [], T0, classify);
+      expect(r.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
+      expect(r.recent).toEqual([]);
+    }
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('🔴 other types keep 50 MB: 60 MB of text, and 60 MB starting with a NEAR-miss model prefix', () => {
+    const classify = acceptAs('text/plain');
+    const text = new Uint8Array(60 * MB).fill(0x61);
+    expect(processSaveBytes({ bytes: abOf(text) }, [], T0, classify).result).toEqual({
+      ok: false,
+      error: 'file exceeds the maximum save size',
+    });
+    // glTF with container version 1, and the FBX magic without its trailing NUL.
+    const glTF1 = text.slice();
+    glTF1.set([0x67, 0x6c, 0x54, 0x46, 0x01, 0x00, 0x00, 0x00]);
+    const fbxNoNul = text.slice();
+    fbxNoNul.set(FBX_MAGIC.subarray(0, 20));
+    for (const bytes of [glTF1, fbxNoNul]) {
+      expect(processSaveBytes({ bytes: abOf(bytes) }, [], T0, classify).result).toEqual({
+        ok: false,
+        error: 'file exceeds the maximum save size',
+      });
+    }
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a 60 MB buffer with a model PREFIX but invalid structure is refused, not saved as anything', () => {
+    const fake = new Uint8Array(60 * MB).fill(0x61);
+    fake.set([0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00]);
+    const r = processSaveBytes({ bytes: abOf(fake), filename: 'x.txt' }, [], T0);
+    expect(r.result).toEqual({ ok: false, error: 'file type is not allowed' });
+    expect(r.recent).toEqual([]);
+  });
+
+  it('a 3D save uses the regular 100 MB window budget: a 60 MB model after a 45 MB save is busy', () => {
+    const r = processSaveBytes(
+      { bytes: abOf(buildGlb({ totalBytes: 60 * MB })) },
+      [{ at: T0, size: 45 * MB }],
+      T0 + 1
+    );
+    expect(r.result).toEqual({ ok: false, error: 'busy' });
   });
 });

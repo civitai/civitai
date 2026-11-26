@@ -40,11 +40,13 @@ const { BaseModelListContent } = await import('~/components/generation_v2/inputs
 const { SearchableMultiSelectRefinementList } = await import(
   '~/components/Search/CustomSearchComponents'
 );
-const { baseModelSelectData, ecosystemByKey, getEcosystemDisplayItems } = await import(
-  '~/shared/constants/basemodel.constants'
-);
+const {
+  baseModelSelectData,
+  ecosystemByKey,
+  getEcosystemDisplayItems,
+  matureRestrictedBaseModels,
+} = await import('~/shared/constants/basemodel.constants');
 const { getWorkflowsForEcosystem } = await import('~/shared/generation/config/workflows');
-const { nsfwRestrictedBaseModels } = await import('~/server/common/constants');
 
 const RED = { green: false, blue: true, red: false };
 const GREEN = { green: true, blue: false, red: false };
@@ -137,16 +139,17 @@ describe('generator base model picker', () => {
 
   // Today Ideogram is the only offered ecosystem whose every base is restricted; SDXL holds SDXL
   // Turbo but is not. If a new one appears, add it here after checking the badge belongs.
-  test('marks Ideogram and nothing else on red', async () => {
+  test('marks Ideogram and Fibo 2.0 and nothing else on red', async () => {
     renderPicker();
     await expect.element(page.getByText('Ideogram', { exact: true })).toBeInTheDocument();
-    expect(row('Ideogram')?.querySelector('[data-testid="sfw-only-badge"]')).toBeTruthy();
+    for (const name of ['Ideogram', 'Fibo 2.0'])
+      expect(row(name)?.querySelector('[data-testid="sfw-only-badge"]'), name).toBeTruthy();
     for (const name of ['Stable Diffusion XL', 'Illustrious']) {
       const r = row(name);
       expect(r, `${name} row rendered`).toBeTruthy();
       expect(r?.querySelector('[data-testid="sfw-only-badge"]'), name).toBeNull();
     }
-    expect(badges()).toHaveLength(1);
+    expect(badges()).toHaveLength(2);
   });
 
   test('marks nothing on .com', async () => {
@@ -179,7 +182,9 @@ describe('base model filter (Models and Images)', () => {
       expect(optionHasBadge(bm), bm).toBe(false);
     // Hidden bases are not offered, so the count is the restricted ones the filter lists.
     const offered = new Set(baseModelSelectData.flatMap((g) => g.items.map((i) => i.value)));
-    expect(badges()).toHaveLength(nsfwRestrictedBaseModels.filter((b) => offered.has(b)).length);
+    expect(badges()).toHaveLength(
+      matureRestrictedBaseModels('images').filter((b) => offered.has(b)).length
+    );
   });
 
   test('marks nothing on .com', async () => {
@@ -188,6 +193,28 @@ describe('base model filter (Models and Images)', () => {
     await page.getByPlaceholder('All Base Models').click();
     await expect.element(page.getByRole('option', { name: /^SDXL 1\.0/ })).toBeInTheDocument();
     expect(badges()).toHaveLength(0);
+  });
+});
+
+describe('base model filter on images', () => {
+  // SDXL 1.0 (visible) is awaited first, or the absence check passes on a list not yet rendered.
+  const sdxlTurbo = async (includeHidden?: boolean) => {
+    renderWithProviders(
+      <BaseModelFilterSelect includeHidden={includeHidden} value={[]} onChange={vi.fn()} />
+    );
+    await page.getByPlaceholder('All Base Models').fill('SDXL');
+    await expect
+      .element(page.getByRole('option', { name: 'SDXL 1.0', exact: true }))
+      .toBeInTheDocument();
+    return page.getByRole('option', { name: /^SDXL Turbo/ });
+  };
+
+  test('lists the hidden bases when asked', async () => {
+    await expect.element(await sdxlTurbo(true)).toBeInTheDocument();
+  });
+
+  test('leaves them out otherwise', async () => {
+    await expect.element(await sdxlTurbo()).not.toBeInTheDocument();
   });
 });
 

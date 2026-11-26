@@ -1,3 +1,5 @@
+import { TRPCError } from '@trpc/server';
+import { isDefined } from '~/utils/type-guards';
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
 import {
@@ -16,14 +18,22 @@ import type {
   CreateExternalCsamReportSchema,
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
 import { createCsamReport } from '~/server/services/csam.service';
 import type { CsamContextText } from '~/server/services/csam-context-text';
 import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
-import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
-import { bulkAddBlockedImages } from '~/server/services/image.service';
+import {
+  releaseReviewFlagsToReportHold,
+  releaseSettledAppealFlags,
+} from '~/server/services/image-appeal-flag';
+import {
+  afterCsamImageBlock,
+  bulkAddBlockedImages,
+  HeldMediaCopyError,
+  logCsamBlocklistNoHash,
+} from '~/server/services/image.service';
 import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
 import {
@@ -42,6 +52,15 @@ export async function createCsamReportHandler({
 }) {
   return fileCsamReport({ ...input, reportedById: ctx.user.id });
 }
+
+export const CSAM_LISTED_BLOCK_FAILED_MESSAGE =
+  'Filing the report failed, so nothing was filed and no image was blocked. File the report again.';
+export const CSAM_BLOCKLIST_FAILED_MESSAGE =
+  'The report was filed and the account removed. Writing the image hashes to the blocklist failed and has been logged. Do not file again.';
+/** The blocklist entry landed but its review copy did not. An operator repairs it with the reconcile
+ *  script (scripts/oneoffs/reconcile-held-media-blocked-hashes.ts). */
+export const CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE =
+  'The report was filed and the account removed. The blocklist entry was written, but its review copy failed and has been logged for repair. Do not file the report again.';
 
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
@@ -72,47 +91,69 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     contextText,
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
-  if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
-  else await createCsamReport(filed);
+  // Blocked in the report's own transaction, so a refused or failed filing blocks nothing.
+  let report: { id: number };
+  try {
+    report = supplementalOf
+      ? await createSupplementalCsamReport({ ...filed, supplementalOf, blockListedImages: true })
+      : await createCsamReport({ ...filed, writeBlocklist: false, blockListedImages: true });
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'BAD_REQUEST') throw error;
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      message: 'filing the report and blocking its images failed; nothing filed',
+      userId,
+      error: (error as Error)?.message,
+      payload: { reportedById, imageCount: imageIds.length },
+    });
+    // A 503 so the message reaches the moderator (a 500's is replaced).
+    throwServiceUnavailableError(CSAM_LISTED_BLOCK_FAILED_MESSAGE, error);
+    throw error;
+  }
+  await afterCsamImageBlock({ imageIds });
 
+  // Hashes read now, written after the account removal below, so a failed blocklist write cannot
+  // hold that up.
+  // A supplemental writes only for an Image report, as on main.
+  const writesBlocklist = !!imageIds.length && (!supplementalOf || type === 'Image');
+  const blocklistImages = writesBlocklist
+    ? await dbWrite.image.findMany({
+        where: { id: { in: imageIds } },
+        select: { id: true, pHash: true },
+      })
+    : [];
+  const blocklistHashes = blocklistImages.map((img) => img.pHash).filter(isDefined);
+  logCsamBlocklistNoHash(
+    blocklistImages.filter((img) => !img.pHash).map((img) => img.id),
+    'csam-report'
+  );
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
-    const [affectedImages, imageReports] = await Promise.all([
-      dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }),
-      dbWrite.imageReport.findMany({
-        where: { imageId: { in: imageIds } },
-        select: { reportId: true, image: { select: { userId: true } } },
-      }),
-    ]);
+    const imageReports = await dbWrite.imageReport.findMany({
+      where: { imageId: { in: imageIds } },
+      select: { reportId: true, image: { select: { userId: true } } },
+    });
 
-    await Promise.all([
-      bulkAddBlockedImages({
-        data: affectedImages
-          .filter((img) => !!img.pHash)
-          .map((x) => ({
-            hash: x.pHash as bigint,
-            reason: BlockImageReason.CSAM,
-          })),
-      }),
-      // Bookkeeping only: a failure here must not stop the account being removed below.
-      bulkSetReportStatus({
-        ids: imageReports.map((report) => report.reportId),
-        status: ReportStatus.Actioned,
-        userId: reportedById,
-        noRewardFor: csamReportRewardExclusions(userId, imageReports),
-        rewardRemovedReporters: false,
-      }).catch((e) =>
-        logToAxiom({
-          name: 'csam-report',
-          type: 'error',
-          important: true,
-          message: 'actioning the reports on filed images failed',
-          userId,
-          reportedById,
-          error: (e as Error)?.message,
-        }).catch(() => undefined)
-      ),
-    ]);
+    // Bookkeeping only: a failure here must not stop the account being removed below. Every report
+    // on these images, whatever its status, on purpose.
+    await bulkSetReportStatus({
+      ids: imageReports.map((report) => report.reportId),
+      status: ReportStatus.Actioned,
+      userId: reportedById,
+      noRewardFor: csamReportRewardExclusions(userId, imageReports),
+      rewardRemovedReporters: false,
+    }).catch((e) =>
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        important: true,
+        message: 'actioning the reports on filed images failed',
+        userId,
+        error: (e as Error)?.message,
+        payload: { reportedById },
+      })
+    );
   } else if (type === 'TrainingData') {
     const modelVersionId = details?.modelVersionIds?.[0];
     if (modelVersionId) {
@@ -138,9 +179,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           message: 'training deny failed; report filed and account still removed',
           modelVersionId,
           userId,
-          reportedById,
           error: (e as Error)?.message,
-        }).catch(() => undefined);
+          payload: { reportedById },
+        });
       }
     }
   }
@@ -148,11 +189,46 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   // A supplemental report follows one that removed the account for this; one restored or banned for
   // something else since is removed again.
   const removed = !!supplementalOf && (await removedForCsam(userId));
-  if (userId !== -1 && !removed) {
-    await softDeleteUser({ id: userId, userId: reportedById });
+  let removalError: unknown;
+  try {
+    if (userId !== -1 && !removed) await softDeleteUser({ id: userId, userId: reportedById });
+  } catch (error) {
+    removalError = error;
+    // Logged here: a failing blocklist write below would replace this error.
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      message: 'removing the reported account failed',
+      userId,
+      error: (error as Error)?.message,
+      payload: { reportedById },
+    });
   }
+  // Written whether or not the removal succeeded. If the removal also failed, a write failure is
+  // thrown here; otherwise it is thrown at the end, after the filed images' appeals are closed.
+  let blocklistError: unknown;
+  try {
+    await bulkAddBlockedImages({
+      data: blocklistHashes.map((hash) => ({ hash, reason: BlockImageReason.CSAM })),
+      context: { step: 'csam-report', imageIds, actorUserId: reportedById },
+    });
+  } catch (error) {
+    // The report id is what the missing write is redone from. No hashes.
+    const failedStore = error instanceof HeldMediaCopyError ? error.store : 'blocklist';
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      message: 'CSAM blocklist write failed',
+      userId,
+      error: (error as Error)?.message,
+      payload: { reportedById, csamReportId: report.id, imageCount: imageIds.length, failedStore },
+    });
+    if (removalError) throw error;
+    blocklistError = error;
+  }
+  if (removalError) throw removalError;
 
-  if (type === 'GeneratedImage') {
+  if (type === 'GeneratedImage' && !blocklistError) {
     // After the removal, so a slow or failing orchestrator can never hold it up. A 404 is the retired
     // route, which leaves nothing to review.
     try {
@@ -163,7 +239,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           name: 'csam-report',
           type: 'info',
           message: 'strikes review not found at the orchestrator; nothing to review',
-        }).catch(() => undefined);
+        });
       } else {
         strikesReviewFailed = true;
         logToAxiom({
@@ -172,9 +248,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           important: true,
           message: 'strikes review failed after the report was filed and the account removed',
           userId,
-          reportedById,
           error: (e as Error)?.message,
-        }).catch(() => undefined);
+          payload: { reportedById },
+        });
       }
     }
   }
@@ -197,9 +273,20 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await dbWrite.$executeRaw`
       DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${imageIds}::int[])
     `;
+    // The appeals closed above leave their flag on an image this report does not block.
+    await releaseSettledAppealFlags(imageIds);
     // Last, so the images are already blocked and the report row committed when the flag comes off.
     await releaseReviewFlagsToReportHold(imageIds);
   }
+  // A 503 so the message reaches the moderator (a 500's is replaced); it must stop a re-file,
+  // which can create a second report.
+  if (blocklistError)
+    throwServiceUnavailableError(
+      blocklistError instanceof HeldMediaCopyError
+        ? CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE
+        : CSAM_BLOCKLIST_FAILED_MESSAGE,
+      blocklistError
+    );
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };

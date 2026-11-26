@@ -40,7 +40,7 @@ const autoMuteTags = ['Impersonating Civitai Staff'];
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
   log(data);
-  logToAxiom({ name: jobName, type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom({ name: jobName, type: 'error', ...data }, 'webhooks');
 };
 
 const tracker = new Tracker();

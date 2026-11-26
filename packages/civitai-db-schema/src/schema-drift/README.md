@@ -142,8 +142,19 @@ baseline of the whole schema, and a subset would turn every out-of-scope baselin
 Migrations here are applied by hand, per environment. For each writable environment:
 
 1. **Dry run** the migration inside a transaction that is rolled back, against the target:
-   `BEGIN;` … the migration … `ROLLBACK;`. (A file that contains `CREATE INDEX CONCURRENTLY`
-   cannot run in a transaction block; dry-run the rest and apply that statement on its own.)
+   `BEGIN;` … the migration … `ROLLBACK;`. Before wrapping, strip the file's own top-level
+   transaction control (`BEGIN` / `START TRANSACTION`, `COMMIT` / `END`, `ROLLBACK`): a `COMMIT`
+   or `END;` inside the wrapper commits what ran before it, and what follows autocommits too when
+   statements are sent one at a time (as psql does). Leave `BEGIN`/`END` inside a function,
+   procedure or `DO` body (`$$ … $$`); they are not transaction control.
+   - A file that contains `CREATE INDEX CONCURRENTLY` cannot run in a transaction block;
+     dry-run the rest and apply that statement on its own.
+   - Run `ALTER TYPE … ADD VALUE` as its own step and dry-run it alone. Statements that use
+     the new value fail (55P04) until it is committed, so they cannot be dry-run on the target
+     first; test them on a disposable database.
+   - Never dry-run on prod a file whose procedures or `DO` blocks `COMMIT` (including a
+     procedure it `CALL`s). Those commits cannot be rolled back (inside the wrapper they fail
+     with 2D000). Use a disposable database.
 2. **A human applies it.**
 3. **Scoped drift check** against the same target, read-only:
 
@@ -489,7 +500,7 @@ Two things it is worth being precise about, because both are easy to overstate:
 - **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
   a red `Package unit tests` does not prevent a merge. It renders red rather than
   red-but-ignored, which is the real difference from the `Unit tests` job.
-- **`apps/*` runs in a sibling job**, `App unit tests + typecheck` (the `App suites` workflow), closed the same way: another
+- **`apps/*` runs in a sibling job**, `App unit tests` (the `App suites` workflow), closed the same way: another
   glob in the same `projects` array, and the ledger script takes the workspace (`packages` or
   `apps`) as an argument rather than hardcoding one.
 

@@ -302,7 +302,7 @@ considered and rejected in favour of parallel lanes — the lanes hold different
 decision, not an omission; do not helpfully collapse them.
 
 Skip a lane only when the diff genuinely cannot contain its findings — no server code at all is a
-reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
+reason to skip perf. "No tests changed" is not a reason to skip the test lane, and not a finding by itself: the lane checks that a bug fix carries its regression test. Say
 which you skipped and why. A skipped lane is not recorded, so the hosted review runs it. Typical shapes:
 
 | Lane | The diff can contain its findings when it… |

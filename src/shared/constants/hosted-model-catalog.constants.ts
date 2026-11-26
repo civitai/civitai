@@ -68,7 +68,7 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
   },
   {
     ecosystemId: ECO.MAI,
-    name: 'MAI-Image-2.5',
+    name: 'MAI Image',
     maker: 'Microsoft',
     modelId: 2673730,
     goodAt:
@@ -94,11 +94,11 @@ export const HOSTED_MODEL_CATALOG: readonly HostedModelCatalogEntry[] = [
   },
   {
     ecosystemId: ECO.Ideogram,
-    name: 'Ideogram 4.5',
+    name: 'Ideogram 4.6',
     maker: 'Ideogram',
     modelId: 2872974,
     goodAt:
-      'Accurate text for posters, logos and typography-led design, plus editing with up to three reference images.',
+      'Accurate text for posters, logos and typography-led design, plus editing with up to five reference images.',
     capabilities: ['legible_text', 'design_layout', 'image_editing', 'reference_images'],
   },
   {

@@ -1,4 +1,6 @@
+import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type TrainingCompleteEmailData = {
@@ -17,69 +19,28 @@ const reviewUrl = (model: TrainingCompleteEmailData['model']) =>
   getBaseUrl() + `/models/${model.id}/wizard`;
 
 export const trainingCompleteEmail = createEmail({
+  template: 'trainingComplete',
+  mailClass: 'transactional',
   header: ({ user, model, mName }: TrainingCompleteEmailData) => ({
     subject: `Your model "${model.name} - ${mName}" is ready for review`,
     to: user.email,
   }),
-  html({ model }: TrainingCompleteEmailData) {
-    const brandColor = '#346df1';
-    const color = {
-      background: '#f9f9f9',
-      text: '#444',
-      mainBackground: '#fff',
-      buttonBackground: brandColor,
-      buttonBorder: brandColor,
-      buttonText: '#fff',
-    };
-
-    return `
-  <body style="background: ${color.background};">
-    <table width="100%" border="0" cellgap="0" cellpadding="0" style="max-width: 600px; margin: auto;">
-      <tr><td height="20"></td></tr>
-      <tr><td>
-        <table width="100%" border="0" cellgap="20" cellpadding="0" style="background: ${
-          color.mainBackground
-        }; border-radius: 10px;">
-          <tr>
-            <td align="center"
-              style="padding: 10px 0px; font-size: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
-                color.text
-              };">
-              Your model is ready for review! 🎉
-            </td>
-          </tr>
-          <tr>
-            <td
-              style="padding: 0px 0px 10px 0px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
-                color.text
-              };">
-              The wait is over! Click the button below to review some sample images and prepare your model for publishing, if you choose to share it. Your training files and job results will be retained on our side for 30 days &mdash; make sure you've published or downloaded what you want to keep before then.
-            </td>
-          </tr>
-          <tr>
-            <td align="center" style="padding: 0;">
-              <table border="0" cellgap="0" cellpadding="0">
-                <tr>
-                  <td align="center" style="border-radius: 5px;" bgcolor="${
-                    color.buttonBackground
-                  }"><a href="${reviewUrl(model)}"
-                      target="_blank"
-                      style="font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${
-                        color.buttonText
-                      }; text-decoration: none; border-radius: 5px; padding: 10px 20px; border: 1px solid ${
-      color.buttonBorder
-    }; display: inline-block; font-weight: bold;">Review Model</a></td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-        </table>
-      </td></tr>
-      <tr><td height="20"></td></tr>
-    </table>
-  </body>
-  `;
+  html({ model, mName }: TrainingCompleteEmailData) {
+    return simpleEmailWithTemplate({
+      icon: '🎉',
+      accent: 'green',
+      eyebrow: 'Training complete',
+      header: 'Your model is ready for review!',
+      body: `<p style="margin: 0;">The wait is over! Click the button below to review some sample images and prepare your model for publishing, if you choose to share it.</p>
+        ${renderEmailSummary([
+          { label: 'Model', value: escapeHtml(model.name) },
+          { label: 'Version', value: escapeHtml(mName) },
+          { label: 'Files kept for', value: '30 days' },
+        ])}
+        <p style="margin: 0;">Your training files and job results will be retained on our side for 30 days &mdash; make sure you've published or downloaded what you want to keep before then.</p>`,
+      btnUrl: escapeHtml(reviewUrl(model)),
+      btnLabel: 'Review Model',
+    });
   },
 
   /** Email Text body (fallback for email clients that don't render HTML, e.g. feature phones) */

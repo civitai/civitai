@@ -153,7 +153,7 @@ export const scanLabelControlSampleJob = createJob(
         type: 'error',
         name: 'scan-label-control-sample',
         message: error instanceof Error ? error.message : 'Unknown error',
-      }).catch(() => null);
+      });
       throw error;
     }
   }

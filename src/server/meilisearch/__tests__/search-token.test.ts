@@ -5,7 +5,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import {
@@ -15,7 +14,6 @@ import {
   mintSearchToken,
 } from '~/server/meilisearch/search-token';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
-import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
 import {
   publicBrowsingLevelsFlag,
@@ -68,15 +66,13 @@ describe('buildSearchRules', () => {
 
   // A key in the token's rules is a grant, so a retired index must have no key at all: a query
   // on it is refused (403) instead of reaching an index that no longer carries the attributes
-  // its filter names.
+  // its filter names. None of today's retired indexes is a browser index, so retire live ones.
   it('never grants a retired index', () => {
-    expect(RETIRED_SEARCH_INDEXES).toContain(IMAGES_SEARCH_INDEX);
+    const retired = [MODELS_SEARCH_INDEX, ARTICLES_SEARCH_INDEX];
     for (const viewer of viewers) {
-      const granted = Object.keys(buildSearchRules(viewer));
-      expect(granted.filter((index) => RETIRED_SEARCH_INDEXES.includes(index))).toEqual([]);
-      expect(
-        BROWSER_SEARCH_INDEXES.filter((index) => RETIRED_SEARCH_INDEXES.includes(index))
-      ).toEqual([]);
+      expect(Object.keys(buildSearchRules(viewer, retired)).sort()).toEqual(
+        BROWSER_SEARCH_INDEXES.filter((index) => !retired.includes(index)).sort()
+      );
     }
   });
 
@@ -104,10 +100,10 @@ describe('buildSearchRules', () => {
   });
 });
 
+// The levelled indexes a token grants (collections are searched through /api/search only).
 const LEVELLED_INDEXES = [
   MODELS_SEARCH_INDEX,
   ARTICLES_SEARCH_INDEX,
-  COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
 ];
@@ -217,5 +213,18 @@ describe('mintSearchToken', () => {
     expect(payload.apiKeyUid).toBe(PARENT_UID);
     expect(payload.exp).toBe(Math.floor((now + SEARCH_TOKEN_TTL_MS) / 1000));
     expect(payload.searchRules).toEqual(buildSearchRules({ id: 42 }));
+  });
+});
+
+describe('collections: searched through /api/search only', () => {
+  it('no token grants the collections index, whoever the viewer', () => {
+    expect(BROWSER_SEARCH_INDEXES).not.toContain(COLLECTIONS_SEARCH_INDEX);
+    for (const viewer of [
+      null,
+      { id: 7, browsingLevelCap: null },
+      { id: 7, browsingLevelCap: null, isModerator: true },
+      { id: 7 },
+    ])
+      expect(Object.keys(buildSearchRules(viewer, []))).not.toContain(COLLECTIONS_SEARCH_INDEX);
   });
 });

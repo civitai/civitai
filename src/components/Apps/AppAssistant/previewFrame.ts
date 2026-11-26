@@ -15,13 +15,17 @@ export class PreviewGoneError extends Error {
 /**
  * The preview pane's frame for `blockId`, with a freshly signed, short-lived entry URL (https, on
  * the frame's `host`) — or `{ preparing: true }` until the tunnel's host can be resolved.
+ *
+ * `check`: the pane's liveness poll rather than a (re)mint of the frame, sent as `check=1` so the
+ * route does not count it as preview activity (a direct preview's idle clock).
  */
 export async function fetchPreviewFrame(
   blockId: string,
-  fetchImpl: typeof fetch = (...args) => fetch(...args)
+  fetchImpl: typeof fetch = (...args) => fetch(...args),
+  { check = false }: { check?: boolean } = {}
 ): Promise<PreviewFrame | PreviewPreparing> {
   const data = await fetchEntryUrlBody(
-    `/api/apps/assistant/preview?blockId=${encodeURIComponent(blockId)}`,
+    `/api/apps/assistant/preview?blockId=${encodeURIComponent(blockId)}${check ? '&check=1' : ''}`,
     fetchImpl,
     {
       fallback: PREVIEW_UNAVAILABLE,

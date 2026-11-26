@@ -22,8 +22,7 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useFormContext, useFormState, useWatch } from 'react-hook-form';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { InputRTE, InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -33,12 +32,14 @@ import type { ComCoverState } from '~/shared/utils/model-sfw-face';
 import {
   COM_COVER_NOT_LISTED_LABEL,
   comCoverStateMessages,
+  COM_FACE_REFUSED_MESSAGE,
   comFaceRemovedMessage,
   isComSafeLevel,
   normalizeSfwFaceText,
   SFW_DESCRIPTION_MAX_LENGTH,
 } from '~/shared/utils/model-sfw-face';
 import { showErrorNotification } from '~/utils/notifications';
+import { ComFaceDisputeAlert } from '~/components/Model/LockReview/ComFaceDisputeAlert';
 import { trpc } from '~/utils/trpc';
 
 type ListingForm = {
@@ -156,6 +157,7 @@ export function ModelListingTabs({
 
           <Tabs.Panel value="com" pt="md">
             {removedAlert}
+            {modelId && <ComFaceDisputeAlert modelId={modelId} />}
             {coverNotListed && (
               <Alert color="yellow" p="xs" mb="md" title={COM_COVER_NOT_LISTED_LABEL}>
                 <Text size="xs">{comCoverStateMessages[coverNotListed]}</Text>
@@ -204,10 +206,15 @@ function ComListing({
     if (name === null) form.setValue('sfwCoverImageId', null, { shouldDirty: true });
   };
 
+  const queryUtils = trpc.useUtils();
   const draftMutation = trpc.model.draftSfwFace.useMutation({
     onSuccess: (draft) => setComContent(draft.sfwName, draft.sfwDescription),
-    onError: (error) =>
-      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) }),
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not draft', error: new Error(error.message) });
+      // A refusal can lock the rating, which brings up the Dispute button.
+      if (modelId && error.message === COM_FACE_REFUSED_MESSAGE)
+        void queryUtils.report.getLockReviewState.invalidate({ id: modelId });
+    },
   });
 
   const handleDraft = () => {
@@ -215,28 +222,22 @@ function ComListing({
     const draft = () => draftMutation.mutate({ name, description, modelId });
     if (!sfwName || sfwName === name) return draft();
 
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Replace your civitai.com content?',
-        message: 'The draft replaces the civitai.com title and description you have now.',
-        labels: { confirm: 'Replace', cancel: 'Keep mine' },
-        onConfirm: draft,
-      },
+    openConfirm({
+      title: 'Replace your civitai.com content?',
+      message: 'The draft replaces the civitai.com title and description you have now.',
+      labels: { confirm: 'Replace', cancel: 'Keep mine' },
+      onConfirm: draft,
     });
   };
 
   const handleUseRed = () =>
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Use the same card on both sites?',
-        message:
-          'The civitai.com title, description and cover are removed, and civitai.com shows the same card as civitai.red.',
-        labels: { confirm: 'Use the same card on both sites', cancel: 'Keep it' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => setComContent(null, null),
-      },
+    openConfirm({
+      title: 'Use the same card on both sites?',
+      message:
+        'The civitai.com title, description and cover are removed, and civitai.com shows the same card as civitai.red.',
+      labels: { confirm: 'Use the same card on both sites', cancel: 'Keep it' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => setComContent(null, null),
     });
 
   const draftButton = (

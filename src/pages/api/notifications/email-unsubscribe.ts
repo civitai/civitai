@@ -1,10 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { escape as escapeHtml } from 'he';
 import * as z from 'zod';
+import { lifecycleTemplateForOptOut } from '~/server/email/lifecycle-opt-outs';
+import { recordEmailEvents } from '~/server/email/send-tracking';
 import { notificationSettingsUrl } from '~/server/email/templates/notification.email';
+import { digestCycleParam, recordDigestEvents } from '~/server/notifications/digest-tracking';
+import { MISSED_DIGEST_EMAIL_TYPE } from '~/server/notifications/missed-digest.constants';
 import {
-  isEmailNotificationType,
-  notificationProcessors,
+  emailOptOutDisplayName,
+  isEmailOptOutType,
 } from '~/server/notifications/utils.notifications';
 import {
   optOutOfNotificationEmail,
@@ -33,7 +37,7 @@ export default PublicEndpoint(
     const parsed = query.safeParse(req.query);
     const valid =
       parsed.success &&
-      isEmailNotificationType(parsed.data.t) &&
+      isEmailOptOutType(parsed.data.t) &&
       verifyEmailUnsubscribe(parsed.data.u, parsed.data.t, parsed.data.s);
     if (!valid) {
       res.status(400).setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -41,10 +45,37 @@ export default PublicEndpoint(
     }
 
     const { u, t } = parsed.data;
-    const name = escapeHtml(notificationProcessors[t]?.displayName ?? t);
+    const name = escapeHtml(emailOptOutDisplayName(t));
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (req.method === 'POST') {
-      await optOutOfNotificationEmail(u, t);
+      const turnedOff = await optOutOfNotificationEmail(u, t);
+      // A digest's links also carry the pass it was sent in (`c`), so its unsubscribes count per
+      // pass. A lifecycle email's opt-out is also an emailEvents row, against the send its link
+      // names (`e`, added per send by base.email.ts). Both are unsigned: they can only mislabel the
+      // user's own row. The campaign is the send row's, joined on the send id. Only the call that
+      // turned it off records: a repeat POST counts nothing.
+      const template = lifecycleTemplateForOptOut(t);
+      if (turnedOff)
+        await Promise.all([
+          t === MISSED_DIGEST_EMAIL_TYPE
+            ? recordDigestEvents([
+                { event: 'unsubscribe', userId: u, cycleStartedAt: digestCycleParam(req.query.c) },
+              ])
+            : undefined,
+          template
+            ? recordEmailEvents([
+                {
+                  event: 'unsubscribe',
+                  sendId: typeof req.query.e === 'string' ? req.query.e : '',
+                  template,
+                  mailClass: 'lifecycle',
+                  campaign: '',
+                  variant: '',
+                  userId: u,
+                },
+              ])
+            : undefined,
+        ]);
       return res.status(200).send(page(`<p>You won't get emails for "${name}" any more.</p>`));
     }
     return res.status(200).send(

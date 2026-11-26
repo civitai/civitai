@@ -53,7 +53,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { ChatSystemNoteText } from '~/components/Chat/ChatSystemNoteText';
 import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -62,7 +62,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
-import { activeMemberStatuses, formatChatSystemMessage } from '~/shared/utils/chat';
+import { activeMemberStatuses } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -988,12 +988,7 @@ function DisplayMessages({
                     border: '1px solid gray',
                   }}
                 >
-                  <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                    {formatChatSystemMessage({
-                      content: c.content,
-                      username: currentUser?.username,
-                    })}
-                  </CustomMarkdown>
+                  <ChatSystemNoteText content={c.content} username={currentUser?.username} />
                 </Text>
               ) : (
                 <>
@@ -1030,6 +1025,7 @@ function DisplayMessages({
                         ) : (
                           <ChatMessageContent
                             content={tReplyData.data?.content ?? ''}
+                            masked={tReplyData.data?.maskedContent}
                             blur={replaceBadWords || domainColor === 'green'}
                             stickerSize={STICKER_SIZE.preview}
                             fallback={<em>Could not load message.</em>}
@@ -1079,6 +1075,7 @@ function DisplayMessages({
                       >
                         <ChatMessageContent
                           content={c.content}
+                          masked={c.maskedContent}
                           blur={replaceBadWords || domainColor === 'green'}
                         />
                       </div>
@@ -1103,14 +1100,22 @@ function ChatMessageContent({
   blur,
   stickerSize,
   fallback,
+  masked,
 }: {
   content: string;
   blur: boolean;
   stickerSize?: number;
   fallback?: React.ReactNode;
+  /** The server's masked copy (`maskedContent`); `undefined` leaves masking to the browser. */
+  masked?: string | null;
 }) {
+  const serverMasked = blur && masked !== undefined;
   const scannable = stripStickerTokens(content);
-  const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+  const browserCleaned = useCleanText(scannable, {
+    enabled: blur && !serverMasked,
+    replacementStyle: 'asterisk',
+  });
+  const cleaned = serverMasked ? masked ?? scannable : browserCleaned;
   const { ownHosts } = useCurrentDomainHosts();
 
   if (!content.length) return <>{fallback ?? null}</>;

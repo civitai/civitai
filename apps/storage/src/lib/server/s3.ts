@@ -17,6 +17,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { parseKey, type MultipartPart } from '@civitai/storage';
+import { purgeObjectVersions } from '@civitai/storage/s3-purge-versions';
 
 export type S3BackendConfig = {
   endpoint: string;
@@ -118,6 +119,10 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
 
   function deleteObject(key: string, bucket?: string) {
     return client.send(new DeleteObjectCommand({ Bucket: requireBucket(bucket), Key: key }));
+  }
+
+  function purgeVersions(key: string, bucket?: string) {
+    return purgeObjectVersions({ client, bucket: requireBucket(bucket), key });
   }
 
   // DeleteObjects caps at 1000 keys/call — chunk so callers can pass any count.
@@ -277,6 +282,7 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
 
   return {
     deleteObject,
+    purgeObjectVersions: purgeVersions,
     deleteManyObjects,
     getPutUrl,
     getMultipartPutUrl,

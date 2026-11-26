@@ -5,13 +5,15 @@ export const CIVITAI_SDK = '@civitai/sdk';
  * The lowest `@civitai/sdk` an app should declare: the minor the host (this repo's own root
  * `package.json`) speaks. An app pinned below it is upgraded to it by the runner (`checkSdkPin`, the runner's `SdkUpgrades`). A `^0.x` range
  * never moves to a newer minor, so an app scaffolded on an older SDK never gets the host's newer
- * bridge messages on its own (0.21.0 added `VIEWER_ACTIVITY`, which keeps the preview awake).
+ * bridge messages on its own (0.21.0 added `VIEWER_ACTIVITY`, which keeps the preview awake). A
+ * minor can also remove calls, so an upgrade can break an app's typecheck (the runner's
+ * `SDK_REMOVED_APIS`).
  *
  * Bump it together with the root `package.json`'s `@civitai/sdk` on each SDK minor release: the
  * runner's `sdk-floor.test.ts` fails while the two disagree. It only reaches the runner with a runner
  * release.
  */
-export const CIVITAI_SDK_FLOOR = '0.24.0';
+export const CIVITAI_SDK_FLOOR = '0.33.0';
 
 /** What an app's `package.json` declares for `@civitai/sdk`, as `checkSdkPin` judges it. */
 export type SdkPinCheck =

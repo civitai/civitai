@@ -54,7 +54,7 @@ function noteMissingTable(site: string): void {
       site,
     },
     'app-blocks'
-  ).catch(() => undefined);
+  );
 }
 
 type RawClient = {

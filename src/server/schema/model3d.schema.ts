@@ -163,6 +163,7 @@ export const getModel3DRelatedPostsSchema = z.object({
   model3dId: z.number().int().positive(),
   limit: z.number().int().min(1).max(50).default(12),
   cursor: z.number().int().positive().optional(),
+  browsingLevel: z.number().int().min(1).optional(),
 });
 
 export type GetModel3DReviewSummaryInput = z.infer<typeof getModel3DReviewSummarySchema>;

@@ -68,7 +68,7 @@ const key = (apiKeyType: string | undefined, tokenScope = TokenScope.Full, id = 
   subject: { type: 'apiKey', id },
   tokenScope,
 });
-const oauth = (apiKeyType: string, tokenScope: number) => ({
+const oauth = (apiKeyType: string, tokenScope: bigint) => ({
   apiKeyId: 3,
   apiKeyType,
   subject: { type: 'oauth', id: 'client-abc' },

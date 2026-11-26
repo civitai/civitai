@@ -16,10 +16,12 @@ export function textCheckFailureStatus(err: TrainingTextCheckError): number {
   return err.status === 401 || err.status === 403 ? err.status : 502;
 }
 
-/** What the main app's check is asked about: a run's trigger word, or the prompt (and starting
- *  image) of an edit the Studio is about to generate — which gets the generator's own prompt check. */
+/** What the main app's check is asked about: a run's trigger word, whether the user accepted the
+ *  licence of the model a run trains, or the prompt (and starting image) of an edit the Studio is
+ *  about to generate — which gets the generator's own prompt check. */
 export type TrainingTextCheckInput =
   | { triggerWord: string }
+  | { licenseEcosystem: string }
   | { editPrompt: string; inputImages?: string[] };
 
 /** Runs the main app's check over one input. Throws `TrainingTextRefusedError` on a refusal, and any

@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *      replaced away from; the stale queue row from that earlier replacement then points at
  *      a live avatar, and deleting it would be a strictly worse version of the original bug;
  *   4. both cohorts leave the queue, so a re-adopted image cannot be re-examined every run
- *      (held images are `remove-replaced-images-hold-guard.behavior.test.ts`);
+ *      (kept images are `remove-replaced-images-guard.behavior.test.ts`);
  *   5. a non-prod database is never mass-deleted.
  *
  * The fixture drives the retention filter for real — the stubbed `jobQueue.findMany` applies

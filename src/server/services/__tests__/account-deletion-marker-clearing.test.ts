@@ -1,7 +1,6 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
  * The account-deletion grace block writes two `Image.metadata` breadcrumbs so a later account
@@ -58,18 +57,6 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
     expect(source().length, `${MOD_BLOCK_FILE} is empty or unreadable`).toBeGreaterThan(1000);
   });
 
-  it('declares both keys with the values the main app defines', () => {
-    const src = source();
-    for (const key of [PRIOR_INGESTION_KEY, PRIOR_BLOCKED_FOR_KEY]) {
-      expect(
-        src.includes(`'${key}'`),
-        `${MOD_BLOCK_FILE} does not carry the literal '${key}'. It re-declares these keys because ` +
-          'it cannot import them; renaming one in image-removal-mode.ts means renaming it here too, ' +
-          'or the moderator app silently stops clearing the breadcrumb.'
-      ).toBe(true);
-    }
-  });
-
   /**
    * `blockImage` writes `metadata` through a TERNARY on `needsReview === 'remixSource'`, and the
    * two arms spell the subject of the strip differently: the remixSource arm has to `COALESCE`
@@ -81,15 +68,14 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
    * The two patterns cannot satisfy each other: in the remixSource arm the character after
    * `"metadata"` is a comma, so the bare-subject pattern below cannot match it.
    */
-  const STRIP_KEYS =
-    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_INGESTION_KEY\}::text` +
-    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY\}::text`;
+  // The shared list of every key, so a key added to it is stripped here too.
+  const STRIP_KEYS = String.raw`\s*-\s*\$\{MINUS_GRACE_KEYS\}`;
   const BRANCHES = [
     ['remixSource', String.raw`COALESCE\("metadata",\s*'\{\}'::jsonb\)`],
     ['every other', String.raw`"metadata"`],
   ] as const;
 
-  it('strips both keys on the block write itself, in both metadata branches', () => {
+  it('strips every key on the block write itself, in both metadata branches', () => {
     const body = blockImageBody(source());
     // The `-` operator, applied to both keys, inside the statement that sets `ingestion: 'Blocked'`.
     // Asserting the operator and not just the names is what separates "the block removes them"
@@ -98,7 +84,7 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
     for (const [label, subject] of BRANCHES) {
       expect(
         new RegExp(subject + STRIP_KEYS).test(body),
-        `the ${label} branch of blockImage's metadata write no longer removes both breadcrumbs, ` +
+        `the ${label} branch of blockImage's metadata write no longer removes every breadcrumb, ` +
           'so a later account restore can un-block content it hid'
       ).toBe(true);
     }

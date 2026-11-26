@@ -205,7 +205,7 @@ export async function checkPoiHashOnScan({
         modelId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return 'skipped';
   }
 }
@@ -293,7 +293,7 @@ export async function sweepPoiHashMatches({
   try {
     ({ rows: result } = await queryWithTimeout<SweepResultRow>(pgDbRead, SWEEP_TIMEOUT_MS, sweep));
   } catch (error) {
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'error',
         name: 'poi-hash-sweep',
@@ -301,7 +301,7 @@ export async function sweepPoiHashMatches({
         since: since.toISOString(),
       },
       'webhooks'
-    ).catch(() => null);
+    );
     throw error;
   }
 
@@ -335,15 +335,13 @@ export async function sweepPoiHashMatches({
             modelId: row.modelId,
           },
           'webhooks'
-        ).catch(() => null);
+        );
       }
     }),
     5
   );
 
-  await logToAxiom({ type: 'info', name: 'poi-hash-sweep', ...report }, 'webhooks').catch(
-    () => null
-  );
+  logToAxiom({ type: 'info', name: 'poi-hash-sweep', ...report }, 'webhooks');
   return report;
 }
 

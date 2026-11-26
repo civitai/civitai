@@ -13,22 +13,31 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import {
+  apiKeyScopeColumns,
+  readApiKeyScope,
+  TokenScope,
+} from '~/shared/constants/token-scope.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import { revokeReviewBatchesOfKeys } from '~/server/services/review-batch/review-batch.store';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
-export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
-  return dbRead.apiKey.findFirst({
+export async function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
+  const key = await dbRead.apiKey.findFirst({
     where: { id, userId },
     select: {
       tokenScope: true,
+      tokenScopeWide: true,
       user: { select: simpleUserSelect },
     },
   });
+  // The scope as a number: this is a tRPC response, whose scope fields stay JSON numbers.
+  return key && { user: key.user, tokenScope: Number(readApiKeyScope(key)) };
 }
 
 export async function getUserApiKeys({
@@ -45,13 +54,20 @@ export async function getUserApiKeys({
     select: {
       id: true,
       tokenScope: true,
+      tokenScopeWide: true,
       name: true,
       createdAt: true,
       lastUsedAt: true,
       buzzLimit: true,
     },
   });
-  return keys.filter((x) => x.name !== generationServiceCookie.name);
+  // The scope as a number: this is a tRPC response, whose scope fields stay JSON numbers.
+  return keys
+    .filter((x) => x.name !== generationServiceCookie.name)
+    .map(({ tokenScopeWide, ...key }) => ({
+      ...key,
+      tokenScope: Number(readApiKeyScope({ tokenScope: key.tokenScope, tokenScopeWide })),
+    }));
 }
 
 export async function addApiKey(
@@ -63,7 +79,14 @@ export async function addApiKey(
     maxAge,
     type,
     key = generateKey(),
-  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType; key?: string },
+  }: Omit<AddAPIKeyInput, 'tokenScope'> & {
+    /** Omitted: the column default, `TokenScope.Full`. */
+    tokenScope?: bigint;
+    userId: number;
+    maxAge?: number;
+    type?: ApiKeyType;
+    key?: string;
+  },
   date = new Date()
 ) {
   const secret = generateSecretHash(key);
@@ -71,7 +94,7 @@ export async function addApiKey(
 
   await dbWrite.apiKey.create({
     data: {
-      tokenScope,
+      ...(tokenScope === undefined ? {} : apiKeyScopeColumns(tokenScope)),
       buzzLimit: buzzLimit ?? undefined,
       name,
       userId,
@@ -132,7 +155,7 @@ export async function setApiKeyBuzzLimit({
       type: 'oauth.bust-cache.failed',
       message: `bust-cache failed for apiKey ${updated.id} user ${updated.userId}`,
       error: safeError(err),
-    }).catch(() => {});
+    });
   }
 
   return updated;
@@ -140,7 +163,7 @@ export async function setApiKeyBuzzLimit({
 
 const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
 
-type MintApiKeyArgs = AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType };
+type MintApiKeyArgs = Parameters<typeof addApiKey>[0];
 
 /** Read from the primary: a ban must stop the next mint, not the one after the session cache expires. */
 export async function assertAccountOpenForMint(userId: number, refusalMessage?: string) {
@@ -182,7 +205,7 @@ export async function mintApiKey(
         name: logName,
         userId: args.userId,
         error: safeError(error),
-      }).catch(() => null)
+      })
     );
     throw refusal;
   }
@@ -204,9 +227,16 @@ export async function getTemporaryUserApiKey(args: MintApiKeyArgs) {
   return key;
 }
 
-/** Download links minted by a revoked key stop working with it. */
-const revokeLinksOfRevokedApiKeys = (ids: number[]) =>
-  revokeLinksOfRevokedCredentials(ids.map((id) => ({ kind: 'apikey' as const, id: String(id) })));
+/** Download links and review batches minted by a revoked key stop working with it. */
+const revokeLinksOfRevokedApiKeys = async (ids: number[]) => {
+  await revokeLinksOfRevokedCredentials(
+    ids.map((id) => ({ kind: 'apikey' as const, id: String(id) }))
+  );
+  await revokeReviewBatchesOfKeys(ids);
+};
+
+/** At most this many orchestrator token-cache expiries in flight per `deleteApiKeys` call. */
+export const ORCHESTRATOR_REVOKE_CONCURRENCY = 10;
 
 /**
  * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
@@ -226,8 +256,12 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
   await evictCachedApiKeys(rows.map((row) => row.key));
   await revokeLinksOfRevokedApiKeys(rows.map((row) => row.id));
   // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
+  // Bounded: a client-wide delete (a connect app's takedown) can reach many users at once.
   const userIds = [...new Set(rows.map((row) => row.userId))];
-  await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
+  await limitConcurrency(
+    userIds.map((userId) => () => revokeCivitaiUserTokens({ userId })),
+    ORCHESTRATOR_REVOKE_CONCURRENCY
+  );
   return result;
 }
 
@@ -305,7 +339,7 @@ export async function forgetGenerationToken(userId: number) {
       name: 'expire-user-api-keys-generation-token',
       userId,
       message: (error as Error).message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -318,13 +352,20 @@ export async function expireGenerationCredentials(userId: number) {
   const now = new Date();
   const rows = await dbWrite.apiKey.findMany({
     where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
-    select: { id: true, key: true, type: true, tokenScope: true, expiresAt: true },
+    select: {
+      id: true,
+      key: true,
+      type: true,
+      tokenScope: true,
+      tokenScopeWide: true,
+      expiresAt: true,
+    },
   });
   const matched = rows.filter(
     (row) =>
       row.type === 'System' ||
       ((row.type === 'Access' || row.type === 'Refresh') &&
-        (row.tokenScope & AI_SERVICES_SCOPES) !== 0)
+        (readApiKeyScope(row) & AI_SERVICES_SCOPES) !== 0n)
   );
   const live = matched.filter((row) => !row.expiresAt || row.expiresAt > now);
   if (live.length) {
@@ -352,7 +393,7 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         type: 'oauth.delete-subject.failed',
         message: `delete-subject failed for apiKey ${id} user ${userId}`,
         error: safeError(err),
-      }).catch(() => {});
+      });
     });
   }
 

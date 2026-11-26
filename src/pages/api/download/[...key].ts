@@ -53,9 +53,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   });
   const moderator = safeSegments && !!session.user?.isModerator;
   const allowed = moderator && isFullScopeSession(req);
-  logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed }).catch(
-    () => undefined
-  );
+  logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed });
   if (!moderator) return res.status(404).json({ error: 'Not found' });
   if (!requireFullScopeSession(req, res)) return;
 
@@ -95,7 +93,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
         key,
         status: 503,
         workerStatus: err.statusCode,
-      }).catch(() => undefined);
+      });
       res.setHeader('Retry-After', '2');
       return res.status(503).json({ error: 'Download temporarily unavailable' });
     }
@@ -109,7 +107,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       name: 'resolve-download-url-failed',
       key,
       status: 500,
-    }).catch(() => undefined);
+    });
     return res.status(500).json({ error: 'Error resolving download' });
   }
 
@@ -123,7 +121,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
       message: 'delivery worker returned no url',
       key,
       status: 502,
-    }).catch(() => undefined);
+    });
     return res.status(502).json({ error: 'Download temporarily unavailable' });
   }
 

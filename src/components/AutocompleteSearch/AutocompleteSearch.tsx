@@ -28,6 +28,7 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { isSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import {
   isImageSearchIndex,
   withSemanticImageSearch,
@@ -66,7 +67,11 @@ import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 import {
   offersImageSearch,
   resolveSearchTarget,
-  searchesImagesFeedInPlace,
+  feedSearchPathname,
+  pageSearchFor,
+  profileFeedSection,
+  searchSectionFor,
+  searchesFeedInPlace,
 } from '~/components/Search/search-target';
 import {
   buildFeedSearchUrl,
@@ -78,17 +83,41 @@ import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearch
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  SEARCH_POLICY_MESSAGE,
+  searchRefusedByLine,
+} from '~/shared/constants/search-refusal.constants';
+
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getSearchRefusal } from '~/components/Search/search-refusal';
+import {
+  browserChecksProfanity,
+  getSearchRefusal,
+  refusedByOf,
+  type SearchRefusal,
+} from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
+import { PageSearchBar } from '~/components/AutocompleteSearch/PageSearchBar';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
+import { imageIdFromDrop, mayCarryImage } from '~/components/AutocompleteSearch/image-drop';
+import {
+  searchUploadFileFromDrop,
+  setPendingSearchUpload,
+} from '~/components/Search/ImageSearchUpload/pending-search-upload';
+import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
+
+/** The dropdown's refusal items that show the policy message, as the refusal each one is. */
+const REFUSAL_ITEMS: Record<string, SearchRefusal> = {
+  profanity: 'profanity',
+  disabled: 'poi',
+  'blocked-words': 'blocked-words',
+};
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -123,7 +152,11 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
     ),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
-      onSuccess: () => autocompleteAvailability.setUnavailable(false),
+      onSuccess: () => {
+        autocompleteAvailability.setUnavailable(false);
+        autocompleteAvailability.setRefusedQuery(null);
+      },
+      onRefused: (query) => autocompleteAvailability.setRefusedQuery(query ?? null),
     }
   )
 );
@@ -141,7 +174,7 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+const IndexSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -159,7 +192,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // their pick — so the category selector would only ever "work" when it picked what the URL
   // already said.
   const pathname = usePathname();
-  const currentSection = pathname.split('/')[1] || 'models';
+  const currentSection = searchSectionFor(pathname, features) || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
   const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(
@@ -265,6 +298,24 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   );
 });
 
+IndexSearch.displayName = 'IndexSearch';
+
+/** The header bar: a plain search of the page on pages that search their own content, else the index search. */
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>((props, ref) => {
+  const features = useFeatureFlags();
+  const page = pageSearchFor(features, useRouter().pathname);
+  if (!page) return <IndexSearch {...props} ref={ref} />;
+  return (
+    <PageSearchBar
+      ref={ref}
+      placeholder={page.placeholder}
+      className={props.className}
+      variant={props.variant}
+      onClear={props.onClear}
+      onSubmit={props.onSubmit}
+    />
+  );
+});
 AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
 
 export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
@@ -288,7 +339,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
-  // const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const showSfwFace = useShowsSfwFace();
   const colorScheme = useComputedColorScheme('dark');
@@ -313,7 +364,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
   // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
-  const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
+  const filtersFeedInPlace = searchesFeedInPlace(
+    features,
+    indexNameProp,
+    router.pathname,
+    profileFeedSection(router.query, currentUser?.username)
+  );
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
   // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
@@ -352,12 +408,22 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   );
   const isIllegalSearch = refusal === 'illegal';
 
-  // Check profanity in search query (only if not illegal and domain is green)
+  // Profanity (green domain only): the server's verdict where every request reaches it, else the
+  // browser's own check with the shipped list.
+  const refusedQuery = useAutocompleteAvailabilityStore((state) => state.refusedQuery);
+  const serverChecksProfanity = !browserChecksProfanity({
+    via: 'siteSearch',
+    proxyEnabled: isSiteSearchProxyEnabled(),
+  });
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
-    enabled: domainColor === 'green' && !isIllegalSearch && !!debouncedSearch,
+    enabled:
+      domainColor === 'green' && !isIllegalSearch && !!debouncedSearch && !serverChecksProfanity,
   });
 
-  const isProfaneSearch = profanityAnalysis.hasProfanity;
+  // Keyed to the query, so a refusal never blocks a different one.
+  const isProfaneSearch = serverChecksProfanity
+    ? !!debouncedSearch && refusedQuery?.trim() === debouncedSearch.trim()
+    : profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
     if (refusal === 'illegal') {
@@ -520,9 +586,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     focus: focusInput,
   }));
 
+  const feedPathname = feedSearchPathname(features, indexName);
   // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
   const searchPageUrl = () =>
-    (features.feedSearch && buildFeedSearchUrl(indexName, search)) ||
+    (feedPathname && buildFeedSearchUrl(feedPathname, search)) ||
     buildSearchPageUrl(indexName, search);
 
   const handleSubmit = () => {
@@ -551,6 +618,28 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     setSearch('');
     feedSearch.commit('');
     onClear?.();
+  };
+
+  const dropsImages =
+    offersMoreLikeThis(features) && isImageSearchIndex(searchIndexMap[indexNameProp]);
+  const dropsFiles = dropsImages && features.imageSearchUpload && !!currentUser;
+  const handleDragOver = (event: React.DragEvent) => {
+    if (dropsImages && mayCarryImage(event.dataTransfer.types)) event.preventDefault();
+    else if (dropsFiles && event.dataTransfer.types.includes('Files')) event.preventDefault();
+  };
+  const handleDrop = (event: React.DragEvent) => {
+    if (!dropsImages) return;
+    const imageId = imageIdFromDrop(event.dataTransfer, [window.location.host]);
+    if (imageId) {
+      event.preventDefault();
+      void router.push(moreLikeThisHref(features, imageId));
+      return;
+    }
+    const file = dropsFiles ? searchUploadFileFromDrop(event.dataTransfer) : undefined;
+    if (!file) return;
+    event.preventDefault();
+    setPendingSearchUpload(file);
+    void router.push('/search/by-image');
   };
 
   // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
@@ -687,6 +776,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         }}
         onBlur={handleBlur}
         onClear={handleClear}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
         onKeyDown={getHotkeyHandler([
           ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
@@ -707,43 +798,23 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               </Stack>
             );
           }
-          if (key === 'profanity') {
+          const refusedBy = Object.hasOwn(REFUSAL_ITEMS, key)
+            ? refusedByOf(REFUSAL_ITEMS[key])
+            : undefined;
+          if (refusedBy) {
             return (
               <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search query contains inappropriate content that violates our community
-                  guidelines.
+                <Text size="sm" align="center" weight={600}>
+                  {SEARCH_POLICY_MESSAGE.title}
                 </Text>
-                {profanityAnalysis.matches.length > 0 && (
+                <Text size="xs" align="center">
+                  {SEARCH_POLICY_MESSAGE.body}
+                </Text>
+                {currentUser?.isModerator && (
                   <Text size="xs" align="center" c="dimmed">
-                    Flagged terms: {profanityAnalysis.matches.join(', ')}
+                    {searchRefusedByLine(refusedBy)}
                   </Text>
                 )}
-                <Text size="xs" align="center">
-                  Please refine your search terms to find appropriate content.
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'disabled') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search includes terms tied to real people. Content depicting real people is
-                  filtered from search results.
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'blocked-words') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search query contains blocked words and has been filtered.
-                </Text>
-                <Text size="xs" align="center">
-                  Please try a different search term.
-                </Text>
               </Stack>
             );
           }

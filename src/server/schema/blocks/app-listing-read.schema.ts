@@ -84,6 +84,12 @@ export const listAppListingsSchema = z.object({
    * is returned exactly when this viewer could find it in the store anyway.
    */
   userId: z.number().int().positive().optional(),
+  /**
+   * The store's text search. Read only with the `app-index-search` flag on, where the app index
+   * answers it (`app-index-search.service.ts`); everywhere else it is ignored and the client
+   * filters the loaded grid itself. A page the index answered carries `search: 'index'`.
+   */
+  query: z.string().trim().max(200).optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
 
@@ -451,6 +457,13 @@ export type ListingDetailKindData =
       connectClientId: string | null;
     };
 
+/**
+ * The public facts of the GitHub Actions run that submitted a listing's serving version:
+ * `owner/repo`, the tag it ran for and that tag's 40-hex commit. Public repositories only.
+ * See `ListingDetail.actionsRunSource`.
+ */
+export type ListingActionsRunSource = { repository: string; tag: string; sha: string };
+
 /** Full public detail for one approved listing (card fields + gallery + body). */
 export type ListingDetail = {
   id: string;
@@ -559,6 +572,21 @@ export type ListingDetail = {
    * outstanding (it is read by raw SQL, never selected on the row).
    */
   issueTrackerUrl: string | null;
+  /**
+   * The GitHub Actions run that submitted the version this on-site app is serving, or null.
+   * Set only when that run's OIDC token was checked at submit AND its repository was public at
+   * the time; a private repository's name never reaches this DTO. Rendered as the Details row
+   * "Submitted by: GitHub Actions run of <owner/repo> @ <tag> (<sha7>)".
+   *
+   * 🔴 A FACT ABOUT THE SUBMITTING RUN, NOT ABOUT THE BUNDLE. The developer's workflow builds and
+   * uploads the bundle itself, so this does not show the app was built from that commit, and it
+   * is not a security review. No copy built on it may say "verified", "secure" or "built by".
+   * See `github-actions-oidc.service.ts`.
+   *
+   * Optional on the type because the moderator preview builders do not set it; the public detail
+   * read always does (null when there is none).
+   */
+  actionsRunSource?: ListingActionsRunSource | null;
   /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
    * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:

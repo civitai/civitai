@@ -1,27 +1,19 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { readFileSync } from 'fs';
-import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   trainingDataListing,
+  trainingDataOnOpenReportSql,
   trainingDataShareRestricted,
   versionHasStudioDataset,
 } from '~/server/services/training-data-restricted.service';
 
-/** A training dataset is shared only while neither its owner nor its content is restricted. Runs
- *  the real restriction migrations on PGlite; each case runs in a transaction that is rolled back. */
+/** A training dataset is shared only while neither its owner nor its content is restricted. Runs on
+ *  PGlite; each case runs in a transaction that is rolled back. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const MIGRATIONS = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations'
-);
-const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migration.sql`, 'utf8');
-
 const PLAIN = 1; // no restriction of any kind
-const MARKER = 2; // an active restriction marker
 const SHARE_ONLY = 3; // restricted for sharing only
 
 // One model + version per owner, ids offset from the owner's.
@@ -50,12 +42,13 @@ const SCHEMA = `
     "tosViolation" boolean NOT NULL DEFAULT false,
     meta jsonb
   );
-  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, meta jsonb);
   CREATE TABLE "ModelFile" (
     id int PRIMARY KEY,
     "modelVersionId" int NOT NULL,
     type text NOT NULL,
-    metadata jsonb
+    metadata jsonb,
+    "virusScanResult" text NOT NULL DEFAULT 'Pending'
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY,
@@ -89,7 +82,7 @@ const SCHEMA = `
   );
 `;
 
-const OWNERS = [PLAIN, MARKER, SHARE_ONLY];
+const OWNERS = [PLAIN, SHARE_ONLY];
 const FIXTURE = `
   INSERT INTO "Model" (id, "userId") SELECT 100 + u, u FROM unnest(ARRAY[${OWNERS.join(',')}]) u;
   INSERT INTO "ModelVersion" (id, "modelId") SELECT 100 + u, 100 + u FROM unnest(ARRAY[${OWNERS.join(
@@ -101,7 +94,6 @@ const FIXTURE = `
   INSERT INTO "Image" (id, "userId", "postId") SELECT 300 + u, u, 200 + u FROM unnest(ARRAY[${OWNERS.join(
     ','
   )}]) u;
-  INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKER}, 'manual', 'test');
   INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
     VALUES (${SHARE_ONLY}, now() - interval '2 years', now() - interval '1 year');
 `;
@@ -126,9 +118,6 @@ const restricted = (uid: number) => trainingDataShareRestricted(client, versionO
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
-  await db.exec(migration('20261019220000_evidence_hold'));
-  await db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
-  await db.exec(migration('20261227150000_evidence_hold_owner_held'));
   await db.exec(FIXTURE);
 });
 beforeEach(async () => {
@@ -145,10 +134,6 @@ describe('trainingDataShareRestricted', () => {
     expect(await restricted(PLAIN)).toBe(false);
   });
 
-  it('an owner the content restriction keeps cannot share', async () => {
-    expect(await restricted(MARKER)).toBe(true);
-  });
-
   it('an owner restricted for sharing only cannot share', async () => {
     expect(await restricted(SHARE_ONLY)).toBe(true);
   });
@@ -163,6 +148,30 @@ describe('trainingDataShareRestricted', () => {
     await db.exec(
       `INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": ${PLAIN}}')`
     );
+    expect(await restricted(PLAIN)).toBe(true);
+  });
+
+  // An image of the owner's on no post of this version.
+  it.each([
+    ['under CSAM review', `"needsReview" = 'csam'`],
+    ['blocked for CSAM', `"blockedFor" = 'CSAM'`],
+  ])('an owner with an image elsewhere %s cannot share', async (_, set) => {
+    await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (391, ${PLAIN})`);
+    expect(await restricted(PLAIN)).toBe(false);
+    await db.exec(`UPDATE "Image" SET ${set} WHERE id = 391`);
+    expect(await restricted(PLAIN)).toBe(true);
+  });
+
+  it('an owner with an image listed on a report naming someone else cannot share', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (391, ${PLAIN});
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${SHARE_ONLY}, '[{"id": 391}]');
+    `);
+    expect(await restricted(PLAIN)).toBe(true);
+  });
+
+  it('a model handed to the placeholder owner cannot share', async () => {
+    await db.exec(`UPDATE "Model" SET "userId" = -1 WHERE id = 101`);
     expect(await restricted(PLAIN)).toBe(true);
   });
 
@@ -198,11 +207,11 @@ describe('trainingDataListing', () => {
     visibility: 'Public',
   });
   const modelOf = (uid: number) => ({ id: 500 + uid, type: 'Model', visibility: 'Public' });
-  const rate = (uid: number, metadata: object) =>
+  const rate = (uid: number, metadata: object, scan = 'Success') =>
     db.exec(
       `INSERT INTO "ModelFile" VALUES (${400 + uid}, ${versionOf(
         uid
-      )}, 'Training Data', '${JSON.stringify(metadata)}')`
+      )}, 'Training Data', '${JSON.stringify(metadata)}', '${scan}')`
     );
   const listedFor = async (
     uid: number,
@@ -231,16 +240,16 @@ describe('trainingDataListing', () => {
 
   it('checks each version on its own', async () => {
     await rate(PLAIN, { nsfwLevel: 1 });
-    await rate(MARKER, { nsfwLevel: 1 });
+    await rate(SHARE_ONLY, { nsfwLevel: 1 });
     const listed = await trainingDataListing(
       client,
       [
         { id: versionOf(PLAIN), files: [datasetOf(PLAIN)] },
-        { id: versionOf(MARKER), files: [datasetOf(MARKER)] },
+        { id: versionOf(SHARE_ONLY), files: [datasetOf(SHARE_ONLY)] },
       ],
       { redCapable: false }
     );
-    expect([listed(datasetOf(PLAIN)), listed(datasetOf(MARKER))]).toEqual([true, false]);
+    expect([listed(datasetOf(PLAIN)), listed(datasetOf(SHARE_ONLY))]).toEqual([true, false]);
   });
 
   it.each([
@@ -258,11 +267,46 @@ describe('trainingDataListing', () => {
     expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([true, true]);
   });
 
+  // The download refuses others until the scan is a Success, so a listed link would 404.
+  it.each(['Pending', 'Error', 'Danger'])(
+    'a %s scan unlists the dataset to others, not to the owner and moderators',
+    async (scan) => {
+      await rate(PLAIN, { nsfwLevel: 1 }, scan);
+      expect(await listedFor(PLAIN, { redCapable: true })).toEqual([false, true]);
+      expect(await listedFor(PLAIN, { redCapable: true, viewerManages: true })).toEqual([
+        true,
+        true,
+      ]);
+    }
+  );
+
   it('unlists every dataset when the check cannot be read', async () => {
     const broken = {
       $queryRaw: () => Promise.reject(new Error('down')),
     } as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>;
     expect(await listedFor(PLAIN, { redCapable: true, c: broken })).toEqual([false, true]);
+  });
+});
+
+describe('trainingDataOnOpenReportSql', () => {
+  const onOpenReport = async (versionId: number) => {
+    const sql = Prisma.sql`SELECT ${trainingDataOnOpenReportSql(
+      Prisma.sql`${versionId}::int`
+    )} AS on`;
+    return (await db.query<{ on: boolean }>(sql.text, sql.values)).rows[0].on;
+  };
+
+  it.each([
+    ['unsent', 'NULL, NULL', true],
+    ['sent, not archived', 'now(), NULL', true],
+    ['sent and archived', 'now(), now()', false],
+  ])('a version on a %s report: %s', async (_, state, expected) => {
+    await db.exec(`
+      INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt")
+        VALUES (${PLAIN}, '{"modelVersionIds": [${versionOf(PLAIN)}]}', ${state})
+    `);
+    expect(await onOpenReport(versionOf(PLAIN))).toBe(expected);
+    expect(await onOpenReport(versionOf(SHARE_ONLY))).toBe(false);
   });
 });
 
@@ -284,6 +328,12 @@ describe('versionHasStudioDataset', () => {
   it('stays true for a Studio model after its dataset row is deleted', async () => {
     await db.exec(
       `UPDATE "Model" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = 100 + ${PLAIN}`
+    );
+    expect(await studio()).toBe(true);
+  });
+  it('is true for a run added to a model that never came from the Studio', async () => {
+    await db.exec(
+      `UPDATE "ModelVersion" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = ${VERSION}`
     );
     expect(await studio()).toBe(true);
   });

@@ -1,15 +1,17 @@
 import type { NextApiRequest } from 'next';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
+import { bearerScopeMode } from '~/server/auth/bearer-scope-tighten';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
 import {
   isAllowlistedMinter,
   secretEpoch,
 } from '~/server/services/download-link/download-link.store';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
-import { Flags } from '~/shared/utils/flags';
 
 const BEARER_RE = /^Bearer\s+(\S+)\s*$/i;
 
@@ -34,7 +36,7 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
     const credential: DownloadLinkCredential = { kind: 'client', id: String(session.subject.id) };
     if (
       session.apiKeyType !== ApiKeyType.Access ||
-      !Flags.hasFlag(session.tokenScope, TokenScope.DownloadLink) ||
+      !hasScope(session.tokenScope, TokenScope.DownloadLink) ||
       !isAllowlistedMinter(credential)
     )
       return { ok: false, status: 403 };
@@ -63,5 +65,22 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
 
   const credential: DownloadLinkCredential = { kind: 'apikey', id: String(session.apiKeyId) };
   if (!isAllowlistedMinter(credential)) return { ok: false, status: 403 };
+  if (
+    !MODEL_VIEW_SCOPES.some((bit) => hasScope(session.tokenScope, bit)) &&
+    (await bearerScopeMode('download-link-mint', session, 'ModelsRead|AIServicesRead')) ===
+      'enforce'
+  )
+    return { ok: false, status: 403 };
   return { ok: true, credential };
+}
+
+/**
+ * The personal ApiKey a request authenticated with through its `Authorization` header, as a link
+ * credential; null for anything else. Reads `req.context`, so it runs after the session resolves.
+ */
+export function headerApiKeyCredential(req: NextApiRequest): DownloadLinkCredential | null {
+  if (!req.headers.authorization || requestCarriesQueryToken(req)) return null;
+  const { apiKeyId, subject } = getRequestCredential(req);
+  if (subject?.type !== 'apiKey' || apiKeyId == null) return null;
+  return { kind: 'apikey', id: String(apiKeyId) };
 }

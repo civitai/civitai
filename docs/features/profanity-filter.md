@@ -1,7 +1,9 @@
 # Profanity Filter
 
 Profanity detection system built on Obscenity, with the blocked-word list from
-`@civitai/mod-utils/profanity/lists` (`blocked-words.json`).
+`@civitai/mod-utils/profanity/lists` (`blocked-words.json`), or, with the
+`profanity-managed-list` flag on, the moderator-managed `ProfanityWord` list for search and
+comment masking in the browser.
 
 ## Usage
 
@@ -53,7 +55,17 @@ Automatically integrated in:
 - **Location**: `packages/civitai-mod-utils/src/profanity/lists/blocked-words.json`, imported as `@civitai/mod-utils/profanity/lists`
 - **Content**: Comprehensive list of inappropriate terms, slurs, and NSFW content
 - **Format**: JSON array of strings, supports [obscenity patterns](https://github.com/jo3-l/obscenity/blob/main/docs/guide/patterns.md) like `|word` for word boundaries
-- **Processing**: Words are cleaned (regex quantifiers stripped, pipe boundaries preserved), lowercased, deduplicated, sorted, and cached.
+- **Processing**: Words are cleaned (regex quantifiers stripped, pipe boundaries preserved), lowercased, deduplicated, sorted, and cached. The cleaning and validity rules live in `@civitai/mod-utils/profanity/word-rules`, shared with the moderator app's entry check.
+
+### Managed blocked list
+
+- **Where moderators edit it**: the `ProfanityWord` tab of the moderator app's Blocklists page (a `Blocklist` row, seeded by hand from `blocked-words.json`; the tab refuses edits until the row exists).
+- **Who reads it**: the server only, through `getServerProfanityFilter`, while `profanity-managed-list` is on. The browser never receives it:
+  - comment, review and chat responses carry `maskedContent` / `maskedDetails` for other viewers: a string when masking changed the text, `null` when it is clean, absent when it was not computed (the browser then masks with the shipped list). The author's own write response carries none;
+  - `/api/search` and the model, article, bounty, comic and image semantic search procedures refuse a profane query themselves (`search_refused`, verdict only, `refuse-profane-search.ts`);
+  - the trainer's trigger-word warning comes from `training.auditTriggerWord`, which answers with a severity only;
+  - those searches check every query on civitai.com whatever the flag says (flag off or Flipt unreachable: the browser's own list, the shipped words and the moderators' benign words; a failed check: the shipped list), so the browser leaves those searches to the server (`browserChecksProfanity`). `system.getBenignPhrases` carries no profanity list;
+- **When it is not used**: flag off (the browser checks and masks with the shipped list, as before), no row, a row below the floor, a failed read, or a list the filter cannot build all mean the shipped list.
 
 ### Whitelist Words List
 

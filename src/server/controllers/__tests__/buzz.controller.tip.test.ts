@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Ledger-backed idempotency for the App Blocks tip (audit 🟡-1).
@@ -47,7 +47,6 @@ const { mockGetEntityCollaborators } = vi.hoisted(() => ({
 vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: (...a: unknown[]) => mockGetEntityCollaborators(...(a as [])),
 }));
-vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
 
 // Hoisted so the 🔴-2 tests can assert these NON-idempotent side effects do not fire
 // for a transaction the ledger deduped.
@@ -339,6 +338,51 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
     });
     expect(mockCreateMany).not.toHaveBeenCalled();
   });
+
+  // Policy: docs/features/memorialized-profiles.md.
+  describe('a memorialized recipient refuses the whole tip', () => {
+    const memorialize = (...ids: number[]) =>
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        strings.join('').includes('flags &')
+          ? (values.flat() as number[]).filter((id) => ids.includes(id)).map((id) => ({ id }))
+          : []) as never);
+    afterEach(() => dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never));
+    const post = { entityType: 'Post' as const, entityId: 7 };
+    const refusal = 'One or more target users are memorialized and cannot receive tips.';
+
+    it('the tipped user', async () => {
+      installLedger();
+      memorialize(5);
+      await expect(
+        createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() })
+      ).rejects.toThrow(refusal);
+      expect(mockCreateMany).not.toHaveBeenCalled();
+    });
+
+    it('a collaborator, when the tip names no account', async () => {
+      installLedger();
+      memorialize(6);
+      mockGetEntityCollaborators.mockResolvedValue([{ user: { id: 6 } }]);
+      const { toAccountId: _none, ...input } = { ...baseInput, ...post };
+      await expect(createBuzzTipTransactionHandler({ input, ctx: ctxUser() })).rejects.toThrow(
+        refusal
+      );
+      expect(mockCreateMany).not.toHaveBeenCalled();
+    });
+
+    it('a collaborator beside a living recipient: no one is paid', async () => {
+      installLedger();
+      memorialize(6);
+      mockGetEntityCollaborators.mockResolvedValue([{ user: { id: 6 } }]);
+      await expect(
+        createBuzzTipTransactionHandler({ input: { ...baseInput, ...post }, ctx: ctxUser() })
+      ).rejects.toThrow(refusal);
+      expect(mockCreateMany).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('createBuzzTipTransactionHandler — a model that is not commercially available', () => {
@@ -395,6 +439,37 @@ describe('createBuzzTipTransactionHandler — a model that is not commercially a
     const ledger = installLedger();
     await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
     expect(mockVersionFindMany).not.toHaveBeenCalled();
+    expect(ledger.debits()).toBe(1);
+  });
+});
+
+describe('createBuzzTipTransactionHandler — POI images', () => {
+  const mockImageFindUnique = dbMock.dbWrite.image.findUnique;
+  beforeEach(() => mockImageFindUnique.mockReset());
+
+  const tipImage = () =>
+    createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Image', entityId: 900 },
+      ctx: ctxUser(),
+    });
+
+  it('refuses a tip on a POI image and moves no Buzz', async () => {
+    const ledger = installLedger();
+    mockImageFindUnique.mockResolvedValue({ postId: 10, poi: true } as never);
+    await expect(tipImage()).rejects.toThrow('This image cannot receive tips');
+    expect(ledger.debits()).toBe(0);
+  });
+
+  it('still tips an image that is not POI', async () => {
+    const ledger = installLedger();
+    mockImageFindUnique.mockResolvedValue({ postId: 10, poi: false } as never);
+    await tipImage();
+    // Read on the primary, like the other guards here: a just-flagged image is not tippable.
+    expect(mockImageFindUnique).toHaveBeenCalledWith({
+      where: { id: 900 },
+      select: { postId: true, poi: true },
+    });
+    expect(mockGetEntityCollaborators).toHaveBeenCalledWith({ entityId: 10, entityType: 'Post' });
     expect(ledger.debits()).toBe(1);
   });
 });

@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { lockReviewRulingMessage } from '@civitai/shared/lock-review';
 
@@ -103,6 +103,8 @@ const itemsLeadIn = (positive: boolean) =>
   positive ? 'This applies to the following:' : 'This decision applies to the following:';
 
 export const moderationActionEmail = createEmail({
+  template: 'moderationAction',
+  mailClass: 'transactional',
   header: ({ to, kind }: ModerationActionEmailData) => ({
     subject: moderationActionConfig[kind].subject,
     to,
@@ -117,7 +119,11 @@ export const moderationActionEmail = createEmail({
     // Positive outcomes (reinstated / overturned / approved) are good news and
     // never carry a reason — suppress the block even if a caller passes one.
     const reasonBlock =
-      !positive && reason ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>` : '';
+      !positive && reason
+        ? renderEmailCallout(`<strong>Reason:</strong><br/>${escapeHtml(reason)}`, {
+            accent: 'red',
+          })
+        : '';
     // Negative outcomes link to the Terms of Service for a non-explicit policy
     // reference (positive outcomes are good news and get no policy link).
     const tosBlock = !positive
@@ -149,6 +155,9 @@ export const moderationActionEmail = createEmail({
     `;
 
     return simpleEmailWithTemplate({
+      icon: positive ? '✅' : '🛡️',
+      accent: positive ? 'green' : 'red',
+      eyebrow: 'Moderation',
       header: heading,
       body,
       ...(positive
@@ -158,7 +167,7 @@ export const moderationActionEmail = createEmail({
   },
 
   /** Plain-text fallback for clients that don't render HTML. */
-  text({ username, kind, reason, items, intro: introOverride }: ModerationActionEmailData) {
+  text({ username, kind, reason, ctaUrl, items, intro: introOverride }: ModerationActionEmailData) {
     const { heading, positive } = moderationActionConfig[kind];
     const intro = introOverride ?? moderationActionConfig[kind].intro;
 
@@ -173,7 +182,8 @@ export const moderationActionEmail = createEmail({
         '',
         `For more information, review our Terms of Service: ${getBaseUrl()}/content/tos`
       );
-    if (!positive) lines.push('', SUPPORT_LINE);
+    // The HTML's Contact Support button, so a plain-text reader gets its link too.
+    if (!positive) lines.push('', SUPPORT_LINE, `Contact Support: ${ctaUrl ?? SUPPORT_URL}`);
     lines.push('', `— ${SIGNATURE}`);
 
     return lines.join('\n') + '\n';

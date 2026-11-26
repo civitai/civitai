@@ -35,6 +35,15 @@ Required environment: database connection strings, authentication providers, S3/
 3. `make start` if the services are down.
 4. Start the dev server with the `/dev-server` skill. The daemon keeps whichever node first ran a CLI verb (`process.execPath`) until shutdown, so start it under the node from `.nvmrc`. On NixOS, `nix run .#dev-server` does this, except while the locked nixpkgs lags `.nvmrc`'s patch (see the note in `flake.nix`).
 
+## feed-go (the Go feed service)
+
+`pnpm dev` also runs feed-go (`apps/feed-go`) next to `next dev`, with no setup: it fetches the
+checksum-verified release binary pinned in `apps/feed-go/package.json` (or builds it when Go is
+installed), feeds it the database, Redis and auth-hub settings from your own `.env`, and points
+`/api/trpc-go` at it. If it cannot start or stops, `/api/trpc-go` is served by Next as before; lines
+prefixed `[feed-go]` say why. `FEED_GO_LOCAL=off` turns it off, `FEED_GO_LOCAL=source` always builds
+your checkout's Go code. Details and troubleshooting: `apps/feed-go/README.md` "Run locally".
+
 ## Email
 
 Local dev never uses real mail credentials. Every email goes to the Mailpit catcher in `docker-compose.base.yml` (`docker compose -f docker-compose.base.yml up -d mailpit`): SMTP on `localhost:1025`, inbox UI and API at http://localhost:1080. The dev-server daemon forces the catcher's `EMAIL_*` values into every app it starts, whatever the `.env` chain says, and `wt new` and `wt env --refresh` write them into each `.env` they copy. Commented-out mail lines left in an older local `.env` are dead values; delete them. With Mailpit down a send fails with a connection error; nothing falls back to a real server.
@@ -53,7 +62,7 @@ Each presents as something other than its cause. None is OS-specific.
 - **Two DB columns gate a usable local account.** `isModerator`, and `onboarding`, which must equal `OnboardingComplete` (`src/server/common/enums.ts`); otherwise every gated route renders the "Welcome!" onboarding wizard (often with a hydration error), which looks like the route being broken. Sessions are cached: after changing either column, clear the Redis caches and log in again.
 - **Stripe keys in a local `.env` must be sandbox keys** (`sk_test_`/`pk_test_`); setup and the
   catalogue sync are in `docs/dev/stripe-sandbox.md`.
-- **Feature flags have two independent paths.** Client/SSR gates read the feature-flag service, which honours `FEATURE_FLAG_<KEY>=public` (see `getEnvOverrides` in `src/server/services/feature-flags.service.ts`). Several server-side gates call Flipt directly and fail closed, so the env override doesn't reach them: you get a rendered page with an empty result set that looks like a broken query. Take the flag's real key from `fliptKey` in that service, never from the camelCase name; an unknown key evaluates false and looks like a legitimately-off feature.
+- **Feature flags have two independent paths.** Client/SSR gates read the feature-flag service, which honours `FEATURE_FLAG_<KEY>=public` (see `getEnvOverrides` in `src/server/services/feature-flags.service.ts`). Several server-side gates call Flipt directly and fail closed, so the env override doesn't reach them: you get a rendered page with an empty result set that looks like a broken query. Take the flag's real key from `fliptKey` in that service, never from the camelCase name; an unknown key evaluates false and looks like a legitimately-off feature. For new server-side gates the single source is `FLIPT_FEATURE_FLAGS` (`src/server/flipt/client.ts`), read with `isFlipt` / `isFliptSync`; see the Use X for Y table in `.claude/rules/server.md`.
 - **A flag declared `availability: []` that also carries a `fliptKey` can't be switched on with `FEATURE_FLAG_<KEY>`.** Flipt alone decides. Use `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on`: comma-separated `key=value` pairs keyed by `fliptKey`, `on`/`off` for booleans, ignored when `NODE_ENV=production`. It reaches the feature-flag service and every `isFlipt`/`isFliptSync` gate, but not `getFliptBoolean` gates, which ignore local overrides by design.
 - **A flag with `availability: []` and no `fliptKey` is the opposite case.** `coinbasePayments` and `nowpaymentPayments` (legacy array form, e.g. `coinbasePayments: []`) are switched only by `FEATURE_FLAG_<KEY>`; `FLIPT_LOCAL_OVERRIDES` can't reach them because there is no key to name. Check for a `fliptKey` before concluding a dark flag is unswitchable.
 - **App Blocks need a signing keypair or they 503.** With `BLOCK_TOKEN_PRIVATE_KEY` / `BLOCK_TOKEN_PUBLIC_KEY` unset, `POST /api/v1/block-tokens` returns `Block tokens not configured` and the UI says "Couldn't authenticate this app". The `kid` is derived from the key, so no third variable is needed. A block's iframe loads from the origin in its manifest, which is usually not served locally, so the host sits on its boot skeleton indefinitely.

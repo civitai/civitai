@@ -1,84 +1,94 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-// The cores are covered in train-core.test.ts; here they only hand back the check the element gave
-// them, so the element's own reading of the host hook is what is under test.
-const core = vi.hoisted(() => ({
-  submitTrainingBatch: vi.fn(),
-  continueTraining: vi.fn(),
-}));
-vi.mock('$lib/train-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/train-core')>()),
-  submitTrainingBatch: core.submitTrainingBatch,
-  continueTraining: core.continueTraining,
-}));
 vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: () => ({ interceptors: { response: { use: () => undefined } } }),
 }));
 
 import { elementBackend, type StudioElementHost } from './backend';
 import { AutoLabelRefusedError } from '$lib/autolabel-errors';
-import { TrainingTextRefusedError, type TrainingTextCheck } from '$lib/training-text';
 
-function host(checkTrainingText?: StudioElementHost['checkTrainingText']): StudioElementHost {
+function host(
+  checkTrainingText?: StudioElementHost['checkTrainingText'],
+  studioServer?: StudioElementHost['studioServer']
+): StudioElementHost {
   return {
     getOrchestratorToken: async () => 'token',
     checkTrainingText,
+    studioServer,
     config: { orchestratorEndpoint: 'https://orchestrator.example' },
     hrefFor: () => '/',
     navigate: async () => undefined,
   };
 }
 
-/** The check each core was handed, as the element built it. */
-const checkGiven = (fn: typeof core.submitTrainingBatch): TrainingTextCheck =>
-  fn.mock.calls[0][2].checkText;
+const edit = {
+  prompt: 'make it red',
+  imageUrl: 'https://blob.example/a.png',
+  currencies: ['green'],
+};
+const suggest = {
+  beforeUrl: 'https://blob.example/a.png',
+  afterUrl: 'https://blob.example/b.png',
+  currencies: ['green'],
+};
 
-describe('elementBackend trigger word check', () => {
-  beforeEach(() => {
-    core.submitTrainingBatch.mockReset().mockResolvedValue({ workflowIds: [] });
-    core.continueTraining.mockReset().mockResolvedValue('wf');
+// The paid calls never use the browser's orchestrator token: no token minted means nothing was sent
+// to the orchestrator from here.
+describe('elementBackend paid helpers go through the Studio server', () => {
+  const paid = [
+    {
+      name: 'editImageSubmit',
+      run: (b: ReturnType<typeof elementBackend>) => b.editImageSubmit(edit),
+      reply: { workflowId: 'wf-edit' },
+      path: '/api/edit-image',
+      body: edit,
+      result: { workflowId: 'wf-edit' },
+    },
+    {
+      name: 'suggestSubmit',
+      run: (b: ReturnType<typeof elementBackend>) => b.suggestSubmit(suggest),
+      reply: { workflowId: 'wf-suggest' },
+      path: '/api/suggest-instruction',
+      body: suggest,
+      result: { workflowId: 'wf-suggest' },
+    },
+    {
+      name: 'epochArchive',
+      run: (b: ReturnType<typeof elementBackend>) => b.epochArchive('wf 1', 'samples'),
+      reply: [{ url: 'https://blob.example/a.zip', entryCount: 2 }],
+      path: '/api/epoch-archive?id=wf+1&kind=samples',
+      body: {},
+      result: [{ url: 'https://blob.example/a.zip', entryCount: 2 }],
+    },
+  ];
+
+  it.each(paid)('$name posts to $path and mints no orchestrator token', async (c) => {
+    const studioServer = vi.fn(async () => Response.json(c.reply));
+    const getOrchestratorToken = vi.fn(async () => 'token');
+    const backend = elementBackend({ ...host(undefined, studioServer), getOrchestratorToken });
+    await expect(c.run(backend)).resolves.toEqual(c.result);
+    expect(studioServer).toHaveBeenCalledTimes(1);
+    const [path, init] = studioServer.mock.calls[0] as unknown as [string, RequestInit];
+    expect(path).toBe(c.path);
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('content-type')).toBe('application/json');
+    expect(JSON.parse(String(init.body))).toEqual(c.body);
+    expect(getOrchestratorToken).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      'submitTraining',
-      (b: ReturnType<typeof elementBackend>) => b.submitTraining([]),
-      core.submitTrainingBatch,
-    ],
-    [
-      'continueRun',
-      (b: ReturnType<typeof elementBackend>) => b.continueRun('wf', 1, 1, [], false),
-      core.continueTraining,
-    ],
-  ] as const)(
-    '%s hands the core a check that refuses what the host refuses',
-    async (_l, run, fn) => {
-      const hostCheck = vi.fn(async () => ({ ok: false as const, error: 'blocked: x' }));
-      await run(elementBackend(host(hostCheck)));
-      const check = checkGiven(fn);
-      await expect(check({ triggerWord: 'bad' })).rejects.toThrow(
-        new TrainingTextRefusedError('blocked: x')
-      );
-      expect(hostCheck).toHaveBeenCalledWith({ triggerWord: 'bad' });
-    }
-  );
+  it.each(paid)('$name refuses on a host without studioServer, sending nothing', async (c) => {
+    const getOrchestratorToken = vi.fn(async () => 'token');
+    const backend = elementBackend({ ...host(async () => ({ ok: true })), getOrchestratorToken });
+    await expect(c.run(backend)).rejects.toThrow(/unavailable on this page/);
+    expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
 
-  it('passes what the host passes', async () => {
-    await elementBackend(host(async () => ({ ok: true }))).submitTraining([]);
+  it("shows the server's reason for a refused edit prompt", async () => {
+    const studioServer = async () =>
+      Response.json({ message: 'That prompt is not allowed.' }, { status: 400 });
     await expect(
-      checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })
-    ).resolves.toBeUndefined();
-  });
-
-  it('refuses every run when the host page offers no check', async () => {
-    await elementBackend(host(undefined)).submitTraining([]);
-    await expect(checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })).rejects.toThrow();
-  });
-
-  it('lets a check that could not run fail rather than pass', async () => {
-    const failure = new Error('check failed');
-    await elementBackend(host(async () => Promise.reject(failure))).submitTraining([]);
-    await expect(checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })).rejects.toBe(failure);
+      elementBackend(host(undefined, studioServer)).editImageSubmit(edit)
+    ).rejects.toThrow('That prompt is not allowed.');
   });
 });
 
@@ -110,8 +120,8 @@ describe('elementBackend auto-label payer', () => {
 describe('elementBackend modelLive', () => {
   it("answers with the host's check", async () => {
     const modelLive = vi.fn(async () => false);
-    await expect(elementBackend({ ...host(), modelLive }).modelLive(77)).resolves.toBe(false);
-    expect(modelLive).toHaveBeenCalledWith(77);
+    await expect(elementBackend({ ...host(), modelLive }).modelLive(77, 770)).resolves.toBe(false);
+    expect(modelLive).toHaveBeenCalledWith(77, 770);
   });
 
   it('keeps the link on a host without the hook', async () => {
@@ -119,16 +129,47 @@ describe('elementBackend modelLive', () => {
   });
 });
 
-describe('elementBackend mature confirm', () => {
-  beforeEach(() => {
-    core.continueTraining.mockReset().mockResolvedValue('wf');
+describe('elementBackend keep training', () => {
+  it('sends the Studio server the continuation', async () => {
+    const studioServer = vi.fn(async () => Response.json({ workflowId: 'wf-next' }));
+    await expect(
+      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['blue'], 0)
+    ).resolves.toBe('wf-next');
+    const [path, init] = studioServer.mock.calls[0] as unknown as [string, RequestInit];
+    expect(path).toBe('/api/continue-training');
+    expect(JSON.parse(String(init.body))).toEqual({
+      workflowId: 'wf',
+      fromEpoch: 1,
+      addEpochs: 2,
+      currencies: ['blue'],
+      matureCount: 0,
+    });
   });
 
-  it.each([true, false])('hands the core the ack the panel gave (%s)', async (ack) => {
-    await elementBackend(host(async () => ({ ok: true }))).continueRun('wf', 1, 1, ['blue'], ack);
-    expect(core.continueTraining.mock.calls[0][1]).toMatchObject({
-      workflowId: 'wf',
-      matureAck: ack,
-    });
+  it("turns the server's reprice refusal into the mature count", async () => {
+    const studioServer = async () =>
+      Response.json({ message: 'm', matureCount: 3 }, { status: 409 });
+    await expect(
+      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['green'], 0)
+    ).rejects.toMatchObject({ matureCount: 3 });
+  });
+
+  it("shows the host's reason for a refusal it made before forwarding", async () => {
+    const studioServer = async () =>
+      Response.json({ error: 'Verify your email address to do this' }, { status: 403 });
+    const backend = elementBackend(host(undefined, studioServer));
+    await expect(backend.continueRun('wf', 1, 2, ['green'], 0)).rejects.toThrow(
+      'Verify your email address to do this'
+    );
+    await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(
+      'Verify your email address to do this'
+    );
+  });
+
+  it('prices and starts nothing on a host page without the Studio server', async () => {
+    const backend = elementBackend(host(async () => ({ ok: true })));
+    await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(/unavailable/);
+    await expect(backend.continueRun('wf', 1, 2, ['green'], 0)).rejects.toThrow(/unavailable/);
+    expect(backend.datasetRating).toBeUndefined();
   });
 });

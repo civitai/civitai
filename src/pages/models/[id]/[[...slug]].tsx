@@ -12,7 +12,6 @@ import {
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconArchive,
   IconArrowsLeftRight,
@@ -21,7 +20,6 @@ import {
   IconBolt,
   IconBookmark,
   IconBrush,
-  IconCircleMinus,
   IconClock,
   IconDotsVertical,
   IconDownload,
@@ -64,21 +62,10 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { RequestLockReviewMenuItem } from '~/components/Model/LockReview/RequestLockReview';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
-import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { ModelPromotionModal } from '~/components/Promotion/ModelPromotionModal';
 
-const MigrateModelToCollection = dynamic(
-  () => import('~/components/Model/Actions/MigrateModelToCollection'),
-  { ssr: false }
-);
-const MergeVersions = dynamic(() => import('~/components/Model/Actions/MergeVersions'), {
-  ssr: false,
-});
-const TransferModelOwnership = dynamic(
-  () => import('~/components/Model/Actions/TransferModelOwnership'),
-  { ssr: false }
-);
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -151,6 +138,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -163,6 +151,7 @@ import { getDefaultModelVersion } from '~/server/services/model-version.service'
 import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { resolveSsrPrefetchCohort } from '~/server/utils/ssr-skip-prefetch';
 import { isMobileUserAgent } from '~/shared/utils/mobile-user-agent';
 import {
   forcedMinorModelBrowsingLevel,
@@ -206,11 +195,14 @@ import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenuItem';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
 
 const NOT_FOUND = Symbol('model-not-found');
+/** This page's pattern (`ctx.pathname` in `_document`), the route label of its SSR metrics. */
+const MODEL_PAGE_ROUTE = '/models/[id]/[[...slug]]';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -302,6 +294,13 @@ export const getServerSideProps = createServerSideProps({
 
     let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
     let suppressAds = false;
+    // `deferredSsr` (the `ssrSignedInSkipPrefetch` trial): the content renders as a loading shell
+    // on the server and on the hydrating render, and fills in once the client has mounted.
+    const pageResult = (deferredSsr: boolean) => ({
+      props: { id, initialMobile: isMobileUserAgent(ctx.req.headers['user-agent']), deferredSsr },
+      gating,
+      suppressAds,
+    });
 
     if (ssg) {
       // Fetch the model first so we can short-circuit on slug mismatch before
@@ -343,6 +342,20 @@ export const getServerSideProps = createServerSideProps({
             },
           };
         }
+      }
+
+      // Every 404, access and redirect decision above is made in both arms of the trial. `skip`
+      // keeps `model.getById` — those decisions, the ad gating and the page's `<head>` read it,
+      // and its dehydrated copy saves the client a refetch — and `hiddenPreferences.getHidden`,
+      // whose blocked-users list the page reads to render NotFound for a creator the viewer
+      // blocked, so that page is decided on the server in both arms rather than flashing the
+      // blocked creator's model after mount. Everything else renders as a loading shell that the
+      // client fills with its own queries after hydration.
+      if (
+        resolveSsrPrefetchCohort({ ctx, session, features, route: MODEL_PAGE_ROUTE }) === 'skip'
+      ) {
+        await ssg.hiddenPreferences.getHidden.prefetch();
+        return pageResult(true);
       }
 
       // No redirect — fire the remaining prefetches in parallel. They have no
@@ -436,17 +449,17 @@ export const getServerSideProps = createServerSideProps({
       );
     }
 
-    return {
-      props: { id, initialMobile: isMobileUserAgent(ctx.req.headers['user-agent']) },
-      gating,
-      suppressAds,
-    };
+    return pageResult(false);
   },
 });
+
+const DELETE_MODEL_DIALOG_ID = 'delete-model';
+const REPUBLISH_MODEL_DIALOG_ID = 'republish-model';
 
 export default function ModelDetailsV2({
   id,
   initialMobile,
+  deferredSsr,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
 
@@ -454,6 +467,7 @@ export default function ModelDetailsV2({
   const colorScheme = useComputedColorScheme('dark');
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
+  const deferredShell = useSsrDeferredShell(deferredSsr);
   const features = useFeatureFlags();
   const ds = !!features.modelPageDesignSystemMarkup;
   const { activeTour, running, runTour } = useTourContext();
@@ -556,7 +570,7 @@ export default function ModelDetailsV2({
         title: 'Successfully deleted the model',
         message: 'Your model has been deleted',
       });
-      closeAllModals();
+      dialogStore.closeById(DELETE_MODEL_DIALOG_ID);
     },
     onError(error) {
       showErrorNotification({
@@ -569,12 +583,12 @@ export default function ModelDetailsV2({
   const handleDeleteModel = (options?: { permanently: boolean }) => {
     const { permanently = false } = options || {};
 
-    openConfirmModal({
+    openConfirm({
+      id: DELETE_MODEL_DIALOG_ID,
       title: 'Delete Model',
-      children: permanently
+      message: permanently
         ? 'Are you sure you want to permanently delete this model? This action is destructive and cannot be reverted.'
         : 'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
-      centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', disabled: deleteMutation.isPending },
       closeOnConfirm: false,
@@ -607,21 +621,19 @@ export default function ModelDetailsV2({
           ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
           : '';
       if (refund.purchaseCount > 0) {
-        openConfirmModal({
+        openConfirm({
           title: 'Refund early access buyers',
-          children: `${
+          message: `${
             refund.buyerCount
           } member(s) bought early access to this model in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access.${exemptNote} Do you want to continue?`,
-          centered: true,
           labels: { confirm: 'Refund & Unpublish', cancel: 'Cancel' },
           confirmProps: { color: 'yellow' },
           onConfirm: () => unpublishModelMutation.mutate({ id, refundEarlyAccess: true }),
         });
       } else if (refund.exemptBuyerCount > 0) {
-        openConfirmModal({
+        openConfirm({
           title: 'Unpublish model',
-          children: `${refund.exemptBuyerCount} member(s) bought early access to this model, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to the model and are not refunded, and nothing is taken from your account. Do you want to continue?`,
-          centered: true,
+          message: `${refund.exemptBuyerCount} member(s) bought early access to this model, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to the model and are not refunded, and nothing is taken from your account. Do you want to continue?`,
           labels: { confirm: 'Unpublish', cancel: 'Cancel' },
           onConfirm: () => unpublishModelMutation.mutate({ id }),
         });
@@ -745,11 +757,11 @@ export default function ModelDetailsV2({
       ? 'This model and all of its versions will be restored to their previous state while remaining private. Are you sure you want to republish this model?'
       : 'This model and all of its versions will be publicly available. Are you sure you want to republish this model?';
 
-    openConfirmModal({
-      centered: true,
+    openConfirm({
+      id: REPUBLISH_MODEL_DIALOG_ID,
       closeOnConfirm: false,
       title: 'Republish model',
-      children: message,
+      message: message,
       labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
       onConfirm: () => {
         publishModelMutation.mutate(
@@ -757,7 +769,7 @@ export default function ModelDetailsV2({
             id: model.id,
             versionIds: model?.modelVersions.map((v) => v.id),
           },
-          { onSuccess: () => closeAllModals() }
+          { onSuccess: () => dialogStore.closeById(REPUBLISH_MODEL_DIALOG_ID) }
         );
       },
     });
@@ -935,42 +947,57 @@ export default function ModelDetailsV2({
   const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
   const showRail = !model.poi && !adsDisabledByUser;
 
+  // One `<Gated>` (ad gating, rating gate and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: model.nsfwLevel,
+    nsfw: model.nsfw && !model.hasSfwFace,
+    bypassRating: isOwner,
+    suppressAds: !published,
+    meta: {
+      title: `${model.name}${
+        selectedVersion ? ' - ' + selectedVersion.name : ''
+      } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
+      description: buildModelMetaDescription({
+        name: model.name,
+        ecosystemName: selectedEcosystemName,
+        typeName: getDisplayName(model.type),
+        creator: !model.user.deletedAt ? model.user.username : undefined,
+        downloads: model.rank?.downloadCountAllTime,
+        likes: model.rank?.thumbsUpCountAllTime,
+        description: plainDescription,
+      }),
+      images: withheld ? undefined : versionImages,
+      ogEndpoint: withheld ? undefined : modelOgEndpoint(model),
+      canonical: `/models/${model.id}/${slugit(model.name)}`,
+      alternate: `/models/${model.id}`,
+      schema: metaSchema,
+      breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+        { name: 'Models', path: '/models' },
+        ...(category
+          ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+          : []),
+        { name: model.name },
+      ]),
+      deIndex:
+        model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetch`: getServerSideProps prefetched only `model.getById` and the hidden
+  // preferences (so a blocked creator's page is already NotFound above), so the server renders the
+  // gate and `<head>` with a loader in place of the content. The hydrating render must
+  // match it, so it waits for the client mount too; the content then renders as it does after a
+  // client-side navigation, with the queries the server skipped loading in place.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
+
   return (
-    <Gated
-      contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw && !model.hasSfwFace}
-      bypassRating={isOwner}
-      suppressAds={!published}
-      meta={{
-        title: `${model.name}${
-          selectedVersion ? ' - ' + selectedVersion.name : ''
-        } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
-        description: buildModelMetaDescription({
-          name: model.name,
-          ecosystemName: selectedEcosystemName,
-          typeName: getDisplayName(model.type),
-          creator: !model.user.deletedAt ? model.user.username : undefined,
-          downloads: model.rank?.downloadCountAllTime,
-          likes: model.rank?.thumbsUpCountAllTime,
-          description: plainDescription,
-        }),
-        images: withheld ? undefined : versionImages,
-        ogEndpoint: withheld ? undefined : modelOgEndpoint(model),
-        canonical: `/models/${model.id}/${slugit(model.name)}`,
-        alternate: `/models/${model.id}`,
-        schema: metaSchema,
-        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
-          { name: 'Models', path: '/models' },
-          ...(category
-            ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
-            : []),
-          { name: model.name },
-        ]),
-        deIndex:
-          model.status !== ModelStatus.Published ||
-          model.availability === Availability.Unsearchable,
-      }}
-    >
+    <Gated {...gatedProps}>
       <ComCardPreviewScope previewing={previewingComCard}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <RenderAdUnitOutstream minContainerWidth={2800} />
@@ -1247,6 +1274,9 @@ export default function ModelDetailsV2({
                               key="add-to-showcase"
                               entityType="Model"
                               entityId={model.id}
+                              offerSections={
+                                isCreator && model.status === ModelStatus.Published && !model.mode
+                              }
                             />
                           )}
                           {/* The model itself, so its showcase images are not the nearest thing to hat. */}
@@ -1422,20 +1452,12 @@ export default function ModelDetailsV2({
                                     key="toggle-searchable-menu-item"
                                   />
                                   {!model.mode ? (
-                                    <>
-                                      <Menu.Item
-                                        leftSection={<IconArchive size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                      >
-                                        Archive
-                                      </Menu.Item>
-                                      <Menu.Item
-                                        leftSection={<IconCircleMinus size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                      >
-                                        Take Down
-                                      </Menu.Item>
-                                    </>
+                                    <Menu.Item
+                                      leftSection={<IconArchive size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                    >
+                                      Archive
+                                    </Menu.Item>
                                   ) : (
                                     <Menu.Item
                                       leftSection={<IconReload size={14} stroke={1.5} />}
@@ -1447,10 +1469,13 @@ export default function ModelDetailsV2({
                                   <Menu.Item
                                     leftSection={<IconArrowsLeftRight size={14} stroke={1.5} />}
                                     onClick={() =>
-                                      dialogStore.trigger({
-                                        component: TransferModelOwnership,
-                                        props: { modelId: model.id },
-                                      })
+                                      openDialog(
+                                        () =>
+                                          import(
+                                            '~/components/Model/Actions/TransferModelOwnership'
+                                          ),
+                                        { modelId: model.id }
+                                      )
                                     }
                                   >
                                     Transfer Ownership
@@ -1464,10 +1489,11 @@ export default function ModelDetailsV2({
                               <Menu.Label>Advanced</Menu.Label>
                               <Menu.Item
                                 onClick={() =>
-                                  dialogStore.trigger({
-                                    component: MigrateModelToCollection,
-                                    props: { modelId: model.id },
-                                  })
+                                  openDialog(
+                                    () =>
+                                      import('~/components/Model/Actions/MigrateModelToCollection'),
+                                    { modelId: model.id }
+                                  )
                                 }
                               >
                                 Migrate to Collection
@@ -1475,10 +1501,10 @@ export default function ModelDetailsV2({
                               {isOwner && model.modelVersions.length > 1 && (
                                 <Menu.Item
                                   onClick={() =>
-                                    dialogStore.trigger({
-                                      component: MergeVersions,
-                                      props: { modelId: model.id },
-                                    })
+                                    openDialog(
+                                      () => import('~/components/Model/Actions/MergeVersions'),
+                                      { modelId: model.id }
+                                    )
                                   }
                                 >
                                   Merge Versions
@@ -1690,6 +1716,12 @@ export default function ModelDetailsV2({
                 modelVersionId={selectedVersion.id}
                 thumbsUpCount={thumbsUpCount}
                 thumbsDownCount={thumbsDownCount}
+                versionRatingCount={
+                  selectedVersion.rank
+                    ? selectedVersion.rank.thumbsUpCountAllTime +
+                      selectedVersion.rank.thumbsDownCountAllTime
+                    : undefined
+                }
               />
             )}
             <AdUnitTopSection />

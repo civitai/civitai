@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as ImageService from '~/server/services/image.service';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
@@ -11,13 +10,17 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { blockedNSFW } from '@civitai/mod-utils/prompt-audit/lists';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
 // image fetch path returns, and that the fetch path keeps every visibility filter for an id list.
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => {
   return {
+    recordAudit: vi.fn(),
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
     stripBenignPhrases: vi.fn(async (text: string) => text),
@@ -26,9 +29,16 @@ const h = vi.hoisted(() => {
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
     isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
+    evalBoolean: vi.fn<() => { enabled: unknown }>(),
+    fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
   };
 });
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   stripBenignPhrases: h.stripBenignPhrases,
@@ -48,11 +58,6 @@ vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
   queryWithTimeout: h.queryWithTimeout,
 }));
-vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof MeilisearchClient>()),
-  metricsSearchClient: {},
-  getMetricsSearchClient: () => ({}),
-}));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -67,6 +72,8 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   isFlipt: h.isFlipt,
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => {
   const actual = await importOriginal<typeof ImageService>();
@@ -106,7 +113,11 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 }));
 
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
+
+/** A session's views (`credentialViews`); the narrow-key cases pass their own after it. */
+const SESSION_VIEWS = { asModerator: true, asOwner: true };
 import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
+import { semanticImageCsamFlaggedText } from '~/server/services/semantic-image-flags.sql';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
@@ -140,6 +151,7 @@ function visibleOnly(visible: Set<number>) {
 }
 
 beforeEach(() => {
+  installFakeCacheRedis();
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
@@ -147,6 +159,9 @@ beforeEach(() => {
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
   h.isFlipt.mockReset().mockResolvedValue(false);
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
+  dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([] as never);
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -172,6 +187,7 @@ describe('a stale index cannot surface a hidden image', () => {
     const { source } = rankedSource(ranking);
 
     const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: 1 }),
       user: VIEWER,
       candidateSource: source,
@@ -188,6 +204,7 @@ describe('a stale index cannot surface a hidden image', () => {
     const { source, calls } = rankedSource(long);
 
     const first = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ limit: 3 }),
       user: VIEWER,
       candidateSource: source,
@@ -196,6 +213,7 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(calls.length).toBeLessThanOrEqual(3);
 
     const second = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ limit: 3, cursor: first.nextCursor }),
       user: VIEWER,
       candidateSource: source,
@@ -208,6 +226,7 @@ describe('a stale index cannot surface a hidden image', () => {
     const { source } = rankedSource([11, 12, 13, 14, 15]);
 
     const first = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ limit: 2 }),
       user: VIEWER,
       candidateSource: source,
@@ -215,6 +234,7 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(first.items.map((x) => x.id)).toEqual([11, 12]);
 
     const second = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ limit: 2, cursor: first.nextCursor }),
       user: VIEWER,
       candidateSource: source,
@@ -226,6 +246,7 @@ describe('a stale index cannot surface a hidden image', () => {
     h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
     const { source } = rankedSource([101, 102, 103]);
     const page = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ limit: 10 }),
       user: VIEWER,
       candidateSource: source,
@@ -238,6 +259,7 @@ describe('a stale index cannot surface a hidden image', () => {
     h.fakeGetAllImages = visibleOnly(new Set([5, 6, 7]));
     const { source } = rankedSource([5, 6, 7]);
     const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: 6 }),
       user: VIEWER,
       candidateSource: source,
@@ -245,11 +267,32 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(items.map((x) => x.id)).toEqual([5, 7]);
   });
 
+  it('leaves the viewer\'s own images out of "more like this" when asked, but still finds the source', async () => {
+    const asked: { ids: number[]; excludedUserIds?: number[] }[] = [];
+    h.fakeGetAllImages = async (args) => {
+      asked.push(args as { ids: number[]; excludedUserIds?: number[] });
+      return visibleOnly(new Set([5, 6, 7]))(args as { ids: number[] });
+    };
+    const { source } = rankedSource([5, 6, 7]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: 6, excludeOwn: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    const anchorCheck = asked.find((call) => call.ids.length === 1 && call.ids[0] === 6);
+    const results = asked.find((call) => call.ids.includes(5));
+    expect(anchorCheck).toBeDefined();
+    expect(anchorCheck?.excludedUserIds ?? []).not.toContain(VIEWER.id);
+    expect(results?.excludedUserIds).toContain(VIEWER.id);
+  });
+
   // The image query has no per-viewer hidden-image filter, so this one is the search's own job.
   it('drops images the viewer hid, and those hidden through a tag they still hide', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([108, 109, 110, 111]));
     const { source } = rankedSource([108, 109, 110, 111]);
     const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input(),
       user: VIEWER,
       candidateSource: source,
@@ -261,9 +304,136 @@ describe('a stale index cannot surface a hidden image', () => {
     h.fakeGetAllImages = async () => ({ items: [], nextCursor: undefined });
     const { source, calls } = rankedSource([5, 7]);
     await expect(
-      searchSemanticImages({ input: input({ imageId: 6 }), user: VIEWER, candidateSource: source })
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input({ imageId: 6 }),
+        user: VIEWER,
+        candidateSource: source,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(calls).toEqual([]);
+  });
+});
+
+describe('the CSAM-flag rule', () => {
+  const FLAGGED_IMAGE = 202;
+  const FLAGGED_IMAGE_2 = 204;
+  const FLAGGED = new Set([FLAGGED_IMAGE, FLAGGED_IMAGE_2]);
+
+  /** Postgres answering the flag query: the flagged ids among those it was asked about. */
+  function heldQuery() {
+    const asked: { ids: number[]; rule: string; statement: string }[] = [];
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ids: number[],
+      rule: { sql: string }
+    ) => {
+      // The statement as Postgres would get it, with the rule spliced in and the ids as $1.
+      const statement = strings[0] + '$1' + strings[1] + rule.sql + strings[2];
+      asked.push({ ids, rule: rule.sql, statement: statement.replace(/\s+/g, ' ') });
+      return ids.filter((id) => FLAGGED.has(id)).map((id) => ({ id }));
+    }) as never);
+    return asked;
+  }
+
+  it('drops CSAM-flagged images from the results, for every viewer, moderators included', async () => {
+    for (const user of [VIEWER, { id: 501, isModerator: true } as SessionUser]) {
+      const asked = heldQuery();
+      h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE, 203, FLAGGED_IMAGE_2]));
+      const { source } = rankedSource([201, FLAGGED_IMAGE, 203, FLAGGED_IMAGE_2]);
+
+      const { items } = await searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input(),
+        user,
+        candidateSource: source,
+      });
+
+      expect(items.map((x) => x.id)).toEqual([201, 203]);
+      expect(asked.at(-1)?.rule).toBe(semanticImageCsamFlaggedText('i'));
+    }
+  });
+
+  it('asks about the hydrated ids, with the rule on the same "Image" alias', async () => {
+    const asked = heldQuery();
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE]));
+    const { source } = rankedSource([201, FLAGGED_IMAGE]);
+
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input(),
+      user: VIEWER,
+      candidateSource: source,
+    });
+
+    const { ids, statement } = asked.at(-1)!;
+    // The last call is the page's hydration; the anchor's came first.
+    expect([...ids].sort()).toEqual([201, FLAGGED_IMAGE]);
+    expect(statement).toMatch(
+      /^ ?SELECT i\.id FROM "Image" i WHERE i\.id = ANY\(\$1::int\[\]\) AND /
+    );
+    expect(statement.endsWith(semanticImageCsamFlaggedText('i').replace(/\s+/g, ' '))).toBe(true);
+  });
+
+  it('fills the page from further candidates when flagged images are dropped', async () => {
+    heldQuery();
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE, FLAGGED_IMAGE_2, 205, 206]));
+    const { source } = rankedSource([FLAGGED_IMAGE, 201, FLAGGED_IMAGE_2, 205, 206]);
+
+    const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ limit: 3 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+
+    expect(items.map((x) => x.id)).toEqual([201, 205, 206]);
+  });
+
+  it('fails the search, rather than serving unfiltered results, when the flag query fails', async () => {
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('replica down') as never);
+    h.fakeGetAllImages = visibleOnly(new Set([201]));
+    const { source } = rankedSource([201]);
+
+    await expect(
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input(),
+        user: VIEWER,
+        candidateSource: source,
+      })
+    ).rejects.toThrow('replica down');
+  });
+
+  it('answers "more like this" from a flagged image as not found', async () => {
+    heldQuery();
+    // Visible to the feed path, so only the flag rule can refuse it.
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE]));
+    const { source, calls } = rankedSource([201]);
+
+    await expect(
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input({ imageId: FLAGGED_IMAGE }),
+        user: VIEWER,
+        candidateSource: source,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('a query searched as typed', () => {
+  it('asks the service for the text with its spelling correction off', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const { source, calls } = rankedSource([101]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'Shikata nee', spellcheck: false }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].query).toEqual({ text: 'Shikata nee', spellcheck: false });
   });
 });
 
@@ -272,6 +442,7 @@ describe('tags that cannot be browsed', () => {
     h.fakeGetAllImages = visibleOnly(new Set([5]));
     const { source, calls } = rankedSource([5]);
     const page = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ tagIds: [601] }),
       user: VIEWER,
       candidateSource: source,
@@ -288,6 +459,7 @@ describe('tags that cannot be browsed', () => {
     };
     const { source, calls } = rankedSource([5]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ tagIds: [601, 42] }),
       user: VIEWER,
       candidateSource: source,
@@ -298,6 +470,97 @@ describe('tags that cannot be browsed', () => {
   });
 });
 
+describe('search by model version', () => {
+  it('narrows the candidates to images made with any of them', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([5]));
+    const { source, calls } = rankedSource([5]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ modelVersionIds: [128078, 290640] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.anyOf?.modelVersionIds).toEqual([128078, 290640]);
+  });
+});
+
+describe('Made On-site and Metadata only', () => {
+  it('applies both to hydration only, not the anchor check', async () => {
+    const hydrated: unknown[] = [];
+    h.fakeGetAllImages = async (args) => {
+      const { fromPlatform, withMeta } = args as { fromPlatform?: boolean; withMeta?: boolean };
+      hydrated.push({ fromPlatform, withMeta });
+      return visibleOnly(new Set([5]))(args);
+    };
+    const { source } = rankedSource([5]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ fromPlatform: true, withMeta: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(hydrated).toEqual([
+      { fromPlatform: undefined, withMeta: false },
+      { fromPlatform: true, withMeta: true },
+    ]);
+  });
+});
+
+// The own-images search asks for candidates at every level, so hydration is the only filter on
+// what the owner is shown: it must keep the review and minor filters for the owner too.
+describe("the own-images search's image query", () => {
+  async function ownImageSql() {
+    const { source } = rankedSource([101, 102]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ query: 'kuro', imageId: undefined, userIds: [VIEWER.id], browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string; values: unknown[] };
+    return { text: stmt.text.replace(/\s+/g, ' '), values: stmt.values };
+  }
+
+  it('never serves the owner their own images awaiting review', async () => {
+    const { text } = await ownImageSql();
+    // Unconditional: the pending read's form, `(... IS NULL OR i."userId" = $n)`, exempts the owner.
+    expect(text).toMatch(/i\."needsReview" IS NULL(?! OR)/);
+    expect(text).not.toMatch(/i\."needsReview" IS NULL OR i\."userId"/);
+    expect(text).toMatch(/i\."acceptableMinor" = FALSE(?! OR)/);
+  });
+
+  // Control: the owner's candidates do reach that query, so the filter is what decides.
+  it("still asks for the owner's candidates", async () => {
+    const { text, values } = await ownImageSql();
+    expect(text).toMatch(/i\."id" = ANY\(/);
+    expect(values).toContainEqual([101, 102]);
+  });
+});
+
+// The video path fakes hydration elsewhere; here the real image query runs, so a restricted clip
+// stays a candidate and is dropped by the licence rule, as for images.
+describe('the video query', () => {
+  it.each([
+    ['the base-model licence rule', /OR NOT i\."modelRestricted"/],
+    ['no blocked ingestion', /i\."ingestion" != 'Blocked'/],
+    ["the viewer's browsing level", /i\."nsfwLevel" & \$\d+/],
+  ])('keeps %s', async (_clause, clause) => {
+    const { source } = rankedSource([101, 102, 103]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ query: 'a red fox', imageId: undefined }),
+      user: VIEWER,
+      candidateSource: source,
+      collection: 'videos',
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string };
+    expect(stmt.text.replace(/\s+/g, ' ')).toMatch(clause);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],
@@ -305,6 +568,7 @@ describe.each([
   async function firstImageSql() {
     const { source } = rankedSource([101, 102, 103]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input(over),
       user: VIEWER,
       candidateSource: source,
@@ -326,6 +590,7 @@ describe.each([
     ['the minor add-on', /i\."minor" != TRUE/],
     ['hidden and blocked creators', /i\."userId" != ALL\(/],
     ['hidden tags', /FROM "TagsOnImageDetails" toi/],
+    ['the base-model licence rule', /OR NOT i\."modelRestricted"/],
   ])('%s', async (_clause, clause) => {
     const { text } = await firstImageSql();
     expect(text).toMatch(clause);
@@ -346,7 +611,11 @@ describe('filters', () => {
   it('searches for a signed-out visitor', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
     const { source } = rankedSource([101, 102, 103]);
-    const { items } = await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery(),
+      candidateSource: source,
+    });
     expect(items.map((x) => x.id)).toEqual([101, 103]);
   });
 
@@ -355,6 +624,7 @@ describe('filters', () => {
     h.fakeGetAllImages = visibleOnly(new Set([101]));
     const { source, calls } = rankedSource([101]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ usernames: ['fox', 'vixen'] }),
       user: VIEWER,
       candidateSource: source,
@@ -366,6 +636,7 @@ describe('filters', () => {
     h.fakeGetAllImages = visibleOnly(new Set([101]));
     const { source, calls } = rankedSource([101]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ userIds: [40] }),
       user: VIEWER,
       candidateSource: source,
@@ -377,6 +648,7 @@ describe('filters', () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 31 }]);
     const { source, calls } = rankedSource([101]);
     const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ usernames: ['fox'], userIds: [40] }),
       user: VIEWER,
       candidateSource: source,
@@ -389,6 +661,7 @@ describe('filters', () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([]);
     const { source, calls } = rankedSource([101]);
     const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ usernames: ['nobody'] }),
       user: VIEWER,
       candidateSource: source,
@@ -401,6 +674,7 @@ describe('filters', () => {
     dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 77 }]);
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ tagNames: ['Fox'] }),
       user: VIEWER,
       candidateSource: source,
@@ -412,6 +686,7 @@ describe('filters', () => {
     dbMock.dbRead.tag.findMany.mockResolvedValue([]);
     const { source, calls } = rankedSource([101]);
     const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ tagNames: ['no-such-tag'] }),
       user: VIEWER,
       candidateSource: source,
@@ -422,7 +697,12 @@ describe('filters', () => {
 
   it("leaves the viewer's hidden tags, users and images out of the Qdrant filter", async () => {
     const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery(),
+      user: VIEWER,
+      candidateSource: source,
+    });
     expect(calls[0].filter).not.toHaveProperty('excludedTagIds');
     expect(calls[0].filter).not.toHaveProperty('excludedUserIds');
     expect(calls[0].filter).not.toHaveProperty('excludedIds');
@@ -431,6 +711,7 @@ describe('filters', () => {
   it('bounds the posted date', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ postedAfter: new Date('2026-01-01T00:00:00Z') }),
       user: VIEWER,
       candidateSource: source,
@@ -438,30 +719,28 @@ describe('filters', () => {
     expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
-  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+  it.each([
+    ['a moderator', { id: 501, isModerator: true } as SessionUser],
+    ['a non-moderator', VIEWER],
+  ])('leaves the base-model licence rule to hydration for %s at NSFW levels', async (_, user) => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: { id: 501, isModerator: true } as SessionUser,
+      user,
       candidateSource: source,
     });
-    const [restricted] = calls[0].filter.mustNot as {
-      must: { key: string; match: { any: unknown[] } }[];
-    }[];
-    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
-    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
-  });
-
-  it('drops the base-model rule when the gate holds no NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
-    expect(calls[0].filter.mustNot).toEqual([]);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+    expect(calls[0].filter.mustNot ?? []).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
     const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ browsingLevel: 0 }),
+      candidateSource: source,
+    });
     expect(calls[0].filter.gate.nsfwLevels.length).toBeGreaterThan(0);
   });
 });
@@ -494,6 +773,7 @@ describe('"more like this" never rates above its anchor', () => {
       };
     };
     return searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: ANCHOR, browsingLevel: ALL_LEVELS }),
       user,
       candidateSource: source,
@@ -512,9 +792,96 @@ describe('"more like this" never rates above its anchor', () => {
   });
 
   it('lifts the cap when the kill switch is on', async () => {
-    h.isFlipt.mockResolvedValue(true);
+    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-similar-anchor-cap-off');
     const { gate } = await run(PG, VIEWER);
-    expect(gate).toEqual([PG, PG13]);
+    expect(gate).toEqual([1, 2, 4, 8, 16]);
+  });
+});
+// Pins the anchor rule shared with the card button (isMoreLikeThisRefused, #10245).
+describe('"more like this" refuses a minor- or POI-flagged anchor at every level', () => {
+  const run = (anchor: Record<string, unknown>, user: SessionUser, browsingLevel = PG) => {
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => ({
+      items: args.ids.map((id) => (id === ANCHOR ? { id, nsfwLevel: PG, ...anchor } : { id })),
+      nextCursor: undefined,
+    });
+    const result = searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: ANCHOR, browsingLevel }),
+      user,
+      candidateSource: source,
+    });
+    return { result, calls };
+  };
+  const MOD = { id: 501, isModerator: true } as SessionUser;
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+
+  it.each([
+    ['a minor-flagged anchor for a PG viewer', { minor: true }, VIEWER, PG],
+    ['a POI-flagged anchor for a PG viewer', { poi: true }, VIEWER, PG],
+    ['a minor-flagged anchor for a moderator', { minor: true }, MOD, PG],
+    [
+      'a minor-flagged anchor for a viewer browsing every level',
+      { minor: true },
+      VIEWER,
+      ALL_LEVELS,
+    ],
+    ['a POI-flagged anchor for a moderator browsing every level', { poi: true }, MOD, ALL_LEVELS],
+    ['a blocked anchor for a PG viewer', { blockedFor: 'Moderated' }, VIEWER, PG],
+    ['an anchor still pending its scan for a PG viewer', { ingestion: 'Pending' }, VIEWER, PG],
+    ['an anchor whose ingestion is blocked for a PG viewer', { ingestion: 'Blocked' }, VIEWER, PG],
+  ])('refuses %s, before any search', async (_name, anchor, user, browsingLevel) => {
+    const { result, calls } = run(anchor, user, browsingLevel);
+    await expect(result).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('still searches from an unflagged, scanned anchor', async () => {
+    const { result, calls } = run({ minor: false, poi: false, ingestion: 'Scanned' }, VIEWER);
+    const { items } = await result;
+    expect(items.map((x) => x.id)).toEqual([101]);
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('"more like this" with a preferred tag', () => {
+  const run = (
+    preferTagIds: number[],
+    over: Partial<SemanticImageSearchInput> = {},
+    collection: 'images' | 'videos' = 'images'
+  ) => {
+    const { source, calls } = rankedSource([101, 102, 103]);
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102, 103]));
+    return searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ preferTagIds, ...over }),
+      user: VIEWER,
+      collection,
+      candidateSource: source,
+    }).then(() => calls.filter((call) => call.filter.ids?.length));
+  };
+
+  it('asks for the tag within the closest matches', async () => {
+    const matches = await run([555]);
+    expect(matches).toHaveLength(1);
+    expect(matches[0].filter.tagIds).toContain(555);
+    expect(matches[0].filter.ids).toEqual([101, 102, 103]);
+  });
+
+  it.each([
+    ['a blocked tag', 601],
+    ['a tag the viewer hides', 801],
+    ['a tag a browsing add-on excludes', 701],
+  ])('does not boost %s', async (_name, tagId) => {
+    expect(await run([tagId])).toHaveLength(0);
+  });
+
+  it('does not boost a video search', async () => {
+    expect(await run([555], {}, 'videos')).toHaveLength(0);
+  });
+
+  it('does not boost a text search', async () => {
+    expect(await run([555], { imageId: undefined, query: 'otters' })).toHaveLength(0);
   });
 });
 
@@ -524,11 +891,16 @@ describe('the query audit and the browsing level', () => {
   const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
   const textQuery = (over: Partial<SemanticImageSearchInput> = {}) =>
     input({ imageId: undefined, query: 'q', ...over });
-  const run = (over: Partial<SemanticImageSearchInput>, user: SessionUser = VIEWER) => {
+  const run = (
+    over: Partial<SemanticImageSearchInput>,
+    user: SessionUser = VIEWER,
+    views = SESSION_VIEWS
+  ) => {
     const { source, calls } = rankedSource([101]);
     const track = { action: vi.fn().mockResolvedValue(undefined) };
     h.fakeGetAllImages = visibleOnly(new Set([101]));
     return searchSemanticImages({
+      ...views,
       input: textQuery(over),
       user,
       track,
@@ -544,6 +916,84 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  // The showcase picker's own-images search refuses where the general search narrows.
+  it('refuses a minor query on the own-images search, at an NSFW level with the clamp off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('audits the own-images query at one level, whatever level is asked for', async () => {
+    const { source } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ browsingLevel: SAFE }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+
+    expect(h.includesInappropriate).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
+  it('asks every level for own-images candidates and keeps the viewer’s level on the page', async () => {
+    const levelOf: Record<number, number> = { 101: 1, 102: 16 };
+    h.fakeGetAllImages = async (args) => {
+      const { ids, browsingLevel } = args as { ids: number[]; browsingLevel: number };
+      return {
+        items: ids
+          .filter((id) => (levelOf[id] & browsingLevel) !== 0)
+          .map((id) => ({ id, nsfwLevel: levelOf[id] })),
+        nextCursor: undefined,
+      };
+    };
+    const { source, calls } = rankedSource([101, 102]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+    expect(result.items.map((i) => i.id)).toEqual([101]);
+  });
+
+  it('recomputes the add-ons at the narrowed level', async () => {
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([
+      { type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] },
+    ]);
+    h.includesInappropriate.mockReturnValue('minor');
+    const seen: number[][] = [];
+    h.fakeGetAllImages = async (args) => {
+      seen.push((args as { excludedTagIds?: number[] }).excludedTagIds ?? []);
+      return visibleOnly(new Set([101]))(args);
+    };
+    const { source } = rankedSource([101]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(seen[0]).toContain(9200);
   });
 
   it('audits the query as NSFW when the resolved level includes an NSFW level', async () => {
@@ -582,6 +1032,13 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).not.toHaveBeenCalled();
   });
 
+  it('searched as typed, still refuses a flagged verdict before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    const { result, calls } = await run({ browsingLevel: ALL_LEVELS, spellcheck: false }, MOD);
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses, and records, a masked minor match for a non-moderator', async () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
@@ -596,7 +1053,13 @@ describe('the query audit and the browsing level', () => {
   it('refuses a minor query for a moderator, before asking the index', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     expect(calls).toHaveLength(0);
   });
 
@@ -633,7 +1096,82 @@ describe('the query audit and the browsing level', () => {
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
+  const blockedWordQuery = `a ${blockedNSFW[0]} fox`;
+
+  it('refuses a query with a blocked word from a non-moderator, before asking the index', async () => {
+    const { result, calls } = await run({ query: blockedWordQuery });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a blocked word even when the benign-phrase pass strips it', async () => {
+    h.stripBenignPhrases.mockResolvedValue('a fox');
+    const { result, calls } = await run({ query: blockedWordQuery });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('lets a moderator search a query with a blocked word', async () => {
+    const { result } = await run({ query: blockedWordQuery, browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items.map((i) => i.id)).toEqual([101]);
+  });
+
+  it("refuses a blocked word from a moderator's scoped key, as from anyone", async () => {
+    const { result, calls } = await run(
+      { query: blockedWordQuery, browsingLevel: ALL_LEVELS },
+      MOD,
+      {
+        asModerator: false,
+        asOwner: false,
+      }
+    );
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("hydrates a moderator's scoped-key search with no moderator or owner view", async () => {
+    let views: unknown;
+    const { source } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => {
+      const { asModerator, asOwner } = args as { asModerator?: boolean; asOwner?: boolean };
+      views = { asModerator, asOwner };
+      return { items: [], nextCursor: undefined };
+    };
+    await searchSemanticImages({
+      input: textQuery({}),
+      user: MOD,
+      candidateSource: source,
+    });
+    expect(views).toEqual({ asModerator: false, asOwner: false });
+  });
+
+  const clampOn = () => h.evalBoolean.mockReturnValue({ enabled: true });
+
+  it('lifts the clamp when the key is present and disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    const { calls } = await run({ browsingLevel: ALL_LEVELS });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
+  });
+
+  it.each([
+    ['the client is unavailable', () => (h.fliptClient = null)],
+    [
+      'the key is missing',
+      () =>
+        h.evalBoolean.mockImplementation(() => {
+          throw new Error('flag not found');
+        }),
+    ],
+    ['the answer is malformed', () => h.evalBoolean.mockReturnValue({ enabled: undefined })],
+  ])('holds the clamp when %s', async (_name, arrange) => {
+    arrange();
+    const { calls } = await run({ browsingLevel: ALL_LEVELS });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
+  });
+
   it('clamps a non-moderator to the safe levels, in the index filter and in hydration', async () => {
+    clampOn();
     const seen: unknown[] = [];
     const { source, calls } = rankedSource([101]);
     h.fakeGetAllImages = async (args) => {
@@ -641,6 +1179,7 @@ describe('the query audit and the browsing level', () => {
       return visibleOnly(new Set([101]))(args);
     };
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ browsingLevel: ALL_LEVELS }),
       user: VIEWER,
       candidateSource: source,
@@ -654,6 +1193,7 @@ describe('the query audit and the browsing level', () => {
     ['R and X', 4 | 8],
     ['XXX alone', 16],
   ])('gives a non-moderator who asks only for %s the public level', async (_name, level) => {
+    clampOn();
     const seen: unknown[] = [];
     const { source, calls } = rankedSource([101]);
     h.fakeGetAllImages = async (args) => {
@@ -661,6 +1201,7 @@ describe('the query audit and the browsing level', () => {
       return visibleOnly(new Set([101]))(args);
     };
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery({ browsingLevel: level }),
       user: VIEWER,
       candidateSource: source,
@@ -681,6 +1222,7 @@ describe('the query audit and the browsing level', () => {
     const track = { action: vi.fn().mockResolvedValue(undefined) };
     const source: CandidateSource = async () => ({ ids: [101], correctedQuery: 'corrected' });
     const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: textQuery(),
       user: VIEWER,
       track,
@@ -691,6 +1233,89 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_correction', resultIds: [] }),
+      expect.any(Function)
+    );
+  });
+
+  it('refuses, and records as the own-images path, a verdict that would narrow the own-images search', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery(),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        wordVerdict: 'minor',
+        searchPath: 'refused_own_images',
+        resultIds: [],
+      }),
+      expect.any(Function)
+    );
+  });
+
+  it('records the own-images path for a refused own-images search from an image', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ imageId: 101 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_own_images', resultIds: [] })
+    );
+  });
+
+  it('audits a correction that changes between hydration rounds of one page', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    h.fakeGetAllImages = visibleOnly(new Set([1, 150]));
+    const source: CandidateSource = async ({ offset, limit }) => ({
+      ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
+      correctedQuery: offset < 100 ? 'fine' : 'corrected',
+    });
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ limit: 50 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+  });
+
+  it('refuses a cached later page whose correction fails the audit, without asking the service again', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    let calls = 0;
+    const source: CandidateSource = async () => {
+      calls++;
+      return { ids: Array.from({ length: 100 }, (_, i) => 101 + i), correctedQuery: 'corrected' };
+    };
+    const page2 = () =>
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: textQuery({ cursor: 100 }),
+        user: VIEWER,
+        candidateSource: source,
+      });
+    expect((await page2()).items).toEqual([]);
+    expect((await page2()).items).toEqual([]);
+    expect(calls).toBe(1);
   });
 
   it("keeps a moderator's requested level", async () => {
@@ -737,6 +1362,7 @@ describe('the search service call', () => {
       })
     );
     const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: undefined, query: 'batmen', tagIds: [42] }),
       user: VIEWER,
     });
@@ -763,14 +1389,17 @@ describe('the search service call', () => {
       Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] })
     );
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: undefined, query: 'fox', sort: 'newest' }),
       user: VIEWER,
     });
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: undefined, query: 'fox' }),
       user: VIEWER,
     });
     await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: undefined, query: 'fox', sort: 'relevance' }),
       user: VIEWER,
     });
@@ -791,8 +1420,16 @@ describe('the search service call', () => {
 
   it('keeps "more like this" in similarity order whatever the sort', async () => {
     const sent = stubService(() => Response.json({ result: { points: [{ id: 101 }] } }));
-    await searchSemanticImages({ input: input({ imageId: ANCHOR, sort: 'newest' }), user: VIEWER });
-    await searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER });
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: ANCHOR, sort: 'newest' }),
+      user: VIEWER,
+    });
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: ANCHOR }),
+      user: VIEWER,
+    });
 
     expect(sent[0].url).toBe('http://search.test/qdrant/collections/images/points/query');
     expect(sent[0].body).toEqual(sent[1].body);
@@ -801,6 +1438,7 @@ describe('the search service call', () => {
   it('reports no correction when the service changed nothing', async () => {
     stubService(() => Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] }));
     const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
       input: input({ imageId: undefined, query: 'fox' }),
       user: VIEWER,
     });
@@ -809,7 +1447,11 @@ describe('the search service call', () => {
 
   it('asks "more like this" through the Qdrant pass-through, without the source image', async () => {
     const sent = stubService(() => Response.json({ result: { points: [{ id: 101 }] } }));
-    await searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER });
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: ANCHOR }),
+      user: VIEWER,
+    });
 
     expect(sent[0].url).toBe('http://search.test/qdrant/collections/images/points/query');
     expect(sent[0].body.query).toBe(ANCHOR);
@@ -819,14 +1461,320 @@ describe('the search service call', () => {
   it('answers NOT_FOUND for an image the index does not hold', async () => {
     stubService(() => new Response('{}', { status: 404 }));
     await expect(
-      searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER })
+      searchSemanticImages({ ...SESSION_VIEWS, input: input({ imageId: ANCHOR }), user: VIEWER })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('answers BAD_GATEWAY when the service fails', async () => {
     stubService(() => new Response('{}', { status: 503 }));
     await expect(
-      searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input({ imageId: undefined, query: 'fox' }),
+        user: VIEWER,
+      })
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+  });
+});
+
+describeSemanticAuditContract({
+  index: 'images',
+  run: ({ source, user, cursor }) => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
+    return searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'fox', cursor }),
+      user,
+      candidateSource: source,
+    });
+  },
+  ids: [101, 103],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
+  ownCache: true,
+});
+
+describe('the showcase picker ranks images tagged with the query first', () => {
+  const TAG = 900;
+  // The model ranks lookalikes (1, 2) above the images carrying the rare tag (7, 3).
+  function taggedIndex() {
+    const calls: Parameters<CandidateSource>[0][] = [];
+    const source: CandidateSource = async (args) => {
+      calls.push(args);
+      const excluded = new Set(args.filter.excludedIds ?? []);
+      const pool = args.filter.tagIds?.includes(TAG)
+        ? [7, 3]
+        : [1, 2, 7, 3, 4].filter((id) => !excluded.has(id));
+      return { ids: pool.slice(args.offset, args.offset + args.limit) };
+    };
+    return { source, calls };
+  }
+  const picker = (source: CandidateSource, tagMatchesFirst: boolean) =>
+    searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ query: 'Tiefling', imageId: undefined, userIds: [VIEWER.id], limit: 25 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+      tagMatchesFirst,
+    });
+
+  beforeEach(() => {
+    h.fakeGetAllImages = visibleOnly(new Set([1, 2, 3, 4, 7]));
+  });
+
+  it('puts the tagged images ahead of the semantic ranking', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source } = taggedIndex();
+    const { items } = await picker(source, true);
+    expect(items.map((x) => x.id)).toEqual([7, 3, 1, 2, 4]);
+  });
+
+  // Control: the same index without the option is the model's order.
+  it('is the semantic ranking without the option', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source, calls } = taggedIndex();
+    const { items } = await picker(source, false);
+    expect(items.map((x) => x.id)).toEqual([1, 2, 7, 3, 4]);
+    expect(calls.some((call) => call.filter.tagIds?.includes(TAG))).toBe(false);
+  });
+
+  it('keeps the viewer filter on the tagged pass', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source, calls } = taggedIndex();
+    await picker(source, true);
+    const tagged = calls.find((call) => call.filter.tagIds?.includes(TAG));
+    expect(tagged?.filter.userIds).toEqual([VIEWER.id]);
+  });
+
+  it('does not order by a tag that cannot be browsed', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 601, name: 'not browsable' }]);
+    const { source, calls } = taggedIndex();
+    await picker(source, true);
+    expect(calls.some((call) => call.filter.tagIds?.includes(601))).toBe(false);
+  });
+});
+
+describe('search by uploaded image', () => {
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+  const R = 4;
+  const IMAGE_URL = 'https://image.test/upload.jpeg';
+  const run = (nsfwLevel: number, browsingLevel: number, user: SessionUser = VIEWER) => {
+    const { source, calls } = rankedSource([101, 102]);
+    h.fakeGetAllImages = async (args) => ({
+      items: args.ids.map((id) => ({ id, nsfwLevel: PG })),
+      nextCursor: undefined,
+    });
+    return searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: { browsingLevel, limit: 50 } as SemanticImageSearchInput,
+      user,
+      candidateSource: source,
+      uploadAnchor: { nsfwLevel, imageUrl: IMAGE_URL },
+    }).then((page) => ({ page, calls }));
+  };
+
+  it('queries by the image, capped at the upload level', async () => {
+    const { page, calls } = await run(PG, ALL_LEVELS);
+    expect(calls[0].query).toEqual({ imageUrl: IMAGE_URL });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(page.items.map((i) => i.id)).toEqual([101, 102]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'served', resultIds: [101, 102] })
+    );
+  });
+
+  it('returns nothing for an upload above the viewer, without asking the index', async () => {
+    const { page, calls } = await run(R, PG | 2);
+    expect(page.items).toEqual([]);
+    // A level refusal of the upload, not of any words: not marked refused.
+    expect(page).toMatchObject({ refused: false });
+    expect(calls).toHaveLength(0);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_upload_level', resultIds: [] })
+    );
+  });
+
+  it('serves the same upload to a viewer who may see its level', async () => {
+    const { page, calls } = await run(R, ALL_LEVELS);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4]);
+    expect(page.items.length).toBeGreaterThan(0);
+  });
+
+  it('never serves an upload from the shared candidate cache', async () => {
+    const counted = (user: SessionUser) => {
+      const { source, calls } = rankedSource([101, 102]);
+      h.fakeGetAllImages = async (args) => ({
+        items: args.ids.map((id) => ({ id, nsfwLevel: PG })),
+        nextCursor: undefined,
+      });
+      const once = (over: object) =>
+        searchSemanticImages({
+          ...SESSION_VIEWS,
+          input: { browsingLevel: ALL_LEVELS, limit: 50 } as SemanticImageSearchInput,
+          user,
+          candidateSource: source,
+          ...over,
+        });
+      return { calls, once };
+    };
+    const upload = counted(VIEWER);
+    await upload.once({ uploadAnchor: { nsfwLevel: PG, imageUrl: IMAGE_URL } });
+    await upload.once({ uploadAnchor: { nsfwLevel: PG, imageUrl: IMAGE_URL } });
+    expect(upload.calls).toHaveLength(2);
+    // Control: the same repeat as a text search is answered from the cache the second time.
+    const text = counted({ id: 502, isModerator: false } as SessionUser);
+    await text.once({
+      input: { browsingLevel: ALL_LEVELS, limit: 50, query: 'fox' } as SemanticImageSearchInput,
+    });
+    await text.once({
+      input: { browsingLevel: ALL_LEVELS, limit: 50, query: 'fox' } as SemanticImageSearchInput,
+    });
+    expect(text.calls).toHaveLength(1);
+  });
+
+  it('leaves a moderator at every level', async () => {
+    const { calls } = await run(PG, ALL_LEVELS, { id: 501, isModerator: true } as SessionUser);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+  });
+});
+
+describe('the video index', () => {
+  afterEach(() => {
+    dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
+  });
+
+  it('searches the clip index and hydrates videos only', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    h.fakeGetAllImages = async (args) => {
+      seen.push(args as Record<string, unknown>);
+      return visibleOnly(new Set([201, 202]))(args);
+    };
+    const { source, calls } = rankedSource([201, 202]);
+    const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'a fox running', types: ['image'] }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items.map((x) => x.id)).toEqual([201, 202]);
+    expect(seen.every((args) => JSON.stringify(args.types) === '["video"]')).toBe(true);
+    // Every point is a clip: a media-type filter from the request is not passed on.
+    expect(calls[0].filter.anyOf?.type).toBeUndefined();
+  });
+
+  it('a CSAM-flagged clip is not served', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([201, 202, 203]));
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 202 }]);
+    const { source } = rankedSource([201, 202, 203]);
+    const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'a fox running' }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items.map((x) => x.id)).toEqual([201, 203]);
+  });
+
+  it('hydration decides what is served', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([201]));
+    const { source } = rankedSource([201, 202]);
+    const { items } = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'a fox running' }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items.map((x) => x.id)).toEqual([201]);
+  });
+
+  it('refuses search by upload, whose still is not comparable with clips', async () => {
+    const { source, calls } = rankedSource([201]);
+    await expect(
+      searchSemanticImages({
+        ...SESSION_VIEWS,
+        input: input({ imageId: undefined }),
+        user: VIEWER,
+        collection: 'videos',
+        candidateSource: source,
+        uploadAnchor: { nsfwLevel: 1, imageUrl: 'https://cdn.example/x.jpeg' },
+      })
+    ).rejects.toThrow(/images only/);
+    expect(calls).toEqual([]);
+  });
+
+  it('the Blocked level is dropped for a non-moderator who asks for it', async () => {
+    const levels: Record<number, number> = { 201: 1, 202: 32 };
+    h.fakeGetAllImages = async ({
+      ids,
+      browsingLevel,
+    }: {
+      ids: number[];
+      browsingLevel?: number;
+    }) => ({
+      items: ids.filter((id) => ((browsingLevel ?? 0) & levels[id]) !== 0).map((id) => ({ id })),
+      nextCursor: undefined,
+    });
+    const { source, calls } = rankedSource([201, 202]);
+    const { items } = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'a fox running', browsingLevel: 1 | 32 }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items.map((x) => x.id)).toEqual([201]);
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1] });
+  });
+
+  it('a moderator keeps the Blocked level', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'a fox running', browsingLevel: 1 | 32 }),
+      user: { id: 501, isModerator: true } as SessionUser,
+      asModerator: true,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 32] });
+  });
+
+  it('a non-moderator asking for the Blocked level only gets nothing, not a wider search', async () => {
+    const { source, calls } = rankedSource([201]);
+    const { items } = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'a fox running', browsingLevel: 32 }),
+      user: VIEWER,
+      collection: 'videos',
+      candidateSource: source,
+    });
+    expect(items).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('searches the videos collection by default, and images by default for image search', async () => {
+    setEnv({ SEARCH_SERVICE_URL: 'http://search.test/', SEARCH_SERVICE_TOKEN: 'tok' });
+    const collections: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      collections.push(JSON.parse(String(init.body)).collection);
+      return Response.json({ query: 'q', corrected: 'q', changes: [], hits: [] });
+    });
+    try {
+      h.fakeGetAllImages = visibleOnly(new Set());
+      await searchSemanticImages({
+        input: input({ imageId: undefined, query: 'a fox running' }),
+        user: VIEWER,
+        collection: 'videos',
+      });
+      await searchSemanticImages({
+        input: input({ imageId: undefined, query: 'a hare' }),
+        user: VIEWER,
+      });
+      expect(collections).toEqual(['videos', 'images']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

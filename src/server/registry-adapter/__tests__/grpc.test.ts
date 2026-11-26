@@ -1,8 +1,14 @@
 import * as grpc from '@grpc/grpc-js';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { VerifyToken } from '~/server/registry-adapter/auth';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { composeAdapter } from '~/server/registry-adapter/doc-streams';
+import { createLevelFeed, parseSharedLevelClients } from '~/server/registry-adapter/level-feed';
+import type { SubscriptionLimiter } from '~/server/registry-adapter/limits';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
 import { abortableSleep } from '~/utils/errorHandling';
 import {
   REGISTRY_SERVICE,
@@ -14,6 +20,7 @@ import {
   listenGrpc,
 } from '~/server/registry-adapter/grpc';
 import type { Adapter, Change, Entity, StreamEvent } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import { createRegistryServer, sseFrame } from '~/server/registry-adapter/serve';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
@@ -65,22 +72,41 @@ type Outcome = {
  */
 async function viaGrpc(
   a: Adapter,
-  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string }>,
+  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string; meta: Buffer }>,
   until: (events: StreamEvent[]) => boolean = () => false,
-  path: string = SPEC_PATH
+  path: string = SPEC_PATH,
+  extra: {
+    onRegion?: (line: string) => void;
+    metadata?: grpc.Metadata;
+    limiter?: SubscriptionLimiter;
+    regionRestricted?: (origin: RequestOrigin) => boolean;
+    verifyToken?: VerifyToken;
+  } = {}
 ): Promise<Outcome> {
-  const server = createGrpcServer(a);
+  const server = createGrpcServer(a, {
+    onRegion: extra.onRegion,
+    limiter: extra.limiter,
+    regionRestricted: extra.regionRestricted,
+    verifyToken: extra.verifyToken,
+  });
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
   const PathClient = clientAt(path);
   const client = new PathClient(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const subscribe = (
-    client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<StreamEvent>>
+    client as unknown as Record<
+      string,
+      (r: unknown, m: grpc.Metadata) => grpc.ClientReadableStream<StreamEvent>
+    >
   ).Subscribe;
   return new Promise<Outcome>((resolve) => {
     const events: StreamEvent[] = [];
     let cancelled = false;
-    const call = subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '', ...req });
+    const call = subscribe.call(
+      client,
+      { schema: APPS, cursor: '', urns: [], filter: '', ...req },
+      extra.metadata ?? new grpc.Metadata()
+    );
     const finish = (outcome: Outcome) => {
       clearTimeout(timer);
       client.close();
@@ -190,10 +216,9 @@ describe('the gRPC binding', () => {
     expect(res.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
   });
 
-  // Rule 6: a filter this source will not evaluate is refused, never ignored. Before, both were
-  // streamed unfiltered (the upsert, then live) with no error.
+  // Rule 6: a filter this source will not evaluate is refused, never ignored.
   it.each([
-    ['a pattern', '{"properties":{"slug":{"pattern":"^zzz"}}}'],
+    ['a lookahead pattern', '{"properties":{"slug":{"pattern":"^(?!zzz)"}}}'],
     ['a $ref', '{"$ref":"#/x","x":{"properties":{"slug":{"const":"zzz"}}}}'],
     ['a filter over the size bound', JSON.stringify({ not: {}, description: 'x'.repeat(8192) })],
   ])('🔴 %s is INVALID_ARGUMENT with reason bad_request, and no event', async (_name, filter) => {
@@ -205,7 +230,7 @@ describe('the gRPC binding', () => {
   });
 
   // Rule 4: `urns` outside this registry's namespace are a request it can never serve anything
-  // for. Before, this was an empty snapshot and `live`, with the stream left open.
+  // for.
   it('🔴 urns all of another namespace are end first, and nothing else', async () => {
     const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {
       urns: ['urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d'],
@@ -225,12 +250,100 @@ describe('the gRPC binding', () => {
   });
 });
 
+describe('🔴 each gRPC subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /**
+   * One subscription from the edge's CA, with meta DE, read to live; its region lines and its
+   * outcome.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      req = { meta: Buffer.from('{"country":"DE"}', 'utf8') },
+      authorization,
+      limiter,
+      regionRestricted,
+    }: {
+      req?: Parameters<typeof viaGrpc>[1];
+      authorization?: string;
+      limiter?: SubscriptionLimiter;
+      regionRestricted?: (origin: RequestOrigin) => boolean;
+    } = {}
+  ) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const metadata = new grpc.Metadata();
+    metadata.set('cf-ipcountry', 'CA');
+    metadata.set('cf-connecting-ip', '192.0.2.7');
+    metadata.set('x-forwarded-for', '198.51.100.1');
+    if (authorization) metadata.set('authorization', authorization);
+    const logged: string[] = [];
+    const res = await viaGrpc(
+      catalog([[ent('alpha', 'r1')]]),
+      req,
+      (e) => e.some((x) => x.type === 'live'),
+      SPEC_PATH,
+      { onRegion: (line) => logged.push(line), metadata, limiter, regionRestricted }
+    );
+    return { error: res.error, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { error, logged } = await lines('1');
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=DE region=none source=meta restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { error, logged } = await lines(undefined);
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    const { error, logged } = await lines(undefined, { regionRestricted: () => true });
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=true principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { error, logged } = await lines('1', { req: { filter: '{not json' } });
+    expect(error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { error, logged } = await lines('1', { limiter });
+    expect(error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { error, logged } = await lines('1', { authorization: 'Bearer x' });
+    expect(error).toEqual({ code: grpc.status.UNAUTHENTICATED, reason: 'invalid_token' });
+    expect(logged).toEqual([]);
+  });
+});
+
 describe('🔴 the method answers at the spec path only', () => {
   it('the service path is the one the spec names', () => {
     expect(REGISTRY_SERVICE.Subscribe.path).toBe('/registry.v1.Registry/Subscribe');
   });
 
-  // Before, only `/Source/Subscribe` was registered: the spec path was UNIMPLEMENTED.
   it('the spec path: a snapshot, then live', async () => {
     const res = await viaGrpc(
       catalog([[ent('alpha', 'r1')]]),
@@ -243,7 +356,7 @@ describe('🔴 the method answers at the spec path only', () => {
     expect(res.events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1'), cursor: '' });
   });
 
-  // The earlier spec's path is not served; before, it was the only one that was.
+  // The earlier spec's path is not served.
   it.each([[LEGACY_PATH], ['/Nope/Subscribe']])(
     '%s is UNIMPLEMENTED, with no event',
     async (path) => {
@@ -301,7 +414,8 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
   // Hand-encoded from the spec's proto block, not from the code's schema: Event.live = 3,
   // Event.end = 4, Event.progress = 6, Event.upsert = 1; Upsert.entity = 1, .cursor = 2;
   // Entity.urn = 1, .schemas = 2, .rev = 3, .body = 4 (bytes: the body's JSON text, UTF-8).
-  // No event this source sends sets Entity.meta (5) or Event.meta (5): empty is absent.
+  // No event this source sends sets Entity.meta (5), and these set no Event.meta (5): empty is
+  // absent. A live or progress WITH meta is below.
   it.each<[string, StreamEvent, string]>([
     ['live', { type: 'live', cursor: 'ab' }, '1a040a026162'],
     ['progress', { type: 'progress', cursor: 'ab' }, '32040a026162'],
@@ -352,6 +466,21 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
     expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(upsert(body));
   });
 
+  // Event.meta = 5 (bytes: a JSON object's text, UTF-8), here `{"head":{"seq":7}}` (18 bytes),
+  // encoded in field-number order: after live (3), before progress (6).
+  const META_HEX = '2a12' + '7b2268656164223a7b22736571223a377d7d';
+  it.each<[string, StreamEvent, string]>([
+    ['live', { type: 'live', cursor: 'ab', meta: { head: { seq: 7 } } }, '1a040a026162' + META_HEX],
+    [
+      'progress',
+      { type: 'progress', cursor: 'ab', meta: { head: { seq: 7 } } },
+      META_HEX + '32040a026162',
+    ],
+  ])('%s with meta: Event.meta is its JSON text, and decodes back', (_name, event, hex) => {
+    expect(encodeEvent(event).toString('hex')).toBe(hex);
+    expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(event);
+  });
+
   it('a body JSON cannot hold is sent as JSON.stringify sends it, as over HTTP', () => {
     // `{"n":null}`: a non-finite number is null, an undefined property is dropped.
     expect(encodeEvent(upsert({ n: Number.NaN, gone: undefined })).toString('hex')).toBe(
@@ -372,6 +501,27 @@ describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', ()
       'event: upsert\n' +
         'id: c\n' +
         'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{"a":[1,true,null],"b":"é"}},"cursor":"c"}\n\n'
+    );
+  });
+
+  // INVARIANT GUARD (green before this change: the frame is the event's own fields): what the SSE
+  // consumer reads the head and a private record's seq from.
+  it("a live or progress frame carries the event's meta; a private entity's key and seq ride in the entity", () => {
+    expect(sseFrame({ type: 'live', cursor: 'c', meta: { head: { seq: 7 } } })).toBe(
+      'event: live\nid: c\ndata: {"cursor":"c","meta":{"head":{"seq":7}}}\n\n'
+    );
+    expect(sseFrame({ type: 'progress', cursor: 'c', meta: { head: { seq: 9 } } })).toBe(
+      'event: progress\nid: c\ndata: {"cursor":"c","meta":{"head":{"seq":9}}}\n\n'
+    );
+    expect(
+      sseFrame({
+        type: 'upsert',
+        entity: { urn: 'u', schemas: ['s'], rev: 'r', body: {}, key: 'k', seq: 12 },
+        cursor: 'c',
+      })
+    ).toBe(
+      'event: upsert\nid: c\n' +
+        'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{},"key":"k","seq":12},"cursor":"c"}\n\n'
     );
   });
 
@@ -479,5 +629,108 @@ describe('🔴 an error is named by its ErrorInfo reason alone, as the spec name
         '0a0e637572736f725f65787069726564'
     );
     expect(errorInfoOf(metadata)).toEqual({ reason: 'cursor_expired', domain: '' });
+  });
+});
+
+describe('🔴 a shared-collection level subscription is refused on gRPC (level-feed.ts, HTTP only)', () => {
+  const LEVEL_CLIENT = 'svc-appdata-grpc-93d2';
+  const SLUG = 'grpc-board-41';
+  const SCHEMA = `urn:schema:apps.civitai.com:${SLUG}/records@v1`;
+  const service: VerifyToken = async () => ({
+    subject: `service:${LEVEL_CLIENT}`,
+    userId: null,
+    clientId: LEVEL_CLIENT,
+    scope: 0n,
+    actor: null,
+    service: true,
+    expiresAt: null,
+  });
+  const store = createMemorySnapshotStore();
+  let reads = 0;
+  /** A level feed that WOULD serve one rated document, were the subscription not refused. */
+  const adapter = () =>
+    composeAdapter(
+      catalog([[]]),
+      createDocFeed({
+        source: {
+          head: async () => 0,
+          changes: async () => ({ docs: [], tombs: [] }),
+          documents: async () => [],
+          witness: async () => ({ docSeq: null, tombSeq: null }),
+        },
+        resolve: async () => null,
+        store,
+        pollMs: 60_000,
+        sleep: abortableSleep,
+      }),
+      undefined,
+      createLevelFeed({
+        clients: parseSharedLevelClients(LEVEL_CLIENT),
+        source: {
+          head: async () => {
+            reads += 1;
+            return 3;
+          },
+          changes: async () => ({ docs: [], tombs: [] }),
+          documents: async (_a, _c, _s, beforeKey) =>
+            beforeKey === ''
+              ? [
+                  {
+                    key: '01KG0R',
+                    data: { t: 'r-doc' },
+                    version: 1,
+                    seq: 3,
+                    createdAt: '2026-11-01T00:00:00.000Z',
+                    updatedAt: '2026-11-01T00:00:00.000Z',
+                  },
+                ]
+              : [],
+          witness: async () => ({ docSeq: 3, tombSeq: null }),
+        },
+        resolve: async () => ({
+          appId: 'ab_grpc_board',
+          slug: SLUG,
+          collection: 'records',
+          contentRating: 'pg13',
+          family: [{ urn: SCHEMA, body: { type: 'object' } }],
+          appBlockId: 'ab_grpc_board',
+          levelsOn: true,
+        }),
+        store,
+        pollMs: 60_000,
+        sleep: abortableSleep,
+        maxRecords: 2_001,
+      })
+    );
+  const bearer = () => {
+    const m = new grpc.Metadata();
+    m.set('authorization', 'Bearer svc');
+    return m;
+  };
+
+  it('a level subscription answers bad_request with no event and no store read', async () => {
+    reads = 0;
+    const out = await viaGrpc(
+      adapter(),
+      { schema: SCHEMA, meta: Buffer.from('{"level":4}', 'utf8') },
+      undefined,
+      SPEC_PATH,
+      { verifyToken: service, metadata: bearer() }
+    );
+    expect(out.events).toEqual([]);
+    expect(out.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+    expect(reads).toBe(0);
+  });
+
+  it('positive control: the same token naming no level is served as today (live, no error)', async () => {
+    const out = await viaGrpc(
+      adapter(),
+      { schema: SCHEMA },
+      (events) => events.some((e) => e.type === 'live'),
+      SPEC_PATH,
+      { verifyToken: service, metadata: bearer() }
+    );
+    expect(out.error).toBeUndefined();
+    expect(kinds(out.events)).toEqual(['live']);
   });
 });

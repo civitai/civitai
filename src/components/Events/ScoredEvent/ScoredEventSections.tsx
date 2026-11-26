@@ -8,6 +8,8 @@ import {
   useEventTeamsLivePoints,
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
+import { ComebackCupSection } from '~/components/Events/ScoredEvent/ComebackCupSection';
+import { FlagRaceEventSection } from '~/components/Events/ScoredEvent/FlagRaceEventSection';
 import { HatTurfEventSection } from '~/components/Events/ScoredEvent/HatTurfEventSection';
 import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
@@ -115,6 +117,8 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
       </div>
     ),
     turf: <HatTurfEventSection event={event} team={team} teams={data.teams} />,
+    flagRace: <FlagRaceEventSection event={event} myTeam={team} teamHats={standings?.teamHats} />,
+    comeback: <ComebackCupSection event={event} myTeam={team} teamHats={standings?.teamHats} />,
     hats: joined && hats.length > 0 && (
       <div ref={hatsView.ref}>
         <MyHatsLivePoints

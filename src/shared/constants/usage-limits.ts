@@ -4,6 +4,7 @@ import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import type { RateLimitKind } from '~/shared/utils/rate-limit-meta';
+import { appUsageLimitDefs } from '~/shared/constants/app-usage-limits';
 
 /**
  * Every tunable usage limit, keyed by the id clients see on a 429 and on `/api/v1/me/limits`.
@@ -59,6 +60,19 @@ export type UsageLimitDef = UsageLimitValues & {
   appliesTo?: 'first-day';
   /** A gate (a limit-0 block) that overrides may not change. */
   configurable?: false;
+  /**
+   * Code-only: an ABUSE limit whose refusal still reports its counts (`limit`, `used`,
+   * `remaining`, and the window's), as a product limit's does. `kind` alone still decides what an
+   * override may do (only a product limit can be disabled), so a cap can be shown to its user and
+   * stay impossible to switch off. Read through `usageLimitReportsCounts`.
+   */
+  reportsCounts?: true;
+  /**
+   * Code-only: the enforcing service keeps its own counter (a fixed window or a calendar day) and
+   * reads only the limit from here. `rateLimit()` cannot count it (`usageLimits` refuses it), and
+   * `/api/v1/me/limits` does not list it from a bucket.
+   */
+  countedBy?: 'owner';
   message?: string | ((resolution: UsageLimitResolution) => string | undefined);
 };
 
@@ -258,11 +272,63 @@ export const usageLimitDefs = [
     base: 1500,
   },
   {
-    // Counted by the gift claim itself (a calendar window), not by rateLimit().
+    // One per image the Training Studio rates on the system token.
+    id: 'dataset-rating.submit',
+    area: 'training-studio',
+    kind: 'abuse',
+    label: 'Training dataset images rated per minute',
+    window: rolling(60),
+    base: 60,
+  },
+  {
+    id: 'dataset-rating.daily',
+    area: 'training-studio',
+    kind: 'abuse',
+    label: 'Training dataset images rated per day',
+    window: rolling(DAY),
+    base: 1000,
+  },
+  {
+    // One per 3D result the post gate rates on the system token (all its preview angles at once).
+    id: 'model3d-rating.submit',
+    area: 'generation',
+    kind: 'abuse',
+    label: '3D results rated before posting, per minute',
+    window: rolling(60),
+    base: 10,
+  },
+  {
+    id: 'model3d-rating.daily',
+    area: 'generation',
+    kind: 'abuse',
+    label: '3D results rated before posting, per day',
+    window: rolling(DAY),
+    base: 200,
+  },
+  {
+    // One per four-angle render the post gate asks for on the system token.
+    id: 'model3d-preview.submit',
+    area: 'generation',
+    kind: 'abuse',
+    label: '3D preview renders before posting, per minute',
+    window: rolling(60),
+    base: 5,
+  },
+  {
+    id: 'model3d-preview.daily',
+    area: 'generation',
+    kind: 'abuse',
+    label: '3D preview renders before posting, per day',
+    window: rolling(DAY),
+    base: 40,
+  },
+  {
+    // Claims of the creator's gift links, counted by the gift claim itself (a calendar window), not
+    // by rateLimit(). It is the creator's limit: whoever claims is never limited.
     id: 'gifts.monthly',
     area: 'gifts',
     kind: 'product',
-    label: 'Gift claims per month',
+    label: 'Gift claims of your links per month',
     window: { type: 'utc-month' },
     base: 3,
     byTier: {
@@ -271,10 +337,22 @@ export const usageLimitDefs = [
       silver: { limit: 30 },
       gold: { limit: 60 },
     },
+    // Shown to the claimer, whose own count and limit are not what was reached.
+    message: "This creator's gift links have reached this month's limit.",
+  },
+  {
+    // Counted by sticker auto-track itself (a calendar window), not by rateLimit(). Each run is
+    // paid by the system account, so this is what bounds that spend.
+    id: 'stickers.auto-track-daily',
+    area: 'stickers',
+    kind: 'product',
+    label: 'Sticker auto-tracks per day',
+    window: { type: 'utc-day' },
+    base: 3,
     message: ({ limit }) =>
-      `You've claimed your ${numberWithCommas(limit)} ${
-        limit === 1 ? 'gift' : 'gifts'
-      } for this month. To get this one, reach out to the person who gave you the link.`,
+      `You've used your ${numberWithCommas(limit)} sticker ${
+        limit === 1 ? 'auto-track' : 'auto-tracks'
+      } for today. Try again tomorrow.`,
   },
   // ── Per-user App Platform caps, by membership tier. Read ONLY through `resolveUserAppCaps`
   // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the
@@ -332,6 +410,40 @@ export const usageLimitDefs = [
       gold: { limit: 10_000 },
     },
   },
+  {
+    // Sleeping (hibernated) apps one user may keep. At the limit a new hibernation is refused and
+    // the app stays as it is. The refusal names the user's oldest sleeping app, which is deleted
+    // only if the user confirms ("delete <name> to continue"); nothing is ever deleted on its own.
+    id: 'apps.sleeping-count',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Sleeping apps',
+    window: { type: 'standing' },
+    base: 5,
+    byTier: {
+      founder: { limit: 25 },
+      bronze: { limit: 25 },
+      silver: { limit: 50 },
+      gold: { limit: 100 },
+    },
+  },
+  {
+    // Bytes of sleeping-app archives one user may keep, across all their sleeping apps.
+    id: 'apps.sleeping-bytes',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Sleeping app storage',
+    window: { type: 'standing' },
+    base: 100 * 1024 * 1024,
+    byTier: {
+      founder: { limit: 500 * 1024 * 1024 },
+      bronze: { limit: 500 * 1024 * 1024 },
+      silver: { limit: 1024 * 1024 * 1024 },
+      gold: { limit: 2 * 1024 * 1024 * 1024 },
+    },
+  },
+  // ── The App Platform's other per-user caps (`app-usage-limits.ts`).
+  ...appUsageLimitDefs,
 ] as const satisfies readonly UsageLimitDef[];
 
 export type UsageLimitId = (typeof usageLimitDefs)[number]['id'];
@@ -391,6 +503,14 @@ export function usageLimitApplies(
   return true;
 }
 
+/**
+ * Whether a refusal by this limit carries its counts: every product limit, and an abuse limit
+ * marked `reportsCounts`. The one predicate the meta builders and the tRPC strip both read.
+ */
+export function usageLimitReportsCounts(def: Pick<UsageLimitDef, 'kind' | 'reportsCounts'>) {
+  return def.kind === 'product' || def.reportsCounts === true;
+}
+
 export function usageLimitMessage(def: UsageLimitDef, resolution: UsageLimitResolution) {
   return typeof def.message === 'function' ? def.message(resolution) : def.message;
 }
@@ -406,8 +526,11 @@ export function isBucketCountable(window: UsageLimitWindow) {
 /** Registry entries for `rateLimit()`; throws for a window the bucket cannot count. */
 export function usageLimits(...ids: UsageLimitId[]): UsageLimitRef {
   for (const id of ids) {
-    if (!isBucketCountable(getUsageLimitDef(id).window))
+    const def = getUsageLimitDef(id);
+    if (!isBucketCountable(def.window))
       throw new Error(`rateLimit() cannot count ${id}: its window is not a rolling day or less`);
+    if (def.countedBy === 'owner')
+      throw new Error(`rateLimit() cannot count ${id}: its enforcing service counts it`);
   }
   return { usageLimitIds: ids };
 }

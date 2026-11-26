@@ -10,17 +10,9 @@ import { logToAxiom, safeError } from '~/server/logging/client';
  * - `defaults-firing`        getGenerationStatus / getTrainingServiceStatus
  *                            / getCreationBlockedTags could not read their
  *                            value. getCreationBlockedTags falls back to
- *                            schema defaults. getGenerationStatus and
- *                            getTrainingServiceStatus do NOT: each serves the
- *                            last value this process read
- *                            (`served: 'last-known-good'`) or, with none,
- *                            refuses — generation DISABLED, training PAUSED
- *                            (`served: 'fail-closed'`). With
- *                            TRAINING_STATUS_FAIL_CLOSED=off the training
- *                            reader falls back to the schema default
- *                            `available=true` instead (`served: 'defaults'`):
- *                            if an admin had paused training, it then appears
- *                            available.
+ *                            schema defaults; getGenerationStatus and
+ *                            getTrainingServiceStatus serve last-known-good
+ *                            or refuse (see their `served` field).
  *
  * - `tracking-write-cliff`   setToken's USER_TOKENS write failed. Next
  *                            authenticated request from that user will
@@ -53,7 +45,8 @@ export type SysRedisFailOpenSubtype =
   | 'token-mint-amplification'
   | 'read-degraded'
   | 'write-degraded'
-  | 'rate-limit-write-degraded';
+  | 'rate-limit-write-degraded'
+  | 'rate-limit-claim-script-error';
 
 /**
  * Emit a structured fail-open warning. Fire-and-forget — never blocks
@@ -77,12 +70,6 @@ export function logSysRedisFailOpen(
   err: unknown,
   extra?: Record<string, unknown>
 ): void {
-  // .catch swallows Axiom-side failures. logToAxiom internally awaits
-  // axiom.ingestEvents which can reject if Axiom itself is degraded —
-  // discarding the promise with `void` alone would let that rejection
-  // bubble to unhandledRejection. Critical when this very logger fires
-  // most: a multi-service incident (sysRedis + Axiom both down).
-  //
   // Spread safeError(err) and extra FIRST: safeError returns
   // { name: e.name, ... } where e.name is "Error" / "TypeError" / etc.
   // Spreading it after the literal `name: 'sysredis-fail-open'` would
@@ -99,7 +86,5 @@ export function logSysRedisFailOpen(
     type: 'warning',
     subtype,
     fn,
-  }).catch(() => {
-    /* fail-open logger never blocks the request */
   });
 }

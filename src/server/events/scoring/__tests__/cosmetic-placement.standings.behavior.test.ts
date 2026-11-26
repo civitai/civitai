@@ -97,6 +97,7 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false,
       "flags" integer NOT NULL DEFAULT 0,
+      "meta" jsonb NOT NULL DEFAULT '{}',
       "createdAt" timestamp(3) NOT NULL DEFAULT '2020-01-01'
     );
     -- Ids in registration order. The new-account window opens 2026-10-25 00:00: user 2 registered a
@@ -321,6 +322,61 @@ describe('standings', () => {
         `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
       );
     }
+  });
+
+  describe('an exclusion start (meta.eventPointsExcludedFrom)', () => {
+    const excludeFrom = (value: string | null, id = EXCLUDED) =>
+      db.pg.exec(
+        value === null
+          ? `UPDATE "User" SET meta = '{}' WHERE id = ${id}`
+          : `UPDATE "User" SET meta = jsonb_build_object('eventPointsExcludedFrom', '${value}') WHERE id = ${id}`
+      );
+    beforeEach(() => insertDays([day('2026-11-03', EXCLUDED, 24, 'claimed', 'Green', 50)]));
+    afterEach(async () => {
+      await excludeFrom(null);
+      await excludeFrom(null, BANNED);
+    });
+    const green = async () => {
+      await settle();
+      const { teams, history, topUsers } = await getEventStandings(event);
+      return {
+        score: teams.find((t) => t.team === 'Green')?.score,
+        history: history
+          .find((h) => h.team === 'Green')
+          ?.scores.map((s) => [s.date.toISOString().slice(0, 10), s.score]),
+        topUsers: topUsers.Green ?? [],
+      };
+    };
+
+    it('keeps the days before it and hides the days from it', async () => {
+      await excludeFrom('2026-11-03T00:00:00.000Z');
+      expect(await green()).toEqual({
+        score: 300,
+        history: [['2026-11-02', 300]],
+        topUsers: [{ userId: EXCLUDED, points: 300 }],
+      });
+    });
+
+    it('reads a plain date the same way', async () => {
+      await excludeFrom('2026-11-03');
+      expect((await green()).score).toBe(300);
+    });
+
+    it('without it, hides the whole season', async () => {
+      expect((await green()).score).toBe(0);
+    });
+
+    it('with a value it cannot read (not UTC midnight), hides the whole season', async () => {
+      await excludeFrom('2026-11-03T05:00:00.000Z');
+      expect((await green()).score).toBe(0);
+    });
+
+    it('never applies to a banned user', async () => {
+      await excludeFrom('2026-11-03', BANNED);
+      await settle();
+      const { teams } = await getEventStandings(event);
+      expect(teams.find((t) => t.team === 'Pink')?.score).toBe(0);
+    });
   });
 
   it('ranks cosmetic instances, so two copies of one design score separately', async () => {
@@ -798,7 +854,8 @@ describe('referee snapshot', () => {
       ALTER TABLE "Image"
         ADD COLUMN "postId" int, ADD COLUMN ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
         ADD COLUMN "tosViolation" boolean DEFAULT false, ADD COLUMN "needsReview" text,
-        ADD COLUMN "nsfwLevel" int DEFAULT 1;
+        ADD COLUMN "nsfwLevel" int DEFAULT 1,
+        ADD COLUMN "modelRestricted" boolean NOT NULL DEFAULT false;
       CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
       CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "nsfwLevel" int);
       CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
@@ -1095,6 +1152,32 @@ describe('referee snapshot', () => {
     const { restrictedUsers, newAccountMinId } = refereeParams();
     expect([...restrictedUsers].sort()).toEqual([BANNED, DELETED, EXCLUDED]);
     expect(newAccountMinId).toBe(NEWBIE);
+  });
+
+  it('restricts each person from their exclusion start, banned and deleted ones from the start of time', async () => {
+    const from = () => {
+      const { restrictedUsers, restrictedFrom } = refereeParams();
+      return Object.fromEntries(
+        restrictedUsers.map((id: number, i: number) => [id, restrictedFrom[i]])
+      );
+    };
+    await runEventPointsReferee(scored, 'live', HOURLY);
+    expect(from()).toEqual({ [BANNED]: 0, [DELETED]: 0, [EXCLUDED]: 0 });
+
+    await db.pg.exec(
+      `UPDATE "User" SET meta = '{"eventPointsExcludedFrom": "2026-11-03T00:00:00.000Z"}' WHERE id IN (${EXCLUDED}, ${BANNED})`
+    );
+    try {
+      ch.query.mockClear();
+      await runEventPointsReferee(scored, 'live', HOURLY);
+      expect(from()).toEqual({
+        [BANNED]: 0,
+        [DELETED]: 0,
+        [EXCLUDED]: Date.UTC(2026, 10, 3),
+      });
+    } finally {
+      await db.pg.exec(`UPDATE "User" SET meta = '{}' WHERE id IN (${EXCLUDED}, ${BANNED})`);
+    }
   });
 
   // Leaderboard exclusion alone must not stop event points; see sync.behavior.test.ts.

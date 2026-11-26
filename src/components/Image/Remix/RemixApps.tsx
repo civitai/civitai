@@ -50,7 +50,7 @@ export function useRemixApps(image: RemixSourceImage): RemixMenuApp[] {
   const viewer = { isGreen: !!features.isGreen, showNsfw: !!session.showNsfw };
   return apps.filter(
     (app) =>
-      app.enabled &&
+      (app.enabled || app.inReview) &&
       app.target === 'image.remix' &&
       !('refusal' in resolveRemixAppEngine(app, image, viewer))
   );
@@ -144,6 +144,11 @@ function RemixAppItem({
       <Text size="sm" fw={600} lh={1.2}>
         {app.name}
       </Text>
+      {app.inReview && (
+        <Text size="xs" c="yellow" lh={1.2}>
+          In review: only you can run it
+        </Text>
+      )}
       {refusal && (
         <Text size="xs" c="dimmed" lh={1.2}>
           {refusal}

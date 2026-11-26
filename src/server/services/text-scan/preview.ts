@@ -19,7 +19,7 @@ import type {
 import { nsfwLevelFromName } from '~/server/services/text-scan/types';
 
 export type TextScanNsfwPreview =
-  | { status: 'ok'; level: NsfwLevel; reason: string }
+  | { status: 'ok'; level: NsfwLevel; reason: string; promptId?: number }
   | { status: 'unavailable' };
 
 /**
@@ -31,11 +31,17 @@ async function previewTextScanLabel<L extends TextScanLabel>({
   label,
   fields,
   waitSeconds,
+  thinking,
 }: {
   label: L;
   fields: TextScanField[];
   waitSeconds: number;
-}): Promise<{ status: 'ok'; output: NonNullable<TextScanOutput[L]> } | { status: 'unavailable' }> {
+  /** Overrides the stored config, for a second, slower pass. */
+  thinking?: boolean;
+}): Promise<
+  | { status: 'ok'; output: NonNullable<TextScanOutput[L]>; promptId?: number }
+  | { status: 'unavailable' }
+> {
   const labels = [label];
   const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
   let composed: ReturnType<typeof composeTextScanMessages>;
@@ -62,7 +68,7 @@ async function previewTextScanLabel<L extends TextScanLabel>({
     segments: composed.segments,
     model: config.model,
     labels,
-    thinking: config.thinking,
+    thinking: thinking ?? config.thinking,
   });
 
   const { data } = await submitWorkflow({
@@ -76,7 +82,11 @@ async function previewTextScanLabel<L extends TextScanLabel>({
   if (!parsed.ok) return { status: 'unavailable' };
   const output = mergeTextScanOutputs(parsed.outputs, labels).output[label];
   if (!output) return { status: 'unavailable' };
-  return { status: 'ok', output: output as NonNullable<TextScanOutput[L]> };
+  return {
+    status: 'ok',
+    output: output as NonNullable<TextScanOutput[L]>,
+    promptId: prompts[`label:${label}`]?.id,
+  };
 }
 
 /** The nsfw verdict: the same classifier that sets a model's `nsfw` flag. */
@@ -90,10 +100,15 @@ export async function previewTextScanNsfw(args: {
     status: 'ok',
     level: nsfwLevelFromName[result.output.level],
     reason: result.output.reason,
+    promptId: result.promptId,
   };
 }
 
 /** Whether a model's listing is something a civitai.com face may be built for. */
-export async function previewComFaceIntent(args: { fields: TextScanField[]; waitSeconds: number }) {
+export async function previewComFaceIntent(args: {
+  fields: TextScanField[];
+  waitSeconds: number;
+  thinking?: boolean;
+}) {
   return previewTextScanLabel({ label: 'model-com-face-intent', ...args });
 }

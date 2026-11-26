@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
 /**
  * The Link dialog's switch and Preferences > Features are two views of ONE saved setting: they
@@ -23,7 +24,10 @@ const { store } = vi.hoisted(() => {
   return { store };
 });
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  // The real module underneath, so an export this file does not override (useOptionalFeatureFlags,
+  // for one) still exists for every module this tree imports.
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () =>
     useSyncExternalStore(
       (cb) => {

@@ -12,7 +12,18 @@ const { acceptImage, setReportStatus } = vi.hoisted(() => ({
   setReportStatus: vi.fn(),
 }));
 
-vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+// Every posted report is filed on both images here, so the report-to-image binding passes.
+const imageReports = vi.hoisted(() => () => {
+  let reportIds: number[] = [];
+  const q = {
+    select: () => q,
+    where: (_c: string, _op: string, ids: number[]) => ((reportIds = ids), q),
+    execute: async () =>
+      [52, 53].flatMap((imageId) => reportIds.map((reportId) => ({ imageId, reportId }))),
+  };
+  return q;
+});
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: { selectFrom: imageReports } }));
 // Pulls in `$app/server`, which only resolves inside a SvelteKit build.
 vi.mock('$lib/server/user-actions.service', () => ({ setImageFlag: vi.fn() }));
 vi.mock('$lib/server/reports.service', () => ({ setReportStatus }));
@@ -37,7 +48,8 @@ const request = (fields: Record<string, string>) =>
 const event = (fields: Record<string, string>) =>
   ({
     request: request(fields),
-    locals: { user: { id: 7 } },
+    // A grant holder, so the media access check (image-action-access) reads nothing.
+    locals: { user: { id: 7, roles: ['moderator:admin'] } },
     params: { slug: 'reported' },
   } as never);
 

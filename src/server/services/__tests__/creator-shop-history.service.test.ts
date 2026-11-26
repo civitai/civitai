@@ -35,7 +35,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Shop artwork is a bare upload key; this one's issue record names the creator (user 11).
 const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
 beforeEach(() => {
-  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+  redisMock.redis.mGet.mockResolvedValue(['11'] as never);
 });
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)

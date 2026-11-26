@@ -9,8 +9,9 @@ import {
   type PreviewErrorSource,
 } from '@civitai/app-assistant';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
+import { boundedClusterCall as bounded } from '~/server/utils/cluster-window-count';
 
 /**
  * The errors an app's own code reported in its LIVE DEV PREVIEW, kept for App Assistant's
@@ -75,8 +76,44 @@ export function redactSecrets(text: string): string {
 const clip = (text: string, max: number) =>
   text.length <= max ? text : `${text.slice(0, max)}… (cut)`;
 
-/** A report as stored: redacted, capped, its time clamped into the window ending now. */
-export function sanitizePreviewError(report: PreviewErrorReport, now: number): ErrorActivity {
+/** What a direct preview's session host is replaced with in what is kept. */
+const PREVIEW_HOST_PLACEHOLDER = '[preview]';
+
+/**
+ * The shortest piece of a session label, cut at the end of a report, that is still taken for it:
+ * 8 base32 characters (40 bits) never match by chance.
+ */
+const MIN_CUT_LABEL = 8;
+
+/**
+ * `text` with `host` (any case) replaced by the placeholder. The host's first label alone is the
+ * credential, so the match is on the label, with whatever of the domain follows it. The SDK caps a
+ * report's message and stack by cutting their END, which can fall inside the label: a trailing
+ * start of the label (at least `MIN_CUT_LABEL` characters) is replaced too.
+ */
+function hideHost(text: string, host: string | null): string {
+  const label = host?.split('.')[0]?.toLowerCase();
+  if (!label) return text;
+  const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`${escape(label)}(?:\\.[a-z0-9-]+)*`, 'gi');
+  const hidden = text.replace(pattern, PREVIEW_HOST_PLACEHOLDER);
+  const tail = hidden.toLowerCase();
+  for (let cut = label.length - 1; cut >= MIN_CUT_LABEL; cut--)
+    if (tail.endsWith(label.slice(0, cut)))
+      return hidden.slice(0, hidden.length - cut) + PREVIEW_HOST_PLACEHOLDER;
+  return hidden;
+}
+
+/**
+ * A report as stored: redacted, capped, its time clamped into the window ending now. `hiddenHost`:
+ * a direct preview's session host, a bearer credential the app's own URLs and stack traces name; it
+ * is replaced before anything is kept.
+ */
+export function sanitizePreviewError(
+  report: PreviewErrorReport,
+  now: number,
+  hiddenHost: string | null = null
+): ErrorActivity {
   const source: PreviewErrorSource = (PREVIEW_ERROR_SOURCES as readonly string[]).includes(
     report.source ?? ''
   )
@@ -92,13 +129,15 @@ export function sanitizePreviewError(report: PreviewErrorReport, now: number): E
     at: new Date(at).toISOString(),
     source,
     fatal: report.fatal === true,
-    message: clip(redactSecrets(report.message), PREVIEW_ERROR_MESSAGE_MAX),
-    stack: report.stack ? clip(redactSecrets(report.stack), PREVIEW_ERROR_STACK_MAX) : null,
+    message: clip(redactSecrets(hideHost(report.message, hiddenHost)), PREVIEW_ERROR_MESSAGE_MAX),
+    stack: report.stack
+      ? clip(redactSecrets(hideHost(report.stack, hiddenHost)), PREVIEW_ERROR_STACK_MAX)
+      : null,
   };
 }
 
 export function previewErrorsKey(userId: number, blockId: string) {
-  return `${REDIS_SYS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
+  return `${REDIS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
 }
 
 /** Back-to-back repeats in `entries` (oldest first) folded into one entry each. */
@@ -129,10 +168,11 @@ export async function storePreviewErrors({
 }): Promise<{ status: 'stored'; stored: number } | { status: 'not-found' }> {
   const tunnel = await getActiveDevTunnel(userId, blockId);
   if (!tunnel) return { status: 'not-found' };
+  const hiddenHost = tunnel.transport === 'direct' ? tunnel.host : null;
   const entries = foldRepeats(
     reports
       .slice(0, PREVIEW_ERRORS_BATCH_MAX)
-      .map((report) => sanitizePreviewError(report, now))
+      .map((report) => sanitizePreviewError(report, now, hiddenHost))
       // Oldest pushed first, so the newest ends up at the head of the list.
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
   );
@@ -140,12 +180,13 @@ export async function storePreviewErrors({
   const key = previewErrorsKey(userId, blockId);
 
   // The oldest of this batch repeats the newest kept entry: that entry is replaced by the fold.
-  const [headRaw] = (await withSysReadDeadline(sysRedis.lRange<string | Buffer>(key, 0, 0))) ?? [];
+  const [headRaw] =
+    (await bounded('storePreviewErrors', () => redis.lRange<string | Buffer>(key, 0, 0))) ?? [];
   const head = headRaw === undefined ? null : parseStored(headRaw);
   const replacesHead = !!head && sameError(head, entries[0]!);
   if (head && replacesHead) entries[0] = foldErrors(head, entries[0]!);
 
-  const pipeline = sysRedis.multi();
+  const pipeline = redis.multi();
   if (replacesHead) pipeline.lPopCount(key, 1);
   pipeline.lPush(
     key,
@@ -153,7 +194,7 @@ export async function storePreviewErrors({
   );
   pipeline.lTrim(key, 0, PREVIEW_ERRORS_MAX_ENTRIES - 1);
   pipeline.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-  const replies: unknown = await withSysReadDeadline(pipeline.exec());
+  const replies: unknown = await bounded('storePreviewErrors', () => pipeline.exec());
 
   // Another write pushed between the read and the replace, so the pop took ITS entry: it goes back
   // (readers order by time, so its place in the list does not matter). The entry this meant to
@@ -168,10 +209,10 @@ export async function storePreviewErrors({
       )
       .filter((raw): raw is string => typeof raw === 'string' && raw !== kept);
     if (others.length > 0) {
-      const putBack = sysRedis.multi();
+      const putBack = redis.multi();
       putBack.lPush(key, others);
       putBack.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-      await withSysReadDeadline(putBack.exec());
+      await bounded('storePreviewErrors', () => putBack.exec());
     }
   }
   return { status: 'stored', stored: entries.length };
@@ -214,8 +255,8 @@ export async function readPreviewErrors({
   userId: number;
   blockId: string;
 }): Promise<ErrorActivity[]> {
-  const raw = await withSysReadDeadline(
-    sysRedis.lRange<string | Buffer>(
+  const raw = await bounded('readPreviewErrors', () =>
+    redis.lRange<string | Buffer>(
       previewErrorsKey(userId, blockId),
       0,
       PREVIEW_ERRORS_MAX_ENTRIES - 1

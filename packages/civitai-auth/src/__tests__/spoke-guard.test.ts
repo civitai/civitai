@@ -16,7 +16,9 @@ import type { SessionUser } from '../types';
 
 const ISSUER = 'http://localhost:5173'; // http → non-secure cookie name 'civ-token'
 const RETURN = 'http://localhost:3100/cases/42';
-const LOGIN = `${ISSUER}/login?returnUrl=${encodeURIComponent(RETURN)}`;
+const SIGN_IN = `http://localhost:3100/api/auth/authorize?returnUrl=${encodeURIComponent(
+  '/cases/42'
+)}`;
 const ORIGINAL_ENV = { ...process.env };
 
 const mod = { id: 1, isModerator: true } as unknown as SessionUser;
@@ -45,21 +47,21 @@ describe('createSpokeGuard', () => {
 
   it('→ login redirect (carrying returnUrl) when there is no session cookie; never calls the hub', async () => {
     const r = await guardOf().check('', RETURN);
-    expect(r).toEqual({ status: 'login', redirect: LOGIN, reason: 'no-session' });
+    expect(r).toEqual({ status: 'login', redirect: SIGN_IN, reason: 'no-session' });
     expect(h.resolveSessionUser).not.toHaveBeenCalled();
   });
 
   it('→ login when the token does not resolve to a user', async () => {
     h.resolveSessionUser.mockResolvedValue(INVALID);
     const r = await guardOf().check('civ-token=bad', RETURN);
-    expect(r).toEqual({ status: 'login', redirect: LOGIN, reason: 'invalid' });
+    expect(r).toEqual({ status: 'login', redirect: SIGN_IN, reason: 'invalid' });
     expect(h.resolveSessionUser).toHaveBeenCalledWith('bad');
   });
 
   it('→ login with reason unavailable when the hub could not resolve the session', async () => {
     h.resolveSessionUser.mockResolvedValue(UNAVAILABLE);
     const r = await guardOf().check('civ-token=t', RETURN);
-    expect(r).toEqual({ status: 'login', redirect: LOGIN, reason: 'unavailable' });
+    expect(r).toEqual({ status: 'login', redirect: SIGN_IN, reason: 'unavailable' });
   });
 
   it('→ ok with the user when authenticated and no `require`', async () => {
@@ -88,13 +90,6 @@ describe('createSpokeGuard', () => {
     await guardOf().check('foo=1; civ-token=the-token; bar=2', RETURN);
     expect(h.resolveSessionUser).toHaveBeenCalledWith('the-token');
   });
-
-  it('honors a custom loginPath', async () => {
-    const r = (await guardOf({ loginPath: '/sign-in' }).check('', RETURN)) as {
-      redirect: string;
-    };
-    expect(r.redirect).toBe(`${ISSUER}/sign-in?returnUrl=${encodeURIComponent(RETURN)}`);
-  });
 });
 
 // ── Secure names: the two slots are distinct (`__Secure-civ-token` / `__Host-civ-token`) ──
@@ -119,17 +114,20 @@ describe('createSpokeGuard (cookie mode)', () => {
     h.resolveSessionUser.mockResolvedValue({ user: normie });
   });
 
-  it('shared mode: a signed-out request goes to the hub login, page load or not (as today)', async () => {
-    h.resolveSessionUser.mockResolvedValue(INVALID);
-    const login = `${HUB}/login?returnUrl=${encodeURIComponent(PAGE)}`;
+  // Not the hub login: with a live hub session and no shared cookie it returns to returnUrl without minting one,
+  // so a shared-mode spoke that sent page loads there redirected forever. Its own authorize mints a host cookie.
+  it("shared mode: a signed-out page load signs in on this app's own host, never the hub login", async () => {
     expect(await guardOf().check('', PAGE)).toEqual({
       status: 'login',
-      redirect: login,
+      redirect: AUTHORIZE,
       reason: 'no-session',
     });
+  });
+
+  it('shared mode: a signed-out fetch gets reauth (401), not a redirect it cannot follow', async () => {
     expect(await guardOf().check('', PAGE, { navigation: false })).toEqual({
-      status: 'login',
-      redirect: login,
+      status: 'reauth',
+      authorize: AUTHORIZE,
       reason: 'no-session',
     });
   });
@@ -177,8 +175,51 @@ describe('createSpokeGuard (cookie mode)', () => {
     });
   });
 
+  it('shared mode: an invalid shared cookie falls back to the host cookie sign-in set, instead of looping', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? { user: normie } : INVALID
+    );
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=own`, PAGE)).toMatchObject({
+      status: 'ok',
+      user: normie,
+    });
+  });
+
+  it('shared mode: an unavailable shared session never falls back to the host cookie', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? { user: normie } : UNAVAILABLE
+    );
+    expect(await guardOf().check(`${SHARED}=busy; ${HOST}=own`, PAGE)).toEqual({
+      status: 'login',
+      redirect: AUTHORIZE,
+      reason: 'unavailable',
+    });
+    expect(h.resolveSessionUser).not.toHaveBeenCalledWith('own');
+  });
+
+  it('shared mode: an invalid shared cookie next to an unavailable host session reports unavailable', async () => {
+    h.resolveSessionUser.mockImplementation(async (t: string) =>
+      t === 'own' ? UNAVAILABLE : INVALID
+    );
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=own`, PAGE)).toEqual({
+      status: 'login',
+      redirect: AUTHORIZE,
+      reason: 'unavailable',
+    });
+  });
+
+  it('shared mode: an invalid shared cookie with an invalid host cookie still signs in', async () => {
+    h.resolveSessionUser.mockResolvedValue(INVALID);
+    expect(await guardOf().check(`${SHARED}=dead; ${HOST}=also-dead`, PAGE)).toEqual({
+      status: 'login',
+      redirect: AUTHORIZE,
+      reason: 'invalid',
+    });
+  });
+
   it('reads the host-only cookie when it is the only one (shared mode falls back to it)', async () => {
-    await guardOf().check(`${HOST}=host-token`, PAGE);
+    // What the authorize → callback sign-in leaves behind in shared mode; it must sign the next page load in.
+    expect(await guardOf().check(`${HOST}=host-token`, PAGE)).toMatchObject({ status: 'ok' });
     expect(h.resolveSessionUser).toHaveBeenCalledWith('host-token');
   });
 
@@ -201,6 +242,16 @@ describe('createSpokeGuard (cookie mode)', () => {
     );
     expect(r).toEqual({ status: 'ok', user: normie, setCookies: [] });
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('reports the cookie slot of each authenticated request, and none for a signed-out one', async () => {
+    const onSessionSlot = vi.fn();
+    const guard = guardOf({ onSessionSlot });
+    await guard.check(`${SHARED}=${aged(0)}`, PAGE);
+    await guard.check(`${HOST}=${aged(0)}`, PAGE);
+    h.resolveSessionUser.mockResolvedValue(INVALID);
+    await guard.check(`${HOST}=bad`, PAGE);
+    expect(onSessionSlot.mock.calls).toEqual([['shared'], ['host']]);
   });
 
   it('shared mode: an old shared cookie is not rolled here (the hub and the main app roll it)', async () => {

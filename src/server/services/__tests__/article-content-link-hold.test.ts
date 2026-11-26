@@ -1,8 +1,10 @@
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as ImageService from '~/server/services/image.service';
@@ -53,12 +55,15 @@ const {
   UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
-const { nextContentLinkHold, writeContentLinkHold } = await import(
-  '~/server/services/article-content-link-hold'
-);
-const { settleContentLinkHolds, CONTENT_LINK_DEFERRAL_BACKSTOP_MS } = await import(
-  '~/server/jobs/article-content-link-hold'
-);
+const {
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
+  deferContentUrls,
+  MAX_UPLOAD_PROBES,
+  nextContentLinkHold,
+  probeContentUploads,
+  writeContentLinkHold,
+} = await import('~/server/services/article-content-link-hold');
+const { settleContentLinkHolds } = await import('~/server/jobs/article-content-link-hold');
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -86,6 +91,14 @@ let db: PGlite;
 let raw: ReturnType<typeof pgliteRaw>;
 const redis = new Map<string, string>();
 let textModeration: { status: string; blocked: boolean } | null;
+/** A verdict from before verdicts carried a text hash, which the recompute counts as it always did. */
+const legacyVerdict = (blocked: boolean) => ({
+  status: 'Succeeded',
+  blocked,
+  contentHash: null,
+  result: null,
+  updatedAt: new Date('2026-01-01'),
+});
 
 const q = async <T>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows;
 
@@ -206,14 +219,37 @@ beforeAll(async () => {
   await db.exec(MIGRATION);
 });
 
+/** The image store, at the S3 wire: a key in `absent` answers 404, every other key exists. */
+const store = { absent: new Set<string>(), down: false };
+setEnv({
+  S3_IMAGE_B2_ENDPOINT: 'https://b2.example',
+  S3_IMAGE_B2_ACCESS_KEY: 'ia',
+  S3_IMAGE_B2_SECRET_KEY: 'is',
+});
+const s3Send = vi.spyOn(S3Client.prototype, 'send').mockImplementation((async (
+  command: unknown
+) => {
+  if (!(command instanceof HeadObjectCommand)) throw new Error('unexpected S3 command');
+  if (store.down) throw Object.assign(new Error('503'), { $metadata: { httpStatusCode: 503 } });
+  if (store.absent.has(command.input.Key ?? ''))
+    throw Object.assign(new Error('NotFound'), {
+      name: 'NotFound',
+      $metadata: { httpStatusCode: 404 },
+    });
+  return { ContentLength: 1024 };
+}) as never);
+afterAll(() => s3Send.mockRestore());
+
 beforeEach(async () => {
   await db.exec(`TRUNCATE "Article", "Image", "ImageConnection", "ArticleContentLinkHold"`);
+  store.absent.clear();
+  store.down = false;
   await givenArticle();
   redis.clear();
-  textModeration = { status: 'Succeeded', blocked: false };
+  textModeration = legacyVerdict(false);
   state.clickhouseDown = false;
   createReport.mockClear();
-  redisMock.sysRedis.set.mockImplementation((async (k: string, v: string) => {
+  redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
     redis.set(k, v);
     return 'OK';
   }) as never);
@@ -251,11 +287,11 @@ async function givenArticle(
   );
 }
 function lookupsDown() {
-  redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+  redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
   state.clickhouseDown = true;
 }
 function lookupsUp() {
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
   state.clickhouseDown = false;
 }
@@ -301,7 +337,7 @@ describe('linking a url whose key cannot be proved', () => {
 
   it('with the issue record alone down, defers a key the request log does not hold', async () => {
     await recordUploadKeyOwner(KEY, OTHER);
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     await link();
     expect(await rows()).toEqual([]);
     expect((await hold())?.deferred).toEqual([KEY]);
@@ -405,7 +441,7 @@ describe('settling a held article', () => {
 
   it('returns to what the article was for other reasons, not to public', async () => {
     await recordUploadKeyOwner(KEY, AUTHOR);
-    textModeration = { status: 'Succeeded', blocked: true };
+    textModeration = legacyVerdict(true);
     await recomputeArticleIngestion(ARTICLE_ID);
     expect(await ingestion()).toBe('Blocked');
     await settleContentLinkHolds(at(10 * MINUTE));
@@ -546,12 +582,26 @@ describe('an image whose upload did not finish', () => {
     }
   });
 
+  // Deliberate: a blob: url renders only in its uploader's own tab, so it is skipped, not held.
   it('gets no image row when stored content is linked, and holds nothing', async () => {
     await recordUploadKeyOwner(KEY2, AUTHOR);
     await givenArticle({ content });
     await link({ content });
     expect(await rows()).toEqual([KEY2]);
     expect(await hold()).toBeNull();
+  });
+
+  // Deliberate, unlike blob: a data: image renders its bytes, unscanned, to every reader.
+  it('holds the article on a stored data: image, with no image row', async () => {
+    const DATA =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk';
+    const dataContent = `<p><edge-media url="${DATA}" type="image"></edge-media>${img(KEY2)}</p>`;
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    await givenArticle({ content: dataContent });
+    await link({ content: dataContent });
+    expect(await rows()).toEqual([KEY2]);
+    expect((await hold())?.refused).toEqual([DATA]);
+    expect(await ingestion()).toBe('Blocked');
   });
 });
 
@@ -692,5 +742,271 @@ describe('a refused url still unrecorded', () => {
     await link({ now: at(30 * MINUTE) });
     expect(await rows()).toEqual([]);
     expect((await hold())?.refused).toEqual([KEY]);
+  });
+});
+
+describe('a url whose upload is not in the image store', () => {
+  beforeEach(() => recordUploadKeyOwner(KEY, AUTHOR));
+
+  it('gets no image row, is deferred, and keeps the article off public', async () => {
+    store.absent.add(KEY);
+    await link();
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY]);
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('links once the upload shows up', async () => {
+    store.absent.add(KEY);
+    await link();
+    store.absent.clear();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([KEY]);
+    expect(await hold()).toBeNull();
+  });
+
+  it('links only the urls whose uploads exist', async () => {
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    store.absent.add(KEY2);
+    const content = `<p>${img(KEY)}${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    await link({ content });
+    expect(await rows()).toEqual([KEY]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+  });
+
+  it('probes a bounded number of urls per link, linking the rest as before', async () => {
+    const keys = Array.from(
+      { length: MAX_UPLOAD_PROBES + 1 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    for (const key of keys) {
+      await recordUploadKeyOwner(key, AUTHOR);
+      store.absent.add(key);
+    }
+    const content = `<p>${keys.map(img).join('')}</p>`;
+    await givenArticle({ content });
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).toHaveBeenCalledTimes(MAX_UPLOAD_PROBES);
+    expect((await hold())?.deferred).toHaveLength(MAX_UPLOAD_PROBES);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('is not probed when the issue record cannot be read, and is handled as on main', async () => {
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    lookupsDown();
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).not.toHaveBeenCalled();
+    // As on main with the lookups down: classification defers it for that, not for its upload.
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+    lookupsUp();
+    store.absent.clear();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([KEY2]);
+  });
+
+  it('is refused, not deferred, when its key was issued to another user', async () => {
+    await recordUploadKeyOwner(KEY2, OTHER);
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(await hold()).toMatchObject({ deferred: [], refused: [KEY2] });
+    expect(await ingestion()).toBe('Blocked');
+  });
+
+  it('defers a key written in upper case like its stored lowercase form', async () => {
+    const upper = KEY2.toUpperCase();
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    const content = `<edge-media url="${upper}" type="image"></edge-media>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([upper]);
+  });
+
+  it('links as before, not deferred, when its key has no issue record', async () => {
+    // Such a key may predate the store the probe asks, so its absence there proves nothing.
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
+  });
+
+  it('stops probing at the first unreadable answer, linking the rest as before', async () => {
+    const keys = Array.from(
+      { length: 12 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    for (const key of keys) await recordUploadKeyOwner(key, AUTHOR);
+    const content = `<p>${keys.map(img).join('')}</p>`;
+    await givenArticle({ content });
+    store.down = true;
+    s3Send.mockClear();
+    await link({ content });
+    // One round of the 4 concurrent probes, not all 12.
+    expect(s3Send.mock.calls.length).toBeGreaterThan(0);
+    expect(s3Send.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(await rows()).toHaveLength(keys.length);
+  });
+
+  it('stays deferred when a later settle gets no answer from the store', async () => {
+    const content = `<p>${img(KEY2)}</p>`;
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+    store.down = true;
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await hold()).toMatchObject({ deferred: [KEY2], refused: [] });
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('control: links as before when the store cannot be read', async () => {
+    store.absent.add(KEY);
+    store.down = true;
+    await link();
+    expect(await rows()).toEqual([KEY]);
+    expect(await hold()).toBeNull();
+  });
+});
+
+describe('deferring urls found absent by the bulk migration', () => {
+  const defer = (urls: string[], content = CONTENT) =>
+    deferContentUrls({ articleId: ARTICLE_ID, content, urls, editorId: AUTHOR, now: T0 });
+
+  it('holds the article off public until they settle', async () => {
+    expect(await defer([KEY])).toBe(true);
+    expect((await hold())?.deferred).toEqual([KEY]);
+    await recomputeArticleIngestion(ARTICLE_ID);
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('keeps what the hold already refused and deferred', async () => {
+    const content = `<p>${img(KEY)}${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    await recordUploadKeyOwner(KEY, OTHER);
+    await link({ content });
+    expect((await hold())?.refused).toEqual([KEY]);
+    await defer([KEY2], content);
+    expect(await hold()).toMatchObject({ refused: [KEY], deferred: [KEY2] });
+  });
+});
+
+describe('probing a slow store', () => {
+  it('starts no probe past the time budget', async () => {
+    const keys = Array.from(
+      { length: 12 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    const answer = s3Send.getMockImplementation();
+    s3Send.mockImplementation((async (...args: Parameters<NonNullable<typeof answer>>) => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return answer?.(...args);
+    }) as never);
+    s3Send.mockClear();
+    try {
+      const { present } = await probeContentUploads(keys, { budgetMs: 100 });
+      // Rounds of 4 start at about 0ms and 60ms; none starts after 100ms.
+      expect(s3Send.mock.calls.length).toBeGreaterThan(0);
+      expect(s3Send.mock.calls.length).toBeLessThan(keys.length);
+      expect(present.size).toBe(s3Send.mock.calls.length);
+    } finally {
+      s3Send.mockImplementation(answer as never);
+    }
+  });
+});
+
+describe('a url still absent past the deferral backstop', () => {
+  const content = `<p>${img(KEY2)}</p>`;
+  const PAST = CONTENT_LINK_DEFERRAL_BACKSTOP_MS + MINUTE;
+  beforeEach(async () => {
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+  });
+
+  it('leaves the hold and links as before, not refused after the cutoff, filing no report', async () => {
+    expect(at(PAST) >= UNRECORDED_KEYS_ACCEPTED_UNTIL).toBe(true);
+    await settleContentLinkHolds(at(PAST));
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
+    expect(createReport).not.toHaveBeenCalled();
+  });
+
+  it('links, not refused, even if its issue record is gone by then', async () => {
+    redis.clear();
+    await settleContentLinkHolds(at(PAST));
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
+    expect(await ingestion()).not.toBe('Blocked');
+  });
+
+  it('stays deferred, not refused, if its issue record is gone within the backstop', async () => {
+    redis.clear();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([]);
+    expect(await hold()).toMatchObject({ deferred: [KEY2], refused: [] });
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('stays deferred, not linked early, while the issue record cannot be read', async () => {
+    lookupsDown();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+  });
+
+  it('control: stays deferred within the backstop', async () => {
+    await settleContentLinkHolds(at(CONTENT_LINK_DEFERRAL_BACKSTOP_MS - MINUTE));
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.deferred).toEqual([KEY2]);
+  });
+});
+
+describe('control: a hold deferred for another reason past the backstop', () => {
+  it('keeps that url and still reports, while the absent one is released', async () => {
+    const content = `<p>${img(KEY)}${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    store.absent.add(KEY2);
+    // KEY has no issue record and the request log is down, so it is deferred for that.
+    state.clickhouseDown = true;
+    await link({ content });
+    expect((await hold())?.deferred.sort()).toEqual([KEY, KEY2].sort());
+    await settleContentLinkHolds(at(CONTENT_LINK_DEFERRAL_BACKSTOP_MS + MINUTE));
+    expect(await rows()).toEqual([KEY2]);
+    expect((await hold())?.deferred).toEqual([KEY]);
+    expect(createReport).toHaveBeenCalledOnce();
+  });
+});
+
+describe('a deferred url that is not a bare upload key', () => {
+  it('is classified again once the lookups are back', async () => {
+    const url = `https://image.civitai.com/x/${KEY}/original=true/a.jpeg`;
+    const content = `<edge-media url="${url}" type="image"></edge-media>`;
+    await givenArticle({ content });
+    lookupsDown();
+    await link({ content });
+    expect((await hold())?.deferred).toEqual([url]);
+    lookupsUp();
+    await recordUploadKeyOwner(KEY, AUTHOR);
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([url]);
+    expect(await hold()).toBeNull();
   });
 });

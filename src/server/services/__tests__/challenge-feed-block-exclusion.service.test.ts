@@ -6,7 +6,7 @@ const mockDbRead = dbMock.dbRead;
 
 // getInfiniteChallenges: user challenges whose creator is in the viewer's block/hide set must be
 // dropped from the feed (parity with getChallengeDetail's creator-block gate, covered in
-// challenge-detail-visibility.service.test.ts). The predicate is only pushed onto the query when
+// challenge-detail-visibility.test.ts). The predicate is only pushed onto the query when
 // the viewer's excluded-id set is non-empty, so we assert both that the predicate appears when it
 // should and that it's absent (not just empty) when it shouldn't.
 const { mockHiddenUsersGetCached, mockBlockedByUsersGetCached, mockBlockedUsersGetCached } =
@@ -187,5 +187,40 @@ describe('getInfiniteChallenges — feed block/hide exclusion', () => {
     expect(mockHiddenUsersGetCached).not.toHaveBeenCalled();
     expect(mockBlockedByUsersGetCached).not.toHaveBeenCalled();
     expect(mockBlockedUsersGetCached).not.toHaveBeenCalled();
+  });
+});
+
+// The semantic search hydrates its candidates through this query by id, so `ids` must narrow it
+// and an empty list must match nothing rather than the whole feed.
+describe('getInfiniteChallenges — by id', () => {
+  const base = {
+    limit: 20,
+    includeEnded: false,
+    excludeEventChallenges: false,
+    isGreen: false,
+    canAccessUserChallenges: true,
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockDbRead.image.findMany.mockResolvedValue([]);
+  });
+
+  it('narrows the feed to the given ids, keeping its visibility gates', async () => {
+    await getInfiniteChallenges({ ...base, ids: [41, 42] } as Parameters<
+      typeof getInfiniteChallenges
+    >[0]);
+    const { text, values } = captureQuery();
+    expect(text).toContain('c.id IN (');
+    expect(values).toEqual(expect.arrayContaining([41, 42]));
+    expect(text).toContain('"visibleAt" <= now()');
+  });
+
+  it('matches nothing for an empty id list', async () => {
+    const result = await getInfiniteChallenges({ ...base, ids: [] as number[] } as Parameters<
+      typeof getInfiniteChallenges
+    >[0]);
+    expect(result.items).toEqual([]);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
   });
 });

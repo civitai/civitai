@@ -129,7 +129,7 @@ describe('Your hats cards', () => {
       })
     );
 
-  // The popover's layout (Ellie review, 2026-10-09): points on their own in the team colour, beside
+  // The popover's layout (design review, 2026-10-09): points on their own in the team colour, beside
   // the four ways that make them up. A card has no room for the words, so each way is its icon
   // and number, with the word kept for screen readers and the tooltip.
   it('shows the points on their own in the team colour, then the four ways as icon and number', () => {
@@ -162,7 +162,7 @@ describe('Your hats cards', () => {
     expect(stats.textContent).not.toMatch(/hourly/i);
   });
 
-  // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
+  // 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
   // the 2x2, side by side only from 13rem, and its cells show whole thousands.
   it('stacks the points above the four ways on a narrow card, with whole thousands', () => {
     const card = cards([
@@ -183,7 +183,7 @@ describe('Your hats cards', () => {
     ).toEqual(['123kviews', '99kreactions']);
   });
 
-  // Justin, 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall.
+  // 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall.
   it('keeps the points tile at least as wide as the 2x2 is tall', () => {
     const stats = cards([hat({ placedOn: placed })]).querySelector<HTMLElement>(
       '[data-testid="hat-stats"]'
@@ -203,7 +203,7 @@ describe('Your hats cards', () => {
     const picture = card.querySelector('[data-testid="thumb"]')!.parentElement!;
     expect(picture.contains(move)).toBe(true);
     expect(move.className).toContain('absolute');
-    // No line saying what it's on: the picture shows it (Justin, 2026-10-09).
+    // No line saying what it's on: the picture shows it (2026-10-09).
     expect(card.textContent).toContain('Party Cap - Blue');
     expect(card.textContent).not.toMatch(/\bOn\b|Not on anything/);
   });
@@ -218,7 +218,7 @@ describe('Your hats cards', () => {
     expect(card.textContent).not.toMatch(/\bOn\b|Not on anything/);
   });
 
-  // Justin and Ellie, 2026-10-09: hats are kept after the event, so they can still be moved and
+  // Decided in #5626: hats are kept after the event, so they can still be moved and
   // placed; only buying another is gone.
   it('still offers Move and Place it once the event has ended, but not another hat', () => {
     const el = cards([hat({ placedOn: placed }), hat({ cosmeticId: 32 })], true);

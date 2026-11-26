@@ -437,7 +437,7 @@ function validateSandbox(
  */
 export interface AppContext {
   /** OauthClient.allowedScopes bitmask — used for scope-subset validation. */
-  allowedScopes: number;
+  allowedScopes: bigint;
   /**
    * OauthClient.allowedOrigins normalized to lowercase scheme://host. H8:
    * iframe.src and assetBundleUrl must be hosted on an origin the registrant
@@ -488,16 +488,18 @@ function urlOriginIfPublic(raw: string): string | null {
 }
 
 export class BlockManifestValidator {
-  // Back-compat overload: the existing test suite passes a bitmask number.
+  // Back-compat overload: the existing test suite passes a bare bitmask (a number or a bigint).
   // Real callers pass the AppContext shape (with allowedOrigins) so the
   // H8 binding check actually runs.
   static validate(
     manifest: unknown,
-    app: AppContext | number,
+    app: AppContext | bigint | number,
     opts?: ManifestValidationOptions
   ): ValidationResult {
     const ctx: AppContext =
-      typeof app === 'number' ? { allowedScopes: app, allowedOrigins: [] } : app;
+      typeof app === 'number' || typeof app === 'bigint'
+        ? { allowedScopes: BigInt(app), allowedOrigins: [] }
+        : app;
     const errors: string[] = [];
     const oauthClientAllowedScopes = ctx.allowedScopes;
 
@@ -1029,7 +1031,7 @@ export class BlockManifestValidator {
    */
   static async validateSubmission(
     manifest: unknown,
-    app: AppContext | number,
+    app: AppContext | bigint | number,
     opts?: ManifestValidationOptions
   ): Promise<ValidationResult> {
     const base = this.validate(manifest, app, opts);

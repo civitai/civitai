@@ -45,8 +45,7 @@ Defined once in `packages/civitai-notifications/src/constants.ts` and re-exporte
 
 Processors live in `src/server/notifications/*.notifications.ts`, are built with
 `createNotificationProcessor()` from `base.notifications.ts`, and are collected in the
-`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its
-category/settings.
+`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its category/settings. An optional `section` groups a type under its own heading in the settings UI instead of its category's (the Knights of New Order types); the notification itself keeps its `category`.
 
 The registry is large and covers far more than the obvious feature areas — read it rather than
 assuming a notification type doesn't exist yet.
@@ -104,6 +103,24 @@ in `pnpm run test:lint-rules`. Its file lists name `NotificationsCard.tsx` only 
 `accountSettingsV2` pane is not yet covered. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
 there rather than shipping unmuteable.
 
+An `optIn` type inverts this: a row means subscribed, and the processor's `prepareQuery` must derive
+recipients by joining `UserNotificationSettings` (the polarity test checks it). An `externalProducer`
+type is the exception: another app (today `apps/knights`, `/api/jobs/notify`) picks the recipients
+itself, applies the settings rows with the polarity the type declares (the Knights types are opt-out:
+default on for players who joined, a row turns one off) and sends through the bulk path. The processor
+has **no** `prepareQuery`; a query there would run a second recipient derivation, and
+`createNotification` must never be called for the type (a guard test scans for it).
+
+## Knights of New Order daily notifications
+
+`apps/knights` sends three `externalProducer` types (`knights-verdicts-in` > `knights-streak-ends-soon` > `knights-new-images`, settings section "Knights of New Order") from `POST /api/jobs/notify` (`Authorization: Bearer $JOBS_TOKEN`; schedule at least hourly so the streak warning goes out within the hour of `streakWarningHourUtc`). Code: `apps/knights/src/lib/server/notify`; table `KnightsNotificationSend` (migration `20261210120000_knights_v2_tables`, applied by hand before the job first runs); env `NOTIFICATIONS_ENDPOINT` / `NOTIFICATIONS_TOKEN`.
+
+- A player gets the best type they are eligible for and have not turned off, at most one per UTC day. Eligibility and ordering: `planNotifications` in `notify.service.ts`; thresholds in `notify/config.ts`.
+- New-images nudges are daily only for players who voted (any `KnightsVote`, yes/no answers included) within `activeDays`; anyone else gets one at most once per `inactiveNudgeDays`, so dormant players hear about the game without a daily ping.
+- Recipients: players who joined the game (a `NewOrderPlayer` row) and are not banned, deleted or missing (a muted account still gets verdicts but not the streak or new-images nudges, as it cannot vote), minus those with a `UserNotificationSettings` row for the type (a row means off), who can open the app today: moderators, or the access flag evaluated locally with `{ id, isModerator }` only (`accessibleIds`), so a rule on tier, membership or early-adopter status can differ from sign-in.
+- Turned everything off: the settings page writes a row only for each type that exists then, so a player is judged against the types that existed at their latest change. Silenced means a row for every opt-out type whose first-seen time (earliest `disabledAt` of any row for it) is at or before their own latest row. The main app lists those types at `GET /api/mod/knights/notification-types` (`x-webhook-token`; cached an hour in the process, as `UserNotificationSettings` has no index on `type`); the job fetches it at the start of each run, and if it cannot be read or is empty the run sends nothing (`skipped`, route 500). A type added later does not undo an earlier silencing. The settings page shows the master switch on for such a user when a type is new, as for every new opt-out type.
+- Sending: a send claims the player's `(playerId, day)` row first, then sends through the bulk path (which does no settings lookup) with `retries: 0`. A refused batch (4xx) gives its claims back; an unknown outcome (timeout, network, 5xx, any error not known to precede the send) keeps them and ends the run, so a retry can never send a second notification that day; a 429 releases its claims and also ends the run. A claim is `confirmedAt` only once the app accepted the send; an unconfirmed claim holds its day but does not count as having told the player about verdicts. A run with `NOTIFICATIONS_*` unset claims nothing and answers 500, as does one with a failed confirmation (`confirmFailed`). A crash between claim and send loses that player's day and never double-sends. The batch key is derived from the day, kind and sorted player ids. Messages are the same for everyone in a batch.
+
 ## Caching
 
 Unread counts are cached per user in Redis, keyed by category, by
@@ -153,10 +170,14 @@ column or a `pushEnabled` column on `UserNotificationSettings`; the opt-out tabl
 
 ## Email
 
-Only types whose processor sets `defaultEmail` send email (today: the nine `service-deal-*`
-Creator Services notifications), and for those email is ON unless the user opts out.
-`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. The settings control
-shows an Email checkbox for those types only, unavailable while the type itself is Off.
+Only types whose processor sets `defaultEmail` send email (today: the `service-deal-*` Creator
+Services notifications, and the app-review outcomes `app-block-approved`, `app-block-rejected`,
+`app-listing-rejected`, `app-listing-reset-to-pending`, `app-access-request-approved` and
+`app-access-request-declined`), and for those email is ON unless the user opts out.
+`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. A toggleable type shows
+an Email checkbox beside its on-site control, unavailable while the type itself is Off. A type with
+`toggleable: false` has no on-site control, so it is listed under "App review emails" as an
+email-only checkbox (`systemEmailNotificationTypes`); its on-site notice is always sent.
 
 - The fan-out worker (`apps/notifications/src/worker/email.ts`) runs beside push, on the users a
   notification was newly delivered to, so a repeated key sends nothing. It gates on
@@ -168,6 +189,55 @@ shows an Email checkbox for those types only, unavailable while the type itself 
   (`/api/notifications/email-unsubscribe`; GET only shows a confirm button).
 - **Off until switched on:** the `KeyValue` row `notification-email-enabled` must hold JSON `true`.
   Delete it (or set `false`) to stop all notification email within a minute, no deploy needed.
+
+### Weekly missed-notification digest
+
+One email a week listing the notifications a user has not seen (`UserNotification.viewed` false)
+in the last seven days, or since their last digest if that is later: the newest ten, "and N more",
+and a link to `/user/notifications`. Types that send their own email (`defaultEmail`) are left out,
+so the digest never repeats one. Users with nothing unseen get nothing.
+
+- **On by default, with an opt-out.** It is the email opt-out type `missed-notification-digest`
+  (`missed-digest.constants.ts`): a `UserEmailNotificationOptOut` row turns it off. The settings
+  switch ("Weekly email of notifications you missed") and the email's one-click unsubscribe both
+  write that row.
+- **Skipped:** no verified email, opted out, every notification turned off (the same rule the
+  Knights app applies), or sent a digest in the last six days.
+- **Job:** `missed-notification-digest`, hourly. One pass walks every user in id order, resuming
+  where the last run stopped (`KeyValue` `missed-notification-digest:cursor`); a new pass starts a
+  week after the previous one did. Sends are paced at the shared bulk-email interval and capped per
+  run. `UserNotificationDigest` records each send before the email goes out; with that table
+  missing the job sends nothing.
+- **Start floor:** a user's first eligible pass sends nothing. It writes their
+  `UserNotificationDigest` row with `lastSentAt` = that moment, as if a digest had gone out, so
+  their first digest comes a pass later and lists only notifications created after they entered
+  the rollout, never the backlog. Per user: a user added to the rollout later gets their own later
+  floor. A user turned off and back on keeps their old row, so their next digest can reach back up
+  to the seven-day window. So the table holds a row per user started, not only per user sent one:
+  a run adds `skipped.first-pass` rows, and `emailed` users move their existing row's `lastSentAt`.
+- **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user (entity = user id,
+  context = `userId` and `isModerator`, so the `is-zach`, `moderators` and `userId` segments match;
+  tier is not passed). Off, it emails no one.
+  A pass that finished while the flag was off holds the next one back for up to a week; delete the
+  `KeyValue` row `missed-notification-digest:cursor` to start a pass at the next hourly run.
+- **No double send:** each send claims the user's `UserNotificationDigest` row first, and the claim
+  fails if a digest was recorded in the last six days, so overlapping runs cannot both send.
+  Eligibility and the address are re-read on the primary just before the send.
+- **Kill switch:** the `notification-email-enabled` row above stops the digest too. It is read
+  before each run and before each send, so a run already going stops at its next send.
+- **Reads:** the notifications app's `POST /notifications/unseen` (`queryUnseenNotifications`).
+- **Counts:** each run logs `notification-digest` with users considered, emailed, failed and
+  skipped by reason.
+- **Click-through** (`digest-tracking.ts`): every digest send, every followed digest link and every
+  unsubscribe from a digest is a row in the ClickHouse table `notificationDigestEvents`, keyed by
+  the pass (`cycleStartedAt`). Start floors, skips and failed sends write nothing. Each site link
+  goes through `/api/notifications/digest-click`, signed with the user, pass, item position and
+  type; it records the click (GET only) and redirects to a same-site path, and a link that fails a
+  check redirects to the notifications page and records nothing. Off-site links are left untracked.
+  The unsubscribe link carries the pass as `c`. The table's DDL is applied by hand
+  (`src/server/clickhouse/migrations/2026-11-24-notification-digest-events.sql`); without it no row
+  lands and nothing else changes. Each insert waits at most 2s. Mail security scanners that follow
+  every link are counted as clicks; filter them at read time (see the DDL's header).
 
 ## Debugging
 

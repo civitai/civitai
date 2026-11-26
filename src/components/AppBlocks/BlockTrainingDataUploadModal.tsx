@@ -32,14 +32,16 @@ export default function BlockTrainingDataUploadModal({
   const [total, setTotal] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
-  // A batch that lands after the modal closed must not resolve anything.
+  // A batch that lands after the modal closed must not resolve anything. Closed, not unmounted:
+  // a closed dialog stays mounted through its exit transition.
   const liveRef = useRef(true);
   useEffect(() => {
+    if (!dialog.opened) return;
     liveRef.current = true;
     return () => {
       liveRef.current = false;
     };
-  }, []);
+  }, [dialog.opened]);
 
   function finish(images: TrainingDataUpload[]) {
     onResolved(images);

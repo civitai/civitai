@@ -94,7 +94,7 @@ export async function submitVideoAudioScan({
       message: 'audio scan submit failed',
       imageId,
       error: safeError(error),
-    }).catch(() => null);
+    });
   }
 }
 
@@ -203,8 +203,6 @@ async function finish(workflowId: string, parsed: AudioScanParse) {
       : { status: 'Failed', error: parsed.error.slice(0, 1000), completedAt },
   });
   if (!parsed.ok)
-    logToAxiom({ type: 'warning', name: LOG_NAME, message: parsed.error, workflowId }).catch(
-      () => null
-    );
+    logToAxiom({ type: 'warning', name: LOG_NAME, message: parsed.error, workflowId });
   return { stored: count > 0, reason: parsed.ok ? 'succeeded' : 'failed' };
 }

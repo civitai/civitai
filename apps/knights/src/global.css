@@ -1,0 +1,306 @@
+:root {
+  color-scheme: dark;
+
+  /* Illuminated Order */
+  --io-bg: #14110d;
+  --io-surface: #1f1a13;
+  --io-matte: #0e0c09;
+  --io-gold: #c9a24a;
+  --io-gold-muted: #6f5b2f;
+  --io-parchment: #e8dcc0;
+  --io-parchment-muted: #a89c80;
+  --io-verdigris: #4f8a6e;
+  --io-crimson: #9b2c2c;
+  --io-crimson-text: #e08a82;
+
+  --io-font-display: 'Cinzel', Georgia, 'Times New Roman', serif;
+  --io-font-body: 'EB Garamond', Georgia, 'Times New Roman', serif;
+  --io-font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-crossfade: 160ms;
+  --motion-milestone-min: 600ms;
+  --motion-milestone-max: 1200ms;
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-stamp: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Names the pages already use. */
+  --bg: var(--io-bg);
+  --panel: var(--io-surface);
+  --border: var(--io-gold-muted);
+  --text: var(--io-parchment);
+  --muted: var(--io-parchment-muted);
+  --gold: var(--io-gold);
+}
+
+/* Reduced motion caps every token at 150ms (the design's motion-reduced-max) and drops the long milestone motion. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 150ms;
+    --motion-crossfade: 150ms;
+    --motion-milestone-min: 150ms;
+    --motion-milestone-max: 150ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 150ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.6 var(--io-font-body);
+  overflow-wrap: break-word;
+}
+
+h1,
+h2 {
+  margin: 0 0 0.5rem;
+  color: var(--gold);
+  font-family: var(--io-font-display);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+a {
+  color: var(--gold);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.notice {
+  color: var(--gold);
+}
+
+button {
+  padding: 0.5rem 1.25rem;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: 600 0.9rem/1.3 var(--io-font-ui);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out-quart),
+    border-color var(--motion-fast) var(--ease-out-quart);
+}
+
+button:hover:not(:disabled) {
+  background: var(--border);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+@media (max-width: 40rem) {
+  body {
+    font-size: 16px;
+    line-height: 1.45;
+  }
+
+  h1 {
+    font-size: 1.35rem;
+  }
+
+  button {
+    min-height: 2.75rem;
+    padding: 0.4rem 0.9rem;
+  }
+}
+
+/* ==== UI-4 page chrome: shared by the player pages (home, gold, judgments, rules, ranks). ==== */
+
+/* Breaks out of the 48rem reading column to the design's content width. */
+.page-wide {
+  padding-top: 1rem;
+}
+
+.page-wide .eyebrow {
+  margin-bottom: 0.6rem;
+}
+
+.page-wide .lede {
+  margin-bottom: 1.5rem;
+}
+
+@media (min-width: 48rem) {
+  .page-wide {
+    position: relative;
+    left: 50%;
+    width: min(67.5rem, 100vw - 3rem);
+    transform: translateX(-50%);
+  }
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--io-gold);
+  font: 600 0.75rem/1.3 var(--io-font-ui);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.eyebrow.crimson {
+  color: var(--io-crimson-text);
+}
+
+h1.page-title {
+  margin: 0 0 1.25rem;
+  color: var(--io-parchment);
+  font-size: clamp(1.6rem, 4.5vw, 2.75rem);
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lede {
+  margin: 0 0 1.5rem;
+  color: var(--io-parchment-muted);
+  font-size: 1.2rem;
+  line-height: 1.5;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.65rem 1.6rem;
+  border: 1.5px solid var(--io-gold);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--io-gold);
+  font: 700 0.95rem/1.2 var(--io-font-display);
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--io-gold) 14%, transparent);
+}
+
+.btn.primary {
+  background: var(--io-gold);
+  color: var(--io-bg);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--io-gold) 88%, white);
+}
+
+.btn.danger {
+  border-color: var(--io-crimson);
+  color: var(--io-crimson-text);
+}
+
+.btn.danger.solid {
+  background: var(--io-crimson);
+  color: var(--io-parchment);
+}
+
+.btn.danger.solid:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--io-crimson) 85%, white);
+}
+
+.btn.block {
+  display: flex;
+  width: 100%;
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1.75rem 0;
+  color: var(--io-gold);
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--io-gold-muted);
+}
+
+.divider > span {
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.pill-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--io-gold-muted);
+  border-radius: 999px;
+  background: var(--io-surface);
+  color: var(--io-gold);
+  font: 400 0.85rem/1.2 var(--io-font-ui);
+  white-space: nowrap;
+}
+
+.pill-stat b {
+  color: var(--io-parchment);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.pill-stat span {
+  color: var(--io-parchment-muted);
+}
+
+/* A hairline-separated list of rows: icon, text, trailing value. */
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--io-gold-muted);
+}
+
+.rows > li {
+  border-bottom: 1px solid var(--io-gold-muted);
+}
+
+.label-caps {
+  font-family: var(--io-font-display);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}

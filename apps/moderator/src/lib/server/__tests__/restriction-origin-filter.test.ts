@@ -57,6 +57,14 @@ describe('origin filter', () => {
     expect(list).toMatch(/and not \(.*@\.origin\.incomplete == true/s);
   });
 
+  it('keeps a prompt an App Block submitted out of typed', async () => {
+    const [list] = await emitted(() =>
+      getGenerationRestrictions({ page: 1, limit: 20, origin: 'typed' })
+    );
+    expect(list).toContain(`jsonb_path_exists(ur."triggers", '$.origin.app'::jsonpath)`);
+    expect(list).toMatch(/and not \(.*'\$\.origin\.app'/s);
+  });
+
   it('does not exclude incomplete rows from the remix filter', async () => {
     const [list] = await emitted(() =>
       getGenerationRestrictions({ page: 1, limit: 20, origin: 'remix' })
@@ -127,11 +135,11 @@ describe('facets', () => {
 
 describe('remix sources', () => {
   it('reads nothing for no ids', async () => {
-    expect(await emitted(() => getRemixSources([]))).toEqual([]);
+    expect(await emitted(() => getRemixSources([], undefined))).toEqual([]);
   });
 
   it('reads the stored prompt out of the image meta', async () => {
-    const [sql] = await emitted(() => getRemixSources([5]));
+    const [sql] = await emitted(() => getRemixSources([5], undefined));
     expect(sql).toContain(`i."meta" ->> 'prompt'`);
     expect(sql).toContain('"i"."id" in ($1)');
   });

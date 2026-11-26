@@ -264,7 +264,8 @@ describe('purchase (purchaseMembershipWithBuzz)', () => {
       return create;
     };
     const tx = {
-      customerSubscription: { findFirst: async () => null, upsert },
+      customerSubscription: { findUnique: async () => null, findFirst: async () => null, upsert },
+      $queryRaw: async () => [],
       $executeRaw: bridge('execute'),
     };
     dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (client: unknown) => unknown) =>

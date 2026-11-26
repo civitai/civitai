@@ -64,6 +64,21 @@ describe('listing-check spend: recorded by one function, read back by the budget
     expect(await agentReviewSpendTodayUsd()).toBeCloseTo(0.75, 10);
   });
 
+  it('🔴 keeps the spend in system Redis, never on the evictable cache cluster', async () => {
+    await recordListingCheckSpendUsd(0.25);
+    expect(await agentReviewSpendTodayUsd()).toBeCloseTo(0.25, 10);
+
+    expect([...store.keys()]).toEqual([
+      expect.stringMatching(/^system:blocks:listing-check-spend:\d{4}-\d{2}-\d{2}$/),
+    ]);
+    expect(redisMock.redis.multi).not.toHaveBeenCalled();
+    expect(
+      redisMock.redis.get.mock.calls.filter(([k]: unknown[]) =>
+        String(k).includes('listing-check-spend')
+      )
+    ).toEqual([]);
+  });
+
   it('🔴 a sub-cent check is counted at the one-cent floor, never as nothing', async () => {
     await recordListingCheckSpendUsd(0.0006);
     expect(await agentReviewSpendTodayUsd()).toBeCloseTo(0.01, 10);

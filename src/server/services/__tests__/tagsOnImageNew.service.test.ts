@@ -9,6 +9,7 @@ import * as systemCache from '../system-cache';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { refreshThumbnailCache } from '~/server/redis/caches';
 import { refreshProfilePicturesForImages } from '~/server/services/user.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {},
@@ -27,6 +28,10 @@ vi.mock('~/server/services/image.service', () => ({
 // this file exercises only the tag write.
 vi.mock('~/server/services/user.service', () => ({
   refreshProfilePicturesForImages: vi.fn(async () => undefined),
+}));
+
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 
 vi.mock('../system-cache', () => ({
@@ -208,6 +213,20 @@ describe('blocked-level tags written after the scan', () => {
     expect(reviewInserts()).toEqual([expect.stringContaining(`(7, ${URINE})`)]);
   });
 
+  it('refreshes the home blocks of the images it held for review', async () => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ imageId: 7, tagId: URINE }]);
+
+    await insertTagsOnImageNew([{ imageId: 7, tagId: URINE, source: 'User' }]);
+
+    // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+    const lookedUp = vi
+      .mocked(dbMock.dbRead.$queryRaw)
+      .mock.calls.map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+      .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+      .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+    expect(lookedUp).toEqual([[7]]);
+  });
+
   it('refreshes the thumbnail cache, parent videos included, for re-rated images', async () => {
     await upsertTagsOnImageNew([
       { imageId: 7, tagId: XXX },
@@ -301,5 +320,42 @@ describe('profile pictures re-rated by a tag write', () => {
     await upsertTagsOnImageNew([{ imageId: UNRATED_IMAGE, tagId: PLAIN_TAG }]);
 
     expect(refreshProfilePicturesForImages).not.toHaveBeenCalled();
+  });
+});
+
+describe('models-index queue on a tag write', () => {
+  const R_TAG = 301;
+  const PLAIN_TAG = 302;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(systemCache.getTagRules).mockResolvedValue([]);
+    vi.mocked(systemCache.getModeratedTags).mockResolvedValue([
+      { id: R_TAG, name: 'r-tag', nsfwLevel: 4 },
+    ]);
+  });
+
+  const written = [
+    { imageId: 71, tagId: R_TAG },
+    { imageId: 72, tagId: PLAIN_TAG },
+  ];
+
+  it.each([
+    ['insert', insertTagsOnImageNew],
+    ['upsert', upsertTagsOnImageNew],
+    ['delete', deleteTagsOnImageNew],
+  ] as const)('%s hands over only the re-rated images, not the written tags', async (_, write) => {
+    await write(written);
+
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledTimes(1);
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [71] });
+  });
+
+  it('hands over no re-rated images when no written tag can change a rating', async () => {
+    await upsertTagsOnImageNew([{ imageId: 72, tagId: PLAIN_TAG }]);
+
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ levelImageIds: [] })
+    );
   });
 });

@@ -23,6 +23,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import { trpcViewer } from '~/server/auth/api-auth-session';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
@@ -40,6 +41,11 @@ import {
 } from '~/shared/constants/bot-cache.constants';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
+import {
+  isSsrPrefetchCohort,
+  SSR_PREFETCH_COHORT_REQ_KEY,
+  SSR_PREFETCH_ROUTE_REQ_KEY,
+} from '~/shared/constants/ssr-prefetch-cohort.constants';
 
 /**
  * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
@@ -103,7 +109,7 @@ export const getServerProxySSGHelpers = async (
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      ...trpcViewer(session?.user),
+      ...trpcViewer(withModeratorRightsFor(session?.user, getRequestCredential(ctx.req))),
       acceptableOrigin: true,
       features,
       track: new Tracker(),
@@ -168,6 +174,41 @@ export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
       shouldDehydrateQuery: (query) => query.state.status === 'success',
     })
   );
+}
+
+function cpuUsageNow(): NodeJS.CpuUsage | undefined {
+  try {
+    return process.cpuUsage();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `ssrSignedInSkipPrefetch*` A/Bs' getServerSideProps CPU: process CPU since `start` (just before
+ * the resolver), for a request `resolveSsrPrefetchCohort` marked. The delta is taken now; the metric
+ * module is loaded lazily, so this file — imported by every page — never pulls prom-client into a
+ * page's client test graph. Never throws, never delays the response.
+ */
+function recordPrefetchCohortGsspCpu(req: object, start: NodeJS.CpuUsage | undefined) {
+  if (!start) return;
+  const marks = req as {
+    [SSR_PREFETCH_COHORT_REQ_KEY]?: unknown;
+    [SSR_PREFETCH_ROUTE_REQ_KEY]?: unknown;
+  };
+  const cohort = marks[SSR_PREFETCH_COHORT_REQ_KEY];
+  const route = marks[SSR_PREFETCH_ROUTE_REQ_KEY];
+  if (!isSsrPrefetchCohort(cohort) || typeof route !== 'string') return;
+  let seconds: number;
+  try {
+    const { user, system } = process.cpuUsage(start);
+    seconds = (user + system) / 1e6;
+  } catch {
+    return;
+  }
+  void import('~/server/prom/ssr-cpu.metrics')
+    .then((metrics) => metrics.recordSsrPrefetchGsspCpu(route, cohort, seconds))
+    .catch(() => undefined);
 }
 
 export function createServerSideProps<P>({
@@ -240,10 +281,11 @@ export function createServerSideProps<P>({
     const botCacheCandidate = !!(context.req as { [BOT_CACHE_REQ_KEY]?: string })[
       BOT_CACHE_REQ_KEY
     ];
+    const viewer = withModeratorRightsFor(session?.user, getRequestCredential(context.req));
     const features = await getFeatureFlagsAsync(
       botCacheCandidate
-        ? { user: session?.user, host: context.req.headers.host, req: undefined }
-        : { user: session?.user, req: context.req }
+        ? { user: viewer, host: context.req.headers.host, req: undefined }
+        : { user: viewer, req: context.req }
     );
     // This response is private, so it is where the viewer's shell rollout is read: the route cookie
     // follows the flag, and only a request carrying it is ever considered for the shell.
@@ -260,11 +302,16 @@ export function createServerSideProps<P>({
         ? await getServerProxySSGHelpers(context, session, features, capture)
         : undefined;
 
+    // The trial's getServerSideProps CPU runs from here (its prefetches) through dehydrate.
+    const gsspCpuStart = cpuUsageNow();
+    // Resolvers see the viewer's effective rights: a moderator on a reduced key is not a moderator here.
+    const resolverSession =
+      session?.user && viewer !== session.user ? { ...session, user: viewer } : session;
     const result = ((await resolver?.({
       ctx: context,
       isClient,
       ssg,
-      session,
+      session: resolverSession,
       features,
     })) ?? { props: {} }) as GetPropsFnResult<NonNullable<P>>;
 
@@ -299,9 +346,10 @@ export function createServerSideProps<P>({
       ...(props ?? {}),
       adsGated,
       ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
-      session: jsonSafeSession(session),
+      session: jsonSafeSession(resolverSession),
     } as NonNullable<P>;
     attachSsrDehydratedState(pageProps, capture);
+    recordPrefetchCohortGsspCpu(context.req, gsspCpuStart);
     return { props: pageProps };
   };
 }

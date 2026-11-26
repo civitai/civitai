@@ -1,10 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import {
-  LegalHoldError,
-  LegalHoldStoppedError,
-  legalHoldMessage,
-} from '~/server/services/legal-hold.service';
-import {
   checkUserNotificationsHandler,
   claimCosmeticHandler,
   completeOnboardingHandler,
@@ -71,6 +66,7 @@ import {
   setUserSettingsInput,
   getBanContentPreviewSchema,
   toggleBanUserSchema,
+  toggleMuteSchema,
   toggleFavoriteInput,
   toggleFeatureInputSchema,
   toggleFollowUserSchema,
@@ -173,6 +169,10 @@ export const userRouter = router({
   getActiveLimits: protectedProcedure
     .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
     .query(({ ctx }) => getActiveLimits(ctx.user.id)),
+  getUsageLimitTiers: publicProcedure.query(async () => {
+    const { getUsageLimitTierTable } = await import('~/server/services/usage-limit-config.service');
+    return getUsageLimitTierTable();
+  }),
   /** Buzz spent through apps today against the per-user cap; `null` where apps are off. */
   getAppBuzzUsage: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
     const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
@@ -188,6 +188,15 @@ export const userRouter = router({
     const { optInAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
     return optInAppBuzzToday(ctx.user);
   }),
+  /** The user's free generation allowance per free-tier model, from the orchestrator. */
+  getOrchestrationFreeUsage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .query(async ({ ctx }) => {
+      const { getMyOrchestrationFreeUsage } = await import(
+        '~/server/services/orchestrator/free-tier-usage.service'
+      );
+      return getMyOrchestrationFreeUsage(ctx.user, ctx);
+    }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
@@ -332,7 +341,7 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleFollowUserSchema)
     .mutation(toggleFollowUserHandler),
-  toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
+  toggleMute: moderatorProcedure.input(toggleMuteSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
   getBanContentPreview: moderatorProcedure
     .input(getBanContentPreviewSchema)
@@ -346,21 +355,9 @@ export const userRouter = router({
     // records WHO ordered the wipe. The other caller of `removeAllContent`
     // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
     // identity and correctly passes none.
-    const track = () =>
-      ctx.track.userActivity({
-        type: 'RemoveContent',
-        targetUserId: input.id,
-      });
-    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch(
-      (e: unknown) => {
-        if (!(e instanceof LegalHoldError)) throw e;
-        // Part of the account was deleted, so it is recorded like a wipe that finished.
-        if (e instanceof LegalHoldStoppedError) track();
-        throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
-      }
-    );
-    track();
-    return { incomplete: result.incomplete, keptModelIds: result.keptModelIds };
+    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id });
+    ctx.track.userActivity({ type: 'RemoveContent', targetUserId: input.id });
+    return { incomplete: result.incomplete };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
@@ -382,7 +379,11 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(getByIdSchema)
     .mutation(({ ctx, input }) =>
-      toggleBookmarkedArticle({ articleId: input.id, userId: ctx.user.id })
+      toggleBookmarkedArticle({
+        articleId: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
     ),
   toggleBountyEngagement: verifiedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })

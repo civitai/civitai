@@ -2,6 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
+// The ban leg revokes recipe-runner authorizations through kyselyDb; this suite never reads them.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return {
+    kyselyWrite: pgliteKysely(() => {
+      throw new Error('no ledger database in this suite');
+    }),
+  };
+});
+
 /** The feedback capture account is never banned or muted: acting on it acts on nobody. */
 
 vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
@@ -34,7 +44,7 @@ describe('the feedback capture account', () => {
   });
 
   it('can still be unbanned', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ bannedAt: new Date(), meta: {} } as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: new Date(), meta: {} } as never);
     await toggleBan({ id: CAPTURE, userId: 1, isModerator: true }).catch((e: Error) => {
       expect(e.message).not.toMatch(/feedback page captures/);
     });
@@ -48,7 +58,7 @@ describe('the feedback capture account', () => {
   });
 
   it('leaves an ordinary account to be banned', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ bannedAt: null, meta: {} } as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null, meta: {} } as never);
     await toggleBan({ id: 42, userId: 1, isModerator: true }).catch(() => undefined);
     expect(dbMock.dbWrite.user.update).toHaveBeenCalled();
   });

@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { getAppAssistantRefusal } from '~/server/services/app-assistant/app-assistant.service';
 import { sourceSaveAnswer } from '~/server/services/app-assistant/source-save-route';
 import { saveAssistantSourceFromSandbox } from '~/server/services/blocks/app-source-repo.service';
@@ -18,8 +19,9 @@ const bodySchema = z.object({ app: z.string().min(1).max(64) });
  * an app that is not theirs. Nothing it writes builds or files a publish request.
  */
 export default AuthedEndpoint(
-  async (req, res, user) => {
+  async (req, res, user, session) => {
     if (!requireFullScopeSession(req, res)) return;
+    if (refuseWhileImpersonating(session, res)) return;
     const refusal = await getAppAssistantRefusal({ user, req });
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const body = bodySchema.safeParse(req.body);
@@ -27,7 +29,11 @@ export default AuthedEndpoint(
     res.setHeader('Cache-Control', 'no-store');
     try {
       const answer = sourceSaveAnswer(
-        await saveAssistantSourceFromSandbox({ userId: user.id, app: body.data.app })
+        await saveAssistantSourceFromSandbox({
+          userId: user.id,
+          app: body.data.app,
+          impersonatedBy: session.impersonatedBy ?? null,
+        })
       );
       return res.status(answer.status).json(answer.json);
     } catch (err) {
@@ -37,7 +43,7 @@ export default AuthedEndpoint(
         userId: user.id,
         app: body.data.app,
         error: safeError(err),
-      }).catch(() => undefined);
+      });
       return res.status(503).json({ error: 'Could not save the app right now' });
     }
   },

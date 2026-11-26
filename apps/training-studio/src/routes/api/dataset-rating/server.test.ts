@@ -26,6 +26,7 @@ const post = (body: unknown) =>
     locals: { user: { id: 1 } },
     request: new Request('http://x/api/dataset-rating', {
       method: 'POST',
+      headers: { cookie: 'session=abc' },
       body: JSON.stringify(body),
     }),
   } as unknown as Parameters<typeof POST>[0]);
@@ -52,27 +53,35 @@ describe('POST /api/dataset-rating', () => {
       failed: 0,
       rated: 1,
       unratedKeys: ['b'],
+      verdicts: { a: true },
     });
     expect(await (await post({ blobIds: ['a', 'b', 'c'] })).json()).toEqual({
       enabled: true,
       matureCount: 1,
       unrated: 2,
+      verdicts: { a: true },
     });
-    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, ['b']);
+    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, 1, ['b'], 'session=abc');
     expect(countDatasetMature.mock.calls[0]![1]).toEqual(['a', 'b', 'c']);
   });
 
-  it('a blob it could not read: Review keeps its own count, the rest still gets rated', async () => {
+  it('a blob it could not read: Review keeps its own count, the rest still gets rated and shown', async () => {
     rating.on = true;
     countDatasetMature.mockResolvedValueOnce({
-      images: 2,
+      images: 3,
       mature: 0,
       failed: 1,
-      rated: 0,
+      rated: 1,
       unratedKeys: ['a'],
+      verdicts: { c: false },
     });
-    expect(await (await post({ blobIds: ['a', 'b'] })).json()).toEqual({ enabled: false });
-    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, ['a']);
+    expect(await (await post({ blobIds: ['a', 'b', 'c'] })).json()).toEqual({
+      enabled: true,
+      matureCount: null,
+      unrated: 2,
+      verdicts: { c: false },
+    });
+    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, 1, ['a'], 'session=abc');
   });
 
   it("past today's allowance: off, and nothing is looked up", async () => {

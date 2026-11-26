@@ -23,6 +23,7 @@ vi.mock('$lib/server/auth/providers', async (importOriginal) => ({
   isStubProviderEnabled: () => false,
 }));
 vi.mock('$lib/server/auth/users', () => ({
+  SystemAccountSignInError: class SystemAccountSignInError extends Error {},
   findOrCreateUser: h.findOrCreateUser,
   linkAccountToUser: h.linkAccountToUser,
   userExistsByEmail: vi.fn(async () => false),
@@ -45,6 +46,8 @@ vi.mock('$lib/server/axiom', () => ({ logToAxiom: h.logToAxiom }));
 
 import { GET } from '../+server';
 import { NO_PKCE_COOKIE } from '$lib/server/auth/providers';
+import { SystemAccountSignInError } from '$lib/server/auth/users';
+import { lastMethodCookieName } from '$lib/server/auth/last-method';
 
 const LANDING = 'https://civitai.com/discord/link-role';
 
@@ -70,7 +73,7 @@ function callback(
     }
     throw new Error('handler returned without redirecting or erroring');
   };
-  return { run, deleted };
+  return { run, deleted, cookies };
 }
 
 const linkJar = {
@@ -246,4 +249,52 @@ describe('Discord roles leg without PKCE', () => {
       expect(h.logToAxiom.mock.calls[0]?.[0]).toMatchObject({ reason: 'no_cookie' });
     }
   );
+});
+
+describe('remembering the sign-in method', () => {
+  const loginJar = { oauth_state: 'st-1', oauth_verifier: 'ver-1', oauth_return: '/' };
+  const lastMethodWrites = (cookies: { set: ReturnType<typeof vi.fn> }) =>
+    cookies.set.mock.calls.filter(([name]) => name === lastMethodCookieName());
+
+  beforeEach(() => {
+    h.findOrCreateUser.mockResolvedValue({ id: 1 });
+    h.establishSession.mockResolvedValue(undefined);
+  });
+
+  it('records the provider once the session is established', async () => {
+    const { run, cookies } = callback(
+      { code: 'c-1', state: 'st-1' },
+      loginJar,
+      undefined,
+      'github'
+    );
+    const thrown = await run();
+    expect(isRedirect(thrown)).toBe(true);
+    expect(lastMethodWrites(cookies).map(([, value]) => value)).toEqual(['github']);
+  });
+
+  it('records nothing when the session cannot be established', async () => {
+    h.establishSession.mockRejectedValue(new Error('refused'));
+    const { run, cookies } = callback(
+      { code: 'c-1', state: 'st-1' },
+      loginJar,
+      undefined,
+      'github'
+    );
+    await run();
+    expect(lastMethodWrites(cookies)).toEqual([]);
+  });
+
+  it('records nothing when the account may not sign in', async () => {
+    h.findOrCreateUser.mockRejectedValue(new SystemAccountSignInError());
+    const { run, cookies } = callback(
+      { code: 'c-1', state: 'st-1' },
+      loginJar,
+      undefined,
+      'github'
+    );
+    const thrown = await run();
+    expect(isRedirect(thrown) && thrown.location).toContain('error=SystemAccount');
+    expect(lastMethodWrites(cookies)).toEqual([]);
+  });
 });

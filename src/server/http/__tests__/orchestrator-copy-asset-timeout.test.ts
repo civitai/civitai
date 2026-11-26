@@ -3,8 +3,12 @@ import type * as FliptClient from '~/server/flipt/client';
 
 // copyAsset is sent with `wait: true`: the orchestrator answers only once a large training asset
 // has been copied, which can take minutes. HttpCaller's default deadline (120 s) would cut a
-// healthy copy short, so copyAsset must carry a budget of at least 300 s, while other calls on
-// the same caller keep the default.
+// healthy copy short, so copyAsset's abort deadline must not end the wait before undici's own
+// 300 s headersTimeout does, while other calls on the same caller keep the default.
+//
+// 300 s is the effective cap: any deadline at or above it behaves the same, because undici gives
+// up waiting for the response headers at 300 s. This test therefore checks only "at least 300 s";
+// it does not (and cannot) tell a 300 s deadline from a longer one.
 vi.mock('~/env/server', () => ({
   env: { ORCHESTRATOR_ENDPOINT: 'https://orchestrator.test', ORCHESTRATOR_ACCESS_TOKEN: 't' },
 }));
@@ -30,7 +34,7 @@ afterEach(() => {
 });
 
 describe('OrchestratorCaller deadlines', () => {
-  it('copyAsset gets a deadline of at least 300 s', async () => {
+  it('copyAsset gets a deadline no shorter than the 300 s headers timeout', async () => {
     await orchestratorCaller.copyAsset({
       payload: { jobId: 'j', assetName: 'a', destinationUri: 'https://dest.test/x' },
       queryParams: { wait: true },

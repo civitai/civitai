@@ -1,6 +1,8 @@
 import * as searchIndex from '~/server/search-index';
 import type { JobContext } from './job';
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import { dbRead } from '~/server/db/client';
+import { queueAllComicsForRefresh } from '~/server/search-index/comics.search-index';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
@@ -34,7 +36,7 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   comics: '*/5 * * * *',
 };
 
-export const searchIndexJobs = Object.entries(searchIndexSets)
+const processorJobs = Object.entries(searchIndexSets)
   .map(([name, searchIndexProcessor]) => [
     createJob(
       `search-index-sync-${name}`,
@@ -66,6 +68,19 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
     ),
   ])
   .flat();
+
+/**
+ * Every 15 minutes, off the comics sync's 5-minute marks: re-queues every comic, so a ban, hold or
+ * image flag that changes no comic row still reaches the comics index within the next sync.
+ */
+const comicsSearchIndexRefreshJob = createJob(
+  'search-index-comics-refresh',
+  '3-59/15 * * * *',
+  async () => ({ queued: await queueAllComicsForRefresh(dbRead) }),
+  { lockExpiration: 10 * 60 }
+);
+
+export const searchIndexJobs = [...processorJobs, comicsSearchIndexRefreshJob];
 
 async function timedExecution<T>(fn: (jobContext: JobContext) => Promise<T>, e: JobContext) {
   const start = Date.now();

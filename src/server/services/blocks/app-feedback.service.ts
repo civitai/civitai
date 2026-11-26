@@ -48,7 +48,10 @@ import { isFeedbackAreaEnabled } from '~/server/services/feedback.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { throwRateLimitError } from '~/server/utils/errorHandling';
 import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants';
-import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
+import {
+  APP_BLOCK_FEEDBACK_AREA,
+  FEEDBACK_SYNC_HOLD_KEY,
+} from '~/shared/constants/feedback.constants';
 import type { StoreListingKind } from '~/shared/utils/store-visibility-scope';
 import { narrowStoreScope, scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
 import type { SessionUser } from '~/types/session';
@@ -726,7 +729,7 @@ async function notifyReporterOfOwnerStatus(
       name: 'app-feedback-status-notify-failed',
       details: { feedbackId, ownerStatus },
       message: error.message,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -979,8 +982,10 @@ export async function modResolveAppFeedbackWithRefund({
   resolve: boolean;
 }): Promise<boolean> {
   return dbWrite.$transaction(async (tx) => {
+    // A move forward also removes the HQ sync hold, as the moderator queue's own writes do.
     const close = resolve
-      ? Prisma.sql`"status" = 'actioned', "handledById" = ${moderatorId}, "handledAt" = now(),`
+      ? Prisma.sql`"status" = 'actioned', "handledById" = ${moderatorId}, "handledAt" = now(),
+          "context" = "context" - ${FEEDBACK_SYNC_HOLD_KEY}::text,`
       : Prisma.empty;
     const count = await tx.$executeRaw`
       UPDATE "Feedback"

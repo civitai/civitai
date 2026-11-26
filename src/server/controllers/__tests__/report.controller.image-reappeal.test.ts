@@ -35,7 +35,7 @@ import {
 } from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
-const OWNER = 602767;
+const OWNER = 990100013;
 const IMAGE_ID = 99;
 const KEY = ['entityType', 'entityId', 'userId'] as const;
 
@@ -129,8 +129,8 @@ beforeEach(() => {
 
   // The image row the appeal flags; refusing a flagged image is image-appeal-review-flag's subject.
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
-  // No hold marker on the owner or the image (one row per image asked about), and the appeal flow
-  // excludes neither the image nor its owner.
+  // No image is blocked (one row per image asked about), and the appeal flow excludes neither the
+  // image nor its owner.
   dbMock.dbWrite.$queryRaw.mockImplementation(((sql: TemplateStringsArray, ...values: unknown[]) =>
     Promise.resolve(
       /"CsamReport"|"UserReport"/.test(sql.join(''))
@@ -151,7 +151,7 @@ describe('a second appeal on the same image', () => {
     expect(mockCharge).toHaveBeenCalledTimes(1);
     expect(mockRefund).not.toHaveBeenCalled();
     expect(appeals.map((a) => a.status)).toEqual([AppealStatus.Approved, AppealStatus.Pending]);
-    expect(appeals[1].buzzTransactionId).toMatch(/^appeal-602767-/);
+    expect(appeals[1].buzzTransactionId).toMatch(/^appeal-990100013-/);
   });
 
   // Product decision (2026-10-02): one appeal per block. A rejection upheld the block that is
@@ -237,7 +237,7 @@ describe('a second appeal on the same image', () => {
     const [first, second] = mockCharge.mock.calls.map(
       ([input]) => input.externalTransactionIdPrefix
     );
-    expect(first).toMatch(/^appeal-602767-1790000000000-/);
+    expect(first).toMatch(/^appeal-990100013-1790000000000-/);
     // Refunds look transactions up by prefix, so neither may be a prefix of the other.
     expect(second.startsWith(first) || first.startsWith(second)).toBe(false);
   });

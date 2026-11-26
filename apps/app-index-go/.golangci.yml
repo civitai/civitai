@@ -1,0 +1,41 @@
+# golangci-lint v2 configuration for apps/app-index-go, run by .github/workflows/app-index-go.yml
+# (the version is pinned there). feed-go's linter set. Any finding fails the job. Suppress a false
+# positive with a narrowly scoped `//nolint:<linter> // <reason>` on the line, never by disabling a
+# linter here.
+version: "2"
+
+run:
+  # Lint the integration tier too (files under the `integration` build tag).
+  build-tags:
+    - integration
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - contextcheck
+    - errcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - govet
+    - misspell
+    - noctx
+    - perfsprint
+    - prealloc
+    - staticcheck
+    - unconvert
+    - unparam
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        # As in feed-go: field order follows meaning, and these structs are never held in bulk.
+        - fieldalignment
+        # As in feed-go: an inner `err` shadowing an outer one is the idiomatic form here.
+        - shadow
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

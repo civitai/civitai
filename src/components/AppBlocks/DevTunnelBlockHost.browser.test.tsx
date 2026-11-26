@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import router from 'next/router';
 import { renderToString } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
+import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -37,9 +38,6 @@ vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({
   },
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 7, username: 'author' }),
-}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
   useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
@@ -87,14 +85,16 @@ afterEach(() => {
 
 describe('/apps/dev/[blockId] client', () => {
   test('without a tunnel it explains how to start one and mints no block token', async () => {
-    renderWithProviders(<DevTunnelPage {...FRAME} iframeSrc={null} host={null} />);
+    renderWithProviders(<DevTunnelPage {...FRAME} iframeSrc={null} host={null} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
     expect(m.useBlockToken).not.toHaveBeenCalled();
     expect(m.hostProps).toBeNull();
   });
 
   test('with a tunnel it mints for the tunnel URL and mounts the dev-tunnel host', async () => {
-    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    renderWithProviders(<DevTunnelPage {...FRAME} />, { user: { id: 7, username: 'author' } });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.useBlockToken).toHaveBeenCalled();
     // Marks the mint as a tunnel preview, so the token carries no document-store scopes.
@@ -136,14 +136,14 @@ describe('/apps/dev/[blockId] client', () => {
       error: null,
       signedScopes: ['apps:storage:read'],
     });
-    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    renderWithProviders(<DevTunnelPage {...FRAME} />, { user: { id: 7, username: 'author' } });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.hostProps?.signedScopes).toEqual(['apps:storage:read']);
   });
 
   test('a failed mint shows the owner-specific copy instead of the host', async () => {
     m.useBlockToken.mockReturnValue({ token: null, error: new Error('nope') });
-    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    renderWithProviders(<DevTunnelPage {...FRAME} />, { user: { id: 7, username: 'author' } });
     await expect
       .element(page.getByText('Can’t run this app in the dev tunnel'))
       .toBeInTheDocument();
@@ -151,7 +151,9 @@ describe('/apps/dev/[blockId] client', () => {
   });
 
   test('while the tunnel host is not resolvable it shows the gate and mounts no host', async () => {
-    await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    await renderWithProviders(<DevTunnelPage {...PENDING} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     expect(m.hostProps, 'the app was framed before its host resolved').toBeNull();
     expect(m.useBlockToken).not.toHaveBeenCalled();
@@ -162,7 +164,9 @@ describe('/apps/dev/[blockId] client', () => {
   });
 
   test('branches on dnsPending itself: a pending frame is never mounted even if it carries a URL', async () => {
-    await renderWithProviders(<DevTunnelPage {...FRAME} dnsPending />);
+    await renderWithProviders(<DevTunnelPage {...FRAME} dnsPending />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     expect(m.hostProps).toBeNull();
   });
@@ -170,7 +174,9 @@ describe('/apps/dev/[blockId] client', () => {
   test('re-runs its server props, in place, when the gate settles, and hands the gate that promise', async () => {
     const transition = Promise.resolve(true);
     vi.mocked(router.replace).mockReturnValue(transition);
-    await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    await renderWithProviders(<DevTunnelPage {...PENDING} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     expect(m.gate!.onSettled()).toBe(transition);
     expect(router.replace).toHaveBeenCalledExactlyOnceWith('/apps/dev/my-app', undefined, {
@@ -180,7 +186,9 @@ describe('/apps/dev/[blockId] client', () => {
   });
 
   test('re-fetched props for a different host reload the document instead of framing it', async () => {
-    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
 
     // The tunnel restarted while the page waited: a new host, which this document's CSP forbids.
@@ -194,7 +202,8 @@ describe('/apps/dev/[blockId] client', () => {
   test('reached client-side with a host other than the one the document was loaded with, it reloads', async () => {
     // Back to this page after the tunnel restarted elsewhere: the first props are already new.
     await renderWithProviders(
-      <DevTunnelPage {...FRAME} host={OTHER} iframeSrc={`https://${OTHER}/?dev=t`} />
+      <DevTunnelPage {...FRAME} host={OTHER} iframeSrc={`https://${OTHER}/?dev=t`} />,
+      { user: { id: 7, username: 'author' } }
     );
     await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
     expect(m.hostProps, 'a host this document may not frame was mounted').toBeNull();
@@ -203,14 +212,17 @@ describe('/apps/dev/[blockId] client', () => {
   test('a document loaded as another page, or with no tunnel, frames a host without a reload', async () => {
     // Another page's props, even one that happens to carry a `host`, say nothing about this CSP.
     loadedAs('/apps', OTHER);
-    const first = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    const first = await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     await first.unmount();
 
     loadedAs('/apps/dev/[blockId]', null);
     m.hostProps = null;
     const screen = await renderWithProviders(
-      <DevTunnelPage {...FRAME} iframeSrc={null} host={null} />
+      <DevTunnelPage {...FRAME} iframeSrc={null} host={null} />,
+      { user: { id: 7, username: 'author' } }
     );
     await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...FRAME} />);
@@ -220,7 +232,9 @@ describe('/apps/dev/[blockId] client', () => {
   });
 
   test('a new host that is still pending reloads rather than waiting under the old policy', async () => {
-    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...PENDING} host={OTHER} />);
     await vi.waitFor(() => expect(router.reload).toHaveBeenCalledTimes(1));
@@ -228,7 +242,9 @@ describe('/apps/dev/[blockId] client', () => {
   });
 
   test('re-fetched props for the same host mount it without a reload', async () => {
-    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...PENDING} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
@@ -239,7 +255,7 @@ describe('/apps/dev/[blockId] client', () => {
   // was ready; the host reports it, and the page re-runs its server props — the SAME
   // in-place path the DNS gate uses — for a freshly signed entry URL.
   test('a guest reload re-runs the server props in place, once', async () => {
-    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    renderWithProviders(<DevTunnelPage {...FRAME} />, { user: { id: 7, username: 'author' } });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     const onGuestReloaded = m.hostProps?.onGuestReloaded;
     expect(onGuestReloaded, 'the page gave the host no way to report a reload').toBeTypeOf(
@@ -256,7 +272,9 @@ describe('/apps/dev/[blockId] client', () => {
   test('a freshly signed entry URL for the same host REMOUNTS the host', async () => {
     // A remount is what resets the host's handshake: re-rendering the same instance with
     // a new src would load the new document into a host still parked on `ready`.
-    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.hostMounts).toBe(1);
 
@@ -272,18 +290,22 @@ describe('/apps/dev/[blockId] client', () => {
   test('the dev-tunnel host is not server-rendered — it mounts on the client', async () => {
     const html = renderToString(
       <MantineProvider>
-        <DevTunnelPage {...FRAME} />
+        <FixedSessionProvider user={{ id: 7, username: 'author' }}>
+          <DevTunnelPage {...FRAME} />
+        </FixedSessionProvider>
       </MantineProvider>
     );
     expect(html).not.toContain('data-testid="page-block-host"');
 
     // Positive control: the same page does mount the host once on the client.
-    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    renderWithProviders(<DevTunnelPage {...FRAME} />, { user: { id: 7, username: 'author' } });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
   });
 
   test('CONTROL: re-rendering with the SAME entry URL does not remount', async () => {
-    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...FRAME} />);
     await new Promise((r) => setTimeout(r, 50));
@@ -294,7 +316,9 @@ describe('/apps/dev/[blockId] client', () => {
   // own, so this cannot see a loop — the no-loop property lives in PageBlockHost's
   // once-per-mount report. What it pins is that the page settles on the start commands.
   test('a fresh mint that comes back with no tunnel shows the start commands', async () => {
-    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     (m.hostProps?.onGuestReloaded as () => void)();
 
@@ -314,7 +338,8 @@ describe('/apps/dev/[blockId] client', () => {
 
   test('without a tunnel it shows the commands that start one', async () => {
     const screen = await renderWithProviders(
-      <DevTunnelPage {...FRAME} iframeSrc={null} host={null} />
+      <DevTunnelPage {...FRAME} iframeSrc={null} host={null} />,
+      { user: { id: 7, username: 'author' } }
     );
     await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
     expect(commandBlocks(screen.container)).toEqual([COMMANDS]);
@@ -322,7 +347,9 @@ describe('/apps/dev/[blockId] client', () => {
 
   test('a failed mint shows only the tunnel command to restart', async () => {
     m.useBlockToken.mockReturnValue({ token: null, error: new Error('nope') });
-    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect
       .element(page.getByText('Can’t run this app in the dev tunnel'))
       .toBeInTheDocument();
@@ -330,7 +357,9 @@ describe('/apps/dev/[blockId] client', () => {
   });
 
   test('a resolvable tunnel never shows the gate', async () => {
-    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.gate).toBeNull();
   });
@@ -356,7 +385,9 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
 
   test('a Retry fetches a freshly signed URL for this app, and the host loads it without a remount', async () => {
     answer(200, { iframeSrc: FRESH_SRC, host: HOST });
-    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(refreshOf(), 'the page gave the host no fresh URL for a Retry').toBeTypeOf('function');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -373,7 +404,9 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
 
   test('the block id is encoded into the request', async () => {
     answer(200, { iframeSrc: FRESH_SRC, host: HOST });
-    await renderWithProviders(<DevTunnelPage {...FRAME} blockId="a&b=c" />);
+    await renderWithProviders(<DevTunnelPage {...FRAME} blockId="a&b=c" />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     await refreshOf()!();
     expect(fetchMock.mock.calls[0][0]).toBe('/api/apps/dev/entry-url?blockId=a%26b%3Dc');
@@ -390,7 +423,9 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
     'an answer with no usable URL (%i %j) rejects, so the host re-arms on the URL it has',
     async (status, body) => {
       answer(status, body);
-      await renderWithProviders(<DevTunnelPage {...FRAME} />);
+      await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+        user: { id: 7, username: 'author' },
+      });
       await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
       await expect(refreshOf()!()).rejects.toThrow();
       expect(router.reload).not.toHaveBeenCalled();
@@ -399,7 +434,9 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
 
   test('a fresh URL on another host is never framed: the page reloads for a document whose policy allows it', async () => {
     answer(200, { iframeSrc: `https://${OTHER}/?dev=fresh`, host: OTHER });
-    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     await expect(refreshOf()!()).rejects.toThrow();
     expect(router.reload).toHaveBeenCalledTimes(1);
@@ -407,7 +444,9 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
 
   test('a URL whose origin is not the host it names is refused', async () => {
     answer(200, { iframeSrc: `https://${OTHER}/?dev=fresh`, host: HOST });
-    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await renderWithProviders(<DevTunnelPage {...FRAME} />, {
+      user: { id: 7, username: 'author' },
+    });
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     await expect(refreshOf()!()).rejects.toThrow('The entry URL is not on its tunnel host');
     expect(router.reload).not.toHaveBeenCalled();

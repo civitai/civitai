@@ -78,7 +78,57 @@ export interface SessionSigner {
     claims?: Record<string, unknown>;
     expiresIn?: number; // seconds, default 3600
   }) => Promise<string>;
+  /**
+   * Mint an RFC 9068 access token (`typ: at+jwt`) for one resource. Every claim is the caller's: no
+   * session or id_token defaults are added. Throws when `iss` or `aud` is empty.
+   */
+  mintAccessTokenJwt: (claims: AccessTokenJwtClaims) => Promise<string>;
 }
+
+/** The claims of an RFC 9068 access token. Times are epoch seconds. */
+export interface AccessTokenJwtClaims {
+  iss: string;
+  sub: string;
+  aud: string;
+  client_id: string;
+  scope: string;
+  jti: string;
+  iat: number;
+  exp: number;
+  act?: { sub: string };
+  /** A service token's roles at the resource (RFC 9068 §2.2.3.1). */
+  roles?: string[];
+  /** A service token's user id at the resource. */
+  civitai_uid?: number;
+  /**
+   * A block-exchange token's App Block binding. Given, all five of its claims are written together
+   * (never some of them): `civitai_token_kind: 'block-exchange'` (the marker),
+   * `civitai_app_block_id`, `civitai_block_instance_id`, `civitai_max_browsing_level` and
+   * `civitai_viewer_browsing_level` ({@link BLOCK_EXCHANGE_TOKEN_KIND}). Absent, none is.
+   */
+  block?: BlockExchangeBinding;
+}
+
+/** What a block-exchange token carries of the App Block token it was exchanged from. */
+export interface BlockExchangeBinding {
+  /** The block token's `appBlockId` (AppBlock.id). */
+  appBlockId: string;
+  /** The block token's `blockInstanceId` (the install the token was minted for). */
+  blockInstanceId: string;
+  /** The block token's `maxBrowsingLevel`: its maturity ceiling, a browsing-level bit flag. */
+  maxBrowsingLevel: number;
+  /**
+   * The viewer's own browsing level the block token carries (its `viewerBrowsingLevel`), a
+   * browsing-level bit flag. With the ceiling it is the level the site's own reads use
+   * (`resolveViewerBrowsingLevel` in `src/server/services/blocks/block-viewer-ceiling.ts`).
+   */
+  viewerBrowsingLevel: number;
+}
+
+/** The `civitai_token_kind` of a token the hub's block exchange minted. */
+export const BLOCK_EXCHANGE_TOKEN_KIND = 'block-exchange';
+
+export const ACCESS_TOKEN_JWT_TYP = 'at+jwt';
 
 export function createSessionSigner(config: SessionSignerConfig = {}): SessionSigner {
   const env = loadAuthEnv();
@@ -160,11 +210,41 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
       .sign(await privateKey());
   }
 
+  async function mintAccessTokenJwt(claims: AccessTokenJwtClaims): Promise<string> {
+    if (!claims.iss) throw new Error('[@civitai/auth] an access token needs an issuer');
+    if (!claims.aud) throw new Error('[@civitai/auth] an access token needs an audience');
+    return new SignJWT({
+      client_id: claims.client_id,
+      scope: claims.scope,
+      ...(claims.act ? { act: { sub: claims.act.sub } } : {}),
+      ...(claims.roles ? { roles: [...claims.roles] } : {}),
+      ...(claims.civitai_uid !== undefined ? { civitai_uid: claims.civitai_uid } : {}),
+      ...(claims.block
+        ? {
+            civitai_token_kind: BLOCK_EXCHANGE_TOKEN_KIND,
+            civitai_app_block_id: claims.block.appBlockId,
+            civitai_block_instance_id: claims.block.blockInstanceId,
+            civitai_max_browsing_level: claims.block.maxBrowsingLevel,
+            civitai_viewer_browsing_level: claims.block.viewerBrowsingLevel,
+          }
+        : {}),
+    })
+      .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: ACCESS_TOKEN_JWT_TYP })
+      .setIssuer(claims.iss)
+      .setSubject(claims.sub)
+      .setAudience(claims.aud)
+      .setIssuedAt(claims.iat)
+      .setExpirationTime(claims.exp)
+      .setJti(claims.jti)
+      .sign(await privateKey());
+  }
+
   return {
     maxAge: cfg.maxAge,
     publicJwks,
     mintSessionToken,
     mintIdToken,
+    mintAccessTokenJwt,
   };
 }
 

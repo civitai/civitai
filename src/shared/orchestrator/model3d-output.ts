@@ -1,3 +1,6 @@
+import type { NsfwLevel } from '@civitai/orchestration-client';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+
 /** `.GLB ` → `glb`: formats arrive from the orchestrator and file names un-normalised. */
 export function normalizeModel3DFormat(format: string | null | undefined) {
   return (format ?? '').trim().toLowerCase().replace(/^\./, '');
@@ -55,5 +58,28 @@ export function pickModel3DPreviewFile<T extends Model3DFileLike>(files: T[]): T
     files.find((f) => f.isPrimary) ??
     files[0] ??
     null
+  );
+}
+
+/**
+ * Max rating across a workflow's `model3DPreview` render images. The
+ * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
+ * chained 2D preview render carries the result's effective rating, so it must
+ * be propagated onto the `model3d` output for the NSFW gates to apply. Used by
+ * the on-site formatter (`formatStepOutputs`) and the App Blocks producers
+ * (`services/blocks/workflow.service`).
+ */
+export function getModel3DPreviewNsfwLevel(
+  steps: ReadonlyArray<{ $type: string; output?: unknown } | null | undefined> | null | undefined
+): NsfwLevel | undefined {
+  const previews = (steps ?? []).filter((s) => s?.$type === 'model3DPreview');
+  if (!previews.length) return undefined;
+  return maxNsfwLevel(
+    previews.flatMap((s) =>
+      (
+        (s?.output as { images?: Array<{ nsfwLevel?: NsfwLevel | null } | null> } | undefined)
+          ?.images ?? []
+      ).map((i) => i?.nsfwLevel)
+    )
   );
 }

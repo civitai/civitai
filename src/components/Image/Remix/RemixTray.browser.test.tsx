@@ -17,7 +17,6 @@ const h = vi.hoisted(() => ({
   signals: new Map<string, (data: unknown) => void>(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
 vi.mock('~/providers/AppProvider', async (orig) => ({
   ...(await orig<object>()),
   useAppContext: () => ({ domain: 'blue' }),
@@ -135,7 +134,7 @@ describe('RemixTray', () => {
       workflow('d', 0, 'scheduled'),
       workflow('e', 0, 'succeeded', ['remix:dismissed']),
     ];
-    renderWithProviders(<RemixTray />);
+    renderWithProviders(<RemixTray />, { user: { id: 9 } });
 
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 2 in progress, 2 ready');
     await pill().click();
@@ -148,7 +147,7 @@ describe('RemixTray', () => {
       workflow('a', 0, 'succeeded', ['remix:dismissed']),
       workflow('b', 0, 'succeeded', ['remix:done']),
     ];
-    renderWithProviders(<RemixTray />);
+    renderWithProviders(<RemixTray />, { user: { id: 9 } });
     await vi.waitFor(() => expect(queryClient.isFetching()).toBe(0));
     await expect.element(pill()).not.toBeInTheDocument();
   });
@@ -159,7 +158,7 @@ describe('RemixTray', () => {
       workflow('a', 1, 'succeeded'),
       workflow('b', 0, 'succeeded'),
     ];
-    renderWithProviders(<RemixTray />);
+    renderWithProviders(<RemixTray />, { user: { id: 9 } });
     await pill().click();
     await expect.poll(() => rows().all()).toHaveLength(2);
 
@@ -174,7 +173,7 @@ describe('RemixTray', () => {
 
   test('a generation signal costs nothing; a remix-app signal for an unseen run adds it once', async () => {
     h.items = [workflow('a', 0, 'succeeded')];
-    renderWithProviders(<RemixTray />);
+    renderWithProviders(<RemixTray />, { user: { id: 9 } });
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 0 in progress, 1 ready');
     const fetchesAtStart = h.fetches;
 
@@ -197,7 +196,7 @@ describe('RemixTray', () => {
 
   test('a run tagged remix:done leaves the tray', async () => {
     h.items = [workflow('a', 0, 'succeeded'), workflow('b', 0, 'succeeded')];
-    renderWithProviders(<RemixTray />);
+    renderWithProviders(<RemixTray />, { user: { id: 9 } });
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 0 in progress, 2 ready');
 
     setCachedWorkflowTag('b-0', 'remix:done', 'add');

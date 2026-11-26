@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/setup';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 
 const { mintAppTokenMock, featuresMock, devTunnelEnabledMock, resolveFrameMock } = vi.hoisted(
@@ -325,6 +327,18 @@ describe('getRunnerDevTunnelUser (the runner’s dev-tunnel endpoints)', () => {
   });
 });
 
+/** The App Assistant client as `enableAppAssistant` keeps it (no `accessMode`). */
+const CANONICAL_CLIENT = {
+  secret: null,
+  name: 'App Assistant',
+  description: 'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
+  redirectUris: [],
+  allowedOrigins: [],
+  isConfidential: false,
+  grants: [],
+  allowedScopes: SCOPE,
+};
+
 describe('enableAppAssistant', () => {
   it("creates the user's own client and consents them with a daily cap", async () => {
     await enableAppAssistant(USER_ID);
@@ -333,7 +347,8 @@ describe('enableAppAssistant', () => {
     expect(CLIENT_ID.startsWith('firstparty-')).toBe(false);
     const upsert = dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0];
     expect(upsert.where).toEqual({ id: CLIENT_ID });
-    expect(upsert.update).toEqual({ allowedScopes: SCOPE });
+    expect(upsert.update).toEqual(CANONICAL_CLIENT);
+    expect(upsert.update).not.toHaveProperty('accessMode');
     expect(upsert.create).toMatchObject({
       id: CLIENT_ID,
       userId: USER_ID,
@@ -357,8 +372,7 @@ describe('enableAppAssistant', () => {
     expect(mintAppTokenMock).not.toHaveBeenCalled();
   });
 
-  it('writes nothing once client and consent are in place, so a limit the user changed survives', async () => {
-    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ allowedScopes: SCOPE });
+  it('leaves a consent already in place alone, so a limit the user changed survives', async () => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({
       scope: SCOPE,
       buzzLimit: [{ type: 'sliding', unit: 1, window: 'day', limit: 250 }],
@@ -367,7 +381,6 @@ describe('enableAppAssistant', () => {
     await enableAppAssistant(USER_ID);
 
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -390,7 +403,7 @@ describe('enableAppAssistant', () => {
   );
 
   it("keeps bits the consent already carries beyond the assistant's own", async () => {
-    const EXTRA = 1 << 30;
+    const EXTRA = 1n << 30n;
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({
       scope: TokenScope.UserRead | EXTRA,
       buzzLimit: null,
@@ -401,11 +414,67 @@ describe('enableAppAssistant', () => {
     );
   });
 
-  it('heals a client whose allowed scopes were narrowed', async () => {
-    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ allowedScopes: TokenScope.UserRead });
-    await enableAppAssistant(USER_ID);
-    expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).toEqual({
+  it('🔴 repairs a client edited before edits were refused: every field back to its canonical value', async () => {
+    // A row renamed and given a redirect URI while its scopes stayed right: the update is the whole
+    // canonical shape whatever the row holds.
+    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({
       allowedScopes: SCOPE,
+      name: 'Totally Official App',
+      redirectUris: ['https://attacker.example/cb'],
+    });
+    await enableAppAssistant(USER_ID);
+    expect(dbMock.dbWrite.oauthClient.upsert).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).toEqual(CANONICAL_CLIENT);
+  });
+
+  // A ban marks the self-only client it disables (oauth-ban-marker, whose re-open SQL is tested on
+  // real rows there); only a marked client is re-opened. The mark lives on the cache Redis, a
+  // process boundary.
+  describe('a disabled client', () => {
+    const marks = new Map<string, string>();
+    const reopenCalls = () => dbMock.dbWrite.$executeRaw.mock.calls;
+    beforeEach(() => {
+      marks.clear();
+      redisMock.redis.get.mockImplementation(
+        (async (key: string) => [...marks].find(([m]) => key.endsWith(m))?.[1] ?? null) as never
+      );
+      redisMock.redis.del.mockImplementation((async (key: string) => {
+        const hit = [...marks.keys()].find((m) => key.endsWith(m));
+        return hit && marks.delete(hit) ? 1 : 0;
+      }) as never);
+      dbMock.dbWrite.$executeRaw.mockReset();
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+    });
+    afterEach(() => {
+      redisMock.redis.get.mockReset();
+      redisMock.redis.del.mockReset();
+    });
+
+    it('🔴 one staff disabled (no ban mark) stays disabled when App Assistant is turned on', async () => {
+      dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({
+        allowedScopes: SCOPE,
+        accessMode: 'disabled',
+      });
+      await enableAppAssistant(USER_ID);
+      expect(reopenCalls()).toHaveLength(0);
+      // The canonical upsert never carries a mode either.
+      expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).not.toHaveProperty(
+        'accessMode'
+      );
+    });
+
+    it('🔴 one a ban disabled is re-opened once the user turns App Assistant on again', async () => {
+      marks.set(`oauth:ban-disabled:${CLIENT_ID}`, 'open');
+      await enableAppAssistant(USER_ID);
+      expect(reopenCalls()).toHaveLength(1);
+      expect(marks.size).toBe(0);
+    });
+
+    it('🔴 a cache Redis error does not fail the enable: no re-open, the consent is still written', async () => {
+      redisMock.redis.get.mockRejectedValue(new Error('cache down'));
+      await expect(enableAppAssistant(USER_ID)).resolves.toBeUndefined();
+      expect(reopenCalls()).toHaveLength(0);
+      expect(dbMock.dbWrite.oauthConsent.upsert).toHaveBeenCalled();
     });
   });
 });
@@ -414,7 +483,7 @@ describe('mintAppAssistantToken', () => {
   it('mints the spending scope for the chat against an existing consent, writing nothing', async () => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({ scope: SCOPE });
 
-    expect(await mintAppAssistantToken(USER_ID, 'chat')).toEqual({
+    expect(await mintAppAssistantToken(USER_ID, 'chat', null)).toEqual({
       token: 'civ_assistant_oauth',
       expiresAt: '2099-01-01T01:00:00Z',
     });
@@ -422,6 +491,7 @@ describe('mintAppAssistantToken', () => {
       userId: USER_ID,
       clientId: CLIENT_ID,
       scope: SCOPE,
+      impersonatedBy: null,
     });
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
@@ -429,11 +499,12 @@ describe('mintAppAssistantToken', () => {
 
   it('mints UserRead alone for the sandbox service', async () => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({ scope: SCOPE });
-    await mintAppAssistantToken(USER_ID, 'sandbox');
+    await mintAppAssistantToken(USER_ID, 'sandbox', null);
     expect(mintAppTokenMock).toHaveBeenCalledWith({
       userId: USER_ID,
       clientId: CLIENT_ID,
       scope: TokenScope.UserRead,
+      impersonatedBy: null,
     });
   });
 
@@ -443,7 +514,7 @@ describe('mintAppAssistantToken', () => {
     ['a consent without the spend bit, for the chat', { scope: TokenScope.UserRead }, 'chat'],
   ] as const)('returns null and re-grants nothing: %s', async (_label, consent, purpose) => {
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue(consent);
-    expect(await mintAppAssistantToken(USER_ID, purpose)).toBeNull();
+    expect(await mintAppAssistantToken(USER_ID, purpose, null)).toBeNull();
     expect(mintAppTokenMock).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
@@ -501,6 +572,74 @@ describe('getAppAssistantPreview', () => {
     resolveFrameMock.mockResolvedValue({ ...frame, iframeSrc: null, dnsPending: true });
     expect(await getAppAssistantPreview({ user: user(), blockId: 'my-app' })).toEqual({
       status: 'preparing',
+    });
+  });
+  /**
+   * App Assistant direct preview: a frame (re)mint stamps the session's idle clock (the tunnel
+   * gate's entry-document stamp, for a path with no gate); the pane's 60 s liveness poll
+   * (`?check=1`) never does, or an open tab alone would keep a session from ever idling out. The
+   * stamp runs through the real dev-tunnel service, so it is read back from the stored record.
+   */
+  describe('the idle stamp of a direct preview', () => {
+    const LABEL = 'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes';
+    const DIRECT_HOST = `${LABEL}.preview.test`;
+    const SESSION_KEY = 'system:blocks:dev-tunnel:session:bki_direct';
+    const OLD = Math.floor(Date.now() / 1000) - 600;
+    const record = {
+      sessionId: 'bki_direct',
+      userId: USER_ID,
+      blockId: 'my-app',
+      host: DIRECT_HOST,
+      fingerprint: '',
+      createdAt: OLD,
+      hardExpiresAt: OLD + 8 * 3600,
+      spendCapBuzz: 5000,
+      lastActivityAt: OLD,
+      transport: 'direct',
+      previewId: '9f86d081884c7d659a2feaa0c55ad015',
+    };
+    const stored = new Map<string, string>();
+    const lastActivity = () => JSON.parse(stored.get(SESSION_KEY)!).lastActivityAt as number;
+
+    beforeEach(() => {
+      setEnv({ APP_ASSISTANT_PREVIEW_DOMAIN: 'preview.test' });
+      featuresMock.mockReturnValue({ ...ON, appBlocksAuthor: true });
+      stored.clear();
+      stored.set(`system:blocks:dev-tunnel:user:{${USER_ID}}:my-app`, 'bki_direct');
+      stored.set(SESSION_KEY, JSON.stringify(record));
+      const get = async (k: string) => stored.get(k) ?? null;
+      redisMock.redis.get.mockImplementation(get);
+      redisMock.sysRedis.get.mockImplementation(get);
+      redisMock.sysRedis.set.mockImplementation(async (k: string, v: string) => {
+        stored.set(k, v);
+        return 'OK';
+      });
+      resolveFrameMock.mockResolvedValue({
+        blockId: 'my-app',
+        host: DIRECT_HOST,
+        iframeSrc: `https://${DIRECT_HOST}/`,
+        dnsPending: false,
+        transport: 'direct',
+      });
+    });
+
+    it('a ?check=1 fetch leaves lastActivityAt unchanged', async () => {
+      const got = await getAppAssistantPreview({ user: user(), blockId: 'my-app', check: true });
+      expect(got.status).toBe('ok');
+      expect(lastActivity()).toBe(OLD);
+    });
+
+    it('a frame fetch without it stamps the session', async () => {
+      const before = Math.floor(Date.now() / 1000);
+      await getAppAssistantPreview({ user: user(), blockId: 'my-app' });
+      expect(lastActivity()).toBeGreaterThanOrEqual(before);
+    });
+
+    it('a tunnel frame is never stamped here (its gate stamps it)', async () => {
+      stored.set(SESSION_KEY, JSON.stringify({ ...record, transport: undefined }));
+      resolveFrameMock.mockResolvedValue(frame);
+      await getAppAssistantPreview({ user: user(), blockId: 'my-app' });
+      expect(lastActivity()).toBe(OLD);
     });
   });
 });

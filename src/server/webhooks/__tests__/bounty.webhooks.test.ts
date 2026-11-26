@@ -17,7 +17,7 @@ describe('new-bounty webhook', () => {
 });
 
 describe('new-bounty webhook payload', () => {
-  it('leaves the profanity fields out of the details', async () => {
+  it('leaves the profanity fields and the text scan record out of the details', async () => {
     const findMany = vi.fn(async () => [
       {
         id: 1,
@@ -25,6 +25,7 @@ describe('new-bounty webhook payload', () => {
           baseModel: 'SD 1.5',
           profanityMatches: ['term'],
           profanityEvaluation: { reason: 'test reason' },
+          textScanNsfw: { workflowId: 'w', level: 4 },
         },
         tags: [],
         user: { username: 'u', image: null },

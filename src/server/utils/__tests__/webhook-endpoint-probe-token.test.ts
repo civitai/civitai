@@ -21,7 +21,11 @@ const PROBE = 'r'.repeat(40);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
-async function call(endpoint: Handler, path: string, auth: { query?: string; bearer?: string }) {
+async function call(
+  endpoint: Handler,
+  path: string,
+  auth: { query?: string; bearer?: string; header?: string }
+) {
   let status = 200;
   const res = {
     status(code: number) {
@@ -34,7 +38,10 @@ async function call(endpoint: Handler, path: string, auth: { query?: string; bea
     method: 'GET',
     url: auth.query === undefined ? path : `${path}?token=${auth.query}`,
     query: auth.query === undefined ? {} : { token: auth.query },
-    headers: auth.bearer === undefined ? {} : { authorization: `Bearer ${auth.bearer}` },
+    headers: {
+      ...(auth.bearer === undefined ? {} : { authorization: `Bearer ${auth.bearer}` }),
+      ...(auth.header === undefined ? {} : { 'x-webhook-token': auth.header }),
+    },
   };
   await endpoint(req as unknown as NextApiRequest, res);
   return status;
@@ -75,6 +82,14 @@ describe('PROBE_TOKEN', () => {
     expect(ok).toHaveBeenCalledTimes(1);
   });
 
+  it('is never read from x-webhook-token, which also hides a Bearer probe token', async () => {
+    const path = '/api/probe-header';
+    expect(await call(healthRoute, path, { header: PROBE })).toBe(401);
+    expect(await call(healthRoute, path, { header: 'wrong', bearer: PROBE })).toBe(401);
+    expect(await call(healthRoute, path, { header: CURRENT })).toBe(200);
+    expect(ok).toHaveBeenCalledTimes(1);
+  });
+
   it('matches nothing while blank or unset', async () => {
     for (const blank of ['', '   ', undefined]) {
       setEnv({ PROBE_TOKEN: blank });
@@ -86,9 +101,9 @@ describe('PROBE_TOKEN', () => {
   });
 });
 
-// Probe manifests carry PROBE_TOKEN as a literal, so it must open the health routes and nothing
-// else. Pinned by who names ProbeEndpoint anywhere in src, outside tests.
-it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
+// Probe manifests and the metrics scrape carry PROBE_TOKEN as a literal, so it must open the health
+// and metrics routes and nothing else. Pinned by who names ProbeEndpoint anywhere in src, outside tests.
+it('only /api/live, /api/ready, /api/health and /api/metrics use ProbeEndpoint', () => {
   const src = path.join(process.cwd(), 'src');
   const users = (fs.readdirSync(src, { recursive: true }) as string[])
     .map((f) => f.split(path.sep).join('/'))
@@ -99,6 +114,7 @@ it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
   expect(users).toEqual([
     'pages/api/health.ts',
     'pages/api/live.ts',
+    'pages/api/metrics.ts',
     'pages/api/ready.ts',
     'server/utils/endpoint-helpers.ts',
   ]);
@@ -107,4 +123,7 @@ it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
     const source = fs.readFileSync(path.join(src, `pages/api/${name}.ts`), 'utf8');
     expect(source, name).toMatch(/^export default ProbeEndpoint\(/m);
   }
+  const metrics = fs.readFileSync(path.join(src, 'pages/api/metrics.ts'), 'utf8');
+  expect(metrics).toMatch(/^const handler = ProbeEndpoint\(/m);
+  expect(metrics).toMatch(/^export default handler;$/m);
 });

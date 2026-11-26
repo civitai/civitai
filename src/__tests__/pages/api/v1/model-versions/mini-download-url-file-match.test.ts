@@ -64,6 +64,9 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: mockResolveCanGenerateForVersions,
   getShouldChargeForResources: mockGetShouldChargeForResources,
 }));
@@ -102,6 +105,8 @@ import { Air } from '@civitai/orchestration-client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getDownloadFilename } from '~/server/services/file.service';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import { modelVersionToAir } from '~/server/utils/resource-air';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
@@ -231,6 +236,7 @@ const versionRow = {
   publishedAt: new Date('2024-01-01T00:00:00Z'),
   modelId: 77,
   modelName: 'Test Model',
+  nsfwLevel: 1,
   baseModel: 'SD 1.5',
   status: 'Published',
   modelStatus: 'Published',
@@ -250,6 +256,7 @@ const versionRow = {
   licensingFee: null,
   licensingFeeType: null,
   licensingFeeSettlementCurrency: null,
+  licensingFeeMarkup: null,
   isLicensingRoot: false,
   licensingSourceVersionId: null,
   sourceLicensingFeeRecipientUserId: null,
@@ -258,6 +265,7 @@ const versionRow = {
   sourceLicensingFee: null,
   sourceLicensingFeeType: null,
   sourceLicensingFeeSettlementCurrency: null,
+  sourceLicensingFeeMarkup: null,
   versionFlags: 0,
   userFlags: 0,
 };
@@ -1107,6 +1115,67 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
   });
 });
 
+describe('percent-of-compute fees carry their markup', () => {
+  type Fee = { role: string; type: string; amount: number; markup?: number };
+  const feesFor = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, { baseModel: 'SDXL 1.0', ...overrides });
+    return (body as Body & { fees: Fee[] }).fees;
+  };
+
+  it('sends the percent as the amount and the markup beside it', async () => {
+    expect(
+      await feesFor({
+        licensingFee: 35 as never,
+        licensingFeeType: 'PercentOfCompute' as never,
+        licensingFeeMarkup: 10 as never,
+      })
+    ).toEqual([
+      expect.objectContaining({
+        role: 'version',
+        type: 'percentOfCompute',
+        amount: 35,
+        markup: 10,
+      }),
+    ]);
+  });
+
+  it('a per-image fee never carries a markup, whatever the column holds', async () => {
+    const fees = await feesFor({
+      licensingFee: 5 as never,
+      licensingFeeType: 'PerImageBuzz' as never,
+      licensingFeeMarkup: 10 as never,
+    });
+    expect(fees.map((f) => [f.type, f.amount, f.markup])).toEqual([['perImageBuzz', 5, undefined]]);
+  });
+
+  it('a licensing-root percent fee carries its own markup', async () => {
+    const fees = await feesFor({
+      isLicensingRoot: true as never,
+      licensingFee: 35 as never,
+      licensingFeeType: 'PercentOfCompute' as never,
+      licensingFeeMarkup: 10 as never,
+      sourceLicensingFeeMarkup: 99 as never,
+    });
+    expect(fees.map((f) => [f.role, f.type, f.amount, f.markup])).toEqual([
+      ['baseModel', 'percentOfCompute', 35, 10],
+    ]);
+  });
+
+  it('a lineage percent fee carries its source version markup', async () => {
+    const fees = await feesFor({
+      licensingSourceVersionId: 900 as never,
+      sourceLicensingFee: 35 as never,
+      sourceLicensingFeeType: 'PercentOfCompute' as never,
+      sourceLicensingFeeMarkup: 10 as never,
+      sourceLicensingFeeRecipientUserId: 31 as never,
+      sourceBaseModel: 'SDXL 1.0' as never,
+    });
+    expect(fees.map((f) => [f.role, f.type, f.amount, f.markup])).toEqual([
+      ['baseModel', 'percentOfCompute', 35, 10],
+    ]);
+  });
+});
+
 describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', () => {
   const DATASET = {
     id: 404,
@@ -1123,7 +1192,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
     mockQueryRaw.mockReset();
     const pending = run([SAFETENSOR, DATASET], { modelFileId: String(DATASET.id) }, {}, host);
     mockQueryRaw.mockResolvedValueOnce([
-      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, restricted: false },
+      {
+        id: DATASET.id,
+        nsfwLevel: 4,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
     ]);
     return pending;
   };
@@ -1137,7 +1212,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
   it('is offered on a red-capable host', async () => {
     const { status, body } = await fetchDataset('civitai.red');
     expect(status).toBe(200);
-    expect(body.fileName).toBe(DATASET.name);
+    expect(body.fileType).toBe(DATASET.type);
   });
 
   it.each([
@@ -1147,7 +1222,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
     currentUser.value = user;
     const { status, body } = await fetchDataset('civitai.com');
     expect(status).toBe(200);
-    expect(body.fileName).toBe(DATASET.name);
+    expect(body.fileType).toBe(DATASET.type);
   });
 });
 
@@ -1340,7 +1415,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
       { availability: 'Private' }
     );
     mockQueryRaw.mockResolvedValueOnce([
-      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+      {
+        id: 3350379,
+        nsfwLevel: 1,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
     ]);
     return pending;
   };
@@ -1554,7 +1635,13 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
       { availability: 'Private', modelMode: 'TakenDown' }
     );
     mockQueryRaw.mockResolvedValueOnce([
-      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+      {
+        id: 3350379,
+        nsfwLevel: 1,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
     ]);
     const { body } = await pending;
 
@@ -1567,5 +1654,114 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
 
     expect(body.downloadUrls).toEqual([EPOCH_URL]);
     expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — fileName is the download name', () => {
+  // A Textual Inversion downloads under its first trained word, not the uploaded name
+  // (civitai/civitai#10113), and files[].name on /api/v1/model-versions/[id] says so.
+  const TI_FILE = {
+    ...SAFETENSOR,
+    name: 'easynegative_upload.safetensors',
+    overrideName: null,
+  };
+  const tiVersion = { type: 'TextualInversion', trainedWords: ['easynegative'] };
+
+  it('a Textual Inversion is named by its trained word, as the download route names it', async () => {
+    const { status, body } = await run([TI_FILE], {}, tiVersion as Partial<typeof versionRow>);
+    expect(status).toBe(200);
+    expect(body.fileName).toBe('easynegative.safetensors');
+    expect(body.fileName).toBe(
+      getDownloadFilename({
+        model: { name: versionRow.modelName, type: 'TextualInversion' },
+        modelVersion: { name: versionRow.versionName, trainedWords: ['easynegative'] },
+        file: TI_FILE,
+        versionFiles: [TI_FILE],
+      })
+    );
+  });
+
+  it("a creator's rename wins, as it does on the download route", async () => {
+    const renamed = { ...SAFETENSOR, overrideName: 'my-model.safetensors' };
+    const { body } = await run([renamed, GGUF]);
+    expect(body.fileName).toBe('my-model.safetensors');
+  });
+
+  it('a file sharing its name with a sibling gets the name the download route gives it', async () => {
+    // Same uploaded name on both: the download route names each against every file on the version.
+    const first = { ...SAFETENSOR, name: 'shared.safetensors' };
+    const second = { ...GGUF, name: 'shared.safetensors' };
+    const { body } = await run([first, second], { modelFileId: String(second.id) });
+    const expected = getDownloadFilename({
+      model: { name: versionRow.modelName, type: 'Checkpoint' },
+      modelVersion: { name: versionRow.versionName },
+      file: second,
+      versionFiles: [first, second],
+    });
+    // Positive control: the sibling really moved it off the shared name.
+    expect(expected).not.toBe(second.name);
+    expect(body.fileName).toBe(expected);
+  });
+
+  // The orchestrator reads only the extension of `fileName`, to infer the format when `format` is
+  // null. Every branch that renames must keep the stored file's extension, or such a file loses it.
+  const extOf = (name: string) => name.slice(name.lastIndexOf('.'));
+  const noFormat = { format: undefined } as unknown as typeof SAFETENSOR.metadata;
+  it.each([
+    [
+      'a Textual Inversion (trained word)',
+      { ...SAFETENSOR, metadata: noFormat, name: 'my_upload.pt' },
+      tiVersion,
+    ],
+    [
+      "a creator's rename",
+      {
+        ...SAFETENSOR,
+        metadata: noFormat,
+        name: 'upload.gguf',
+        overrideName: sanitizeOverrideName('Renamed by creator', 'upload.gguf'),
+      },
+      {},
+    ],
+    [
+      'a trainer blob name',
+      { ...SAFETENSOR, metadata: noFormat, name: '01HZX5V3K8Q9R2T4W6Y8A0C2E4.safetensors' },
+      { type: 'LORA' },
+    ],
+    ['a generic uploaded name', { ...SAFETENSOR, metadata: noFormat, name: 'model.ckpt' }, {}],
+  ])('%s keeps the stored extension', async (_label, file, version) => {
+    const { status, body } = await run([file], {}, version as Partial<typeof versionRow>);
+    expect(status).toBe(200);
+    // Positive control: this branch really renamed the file.
+    expect(body.fileName).not.toBe(file.name);
+    expect(extOf(body.fileName)).toBe(extOf(file.name));
+  });
+
+  it('a training-data zip keeps .zip', async () => {
+    const dataset = {
+      id: 404,
+      type: 'Training Data',
+      visibility: 'Public',
+      url: 'https://example.invalid/data.zip',
+      metadata: { nsfwLevel: 1, fullyRated: true },
+      sizeKB: 1024,
+      name: 'data.zip',
+      hashes: {},
+    };
+    currentUser.value = { id: OWNER_ID };
+    const pending = run([SAFETENSOR, dataset], { modelFileId: String(dataset.id) });
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        id: dataset.id,
+        nsfwLevel: 1,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
+    ]);
+    const { status, body } = await pending;
+    expect(status).toBe(200);
+    expect(body.fileName).not.toBe(dataset.name);
+    expect(extOf(body.fileName)).toBe('.zip');
   });
 });

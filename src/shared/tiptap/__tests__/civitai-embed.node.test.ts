@@ -1,6 +1,6 @@
 import { generateHTML } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
-import { upsertArticleInput } from '~/server/schema/article.schema';
+import { articleContentSchema } from '~/server/schema/article.schema';
 import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import type { Editor } from '@tiptap/core';
 import {
@@ -30,7 +30,7 @@ const doc = (attrs: Record<string, unknown>) => ({
 
 /** What an article save does to the editor's HTML: the schema's sanitizer, then the server parse. */
 function save(html: string) {
-  const content = upsertArticleInput.shape.content.parse(html);
+  const content = articleContentSchema.parse(html);
   return generateJSON(content, tiptapExtensions);
 }
 const embedOf = (json: any) => json.content.find((n: any) => n.type === 'civitaiEmbed');
@@ -64,6 +64,51 @@ describe('civitaiEmbed node through an article save', () => {
       '<a href="/i" data-entity="image" data-id="8">d</a>' +
       '</div>';
     expect(embedOf(save(junk))?.attrs.items).toEqual([{ type: 'image', id: 8 }]);
+  });
+});
+
+describe('civitaiEmbed full-width display', () => {
+  const one = [{ type: 'image', id: 13 }];
+
+  it('keeps display full through an article save', () => {
+    const html = generateHTML(doc({ items: one, display: 'full' }), tiptapExtensions);
+    expect(html).toContain('data-display="full"');
+    expect(embedOf(save(html))?.attrs).toEqual({ items: one, display: 'full' });
+  });
+
+  it('leaves an embed saved before the attribute existed as a card, with unchanged HTML', () => {
+    const old =
+      '<div data-type="civitaiEmbed"><a href="/images/13" data-entity="image" data-id="13">/images/13</a></div>';
+    const json = save(old);
+    expect(embedOf(json)?.attrs).toEqual({ items: one, display: 'card' });
+    const out = generateHTML(json as any, tiptapExtensions);
+    expect(out).toContain('data-type="civitaiEmbed"><a href="/images/13"');
+    expect(out).not.toContain('data-display');
+  });
+
+  it('reads any other display value as a card', () => {
+    const html =
+      '<div data-type="civitaiEmbed" data-display="huge"><a href="/images/13" data-entity="image" data-id="13">x</a></div>';
+    expect(embedOf(generateJSON(html, tiptapExtensions))?.attrs.display).toBe('card');
+  });
+
+  it('keeps no display value but full on the embed, on the article save path', () => {
+    const content = articleContentSchema.parse(
+      '<div data-type="civitaiEmbed" data-display="anything"><a href="/images/13" data-entity="image" data-id="13">x</a></div>'
+    );
+    expect(content).not.toContain('anything');
+  });
+
+  it('drops data-display from any div that is not the embed, on the article save path', () => {
+    const content = articleContentSchema.parse(
+      '<div data-type="civitaiembed" data-display="full">a</div>' +
+        '<div data-type="civitaiEmbed2" data-display="full">b</div>' +
+        '<div data-display="full">c</div>' +
+        '<p data-display="full">d</p><span data-display="full">e</span>' +
+        '<div data-type="civitaiEmbed" data-display="full"><a href="/images/13" data-entity="image" data-id="13">x</a></div>'
+    );
+    expect(content.match(/data-display/g)).toHaveLength(1);
+    expect(content).toContain('<div data-type="civitaiEmbed" data-display="full">');
   });
 });
 

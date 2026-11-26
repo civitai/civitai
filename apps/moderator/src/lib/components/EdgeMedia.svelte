@@ -18,6 +18,8 @@
     controls?: boolean;
     alt?: string;
     class?: string;
+    /** Images only: the <img> failed to load. */
+    onerror?: () => void;
   };
 
   let {
@@ -31,6 +33,7 @@
     controls,
     alt,
     class: className,
+    onerror,
     ...options
   }: Props = $props();
 
@@ -40,5 +43,5 @@
 {#if resolved === 'video'}
   <EdgeVideo {src} {name} {thumbnailUrl} {threshold} {muted} {hoverPlay} {controls} class={className} {...options} />
 {:else}
-  <EdgeImage {src} {name} type="image" {alt} class={className} {...options} />
+  <EdgeImage {src} {name} type="image" {alt} class={className} {onerror} {...options} />
 {/if}
