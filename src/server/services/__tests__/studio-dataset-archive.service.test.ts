@@ -535,6 +535,17 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     }
   );
 
+  it("reads the orchestrator's 'none' block header as not blocked", async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => {
+      const res = blobResponse('png-bytes', 'image/png', 'pg');
+      res.headers.set('x-blocked-reason', 'none');
+      return res;
+    });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: true, numImages: 2 });
+  });
+
   it('a zip with no rated item stays Private and records no rating', async () => {
     lockedRow(shared);
     fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png', null));

@@ -1,4 +1,8 @@
 import { Upload } from '@aws-sdk/lib-storage';
+import {
+  parseBlobVerdictHeaders,
+  type BlobVerdictHeaders,
+} from '~/shared/orchestrator/blob-verdict-headers';
 import { datasetRating, type RatedEntry } from '~/server/services/training-data-rating';
 import type { Prisma } from '@prisma/client';
 import type { Workflow } from '@civitai/orchestration-client';
@@ -151,6 +155,9 @@ function extensionFor(key: string, contentType: string | null): string {
 }
 
 const BLOCKED_BLOB_PATH = '/v2/consumer/blobs/blocked/';
+const blockedReasonOf = (verdict: BlobVerdictHeaders) =>
+  verdict.status === 'rated' ? verdict.blockedReason : null;
+
 /** Whether `url` is the orchestrator's own blocked placeholder route. */
 const blockedPlaceholder = (url: string, baseUrl: string) => {
   try {
@@ -198,8 +205,10 @@ async function fetchBlob({
       key,
       contentType: response.headers.get('content-type'),
       nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
+      // The header as the blob-verdict parser reads it; fetch followed any redirect, so the
+      // placeholder shows as the final url rather than a Location header.
       blockedReason:
-        response.headers.get('x-blocked-reason') ??
+        blockedReasonOf(parseBlobVerdictHeaders(response.headers, response.status)) ??
         (blockedPlaceholder(response.url, baseUrl) ? 'blocked' : null),
     };
   } catch {
