@@ -158,6 +158,22 @@ export const submitVersionSchema = z.object({
     .max(16_384)
     .nullish()
     .transform((v) => v ?? undefined),
+  // `civitai app submit --allow-outdated-sdk`: the packages the CLI found below the platform
+  // minimum (`GET /api/v1/blocks/sdk-floor`) and submitted anyway. OPTIONAL, same wire contract
+  // as the fields above (omit or `null` = none sent). An UNTRUSTED CLIENT CLAIM, stored as one
+  // beside the server's own reading of the bundle's lockfile and shown to the moderator labelled
+  // as the client's. A malformed value rejects, for the reason `sourceCommit`'s does.
+  sdkFloorOverride: z
+    .array(
+      z.object({
+        package: z.string().min(1).max(214),
+        installed: z.string().min(1).max(64),
+        minimum: z.string().min(1).max(64),
+      })
+    )
+    .max(8)
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
@@ -171,6 +187,8 @@ const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
   sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
   sourceDirty: 'sourceDirty must be a boolean',
   githubOidcToken: 'githubOidcToken must be a non-empty string of at most 16384 characters',
+  sdkFloorOverride:
+    'sdkFloorOverride must be a list of at most 8 { package, installed, minimum } strings',
 };
 
 /** The message both submit routes have always returned for a parse failure. */
