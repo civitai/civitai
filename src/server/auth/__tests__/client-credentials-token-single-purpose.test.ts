@@ -61,6 +61,8 @@ const { resolveCatalogCaller } = await import(
 const OWNER = 1;
 const CATALOG_TOKEN = 'civitai_catalog';
 const ORDINARY_TOKEN = 'civitai_ordinary';
+/** A recipe-runner token: accepted only where the caller passes `allowRunnerMint`. */
+const RUNNER_TOKEN = 'civitai_runner';
 /** Moderator surfaces take a full-scope personal key, so it is their positive control. */
 const PERSONAL_TOKEN = 'civitai_personal';
 /** Tokens carrying OTHER opt-in bits above `Full`: they are not client-credentials-only. */
@@ -70,6 +72,19 @@ const OPT_IN_TOKENS: Record<string, bigint> = {
 };
 
 function keyRow(token: string) {
+  if (token === RUNNER_TOKEN) {
+    // As stored: the runner bit lives only in the wide column.
+    return {
+      id: 504,
+      userId: OWNER,
+      tokenScope: Number(TokenScope.UserRead),
+      tokenScopeWide: TokenScope.UserRead | TokenScope.RunnerMint,
+      lastUsedAt: new Date(),
+      buzzLimit: null,
+      clientId: 'recipe-runner',
+      type: 'Access',
+    };
+  }
   if (token === PERSONAL_TOKEN) {
     return {
       id: 503,
@@ -122,6 +137,10 @@ function res() {
       r.body = payload;
       return r;
     },
+    send(payload: unknown) {
+      r.body = payload;
+      return r;
+    },
   });
   return r as typeof r & NextApiResponse;
 }
@@ -154,6 +173,43 @@ describe('getSessionFromBearerToken', () => {
 
   it('still resolves an ordinary OAuth access token (positive control)', async () => {
     expect((await getSessionFromBearerToken(ORDINARY_TOKEN))?.user?.id).toBe(OWNER);
+  });
+});
+
+describe('getSessionFromBearerToken and a runner token', () => {
+  it('resolves it to no session by default, and with only the client-credentials opt-in', async () => {
+    expect(await getSessionFromBearerToken(RUNNER_TOKEN)).toBeNull();
+    expect(
+      await getSessionFromBearerToken(RUNNER_TOKEN, { allowClientCredentialsOnly: true })
+    ).toBeNull();
+  });
+
+  it('resolves it when the caller opts in', async () => {
+    const session = await getSessionFromBearerToken(RUNNER_TOKEN, { allowRunnerMint: true });
+    expect(session?.user?.id).toBe(OWNER);
+  });
+
+  it('getServerAuthSession (the tRPC and REST session) returns no session for it', async () => {
+    expect(await getServerAuthSession({ req: req(RUNNER_TOKEN), res: res() })).toBeNull();
+  });
+
+  it('/api/v1/me answers 401 for it, and gets past authentication for an ordinary token', async () => {
+    const { default: me } = await import('~/pages/api/v1/me');
+    const refused = res();
+    await me(req(RUNNER_TOKEN) as never, refused);
+    expect(refused.statusCode).toBe(401);
+    // Control: the same route with an ordinary OAuth token is not refused at authentication.
+    const ordinary = res();
+    await me(req(ORDINARY_TOKEN) as never, ordinary);
+    expect(ordinary.statusCode).not.toBe(401);
+  });
+
+  it('AuthedEndpoint answers 401 for it and never runs the handler', async () => {
+    const handler = vi.fn(async () => undefined);
+    const r = res();
+    await AuthedEndpoint(handler)(req(RUNNER_TOKEN) as never, r);
+    expect(r.statusCode).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 
