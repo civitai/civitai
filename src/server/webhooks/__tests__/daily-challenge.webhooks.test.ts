@@ -55,8 +55,11 @@ describe('daily challenge webhooks on Postgres — the cover', () => {
   afterAll(() => db?.close());
 
   let nextId = 1;
-  async function sentCover(event: (typeof EVENTS)[number], { listed }: { listed: boolean }) {
-    const [name, status] = event;
+  async function sentCover(
+    name: (typeof EVENTS)[number][0],
+    status: string,
+    { listed }: { listed: boolean }
+  ) {
     const id = nextId++;
     await db.query('DELETE FROM "CollectionItem"');
     await db.query(`INSERT INTO "Image" (id, url) VALUES ($1, $2)`, [id, `cover-${id}`]);
@@ -79,13 +82,13 @@ describe('daily challenge webhooks on Postgres — the cover', () => {
     return { cover: sent[0].cover, url: `cover-${id}` };
   }
 
-  it.each(EVENTS)('%s sends an unlisted cover (control)', async (...event) => {
-    const { cover, url } = await sentCover(event, { listed: false });
+  it.each(EVENTS)('%s sends an unlisted cover (control)', async (name, status) => {
+    const { cover, url } = await sentCover(name, status, { listed: false });
     expect(cover).toContain(url);
   });
 
-  it.each(EVENTS)('🔴 %s sends no cover listed on a report', async (...event) => {
-    const { cover } = await sentCover(event, { listed: true });
+  it.each(EVENTS)('🔴 %s sends no cover listed on a report', async (name, status) => {
+    const { cover } = await sentCover(name, status, { listed: true });
     expect(cover).toBeNull();
   });
 });
