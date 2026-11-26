@@ -15,6 +15,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -145,6 +146,7 @@ export const useSemanticArticleFeed = (
     ...rest,
     articles: items,
     isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
     correctedQuery: data?.pages[0]?.correctedQuery,
     // Identifies the search, so the feed can scroll to the top when it changes.
     searchKey: query ? JSON.stringify(input) : undefined,

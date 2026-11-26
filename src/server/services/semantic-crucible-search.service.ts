@@ -2,7 +2,13 @@ import { logToAxiom } from '~/server/logging/client';
 import type { SemanticCrucibleSearchInput } from '~/server/schema/semantic-crucible-search.schema';
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import { getCrucibles, withEntryCounts } from '~/server/services/crucible.service';
-import { semanticSearchPrelude, type QueryTracker } from '~/server/services/semantic-query-guard';
+import {
+  finishUnauditedSearch,
+  semanticSearchPrelude,
+  withRefusal,
+  type QueryRefusal,
+  type QueryTracker,
+} from '~/server/services/semantic-query-guard';
 import {
   auditedTextCandidates,
   collectPage,
@@ -51,6 +57,7 @@ export async function searchSemanticCrucibles({
     items: [] as HydratedCrucible[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   const prelude = await semanticSearchPrelude({
     index: 'crucibles_semantic',
@@ -61,7 +68,7 @@ export async function searchSemanticCrucibles({
     browsingLevelCap,
     track,
   });
-  if (!prelude) return none;
+  if ('refusedBy' in prelude) return withRefusal(none, user, prelude.refusedBy);
   const { browsingLevel, hidden, refusalOf } = prelude;
 
   const statuses = input.status?.length ? input.status : OPEN_STATUSES;
@@ -118,12 +125,13 @@ export async function searchSemanticCrucibles({
     return kept;
   };
 
+  let correctionVerdict: QueryRefusal = false;
   const search = auditedTextCandidates({
     source: candidateSource,
     text: input.query,
     filter,
     viewer: { isModerator: !!user?.isModerator },
-    audit: (correction) => refusalOf(correction, 'correction'),
+    audit: async (correction) => (correctionVerdict = await refusalOf(correction, 'correction')),
   });
   const page = await collectPage({
     candidates: search.candidates,
@@ -140,6 +148,10 @@ export async function searchSemanticCrucibles({
     payload: { returned: search.state.returned, shown: page.items.length },
   });
 
-  if (search.state.refused) return none;
-  return { ...page, correctedQuery: search.state.correctedQuery };
+  return finishUnauditedSearch({ ...page, correctedQuery: search.state.correctedQuery }, none, {
+    user,
+    refused: search.state.refused,
+    correctionVerdict,
+    guard: search.state.first?.guard,
+  });
 }

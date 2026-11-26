@@ -38,6 +38,10 @@ import {
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import {
+  type SearchRefusalMark,
+  type SearchRefusedBy,
+} from '~/shared/constants/search-refusal.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 import {
@@ -169,6 +173,70 @@ export function queryVerdictLevel(
   return 'refuse';
 }
 
+/** The check a word verdict names, as a moderator is told it. */
+export function refusedByWord(refusal: QueryRefusal): SearchRefusedBy | undefined {
+  switch (refusal) {
+    case false:
+      return undefined;
+    case 'minor':
+    case 'minor-safe':
+    case 'poi-minor':
+      return 'minor';
+    case 'poi':
+      return 'real people';
+    case 'blocked':
+      return 'blocked words';
+    default:
+      // 'error', and any verdict added later: the check could not complete.
+      return 'error';
+  }
+}
+
+/** The search service's refusal of the text, if it refused it: a flag, or a check that failed closed. */
+export function refusedByGuard(guard: GuardRead | undefined): SearchRefusedBy | undefined {
+  if (!guard?.refused) return undefined;
+  return guard.outcome === 'flag' ? 'query guard' : 'error';
+}
+
+/**
+ * Marks a page refused (or not). `refusedBy` comes only from the session's role, never request
+ * input, and is set on the page as it is returned: after every cache, never inside one.
+ */
+export function withRefusal<R extends object>(
+  page: R,
+  viewer: { isModerator?: boolean | null } | undefined,
+  by: SearchRefusedBy | undefined
+): R & SearchRefusalMark {
+  if (by === undefined) return { ...page, refused: false };
+  return viewer?.isModerator === true
+    ? { ...page, refused: true, refusedBy: by }
+    : { ...page, refused: true };
+}
+
+/**
+ * The page a search without the semantic audit returns: nothing when its spelling correction was
+ * refused (naming that verdict), else its page, marked refused only when it is empty and the search
+ * service refused the text.
+ */
+export function finishUnauditedSearch<P extends { items: unknown[] }, N extends object>(
+  page: P & { correctedQuery?: string },
+  none: N,
+  {
+    user,
+    refused,
+    correctionVerdict,
+    guard,
+  }: {
+    user: { isModerator?: boolean | null } | undefined;
+    refused: boolean;
+    correctionVerdict: QueryRefusal;
+    guard: GuardRead | undefined;
+  }
+) {
+  if (refused) return withRefusal(none, user, refusedByWord(correctionVerdict) ?? 'error');
+  return withRefusal(page, user, page.items.length ? undefined : refusedByGuard(guard));
+}
+
 export type DryRunOutcome = { verdict: QueryRefusal; result: 'allow' | 'narrow' | 'refuse' };
 
 /**
@@ -230,7 +298,7 @@ export function makeRefusalOf({
 
 /**
  * What a semantic search settles before it searches: the viewer's level (clamped, then capped by
- * the site), their hidden users, and the query audit. Null when the query is refused. The returned
+ * the site), their hidden users, and the query audit. `{ refusedBy }` when the query is refused. The returned
  * `browsingLevel` is the level the feed filters on, and `refusalOf` audits at it, so a correction is
  * judged at the level the query was narrowed to.
  */
@@ -271,12 +339,9 @@ export async function semanticSearchPrelude({
     track,
     context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
   });
-  const verdictLevel = queryVerdictLevel(
-    await refusalOf(query, 'query'),
-    browsingLevel,
-    user?.isModerator
-  );
-  if (verdictLevel === 'refuse') return null;
+  const refusal = await refusalOf(query, 'query');
+  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  if (verdictLevel === 'refuse') return { refusedBy: refusedByWord(refusal) ?? 'error' } as const;
   browsingLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: !!user,
@@ -345,7 +410,7 @@ export function beginSemanticAudit({
       result: R,
       browsingLevel: number,
       searchPath?: SemanticSearchPath
-    ): R {
+    ): R & SearchRefusalMark {
       if (firstPage)
         recordSemanticAudit(
           entry(
@@ -354,7 +419,20 @@ export function beginSemanticAudit({
             searchPath ?? (wordVerdict ? 'narrowed' : 'served')
           )
         );
-      return result;
+      // A refused_ path (own images narrowed, a refused query by image) names its word verdict,
+      // except refused_upload_level (an upload above the viewer's level), which is not marked
+      // refused; a served page is refused only when it is empty and the search service refused its
+      // text.
+      const path = searchPath ?? 'served';
+      const by =
+        path === 'refused_upload_level'
+          ? undefined
+          : path.startsWith('refused_')
+          ? refusedByWord(wordVerdict) ?? 'error'
+          : result.items.length
+          ? undefined
+          : refusedByGuard(candidates?.guard);
+      return withRefusal(result, viewer, by);
     },
     /**
      * A refused search: serves `result` (nothing) at once. The audit may then run `compute` for
@@ -365,9 +443,9 @@ export function beginSemanticAudit({
       result: R,
       browsingLevel: number,
       compute: () => Promise<RefusedCandidates>
-    ): R {
+    ): R & SearchRefusalMark {
       if (firstPage) recordRefusedSemanticAudit(entry(browsingLevel, [], searchPath), compute);
-      return result;
+      return withRefusal(result, viewer, refusedByWord(wordVerdict) ?? 'error');
     },
   };
 }

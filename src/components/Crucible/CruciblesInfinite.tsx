@@ -25,6 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 
 export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const cruciblesFilters = useCrucibleFilters();
@@ -38,8 +39,15 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
   const filters = removeEmpty({ ...cruciblesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { crucibles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
+  const {
+    crucibles,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+    serverRefusal,
+  } = useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
 
   const browsingLevel = useBrowsingLevelDebounced();
   const openIds = useMemo(
@@ -100,6 +108,8 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
+      ) : serverRefusal ? (
+        <SearchRefusalNotice refusal="policy" refusedBy={serverRefusal.refusedBy} />
       ) : (
         <CruciblesEmptyState hasFilters={hasFilters} isLoggedIn={!!currentUser} />
       )}

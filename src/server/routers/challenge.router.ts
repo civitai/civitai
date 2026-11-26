@@ -133,7 +133,8 @@ export const challengeRouter = router({
     .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const guard = await guardTextQuery(input, ctx);
-      if (guard === 'refuse') return { items: [], nextCursor: undefined };
+      // The feed's search fallback: the page says it was refused, never which check refused it.
+      if (guard === 'refuse') return { items: [], nextCursor: undefined, refused: true as const };
       return getInfiniteChallenges({
         ...input,
         ...guard,

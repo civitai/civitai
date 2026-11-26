@@ -832,6 +832,11 @@ export interface MatureCount {
   rated: number;
   /** Blob ids the caller can read that have no stored v2 rating yet (always empty without a rating). */
   unratedKeys: string[];
+  /** The stored v2 verdict by the id the caller sent, only for blobs its HEAD could read. */
+  verdicts: Record<string, boolean>;
+  /** Of the `rated` images: v2 not mature where the upload rating was mature, and the reverse. */
+  v2NotMatureUploadMature: number;
+  v2MatureUploadNotMature: number;
 }
 
 /** How many of a dataset's blobs are mature. Each blob's X-NSFW-Level header counts R and above;
@@ -848,25 +853,41 @@ async function countMatureBlobs(
   let mature = 0;
   let failed = 0;
   let rated = 0;
+  let v2NotMatureUploadMature = 0;
+  let v2MatureUploadNotMature = 0;
   const unratedKeys: string[] = [];
+  const verdicts: Record<string, boolean> = {};
   await forEachPooled(airs, PROBE_CONCURRENCY, async (air) => {
     try {
       const { response } = await headBlob({ client, path: { blobId: blobIdFromAir(air) } });
       if (!response?.ok) failed++;
+      const uploadMature = isMatureNsfwLevel(response?.headers.get('x-nsfw-level'));
       // Only for a blob this caller's HEAD could read: the cache is shared across users.
       const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
       if (v2) {
         rated++;
+        verdicts[air] = v2.mature;
         if (v2.mature) mature++;
+        if (v2.mature && !uploadMature) v2MatureUploadNotMature++;
+        if (!v2.mature && uploadMature) v2NotMatureUploadMature++;
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-      if (isMatureNsfwLevel(response?.headers.get('x-nsfw-level'))) mature++;
+      if (uploadMature) mature++;
     } catch {
       failed++;
     }
   });
-  return { images: airs.length, mature, failed, rated, unratedKeys };
+  return {
+    images: airs.length,
+    mature,
+    failed,
+    rated,
+    unratedKeys,
+    verdicts,
+    v2NotMatureUploadMature,
+    v2MatureUploadNotMature,
+  };
 }
 
 /** A dataset's mature count for Review, the same count the submit makes. */
