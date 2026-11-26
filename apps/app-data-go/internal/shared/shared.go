@@ -77,11 +77,10 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
 
-// Views answers a stream's records and meta (session.Manager.View), and releases a stream only the
-// releasing read used (session.Manager.Release).
+// Views answers a stream's records and meta (session.Manager.View), with a Lease on a stream the
+// read opened.
 type Views interface {
 	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
-	Release(token, schema string)
 }
 
 // LevelBits are the selectable content levels, one level stream each (level-feed.ts
@@ -198,6 +197,10 @@ type Board struct {
 	// KeyedBy is the collection's `keyedBy` as the per-viewer stream names it ("" for none, and for a
 	// signed-out read).
 	KeyedBy string
+	// Leases are the streams this read opened (session.Snapshot.Lease), for it to release when it is
+	// done with this major (a read that moved to another): each closes only a stream no other read
+	// has taken.
+	Leases []session.Lease
 	// Current is the collection's current major as every level stream read names it (level-feed.ts
 	// levelMeta `currentMajor`); 0 when one names none or two name different majors.
 	Current int
@@ -318,6 +321,11 @@ func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, ma
 		return nil
 	}
 	board := Board{KeyedBy: meta.KeyedBy, Current: agreedCurrent(views)}
+	for _, sn := range append(slices.Clone(views), own) {
+		if sn.Lease != (session.Lease{}) {
+			board.Leases = append(board.Leases, sn.Lease)
+		}
+	}
 	// low is the lowest head among the streams read; known only when every one of them named one.
 	low, read, headless := int64(0), 0, false
 	head := func(s session.Snapshot) {
@@ -369,25 +377,6 @@ func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, ma
 	}
 	slices.SortFunc(board.Docs, func(a, b Doc) int { return strings.Compare(a.Key, b.Key) })
 	return board, nil
-}
-
-// Release releases the streams a read of one collection major for v opened and alone used (its level
-// streams, at every level, and v's per-viewer stream): a read that moved to another major is done
-// with them. A stream another read used is kept (session.Manager.Release).
-func (r *Reader) Release(v Viewer, slug, collection string, major int) {
-	schema, err := urn.CollectionSchema(slug, collection, major)
-	if err != nil {
-		return
-	}
-	r.Levels.Release(LevelSubject(schema, "none"), schema)
-	for _, b := range LevelBits {
-		r.Levels.Release(LevelSubject(schema, strconv.FormatInt(b, 10)), schema)
-	}
-	if v.Anonymous == nil {
-		if vschema, err := urn.ViewerSchema(slug, collection, major); err == nil {
-			r.Viewers.Release(v.Token, vschema)
-		}
-	}
 }
 
 // levels reads the level streams of schema for mask, in the schema's mode, switching mode once when

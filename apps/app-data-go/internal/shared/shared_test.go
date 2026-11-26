@@ -37,8 +37,6 @@ func newViews() *fakeViews {
 	return &fakeViews{snaps: map[string]session.Snapshot{}, errs: map[string]error{}, calls: map[string]int{}}
 }
 
-func (f *fakeViews) Release(string, string) {}
-
 func (f *fakeViews) View(_ context.Context, token, sch string, _ int64) (session.Snapshot, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

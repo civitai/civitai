@@ -30,8 +30,7 @@ Authorization: Bearer <the app's hub access token for the user>
    it opens the stream at the major the streams last named for the collection on this replica (1 the
    first time), and the stream's `meta` names the current one (`currentMajor`, which the adapter's
    private and level feeds send on `live` and `progress`). A stream that names another major is read
-   again at it, once; one that names none is answered as it was before the adapter named any, at
-   the major it was opened at (`internal/api/major.go`, THE CURRENT MAJOR). Neither service needs
+   again at it, once; one that names none is answered at the major it was opened at (`internal/api/major.go`, THE CURRENT MAJOR). Neither service needs
    the other released first.
 2. If the registry path is on and the token is one the hub can exchange (below), read the token's
    stream for that schema (`internal/session`). A read:

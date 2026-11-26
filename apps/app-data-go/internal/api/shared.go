@@ -37,8 +37,6 @@ import (
 // SharedReads answers shared reads (shared.Reader).
 type SharedReads interface {
 	Read(ctx context.Context, v shared.Viewer, slug, collection string, major int, minSeq int64) (shared.Board, error)
-	// Release releases the streams a read of that major opened and alone used (shared.Reader.Release).
-	Release(v shared.Viewer, slug, collection string, major int)
 }
 
 // The store's list bounds (doc-store.types.ts DOC_STORE_BOUNDS listLimitDefault, listLimitMax).

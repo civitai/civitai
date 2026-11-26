@@ -25,10 +25,9 @@ import (
 //   - it names another major: the hint becomes that major and the read is made once more there,
 //     and answered there whatever that stream names (a major approved between the two reads moves
 //     the hint again, for the next read). Never a third stream;
-//   - it names none (an adapter from before `currentMajor`, a refused viewer, or two level streams
-//     naming different majors): the read is answered at the guess, exactly as a read with no major
-//     was before the adapter named it. Never a refusal: either service can ship, or roll back,
-//     without the other.
+//   - it names none (an adapter that does not send `currentMajor`, a refused viewer, or two level
+//     streams naming different majors): the read is answered at the guess. Never a refusal: either
+//     service can ship, or roll back, without the other.
 //
 // The hint is never trusted, only tried: a stream that names another major moves the read and the
 // hint. A newly approved major therefore corrects it at the next read of the collection: the
@@ -41,14 +40,20 @@ import (
 // streams name nothing): the next read relearns it. The hints are bounded (majorHintsMax; past it
 // they are all dropped and relearned).
 //
-// A read that moves releases the streams its guess opened, when no other read used them
-// (session.Manager.Release), so a cold hint does not hold two majors' streams against the caps.
+// A read that moves releases the streams its guess OPENED (their session.Lease, which closes a
+// stream only while no other read has taken it), so a cold hint does not hold two majors' streams
+// against the caps. A stream the read joined (another reader's, or a level stream another viewer
+// opened) is never released by it.
+//
+// Each decision is counted (app_data_implied_major_total, by outcome: metrics.ImpliedMajorOutcomes):
+// `matched` (the stream named the guess), `moved` (it named another major), `unnamed` (it named
+// none: answered at the guess), and `hint_dropped` (a hinted major the adapter no longer resolves).
 //
 // ONE RULE for the major a request that names none uses: a write's acknowledgement is held at the
 // same guess (writes.Forwarder.UseImpliedMajor, set from majorHints.guess by Handler), so the
 // read-back's floor finds it on the stream the read opens.
 //
-// An explicit `?major=N` is read exactly as before: at N, with no meta check.
+// An explicit `?major=N` is read at N, with no meta check.
 
 // majorHintsMax bounds the collections whose current major is remembered.
 const majorHintsMax = 10_000
@@ -104,6 +109,16 @@ func (p *readParams) at(major int) error {
 // current (0: none), corrected when it was already moved once (THE CURRENT MAJOR): true when the
 // read is answered at p.major; false when p was moved to the named major, to be read there.
 func (s *Server) settle(p *readParams, current int, corrected bool) bool {
+	if !corrected {
+		switch current {
+		case 0:
+			s.impliedMajor("unnamed")
+		case p.major:
+			s.impliedMajor("matched")
+		default:
+			s.impliedMajor("moved")
+		}
+	}
 	if current == 0 {
 		return true
 	}
@@ -113,6 +128,12 @@ func (s *Server) settle(p *readParams, current int, corrected bool) bool {
 	}
 	// A major no schema URN of p's collection can carry is not followed: answered at the guess.
 	return p.at(current) != nil
+}
+
+func (s *Server) impliedMajor(outcome string) {
+	if s.Metrics != nil {
+		s.Metrics.ImpliedMajor.WithLabelValues(outcome).Inc()
+	}
 }
 
 // impliedMajorUser takes the rule for the major a request that names none uses (the write
@@ -144,17 +165,18 @@ func (s *Server) view(ctx context.Context, p *readParams) ([]registry.Entity, er
 		}
 		if c1 := shared.CurrentMajor(snap1.Meta); c1 == p.major {
 			// The hint holds: this viewer's stream at it is empty. The @v1 stream was only asked.
-			s.Streams.Release(at1.token, at1.schema)
+			snap1.Lease.Release()
 		} else {
 			// The hinted major is not the adapter's now: the hint is dropped, the read is major 1's.
 			s.majors.forget(p.slug, p.collection)
-			s.Streams.Release(p.token, p.schema)
+			s.impliedMajor("hint_dropped")
+			snap.Lease.Release()
 			*p, snap, current = at1, snap1, c1
 		}
 	}
-	if from := p.schema; !s.settle(p, current, false) {
-		// Moved: the stream the guess opened is released (when this read alone used it).
-		s.Streams.Release(p.token, from)
+	if guess := snap.Lease; !s.settle(p, current, false) {
+		// Moved: the stream the guess opened is released (while no other read has taken it).
+		guess.Release()
 		if snap, err = s.Streams.View(ctx, p.token, p.schema, 0); err != nil {
 			return nil, err
 		}
@@ -179,6 +201,7 @@ func (s *Server) sharedRead(ctx context.Context, v shared.Viewer, p *readParams)
 		if errors.As(err, &ended) && ended.Reason == "not_resolved" && p.major != 1 {
 			// A hinted major the adapter does not resolve now: the next read guesses 1 again.
 			s.majors.forget(p.slug, p.collection)
+			s.impliedMajor("hint_dropped")
 		}
 		return b, err
 	}
@@ -186,9 +209,11 @@ func (s *Server) sharedRead(ctx context.Context, v shared.Viewer, p *readParams)
 	if err != nil {
 		return shared.Board{}, err
 	}
-	if from := p.major; !s.settle(p, b.Current, false) {
-		// Moved: the streams the guess opened are released (those this read alone used).
-		s.Shared.Release(v, p.slug, p.collection, from)
+	if guess := b.Leases; !s.settle(p, b.Current, false) {
+		// Moved: the streams the guess opened are released (each while no other read has taken it).
+		for _, l := range guess {
+			l.Release()
+		}
 		if b, err = read(); err != nil {
 			return shared.Board{}, err
 		}

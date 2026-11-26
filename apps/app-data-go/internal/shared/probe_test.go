@@ -19,8 +19,6 @@ type gatedViews struct {
 	waiting chan struct{}
 }
 
-func (g *gatedViews) Release(string, string) {}
-
 func (g *gatedViews) View(ctx context.Context, token, sch string, minSeq int64) (session.Snapshot, error) {
 	if token == g.subject {
 		g.waiting <- struct{}{}

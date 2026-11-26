@@ -5,7 +5,7 @@
 //
 // `major` names the collection schema major read; a read that names none reads the collection's
 // current major when the adapter's streams name it (major.go, THE CURRENT MAJOR), and otherwise the
-// major it opened at (1 unless a stream named another), as before.
+// major it opened at (1 unless a stream named another).
 //
 // Every private record of one collection of the app `slug` names that the token's user may read
 // through the token's app: the app's own collection when slug is the app itself, or another app's
@@ -93,11 +93,10 @@ import (
 const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
 // Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0,
-// with the stream's latest meta (which names the collection's current major: major.go), and
-// releases a stream only the releasing read used (a read that moved to another major).
+// with the stream's latest meta (which names the collection's current major: major.go) and a Lease
+// on a stream the read opened.
 type Streams interface {
 	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
-	Release(token, schema string)
 }
 
 // Lister is the REST fallback (rest.Client).
