@@ -9,13 +9,15 @@ import { servableItems } from '../queue/queue.service';
 import { metrics } from '../metrics';
 import { SMITES } from '../smites/config';
 import { stagesWorkedBy } from '../queue/ranks';
-import { RANKS } from '../ranks';
+import { RANKS, type Rank } from '../ranks';
 import type { SilenceType } from './silence-types';
 import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
 const CLAIM_CHUNK = 1000;
 const SILENCE_CHUNK = 20_000;
+/** Open items gated per read; small enough that the planner probes each item's image (`servableOpenItems`). */
+const GATE_CHUNK = 1000;
 
 export type NotificationBatch = { kind: NotifyKind; type: string; key: string; userIds: number[] };
 export type SendBatch = (batch: NotificationBatch) => Promise<void>;
@@ -186,20 +188,61 @@ async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
     .map((row) => row.userId);
 }
 
-async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
-  const oldest = await db
+/**
+ * The servable open items at `stages`, newest first, so the player read below usually stops at the first item it
+ * tries. The gate runs on `GATE_CHUNK` ids at a time: given all open items at once (about 26k on 2026-11-26), the
+ * planner hashed every Image and Post through the gate instead of probing each item's image.
+ */
+async function servableOpenItems(db: Kysely<DB>, stages: Rank[]) {
+  const ids = await db
     .selectFrom('KnightsQueueItem')
-    .select((eb) => eb.fn.min('createdAt').as('at'))
+    .select('id')
     .where('status', '=', 'Open')
-    .executeTakeFirst();
-  if (!oldest?.at) return [];
+    .where('minRank', 'in', stages)
+    .orderBy('createdAt', 'desc')
+    .orderBy('id', 'desc')
+    .execute();
+  const items = new Map<
+    string,
+    { imageId: number; questionKey: string; minRank: string; userId: number | null }
+  >();
+  for (let at = 0; at < ids.length; at += GATE_CHUNK) {
+    const chunk = ids.slice(at, at + GATE_CHUNK).map((r) => r.id);
+    const rows = await readWithoutJit(db, (trx) =>
+      servableItems(trx)
+        .where('i.id', '=', sql<number>`any(${chunk}::int[])`)
+        .select(['i.id', 'i.imageId', 'i.questionKey', 'i.minRank', 'img.userId'])
+        .execute()
+    );
+    const position = new Map(chunk.map((id, at) => [id, at]));
+    rows.sort((a, b) => position.get(a.id)! - position.get(b.id)!);
+    for (const { id: _, ...row } of rows)
+      items.set(`${row.imageId}:${row.questionKey}:${row.minRank}`, row);
+  }
+  return [...items.values()];
+}
+
+/**
+ * Two reads: the servable open items, then per rank the players one of them waits for. Under one EXISTS per player the
+ * planner joined every Image and Post through the gate before probing the open items, and timed out in production.
+ */
+async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
+  const worked = RANKS.flatMap((rank) =>
+    // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
+    rank === 'Acolyte' || rank === 'Inquisitor' ? [] : [{ rank, stages: stagesWorkedBy(rank) }]
+  ).filter(({ stages }) => stages.length > 0);
+  const stages = [...new Set(worked.flatMap((w) => w.stages))];
+  if (stages.length === 0) return [];
+  const waiting = await servableOpenItems(db, stages);
+  if (waiting.length === 0) return [];
+
   const activeFrom = utc(dayStart(addDays(day, -NOTIFY.activeDays)));
   const lastNudgeAfter = dateOf(addDays(day, -NOTIFY.inactiveNudgeDays));
   const found: number[] = [];
-  for (const rank of RANKS) {
-    const stages = stagesWorkedBy(rank);
-    // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
-    if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
+  for (const { rank, stages } of worked) {
+    const items = waiting.filter((w) => (stages as string[]).includes(w.minRank));
+    if (items.length === 0) continue;
+    // Without JIT or parallel workers: the plan is priced as a walk of the whole list per player, but stops at the first hit.
     const rows = await readWithoutJit(db, (trx) =>
       recipients(trx, 'new-images', day)
         .select('pl.userId')
@@ -209,17 +252,14 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
           sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
           or not exists (select 1 from "KnightsNotificationSend" s where s."playerId" = pl."userId" and s."kind" = 'new-images' and s."day" > ${lastNudgeAfter}))`
         )
-        .where((eb) =>
-          eb.exists(
-            servableItems(db)
-              .select(sql<number>`1`.as('one'))
-              .where('i.minRank', 'in', stages)
-              .where(sql<boolean>`img."userId" is distinct from pl."userId"`)
-              .where(
-                // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
-                sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`
-              )
-          )
+        .where(
+          // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
+          sql<boolean>`exists (
+          select 1 from unnest(${items.map((w) => w.imageId)}::int[], ${items.map(
+            (w) => w.questionKey
+          )}::text[], ${items.map((w) => w.userId)}::int[]) as w("imageId", "questionKey", "userId")
+          where w."userId" is distinct from pl."userId"
+            and not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = w."imageId" and j."questionKey" = w."questionKey"))`
         )
         .execute()
     );
