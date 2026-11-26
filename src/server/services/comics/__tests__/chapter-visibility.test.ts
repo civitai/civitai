@@ -126,3 +126,37 @@ describe('an image made with a base model that restricts mature images', () => {
     expect(servedPanel(image(32, false), OWNER).imageUrl).toBe('u');
   });
 });
+
+describe('a panel whose image is blocked', () => {
+  const blocked = (blockedFor: string) => ({
+    id: 1,
+    url: 'u',
+    hash: 'blur-hash' as string | null,
+    nsfwLevel: 1,
+    modelRestricted: false,
+    userId: OWNER,
+    ingestion: 'Blocked',
+    blockedFor: blockedFor as string | null,
+  });
+
+  it.each(['tos', 'moderated'])(
+    'keeps its row for its owner with no media or blur hash (%s)',
+    (blockedFor) => {
+      const panel = {
+        imageUrl: 'u' as string | null,
+        image: blocked(blockedFor) as ReturnType<typeof blocked> | null,
+      };
+      withholdRestrictedPanelImages([{ panels: [panel] }], OWNER);
+      expect(panel).toMatchObject({ imageUrl: null, image: { id: 1, blockedFor, hash: null } });
+    }
+  );
+
+  it('keeps the blur hash for a moderator on a session or full-access key', () => {
+    const panel = {
+      imageUrl: 'u' as string | null,
+      image: blocked('tos') as ReturnType<typeof blocked> | null,
+    };
+    withholdRestrictedPanelImages([{ panels: [panel] }], moderator.id, true);
+    expect(panel).toMatchObject({ imageUrl: 'u', image: { hash: 'blur-hash' } });
+  });
+});

@@ -76,6 +76,19 @@ export function withoutMedia<T extends { url: string | null; metadata?: unknown 
 }
 
 /**
+ * The owner's view of their image when its block refuses them the media (`ownerMediaAllowed`):
+ * the row and its block notice (`blockedFor`, `ingestion`), with no media, blur hash or media
+ * references in its generation meta.
+ */
+export function ownerBlockedNotice<
+  T extends { url: string | null; hash?: string | null; metadata?: unknown; meta?: unknown }
+>(image: T): Omit<T, 'url' | 'hash'> & { url: null; hash: null } {
+  const meta =
+    image.meta && typeof image.meta === 'object' ? withoutMediaReferences(image.meta) : image.meta;
+  return { ...withoutMedia(image), hash: null, meta };
+}
+
+/**
  * Whether the user holds MANAGE on the collection the image's post was submitted to. Only the
  * post's author (or a moderator) chooses that collection, so the post must also belong to the
  * image's owner. Membership of a collection does not count: anyone can create one, of any mode,

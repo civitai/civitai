@@ -1,5 +1,6 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { ownerBlockedNotice } from '~/server/utils/image-media-visibility';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import {
@@ -699,12 +700,17 @@ export const getArticles = async ({
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
-        const coverImage = isArticleImageViewable(
+        const viewable = isArticleImageViewable(
           cover,
           articleImageViewer(sessionUser, article.userId)
         )
           ? cover
           : undefined;
+        // The author keeps a cover whose block refuses them the media as a notice row.
+        const coverImage =
+          viewable && !sessionUser?.isModerator && !ownerMediaAllowed(viewable)
+            ? ownerBlockedNotice(viewable)
+            : viewable;
         const match = articleStats[article.id];
 
         return {
@@ -712,6 +718,7 @@ export const getArticles = async ({
           // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
+            coverImage?.url === null ||
             (!!cover &&
               !coverImage &&
               (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
@@ -937,7 +944,9 @@ export const getArticleById = async ({
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
       where: { entityId: id, entityType: ImageConnectionType.Article, ...connectionImageExists },
-      include: { image: { select: { ...articleContentImageSelect, minor: true } } },
+      include: {
+        image: { select: { ...articleContentImageSelect, blockedFor: true, minor: true } },
+      },
     });
 
     const articleCategories = await getCategoryTags('article');
@@ -968,12 +977,20 @@ export const getArticleById = async ({
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
     const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
-    const coverImage = viewableArticleImage(coverWithheld ? null : article.coverImage, viewer);
-    const bannerImage = viewableArticleImage(
-      bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
-        ? null
-        : article.bannerImage,
-      viewer
+    // The owner keeps a cover or banner whose block refuses them the media as a notice row.
+    const ownerView = <T extends Parameters<typeof ownerMediaAllowed>[0] & { url: string }>(
+      image: T | undefined
+    ) => (!image || isModerator || ownerMediaAllowed(image) ? image : ownerBlockedNotice(image));
+    const coverImage = ownerView(
+      viewableArticleImage(coverWithheld ? null : article.coverImage, viewer)
+    );
+    const bannerImage = ownerView(
+      viewableArticleImage(
+        bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
+          ? null
+          : article.bannerImage,
+        viewer
+      )
     );
     // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
     const isOwner = userId !== undefined && userId === article.userId;
@@ -981,12 +998,15 @@ export const getArticleById = async ({
     const bannerImageWithheld = isOwner && bannerHidden;
 
     // Report-listed media, and media nobody but its owner and moderators may get, leave the body;
-    // csam-held media leaves it for the owner too.
+    // csam-held media, and media whose block refuses its owner (`ownerMediaAllowed`), leave it for
+    // the owner too.
     const keptImages = bodyImages.filter(
       (image) =>
         !listedHidden.has(image.id) &&
         (isModerator ||
-          (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
+          (userId === article.userId
+            ? !isCsamHeldBodyImage(image) && ownerMediaAllowed(image)
+            : isServableBodyImage(image)))
     );
     // On the edit form a listed body image is placeholdered, not dropped, so a save keeps it; it
     // stays withheld so the strip below catches any other spelling of it.
@@ -997,7 +1017,9 @@ export const getArticleById = async ({
     const withheld = bodyImages
       .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
-    const contentImages = keptImages.map(withoutMinorFlag);
+    const contentImages = keptImages.map(({ blockedFor: _blockedFor, ...image }) =>
+      withoutMinorFlag(image)
+    );
     const nonOwner = !isModerator && userId !== article.userId;
     const body =
       placeholdered.length && article.content
@@ -1024,6 +1046,7 @@ export const getArticleById = async ({
       ...article,
       // The legacy `cover` is the same image's key.
       ...((coverWithheld ||
+        coverImage?.url === null ||
         (!!article.coverImage &&
           !coverImage &&
           (isRestrictedImage(article.coverImage) ||

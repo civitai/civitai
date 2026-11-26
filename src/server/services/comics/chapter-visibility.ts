@@ -61,12 +61,13 @@ export function withServableCover<
 
 /**
  * Withholds each panel image `viewerId` may not see, and the media of each one `blockLeavesMedia`
- * refuses them. A blocked panel keeps its image row so its owner still sees the block.
+ * refuses them, blur hash included. A blocked panel keeps its image row so its owner still sees the
+ * block.
  * Unlike a tainted panel this keeps the chapter up: only a re-rating below R lifts the restriction,
  * so holding the chapter back would never end.
  */
-export function withholdRestrictedPanelImages(
-  chapters: { panels: { imageUrl: string | null; image: PanelImage | null }[] }[],
+export function withholdRestrictedPanelImages<I extends PanelImage & { hash?: string | null }>(
+  chapters: { panels: { imageUrl: string | null; image: I | null }[] }[],
   viewerId?: number,
   actsAsModerator = false
 ) {
@@ -78,6 +79,7 @@ export function withholdRestrictedPanelImages(
         panel.image = null;
       } else if (!blockLeavesMedia(panel.image, viewerId, actsAsModerator)) {
         panel.imageUrl = null;
+        if (panel.image.hash != null) panel.image = { ...panel.image, hash: null };
       }
     }
   }

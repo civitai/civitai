@@ -68,7 +68,7 @@ import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.sele
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
-import { withoutMedia, withoutMediaReferences } from '~/server/utils/image-media-visibility';
+import { ownerBlockedNotice } from '~/server/utils/image-media-visibility';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -969,14 +969,7 @@ async function combinePostEditImageData(
         }).thumbnailUrl ?? null) as string | null,
       };
       if (asModerator || ownerMediaAllowed(image)) return row;
-      // The owner keeps a blocked row and its notice (`blockedFor`, `ingestion`), not its media
-      // or blur hash, as on the image page.
-      return {
-        ...withoutMedia(row),
-        hash: null,
-        thumbnailUrl: null,
-        meta: row.meta ? withoutMediaReferences(row.meta) : row.meta,
-      };
+      return { ...ownerBlockedNotice(row), thumbnailUrl: null };
     })
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
