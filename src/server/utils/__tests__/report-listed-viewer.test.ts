@@ -15,6 +15,7 @@ const scopedKey = {
   tokenScope: TokenScope.ArticlesRead,
 };
 
+// Who sees report-listed images: the rule bounty images follow (#10483).
 describe('reportListedViewerOf', () => {
   it('gives a grant-holding moderator on a session both views', () => {
     expect(reportListedViewerOf({ user: moderator, features: grant } as Ctx)).toEqual({

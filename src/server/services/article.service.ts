@@ -301,7 +301,6 @@ export const getArticles = async ({
   eventDecorationViewer,
   reportListedViewer = { seesReportListed: false },
 }: GetInfiniteArticlesSchema & {
-  /** Who sees report-listed covers (`seesReportListed(ctx)`; the owner on a session or full key). */
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
@@ -899,7 +898,6 @@ export const getArticleById = async ({
 }: GetByIdInput & {
   userId?: number;
   isModerator?: boolean;
-  /** Who sees a report-listed cover or banner (`seesReportListed(ctx)`; the owner on a session or full key). */
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
 }) => {
   try {
@@ -945,8 +943,8 @@ export const getArticleById = async ({
     const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
     // owner when they uploaded it; one listed on a CsamReport follows `reportListedViewer`. The
-    // edit form learns of one it may not see from the
-    // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
+    // edit form learns of one it may not see from the `...Withheld` flags, and a save that
+    // leaves it out keeps it (upsertArticle).
     const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
     const [withheldByModel, listedHidden] = await Promise.all([
       isModerator ? new Set<number>() : getModelWithheldImageIds(ownImageIds),
@@ -1080,10 +1078,13 @@ export const upsertArticle = async ({
   isModerator,
   scanContent,
   scheduledAt,
+  reportListedViewer = { seesReportListed: false },
   ...data
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
+  /** The editor's report-listed view, as getArticleById applied it to the edit form. */
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {
@@ -1251,26 +1252,30 @@ export const upsertArticle = async ({
       });
     }
 
-    // A save that leaves out a cover or banner its model hides from this editor keeps it: the
-    // edit form never had it to send back (getArticleById).
-    if (article && !isModerator) {
+    // A save that leaves out a cover or banner its model or the report-listed rule hides from this
+    // editor keeps it: the edit form never had it to send back (getArticleById).
+    if (article) {
       const stored = [
         coverId === null ? article.coverId : null,
         bannerId === null ? article.bannerId : null,
       ].filter(isDefined);
       if (stored.length) {
-        const withheld = await getModelWithheldImageIds(stored, dbWrite);
+        const [withheld, listedHidden] = await Promise.all([
+          isModerator ? new Set<number>() : getModelWithheldImageIds(stored, dbWrite),
+          getReportListedHiddenImageIds(stored, { userId, ...reportListedViewer }, dbWrite),
+        ]);
         const owners = withheld.size
           ? await dbWrite.image.findMany({
               where: { id: { in: [...withheld] } },
               select: { id: true, userId: true },
             })
           : [];
-        const hiddenIds = new Set(
-          owners
+        const hiddenIds = new Set([
+          ...listedHidden,
+          ...owners
             .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
-            .map((image) => image.id)
-        );
+            .map((image) => image.id),
+        ]);
         if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
           coverId = undefined;
         if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
