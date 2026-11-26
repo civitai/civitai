@@ -81,6 +81,8 @@ const storeShowcase = (showcaseItems: ShowcaseItemSchema[]) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a once-queue a case left unread; it must not reach the next case.
+  db.image.findMany.mockReset();
   db.image.findMany.mockImplementation(findOwned('image') as never);
   db.model.findMany.mockImplementation(findOwned('model') as never);
   db.model.count.mockImplementation(countWithMode as never);
@@ -257,11 +259,31 @@ describe('updateUserProfile — showcase ownership', () => {
       updateUserProfile({
         userId: OWNER_ID,
         isModerator: true,
+        asModerator: true,
         sessionUserId: STRANGER_ID,
         showcaseItems: [{ entityType: 'Image', entityId: STRANGER_IMAGE }],
       })
     ).resolves.toBeDefined();
     expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a moderator on a scoped key to the owner's rules: the owner's blocked image is refused", async () => {
+    db.image.findMany.mockResolvedValueOnce([
+      { id: OWN_IMAGE, ingestion: 'Blocked', blockedFor: 'tos' },
+    ] as never);
+    await expect(
+      updateUserProfile({
+        userId: OWNER_ID,
+        isModerator: true,
+        asModerator: false,
+        sessionUserId: STRANGER_ID,
+        showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A blocked image cannot be added to your showcase',
+    });
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   it("refuses a moderator putting another user's image on their own profile", async () => {

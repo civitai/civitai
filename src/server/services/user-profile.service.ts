@@ -594,7 +594,7 @@ export const updateUserProfile = async ({
     await assertShowcaseItemsOwned({
       userId,
       // A moderator may curate another user's showcase, never fill their own with others' items.
-      isModerator: isModerator && sessionUserId !== userId,
+      isModerator: asModerator && sessionUserId !== userId,
       showcaseItems: profile.showcaseItems,
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });
