@@ -155,7 +155,7 @@ describe('getTags — cache invalidation contract', () => {
   });
 
   it('disableTags(entityType:tag) busts the getTags listing cache (TagsOnTags DELETE)', async () => {
-    await disableTags({ tags: [1], entityIds: [2], entityType: 'tag' });
+    await disableTags({ csamReview: true, tags: [1], entityIds: [2], entityType: 'tag' });
     expect(bustCacheTag).toHaveBeenCalledWith('getTags');
   });
 
@@ -176,7 +176,7 @@ describe('getTags — cache invalidation contract', () => {
 
   it('disableTags(entityType:image) does NOT bust the getTags listing cache (TagsOnImages only)', async () => {
     dbWriteQueryRaw.mockResolvedValue([]); // TagsOnImageDetails select
-    await disableTags({ tags: [1], entityIds: [2], entityType: 'image' });
+    await disableTags({ csamReview: true, tags: [1], entityIds: [2], entityType: 'image' });
     expect(bustCacheTag).not.toHaveBeenCalledWith('getTags');
   });
 });

@@ -1424,7 +1424,7 @@ describe('scan result writes', () => {
 
     describe('group 5', () => {
       const rescan = async (id: number) => {
-        await rescanImageById({ id });
+        await rescanImageById({ csamReview: true, id });
         expect(submitted()).toContain(id);
       };
 

@@ -1,4 +1,9 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
+import {
+  assertMayLoosenImages,
+  loosensImageLevel,
+  loosensImageLevelSql,
+} from '~/server/services/moderator-withheld.service';
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
@@ -6,6 +11,7 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -6860,10 +6866,13 @@ export async function updateImageNsfwLevel({
   isModerator,
   activity,
   reason,
+  csamReview = false,
 }: UpdateImageNsfwLevelOutput & {
   userId: number;
   isModerator?: boolean;
   activity?: ImageModActivity['activity'];
+  /** The moderator's `csamReports` grant: without it, loosening a withheld image is refused. */
+  csamReview?: boolean;
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
@@ -6874,6 +6883,9 @@ export async function updateImageNsfwLevel({
       select: { metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
+    // A Knights consensus is a vote, not a moderator's decision, and has no grant to check.
+    if (activity !== 'setNsfwLevelKono' && loosensImageLevel(image.nsfwLevel, nsfwLevel))
+      await assertMayLoosenImages([id], { csamReview });
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
@@ -6951,15 +6963,59 @@ export async function updateImageNsfwLevel({
   return nsfwLevel;
 }
 
+/**
+ * A moderator's rating of several images, all or nothing on what is withheld from them: every item
+ * that loosens a rating is checked before the first write, so a refusal writes none of them.
+ */
+export async function setImagesNsfwLevel({
+  items,
+  userId,
+  csamReview,
+  status,
+}: {
+  items: { imageId: number; nsfwLevel: NsfwLevel }[];
+  userId: number;
+  csamReview: boolean;
+  status?: UpdateImageNsfwLevelOutput['status'];
+}) {
+  // primary: the current level decides which items loosen a rating.
+  const current = await dbWrite.image.findMany({
+    where: { id: { in: items.map((item) => item.imageId) } },
+    select: { id: true, nsfwLevel: true },
+  });
+  const levels = new Map(current.map((image) => [image.id, image.nsfwLevel]));
+  await assertMayLoosenImages(
+    items
+      .filter((item) => loosensImageLevel(levels.get(item.imageId) ?? 0, item.nsfwLevel))
+      .map((item) => item.imageId),
+    { csamReview }
+  );
+  const imageIds: number[] = [];
+  for (const item of items) {
+    await updateImageNsfwLevel({
+      id: item.imageId,
+      nsfwLevel: item.nsfwLevel,
+      userId,
+      isModerator: true,
+      csamReview,
+      ...(status && { status }),
+    });
+    imageIds.push(item.imageId);
+  }
+  return imageIds;
+}
+
 export type KnightsNsfwLevelResult =
   | { applied: true }
   | { applied: false; reason: 'missing' | 'blocked' | 'locked'; currentLevel: number | null };
 
 /**
  * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
- * hands: it exists, carries no block marker, and is unlocked or locked by an earlier Knights vote.
- * The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a read
- * and the write cannot be overwritten.
+ * hands: it exists, carries no block marker, is unlocked or locked by an earlier Knights vote, and
+ * is not withheld from a moderator without the grant when the vote would loosen it
+ * (`loosensImageLevel`; a vote holds no grant). The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a
+ * read and the write cannot be overwritten. A withheld loosening answers `locked`, which the Knights
+ * app routes to a moderator at the current level.
  */
 export async function setImageNsfwLevelFromKnights({
   id,
@@ -6982,6 +7038,10 @@ export async function setImageNsfwLevelFromKnights({
       AND (
         NOT i."nsfwLevelLocked"
         OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}
+      )
+      AND NOT (
+        ${Prisma.raw(loosensImageLevelSql(nsfwLevel, 'i."nsfwLevel"'))}
+        AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
       )
     RETURNING i."postId"
   `;
@@ -7122,11 +7182,15 @@ export async function resolveIngestionError({
   id,
   nsfwLevel,
   userId,
+  csamReview,
 }: {
   id: number;
   nsfwLevel: NsfwLevel;
   userId: number;
+  /** The moderator's `csamReports` grant: without it, a withheld image is refused. */
+  csamReview: boolean;
 }) {
+  await assertMayLoosenImages([id], { csamReview });
   const image = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -8081,7 +8145,9 @@ export async function setVideoThumbnail({
 export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
-}: UpdateImageAcceptableMinorInput) {
+  csamReview,
+}: UpdateImageAcceptableMinorInput & { csamReview: boolean }) {
+  if (acceptableMinor) await assertMayLoosenImages([id], { csamReview });
   // primary: whether this write changes the flag decides whether shared caches are purged.
   const before = await dbWrite.image.findUnique({
     where: { id },
@@ -8567,13 +8633,19 @@ export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
 
-export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
-  const image = await dbRead.image.findUnique({
+export const toggleImageFlag = async ({
+  id,
+  flag,
+  csamReview,
+}: ToggleImageFlagInput & { csamReview: boolean }) => {
+  // primary: the current value decides whether this toggle clears the flag.
+  const image = await dbWrite.image.findUnique({
     where: { id },
     select: { [flag]: true },
   });
 
   if (!image) throw throwNotFoundError();
+  if (image[flag]) await assertMayLoosenImages([id], { csamReview });
 
   await dbWrite.image.update({
     where: { id },

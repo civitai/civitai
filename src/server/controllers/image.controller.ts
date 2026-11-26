@@ -1,4 +1,5 @@
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { withheldImageIds } from '~/server/services/moderator-withheld.service';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
@@ -1432,9 +1433,18 @@ export async function updateImageAcceptableMinorHandler({
       });
       if (!item?.addedById || item.addedById !== item.image?.userId || item.addedById === userId)
         throw throwAuthorizationError();
+      // Refused as any other entry the manager may not rule on: the reason is not theirs to see.
+      if (
+        input.acceptableMinor &&
+        (await withheldImageIds([input.id], { csamReview: false })).has(input.id)
+      )
+        throw throwAuthorizationError();
     }
 
-    const image = await updateImageAcceptableMinor(input);
+    const image = await updateImageAcceptableMinor({
+      ...input,
+      csamReview: !!ctx.features?.csamReports,
+    });
     return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1455,7 +1465,12 @@ export async function handleUpdateImageNsfwLevel({
     const applied =
       !isModerator &&
       (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
-    const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
+    const updatedNsfwLevel = await updateImageNsfwLevel({
+      ...input,
+      userId,
+      isModerator,
+      csamReview: !!ctx.features?.csamReports,
+    });
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
   } catch (error) {

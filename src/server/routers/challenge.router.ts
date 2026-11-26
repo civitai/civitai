@@ -352,7 +352,13 @@ export const challengeRouter = router({
   rescan: moderatorProcedure
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      rescanChallenge({
+        id: input.id,
+        moderatorId: ctx.user.id,
+        csamReview: !!ctx.features?.csamReports,
+      })
+    ),
 
   rejudge: moderatorProcedure
     .input(challengeQuickActionSchema)
@@ -481,7 +487,9 @@ export const challengeRouter = router({
   playgroundReviewImage: moderatorProcedure
     .input(playgroundReviewImageSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => playgroundReviewImage(input)),
+    .mutation(({ input, ctx }) =>
+      playgroundReviewImage({ ...input, csamReview: !!ctx.features?.csamReports })
+    ),
 
   // Moderator: Playground — dry-run the pairwise ladder over a real field. Writes nothing, but
   // every comparison is a paid LLM call, so it stays behind moderatorProcedure.
