@@ -5073,6 +5073,7 @@ export interface ScanLabelClaim {
   userId: number;
   expiresAt: Date;
   token: string | null;
+  releasedAt: Date | null;
 }
 
 export interface ScanLabelCopyObject {
