@@ -181,7 +181,6 @@ async function resolve({
   const detection = model ? getTextScanRedetection(model.meta, label) : null;
   if (!model || !detection || detection.textHash !== textHash) throw stale();
 
-  // promptIds are logged so a decision can be joined to the prompt versions that produced the verdict.
   // The label is already set, so closing the lead changes nothing on the model: this row is the only
   // record that a moderator ruled on it. The drop has landed and nothing retries it (a retry reads
   // stale), so a failed insert is logged, not thrown.
@@ -205,6 +204,7 @@ async function resolve({
     }
   };
 
+  // promptIds are logged so a decision can be joined to the prompt versions that produced the verdict.
   const logDecision = (decision: 'kept' | 'dismissed' | 'closed') =>
     logToAxiom({
       name: 'text-scan',
