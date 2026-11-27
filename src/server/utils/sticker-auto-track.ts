@@ -15,15 +15,13 @@ import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
 // The civitai-sticker-track node pack (our fork of rmatif/comfyui-sticker-track) follows the
 // subject under a sticker and returns a v1 track.
-// Keep COMFY_IMAGE on the workers' default Comfy image (the one a customComfy job with no
-// comfyImage runs on): a run pinned to any other image waits, sometimes over an hour, for a
-// worker to pull ~30 GB. Omitting comfyImage is not the fix: the install step then falls back to
-// the orchestrator's own default, a different image. After changing COMFY_IMAGE or NODE_PACK, submit one run
-// before deploying and check it succeeds: the first run that built the v2.7.65 layer failed its
-// track step with no reason given, and runs passed once the layer existed.
+// The pack ships inside the workers' default Comfy image from v2.7.66, so the run is one
+// customComfy step on that image, with no node-pack layer: a layer cannot be built on an image
+// that already has the pack (the installer refuses a non-pristine pack dir), and a layer on an
+// older image makes every run wait, sometimes over an hour, for a worker to pull ~30 GB.
+// After changing COMFY_IMAGE, submit one run before deploying and check it succeeds and is
+// claimed in seconds.
 const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.66';
-const NODE_PACK = 'urn:air:comfy:nodepack:comfyregistry:civitai/civitai-sticker-track@1.3.0';
-const INSTALL_STEP = 'install';
 const TRACK_STEP = 'track';
 const SAM_CHECKPOINT =
   'urn:air:other:checkpoint:huggingface:Comfy-Org/sam3.1@7bb8374780a725b4353ed31f3a9395c9742b5621/checkpoints/sam3.1_multiplex_fp16.safetensors';
@@ -82,7 +80,7 @@ export function readStickerAutoTrackWorkflow(
     name?: string | null;
     output?: { blobs?: { id?: string; url?: string | null; available?: boolean }[] };
   }[];
-  // Runs submitted before the install step existed have one unnamed step.
+  // Runs submitted before the step was named have one unnamed step.
   const step =
     steps.find((s) => s.name === TRACK_STEP) ?? (steps.length === 1 ? steps[0] : undefined);
   const blob = step?.output?.blobs?.find((b) => b.id?.endsWith('.json'));
@@ -204,22 +202,12 @@ export function buildStickerAutoTrackWorkflow({
         },
       }
     : {};
-  const install = {
-    $type: 'comfyNodepackSnapshot',
-    name: INSTALL_STEP,
-    input: { comfyImage: COMFY_IMAGE, nodepacks: [NODE_PACK] },
-  };
   const track = {
     $type: 'customComfy',
     name: TRACK_STEP,
     input: {
       comfyImage: COMFY_IMAGE,
-      resources: [
-        { $ref: INSTALL_STEP, path: 'output.results[0].layerAir' },
-        videoAir,
-        SAM_CHECKPOINT,
-        TAPNEXT_CHECKPOINT,
-      ],
+      resources: [videoAir, SAM_CHECKPOINT, TAPNEXT_CHECKPOINT],
       workflow: {
         '1': {
           class_type: 'StickerLoadVideo',
@@ -299,7 +287,7 @@ export function buildStickerAutoTrackWorkflow({
       },
     },
   };
-  return [install, track] as unknown as WorkflowStepTemplate[];
+  return [track] as unknown as WorkflowStepTemplate[];
 }
 
 /** One counter per placer per UTC day, read back by the account Limits page. */
