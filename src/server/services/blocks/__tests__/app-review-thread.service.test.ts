@@ -45,6 +45,8 @@ const state = {
   firstSlugOwner: null as number | null,
   /** When that listing was created: after the request = the slug was released and taken again. */
   firstSlugCreatedAt: AFTER,
+  /** Whether the app's block has a listing; without one its owner is the block's. */
+  blockHasListing: true,
   messageId: 991,
 };
 
@@ -133,6 +135,7 @@ beforeEach(() => {
   state.offsiteOwner = SUBMITTER;
   state.firstSlugOwner = null;
   state.firstSlugCreatedAt = AFTER;
+  state.blockHasListing = true;
 
   dbMock.dbRead.appBlockPublishRequest.findUnique.mockImplementation((async (args: {
     where: { id: string };
@@ -176,7 +179,7 @@ beforeEach(() => {
     where: { id?: string; appBlockId?: string; slug?: string };
   }) => {
     const { where } = args;
-    if (where.appBlockId === 'ab_owned') return { id: 'apl_owned' };
+    if (where.appBlockId === 'ab_owned') return state.blockHasListing ? { id: 'apl_owned' } : null;
     if (where.slug === 'pixel-pal')
       return { id: 'apl_owned', revisionOfId: null, createdAt: BEFORE };
     if (where.slug === 'first-app') {
@@ -186,6 +189,10 @@ beforeEach(() => {
     }
     return where.id ? listingRow(where.id) : null;
   }) as never);
+  dbMock.dbRead.appBlock.findUnique.mockImplementation((async (args: { where: { id: string } }) =>
+    args.where.id === 'ab_owned'
+      ? { id: 'ab_owned', app: { userId: state.blockOwner }, appListing: null }
+      : null) as never);
   // An accepted editor seat exists on the app: it must not make the editor a participant.
   dbMock.dbRead.appCollaborator.findFirst.mockImplementation((async (args: {
     where: { userId: number };
@@ -315,6 +322,17 @@ describe('participants follow the current owner', () => {
     expect(dbMock.dbRead.appReviewMessage.findMany).toHaveBeenCalledTimes(1);
   });
 
+  it("a block with no listing: the block's owner, not the submitter", async () => {
+    state.blockHasListing = false;
+    transfer();
+    expect(
+      await codeOf(listReviewMessages({ subjectId: OWNED, viewer: developer(SUBMITTER) }))
+    ).toBe('NOT_FOUND');
+    await listReviewMessages({ subjectId: OWNED, viewer: developer(NEW_OWNER) });
+    expect(dbMock.dbRead.appReviewMessage.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.appBlock.findUnique).toHaveBeenCalled();
+  });
+
   it("🔴 a rejected revision (shadow deleted) belongs to the live listing's current owner", async () => {
     transfer();
     for (const userId of [EDITOR, SUBMITTER]) {
@@ -405,6 +423,17 @@ describe('posting stores the row and sends exactly one notification', () => {
     const values = JSON.stringify(details);
     expect(values).not.toContain(String(REVIEWER));
     expect(values).not.toContain(String(SUBMITTER));
+  });
+
+  it("a moderator's reply with nobody on the developer side is stored and notifies no one", async () => {
+    state.firstSlugOwner = NEW_OWNER; // a slug listing created after the request: nobody
+    const out = await postReviewMessage({
+      input: { subjectId: FIRST, body: 'Closing this out.' },
+      viewer: moderator,
+    });
+    expect(out).toEqual({ id: state.messageId, routedTo: 'developer' });
+    expect(createMessage).toHaveBeenCalledTimes(1);
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it('a blocked link is refused: no row, no notification', async () => {
