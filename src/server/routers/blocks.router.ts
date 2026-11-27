@@ -302,6 +302,10 @@ import {
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
 import {
+  blockViewerImageUserSelect,
+  projectBlockViewerImage,
+} from '~/server/services/blocks/block-viewer-image';
+import {
   resolveBlockOutputRules,
   resolveBlockOutputView,
 } from '~/server/services/blocks/block-media-serving';
@@ -9665,7 +9669,14 @@ export const blocksRouter = router({
       // viewer surface to the block as active.
       const user = await dbWrite.user.findUnique({
         where: { id: userId },
-        select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+        select: {
+          id: true,
+          username: true,
+          bannedAt: true,
+          muted: true,
+          deletedAt: true,
+          ...blockViewerImageUserSelect,
+        },
       });
       if (!user || user.deletedAt) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
@@ -9679,6 +9690,8 @@ export const blocksRouter = router({
         username: user.username,
         // Muted viewers pass through so the block can suppress write UI.
         status: (user.muted ? 'muted' : 'active') as 'active' | 'muted',
+        // The viewer's avatar against this token's output ceiling (mirrors /blocks/me).
+        image: projectBlockViewerImage(user, blockOutputCeilingFromClaims(claims)),
         // Per-call spend cap the block was issued with — surfaced so the block
         // can clamp UI without a second call (mirrors /blocks/me).
         buzzBudget: claims.buzzBudget ?? null,

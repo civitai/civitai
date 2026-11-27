@@ -106,6 +106,7 @@ export function DevTunnelBlockHost({
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
+    viewerImage,
     error,
     // `terminal` = the mint failed, nothing usable is left, AND the hook's
     // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
@@ -163,6 +164,7 @@ export function DevTunnelBlockHost({
       tokenError={error != null}
       tokenTerminal={terminal}
       viewer={viewer}
+      viewerImage={viewerImage}
       theme={theme}
       onConsentGranted={refresh}
       onRetryToken={refresh}
