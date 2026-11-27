@@ -557,16 +557,17 @@
       {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
       <TriageDecisionBar
         compact
+        unavailable={KEYS.map((k, i) => (enabled[i] ? undefined : whyDisabled(k.decision)))}
         hint="Dismiss closes the hold and changes nothing. 5 bans the author and opens the CSAM report form for them. The next hold opens after each decision; J/K to move."
       >
-        {#snippet buttons()}
+        {#snippet buttons(reasonId)}
           {#each KEYS as k, i (k.decision)}
             <TriageKeyButton
               type="button"
               key={i + 1}
               tone={k.tone}
               disabled={!enabled[i]}
-              title={enabled[i] ? undefined : whyDisabled(k.decision)}
+              aria-describedby={enabled[i] ? undefined : reasonId}
               onclick={() => press(k.decision)}
             >
               {#if k.tone === 'red-outline'}<IconShield class="size-3.5" aria-hidden="true" />{/if}

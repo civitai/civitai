@@ -114,6 +114,13 @@
       await after?.(opts);
     };
   };
+
+  // A disabled button takes no pointer events, so its reason is text, not a `title`.
+  const uid = $props.id();
+  const unavailableId = `${uid}-unavailable`;
+  const unavailableReasons = $derived([
+    ...new Set(choices.map((c) => choiceDisabled?.(c.verdict)).filter((r): r is string => !!r)),
+  ]);
 </script>
 
 <div class={cn('grid gap-2', large && 'w-full')}>
@@ -126,7 +133,7 @@
         variant={draft.verdict === c.verdict ? c.variant : 'outline'}
         aria-pressed={draft.verdict === c.verdict}
         disabled={disabled || !!unavailable}
-        title={unavailable ?? undefined}
+        aria-describedby={unavailable ? unavailableId : undefined}
         onclick={() => choose(c.verdict)}
         data-touch-target
       >
@@ -135,6 +142,11 @@
       </Button>
     {/each}
   </div>
+  {#if unavailableReasons.length}
+    <p id={unavailableId} data-testid="decision-unavailable" class="m-0 text-xs text-amber-300">
+      {unavailableReasons.join(' ')}
+    </p>
+  {/if}
   {#if chosen}
     <form
       method="POST"
