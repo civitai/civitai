@@ -407,7 +407,8 @@ For BLOCK_INIT the token mint computes it (`mintViewerImage` in
 check (`projectBlockInitViewerImage`). The key is ABSENT when the token lacks
 `user:read:self` (it is not re-sent after a later consent grant — call
 `/blocks/me`), for an anonymous viewer, on the review preview, and when the read
-fails.
+fails. The mint reads the avatar from the replica, so just after a viewer changes it
+BLOCK_INIT can briefly lag `/blocks/me` (which reads the primary).
 
 #### `viewer.signedIn`, and what "deprecated" means here (v2)
 
