@@ -151,8 +151,8 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
   let lyrics = await readLyricsVerdict(imageId);
   // A song without lyrics never waits on its title's verdict: that only re-rates it.
   if (fromLyrics && lyrics.state === 'none') return rerateSong(imageId);
-  // Never on a rescan: a later verdict only re-rates a decided song (above), so lyrics it blocked
-  // could not block the song.
+  // Only at the first decision: once the song is public, a verdict on a transcript could no longer
+  // block it.
   if (
     !fromLyrics &&
     UNDECIDED.includes(image.ingestion) &&

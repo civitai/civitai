@@ -421,7 +421,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
     expect(pipeline.resolveScanOutcome).not.toHaveBeenCalled();
   });
 
-  // S4: transcribed lyrics are rated the same as generator lyrics, language included.
+  // Transcribed lyrics are rated the same as generator lyrics, language included.
   it('sends the saved lyrics for their language level', async () => {
     await run(transcribed('Rain on the window. Sun on the floor.'), pending);
 

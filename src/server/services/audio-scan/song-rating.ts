@@ -1,8 +1,9 @@
 import { isSongsOwnCover } from '@civitai/db-queries/profile-picture-clear';
 import { NsfwLevel } from '~/server/common/enums';
-import { judgeRatingFloor } from '~/server/common/judge-rating';
+import { judgeRatingFloor, RATING_LEVELS } from '~/server/common/judge-rating';
 import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 // Defined here, not beside the scan submits: those sit in an import cycle this module must stay out
@@ -11,9 +12,8 @@ export const TRACK_LYRICS_ENTITY_TYPE = 'TrackLyrics';
 /** A song's lyrics profanity verdict: its own row, as EntityModeration is one row per entity. */
 export const TRACK_LYRICS_LANGUAGE_ENTITY_TYPE = 'TrackLyricsLanguage';
 
-const RATINGS: number[] = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 const asRating = (level: unknown) =>
-  typeof level === 'number' && RATINGS.includes(level) ? level : NsfwLevel.PG;
+  typeof level === 'number' && RATING_LEVELS.includes(level) ? level : NsfwLevel.PG;
 
 /**
  * A song's level (docs/features/music.md "A song's rating"): the highest of PG, its lyrics and title
@@ -142,4 +142,47 @@ export async function songOfCover(coverId: number) {
     select: { imageId: true },
   });
   return track?.imageId ?? null;
+}
+
+type SongReRater = (songId: number) => Promise<void>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiSongReRater: SongReRater | undefined;
+}
+
+/**
+ * The moderation registry sets this when it loads (at server start, `instrumentation.ts`) to the
+ * scan pipeline's `rerateSong`. A level setter in the image service re-rates through it: importing
+ * the pipeline there would put the pipeline in the image service's import cycle. On `globalThis`,
+ * as `setTextScanVerdictApplier` is: the build emits this module more than once.
+ */
+export function setSongReRater(next: SongReRater) {
+  globalThis.__civitaiSongReRater = next;
+}
+
+/** Re-rates the song whose own cover this image is, after the image's level changed. Never throws. */
+export async function rerateSongOfRatedCover(coverId: number) {
+  try {
+    const songId = await songOfCover(coverId);
+    if (songId === null) return;
+    const rerate = globalThis.__civitaiSongReRater;
+    if (!rerate) {
+      logToAxiom({
+        name: 'song-rating',
+        type: 'error',
+        message: 'song re-rater not registered',
+        payload: { songId },
+      });
+      return;
+    }
+    await rerate(songId);
+  } catch (error) {
+    logToAxiom({
+      name: 'song-rating',
+      type: 'error',
+      message: (error as Error).message,
+      payload: { coverId },
+    });
+  }
 }

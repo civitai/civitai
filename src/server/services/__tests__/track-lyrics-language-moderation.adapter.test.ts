@@ -75,3 +75,10 @@ describe('a lyrics profanity verdict', () => {
     expect(content.get(SONG)).toBe('la la');
   });
 });
+
+describe('the moderation registry', () => {
+  // The image service re-rates a song through it when the song's cover is rated.
+  it('registers the song re-rater when it loads', () => {
+    expect(globalThis.__civitaiSongReRater).toBeTypeOf('function');
+  });
+});

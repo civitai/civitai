@@ -2,6 +2,7 @@ import {
   SONGS_UNAVAILABLE_MESSAGE,
   songAllowsRemix,
 } from '~/shared/form-graph/generation/audio/song-metadata';
+import { rerateSongOfRatedCover } from '~/server/services/audio-scan/song-rating';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   assertMayLoosenImages,
@@ -6983,6 +6984,8 @@ async function afterImageNsfwLevelSet({
   ]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId });
+  // A song's own cover is a postless image, and its level counts toward the song's.
+  if (postId == null) await rerateSongOfRatedCover(id);
   await trackModActivity(userId, { entityType: 'image', entityId: id, activity });
 }
 

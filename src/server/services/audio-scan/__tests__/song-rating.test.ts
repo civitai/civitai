@@ -181,6 +181,17 @@ describe('a song its own scan still decides', () => {
     expect(onRated).not.toHaveBeenCalled();
   });
 
+  // A block reason on a Scanned song at a normal level: the song is left to its block, with no
+  // write attempted (a refused write would only be read again and retried).
+  it('attempts no write on a song carrying a block reason', async () => {
+    await song(`"blockedFor" = 'moderated'`);
+    await languageVerdict(R);
+
+    expect(await rate()).toBeNull();
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+    expect(await level()).toBe(PG);
+  });
+
   it("never overrides a locked level, a moderator's review", async () => {
     await song(`"nsfwLevelLocked" = true`);
     await lyricsVerdict(X);
