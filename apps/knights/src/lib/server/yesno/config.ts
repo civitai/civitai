@@ -11,6 +11,8 @@ export type YesNoSettings = {
   tagReview: boolean;
   /** Whether a player who never set the questions switch in Knights settings is served yes/no questions. */
   playerDefault: boolean;
+  /** Distinct players who must report a question before it stops being served to anyone (`report.ts`). */
+  reportThreshold: number;
 };
 
 export const DEFAULT_YESNO: YesNoSettings = {
@@ -19,6 +21,7 @@ export const DEFAULT_YESNO: YesNoSettings = {
   maxAgeDays: 14,
   tagReview: false,
   playerDefault: false,
+  reportThreshold: 5,
 };
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
@@ -48,5 +51,12 @@ export function yesNoSettings(
     tagReview: stored.modTagReview === true,
     playerDefault:
       stored.yesNoPlayerDefault ?? env.KNIGHTS_YESNO_PLAYER_DEFAULT?.trim().toLowerCase() === 'on',
+    reportThreshold:
+      stored.yesNoReportThreshold ??
+      read(
+        env.KNIGHTS_YESNO_REPORT_THRESHOLD,
+        DEFAULT_YESNO.reportThreshold,
+        (n) => Number.isInteger(n) && n > 0
+      ),
   };
 }

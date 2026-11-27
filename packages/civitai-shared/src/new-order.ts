@@ -143,6 +143,13 @@ export const KNIGHTS_GAME_SETTINGS = {
     env: 'KNIGHTS_YESNO_PLAYER_DEFAULT',
     label: 'Questions for players who have not chosen',
   },
+  yesNoReportThreshold: {
+    kind: 'number',
+    env: 'KNIGHTS_YESNO_REPORT_THRESHOLD',
+    label: 'Reports to pull a question',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
   apprenticeSmites: {
     kind: 'toggle',
     env: 'KNIGHTS_APPRENTICE_SMITES',

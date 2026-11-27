@@ -75,7 +75,7 @@
       ],
       toggles: ['inquisitorQueue', 'skillCheckServeJudged'],
     },
-    { id: 'yes-no', title: 'Yes/no questions', numbers: ['yesNoStretch', 'yesNoMaxAgeDays'], toggles: ['yesNoPlayerDefault'] },
+    { id: 'yes-no', title: 'Yes/no questions', numbers: ['yesNoStretch', 'yesNoMaxAgeDays', 'yesNoReportThreshold'], toggles: ['yesNoPlayerDefault'] },
     { id: 'acolytes', title: 'Acolytes', numbers: [], toggles: ['apprenticeSmites'] },
     {
       id: 'harvest',
